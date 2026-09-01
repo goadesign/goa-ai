@@ -65,15 +65,22 @@ package main
 import (
     "context"
     "fmt"
+    "time"
 
     chat "example.com/assistant/gen/orchestrator/agents/chat"
     "goa.design/goa-ai/runtime/agent/model"
     "goa.design/goa-ai/runtime/agent/runtime"
+    storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 )
 
 func main() {
-    // 1. Create runtime (in-memory engine by default)
-    rt := runtime.New()
+    // 1. Create the local store, session, and runtime.
+    ctx := context.Background()
+    runtimeStore := storageinmem.New()
+    if _, err := runtimeStore.CreateSession(ctx, "session-1", time.Now().UTC()); err != nil {
+        panic(err)
+    }
+    rt := runtime.New(runtimeStore)
 
     // 2. Register agent with a planner
     if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{
@@ -87,7 +94,7 @@ func main() {
     out, err := client.Run(context.Background(), "session-1", []*model.Message{{
         Role:  model.ConversationRoleUser,
         Parts: []model.Part{model.TextPart{Text: "Hello!"}},
-    }})
+    }}, runtime.WithRunID("run-1"))
     if err != nil {
         panic(err)
     }
@@ -114,7 +121,7 @@ func main() {
         }
     }()
 
-    // MongoDB stores for persistence.
+    // MongoDB memory store for persistent transcript memory.
     // The low-level client is a *mongo.Client from go.mongodb.org/mongo-driver/v2/mongo.
     mongoClient := newMongoClient()
     memClient, _ := memorymongoclient.New(memorymongoclient.Options{
@@ -128,6 +135,7 @@ func main() {
 
     // Construct runtime with all features
     rt := runtime.New(
+        runtimeStore, // Host-owned durable runtime storage
         runtime.WithEngine(temporalEng),
         runtime.WithMemoryStore(memStore),
         runtime.WithStream(pulseSink),
@@ -596,10 +604,12 @@ Gemini 3 does not inherit it.
 
 ### Construction Options
 
-Create a runtime using `runtime.New()` with functional options:
+Pass the required runtime store to `runtime.New`, followed by functional
+options:
 
 ```go
 rt := runtime.New(
+    runtimeStore,                         // Runs, checkpoints, and ordered records
     runtime.WithEngine(engine),          // Workflow backend (required for production)
     runtime.WithMemoryStore(store),      // Transcript persistence
     runtime.WithPromptStore(promptStore),// Scoped prompt overrides
@@ -609,11 +619,11 @@ rt := runtime.New(
     runtime.WithLogger(logger),          // Structured logging
     runtime.WithMetrics(metrics),        // Counter/histogram recording
     runtime.WithTracer(tracer),          // Distributed tracing
-    runtime.WithWorker(agentID, cfg),    // Per-agent queue placement
 )
 ```
 
-When options are omitted, the runtime uses sensible defaults:
+The runtime store has no default. When options are omitted, the runtime uses
+these defaults:
 
 | Option | Default |
 |--------|---------|
@@ -625,11 +635,13 @@ When options are omitted, the runtime uses sensible defaults:
 | Hooks | In-process bus |
 | Logger/Metrics/Tracer | No-op implementations |
 
-`runtime.WithWorker(...)` is intentionally narrow: it controls agent placement
-(`Queue`) only. Semantic planner and tool attempt budgets come from the DSL
-(`RunPolicy.Timing`) or per-run overrides (`runtime.WithTiming(...)`). If you
-use the Temporal engine and need queue-wait or liveness tuning, configure those
-mechanics on `temporal.Options.ActivityDefaults` when constructing the engine.
+Each generated `AgentDefinition` contains the agent's workflow name and default
+task queue. Callers and workers use that same definition. A caller may still
+select a different queue for one run with `runtime.WithTaskQueue(...)`.
+Semantic planner and tool attempt budgets come from the DSL
+(`RunPolicy.Timing`) or per-run overrides (`runtime.WithTiming(...)`). Configure
+Temporal queue-wait and liveness behavior on
+`temporal.Options.ActivityDefaults` when constructing the engine.
 
 ### Prompt Registry and Overrides
 
@@ -654,6 +666,7 @@ mongoClient, _ := clientmongo.New(clientmongo.Options{
 promptStore, _ := promptmongo.NewStore(mongoClient)
 
 rt := runtime.New(
+    runtimeStore,
     runtime.WithPromptStore(promptStore),
 )
 
@@ -665,15 +678,61 @@ _ = rt.PromptRegistry.Register(prompt.PromptSpec{
 })
 ```
 
-Render prompts from planners through `PlannerContext.RenderPrompt(...)`. The result includes rendered
-text and a versioned `PromptRef` for provenance.
+Rendering returns text and a versioned `PromptRef`; it never writes runtime
+storage. When a `prompt.RenderRecorder` is present in the context, every
+successful render also records one `prompt.RenderEvent` containing the resolved
+prompt ID, version, and scope. Failed renders record nothing.
+`RenderRecorder.Events` returns completed renders in stable prompt ID, version,
+session, and scope order. Concurrent completion order therefore cannot change
+the exact workflow start request.
+
+Planners normally call `PlannerContext.RenderPrompt(...)`. The runtime supplies
+the recorder, returns its events with the accepted planner activity result, and
+then stores them as `PromptRendered` records from workflow history. Copy the
+returned `PromptRef` into the model request as described under [Model
+Clients](#model-clients).
+
+Callers that render text before `Start` must carry the recorded events with the
+same run input that contains that text:
+
+```go
+recorder := prompt.NewRenderRecorder()
+renderCtx := prompt.WithRenderRecorder(ctx, recorder)
+content, err := rt.PromptRegistry.Render(renderCtx, "assistant.system", scope, data)
+if err != nil {
+    return err
+}
+
+messages := []*model.Message{{
+    Role:  model.ConversationRoleSystem,
+    Parts: []model.Part{model.TextPart{Text: content.Text}},
+}}
+_, err = client.Start(ctx, sessionID, messages,
+    runtime.WithRunID(runID),
+    runtime.WithRenderedPrompts(recorder.Events()),
+)
+```
+
+`WithRenderedPrompts` is for initial input whose rendered text is already in
+`Messages`; continuations restore their own checkpoint state and reject it. The
+runtime also rejects an event without a prompt ID or version, or whose scoped
+session differs from the run session. The
+accepted root or child workflow stores `RunStarted` and then these prompt events
+before planner work. If session ending prevents the run from starting, it stores
+the canceled start and no prompt events. Consumer-side agent-tool rendering runs
+in an activity and carries its recorded text and events in the child input.
+Workflow replay therefore reuses the activity result instead of reading prompt
+storage again. `RunOneShot` gives
+its callback a recorder context and stores the same events on the one-shot run.
+Only the path into the accepted run differs; the event shape and durable
+`PromptRendered` record are the same.
 
 ### Two Deployment Patterns
 
 **Worker process** — Registers agents and executes workflows:
 
 ```go
-rt := runtime.New(runtime.WithEngine(temporalWorker))
+rt := runtime.New(runtimeStore, runtime.WithEngine(temporalWorker))
 
 // Register agents with planners
 if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{
@@ -688,11 +747,11 @@ if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{
 **Client-only process** — Submits runs without local execution:
 
 ```go
-rt := runtime.New(runtime.WithEngine(temporalClient))
+rt := runtime.New(runtimeStore, runtime.WithEngine(temporalClient))
 
 // No registration needed; use generated client with route info
 client := chat.NewClient(rt)
-out, err := client.Run(ctx, "session-1", msgs)
+out, err := client.Run(ctx, "session-1", msgs, runtime.WithRunID("run-1"))
 ```
 
 The generated `NewClient` function embeds the route (workflow name, task queue) so
@@ -711,7 +770,8 @@ Start ──► PlanStart ──► Tool Calls? ──► Execute Tools ──�
                 └──► Final Response ◄──────────────────────────┘
 ```
 
-1. **Start** — `client.Run()` or `client.Start()` creates a workflow
+1. **Start** — `client.Run()` or `client.Start()` submits a stable run ID and
+   exact request to the engine
 2. **PlanStart** — Planner receives messages and decides: answer or call tools?
 3. **Execute** — Tools run as activities (parallel by default)
 4. **PlanResume** — Planner receives tool results and decides next step
@@ -721,6 +781,8 @@ Start ──► PlanStart ──► Tool Calls? ──► Execute Tools ──�
 ### Workflow Contracts
 
 - **SessionID is required.** `Start` fails fast if `SessionID` is empty.
+- **RunID is required for sessionful work.** Supply `WithRunID`; the runtime
+  creates an ID only for sessionless one-shot work.
 - **Agents must register before runs start.** Registration closes after the first
   run to maintain worker determinism.
 - **Tool results flow through codecs.** The runtime decodes results centrally and
@@ -920,15 +982,14 @@ directly:
   `codegen.CapsData.MaxRecoveryTurns`.
 
 These names and their serialized field names are intentionally breaking.
-Suspensions written by this runtime use `goa-ai.run-suspension.v6`; version-four
-suspensions are not accepted. Version-five suspensions remain readable with
-their original shape: a pending recovery must include its serialized
-`PendingRecoveryCatalog`. A version-five checkpoint that omits that catalog is
-invalid. Version six removes only the duplicate catalog for `correct_call`:
-the reader derives the exact ordered names from the saved typed failures and
-rejects a version-six correction checkpoint that also serializes a catalog.
-Each model-authored await item stores its runtime `ToolCallID` separately from
-the provider `ModelToolCallID`. Other checkpoint versions cannot resume.
+Suspensions written by this runtime use `goa-ai.run-suspension.v7`. Earlier
+versions cannot resume. Version seven derives the exact ordered correction
+catalog from saved typed failures instead of storing a duplicate catalog. It
+also requires complete successful tool results: a result-bearing tool stores
+JSON accepted by its generated codec, while a successful tool without a result
+type and a failed tool store no result JSON. Each model-authored await item
+stores its runtime `ToolCallID` separately from the provider
+`ModelToolCallID`.
 
 Run-scoped completion tool:
 
@@ -1023,70 +1084,56 @@ recovery turn may end with an input suspension; continuing retains the selected
 failure evidence. A failed batch clears its earlier synthesis intent; a new
 retry batch may request `SynthesizeAfterTools` again.
 
-A retired tool is a tool whose complete executable toolset registration remains
-loaded only so saved work can finish. That registration binds the generated
-input and result codecs to the function that executes the tool. A standalone
-tool specification is not enough to authorize recovery. The retired tool is
-absent from the agent's current `Specs`, so new runs, ordinary continuation
-turns, replanning, and turns after recovery do not advertise it.
+Saved work must match the current generated `AgentDefinition`. Removing a tool,
+changing an incompatible codec, or changing completion policy deliberately
+invalidates a suspension that depends on the old contract. Continuation
+preparation rejects it before the workflow engine receives the successor run
+ID. Goa-AI does not keep a retired tool catalog or use an older worker
+registration as a fallback.
 
 `RegisterToolset` validates agent tools before adding any part of the toolset to
 the runtime. A registration with agent-tool execution configuration requires
 every specification in that toolset to be marked as an agent tool; a marked
 specification requires agent-tool execution configuration. Mixed marked and
 unmarked specifications are invalid. Each generated agent-tool specification
-must name the same agent as the registration and its child-workflow route. The
-registration must use inline child-agent execution and provide the route's
-workflow name and task queue. Missing or conflicting values fail application
-setup; the runtime never infers the marker or falls back to ordinary tool
-activity execution. Generated registrations already satisfy this contract.
+must name the same agent as the registration's generated `AgentDefinition`.
+That definition is the only owner of the child agent ID, workflow name, default
+task queue, tool contracts, and required labels. Missing or conflicting values
+fail application setup; the runtime never infers the marker or falls back to
+ordinary tool activity execution. Generated registrations already satisfy this
+contract.
 Applications that construct `ToolsetRegistration` directly must update partial
 agent-tool registrations before upgrading.
 
-Every `correct_call` recovery uses the same exact-catalog contract, whether its
-tool is current or retired. The existing resume activity reloads each failed
-output by its saved call ID, reads the typed recovery action, and derives tool
-names in first-failure order while removing later copies of the same name. It
-then requires each name in the owning executable toolset registration and
-advertises only that registration's exact definitions for the correction turn.
-An unknown tool, a specification without its executable toolset, or a tool the
-registration no longer contains fails before a model call. The saved failure
-proves which earlier call needs correction; the retained executable registration
-is the narrow, current grant to attempt that correction.
+Every accepted `correct_call` recovery reloads each failed output by its saved
+call ID, reads the typed recovery action, and derives tool names in
+first-failure order while removing later copies of the same name. It requires
+each name in the current executable toolset registration and advertises only
+that registration's exact definitions for the correction turn. An unknown
+tool, a specification without its executable toolset, or a tool the current
+registration no longer contains fails before a model call.
 
 Run tag restrictions still filter the correction catalog before the planner
 runs. Runtime policy and authorization implemented by the tool's downstream
-executor still evaluate the corrected call. Retaining an executable registration
-does not bypass those checks. Removing the registration revokes recovery
-immediately.
-
-For planned retirement, keep the complete executable registration only while
-the owning application has pending corrections that may use it. Remove that
-registration after those corrections complete, are explicitly ended, or are
-otherwise accounted for under the application's recovery policy. Retaining only
-the tool specification is invalid.
+executor still evaluate the corrected call. Removing the current registration
+revokes recovery immediately.
 
 This recovery does not add an activity, change the resume activity name, or
 change workflow command ordering. A turn with no `correct_call` failure
 continues to advertise only the agent's current `Specs`, and the first normal
 turn after correction returns to those current tools.
 
-Suspensions written by version 6 omit `PendingRecoveryCatalog` only when typed
-pending failures contain `correct_call`. The version 6 reader derives the exact
+Suspensions omit `PendingRecoveryCatalog` only when typed pending failures
+contain `correct_call`. The current reader derives the exact
 catalog from those failures and rejects a serialized duplicate. Other recovery
 actions still require their serialized catalog because the failed outputs do
-not determine every tool that the planner may use. Version 5 retains its
-original shape and remains resumable: every pending recovery requires its
-serialized `PendingRecoveryCatalog`.
+not determine every tool that the planner may use.
 
 Applications should update workers for every workflow and activity queue
 together before accepting new work. This coordinated update keeps one runtime
-contract across the application; it does not require applications to discard or
-drain valid version 5 suspensions because new workers can resume them. Once new
-work has produced version 6 suspensions, rolling back to workers that understand
-only version 5 is unsafe. Pause intake and either keep version 6 workers
-available for those continuations or account for them through the application's
-owned suspension store before rollback.
+contract across the application. Saved suspensions must use the current schema;
+older suspension versions are rejected. Before upgrading across a suspension
+schema change, finish or explicitly end incompatible suspended runs.
 
 The workflow selects current recovery outputs by stable call ID in
 `PlanActivityInput`. Empty recovery IDs are omitted from canonical JSON.
@@ -1364,7 +1411,7 @@ text and thoughts, and none of those fragments are persisted or published as
 hooks. Usage events still include every invocation. After atomic tool-batch
 admission, the workflow commits the complete selected response once before any
 effects. The workflow publishes each accepted ordered record batch through one
-record activity; stable event keys make a retried prefix idempotent without
+`runtime.store` activity; stable event keys make a retried prefix idempotent without
 creating one Temporal activity per record. Keyed stream publications use the
 same identity, so a retry completes a failed delivery without appending a
 duplicate client event.
@@ -1999,8 +2046,7 @@ rt.RegisterToolset(reg)
 
 ```go
 reg := runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
-    AgentID: agent.Ident("service.nested"),
-    Route:   runtime.AgentRoute{...},
+    Definition: nestedagent.Definition(),
     // Optional per-tool prompts/templates
 })
 ```
@@ -2059,7 +2105,7 @@ the labels map itself.
    attribute-validation codegen, not hand-duplicated), and return a precise
    error naming the tool and key on a missing or invalid label. The toolset's
    `RequiredLabels` (sorted, deduplicated label keys) is generated onto its
-   specs package and aggregated, per agent, onto `AgentRegistration`.
+   specs package and included in the agent's immutable `AgentDefinition`.
 3. Runtime time: both execution topologies call the **same** generated
    `Inject<Tool>` function between decode and execute, so population never
    diverges by where a tool runs:
@@ -2077,38 +2123,23 @@ the labels map itself.
      **Use the toolset's generated `Decode<Tool>(payload []byte, meta
      runtime.ToolCallMeta, labels map[string]string) (*<Tool>Payload, error)`
      function to decode these tools' payloads**, not the raw
-     `<Tool>PayloadCodec.FromJSON` followed by a manual `Inject<Tool>` call.
+   `<Tool>PayloadCodec.FromJSON` followed by a manual `Inject<Tool>` call.
      `Decode<Tool>` composes both in one call; decoding with the codec alone
      silently leaves injected fields at their Go zero value, because their
      wire tag is `json:"-"` and there is no "missing key" signal. `payload`
      accepts a `runtime.ToolCall.Payload` (`rawjson.Message`) directly.
-4. Run start: `Runtime.Start`/`StartOneShot` (and their route variants)
-   validate the caller-supplied `WithLabels(...)` map against the starting
-   agent's aggregated `RequiredLabels` **before** scheduling any workflow or
-   activity, failing fast with every missing key named in one error.
-   **Gateway/orchestration no-op:** this check reads `RequiredLabels` off the
-   *locally registered* `AgentRegistration`. A process that only holds a
-   `Runtime.ClientFor(route AgentRoute)` (or `MustClientFor`) -- the pattern
-   this runtime documents for gateway and orchestration processes that do
-   not run the agent's workflow themselves -- has no local registration, so
-   the check is a silent no-op there; a missing label is instead caught
-   later, per tool call, when `Inject<Tool>` actually runs. Carry
-   `RequiredLabels` on `AgentRoute` yourself if this gap matters for your
-   deployment; the runtime does not do so today.
-   **Agent-as-tool child runs** bypass run-start validation the same way:
-   `ExecuteAgentChildWithRoute` starts the child workflow directly (no
-   `Start`/`StartOneShot` funnel), so the child's `RequiredLabels` are never
-   checked up front. The parent run's labels propagate to the child
-   unchanged (the child's `RunInput.Labels` is a copy of the parent tool
-   call's labels), so a parent started with the right `WithLabels(...)`
-   satisfies the child too; a label the child needs that the parent never
-   carried fails loud at the child's `Inject<Tool>` call, per tool call,
-   not at child start.
+4. Run start: the generated `AgentDefinition` carries the complete, deduplicated
+   required-label list to both callers and workers. `Start` and `StartOneShot`
+   validate `WithLabels(...)` before scheduling planner or tool work and report
+   every missing key in one error. Remote callers therefore enforce the same
+   contract without registering the worker locally. Continuation preparation
+   checks the restored labels against the same definition.
 
 **`WithLabels` contract:**
 
 ```go
 out, err := client.Run(ctx, sessionID, messages,
+    runtime.WithRunID(runID),
     runtime.WithLabels(map[string]string{"household_id": "house-42"}),
 )
 ```
@@ -2241,6 +2272,12 @@ boundaries:
 - oversized successful transcript content projects to an explicit omission object:
   `{"omitted":true,"reason":"size_limit","preview":"...","bounds":{...}}`.
 
+That omission object changes only the bounded content sent to the model. The
+runtime store, continuation checkpoint, child result, final result, and stream
+event retain the complete successful JSON. Planner resume activities carry
+exact run-record identifiers and load the stored JSON instead of copying large
+results through workflow history.
+
 For method-backed `BindTo` tools, the bound service method result still needs to
 carry the canonical bounded fields so the generated executor can build
 `planner.ToolResult.Bounds` before runtime projection. Explicit tool-facing
@@ -2271,7 +2308,8 @@ nested agents execute as child workflows with their own run IDs and event stream
 
 1. Parent planner requests tool (e.g., `"service.analysis.analyze"`)
 2. Runtime identifies it as an agent-tool via `ToolSpec.IsAgentTool`
-3. Runtime starts child workflow using `AgentToolConfig.Route`
+3. Runtime starts the child workflow using the route in its generated
+   `AgentDefinition`
 4. Child agent executes its own plan/execute loop
 5. Runtime returns a parent `ToolResult` derived from the child run output (final text and/or finalizer output, plus aggregated telemetry). **Artifacts are not propagated to the parent tool result**; they remain attached to the child tool events.
 6. `ChildRunLinked` event links parent and child for streaming
@@ -2280,19 +2318,12 @@ nested agents execute as child workflows with their own run IDs and event stream
 
 ```go
 reg := runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
-    AgentID:         agent.Ident("service.data-analyst"),
-    Route:           runtime.AgentRoute{
-        ID:               agent.Ident("service.data-analyst"),
-        WorkflowName:     "DataAnalystWorkflow",
-        DefaultTaskQueue: "orchestrator.data-analyst",
-    },
-    SystemPrompt:    "You are a data analysis expert.",
+    Definition:   dataanalystagent.Definition(),
+    SystemPrompt: "You are a data analysis expert.",
     AgentToolContent: runtime.AgentToolContent{
         Templates: compiledTemplates, // Per-tool user message templates (optional)
         Texts:     textMessages,      // Alternative to templates (optional)
     },
-    JSONOnly:        true,                // Return structured results
-    Finalizer:       myFinalizer,         // Custom result aggregation
 })
 ```
 
@@ -2352,13 +2383,113 @@ end the current workflow successfully. The returned `api.RunSuspension`
 contains the visible pending requests plus a private checkpoint. No workflow
 waits while a person or external system prepares the answer.
 
-Before completing the workflow, the runtime persists the suspension in its
-configured session store under the completed run ID. The checkpoint can contain
-private planner messages and tool state; do not send it to an untrusted client.
-The owning service must atomically accept one answer before starting the
-continuation, so concurrent answers cannot start two workflows from the same
-state. When one answer is ready, start a new workflow with the completed run ID,
-a new run ID, and a new turn ID:
+Before completing the workflow, the runtime stores the suspension, suspended
+status, and matching record together under the completed run ID. The checkpoint
+can contain private planner messages and tool state; do not send it to an
+untrusted client.
+Before claiming an answer, the owning service prepares the continuation. This
+loads the exact saved suspension, checks the response and every nested child
+checkpoint against the current generated agent definitions, and takes an
+immutable copy of the complete workflow input. It does not write runtime state
+or call the workflow engine. A rejected response therefore leaves the requested
+run ID unused.
+
+The owning service then atomically accepts one prepared answer, so concurrent
+answers cannot start two workflows from the same state, and starts that exact
+prepared value. It may safely retry the same prepared value after an uncertain
+engine response because `StartPrepared` submits the same stored request each time:
+
+```go
+prepared, err := client.PrepareContinuation(
+    ctx,
+    "session-1",
+    previous.RunID,
+    "run-124",
+    "turn-2",
+    response,
+    runtime.WorkflowOptions{},
+)
+if err != nil {
+    return err
+}
+preparedBytes, err := prepared.MarshalBinary()
+if err != nil {
+    return err
+}
+// This application-owned method uses one database transaction to accept the
+// answer and store the prepared workflow ID with preparedBytes.
+err = workflowStarts.AcceptContinuation(ctx, previous.RunID, prepared.RunID(), preparedBytes)
+if err != nil {
+    return err
+}
+```
+
+A later process can submit the accepted request without retaining any in-memory
+state from preparation:
+
+```go
+preparedBytes, err := workflowStarts.Load(ctx, "run-124")
+if err != nil {
+    return err
+}
+stored, err := runtime.ParsePreparedRun(preparedBytes)
+if err != nil {
+    return err
+}
+handle, err := client.StartPrepared(ctx, stored)
+```
+
+Initial runs use the same durable command. Call `Prepare`, store the bytes from
+`MarshalBinary`, restore them with `ParsePreparedRun` after a restart, and call
+`StartPrepared`. `PreparedRun.RunID` returns the exact workflow ID to associate
+with the stored command. `Start` prepares and submits in memory when the
+application does not need a durable write between validation and engine
+submission.
+
+`Prepare` and `PrepareOneShot` are client-only operations. They copy and
+validate a complete request without writing runtime storage, sealing worker
+registration, or calling the workflow engine. `PrepareContinuation` first reads
+the saved suspension but still performs no write and starts no workflow.
+Preparation does not serialize the optional stored form. `MarshalBinary`
+creates that form; `StartPrepared` independently submits the engine request.
+`Start`, `StartOneShot`, and `Continue` never call `MarshalBinary`.
+
+Prepared bytes can contain the complete transcript, tool results, and private
+continuation checkpoint. Store them only in trusted, access-controlled
+application storage. Workflow launch settings are stored only in the engine
+request; `api.RunInput` contains only workflow input. One workflow start may use
+at most `engine.MaxPayloadBytes` (1,048,576) bytes. This inclusive count covers
+the workflow ID, workflow and queue names, memo and search-attribute names, the
+encoded workflow input, every memo and search value's data and metadata, and
+the reserved digest memo added by the engine. Exactly 1,048,576 bytes is
+accepted and one more is rejected. The stored JSON record has its own
+8,388,608-byte ceiling for its complete representation, including the agent ID,
+explicit queue override, JSON escaping, base64 expansion, and JSON field syntax.
+`MarshalBinary` checks the complete record when it creates the bytes, and
+`ParsePreparedRun` checks it before decoding. This second limit protects the
+stored format; it does not increase the workflow request limit. Store large
+domain values separately and pass durable references instead.
+
+`MarshalBinary` reports a storage-encoding failure as
+`ErrPreparedRunRejected` without changing the in-memory prepared request. It
+remains startable, but an application that requires durable admission must not
+start it until the bytes are stored. `ErrPreparedRunRejected` from
+`ParsePreparedRun` means the stored bytes are malformed or are not the exact
+format produced by `MarshalBinary`; they cannot be retried. `StartPrepared`
+returns the same error when the stored
+request no longer satisfies the current generated agent definition; that
+command cannot start with this generated release. It also returns the error
+when valid bytes are passed to the wrong generated agent client. The bytes
+remain valid and must be submitted through the matching client.
+`ErrWorkflowStartFailed`
+means the engine did not confirm the start. Goa-AI does not retry automatically;
+the application explicitly calls `StartPrepared` again with the same value, or
+parses and submits the same stored bytes after a restart. If the cause is
+`engine.ErrWorkflowStartConflict`, another request owns the workflow ID and
+retrying cannot succeed.
+
+Callers that do not need a separate application write can use `Continue`, which
+prepares, starts, and waits for completion:
 
 ```go
 next, err := client.Continue(
@@ -2368,17 +2499,31 @@ next, err := client.Continue(
     "run-124",
     "turn-2",
     response,
+    runtime.WorkflowOptions{},
 )
 ```
+
+`Runtime.LoadRunSuspension` exposes a checkpoint only after run metadata records
+the predecessor as suspended. Running and paused runs return
+`runtime.ErrRunSuspensionNotReady`; completed, failed, and canceled runs return
+`session.ErrRunSuspensionNotFound`. A suspended run returns
+`runtime.ErrRunSuspensionCorrupt` only when its checkpoint is missing, malformed,
+inconsistent with its stored ID, invalid, or names another predecessor. Errors
+while reading the runtime store remain unchanged, so callers do not mistake an
+unavailable dependency for permanent checkpoint corruption.
 
 One continuation consumes only the first item in `Suspension.Pending`. If more
 input remains, the new workflow ends with another suspension. The checkpoint
 restores the original messages, policy, labels, nested-tool identity, remaining
 active-time budget, and exact call/result provenance; callers cannot override
 those values. The runtime loads the suspension by predecessor run ID and checks
-the checkpoint version, public pending requests, and required tool names before routing. The receiving
-worker restores saved payloads and results through its current generated codecs;
-any saved value outside the current contract fails at that typed boundary. If
+the checkpoint version, public pending requests, saved planner result, required
+labels, every saved payload and result, and every nested child suspension before
+starting the workflow. Caller and worker use the same generated
+`AgentDefinition`, including the definitions of every reachable child agent.
+Removing a tool or changing its generated codec deliberately makes a suspension
+that depends on the old contract incompatible. The workflow checks the saved
+input again before using it. If
 the response closes a tool call created by the previous
 workflow, the `tool_end` event belongs to the new result run and its required
 `call_run_id` identifies the run that emitted the matching `tool_start`.
@@ -2388,30 +2533,225 @@ workflow, the `tool_end` event belongs to the new result run and its required
 Generated agents, generated completion packages, runtime workers, and their
 callers use one exact contract and deploy as one release unit.
 
+#### Preview upgrade guide
+
+This preview intentionally changes the generated MCP API and the runtime
+storage API. Upgrade all generated packages, runtime workers, and callers
+together. Mixed old and new processes are not supported.
+
+For MCP services:
+
+- Add a service-level `JSONRPC` block with one `POST` route. `MCP(...)` no
+  longer chooses an HTTP path implicitly.
+- Replace `WatchableResource` with `Resource` when the method is a fixed unary
+  read. Generated resource subscriptions are no longer supported.
+- Replace `DynamicPrompt` with `StaticPrompt` only when the prompt is fixed in
+  the design. Goa-AI no longer generates dynamic prompt providers.
+- Remove uses of the generated `Notification`, `Subscription`, and
+  `SubscriptionMonitor` APIs. This preview has no generated replacement for
+  server notifications or subscriptions.
+- Remove `AllowedResourceURIs`, `DeniedResourceURIs`,
+  `StructuredStreamJSON`, and `ProtocolVersionOverride` from generated
+  `MCPAdapterOptions`. Enforce resource authorization in the Goa service, return
+  the declared result shape, and set the protocol version in the design.
+- Replace `SSECaller` and `NewSSECaller` with `HTTPCaller` and
+  `NewHTTPCaller`. The HTTP caller accepts a normal JSON response or an HTTP
+  event-stream response for a unary call.
+- Replace direct uses of `runtime/mcp.Notification`, `Broadcaster`,
+  `Subscription`, `NewChannelBroadcaster`, `EncodeJSONToString`, or
+  `CoerceQuery` with application-owned code if it is still needed. These
+  helpers supported the removed generated notification and subscription paths
+  and have no Goa-AI replacement.
+- Regenerate the whole service. Do not preserve or copy old generated MCP
+  packages; their constructors, adapters, and transport files are generated
+  from the new contract.
+
+For runtime storage and workflow adapters:
+
+- Regenerate every agent package. Generated callers and workers now share one
+  immutable `AgentDefinition` containing the route, tool contracts, required
+  labels, completion policy, and every reachable child definition.
+- Replace handwritten `AgentRegistration` route, tool-specification, and
+  required-label fields with `Definition`. Keep only worker implementations and
+  activity settings in the registration. Remove `WorkerConfig`, `WorkerOption`,
+  `WithWorker`, and `WithQueue`; the generated definition owns the workflow name
+  and default task queue. `WithTaskQueue` remains available on an individual
+  start because that queue is part of the caller's exact start request.
+- Pass the generated child definition to handwritten `AgentToolConfig` values
+  and generated exported-agent registration helpers. Remove separate child
+  agent IDs, routes, queues, activity names, specifications, and required labels
+  from those registrations.
+- Replace a service-side load followed by a direct continuation start with
+  `PrepareContinuation` and `StartPrepared`. Preparation validates and
+  copies the complete input without calling the engine. Start submits only that
+  prepared value. Use `Continue` only when no application write must occur
+  between validation and start.
+- Use `PreparedRun` for both initial and continuation starts.
+  `PreparedRun.RunID` returns the workflow ID assigned during preparation,
+  `PreparedRun.MarshalBinary` creates the optional durable form only when
+  called, and `ParsePreparedRun` restores it after a process restart.
+- `Prepare(sessionID, messages, opts...)` and
+  `PrepareOneShot(messages, opts...)` are new methods. Handwritten
+  `AgentClient` implementations must add both methods. Preparation performs no
+  I/O, so neither method accepts a context. `Start`, `Run`, `StartOneShot`, and
+  `OneShotRun` now use the same prepared-request path internally.
+- Replace custom `RunOption` functions with the option constructors in
+  `runtime`, such as `WithRunID`, `WithMemo`, and `WithTaskQueue`. `RunOption`
+  is now a closed interface so external code cannot depend on private request
+  construction. Remove nil placeholders from option lists; a nil `RunOption`
+  now panics instead of being ignored.
+- Remove `WithWorkflowOptions` from initial and one-shot starts. Use
+  `WithTaskQueue`, `WithMemo`, and `WithSearchAttributes` so each option has one
+  clear effect. Continuation methods now take `runtime.WorkflowOptions` by
+  value; pass `runtime.WorkflowOptions{}` when no launch setting is needed.
+  `api.WorkflowOptions` is removed because launch settings are caller-side
+  values, not workflow input. `api.RunInput` no longer contains a
+  `WorkflowOptions` field.
+- Stop reading `RunInput.WorkflowOptions` from workflow handlers or custom
+  workflow engines. The field no longer exists. Read memo, search attributes,
+  and task queue from the corresponding `engine.WorkflowStartRequest` fields
+  instead. Custom engines now receive memo entries as `engine.EncodedValue`;
+  persist each entry's `Metadata` and `Data` bytes without decoding and encoding
+  it again. Search attributes arrive in their final engine-wide types: `string`,
+  `bool`, `int64`, `float64`, `time.Time`, or `[]string`. Integers and
+  `float32` values are converted before the engine receives them. Any other
+  type is rejected before submission.
+- Populate `ID`, `Workflow`, `TaskQueue`, and `Input` on every
+  `engine.WorkflowStartRequest`. All four fields are required. Official and
+  custom engines reject a missing value instead of supplying a Temporal or
+  local default. `ID` must equal `Input.RunID`.
+- Populate `ID`, `Workflow`, `TaskQueue`, and `Input` on every
+  `engine.ChildWorkflowRequest` too. `TaskQueue` is newly required for child
+  starts. A child must name its own queue instead of inheriting the parent or an
+  engine default, and its `ID` must equal `Input.RunID`. A child-start method
+  now returns only after the engine accepts or rejects the start.
+- Treat a zero `engine.RetryPolicy` as no retry override. `MaxAttempts` includes
+  the first attempt. A policy that sets `InitialInterval` or
+  `BackoffCoefficient` must also set a positive `MaxAttempts` or
+  `UnlimitedAttempts`.
+- Custom engines call `contract.NormalizeRootRequest` and bind its digest to the
+  workflow ID for exact-retry checks. They call
+  `contract.NormalizeChildRequest` for child starts. They use
+  `contract.CopyRunInput` for every initial or retry handler attempt, retain one
+  private `contract.CopyRunOutput` result, and copy that result again for every
+  wait, query, or other caller-facing read. These functions enforce the same
+  strict representation, 1 MiB limit, nil behavior, and independent ownership
+  as the shipped engines.
+- Every workflow input written by the old runtime includes the removed
+  `WorkflowOptions` field, even when its value is nil. The new strict decoder
+  rejects that old input shape, and the new exact-start identity differs from
+  every old request. Finish or cancel every old workflow before upgrading.
+  Resolve or abandon every old start whose result is uncertain, and never retry
+  an old request or reuse its workflow ID with this runtime. A changed request
+  returns `engine.ErrWorkflowStartConflict`.
+- Replace separate `session.Store` and `runlog.Store` implementations with one
+  `storage.Store`. Each method stores one complete lifecycle change and its
+  ordered run record together.
+- When `session.RunStart.PredecessorRunID` is non-empty, implement root and
+  child starts so they require that run to exist, be suspended, and have the
+  same session, agent, and parent. Check those facts in the same transaction as
+  the successor start. Reject a mismatch before writing the successor or its
+  parent link. Do not copy the predecessor ID into `RunMeta`; `RunStarted` is
+  the immutable relationship record.
+- Pass that store as the first argument to `runtime.New`. Remove
+  `WithSessionStore` and `WithRunEventStore`; they no longer exist:
+
+  ```go
+  rt := runtime.New(store, runtime.WithEngine(engine))
+  ```
+
+- Replace `runtime/agent/session/inmem` and `runtime/agent/runlog/inmem` with
+  `runtime/agent/storage/inmem` for local work and tests. The former
+  `features/session/mongo` and `features/runlog/mongo` packages are removed;
+  production applications now implement their own durable `storage.Store`.
+- Convert existing physical records or collections before the new runtime
+  starts if the new store cannot read their current layout. Completed run
+  outcomes keep the same meaning; the conversion changes storage layout, not
+  history.
+- Convert every stored `RunStarted` payload offline before starting the new
+  runtime. The old payload stored `RunContext` and `Input`. The new payload
+  stores only `parent_run_id`, optional `predecessor_run_id`, and `labels`; copy
+  the parent and labels from the old `RunContext` and discard the duplicated input.
+  For every historical continuation, copy the exact run ID whose checkpoint it
+  restored from the application's stored continuation identity. Initial runs
+  and ordinary child runs leave `PredecessorRunID` empty. Do not infer a
+  predecessor from timestamps, labels, or record order. Keep the run ID, agent
+  ID, session ID, turn ID, event key, and timestamp in the surrounding run
+  record. The new decoder rejects the old fields and every unknown field
+  instead of silently ignoring them.
+- Synthesize a `RunStarted` record before the canceled `RunCompleted` record for
+  every historical run stopped because its Session had already ended. Every
+  admitted run now has exactly one start record. The two records use different
+  stable event keys and the same start timestamp, owner, and labels.
+- Change `Runtime.ResolvePromptRefs(ctx, runID)` calls to
+  `Runtime.ResolvePromptRefs(ctx, sessionID, runID)`. Pass the Session ID that
+  the caller has already authorized. A run from another Session is reported as
+  missing.
+- Replace `WithRecordActivityTimeout` with `WithStorageActivityTimeout`. The
+  new option covers the single storage activity that writes both lifecycle
+  state and ordered run records.
+- Remove `ToolCallArgsDeltaEvent` handling from hook and stream subscribers.
+  Partial tool arguments remain private until the provider finishes the call
+  and the generated payload decoder accepts it. Consumers observe the complete
+  `ToolCallScheduled` event afterward.
+- Remove `ResultOmitted` and `ResultOmittedReason` from API, planner, hook, and
+  stream values. Successful typed tool results are stored in full, and planner
+  activities load those exact bytes from run records by ID. There is no
+  omitted-success state to handle.
+- Remove the extra `context.Context` argument from custom workflow activity
+  methods and `Await`. The `WorkflowContext` receiver now owns cancellation.
+- Stop setting `policy.CapsState.ExpiresAt`. The workflow owns its budget and
+  hard deadlines directly.
+- Treat saved suspensions from versions before
+  `goa-ai.run-suspension.v7` as incompatible. They cannot be resumed by this
+  runtime.
+
+Install the Goa revision required by this module before regenerating:
+
+```bash
+go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.3
+```
+
 For a release that changes generated or persisted runtime shapes:
 
 1. Regenerate every consumer from the same Goa-AI revision.
-2. Pause new work and deploy the runtime workers for every workflow and
-   activity queue, generated packages, and callers as one release.
-3. Verify every deployed component reports the same revision ready before
-   accepting new work.
+2. Finish or cancel every workflow started by the old runtime. Do not replay an
+   old active workflow history with the new worker.
+3. Resolve or abandon every start whose old caller did not receive a definite
+   engine result. Do not retry old uncertain requests after the upgrade.
+4. Deploy the runtime workers for every workflow and activity queue, generated
+   packages, and callers as one release.
+5. Verify every deployed component reports the same revision before accepting
+   new work.
 
-Ongoing workflows and saved suspensions must satisfy the exact current
-contract. Historical completed-session records remain stored unchanged because
-this release policy does not alter their persistence schema.
+Completed run history keeps the same meaning. Saved suspensions must use the
+current `goa-ai.run-suspension.v7` contract. A host may still need to convert
+its physical records or collections so the new store can read them. That
+conversion must preserve every recorded outcome and event.
 
-`goa-ai.run-suspension.v6` is the current suspension schema. Version 5 remains
-readable with its original required recovery catalog; version 4 and other
-suspension schemas are incompatible. Every model-authored await item preserves
+A coordinated upgrade must replace every former session and run-record writer
+with the current `storage.Store` contract in one release. The host owns its
+schema, data conversion, verification, backup, and deployment plan. See
+[Runtime Store](#runtime-store-storagestore) for the steady-state contract.
+A release that introduces workflow recipe digests must also stop new
+admissions and prove that no unresolved pre-upgrade start obligation or active
+workflow still requires attachment by exact ID. Deploy every workflow starter
+together before admission resumes. A queryable execution without the reserved
+recipe memo is a conflict; the runtime never infers its original start request.
+
+`goa-ai.run-suspension.v7` is the only accepted suspension schema. Every
+model-authored await item preserves
 its runtime `ToolCallID` separately from the provider `ModelToolCallID`: runtime
 records and continuation responses use the former, while provider transcript
 reconstruction uses the latter.
 
 Ending a session stops future work but retains its run metadata for inspection.
-When the owning application permanently deletes the session's customer data, it
-must wait for in-flight workflow and stream work to settle and then call
-`Runtime.PurgeSession`. Purging removes the session, every owned run record, and
-all private checkpoints. It is idempotent and rejects an active session.
+When the owning application permanently deletes the session's application data, it
+must wait for in-flight workflow and stream work to settle and then purge the
+session through its own administrative API. Purging permanently reserves the
+session ID before removing the session, every owned run, all private
+checkpoints, and all ordered records. The integrated in-memory store exposes
+these host operations for local development and tests.
 
 ### Clarification Requests
 
@@ -2633,22 +2973,23 @@ Notes:
 The runtime publishes events to an internal bus (`hooks.Bus`). Default subscribers
 handle memory persistence and stream forwarding.
 
-**Determinism note:** When using a durable workflow engine (e.g., Temporal),
+**Determinism note:** When using a durable workflow engine such as Temporal,
 workflow code must be deterministic and must not trigger external I/O. The
-runtime therefore routes workflow-emitted records through a dedicated record
-activity (`runtime.record_event`), which persists canonical run-log records and
-fans out hook-backed records outside the workflow thread. Activities and other
-non-workflow code publish directly.
+runtime therefore routes every durable state change through the single
+`runtime.store` activity. That activity stores run metadata, checkpoints, and
+ordered records outside the workflow thread, then sends newly inserted hook
+records to subscribers. Activities and other non-workflow code can perform I/O
+directly.
 
 **Event types:**
 
 | Event | When |
 |-------|------|
-| `RunStarted` | Run begins (carries `RunContext`, including run labels) |
+| `RunStarted` | Run begins; its stored payload contains `ParentRunID`, optional `PredecessorRunID`, and `Labels` |
 | `RunCompleted` | Run finishes (success, failed, canceled); carries the run's start labels |
 | `RunSuspended` | Workflow ended with a versioned checkpoint and ordered pending input |
 | `RunPhaseChanged` | Phase transitions (planning, executing_tools, etc.) |
-| `PromptRendered` | Runtime resolves and renders a prompt spec |
+| `PromptRendered` | A successful recorded prompt render is accepted into a run |
 | `ToolCallScheduled` | Tool activity scheduled |
 | `ToolResultReceived` | Tool completes |
 | `ToolCallUpdated` | Parent tool discovers more children |
@@ -2856,6 +3197,7 @@ Callers can override policy for specific runs:
 
 ```go
 client.Run(ctx, "session-1", msgs,
+    runtime.WithRunID("run-1"),
     runtime.WithRunMaxToolCalls(5),
     runtime.WithRunMaxRecoveryTurns(2),
     runtime.WithRunTimeBudget(2*time.Minute),
@@ -2913,17 +3255,126 @@ type Store interface {
 The runtime automatically subscribes to hooks and persists events when a memory
 store is configured.
 
-### Run event store (runlog.Store)
+### Runtime Store (`storage.Store`)
 
-The runtime also maintains a canonical, append-only run event log used for
-introspection, audit/debug UIs, and deriving compact `run.Snapshot` values.
+The runtime requires one store for run metadata, continuation checkpoints, and
+ordered run records. The host's concrete repository also owns session creation,
+ending, listing, and permanent deletion, but those administrative operations are
+not part of the worker-facing `storage.Store` interface. A host may put that
+repository behind a Session service and give agent workers a `storage.Store`
+adapter built on the service's generated typed client. Agent workers must not
+open or share the Session service's database.
 
-```go
-type Store interface {
-    Append(ctx context.Context, e *runlog.Event) (runlog.AppendResult, error)
-    List(ctx context.Context, runID string, cursor string, limit int) (runlog.Page, error)
-}
-```
+Lifecycle commands store the state change and matching records together:
+
+- `StartRootRun` always stores `RunStarted` after the engine accepts the
+  workflow. If the Session has already ended, it then stores `RunCompleted`
+  with canceled status. A continued run puts the run whose planner state it
+  restored in the `RunStarted` record.
+- `StartChildRun` always stores `ChildRunLinked` followed by `RunStarted`. If
+  the Session has already ended, it then stores `RunCompleted` with canceled
+  status.
+- `StartOneShotRun` gives sessionless work the same durable run metadata and
+  stores `RunStarted`.
+- `StartOneShotChildRun` atomically stores `ChildRunLinked` on a running
+  sessionless parent and `RunStarted` on its sessionless child.
+- `RecordRunCancellation`, `RecordRunSuspension`, and `RecordRunTerminal` each
+  store the run change and its matching record atomically.
+- `AppendRunRecord` stores ordinary records and returns the session state
+  observed in the same write. Streaming therefore never needs a second session
+  lookup to decide whether the record may be published.
+
+Exact start retries return the original immutable `StartOutcome` and ordered
+record identifiers. Changed run, agent, session, or parent identity returns
+`session.ErrRunConflict`. A record whose agent or session differs from its
+stored run returns `storage.ErrRunRecordOwnerMismatch`.
+
+Every mutation method returns `storage.ContractError` when repeating the same
+command cannot succeed, including stored-state conflicts and invalid record
+ownership. Custom stores must preserve this classification with
+`storage.NewContractError`. Temporary database and network failures remain
+ordinary errors so the storage activity can retry them.
+
+Workflow code reaches the store through one `runtime.store` activity. Its
+`StorageActivityCommand` sets exactly one of `Append`, `RootStart`,
+`ChildStart`, `OneShotStart`, `OneShotChildStart`, `Cancellation`, `Suspension`,
+or `Terminal`.
+`StorageActivityResult` sets exactly the same field and no other field. The
+runtime rejects empty commands, multiple commands, empty results, multiple
+results, and a result field that does not match the command. This explicit
+shape prevents the activity from guessing an operation by inspecting event
+types.
+
+Root and child starts serialize with session ending inside the host store. An
+active session produces running metadata. An ended session produces terminal
+canceled metadata with reason `session_ended`, so planner and tool work cannot
+begin. A sessionful caller must supply a
+stable run ID. The engine binds that ID to the exact start request while the
+backend can still query the execution. During that period, an exact retry
+returns the original open or closed execution and a changed request returns
+`WorkflowStartConflictError`. Temporal forces duplicate starts to return an
+error and compares an engine-owned digest from workflow memo. The shared,
+versioned digest frames the caller-submitted workflow name, task queue, input boundary
+payload, run timeout, retry policy, and every sorted memo and search-attribute
+entry with its payload metadata and bytes. The in-memory engine stores only the
+fixed-size digest and executes a converter-produced input snapshot on its own
+cancelable context. Every root and child request requires its engine workflow ID
+to equal `RunInput.RunID`. A zero `engine.RetryPolicy` supplies no override.
+When a request supplies a policy, `MaxAttempts` includes the first execution;
+retry timing requires a positive `MaxAttempts` or `UnlimitedAttempts`. After
+backend history expires, the owning application uses
+durable command identity to prevent reopening settled work; the engine does not
+add a durable identity registry.
+
+Hook persistence has one owner. Start and lifecycle commands store their
+selected records. Other durable hook events use `AppendRunRecord`. The hook bus
+sees only newly inserted records. An active session's live stream also receives
+exact activity retries after a failed delivery; stable event keys let the sink
+return its original publication instead of creating a duplicate. The bus has no
+second lifecycle writer.
+
+Prompt references and child relationships are derived from canonical ordered
+records. `RunMeta` does not duplicate those values. `ChildRunLinked` contains
+the tool and call that created the child plus the child run and agent. The
+record envelope names the parent run, parent agent, and Session.
+
+`Runtime.ResolvePromptRefs(ctx, sessionID, runID)` requires the Session ID that
+the caller has already authorized. The earlier form without `sessionID` has
+been removed; callers must pass the expected owner when they upgrade. The
+empty Session ID selects a sessionless one-shot run that the caller has already
+authorized by its run ID. The method reports any other owner as missing, then
+reads the requested run's records breadth-first across every predecessor named
+by its one `RunStarted` record and every `ChildRunLinked` child reachable from
+those runs.
+The predecessor is the suspended run whose saved planner messages the
+continuation restored. It must keep the same Session, agent, and parent run as
+its successor. Each child must keep the same Session and match the child agent
+and parent run named by its link record. A missing or mismatched related run, a
+relationship cycle, or more than one start record is a stored-data error; it is
+never skipped. A run stopped because its Session had already ended has
+`RunStarted` followed by a canceled `RunCompleted` record. The resolver
+validates both records against the stored run, including their owner, labels,
+reason, and start time. That run does no planner or tool work, so it contributes
+no prompt references or child relationships. The method collects each
+`PromptRendered` reference once and visits each run once. These records show
+which prompt versions and scopes contributed to the run. Exact rendered prompt
+text remains in immutable workflow input or workflow history and is not
+reconstructed from the references.
+
+Child workflow IDs are single-use. Every second explicit issue is rejected for
+open and closed children, including an otherwise identical request; Temporal
+deterministic replay is not a second issue.
+
+Cancellation provenance is written before engine cancellation. The first reason
+is immutable for every run type. Cancellation metadata plus
+`engine.ErrWorkflowNotFound` is an invariant error for an active run. If both
+metadata and the workflow are absent, cancellation is idempotently complete. If
+the run became terminal just before cancellation was recorded, cancellation is
+also idempotently complete.
+
+The ordered records are the canonical history used for introspection,
+audit/debug UIs, continuation hydration, and compact `run.Snapshot` values.
+Records are append-only until the host permanently purges their ended session.
 
 Pages are always returned oldest-first. `Event.ID` and page cursors are
 store-owned opaque strings: callers may retain and return them to the same
@@ -2934,48 +3385,36 @@ The runtime exposes:
 
 - `Runtime.ListRunEvents(ctx, runID, cursor, limit)` for cursor-paginated listing
 - `Runtime.GetRunSnapshot(ctx, runID)` for a compact snapshot derived from replaying the run log
+- `Runtime.RepairRunCompletion(ctx, runID)` for the exceptional case where
+  engine history is closed but the stored run is still active
 
-Configure the store via `runtime.WithRunEventStore(...)`. If not set, the runtime
-defaults to an in-memory implementation (`runtime/agent/runlog/inmem`).
+The first two operations are read-only. They never infer or store a missing
+terminal result. Normal workflow completion retries suspension and terminal
+writes until the store accepts them. `RepairRunCompletion` is a separate
+operator command: it verifies that engine history is terminal, retrieves the
+final workflow output and workflow error, and stores the missing suspension or
+terminal record through a repair-only store method. That method atomically
+writes the supplied repair while the run is active or reports that a workflow
+already stored a terminal result. The runtime publishes the reconstructed event
+only in the first case. A failure to retrieve the engine result is returned to
+the operator and is never stored as the workflow's final error. Repeating a
+successful repair is a no-op.
+The engine supplies one stable workflow completion time. Repair uses that time
+for the recovered record, so a retry submits the exact same timestamp.
+Every accepted lifecycle timestamp uses millisecond precision because runtime
+records carry time as integer milliseconds. Stores reject finer timestamps
+instead of changing them, so an exact retry always carries the same value.
 
-The MongoDB implementation assigns one increasing sequence to each logical
-stream. Runs with a session share `session:<session ID>` ordering; one-shot runs
-use `run:<run ID>`. The first event for a run permanently binds that run ID to
-its derived stream. The binding, sequence allocation, and event insert commit
-in one MongoDB transaction, so later events cannot move a run between sessions.
-MongoDB ObjectIDs remain document identities only and never define replay order.
+Pass the required store as the first argument to `runtime.New`. Goa-AI provides
+`runtime/agent/storage/inmem` for local development and tests. Production hosts
+implement the same contract in their own durable repository.
 
-Before constructing a MongoDB run-log client, run `clients/mongo.Migrate` with
-`Apply: true` for every run-log database, including a newly created empty
-database. Migration is a dry run unless `Apply` is true. It validates all
-existing event identities and partial migration fields before generic backfill,
-backfills sequences in the database's current ObjectID order, creates immutable
-run-to-stream bindings, initializes stream counters, creates the sequence
-indexes, removes the old ObjectID cursor indexes, tightens Mongo validation,
-verifies the final strict validator and exact index options, and writes the
-schema sentinel last. Applying the same migration after a partial failure
-repeats only idempotent writes. Once the sentinel exists, migration verifies the
-strict validator and indexes and returns `AlreadyCurrent` without scanning
-events or writing data, for both dry-run and apply calls.
-
-Run this direct state transition while no run-log appends occur:
-
-1. Run the migration without `Apply` and resolve any malformed or conflicting
-   persisted records it reports. The dry run performs no writes.
-2. Keep traffic disabled and run with `Apply: true`.
-3. After apply succeeds, restore traffic through the normal rollout of code
-   that uses the new MongoDB client.
-
-Preflight rejects every event whose persisted `session_id` is absent, null, or
-not a BSON string before migration writes begin. Session and sessionless stream
-scans then select only string-valued `session_id` fields.
-
-The new client refuses to start when the sentinel is absent or has another
-version, or when the strict validator and required indexes are absent. The
-state change has no online or mixed-version write protocol. Services may remain
-running, but callers must ensure that no appends occur until apply completes.
-If apply fails, fix the reported cause and rerun the idempotent migration before
-the normal rollout.
+The host's concrete store owns session administration. Ending prevents future
+root and child work while retaining history. Purge rejects an active session or
+one with active runs, permanently reserves the session ID, and then removes its
+runs, checkpoints, and records. A production implementation may delete data in
+bounded restartable batches after the durable reservation. Other sessions and
+sessionless runs remain readable.
 
 The run log is also the canonical hydration source for planner resumes:
 `ToolCallScheduledEvent` stores the authoritative tool payload, and
@@ -3324,12 +3763,12 @@ specs := rt.ToolSpecsForAgent(agent.Ident("service.chat"))
 ```go
 type Engine interface {
     RegisterWorkflow(ctx, def WorkflowDefinition) error
-    RegisterRecordActivity(ctx, name, opts, fn) error
+    RegisterStorageActivity(ctx, name, opts, fn) error
     RegisterPlannerActivity(ctx, name, opts, fn) error
     RegisterExecuteToolActivity(ctx, name, opts, fn) error
+    RegisterAgentChildActivity(ctx, name, opts, fn) error
     StartWorkflow(ctx, req WorkflowStartRequest) (WorkflowHandle, error)
-    QueryRunStatus(ctx, runID string) (RunStatus, error)
-    QueryRunCompletion(ctx, runID string) (*api.RunOutput, error)
+    QueryRunCompletion(ctx, runID string) (RunCompletion, error)
 }
 
 ```
@@ -3341,29 +3780,91 @@ Workflow handlers receive a context for deterministic operations:
 ```go
 type WorkflowContext interface {
     Context() context.Context
+    SetQueryHandler(name string, handler any) error
+    SetCancellationHandler(handler engine.CancellationHandler) error
     WorkflowID() string
     RunID() string
     Now() time.Time  // Deterministic time
     NextSequence() uint64
-    PublishRecords(call engine.RecordActivityCall) error
+    ExecuteStorageActivity(call engine.StorageActivityCall) (*api.StorageActivityResult, error)
     ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error)
     ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error)
     ExecuteToolActivityAsync(call engine.ToolActivityCall) (Future[*api.ToolOutput], error)
+    ExecuteAgentChildActivity(call engine.AgentChildActivityCall) (*api.AgentChildActivityOutput, error)
     NewTimer(ctx context.Context, d time.Duration) (Future[time.Time], error)
     Await(condition func() bool) error
     StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error)
     Detached() WorkflowContext
     WithCancel() (WorkflowContext, func())
-    SetQueryHandler(name string, handler any) error
 }
 
 ```
 
-Custom engine adapters must implement `RegisterRecordActivity` and
-`PublishRecords` with `RecordActivityBatchInput`. The runtime sends every
-publication as a non-empty ordered batch; a singular lifecycle event is a
-one-item batch. Returning to one activity per record does not satisfy the
-contract.
+Custom engine adapters must implement `RegisterStorageActivity` and
+`ExecuteStorageActivity`. The runtime registers one typed `runtime.store`
+activity. Each `StorageActivityCommand` has exactly one `Append`, `RootStart`,
+`ChildStart`, `OneShotStart`, `OneShotChildStart`, `Cancellation`, `Suspension`,
+or `Terminal` field. The returned `StorageActivityResult` must have exactly the
+matching field. The runtime uses `storage.ContractError` to tell an engine that
+the same command cannot succeed on retry. `runtime.WithStorageActivityTimeout`
+sets the activity's Start-to-Close timeout; it must be greater than zero.
+
+Custom engines apply the shared request and result contract instead of
+recreating the shipped adapters' validation:
+
+```go
+import "goa.design/goa-ai/runtime/agent/engine/contract"
+
+func (e *Engine) StartWorkflow(ctx context.Context, request engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
+    normalized, err := contract.NormalizeRootRequest(request)
+    if err != nil {
+        return nil, err
+    }
+
+    // Retain normalized.Digest with normalized.Request.ID while this execution
+    // can be queried. Return the existing handle only when an exact retry has
+    // the same digest.
+    return e.start(ctx, normalized.Request, normalized.Digest)
+}
+```
+
+Call `contract.NormalizeChildRequest` before retaining or submitting a child
+request. Keep each normalized request private. Call `contract.CopyRunInput`
+before every initial or retry handler attempt. After success, retain one private
+result from `contract.CopyRunOutput`, then call `CopyRunOutput` again for every
+wait, query, or other caller-facing read. The shared normalization converts
+search values to their portable types and fixes the root request digest. Each
+adapter still translates and submits those values through its own backend.
+The public functions use only `engine` and `api` values.
+
+Custom adapters must also implement `RegisterAgentChildActivity` and
+`ExecuteAgentChildActivity`. This activity prepares a nested agent's messages,
+renders any consumer-side prompt, and returns exactly one `Success` or
+`Failure`. `Success` contains only the messages and prompt render facts that
+workflow history must retain. The workflow derives the child run, session,
+parent, tool, and label identity from the original recorded tool call. Workflow
+code must not read prompt storage directly because replay could otherwise see a
+newer prompt version than the original execution.
+
+The in-memory adapter copies child activity input and output and every
+successful root or child workflow output through the same type-preserving,
+1 MiB converter used at the Temporal workflow boundary. Returned workflow
+outputs are independent of the handler-owned value. Tests that pass in memory
+therefore do not hide a retry, serialization, ownership, or payload-size failure
+that Temporal would surface.
+
+`StartChildWorkflow` returns only after an engine accepts or rejects the child
+start. The Temporal adapter waits for Temporal's child-start acknowledgement;
+the returned handle represents the already-accepted child's later completion.
+
+`QueryRunCompletion` returns the current `Status` in the same `RunCompletion`
+value as the terminal `Output` or `WorkflowError`. Open runs return only their
+non-terminal status. Closed runs return their terminal status, stable
+`CompletedAt` time, and output or workflow error. The method's separate `error`
+reports that the adapter could not retrieve this information. There is no
+separate status method.
+Adapters must preserve this distinction so completion repair cannot record a
+network or backend query error as the workflow's own failure.
 
 The activity methods and `Await` no longer accept a separate
 `context.Context`; the `WorkflowContext` receiver owns cancellation for
@@ -3488,8 +3989,6 @@ type Tracer interface {
 |---------|---------|
 | `features/memory/mongo` | MongoDB-backed memory store |
 | `features/prompt/mongo` | MongoDB-backed prompt override store |
-| `features/runlog/mongo` | MongoDB-backed run event log store |
-| `features/session/mongo` | MongoDB-backed session store |
 | `features/stream/pulse` | Pulse message bus sink |
 | `features/model/bedrock` | AWS Bedrock model client |
 | `features/model/openai` | OpenAI-compatible model client |
@@ -3502,8 +4001,9 @@ type Tracer interface {
 
 ## MCP Callers
 
-The `runtime/mcp` package provides three caller implementations for different MCP server
-transports.
+The `runtime/mcp` package provides callers for stdio and HTTP MCP servers. Both
+callers perform the MCP initialize handshake when they are created and require
+the application's name and version.
 
 ### StdioCaller
 
@@ -3512,10 +4012,14 @@ Spawns an MCP server as a subprocess and communicates via stdin/stdout:
 ```go
 import "goa.design/goa-ai/runtime/mcp"
 
-caller, err := mcp.NewStdioCaller(mcp.StdioOptions{
+caller, err := mcp.NewStdioCaller(ctx, mcp.StdioOptions{
     Command: "npx",
     Args:    []string{"-y", "@modelcontextprotocol/server-filesystem"},
     Env:     []string{"HOME=" + os.Getenv("HOME")},
+    ClientInfo: mcp.ClientInfo{
+        Name:    "my-agent",
+        Version: "1.0.0",
+    },
 })
 if err != nil {
     log.Fatal(err)
@@ -3525,36 +4029,51 @@ defer caller.Close()
 
 ### HTTPCaller
 
-HTTP POST to MCP endpoints:
+Sends JSON-RPC requests to an MCP HTTP endpoint. The server may return each
+response as JSON or as an HTTP event stream; the same caller handles both
+formats.
 
 ```go
-caller := mcp.NewHTTPCaller("https://mcp-server.example.com/mcp")
-```
-
-### SSECaller
-
-Server-Sent Events for streaming MCP responses:
-
-```go
-caller := mcp.NewSSECaller(mcp.SSEOptions{
-    URL: "https://mcp-server.example.com/sse",
+caller, err := mcp.NewHTTPCaller(ctx, mcp.HTTPOptions{
+    Endpoint: "https://mcp-server.example.com/mcp",
+    ClientInfo: mcp.ClientInfo{
+        Name:    "my-agent",
+        Version: "1.0.0",
+    },
 })
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
-All callers implement the `mcp.Caller` interface. They return typed transport,
+Both callers implement the `mcp.Caller` interface. They return typed transport,
 protocol, malformed-response, and tool-execution errors without retrying or
 turning error text into control flow. Generated MCP executors classify those
 errors into the canonical `planner.ToolFailure` contract.
 
-### Server-initiated events (Broadcaster)
+```go
+type Caller interface {
+    CallTool(ctx context.Context, req CallRequest) (CallResponse, error)
+}
 
-Generated MCP adapters can stream server-initiated events (notifications, resource updates) to multiple
-subscribers via `mcp.Broadcaster`. The default in-memory implementation is:
+type CallRequest struct {
+    Tool    string
+    Payload json.RawMessage
+}
+
+type CallResponse struct {
+    Content           []string
+    StructuredContent json.RawMessage
+}
+```
+
+A Goa-generated MCP client exposes the same caller contract:
 
 ```go
-b := mcp.NewChannelBroadcaster(128, true) // (buf, drop)
-sub, _ := b.Subscribe(ctx)
-defer sub.Close()
+caller, err := mcpservice.NewCaller(ctx, client, mcp.ClientInfo{
+    Name:    "my-agent",
+    Version: "1.0.0",
+})
 ```
 
 ## Stream Profiles
@@ -3733,8 +4252,8 @@ and back off after a unary or streaming rate-limit error.
 Generated `goa example` emits `cmd/<service>/agents_bootstrap.go`:
 
 ```go
-// Bootstrap creates runtime with Temporal, stores, and registers agents
-rt, cleanup, err := bootstrap.New(ctx)
+// The host provides the runtime store; bootstrap wires the runtime and agents.
+rt, cleanup, err := bootstrap.New(ctx, runtimeStore)
 if err != nil {
     log.Fatal(err)
 }
@@ -3751,6 +4270,7 @@ streams, _ := pulsestream.NewRuntimeStreams(pulsestream.RuntimeStreamsOptions{
 })
 
 rt := runtime.New(
+    runtimeStore,
     runtime.WithEngine(eng),
     runtime.WithStream(streams.Sink()),
 )
@@ -3791,12 +4311,14 @@ executor := runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime
 
 ```go
 var (
-    ErrAgentNotFound       = errors.New("agent not found")
-    ErrEngineNotConfigured = errors.New("runtime engine not configured")
-    ErrInvalidConfig       = errors.New("invalid configuration")
-    ErrMissingSessionID    = errors.New("session id is required")
-    ErrWorkflowStartFailed = errors.New("workflow start failed")
-    ErrRegistrationClosed  = errors.New("registration closed after first run")
+    ErrAgentNotFound         = errors.New("agent not found")
+    ErrEngineNotConfigured   = errors.New("runtime engine not configured")
+    ErrInvalidConfig         = errors.New("invalid configuration")
+    ErrMissingSessionID      = errors.New("session id is required")
+    ErrRunSuspensionCorrupt  = errors.New("run suspension corrupt")
+    ErrRunSuspensionNotReady = errors.New("run suspension not ready")
+    ErrWorkflowStartFailed   = errors.New("workflow start failed")
+    ErrRegistrationClosed    = errors.New("registration closed after first run")
 )
 ```
 
@@ -3844,8 +4366,9 @@ cancellation remain outside `OutputValidationError`.
 5. **Trust the contracts.** Don't add defensive checks for values guaranteed by
    Goa validation or construction. Let violations fail fast.
 
-6. **Configure stores for production.** In-memory defaults are suitable for
-   development; use MongoDB stores for persistence.
+6. **Configure stores for production.** Supply one durable host implementation
+   of `storage.Store` for runtime lifecycle and records. Configure memory and
+   prompt stores separately when those features need persistence.
 
 7. **Stream events, don't poll.** Use `SubscribeRun` or Pulse subscriptions
    instead of polling run status.

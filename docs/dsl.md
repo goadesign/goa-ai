@@ -204,12 +204,22 @@ Prompt management is intentionally runtime-driven:
 
 - Register baseline prompt specs via `Runtime.PromptRegistry.Register(prompt.PromptSpec{...})`.
 - Configure scoped overrides with `runtime.WithPromptStore(...)` (for example, Mongo prompt store).
-- Render prompts in planners using `PlannerContext.RenderPrompt(...)`.
+- Rendering returns text and prompt identity but never writes runtime storage.
+  When a `prompt.RenderRecorder` is present, each successful render adds the
+  same ID, version, and scope event used by every runtime path.
+- Render prompts in planners using `PlannerContext.RenderPrompt(...)`; the
+  runtime carries recorded events through the accepted planner result.
+- If application code renders text before `Start`, create a recorder with
+  `prompt.NewRenderRecorder`, attach it with `prompt.WithRenderRecorder`, and
+  pass `recorder.Events()` through `runtime.WithRenderedPrompts(...)` alongside
+  the messages containing that text.
 - For agent-as-tool registrations, consumer-side prompt rendering is optional. If you need the
-consumer to render a payload-only user message, you may map tool IDs to prompt IDs with
-`runtime.WithPromptSpec(...)` (or provide templates/text). When no consumer-side content is
-configured, the runtime uses the canonical JSON tool payload bytes as the nested user message,
-and provider planners can render their own prompts with injected server-side context.
+  consumer to render a payload-only user message, you may map tool IDs to prompt IDs with
+  `runtime.WithPromptSpec(...)` (or provide templates/text). When no consumer-side content is
+  configured, the runtime uses the canonical JSON tool payload bytes as the nested user message,
+  and provider planners can render their own prompts with injected server-side context. Consumer-side
+  rendering records the same event and carries it in the child workflow input. `RunOneShot` also uses
+  the same recorder contract for renders performed by its callback.
 
 This keeps prompt rollout and overrides operational (runtime/store level) while the DSL remains focused
 on agent/tool contracts.
@@ -447,18 +457,16 @@ shape it will send to the provider.
 ### MCP Functions
 
 
-| Function                             | Context                            | Purpose                                        |
-| ------------------------------------ | ---------------------------------- | ---------------------------------------------- |
-| `MCP(name, version, opts...)`        | Inside `Service`                   | Enables MCP protocol for the service           |
-| `ProtocolVersion(version)`           | Option for `MCP`                   | Sets MCP protocol version (e.g., "2025-06-18") |
-| `Tool(name, description)`            | Inside `Method` (with MCP enabled) | Marks method as MCP tool                       |
-| `Resource(name, uri, mime)`          | Inside `Method`                    | Marks method as MCP resource provider          |
-| `WatchableResource(name, uri, mime)` | Inside `Method`                    | MCP resource with subscription support         |
-| `StaticPrompt(name, desc, msgs...)`  | Inside `Service` (with MCP)        | Defines static MCP prompt template             |
-| `DynamicPrompt(name, description)`   | Inside `Method`                    | Marks method as dynamic prompt generator       |
-| `Notification(name, description)`    | Inside `Method`                    | Marks method as MCP notification sender        |
-| `Subscription(resourceName)`         | Inside `Method`                    | Defines subscription handler for a resource    |
-| `SubscriptionMonitor(name)`          | Inside `Method`                    | Defines SSE monitor for subscriptions          |
+| Function                            | Context                            | Purpose                                        |
+| ----------------------------------- | ---------------------------------- | ---------------------------------------------- |
+| `MCP(name, version, opts...)`       | Inside `Service`                   | Enables MCP protocol for the service           |
+| `ProtocolVersion(version)`          | Option for `MCP`                   | Sets MCP protocol version (e.g., "2025-06-18") |
+| `Tool(name, description)`           | Inside `Method` (with MCP enabled) | Marks method as MCP tool                       |
+| `Resource(name, uri, mime)`         | Inside `Method`                    | Marks method as MCP resource provider          |
+| `StaticPrompt(name, desc, msgs...)` | Inside `Service` (with MCP)        | Defines static MCP prompt template             |
+
+Every service that calls `MCP(...)` must also use Goa's service-level
+`JSONRPC(func() { POST("/path") })` DSL to choose its HTTP endpoint.
 
 
 ### Registry Functions
@@ -613,6 +621,9 @@ Use `FromMCP` when your MCP server is defined in the same design using the
 ```go
 Service("assistant", func() {
     MCP("assistant-mcp", "1.0.0")
+    JSONRPC(func() {
+        POST("/mcp")
+    })
     Method("search", func() {
         Payload(SearchParams)
         Result(SearchResults)
@@ -725,6 +736,9 @@ The method's payload becomes the tool input schema and the result becomes the ou
 ```go
 Service("calculator", func() {
     MCP("calc", "1.0.0")
+    JSONRPC(func() {
+        POST("/mcp")
+    })
     Method("add", func() {
         Payload(func() {
             Attribute("a", Int, "First number")
@@ -1319,6 +1333,10 @@ Enable MCP protocol for a service with `MCP`:
 Service("calculator", func() {
     MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
 
+    JSONRPC(func() {
+        POST("/mcp")
+    })
+
     Method("add", func() {
         Payload(func() {
             Attribute("a", Int)
@@ -1335,41 +1353,20 @@ Service("calculator", func() {
         Resource("readme", "file:///docs/README.md", "text/markdown")
     })
 
-    Method("status", func() {
-        Result(func() {
-            Attribute("status", String)
-        })
-        WatchableResource("status", "status://system", "application/json")
-    })
-
     StaticPrompt("greeting", "Friendly greeting",
         "system", "You are a helpful assistant",
         "user", "Hello!")
-    
-    Method("code_review", func() {
-        Payload(func() {
-            Attribute("language", String)
-            Attribute("code", String)
-        })
-        Result(ArrayOf(Message))
-        DynamicPrompt("code_review", "Generate code review prompt")
-    })
 })
 ```
 
 ### MCP Capabilities
 
 
-| DSL Function                 | MCP Capability                                         |
-| ---------------------------- | ------------------------------------------------------ |
-| `Tool(name, desc)` in Method | `tools/list`, `tools/call`                             |
-| `Resource(name, uri, mime)`  | `resources/list`, `resources/read`                     |
-| `WatchableResource(...)`     | Resources with `resources/subscribe`                   |
-| `StaticPrompt(...)`          | `prompts/list`, `prompts/get` (static)                 |
-| `DynamicPrompt(...)`         | `prompts/list`, `prompts/get` (dynamic, method-backed) |
-| `Notification(...)`          | Notification senders                                   |
-| `Subscription(...)`          | Subscription handlers                                  |
-| `SubscriptionMonitor(...)`   | SSE subscription monitors                              |
+| DSL Function                 | MCP Capability                     |
+| ---------------------------- | ---------------------------------- |
+| `Tool(name, desc)` in Method | `tools/list`, `tools/call`         |
+| `Resource(name, uri, mime)`  | `resources/list`, `resources/read` |
+| `StaticPrompt(...)`          | `prompts/list`, `prompts/get`      |
 
 
 ---
@@ -1541,12 +1538,18 @@ Generated when an agent exports toolsets (agent-as-tool). Export packages provid
 When a service declares MCP (`MCP(...)`), `goa gen` emits JSON-RPC client/server code under
 `gen/jsonrpc/<service>/...` and runtime registration helpers in the service package.
 
+MCP services must declare their service-level JSON-RPC `POST` route explicitly.
+For migration from the former MCP subscription, notification, dynamic-prompt,
+and SSE-caller APIs, see the
+[preview upgrade guide](runtime.md#preview-upgrade-guide).
+
 ---
 
 ## Wiring Example
 
 ```go
 rt := runtime.New(
+    runtimeStore,
     runtime.WithEngine(temporalClient),
     runtime.WithMemoryStore(mongoStore),
 )
@@ -1558,7 +1561,16 @@ if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{
 }
 
 // MCP toolset wiring
-caller := mcp.NewHTTPCaller("https://assistant.example.com/mcp")
+caller, err := mcp.NewHTTPCaller(ctx, mcp.HTTPOptions{
+    Endpoint: "https://assistant.example.com/mcp",
+    ClientInfo: mcp.ClientInfo{
+        Name:    "my-agent",
+        Version: "1.0.0",
+    },
+})
+if err != nil {
+    log.Fatal(err)
+}
 if err := mcpassistant.RegisterAssistantToolset(ctx, rt, caller); err != nil {
     log.Fatal(err)
 }

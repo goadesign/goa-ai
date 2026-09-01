@@ -4,11 +4,34 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/testhelpers"
 	. "goa.design/goa-ai/dsl"
 	"goa.design/goa-ai/testutil"
 	goadsl "goa.design/goa/v3/dsl"
 )
+
+func TestRegistryClientGeneratedForServiceOnlyExport(t *testing.T) {
+	design := func() {
+		goadsl.API("service_export", func() {})
+		registry := Registry("catalog", func() {
+			goadsl.URL("https://catalog.example")
+		})
+		tools := Toolset(FromRegistry(registry, "shared"))
+
+		goadsl.Service("provider", func() {
+			Export(tools)
+		})
+	}
+
+	files := testhelpers.BuildAndGenerateWithPkg(t, "example.com/service_export", design)
+	specs := testhelpers.FileContent(t, files, "gen/provider/toolsets/shared/specs.go")
+	client := testhelpers.FileContent(t, files, "gen/provider/registry/catalog/client.go")
+	require.Contains(t, specs, `const RegistryName = "catalog"`)
+	require.Contains(t, specs, `const ToolsetName = "shared"`)
+	require.Contains(t, client, "type Client struct")
+	require.Contains(t, client, "func NewClient(")
+}
 
 // TestRegistryClientGeneratesCorrectMethods verifies that the generated registry
 // client contains all required methods: ListToolsets, GetToolset, Search,

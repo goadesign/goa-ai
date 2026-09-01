@@ -5,40 +5,40 @@ type Option func(*Client)
 {{- range .SecuritySchemes }}
 {{- if isAPIKey .Kind }}
 
-// {{ goify .Name true }}Auth provides API key authentication.
-type {{ goify .Name true }}Auth struct {
+// {{ .AuthTypeName }} provides API key authentication.
+type {{ .AuthTypeName }} struct {
 	// Key is the API key value.
 	Key string
 }
 {{- end }}
 {{- if isOAuth2 .Kind }}
 
-// {{ goify .Name true }}Auth provides OAuth2 authentication.
-type {{ goify .Name true }}Auth struct {
+// {{ .AuthTypeName }} provides OAuth2 authentication.
+type {{ .AuthTypeName }} struct {
 	// Token is the OAuth2 access token.
 	Token string
 }
 {{- end }}
 {{- if isJWT .Kind }}
 
-// {{ goify .Name true }}Auth provides JWT authentication.
-type {{ goify .Name true }}Auth struct {
+// {{ .AuthTypeName }} provides JWT authentication.
+type {{ .AuthTypeName }} struct {
 	// Token is the JWT token.
 	Token string
 }
 {{- end }}
 {{- if isBearer .Kind }}
 
-// {{ goify .Name true }}Auth provides bearer token authentication.
-type {{ goify .Name true }}Auth struct {
+// {{ .AuthTypeName }} provides bearer token authentication.
+type {{ .AuthTypeName }} struct {
 	// Token is the bearer token.
 	Token string
 }
 {{- end }}
 {{- if isBasicAuth .Kind }}
 
-// {{ goify .Name true }}Auth provides Basic authentication.
-type {{ goify .Name true }}Auth struct {
+// {{ .AuthTypeName }} provides Basic authentication.
+type {{ .AuthTypeName }} struct {
 	// Username is the basic auth username.
 	Username string
 	// Password is the basic auth password.
@@ -98,37 +98,37 @@ func WithEndpoint(endpoint string) Option {
 {{- range .SecuritySchemes }}
 {{- if isAPIKey .Kind }}
 
-// With{{ goify .Name true }} creates an auth provider with the given API key.
-func With{{ goify .Name true }}(key string) Option {
-	return WithAuth(&{{ goify .Name true }}Auth{Key: key})
+// {{ .OptionName }} creates an auth provider with the given API key.
+func {{ .OptionName }}(key string) Option {
+	return WithAuth(&{{ .AuthTypeName }}{Key: key})
 }
 {{- end }}
 {{- if isOAuth2 .Kind }}
 
-// With{{ goify .Name true }} creates an auth provider with the given OAuth2 token.
-func With{{ goify .Name true }}(token string) Option {
-	return WithAuth(&{{ goify .Name true }}Auth{Token: token})
+// {{ .OptionName }} creates an auth provider with the given OAuth2 token.
+func {{ .OptionName }}(token string) Option {
+	return WithAuth(&{{ .AuthTypeName }}{Token: token})
 }
 {{- end }}
 {{- if isJWT .Kind }}
 
-// With{{ goify .Name true }} creates an auth provider with the given JWT token.
-func With{{ goify .Name true }}(token string) Option {
-	return WithAuth(&{{ goify .Name true }}Auth{Token: token})
+// {{ .OptionName }} creates an auth provider with the given JWT token.
+func {{ .OptionName }}(token string) Option {
+	return WithAuth(&{{ .AuthTypeName }}{Token: token})
 }
 {{- end }}
 {{- if isBearer .Kind }}
 
-// With{{ goify .Name true }} creates an auth provider with the given bearer token.
-func With{{ goify .Name true }}(token string) Option {
-	return WithAuth(&{{ goify .Name true }}Auth{Token: token})
+// {{ .OptionName }} creates an auth provider with the given bearer token.
+func {{ .OptionName }}(token string) Option {
+	return WithAuth(&{{ .AuthTypeName }}{Token: token})
 }
 {{- end }}
 {{- if isBasicAuth .Kind }}
 
-// With{{ goify .Name true }} creates an auth provider with the given credentials.
-func With{{ goify .Name true }}(username, password string) Option {
-	return WithAuth(&{{ goify .Name true }}Auth{
+// {{ .OptionName }} creates an auth provider with the given credentials.
+func {{ .OptionName }}(username, password string) Option {
+	return WithAuth(&{{ .AuthTypeName }}{
 		Username: username,
 		Password: password,
 	})
@@ -141,7 +141,7 @@ func With{{ goify .Name true }}(username, password string) Option {
 {{- if isAPIKey .Kind }}
 
 // ApplyAuth implements AuthProvider.
-func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {
+func (a *{{ .AuthTypeName }}) ApplyAuth(req *http.Request) error {
 	if a.Key == "" {
 		return nil
 	}
@@ -158,7 +158,7 @@ func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {
 {{- if isOAuth2 .Kind }}
 
 // ApplyAuth implements AuthProvider.
-func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {
+func (a *{{ .AuthTypeName }}) ApplyAuth(req *http.Request) error {
 	if a.Token == "" {
 		return nil
 	}
@@ -169,7 +169,7 @@ func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {
 {{- if isJWT .Kind }}
 
 // ApplyAuth implements AuthProvider.
-func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {
+func (a *{{ .AuthTypeName }}) ApplyAuth(req *http.Request) error {
 	if a.Token == "" {
 		return nil
 	}
@@ -180,7 +180,7 @@ func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {
 {{- if isBearer .Kind }}
 
 // ApplyAuth implements AuthProvider.
-func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {
+func (a *{{ .AuthTypeName }}) ApplyAuth(req *http.Request) error {
 	if a.Token == "" {
 		return nil
 	}
@@ -191,7 +191,7 @@ func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {
 {{- if isBasicAuth .Kind }}
 
 // ApplyAuth implements AuthProvider.
-func (a *{{ goify .Name true }}Auth) ApplyAuth(req *http.Request) error {
+func (a *{{ .AuthTypeName }}) ApplyAuth(req *http.Request) error {
 	if a.Username == "" && a.Password == "" {
 		return nil
 	}

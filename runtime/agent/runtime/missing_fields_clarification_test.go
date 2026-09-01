@@ -10,14 +10,13 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -25,25 +24,24 @@ import (
 func seedRunMeta(t *testing.T, rt *Runtime, input *RunInput) {
 	t.Helper()
 	now := time.Now().UTC()
-	_, err := rt.SessionStore.CreateSession(context.Background(), input.SessionID, now)
+	_, err := createSessionForTest(context.Background(), rt.Store, input.SessionID)
 	require.NoError(t, err)
-	require.NoError(t, rt.SessionStore.UpsertRun(context.Background(), session.RunMeta{
+	admitRunForTest(t, rt.Store, session.RunMeta{
 		AgentID:   string(input.AgentID),
 		RunID:     input.RunID,
 		SessionID: input.SessionID,
 		Status:    session.RunStatusRunning,
 		StartedAt: now,
 		UpdatedAt: now,
-	}))
+	})
 }
 
 func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 	rt := &Runtime{
-		RunEventStore: runloginmem.New(),
-		SessionStore:  sessioninmem.New(),
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
+		Store:   newTestStore(),
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
 	}
 	seedTestToolSpecs(rt, tools.ToolSpec{
 		Name: tools.Ident("tool"),
@@ -96,10 +94,8 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 	deadline := wfCtx.Now().Add(1 * time.Hour)
 	out, await, err := rt.applyMissingFieldsPolicy(
 		wfCtx,
-		AgentRegistration{
-			ID:                 input.AgentID,
-			ResumeActivityName: "resume",
-			Policy:             RunPolicy{OnMissingFields: MissingFieldsAwaitClarification},
+		AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ResumeActivityName: "resume",
+			Policy: RunPolicy{OnMissingFields: MissingFieldsAwaitClarification},
 		},
 		input,
 		base,
@@ -123,7 +119,7 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 }
 
 func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
-	completion := newAnyJSONSpec("reports.persist", "catalog")
+	completion := newAnyJSONSpec("reports.persist")
 	completion.Payload.FieldDescriptions = map[string]string{
 		"title": "The title to save.",
 	}
@@ -154,7 +150,7 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 		},
 	)
 	h.registration.Policy = RunPolicy{OnMissingFields: MissingFieldsAwaitClarification}
-	h.registration.Specs = []tools.ToolSpec{completion}
+	h.registration.Definition = testAgentDefinition(h.input.AgentID, string(h.input.AgentID)+".workflow", "test", []tools.ToolSpec{completion}, nil)
 	h.runtime.agents[h.input.AgentID] = h.registration
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
@@ -170,7 +166,7 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 	require.NotNil(t, first.Suspension)
 	require.Len(t, first.Suspension.Pending, 1)
 
-	checkpoint, err := h.runtime.decodeWorkflowCheckpoint(first.Suspension)
+	checkpoint, err := decodeWorkflowCheckpoint(first.Suspension, testRuntimeDefinition(h.runtime, h.input.AgentID))
 	require.NoError(t, err)
 	require.True(t, checkpoint.Batch.ResumePlannerAfterPending)
 	require.Equal(t, 2, checkpoint.State.Caps.RemainingToolCalls)

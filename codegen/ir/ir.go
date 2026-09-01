@@ -1,22 +1,14 @@
-// Package ir defines the canonical generator-facing model for goa-ai.
-//
-// The IR captures ownership, output layout, and deterministic ordering once so
-// downstream generators can render files without re-deriving the same facts
-// from the evaluated DSL graph.
+// Package ir records the services, agents, toolsets, and output paths selected
+// while one command writes code.
 package ir
 
 import (
 	agentsExpr "goa.design/goa-ai/expr/agent"
-	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
 type (
-	// Design is the deterministic, generator-facing intermediate representation of a
-	// Goa-AI agent/toolset design.
-	//
-	// Design is intended to be stable and ordered deterministically so generators
-	// can iterate it without relying on map iteration order.
+	// Design contains the ordered values needed to generate one Goa-AI design.
 	Design struct {
 		// Genpkg is the import path root for generated code (typically "<module>/gen").
 		Genpkg string `json:"genpkg"`
@@ -31,23 +23,34 @@ type (
 		Agents []*Agent `json:"agents"`
 		// Toolsets is the set of defining toolsets, sorted by toolset name.
 		Toolsets []*Toolset `json:"toolsets"`
+		// ServiceExports is every explicit service toolset export, sorted by
+		// service and route name.
+		ServiceExports []*ToolsetRef `json:"service_exports"`
 		// Completions is the set of service-owned typed completions, sorted by
 		// service then completion name.
 		Completions []*Completion `json:"completions"`
+		// Registries lists the registry definitions supplied to this generation.
+		Registries []*Registry `json:"registries"`
 	}
 
 	// Service describes a Goa service used to anchor ownership and output layout.
 	Service struct {
+		// Expr is the evaluated Goa service declaration.
+		Expr *goaexpr.ServiceExpr `json:"-"`
 		// Name is the Goa service name.
 		Name string `json:"name"`
 		// PathName is the Goa service path name used in generated directories.
 		PathName string `json:"path_name"`
-
-		Goa *service.Data `json:"-"`
+		// ImportPath is the generated Go import path for the service package.
+		ImportPath string `json:"import_path"`
+		// Dir is the generated filesystem output directory for the service package.
+		Dir string `json:"dir"`
 		// Agents declared by this service, sorted by agent name.
 		Agents []*Agent `json:"-"`
 		// Completions declared by this service, sorted by completion name.
 		Completions []*Completion `json:"-"`
+		// Exports lists every toolset route explicitly exported by this service.
+		Exports []*ToolsetRef `json:"-"`
 	}
 
 	// Agent describes an agent declaration anchored to a Goa service.
@@ -82,13 +85,13 @@ type (
 		WorkflowDefinitionVar string `json:"workflow_definition_var"`
 		// WorkflowName is the runtime workflow identifier.
 		WorkflowName string `json:"workflow_name"`
-		// WorkflowQueue is the canonical workflow task queue.
+		// WorkflowQueue is the task queue used to run this agent's workflow.
 		WorkflowQueue string `json:"workflow_queue"`
-		// ToolSpecsPackage is the aggregate specs package name for the agent.
+		// ToolSpecsPackage is the package name that collects this agent's tool specs.
 		ToolSpecsPackage string `json:"tool_specs_package"`
-		// ToolSpecsImportPath is the import path for the aggregate specs package.
+		// ToolSpecsImportPath is the import path for the package that collects this agent's tool specs.
 		ToolSpecsImportPath string `json:"tool_specs_import_path"`
-		// ToolSpecsDir is the filesystem output directory for the aggregate specs package.
+		// ToolSpecsDir is the directory where that package is written.
 		ToolSpecsDir string `json:"tool_specs_dir"`
 		// UsedToolsets lists consumed toolset references, sorted by toolset name.
 		UsedToolsets []*ToolsetRef `json:"-"`
@@ -107,19 +110,12 @@ type (
 		Slug string `json:"slug"`
 		// Owner identifies where this toolset's generated specs/codecs are generated.
 		Owner Owner `json:"owner"`
-		// SpecsPackageName is the canonical Go package name for generated specs/types/codecs.
+		// SpecsPackageName is the Go package name for generated specs, types, and codecs.
 		SpecsPackageName string `json:"specs_package_name"`
-		// SpecsImportPath is the canonical Go import path for generated specs/types/codecs.
+		// SpecsImportPath is the Go import path for generated specs, types, and codecs.
 		SpecsImportPath string `json:"specs_import_path"`
-		// SpecsDir is the canonical filesystem directory for generated specs/types/codecs.
+		// SpecsDir is the directory where generated specs, types, and codecs are written.
 		SpecsDir string `json:"specs_dir"`
-		// AgentToolsPackage is the canonical provider-side agenttools package name
-		// when this toolset is owned by an agent export.
-		AgentToolsPackage string `json:"agent_tools_package,omitempty"`
-		// AgentToolsImportPath is the canonical provider-side agenttools import path.
-		AgentToolsImportPath string `json:"agent_tools_import_path,omitempty"`
-		// AgentToolsDir is the canonical provider-side agenttools directory.
-		AgentToolsDir string `json:"agent_tools_dir,omitempty"`
 	}
 
 	// OwnerKind identifies the generation anchor for a toolset.
@@ -131,6 +127,11 @@ type (
 		// Toolsets may be declared globally (top-level) but still require a concrete
 		// owner anchor to avoid duplicate emission and to keep package layout stable.
 		Kind OwnerKind `json:"kind"`
+		// Ref supplies the service, route, and provider context used when the
+		// defining toolset's reusable specs are written.
+		Ref *ToolsetRef `json:"-"`
+		// pendingRef keeps the raw DSL reference until complete ToolsetRef values exist.
+		pendingRef *toolsetOwnerRef
 
 		// ServiceName is the Goa service name that owns the generated package.
 		ServiceName string `json:"service_name"`
@@ -157,38 +158,49 @@ type (
 		Service *Service `json:"service"`
 	}
 
-	// ToolsetRefKind identifies how an agent references a toolset.
+	// Registry describes one registry client definition.
+	Registry struct {
+		// Expr is the evaluated registry definition.
+		Expr *agentsExpr.RegistryExpr `json:"-"`
+		// Name is the registry name written in the design.
+		Name string `json:"name"`
+	}
+
+	// ToolsetRefKind identifies how a service or agent references a toolset.
 	ToolsetRefKind string
 
-	// ToolsetRef describes one agent-scoped reference to a defining toolset.
+	// ToolsetRef describes one service or agent reference to a toolset definition.
 	ToolsetRef struct {
 		// Expr is the evaluated DSL node for this concrete reference.
 		Expr *agentsExpr.ToolsetExpr `json:"-"`
-		// Definition points to the canonical defining toolset.
+		// Definition points to the original toolset definition.
 		Definition *Toolset `json:"-"`
-		// Kind states whether the agent uses or exports this toolset.
+		// Kind states whether a service or agent uses or exports this toolset.
 		Kind ToolsetRefKind `json:"kind"`
-		// Name is the toolset identifier visible from the referencing agent.
+		// Name is the toolset identifier visible from the referencing service or agent.
 		Name string `json:"name"`
 		// Slug is the filesystem-safe token derived from Name.
 		Slug string `json:"slug"`
-		// QualifiedName is the canonical runtime registration identifier seen by the agent.
+		// QualifiedName is the route used to register this toolset.
 		QualifiedName string `json:"qualified_name"`
-		// Description is the DSL description visible from the referencing agent.
+		// Description is the DSL description visible from the reference.
 		Description string `json:"description"`
-		// Tags are the toolset-level tags visible from the referencing agent.
+		// Tags are the toolset-level tags visible from the reference.
 		Tags []string `json:"tags,omitempty"`
-		// Service is the Goa service that owns the referencing agent.
+		// Service is the Goa service that owns the reference.
 		Service *Service `json:"-"`
-		// ServiceName is the Goa service name that owns the referencing agent.
+		// ServiceName is the Goa service name that owns the reference.
 		ServiceName string `json:"service_name"`
-		// Agent is the referencing agent.
+		// Agent is set when an agent owns the reference.
 		Agent *Agent `json:"-"`
+		// SourceExport is the exact agent export selected by this Use reference.
+		// It is nil for toolsets executed directly by the consuming agent.
+		SourceExport *ToolsetRef `json:"-"`
 		// SourceService is the Goa service that owns the underlying tool definitions.
 		SourceService *Service `json:"-"`
 		// SourceServiceName is the Goa service name that owns the underlying tool definitions.
 		SourceServiceName string `json:"source_service_name"`
-		// TaskQueue is the canonical executor queue for this agent-local toolset package.
+		// TaskQueue is the queue that runs this toolset for the agent.
 		TaskQueue string `json:"task_queue"`
 		// PackageName is the generated agent-local helper package name.
 		PackageName string `json:"package_name"`
@@ -196,18 +208,18 @@ type (
 		PackageImportPath string `json:"package_import_path"`
 		// Dir is the generated agent-local helper directory.
 		Dir string `json:"dir"`
-		// SpecsPackageName is the canonical package name for shared specs/codecs.
+		// SpecsPackageName is the package name for shared specs and codecs.
 		SpecsPackageName string `json:"specs_package_name"`
-		// SpecsImportPath is the canonical import path for shared specs/codecs.
+		// SpecsImportPath is the import path for shared specs and codecs.
 		SpecsImportPath string `json:"specs_import_path"`
-		// SpecsDir is the canonical directory for shared specs/codecs.
+		// SpecsDir is the directory where shared specs and codecs are written.
 		SpecsDir string `json:"specs_dir"`
-		// AgentToolsPackage is the canonical provider-side agenttools package name
+		// AgentToolsPackage is the package name for helpers that expose an agent's tools
 		// when the defining toolset is owned by an agent export.
 		AgentToolsPackage string `json:"agent_tools_package,omitempty"`
-		// AgentToolsImportPath is the canonical provider-side agenttools import path.
+		// AgentToolsImportPath is the import path for helpers that expose an agent's tools.
 		AgentToolsImportPath string `json:"agent_tools_import_path,omitempty"`
-		// AgentToolsDir is the canonical provider-side agenttools directory.
+		// AgentToolsDir is the directory where those helpers are written.
 		AgentToolsDir string `json:"agent_tools_dir,omitempty"`
 		// Provider captures provider-specific runtime metadata needed by render adapters.
 		Provider *ToolsetProvider `json:"provider,omitempty"`
@@ -232,7 +244,7 @@ type (
 		SuiteName string `json:"suite_name"`
 		// Source identifies whether schemas come from Goa MCP or inline DSL.
 		Source agentsExpr.MCPSourceKind `json:"source"`
-		// QualifiedName is the canonical runtime toolset identifier.
+		// QualifiedName is the name used to register this MCP toolset.
 		QualifiedName string `json:"qualified_name"`
 		// ConstName is the generated Go identifier for the agent-local MCP toolset ID constant.
 		ConstName string `json:"const_name"`
@@ -247,7 +259,7 @@ type (
 		ToolsetName string `json:"toolset_name"`
 		// Version is the optional external version pin.
 		Version string `json:"version,omitempty"`
-		// QualifiedName is the canonical runtime toolset identifier.
+		// QualifiedName is the name used to register this registry toolset.
 		QualifiedName string `json:"qualified_name"`
 		// RegistryClientImportPath is the generated import path for the registry client package.
 		RegistryClientImportPath string `json:"registry_client_import_path"`
@@ -268,4 +280,6 @@ const (
 	ToolsetRefKindUsed ToolsetRefKind = "used"
 	// ToolsetRefKindExported identifies a toolset exported by an agent.
 	ToolsetRefKindExported ToolsetRefKind = "exported"
+	// ToolsetRefKindServiceExport identifies a toolset exported directly by a service.
+	ToolsetRefKindServiceExport ToolsetRefKind = "service_export"
 )

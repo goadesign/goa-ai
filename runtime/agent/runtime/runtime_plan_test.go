@@ -23,7 +23,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -178,6 +177,7 @@ func TestRunPlanActivityAcceptsTerminalFinalToolResult(t *testing.T) {
 		tracer:  telemetry.NoopTracer{},
 		Bus:     noopHooks{},
 	}
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.do"))
 	wf := &testWorkflowContext{
 		ctx:           context.Background(),
 		hasPlanResult: true,
@@ -188,7 +188,9 @@ func TestRunPlanActivityAcceptsTerminalFinalToolResult(t *testing.T) {
 		},
 	}
 
-	out, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, time.Time{})
+	out, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{
+		RunContext: run.Context{Tool: "svc.tools.do"},
+	}, time.Time{})
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.Result)
@@ -710,7 +712,7 @@ func TestPlanStartActivityRetriesFailedRejectedPresentationCleanup(t *testing.T)
 	cleanupErr := errors.New("stream unavailable")
 	sink := &failOnceDiscardSink{err: cleanupErr}
 	rt.streamSubscriber = runtimeWithPresentationSink(t, sink).streamSubscriber
-	_, err := rt.CreateSession(t.Context(), "session-123")
+	_, err := createSessionForTest(t.Context(), rt.Store, "session-123")
 	require.NoError(t, err)
 
 	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
@@ -890,7 +892,7 @@ func TestPlanStartActivityRejectsModelToolPayloadBeforeRecovery(t *testing.T) {
 		}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	spec := newAnyJSONSpec(call.Name, "service")
+	spec := newAnyJSONSpec(call.Name)
 	spec.Payload.Codec.FromJSON = func(data []byte) (any, error) {
 		var payload struct {
 			Query string `json:"query"`
@@ -948,7 +950,7 @@ func TestPlanStartActivityRejectsStreamedToolPayloadBeforePlannerExposure(t *tes
 		return finalPlannerResult("planner tried to continue"), nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	spec := newAnyJSONSpec(call.Name, "service")
+	spec := newAnyJSONSpec(call.Name)
 	spec.Payload.Codec.FromJSON = func(data []byte) (any, error) {
 		var payload struct {
 			Query string `json:"query"`
@@ -1979,7 +1981,7 @@ func TestRunPlanActivityRetriesPublicationBeforeOutputFailure(t *testing.T) {
 		failCall: 2,
 		stored:   make(map[string]*runlog.Event),
 	}
-	rt.RunEventStore = store
+	rt.Store = store
 	rt.Bus = noopHooks{}
 	rt.models["test"] = mustTestModelClient(stubModelClient{
 		complete: func(context.Context, *model.Request) (*model.Response, error) {
@@ -2331,9 +2333,9 @@ func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 	seedTestToolSpecs(rt, search, continuation)
 	rt.agentToolSpecs = make(map[agent.Ident][]tools.ToolSpec)
 	rt.agentToolSpecs["service.agent"] = []tools.ToolSpec{search, continuation}
-	store := runloginmem.New()
-	rt.RunEventStore = store
-	_, err := rt.SessionStore.CreateSession(t.Context(), "session-1", time.Now().UTC())
+	store := newTestStore()
+	rt.Store = store
+	_, err := createSessionForTest(t.Context(), rt.Store, "session-1")
 	require.NoError(t, err)
 
 	appendHistoricalHookEvent(t, store, hooks.NewToolCallScheduledEvent(
@@ -2357,9 +2359,6 @@ func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 		"source-1",
 		"",
 		rawjson.Message(`{"items":["page-1"]}`),
-		len(`{"items":["page-1"]}`),
-		false,
-		"",
 		nil,
 		"page 1",
 		&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &cursor},
@@ -2479,9 +2478,6 @@ func TestPlanResumeActivityBindsModelSelectedContinuation(t *testing.T) {
 			"source-1",
 			"",
 			rawjson.Message(`{"items":["page-1"]}`),
-			len(`{"items":["page-1"]}`),
-			false,
-			"",
 			nil,
 			"page 1",
 			&agent.Bounds{Returned: 1, Truncated: true, NextCursor: &cursor},
@@ -2592,11 +2588,16 @@ func TestPlanStartActivityCancelsAndJoinsPendingUnaryInvocation(t *testing.T) {
 func TestPlanStartActivityCancelsClosesAndJoinsPendingStream(t *testing.T) {
 	returned := make(chan struct{})
 	closed := make(chan struct{})
+	streamFinished := make(chan error, 1)
 	pl := &stubPlanner{start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		client, ok := input.Agent.ModelClient("test")
 		require.True(t, ok)
-		_, err := client.Stream(context.Background(), &model.Request{Model: "pending-stream"})
+		stream, err := client.Stream(context.Background(), &model.Request{Model: "pending-stream"})
 		require.NoError(t, err)
+		go func() {
+			_, recvErr := stream.Recv()
+			streamFinished <- stream.Finalize(recvErr)
+		}()
 		close(returned)
 		return finalPlannerResult("planner returned early"), nil
 	}}
@@ -2620,6 +2621,7 @@ func TestPlanStartActivityCancelsClosesAndJoinsPendingStream(t *testing.T) {
 	default:
 		t.Fatal("planner did not receive the stream")
 	}
+	require.ErrorIs(t, <-streamFinished, context.Canceled)
 	select {
 	case <-closed:
 	default:
@@ -2725,11 +2727,11 @@ func TestPlanStartActivityAdvertisesPolicyFilteredTools(t *testing.T) {
 		},
 	}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	visible := newAnyJSONSpec("svc.tools.visible", "svc.tools")
+	visible := newAnyJSONSpec("svc.tools.visible")
 	visible.Description = "Visible tool"
 	visible.Payload.Schema = tools.RawJSON(`{"type":"object","properties":{"q":{"type":"string"}}}`)
 	visible.Tags = []string{"system", "profile"}
-	blocked := newAnyJSONSpec("svc.tools.blocked", "svc.tools")
+	blocked := newAnyJSONSpec("svc.tools.blocked")
 	blocked.Tags = []string{"system"}
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
 		"service.agent": {visible, blocked},
@@ -2781,7 +2783,6 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		require.JSONEq(t, `{"from":"test"}`, string(input.ToolOutputs[0].Payload))
 		require.JSONEq(t, `{"status":"ok"}`, string(input.ToolOutputs[0].Result))
 		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
-		require.Equal(t, len(resultJSON), input.ToolOutputs[0].ResultBytes)
 		require.NotNil(t, input.ToolOutputs[0].Bounds)
 		require.True(t, input.ToolOutputs[0].Bounds.Truncated)
 		require.Equal(t, "narrow the window", input.ToolOutputs[0].Bounds.RefinementHint)
@@ -2795,7 +2796,12 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, "svc.tools"))
+	spec := newAnyJSONSpec(toolName)
+	spec.Bounds = &tools.BoundsSpec{}
+	spec.CanonicalizeServerData = func(data rawjson.Message) (rawjson.Message, error) {
+		return data, nil
+	}
+	seedTestToolSpecs(rt, spec)
 	require.NoError(t, rt.publishHookErr(
 		context.Background(),
 		hooks.NewToolCallScheduledEvent(
@@ -2822,9 +2828,6 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 			"call-1",
 			"",
 			resultJSON,
-			len(resultJSON),
-			false,
-			"",
 			serverData,
 			"preview",
 			bounds,
@@ -2889,9 +2892,6 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 			"source-1",
 			"",
 			resultJSON,
-			len(resultJSON),
-			false,
-			"",
 			nil,
 			"",
 			&agent.Bounds{Returned: 0, Truncated: true, NextCursor: &nextCursor},
@@ -2921,9 +2921,9 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 }
 
 func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) {
-	first := newAnyJSONSpec("svc.tools.first", "svc.tools")
-	wrong := newAnyJSONSpec("svc.tools.wrong", "svc.tools")
-	second := newAnyJSONSpec("svc.tools.second", "svc.tools")
+	first := newAnyJSONSpec("svc.tools.first")
+	wrong := newAnyJSONSpec("svc.tools.wrong")
+	second := newAnyJSONSpec("svc.tools.second")
 	bookkeeping := newBookkeepingSpec("svc.tools.progress")
 	specs := []tools.ToolSpec{first, wrong, second, bookkeeping}
 
@@ -2973,9 +2973,6 @@ func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) 
 				failed.callID,
 				"",
 				nil,
-				0,
-				false,
-				"",
 				nil,
 				"",
 				nil,
@@ -3025,7 +3022,7 @@ func TestPlanResumeActivityEnforcesSynthesisOnly(t *testing.T) {
 
 func TestPlanResumeActivityFailsWhenCanonicalToolResultIsMissing(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{})
-	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool", "svc.tools"))
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool"))
 	require.NoError(t, rt.publishHookErr(
 		context.Background(),
 		hooks.NewToolCallScheduledEvent(
@@ -3063,9 +3060,6 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 		called = true
 		require.Len(t, input.ToolOutputs, 1)
 		require.Equal(t, "call-1", input.ToolOutputs[0].ToolCallID)
-		require.False(t, input.ToolOutputs[0].ResultOmitted)
-		require.Empty(t, input.ToolOutputs[0].ResultOmittedReason)
-		require.Equal(t, len(resultJSON), input.ToolOutputs[0].ResultBytes)
 		require.JSONEq(t, string(resultJSON), string(input.ToolOutputs[0].Result))
 		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
@@ -3075,8 +3069,11 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 		}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	source := newAnyJSONSpec("svc.ts.tool", "svc.tools")
-	other := newAnyJSONSpec("svc.other.tool", "svc.tools")
+	source := newAnyJSONSpec("svc.ts.tool")
+	source.CanonicalizeServerData = func(data rawjson.Message) (rawjson.Message, error) {
+		return data, nil
+	}
+	other := newAnyJSONSpec("svc.other.tool")
 	seedTestToolSpecs(rt, source, other)
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{"service.agent": {source, other}}
 	require.NoError(t, rt.publishHookErr(
@@ -3105,9 +3102,6 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 			"call-1",
 			"",
 			resultJSON,
-			len(resultJSON),
-			false,
-			"",
 			rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
 			"preview",
 			nil,
@@ -3129,7 +3123,7 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 	require.True(t, called)
 }
 
-func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.T) {
+func TestBuildPlannerToolOutputRecordsEncodesCompleteResult(t *testing.T) {
 	t.Parallel()
 	const runID = "run-123"
 
@@ -3138,7 +3132,7 @@ func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
 	}
-	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool", "svc.tools"))
+	seedTestToolSpecs(rt, newAnyJSONSpec("svc.ts.tool"))
 
 	records := stepToolRecordsForTest(
 		t,
@@ -3151,12 +3145,10 @@ func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.
 		},
 		[]*planner.ToolResult{
 			{
-				Name:                "svc.ts.tool",
-				ToolCallID:          "call-1",
-				ResultOmitted:       true,
-				ResultOmittedReason: "workflow_budget",
-				ResultBytes:         12345,
-				ServerData:          rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
+				Name:       "svc.ts.tool",
+				ToolCallID: "call-1",
+				Result:     map[string]any{"status": "ok"},
+				ServerData: rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
 			},
 		},
 	)
@@ -3165,10 +3157,7 @@ func TestBuildPlannerToolOutputRecordsPreservesOmittedResultMetadata(t *testing.
 	outputs, err := rt.buildPlannerToolOutputRecords(context.Background(), records)
 	require.NoError(t, err)
 	require.Len(t, outputs, 1)
-	require.True(t, outputs[0].ResultOmitted)
-	require.Equal(t, "workflow_budget", outputs[0].ResultOmittedReason)
-	require.Equal(t, 12345, outputs[0].ResultBytes)
-	require.Empty(t, outputs[0].Result)
+	require.JSONEq(t, `{"status":"ok"}`, string(outputs[0].Result))
 	require.JSONEq(t, `[{"kind":"evidence"}]`, string(outputs[0].ServerData))
 }
 
@@ -3183,9 +3172,9 @@ func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 	}
 	seedTestToolSpecs(
 		rt,
-		newAnyJSONSpec("svc.ts.tool", "svc.tools"),
+		newAnyJSONSpec("svc.ts.tool"),
 		func() tools.ToolSpec {
-			spec := newAnyJSONSpec("workflow.progress.set_step_status", "workflow.progress")
+			spec := newAnyJSONSpec("workflow.progress.set_step_status")
 			spec.Bookkeeping = true
 			return spec
 		}(),

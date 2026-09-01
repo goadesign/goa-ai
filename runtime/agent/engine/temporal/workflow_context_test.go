@@ -6,6 +6,8 @@ package temporal
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -13,11 +15,13 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	failurepb "go.temporal.io/api/failure/v1"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
 	temporalsdk "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/prompt"
 )
 
 func TestApplyActivityDefaultsUsesTemporalPlannerDefaults(t *testing.T) {
@@ -66,6 +70,167 @@ func TestDerivedWorkflowContextsPreserveWorkflowTime(t *testing.T) {
 	require.NoError(t, env.GetWorkflowError())
 }
 
+func TestCancellationUpdateWaitsForWorkflowHandler(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	request := engine.CancellationRequest{RunID: "run", Reason: "user_requested"}
+	var (
+		handled        bool
+		completedValue any
+		completedErr   error
+	)
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(cancellationUpdateName, cancellationUpdateID, &testsuite.TestUpdateCallback{
+			OnReject: func(err error) {
+				completedErr = err
+			},
+			OnComplete: func(value any, err error) {
+				completedValue = value
+				completedErr = err
+			},
+		}, request)
+	}, 0)
+	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: request.RunID})
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := newTemporalWorkflowContext(&Engine{}, ctx)
+		if err := workflow.Sleep(ctx, time.Second); err != nil {
+			return err
+		}
+		if err := wfCtx.SetCancellationHandler(func(handlerCtx engine.WorkflowContext, got engine.CancellationRequest) error {
+			if handlerCtx.WorkflowID() != request.RunID {
+				return errors.New("update handler received the wrong workflow context")
+			}
+			if got != request {
+				return errors.New("update handler received the wrong cancellation request")
+			}
+			handled = true
+			return nil
+		}); err != nil {
+			return err
+		}
+		return workflow.Await(ctx, func() bool {
+			return handled
+		})
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+	require.NoError(t, completedErr)
+	require.Equal(t, request.Reason, completedValue)
+}
+
+func TestCancellationUpdateStopsExecutionBeforeAcknowledgement(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	request := engine.CancellationRequest{RunID: "run", Reason: "user_requested"}
+	var (
+		handled        bool
+		completedValue any
+		completedErr   error
+	)
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(cancellationUpdateName, cancellationUpdateID, &testsuite.TestUpdateCallback{
+			OnReject: func(err error) {
+				completedErr = err
+			},
+			OnComplete: func(value any, err error) {
+				completedValue = value
+				completedErr = err
+			},
+		}, request)
+	}, 0)
+	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: request.RunID})
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := newTemporalWorkflowContext(&Engine{}, ctx)
+		if err := wfCtx.SetCancellationHandler(func(engine.WorkflowContext, engine.CancellationRequest) error {
+			handled = true
+			return nil
+		}); err != nil {
+			return err
+		}
+		if err := workflow.Await(wfCtx.ctx, func() bool {
+			return handled
+		}); err != nil {
+			return err
+		}
+		return workflow.Sleep(wfCtx.ctx, time.Hour)
+	})
+
+	require.True(t, temporalsdk.IsCanceledError(env.GetWorkflowError()))
+	require.NoError(t, completedErr)
+	require.Equal(t, request.Reason, completedValue)
+}
+
+func TestCancellationUpdateMapsHandlerConflict(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	request := engine.CancellationRequest{RunID: "run", Reason: "session_ended"}
+	var (
+		handled      bool
+		completedErr error
+	)
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(cancellationUpdateName, cancellationUpdateID, &testsuite.TestUpdateCallback{
+			OnReject: func(err error) {
+				completedErr = err
+			},
+			OnComplete: func(_ any, err error) {
+				completedErr = err
+			},
+		}, request)
+	}, 0)
+	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: request.RunID})
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := newTemporalWorkflowContext(&Engine{}, ctx)
+		if err := wfCtx.SetCancellationHandler(func(engine.WorkflowContext, engine.CancellationRequest) error {
+			handled = true
+			return &engine.CancellationConflictError{RunID: request.RunID, Reason: request.Reason}
+		}); err != nil {
+			return err
+		}
+		return workflow.Await(ctx, func() bool {
+			return handled
+		})
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+	require.Error(t, completedErr)
+	var conflict *engine.CancellationConflictError
+	require.ErrorAs(t, mapCancellationUpdateError(completedErr), &conflict)
+	require.Equal(t, request.RunID, conflict.RunID)
+	require.Equal(t, request.Reason, conflict.Reason)
+}
+
+func TestCancellationUpdateMapsCompletedHandler(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	request := engine.CancellationRequest{RunID: "run", Reason: "session_ended"}
+	var completedErr error
+	env.RegisterDelayedCallback(func() {
+		env.UpdateWorkflow(cancellationUpdateName, cancellationUpdateID, &testsuite.TestUpdateCallback{
+			OnReject: func(err error) {
+				completedErr = err
+			},
+			OnComplete: func(_ any, err error) {
+				completedErr = err
+			},
+		}, request)
+	}, 0)
+	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: request.RunID})
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := newTemporalWorkflowContext(&Engine{}, ctx)
+		if err := wfCtx.SetCancellationHandler(func(engine.WorkflowContext, engine.CancellationRequest) error {
+			return engine.ErrWorkflowCompleted
+		}); err != nil {
+			return err
+		}
+		return workflow.Sleep(ctx, time.Millisecond)
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+	require.Error(t, completedErr)
+	require.ErrorIs(t, mapCancellationUpdateError(completedErr), engine.ErrWorkflowCompleted)
+}
+
 func TestActivityOptionsForUsesExplicitTimeoutFields(t *testing.T) {
 	t.Parallel()
 
@@ -105,6 +270,229 @@ func TestActivityOptionsForUsesExplicitTimeoutFields(t *testing.T) {
 	require.EqualValues(t, 3, opts.RetryPolicy.MaximumAttempts)
 	require.Equal(t, time.Second, opts.RetryPolicy.InitialInterval)
 	require.InDelta(t, 2.0, opts.RetryPolicy.BackoffCoefficient, 0.000001)
+}
+
+func TestActivityOptionsForAllowsExplicitUnlimitedRetries(t *testing.T) {
+	wf := &temporalWorkflowContext{
+		engine: &Engine{
+			activityOptions: map[string]engine.ActivityOptions{
+				"record": {RetryPolicy: engine.RetryPolicy{MaxAttempts: 3}},
+			},
+		},
+	}
+
+	opts := wf.activityOptionsFor("record", engine.ActivityOptions{
+		RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true},
+	})
+
+	require.NotNil(t, opts.RetryPolicy)
+	require.Zero(t, opts.RetryPolicy.MaximumAttempts)
+}
+
+func TestStartChildWorkflowRejectsIncompleteRequest(t *testing.T) {
+	wfCtx := &temporalWorkflowContext{}
+	valid := engine.ChildWorkflowRequest{
+		ID:        "child",
+		Workflow:  "workflow",
+		TaskQueue: "test.queue",
+		Input:     &api.RunInput{RunID: "child"},
+	}
+	tests := []struct {
+		name    string
+		wantErr string
+		change  func(*engine.ChildWorkflowRequest)
+	}{
+		{name: "missing id", wantErr: "child workflow id is required", change: func(req *engine.ChildWorkflowRequest) {
+			req.ID = ""
+		}},
+		{name: "missing workflow", wantErr: "child workflow name is required", change: func(req *engine.ChildWorkflowRequest) {
+			req.Workflow = ""
+		}},
+		{name: "missing task queue", wantErr: "child workflow task queue is required", change: func(req *engine.ChildWorkflowRequest) {
+			req.TaskQueue = ""
+		}},
+		{name: "missing input", wantErr: "child workflow input is required", change: func(req *engine.ChildWorkflowRequest) {
+			req.Input = nil
+		}},
+		{name: "mismatched run id", wantErr: "child workflow id must match input run id", change: func(req *engine.ChildWorkflowRequest) {
+			req.Input = &api.RunInput{RunID: "other-child"}
+		}},
+		{name: "retry interval without attempts", wantErr: "workflow retry timing requires max attempts or unlimited attempts", change: func(req *engine.ChildWorkflowRequest) {
+			req.RetryPolicy.InitialInterval = time.Second
+		}},
+		{name: "retry backoff without attempts", wantErr: "workflow retry timing requires max attempts or unlimited attempts", change: func(req *engine.ChildWorkflowRequest) {
+			req.RetryPolicy.BackoffCoefficient = 2
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			req := valid
+			test.change(&req)
+			_, err := wfCtx.StartChildWorkflow(t.Context(), req)
+			require.EqualError(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestStartChildWorkflowRejectsCompletedIDReuse(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterWorkflowWithOptions(
+		func(workflow.Context, *api.RunInput) (*api.RunOutput, error) {
+			return &api.RunOutput{}, nil
+		},
+		workflow.RegisterOptions{Name: "child"},
+	)
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		first, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
+			ID:        "single-use-child",
+			Workflow:  "child",
+			TaskQueue: "test.queue",
+			Input:     &api.RunInput{RunID: "single-use-child"},
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := first.Get(context.Background()); err != nil {
+			return err
+		}
+		second, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
+			ID:        "single-use-child",
+			Workflow:  "child",
+			TaskQueue: "test.queue",
+			Input:     &api.RunInput{RunID: "single-use-child"},
+		})
+		if !errors.Is(err, engine.ErrChildWorkflowIDReuse) {
+			return fmt.Errorf("second child start: expected ID reuse, got %w", err)
+		}
+		if second != nil {
+			return errors.New("second child start returned a handle")
+		}
+		var reuse *engine.ChildWorkflowIDReuseError
+		if !errors.As(err, &reuse) || reuse.ID != "single-use-child" {
+			return fmt.Errorf("second child start returned %T for %q", err, reuse.ID)
+		}
+		return nil
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+}
+
+func TestStartChildWorkflowSnapshotsCallerInput(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterWorkflowWithOptions(
+		func(_ workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
+			return &api.RunOutput{RunID: input.Labels["tenant"]}, nil
+		},
+		workflow.RegisterOptions{Name: "child"},
+	)
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		input := &api.RunInput{RunID: "child", Labels: map[string]string{"tenant": "accepted"}}
+		child, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
+			ID: "child", Workflow: "child", TaskQueue: "test.queue", Input: input,
+		})
+		if err != nil {
+			return err
+		}
+		input.Labels["tenant"] = "mutated"
+		output, err := child.Get(context.Background())
+		if err != nil {
+			return err
+		}
+		if output.RunID != "accepted" {
+			return fmt.Errorf("child received label %q", output.RunID)
+		}
+		return nil
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+}
+
+func TestStartChildWorkflowEnforcesExactPayloadLimit(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	exact := temporalInputAtWorkflowBudget(t, "child1", "child", "test.queue", 0, 0)
+	oversized := temporalInputAtWorkflowBudget(t, "child2", "child", "test.queue", 0, 1)
+	env.RegisterWorkflowWithOptions(
+		func(workflow.Context, *api.RunInput) (*api.RunOutput, error) {
+			return &api.RunOutput{}, nil
+		},
+		workflow.RegisterOptions{Name: "child"},
+	)
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		child, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
+			ID: "child1", Workflow: "child", TaskQueue: "test.queue", Input: exact,
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := child.Get(context.Background()); err != nil {
+			return err
+		}
+
+		_, err = wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
+			ID: "child2", Workflow: "child", TaskQueue: "test.queue", Input: oversized,
+		})
+		if err == nil {
+			return errors.New("oversized child start succeeded")
+		}
+		return nil
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+}
+
+func TestStartChildWorkflowWaitsForCancellationCleanup(t *testing.T) {
+	var cleanupCalled atomic.Bool
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterWorkflowWithOptions(
+		func(ctx workflow.Context, _ *api.RunInput) (*api.RunOutput, error) {
+			if err := workflow.NewTimer(ctx, time.Hour).Get(ctx, nil); err != nil {
+				cleanupCtx, _ := workflow.NewDisconnectedContext(ctx)
+				if cleanupErr := workflow.NewTimer(cleanupCtx, 10*time.Minute).Get(cleanupCtx, nil); cleanupErr != nil {
+					return nil, cleanupErr
+				}
+				cleanupCalled.Store(true)
+				return nil, err
+			}
+			return nil, errors.New("child completed without cancellation")
+		},
+		workflow.RegisterOptions{Name: "child-with-cancellation-cleanup"},
+	)
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		child, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
+			ID:        "child-with-cleanup",
+			Workflow:  "child-with-cancellation-cleanup",
+			TaskQueue: "test.queue",
+			Input:     &api.RunInput{RunID: "child-with-cleanup"},
+		})
+		if err != nil {
+			return err
+		}
+		if child.IsReady() {
+			return errors.New("child completed before cancellation")
+		}
+		if err := workflow.NewTimer(ctx, time.Minute).Get(ctx, nil); err != nil {
+			return err
+		}
+		if err := child.Cancel(context.Background()); err != nil {
+			return err
+		}
+		_, err = child.Get(context.Background())
+		if !cleanupCalled.Load() {
+			return errors.New("child future returned before cancellation cleanup")
+		}
+		return err
+	})
+
+	require.Error(t, env.GetWorkflowError())
+	require.True(t, cleanupCalled.Load())
 }
 
 func TestActivityOptionsForLeavesQueueWaitUnsetWithoutTemporalDefault(t *testing.T) {
@@ -187,6 +575,49 @@ func TestExecutePlannerActivityBoundsRetriesByScheduleToClose(t *testing.T) {
 	require.Error(t, activityErr)
 	require.Greater(t, attempts, 1)
 	require.Less(t, attempts, 100)
+}
+
+func TestExecuteAgentChildActivityReturnsRecordedOutput(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	var calls int
+	env.RegisterActivityWithOptions(
+		func(context.Context, *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error) {
+			calls++
+			return &api.AgentChildActivityOutput{
+				Success: &api.AgentChildActivitySuccess{
+					RenderedPrompts: []prompt.RenderEvent{{
+						PromptID: "child.prompt",
+						Version:  "v1",
+					}},
+				},
+			}, nil
+		},
+		activity.RegisterOptions{Name: "prepare_child"},
+	)
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{
+			engine: &Engine{},
+			ctx:    ctx,
+		}
+		output, err := wfCtx.ExecuteAgentChildActivity(engine.AgentChildActivityCall{
+			Name: "prepare_child",
+			Input: &api.AgentChildActivityInput{
+				Call: api.ToolCall{RunID: "parent-run"},
+			},
+			Options: engine.ActivityOptions{StartToCloseTimeout: time.Minute},
+		})
+		if err != nil {
+			return err
+		}
+		if output.Success.RenderedPrompts[0].Version != "v1" {
+			return errors.New("agent child activity changed its recorded output")
+		}
+		return nil
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+	require.Equal(t, 1, calls)
 }
 
 // TestNormalizeTemporalPlannerError builds the failure envelope emitted by

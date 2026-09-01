@@ -7,9 +7,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	scribe "goa.design/goa-ai/alpha/agents/scribe"
+	scribe "goa.design/goa-ai/gen/alpha/agents/scribe"
 	plannerscribe "goa.design/goa-ai/internal/agents/scribe/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
+	"goa.design/goa-ai/runtime/agent/storage"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
@@ -18,10 +19,11 @@ var (
 	mcpCalcCoreEndpoint = flag.String("mcp-calc-core-endpoint", "", "MCP core HTTP endpoint (e.g., http://127.0.0.1:8080/rpc)")
 )
 
-// New constructs a minimal runtime and registers all agents for this service.
-// Replace options (engine, stores, telemetry) as you adopt production wiring.
-func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
-	rt := agentsruntime.New()
+// New constructs a runtime with the host-owned store and registers all agents
+// for this service. Replace the example planner and tool executors as you adopt
+// production wiring.
+func New(ctx context.Context, store storage.Store) (*agentsruntime.Runtime, func(), error) {
+	rt := agentsruntime.New(store)
 	cleanup := func() {}
 
 	// Register agents with example planners. Replace with your own planner impls.
@@ -30,7 +32,10 @@ func New(ctx context.Context) (*agentsruntime.Runtime, func(), error) {
 		// Configure MCP callers for external toolsets.
 		cfg.MCPCallers = map[string]mcpruntime.Caller{}
 		if mcpCalcCoreEndpoint != nil && *mcpCalcCoreEndpoint != "" {
-			caller, err := mcpruntime.NewHTTPCaller(ctx, mcpruntime.HTTPOptions{Endpoint: *mcpCalcCoreEndpoint})
+			caller, err := mcpruntime.NewHTTPCaller(ctx, mcpruntime.HTTPOptions{
+				Endpoint:   *mcpCalcCoreEndpoint,
+				ClientInfo: mcpruntime.ClientInfo{Name: "alpha", Version: "1.2.3"},
+			})
 			if err != nil {
 				return nil, nil, err
 			}

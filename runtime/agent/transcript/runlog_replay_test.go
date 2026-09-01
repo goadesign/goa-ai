@@ -11,15 +11,18 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	agentrun "goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
+	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 )
 
 func TestBuildMessagesFromRunLogReplaysCanonicalTranscriptOrder(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := runloginmem.New()
+	store := newTranscriptTestStore(t, ctx)
 
 	appendTranscriptDelta(t, ctx, store, "run-1", "turn-1", []*model.Message{{
 		Role:  model.ConversationRoleUser,
@@ -71,7 +74,7 @@ func TestBuildMessagesFromRunLogReplaysSeededAndAppendedTranscriptMessages(t *te
 	t.Parallel()
 
 	ctx := context.Background()
-	store := runloginmem.New()
+	store := newTranscriptTestStore(t, ctx)
 
 	appendTranscriptMessages(t, ctx, store, "run-1", "turn-1", RunLogMessagesSeeded, []*model.Message{{
 		Role:  model.ConversationRoleUser,
@@ -93,35 +96,24 @@ func TestBuildMessagesFromRunLogRequiresTranscriptDeltaEvents(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	store := runloginmem.New()
-	_, err := store.Append(ctx, &runlog.Event{
-		EventKey:  "run_started",
-		RunID:     "run-1",
-		AgentID:   agent.Ident("agent-1"),
-		SessionID: "session-1",
-		TurnID:    "turn-1",
-		Type:      hooks.RunStarted,
-		Payload:   []byte(`{}`),
-		Timestamp: time.Unix(0, 0).UTC(),
-	})
-	require.NoError(t, err)
+	store := newTranscriptTestStore(t, ctx)
 
-	_, err = BuildMessagesFromRunLog(ctx, store, "run-1")
+	_, err := BuildMessagesFromRunLog(ctx, store, "run-1")
 	require.ErrorContains(t, err, "has no transcript message events")
 }
 
-func appendTranscriptDelta(t *testing.T, ctx context.Context, store runlog.Store, runID, turnID string, messages []*model.Message) {
+func appendTranscriptDelta(t *testing.T, ctx context.Context, store storage.Store, runID, turnID string, messages []*model.Message) {
 	t.Helper()
 	appendTranscriptMessages(t, ctx, store, runID, turnID, RunLogMessagesAppended, messages)
 }
 
-func appendTranscriptMessages(t *testing.T, ctx context.Context, store runlog.Store, runID, turnID string, typ runlog.Type, messages []*model.Message) {
+func appendTranscriptMessages(t *testing.T, ctx context.Context, store storage.Store, runID, turnID string, typ runlog.Type, messages []*model.Message) {
 	t.Helper()
 
 	payload, err := EncodeRunLogDelta(messages)
 	require.NoError(t, err)
 
-	_, err = store.Append(ctx, &runlog.Event{
+	_, err = store.AppendRunRecord(ctx, &runlog.Event{
 		EventKey:  "event-" + turnID + "-" + time.Now().UTC().Format(time.RFC3339Nano),
 		RunID:     runID,
 		AgentID:   agent.Ident("agent-1"),
@@ -129,7 +121,55 @@ func appendTranscriptMessages(t *testing.T, ctx context.Context, store runlog.St
 		TurnID:    turnID,
 		Type:      typ,
 		Payload:   payload,
-		Timestamp: time.Now().UTC(),
+		Timestamp: time.Now().UTC().Truncate(time.Millisecond),
 	})
 	require.NoError(t, err)
+}
+
+// newTranscriptTestStore creates the run whose transcript records the tests
+// append directly.
+func newTranscriptTestStore(t *testing.T, ctx context.Context) *storageinmem.Store {
+	t.Helper()
+	store := storageinmem.New()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	_, err := store.CreateSession(ctx, "session-1", now)
+	require.NoError(t, err)
+	started := transcriptLifecycleRecord(t, hooks.NewRunStartedEvent(
+		"run-1", "agent-1", "session-1", "", "", nil,
+	), "run-started", now)
+	canceled := transcriptLifecycleRecord(t, hooks.NewRunCompletedEvent(
+		"run-1",
+		"agent-1",
+		"session-1",
+		"canceled",
+		agentrun.PhaseCanceled,
+		nil,
+		context.Canceled,
+		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
+	), "run-canceled", now)
+	_, err = store.StartRootRun(ctx, storage.RootRunStart{
+		Run:      session.RunStart{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", StartedAt: now},
+		Started:  started,
+		Canceled: canceled,
+	})
+	require.NoError(t, err)
+	return store
+}
+
+// transcriptLifecycleRecord encodes a typed lifecycle event for transcript
+// store setup.
+func transcriptLifecycleRecord(t *testing.T, event hooks.Event, key string, at time.Time) *runlog.Event {
+	t.Helper()
+	input, err := hooks.EncodeToRecordInput(event, hooks.EncodeOptions{EventKey: key, TimestampMS: at.UnixMilli()})
+	require.NoError(t, err)
+	return &runlog.Event{
+		EventKey:  input.EventKey,
+		RunID:     input.RunID,
+		AgentID:   input.AgentID,
+		SessionID: input.SessionID,
+		TurnID:    input.TurnID,
+		Type:      input.Type,
+		Payload:   input.Payload,
+		Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
+	}
 }

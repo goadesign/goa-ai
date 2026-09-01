@@ -1,0 +1,114 @@
+package generated
+
+// Tools handling
+
+// ToolsList returns the tools declared in the Goa design.
+func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*ToolsListResult, error) {
+	a.log(ctx, "request", map[string]any{"method": "tools/list"})
+	if p.Params != nil && p.Params.Cursor != nil {
+		return nil, goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
+	}
+	tools := []*ToolInfo{
+		{
+			Name:         "summarize",
+			Description:  stringPtr("Summarize one document."),
+			InputSchema:  json.RawMessage("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Text written with `inline code`.\"}},\"additionalProperties\":false}"),
+			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"summary\":{\"type\":\"string\",\"description\":\"Summary written with `inline code`.\"}},\"additionalProperties\":false}"),
+		},
+	}
+	res := &ToolsListResult{Tools: tools}
+	a.log(ctx, "response", map[string]any{"method": "tools/list"})
+	return res, nil
+}
+
+// toolCallError returns a service failure as an MCP tool result.
+func toolCallError(message string) *ToolsCallResult {
+	return &ToolsCallResult{
+		Content: []*ContentItem{
+			{Type: "text", Text: message},
+		},
+		IsError: boolPtr(true),
+	}
+}
+
+// ToolsCall validates the arguments and calls the Goa method for the named tool.
+func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error) {
+	a.log(ctx, "request", map[string]any{"method": "tools/call", "name": p.Name})
+	switch p.Name {
+	case "summarize":
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
+		}
+		payload, err := codec.DecodeSummarizePayload(arguments)
+		if err != nil {
+			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+		}
+		result, err := a.service.Summarize(ctx, payload)
+		if err != nil {
+			return toolCallError(a.mapError(err).Error()), nil
+		}
+		encoded, err := codec.EncodeSummarizeResult(result)
+		if err != nil {
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		text := string(encoded)
+		final := &ToolsCallResult{
+			Content: []*ContentItem{
+				{Type: "text", Text: text},
+			},
+			StructuredContent: json.RawMessage(encoded),
+		}
+		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
+		return final, nil
+	default:
+		return nil, goa.PermanentError("invalid_params", "unknown tool: %s", p.Name)
+	}
+}
+
+// Prompts handling
+
+// PromptsList returns the fixed prompts declared in the Goa design.
+func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*PromptsListResult, error) {
+	a.log(ctx, "request", map[string]any{"method": "prompts/list"})
+	if p.Params != nil && p.Params.Cursor != nil {
+		return nil, goa.PermanentError("invalid_params", "prompts/list does not accept a cursor")
+	}
+	prompts := []*PromptInfo{
+
+		{Name: "daily \"summary\"\nreport", Description: stringPtr("Prepare the daily report.")},
+	}
+	res := &PromptsListResult{Prompts: prompts}
+	a.log(ctx, "response", map[string]any{"method": "prompts/list"})
+	return res, nil
+}
+
+// PromptsGet returns the fixed messages for the named prompt.
+func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*PromptsGetResult, error) {
+	a.log(ctx, "request", map[string]any{"method": "prompts/get", "name": p.Name})
+	switch p.Name {
+
+	case "daily \"summary\"\nreport":
+		if len(p.Arguments) > 0 {
+			return nil, goa.PermanentError("invalid_params", "prompt %q does not accept arguments", p.Name)
+		}
+		msgs := make([]*PromptMessage, 0, 1)
+
+		msgs = append(msgs, &PromptMessage{
+			Role: "user",
+			Content: &MessageContent{
+				Type: "text",
+				Text: "Summarize today.",
+			},
+		})
+
+		res := &PromptsGetResult{
+			Description: stringPtr("Prepare the daily report."),
+			Messages:    msgs,
+		}
+		a.log(ctx, "response", map[string]any{"method": "prompts/get", "name": p.Name})
+		return res, nil
+
+	}
+	return nil, goa.PermanentError("invalid_params", "Unknown prompt: %s", p.Name)
+}

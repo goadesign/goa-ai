@@ -68,7 +68,7 @@ func TestModelInvocationRecoveryRequiresExactValidationLeaves(t *testing.T) {
 }
 
 func TestRunLoopRecoversMalformedStreamedToolCallBeforeExecution(t *testing.T) {
-	kickoff := newAnyJSONSpec("catalog.stream_kickoff", "catalog")
+	kickoff := newAnyJSONSpec("catalog.stream_kickoff")
 	lookup := newStrictRecoverySpec()
 	var providerCalls, lookupCalls, resumes int
 	h := newRecoveryHarness(
@@ -130,7 +130,7 @@ func TestRunLoopRecoversMalformedStreamedToolCallBeforeExecution(t *testing.T) {
 }
 
 func TestRunLoopRecoversProviderMalformedToolJSONBeforeExecution(t *testing.T) {
-	kickoff := newAnyJSONSpec("catalog.provider_json_kickoff", "catalog")
+	kickoff := newAnyJSONSpec("catalog.provider_json_kickoff")
 	lookup := newStrictRecoverySpec()
 	var providerCalls, lookupCalls int
 	h := newRecoveryHarness(
@@ -180,7 +180,7 @@ func TestRunLoopRecoversProviderMalformedToolJSONBeforeExecution(t *testing.T) {
 }
 
 func TestRunLoopRecoversMalformedStreamedToolCallWhenCloseFails(t *testing.T) {
-	kickoff := newAnyJSONSpec("catalog.stream_close_kickoff", "catalog")
+	kickoff := newAnyJSONSpec("catalog.stream_close_kickoff")
 	lookup := newStrictRecoverySpec()
 	closeErr := errors.New("provider close failed")
 	var providerCalls, lookupCalls int
@@ -222,7 +222,7 @@ func TestRunLoopRecoversMalformedStreamedToolCallWhenCloseFails(t *testing.T) {
 }
 
 func TestRunLoopMalformedStreamedToolCallUsesSharedRecoveryCap(t *testing.T) {
-	kickoff := newAnyJSONSpec("catalog.stream_cap_kickoff", "catalog")
+	kickoff := newAnyJSONSpec("catalog.stream_cap_kickoff")
 	lookup := newStrictRecoverySpec()
 	var providerCalls, lookupCalls, recoveryAttempts int
 	h := newRecoveryHarness(
@@ -265,7 +265,7 @@ func TestRunLoopMalformedStreamedToolCallUsesSharedRecoveryCap(t *testing.T) {
 }
 
 func TestRunLoopCancellationPreventsStreamedToolCallReplacement(t *testing.T) {
-	kickoff := newAnyJSONSpec("catalog.stream_cancel_kickoff", "catalog")
+	kickoff := newAnyJSONSpec("catalog.stream_cancel_kickoff")
 	lookup := newStrictRecoverySpec()
 	var providerCalls, plannerCalls int
 	h := newRecoveryHarness(

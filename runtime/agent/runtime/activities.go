@@ -24,7 +24,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/run"
-	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -58,11 +57,6 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
-	if ended, err := r.sessionEndedForPlanning(ctx, input); err != nil {
-		return nil, err
-	} else if ended {
-		return &PlanActivityOutput{SessionEnded: true}, nil
-	}
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !input.SynthesisOnly {
 		historicalOutputs, err := r.loadHistoricalContinuationOutputs(ctx, input)
@@ -90,7 +84,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	if err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
-	if err := validatePlannerActivityResult(r, result, false); err != nil {
+	if err := validatePlannerActivityResult(r, result, input.RunContext.Tool, false); err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
 	if err := validatePlannerAdvertisedTools(result, act.agentCtx.AdvertisedToolDefinitions()); err != nil {
@@ -129,11 +123,6 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	// finalization output instead keeps the finalizer's existing response or
 	// terminal-tool contract, which may require one exact bookkeeping tool.
 	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil && input.Finalize == nil
-	if ended, err := r.sessionEndedForPlanning(ctx, input); err != nil {
-		return nil, err
-	} else if ended {
-		return &PlanActivityOutput{SessionEnded: true}, nil
-	}
 	toolOutputs, err := r.loadPlannerToolOutputs(ctx, input.ToolOutputs)
 	if err != nil {
 		return nil, err
@@ -247,7 +236,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
-	if err := validatePlannerActivityResult(r, result, synthesisOnly); err != nil {
+	if err := validatePlannerActivityResult(r, result, input.RunContext.Tool, synthesisOnly); err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
 	if err := validatePlannerAdvertisedTools(result, act.agentCtx.AdvertisedToolDefinitions()); err != nil {
@@ -288,7 +277,14 @@ func (r *Runtime) correctCallSpecs(outputs []*planner.ToolOutput) ([]tools.ToolS
 		if !registered {
 			return nil, fmt.Errorf("correct-call recovery references unregistered tool %q", name)
 		}
-		registration, registered := r.toolsets[globalSpec.Toolset]
+		toolsetName, registered := r.toolsetNames[name]
+		if !registered {
+			return nil, fmt.Errorf(
+				"correct-call recovery tool %q has no executable toolset registration",
+				name,
+			)
+		}
+		registration, registered := r.toolsets[toolsetName]
 		if !registered || registration.Execute == nil {
 			return nil, fmt.Errorf(
 				"correct-call recovery tool %q has no executable toolset registration",
@@ -303,7 +299,7 @@ func (r *Runtime) correctCallSpecs(outputs []*planner.ToolOutput) ([]tools.ToolS
 				name,
 			)
 		}
-		if registration.Name != spec.Toolset ||
+		if registration.Name != toolsetName ||
 			!equivalentToolSpec(globalSpec, spec) {
 			return nil, fmt.Errorf(
 				"correct-call recovery tool %q has mismatched global and executable registrations",
@@ -511,7 +507,7 @@ func (a *plannerActivityInvocation) output(
 	synthesisOnly bool,
 	continuationActions []continuationAction,
 ) (*PlanActivityOutput, error) {
-	if err := validatePlannerActivityResult(r, result, synthesisOnly); err != nil {
+	if err := validatePlannerActivityResult(r, result, a.runContext.Tool, synthesisOnly); err != nil {
 		return nil, err
 	}
 	transcript, err := a.invocations.exportModelInvocation(result)
@@ -775,8 +771,8 @@ func (a *plannerActivityInvocation) planningError(err error) error {
 
 // validatePlannerActivityResult rejects planner values that cannot be
 // executed before any selected model presentation is published.
-func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, synthesisOnly bool) error {
-	if err := validatePlannerResultPayloads(result); err != nil {
+func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, parentTool tools.Ident, synthesisOnly bool) error {
+	if err := r.validatePlannerResultPayloads(result, parentTool); err != nil {
 		return planner.NewOutputContractError(err)
 	}
 	if err := validatePlannerToolCallIDs(result); err != nil {
@@ -925,7 +921,11 @@ func validatePlannerToolCallIDs(result *planner.PlanResult) error {
 
 // validatePlannerResultPayloads enforces canonical tool JSON before Temporal
 // serializes planner activity output.
-func validatePlannerResultPayloads(result *planner.PlanResult) error {
+func (r *Runtime) validatePlannerResultPayloads(result *planner.PlanResult, parentTool tools.Ident) error {
+	return validatePlannerResultPayloadsWithSpecs(result, parentTool, r.toolSpec)
+}
+
+func validatePlannerResultPayloadsWithSpecs(result *planner.PlanResult, parentTool tools.Ident, lookup toolSpecLookup) error {
 	if result == nil {
 		return errors.New("planner returned a nil result")
 	}
@@ -940,8 +940,17 @@ func validatePlannerResultPayloads(result *planner.PlanResult) error {
 			return fmt.Errorf("planner final response: %w", err)
 		}
 	}
-	if err := validatePlannerFinalToolResult(result.FinalToolResult); err != nil {
-		return err
+	if result.FinalToolResult != nil {
+		if parentTool == "" {
+			return errors.New("planner final tool result requires a parent tool")
+		}
+		spec, ok := lookup(parentTool)
+		if !ok {
+			return fmt.Errorf("planner final tool result references unregistered parent tool %q", parentTool)
+		}
+		if err := validatePlannerFinalToolResult(spec, result.FinalToolResult); err != nil {
+			return err
+		}
 	}
 	for index, call := range result.ToolCalls {
 		if err := validatePlannerToolPayload(call.Payload); err != nil {
@@ -1000,7 +1009,7 @@ func validatePlannerResultPayloads(result *planner.PlanResult) error {
 
 // validatePlannerFinalToolResult rejects malformed or contradictory values
 // before a planner result crosses the activity boundary.
-func validatePlannerFinalToolResult(final *planner.FinalToolResult) error {
+func validatePlannerFinalToolResult(spec tools.ToolSpec, final *planner.FinalToolResult) error {
 	if final == nil {
 		return nil
 	}
@@ -1012,25 +1021,14 @@ func validatePlannerFinalToolResult(final *planner.FinalToolResult) error {
 	if len(serverJSON) > 0 && !json.Valid(serverJSON) {
 		return errors.New("planner final tool server data is not valid JSON")
 	}
-	if final.ResultBytes < 0 {
-		return errors.New("planner final tool result byte count cannot be negative")
-	}
 	if final.Failure != nil {
-		if len(resultJSON) > 0 || final.ResultOmitted {
+		if len(final.Result) > 0 {
 			return errors.New("planner final tool result contains both a failure and a result")
 		}
-	} else if !final.ResultOmitted && len(resultJSON) == 0 {
-		return errors.New("planner final tool result is missing its result")
+		return nil
 	}
-	if final.ResultOmitted {
-		if len(resultJSON) > 0 {
-			return errors.New("planner final tool result is marked omitted but contains a result")
-		}
-		if final.ResultOmittedReason == "" {
-			return errors.New("planner final tool result is marked omitted without a reason")
-		}
-	} else if final.ResultOmittedReason != "" {
-		return errors.New("planner final tool result has an omission reason but is not omitted")
+	if _, err := decodeSuccessfulToolResult(spec, final.Result); err != nil {
+		return fmt.Errorf("planner final tool result: %w", err)
 	}
 	return nil
 }
@@ -1189,19 +1187,14 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 		return nil, fmt.Errorf("agent-as-tool %q must run in workflow context", req.ToolName)
 	}
-	sName := req.ToolsetName
-	if sName == "" {
-		spec, ok := r.toolSpec(req.ToolName)
-		if !ok {
-			return nil, fmt.Errorf("unknown tool %q", req.ToolName)
-		}
-		sName = spec.Toolset
+	if req.ToolsetName == "" {
+		return nil, errors.New("toolset name is required")
 	}
 	r.mu.RLock()
-	reg, ok := r.toolsets[sName]
+	reg, ok := r.toolsets[req.ToolsetName]
 	r.mu.RUnlock()
 	if !ok {
-		return nil, fmt.Errorf("toolset %q is not registered", sName)
+		return nil, fmt.Errorf("toolset %q is not registered", req.ToolsetName)
 	}
 
 	// Rebuild the activity-local call from execution data only. The workflow
@@ -1333,36 +1326,6 @@ func buildToolFailureFromAgentToolRequestError(err error) *planner.ToolFailure {
 }
 
 // planStart invokes the planner's PlanStart method with tracing.
-// sessionEndedForPlanning is the turn-boundary session lifecycle gate: every
-// planner activity (start and resume) refuses to plan when the run's durable
-// session has been ended, mirroring startRunOn's refusal to start new runs.
-// Before reporting the refusal it records CancellationReasonSessionEnded on
-// the run (idempotently), so the terminal RunCompleted event carries the
-// canonical provenance even when engine cancellation never delivered —
-// CancelRun rolls its provisional reason back in exactly that case. One-shot
-// runs (empty SessionID) intentionally bypass SessionStore and are never
-// gated.
-func (r *Runtime) sessionEndedForPlanning(ctx context.Context, input *PlanActivityInput) (bool, error) {
-	sessionID := input.RunContext.SessionID
-	if sessionID == "" {
-		return false, nil
-	}
-	sess, err := r.SessionStore.LoadSession(ctx, sessionID)
-	if err != nil {
-		return false, fmt.Errorf("load session %q for planning: %w", sessionID, err)
-	}
-	if sess.Status != session.StatusEnded {
-		return false, nil
-	}
-	if _, _, err := r.recordRunCancellation(ctx, CancelRequest{
-		RunID:  input.RunID,
-		Reason: run.CancellationReasonSessionEnded,
-	}); err != nil {
-		return false, fmt.Errorf("record session-ended cancellation for run %q: %w", input.RunID, err)
-	}
-	return true, nil
-}
-
 func (r *Runtime) planStart(ctx context.Context, reg *AgentRegistration, input *planner.PlanInput) (*planner.PlanResult, error) {
 	if reg.Planner == nil {
 		return nil, errors.New("planner not configured")

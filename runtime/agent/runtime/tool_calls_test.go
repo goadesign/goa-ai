@@ -11,7 +11,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -47,7 +46,7 @@ func TestDispatchToolCallsPropagatesLabelsToActivityInput(t *testing.T) {
 				"svc.tools": {},
 			},
 			toolSpecs: map[tools.Ident]tools.ToolSpec{
-				"search": newAnyJSONSpec("search", "svc.tools"),
+				"search": newAnyJSONSpec("search"),
 			},
 		},
 		activityName: "execute",
@@ -109,13 +108,13 @@ func TestExecuteToolCallsRetainsModelPayloadInWorkflow(t *testing.T) {
 				}),
 			},
 		},
-		Bus:           noopHooks{},
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:     noopHooks{},
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 	}
-	seedTestToolSpecs(rt, newAnyJSONSpec(toolName, toolsetName))
+	seedTestToolset(rt, toolsetName, newAnyJSONSpec(toolName))
 	wfCtx := &testWorkflowContext{
 		ctx:     context.Background(),
 		runtime: rt,

@@ -50,7 +50,7 @@
 //	defer eng.Close()
 //
 //	// Create runtime with engine
-//	rt := runtime.New(runtime.WithEngine(eng))
+//	rt := runtime.New(runtimeStore, runtime.WithEngine(eng))
 //
 //	// Register agents (registers workflows/activities on engine)
 //	chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{...})
@@ -63,6 +63,8 @@ package engine
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/api"
@@ -98,7 +100,90 @@ var (
 	// ErrWorkflowCompleted indicates that a requested workflow mutation arrived
 	// after the workflow had already completed.
 	ErrWorkflowCompleted = errors.New("workflow completed")
+	// ErrWorkflowStartConflict indicates that an existing workflow ID was
+	// started with different immutable execution semantics.
+	ErrWorkflowStartConflict = errors.New("workflow start conflict")
+	// ErrChildWorkflowIDReuse indicates that a parent explicitly issued the
+	// same single-use child workflow ID more than once.
+	ErrChildWorkflowIDReuse = errors.New("child workflow id already used")
 )
+
+type (
+	// WorkflowStartConflictError reports an attempt to reuse a queryable workflow
+	// ID for a different request.
+	WorkflowStartConflictError struct {
+		ID string
+	}
+
+	// CancellationConflictError reports a request whose reason differs from the
+	// reason already accepted for the workflow.
+	CancellationConflictError struct {
+		// RunID identifies the workflow whose first reason won.
+		RunID string
+		// Reason is the later reason that was rejected.
+		Reason string
+	}
+
+	// NonRetryableActivityError marks malformed input or a deterministic contract
+	// conflict that repeating the same activity call cannot repair.
+	NonRetryableActivityError struct {
+		Err error
+	}
+
+	// ChildWorkflowIDReuseError reports a second explicit child workflow start.
+	// Deterministic replay of the original command is not a second start.
+	ChildWorkflowIDReuseError struct {
+		ID string
+	}
+)
+
+// Error implements error.
+func (e *NonRetryableActivityError) Error() string {
+	return e.Err.Error()
+}
+
+// Unwrap exposes the contract error.
+func (e *NonRetryableActivityError) Unwrap() error {
+	return e.Err
+}
+
+// MarkActivityErrorNonRetryable preserves err while classifying it for workflow
+// engines that support retry policies.
+func MarkActivityErrorNonRetryable(err error) error {
+	return &NonRetryableActivityError{Err: err}
+}
+
+// IsActivityErrorNonRetryable reports whether retrying the same activity input
+// cannot succeed.
+func IsActivityErrorNonRetryable(err error) bool {
+	var target *NonRetryableActivityError
+	return errors.As(err, &target)
+}
+
+// Error implements error.
+func (e *ChildWorkflowIDReuseError) Error() string {
+	return fmt.Sprintf("child workflow %q: %v", e.ID, ErrChildWorkflowIDReuse)
+}
+
+// Unwrap exposes ErrChildWorkflowIDReuse for errors.Is.
+func (e *ChildWorkflowIDReuseError) Unwrap() error {
+	return ErrChildWorkflowIDReuse
+}
+
+// Error implements error.
+func (e *WorkflowStartConflictError) Error() string {
+	return fmt.Sprintf("workflow %q: %v", e.ID, ErrWorkflowStartConflict)
+}
+
+// Unwrap exposes ErrWorkflowStartConflict for errors.Is.
+func (e *WorkflowStartConflictError) Unwrap() error {
+	return ErrWorkflowStartConflict
+}
+
+// Error implements error.
+func (e *CancellationConflictError) Error() string {
+	return fmt.Sprintf("run %q already accepted a different cancellation reason; rejected %q", e.RunID, e.Reason)
+}
 
 type (
 	// Engine abstracts workflow registration and execution so adapters (Temporal,
@@ -108,9 +193,9 @@ type (
 		// RegisterWorkflow registers a workflow definition with the engine.
 		RegisterWorkflow(ctx context.Context, def WorkflowDefinition) error
 
-		// RegisterRecordActivity registers the typed activity that persists one
-		// non-empty ordered record batch outside the deterministic workflow thread.
-		RegisterRecordActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.RecordActivityBatchInput) error) error
+		// RegisterStorageActivity registers the one typed activity that applies
+		// runtime storage commands outside the deterministic workflow thread.
+		RegisterStorageActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.StorageActivityCommand) (*api.StorageActivityResult, error)) error
 
 		// RegisterPlannerActivity registers a typed planner activity (PlanStart or
 		// PlanResume) that accepts *api.PlanActivityInput and returns *api.PlanActivityOutput.
@@ -120,23 +205,21 @@ type (
 		// accepts *api.ToolInput and returns *api.ToolOutput.
 		RegisterExecuteToolActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error
 
-		// StartWorkflow initiates a new workflow execution and returns a handle for
-		// interacting with it. The workflow ID in req must be unique for the engine
-		// instance. Returns an error if the workflow name is not registered, the ID
-		// conflicts with a running workflow, or if scheduling fails.
+		// RegisterAgentChildActivity registers the typed activity that prepares one
+		// child-agent run outside deterministic workflow code.
+		RegisterAgentChildActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error)) error
+
+		// StartWorkflow binds req.ID to its immutable request while the backend can
+		// still query that execution. An exact retry returns the original open or
+		// closed execution handle. Reusing a queryable ID with changed semantics
+		// returns WorkflowStartConflictError. Callers own durable command identity
+		// after backend history expires and must not reopen settled work.
 		StartWorkflow(ctx context.Context, req WorkflowStartRequest) (WorkflowHandle, error)
 
-		// QueryRunStatus returns the current lifecycle status for the workflow
-		// identified by workflowID. The engine is the source of truth for durable
-		// workflow status. Returns an error if the workflow does not exist or if
-		// querying fails.
-		QueryRunStatus(ctx context.Context, workflowID string) (RunStatus, error)
-
-		// QueryRunCompletion returns the workflow output for successful runs or the
-		// terminal error for failed/timed-out/canceled runs, addressed by
-		// workflowID. The runtime calls this only after QueryRunStatus reports a
-		// terminal state so implementations may wait for result delivery.
-		QueryRunCompletion(ctx context.Context, workflowID string) (*api.RunOutput, error)
+		// QueryRunCompletion returns the workflow status and, once closed, its
+		// final output or workflow error. The method error is reserved for failure
+		// to retrieve this information.
+		QueryRunCompletion(ctx context.Context, workflowID string) (RunCompletion, error)
 	}
 
 	// RegistrationSealer allows an engine to stage workflow/activity registrations
@@ -150,14 +233,40 @@ type (
 		SealRegistration(ctx context.Context) error
 	}
 
-	// Canceler provides workflow cancellation by workflow ID without requiring
-	// in-process workflow handles. Engines that support out-of-process cancellation
-	// (for example, Temporal) should implement this so callers can cancel runs
-	// across process restarts.
-	Canceler interface {
-		// CancelByID requests cancellation of the workflow identified by
-		// workflowID.
-		CancelByID(ctx context.Context, workflowID string) error
+	// CancellationRequester sends a durable cancellation command to a workflow.
+	CancellationRequester interface {
+		// RequestCancellation waits until workflow code handles the request, then
+		// cancels the workflow. An exact retry succeeds. A different reason returns
+		// CancellationConflictError. A request that arrives after terminal work
+		// starts returns ErrWorkflowCompleted.
+		RequestCancellation(context.Context, CancellationRequest) error
+	}
+
+	// CancellationRequest identifies one workflow and its write-once reason.
+	CancellationRequest struct {
+		// RunID identifies the workflow to cancel.
+		RunID string
+		// Reason records why cancellation was requested.
+		Reason string
+	}
+
+	// CancellationHandler records one cancellation request from workflow code.
+	// It returns ErrWorkflowCompleted when terminal work has already started.
+	CancellationHandler func(WorkflowContext, CancellationRequest) error
+
+	// RunCompletion separates the workflow result from errors encountered while
+	// retrieving it from the engine.
+	RunCompletion struct {
+		// Status is the workflow state observed by the same query.
+		Status RunStatus
+		// CompletedAt is the time the engine closed the workflow. It is zero while
+		// the workflow is open.
+		CompletedAt time.Time
+		// Output is the value returned by a successfully completed workflow.
+		Output *api.RunOutput
+		// WorkflowError is the final error returned by a failed, canceled, or timed
+		// out workflow.
+		WorkflowError error
 	}
 
 	// WorkflowDefinition binds a workflow handler to a logical name and default queue.
@@ -205,6 +314,11 @@ type (
 		// this as a no-op.
 		SetQueryHandler(name string, handler any) error
 
+		// SetCancellationHandler registers the workflow function that durably
+		// records cancellation before execution stops. Requests received before
+		// registration wait for this handler.
+		SetCancellationHandler(CancellationHandler) error
+
 		// WorkflowID returns the unique identifier for this workflow execution.
 		WorkflowID() string
 
@@ -212,10 +326,10 @@ type (
 		// and run-level correlation.
 		RunID() string
 
-		// PublishRecords schedules one activity for a non-empty ordered record
-		// batch and waits for completion. Implementations must run persistence
-		// outside the deterministic workflow thread so record consumers can do I/O.
-		PublishRecords(call RecordActivityCall) error
+		// ExecuteStorageActivity schedules one durable state change and waits for
+		// its matching result. Implementations run storage outside the deterministic
+		// workflow thread so stores and record consumers can do I/O.
+		ExecuteStorageActivity(call StorageActivityCall) (*api.StorageActivityResult, error)
 
 		// ExecutePlannerActivity schedules a planner activity (PlanStart/PlanResume)
 		// and blocks until it completes. Planner activities are executed outside the
@@ -231,6 +345,10 @@ type (
 		// ExecuteToolActivityAsync schedules a tool execution activity and returns a Future
 		// so workflows can run multiple tools concurrently and collect results later.
 		ExecuteToolActivityAsync(call ToolActivityCall) (Future[*api.ToolOutput], error)
+
+		// ExecuteAgentChildActivity prepares one child-agent run outside workflow
+		// code and returns the exact values recorded in workflow history.
+		ExecuteAgentChildActivity(call AgentChildActivityCall) (*api.AgentChildActivityOutput, error)
 
 		// Now returns the current workflow time in a deterministic manner. Implementations
 		// must return a time source that is replay-safe (e.g., Temporal's workflow.Now).
@@ -258,10 +376,13 @@ type (
 		// order (e.g., "wait until any tool future completes").
 		Await(condition func() bool) error
 
-		// StartChildWorkflow starts a child workflow execution and returns a handle
-		// to await its completion or cancel it. Implementations should honor the
-		// provided workflow name, task queue and timeouts without requiring local
-		// registration lookups in the parent process.
+		// StartChildWorkflow issues one single-use child workflow ID and returns a
+		// handle to await or cancel it. A second explicit call with the same ID
+		// returns ChildWorkflowIDReuseError even when the request is identical or
+		// the first child is closed. Deterministic engine replay of the original
+		// call is not a second issuance. Implementations honor the provided
+		// workflow name, task queue, and timeouts without parent-side registration
+		// lookups.
 		StartChildWorkflow(ctx context.Context, req ChildWorkflowRequest) (ChildWorkflowHandle, error)
 
 		// Detached returns a derived WorkflowContext whose cancellation is disconnected
@@ -329,14 +450,13 @@ type (
 		HeartbeatTimeout time.Duration
 	}
 
-	// RecordActivityCall describes one ordered record publication activity from
-	// inside workflow code.
-	RecordActivityCall struct {
-		// Name identifies the registered record activity.
+	// StorageActivityCall describes one durable state change from workflow code.
+	StorageActivityCall struct {
+		// Name identifies the registered storage activity.
 		Name string
 
-		// Input contains the immutable records published in order.
-		Input *api.RecordActivityBatchInput
+		// Command selects one operation and carries its immutable records.
+		Command *api.StorageActivityCommand
 
 		// Options overrides the registered activity defaults for this invocation.
 		Options ActivityOptions
@@ -368,32 +488,56 @@ type (
 		Options ActivityOptions
 	}
 
+	// AgentChildActivityCall describes one child-agent preparation activity.
+	AgentChildActivityCall struct {
+		// Name identifies the registered child-agent activity.
+		Name string
+
+		// Input contains the validated parent call and transcript state.
+		Input *api.AgentChildActivityInput
+
+		// Options overrides the registered activity defaults for this invocation.
+		Options ActivityOptions
+	}
+
+	// EncodedValue contains one memo value in the engine's portable wire form.
+	// Metadata describes how to decode Data. Both fields contain mutable byte
+	// slices: code that creates or retains an EncodedValue must deep-copy Data,
+	// the Metadata map, and every metadata value so callers cannot change an
+	// accepted workflow request after submission.
+	EncodedValue struct {
+		// Metadata describes the encoding stored in Data.
+		Metadata map[string][]byte
+		// Data contains the encoded value bytes.
+		Data []byte
+	}
+
 	// WorkflowStartRequest describes how to launch a workflow execution. Generated
 	// code constructs these when agents are invoked.
 	WorkflowStartRequest struct {
-		// ID is the workflow identifier, which must be unique within the engine scope.
-		// Typically derived from the agent ID and a UUID.
+		// ID is the required workflow identifier, which must be unique within the
+		// engine scope. It is typically derived from the agent ID and a UUID.
 		ID string
-		// Workflow names the registered workflow definition to execute. Engines that
-		// support multiple workflows (one per agent) require this field.
+		// Workflow is the required name that a worker uses to select the workflow
+		// handler.
 		Workflow string
-		// TaskQueue selects the queue to schedule the workflow on. Workers listening
-		// on this queue will pick up the workflow.
+		// TaskQueue is the required queue that receives the workflow task. A worker
+		// listening on this queue will execute the workflow.
 		TaskQueue string
-		// Input is the typed payload passed to the workflow handler.
+		// Input is the required typed payload passed to the workflow handler.
 		Input *api.RunInput
-		// RunTimeout bounds the total workflow execution time at the engine level.
-		// Zero means use the engine default (if any). Engines may map this to their
-		// native execution timeout/TTL (Temporal: WorkflowRunTimeout/ExecutionTimeout).
+		// RunTimeout bounds one workflow execution attempt. A retry starts a fresh
+		// attempt with the same timeout. Zero means use the engine default.
 		RunTimeout time.Duration
-		// Memo stores small diagnostic payloads alongside the workflow execution.
-		// Engines like Temporal persist these for queries/visibility. Nil means no memo.
-		Memo map[string]any
+		// Memo stores exact encoded diagnostic payloads alongside the workflow
+		// execution. Engines persist these bytes without decoding and re-encoding
+		// them. Nil means no memo.
+		Memo map[string]EncodedValue
 		// SearchAttributes captures indexed metadata used for visibility queries.
 		// Nil means no attributes are set.
 		SearchAttributes map[string]any
-		// RetryPolicy controls automatic restarts of the workflow start attempt if
-		// scheduling fails. Not to be confused with activity retries.
+		// RetryPolicy controls automatic retries after a workflow execution fails.
+		// It is separate from activity retries.
 		RetryPolicy RetryPolicy
 	}
 
@@ -412,31 +556,39 @@ type (
 	}
 
 	// RetryPolicy defines retry semantics shared by workflows and activities.
-	// Zero-valued fields mean the engine uses its defaults.
+	// An all-zero policy leaves the engine or registered activity policy
+	// unchanged. Retry timing may be set only with a finite or unlimited attempt
+	// policy so callers cannot submit a partial retry policy.
 	RetryPolicy struct {
-		// MaxAttempts caps the total number of retry attempts. Zero means unlimited retries.
+		// MaxAttempts caps total attempts, including the first. Zero leaves the
+		// engine or registered activity default unchanged.
 		MaxAttempts int
-		// InitialInterval is the delay before the first retry. Zero means use engine default.
+		// UnlimitedAttempts explicitly overrides a registered finite default.
+		// It must not be combined with MaxAttempts.
+		UnlimitedAttempts bool
+		// InitialInterval is the delay before the first retry. Zero leaves the
+		// existing default unchanged.
 		InitialInterval time.Duration
-		// BackoffCoefficient multiplies the delay after each retry. Values < 1 are treated
-		// as 1 (constant backoff). A value of 2 provides exponential backoff.
+		// BackoffCoefficient multiplies the delay after each retry. Zero leaves the
+		// existing default unchanged. Values below 1 are invalid.
 		BackoffCoefficient float64
 	}
 
 	// ChildWorkflowRequest describes a child workflow to start from within an
 	// existing workflow execution.
 	ChildWorkflowRequest struct {
-		// ID is the child workflow identifier, unique within the engine scope.
+		// ID is the required child workflow identifier, unique within the engine
+		// scope.
 		ID string
-		// Workflow is the provider workflow name to execute.
+		// Workflow is the required provider workflow name to execute.
 		Workflow string
-		// TaskQueue is the queue to schedule the child on.
+		// TaskQueue is the required queue that receives the child workflow task.
 		TaskQueue string
-		// Input is the payload passed to the child workflow handler.
+		// Input is the required payload passed to the child workflow handler.
 		Input *api.RunInput
-		// RunTimeout bounds the total child workflow execution time.
+		// RunTimeout bounds one child workflow execution attempt.
 		RunTimeout time.Duration
-		// RetryPolicy controls start retries for the child workflow start attempt.
+		// RetryPolicy controls retries after a child workflow execution fails.
 		RetryPolicy RetryPolicy
 	}
 
@@ -449,7 +601,78 @@ type (
 		IsReady() bool
 		// Cancel requests cancellation of the child workflow execution.
 		Cancel(ctx context.Context) error
-		// RunID returns the engine-assigned run identifier of the child.
-		RunID() string
 	}
 )
+
+// ValidateWorkflowLaunchSettings checks the timeout and retry values shared by
+// root and child workflow starts. Callers use it before decoding or retaining
+// other launch values so malformed timing settings fail first.
+func ValidateWorkflowLaunchSettings(runTimeout time.Duration, retry RetryPolicy) error {
+	if runTimeout < 0 {
+		return errors.New("workflow run timeout must not be negative")
+	}
+	if retry.MaxAttempts < 0 {
+		return errors.New("workflow retry max attempts must not be negative")
+	}
+	if retry.InitialInterval < 0 {
+		return errors.New("workflow retry initial interval must not be negative")
+	}
+	if coefficient := retry.BackoffCoefficient; math.IsNaN(coefficient) ||
+		math.IsInf(coefficient, 0) || coefficient < 0 || coefficient > 0 && coefficient < 1 {
+		return errors.New("workflow retry backoff coefficient must be zero or at least one")
+	}
+	if retry.UnlimitedAttempts && retry.MaxAttempts != 0 {
+		return errors.New("workflow retry cannot set both unlimited attempts and max attempts")
+	}
+	if (retry.InitialInterval != 0 || retry.BackoffCoefficient != 0) &&
+		retry.MaxAttempts == 0 && !retry.UnlimitedAttempts {
+		return errors.New("workflow retry timing requires max attempts or unlimited attempts")
+	}
+	return nil
+}
+
+// ValidateWorkflowStartRequest rejects requests that official workflow engines
+// cannot submit with the same meaning. Callers must provide the workflow ID,
+// workflow name, task queue, and input because an engine must not guess them
+// from local worker registration or configuration.
+func ValidateWorkflowStartRequest(req WorkflowStartRequest) error {
+	if req.ID == "" {
+		return errors.New("workflow id is required")
+	}
+	if req.Workflow == "" {
+		return errors.New("workflow name is required")
+	}
+	if req.TaskQueue == "" {
+		return errors.New("workflow task queue is required")
+	}
+	if req.Input == nil {
+		return errors.New("workflow input is required")
+	}
+	if req.ID != req.Input.RunID {
+		return errors.New("workflow id must match input run id")
+	}
+	return ValidateWorkflowLaunchSettings(req.RunTimeout, req.RetryPolicy)
+}
+
+// ValidateChildWorkflowRequest rejects child requests that official workflow
+// engines cannot start with the same meaning. Callers must provide every value
+// needed to route and execute the child because an engine must not inherit a
+// queue or input from its parent workflow.
+func ValidateChildWorkflowRequest(req ChildWorkflowRequest) error {
+	if req.ID == "" {
+		return errors.New("child workflow id is required")
+	}
+	if req.Workflow == "" {
+		return errors.New("child workflow name is required")
+	}
+	if req.TaskQueue == "" {
+		return errors.New("child workflow task queue is required")
+	}
+	if req.Input == nil {
+		return errors.New("child workflow input is required")
+	}
+	if req.ID != req.Input.RunID {
+		return errors.New("child workflow id must match input run id")
+	}
+	return ValidateWorkflowLaunchSettings(req.RunTimeout, req.RetryPolicy)
+}

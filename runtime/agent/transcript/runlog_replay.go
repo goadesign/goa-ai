@@ -13,6 +13,12 @@ import (
 
 const runlogReplayPageSize = 512
 
+// runLogLister is the one run-log operation transcript replay needs. Callers
+// do not need to provide append, session listing, or purge capabilities.
+type runLogLister interface {
+	ListRunRecords(ctx context.Context, runID string, cursor string, limit int) (runlog.Page, error)
+}
+
 // ReplayRunLogEvents replays canonical transcript seed and append records from
 // an ordered run-log event slice.
 func ReplayRunLogEvents(events []*runlog.Event) ([]*model.Message, bool, error) {
@@ -36,7 +42,7 @@ func ReplayRunLogEvents(events []*runlog.Event) ([]*model.Message, bool, error) 
 
 // BuildMessagesFromRunLog replays canonical transcript message events from the
 // durable run log and returns the ordered provider-ready transcript.
-func BuildMessagesFromRunLog(ctx context.Context, store runlog.Store, runID string) ([]*model.Message, error) {
+func BuildMessagesFromRunLog(ctx context.Context, store runLogLister, runID string) ([]*model.Message, error) {
 	if store == nil {
 		return nil, fmt.Errorf("transcript: runlog store is required")
 	}
@@ -49,7 +55,7 @@ func BuildMessagesFromRunLog(ctx context.Context, store runlog.Store, runID stri
 		found    bool
 	)
 	for {
-		page, err := store.List(ctx, runID, cursor, runlogReplayPageSize)
+		page, err := store.ListRunRecords(ctx, runID, cursor, runlogReplayPageSize)
 		if err != nil {
 			return nil, fmt.Errorf("transcript: list runlog events for run %q: %w", runID, err)
 		}

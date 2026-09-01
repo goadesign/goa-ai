@@ -1,11 +1,11 @@
-// Name is the DSL-declared name for the exported toolset "{{ .Toolset.Name }}".
-const Name = {{ printf "%q" .Toolset.Name }}
+// {{ .ToolsetName }} identifies this exported toolset during registration.
+const {{ .ToolsetName }} = {{ printf "%q" .Toolset.QualifiedName }}
 
-// Service identifies the service that defined the toolset.
-const Service = {{ printf "%q" .Toolset.ServiceName }}
+// {{ .ServiceName }} identifies the service that exposes the toolset.
+const {{ .ServiceName }} = {{ printf "%q" .Toolset.ServiceName }}
 
-// AgentID is the fully-qualified identifier of the agent exporting this toolset.
-const AgentID agent.Ident = {{ printf "%q" .Toolset.Agent.ID }}
+// {{ .AgentIDName }} identifies the agent that runs calls to this toolset.
+const {{ .AgentIDName }} {{ .AgentAlias }}.Ident = {{ printf "%q" .Toolset.Agent.ID }}
 
 // Tool IDs for this exported toolset (globally unique). Use these typed
 // constants as keys for per-tool configuration maps (e.g., SystemPrompts).
@@ -14,14 +14,30 @@ const (
     // {{ .ConstName }} is the canonical tool identifier for {{ .Name }}.
     // Tool IDs are always the fully-qualified "<toolset>.<tool>" form so they
     // match Specs entries, planner requests, and runtime stream events exactly.
-    {{ .ConstName }} tools.Ident = {{ printf "%q" .Name }}
+    {{ .ConstName }} {{ $.ToolsAlias }}.Ident = {{ printf "%q" .Name }}
 {{- end }}
 )
 
+// {{ .SpecsFunc }} returns fresh tool specifications for this exported toolset.
+func {{ .SpecsFunc }}() []{{ .ToolsAlias }}.ToolSpec {
+    specs := make([]{{ .ToolsAlias }}.ToolSpec, 0, {{ len .Tools }})
+    {{- range .Tools }}
+    {
+        spec := {{ $.SpecsAlias }}.{{ .SpecVar }}()
+        spec.IsAgentTool = true
+        spec.AgentID = string({{ $.AgentIDName }})
+        specs = append(specs, spec)
+    }
+    {{- end }}
+    return specs
+}
+
 // Type aliases preserve exact tool payload and result identities.
 {{- range .Tools }}
-type {{ .GoName }}Payload = {{ $.Toolset.SpecsPackageName }}specs.{{ .Payload.TypeName }}
-type {{ .GoName }}Result  = {{ $.Toolset.SpecsPackageName }}specs.{{ .Result.TypeName }}
+type {{ .PayloadAlias }} = {{ $.SpecsAlias }}.{{ .Payload.TypeName }}
+{{- if .ResultAlias }}
+type {{ .ResultAlias }}  = {{ $.SpecsAlias }}.{{ .Result.TypeName }}
+{{- end }}
 {{- end }}
 
 {{- $hasCallHints := false -}}
@@ -31,9 +47,9 @@ type {{ .GoName }}Result  = {{ $.Toolset.SpecsPackageName }}specs.{{ .Result.Typ
 {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
 {{- end }}
 {{- if or $hasCallHints $hasResultHints }}
-func installGeneratedHints(reg *runtime.ToolsetRegistration) error {
+func {{ .HintsInstaller }}(reg *{{ .RuntimeAlias }}.ToolsetRegistration) error {
     {{- if $hasCallHints }}
-    callHints, err := hints.CompileHintTemplates(map[tools.Ident]string{
+    callHints, err := {{ .HintsAlias }}.CompileHintTemplates(map[{{ .ToolsAlias }}.Ident]string{
     {{- range .Toolset.Tools }}
     {{- if .CallHintTemplate }}
         {{ .ConstName }}: {{ printf "%q" .CallHintTemplate }},
@@ -46,7 +62,7 @@ func installGeneratedHints(reg *runtime.ToolsetRegistration) error {
     reg.CallHints = callHints
     {{- end }}
     {{- if $hasResultHints }}
-    resultHints, err := hints.CompileHintTemplates(map[tools.Ident]string{
+    resultHints, err := {{ .HintsAlias }}.CompileHintTemplates(map[{{ .ToolsAlias }}.Ident]string{
     {{- range .Toolset.Tools }}
     {{- if .ResultHintTemplate }}
         {{ .ConstName }}: {{ printf "%q" .ResultHintTemplate }},
@@ -61,100 +77,74 @@ func installGeneratedHints(reg *runtime.ToolsetRegistration) error {
     return nil
 }
 {{- end }}
-
-// New{{ .Toolset.Agent.GoName }}ToolsetRegistration creates a toolset registration for the {{ .Toolset.Agent.Name }} agent.
-// The returned registration can be used with runtime.RegisterToolset to make the agent
-// available as a tool to other agents. When invoked, the agent runs its full planning loop
-// and returns the final response as the tool result. DSL-authored CallHintTemplate and
-// ResultHintTemplate declarations are compiled into hint templates so sinks can render
-// concise labels and previews without heuristics.
-//
-// Example usage:
-//
-//	rt := runtime.New(...)
-//	reg := New{{ .Toolset.Agent.GoName }}ToolsetRegistration(rt)
-//	if err := rt.RegisterToolset(reg); err != nil {
-//		// handle error
-//	}
-func New{{ .Toolset.Agent.GoName }}ToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistration {
-    cfg := runtime.AgentToolConfig{
-        AgentID:   AgentID,
-        Name:      {{ printf "%q" .Toolset.QualifiedName }},
-        TaskQueue: {{ printf "%q" .Toolset.TaskQueue }},
-        Route: runtime.AgentRoute{
-			ID:               AgentID,
-			WorkflowName:     {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }},
-			DefaultTaskQueue: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Queue }},
-		},
-        PlanActivityName:    {{ printf "%q" .Toolset.Agent.Runtime.PlanActivity.Name }},
-        ResumeActivityName:  {{ printf "%q" .Toolset.Agent.Runtime.ResumeActivity.Name }},
-        ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},
+// {{ .ProviderConstructor }} creates a toolset registration for the {{ .Toolset.Agent.Name }} agent.
+// Pass the returned value to {{ .RuntimeAlias }}.RegisterToolset to let other agents call
+// this agent. Each call starts the agent and returns its final response. The
+// generated registration also includes the labels and previews declared for
+// tool calls and results.
+func {{ .ProviderConstructor }}(
+    rt *{{ .RuntimeAlias }}.Runtime,
+    definition {{ .RuntimeAlias }}.AgentDefinition,
+) {{ .RuntimeAlias }}.ToolsetRegistration {
+    cfg := {{ .RuntimeAlias }}.AgentToolConfig{
+        Definition: definition,
+        Name:       {{ .ToolsetName }},
     }
-    reg := runtime.NewAgentToolsetRegistration(rt, cfg)
-    reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs()
-    reg.ToolMetadataLookup = {{ $.Toolset.SpecsPackageName }}specs.MetadataByName
+    reg := {{ .RuntimeAlias }}.NewAgentToolsetRegistration(rt, cfg)
+    reg.Specs = {{ .SpecsFunc }}()
+    reg.ToolMetadataLookup = {{ .SpecsAlias }}.MetadataByName
     {{- if or $hasCallHints $hasResultHints }}
-    if err := installGeneratedHints(&reg); err != nil {
+    if err := {{ .HintsInstaller }}(&reg); err != nil {
         panic(err)
     }
     {{- end }}
     return reg
 }
 
-// NewRegistration creates a toolset registration with an optional agent-wide
-// system prompt and per-tool content configured via runtime options. Callers
-// can mix text and templates; each tool must be configured in exactly one way.
-func NewRegistration(
-    rt *runtime.Runtime,
+// {{ .RegistrationConstructor }} creates a toolset registration with an optional
+// system prompt and content for individual tools. Callers can mix text and
+// templates, but each tool must use exactly one form.
+func {{ .RegistrationConstructor }}(
+    rt *{{ .RuntimeAlias }}.Runtime,
+    definition {{ .RuntimeAlias }}.AgentDefinition,
     systemPrompt string,
-    opts ...runtime.AgentToolOption,
-) (runtime.ToolsetRegistration, error) {
-    cfg := runtime.AgentToolConfig{
-        AgentID:      AgentID,
-        Name:         {{ printf "%q" .Toolset.QualifiedName }},
-        TaskQueue:    {{ printf "%q" .Toolset.TaskQueue }},
+    opts ...{{ .RuntimeAlias }}.AgentToolOption,
+) ({{ .RuntimeAlias }}.ToolsetRegistration, error) {
+    cfg := {{ .RuntimeAlias }}.AgentToolConfig{
+        Definition:   definition,
+        Name:         {{ .ToolsetName }},
         SystemPrompt: systemPrompt,
-        // Strong-contract routing for cross-process child workflow composition
-        Route: runtime.AgentRoute{
-			ID:              AgentID,
-			WorkflowName:    {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Name }},
-			DefaultTaskQueue: {{ printf "%q" .Toolset.Agent.Runtime.Workflow.Queue }},
-		},
-        PlanActivityName:    {{ printf "%q" .Toolset.Agent.Runtime.PlanActivity.Name }},
-        ResumeActivityName:  {{ printf "%q" .Toolset.Agent.Runtime.ResumeActivity.Name }},
-        ExecuteToolActivity: {{ printf "%q" .Toolset.Agent.Runtime.ExecuteTool.Name }},
     }
     for _, o := range opts {
         o(&cfg)
     }
-    // Validate only for the templates explicitly provided (optional)
+    // Check only the templates provided by the caller.
     if len(cfg.Templates) > 0 {
-        ids := make([]tools.Ident, 0, len(cfg.Templates))
+        ids := make([]{{ .ToolsAlias }}.Ident, 0, len(cfg.Templates))
         for id := range cfg.Templates {
             ids = append(ids, id)
         }
-        if err := runtime.ValidateAgentToolTemplates(cfg.Templates, ids, nil); err != nil {
-            return runtime.ToolsetRegistration{}, err
+        if err := {{ .RuntimeAlias }}.ValidateAgentToolTemplates(cfg.Templates, ids, nil); err != nil {
+            return {{ .RuntimeAlias }}.ToolsetRegistration{}, err
         }
     }
-    reg := runtime.NewAgentToolsetRegistration(rt, cfg)
-    reg.Specs = {{ $.Toolset.SpecsPackageName }}specs.Specs()
-    reg.ToolMetadataLookup = {{ $.Toolset.SpecsPackageName }}specs.MetadataByName
+    reg := {{ .RuntimeAlias }}.NewAgentToolsetRegistration(rt, cfg)
+    reg.Specs = {{ .SpecsFunc }}()
+    reg.ToolMetadataLookup = {{ .SpecsAlias }}.MetadataByName
     {{- if or $hasCallHints $hasResultHints }}
-    if err := installGeneratedHints(&reg); err != nil {
-        return runtime.ToolsetRegistration{}, err
+    if err := {{ .HintsInstaller }}(&reg); err != nil {
+        return {{ .RuntimeAlias }}.ToolsetRegistration{}, err
     }
     {{- end }}
     return reg, nil
 }
 
-// Typed tool-call helpers for each tool in this exported toolset. These helpers
-// enforce use of the generated tool identifier and accept a typed payload that
-// matches the tool schema.
+// Typed call helpers use the generated tool identifier and accept the generated
+// payload type for each tool.
 {{- range .Tools }}
-// New{{ goify .Name true }}Call builds a planner-authored request for the
+// {{ .CallFunc }} builds a planner-authored request for the
 // {{ .Name }} tool. The runtime assigns its execution ID.
-func New{{ goify .Name true }}Call(args {{ if .Payload.Pointer }}*{{ end }}{{ .GoName }}Payload) (planner.ToolRequest, error) {
-    return planner.NewToolRequest({{ $.Toolset.SpecsPackageName }}specs.{{ .TypedToolVar }}(), args)
+func {{ .CallFunc }}(args {{ if .Payload.Pointer }}*{{ end }}{{ .PayloadAlias }}) ({{ $.PlannerAlias }}.ToolRequest, error) {
+    return {{ $.PlannerAlias }}.NewToolRequest({{ $.SpecsAlias }}.{{ .TypedToolVar }}(), args)
 }
 {{- end }}

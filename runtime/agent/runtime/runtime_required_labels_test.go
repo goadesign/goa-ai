@@ -10,10 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
-	"goa.design/goa-ai/runtime/agent/engine"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
@@ -23,39 +20,39 @@ import (
 // genuinely dynamic caller input being validated against it.
 func TestValidateRequiredLabels(t *testing.T) {
 	cases := []struct {
-		name      string
-		reg       AgentRegistration
-		labels    map[string]string
-		wantErr   bool
-		wantInMsg []string
+		name       string
+		definition AgentDefinition
+		labels     map[string]string
+		wantErr    bool
+		wantInMsg  []string
 	}{
 		{
-			name: "no required labels is a no-op regardless of input",
-			reg:  AgentRegistration{ID: "svc.agent"},
+			name:       "no required labels is a no-op regardless of input",
+			definition: testAgentDefinition("svc.agent", "workflow", "queue", nil, nil),
 		},
 		{
-			name:   "all required labels present passes",
-			reg:    AgentRegistration{ID: "svc.agent", RequiredLabels: []string{"household_id"}},
-			labels: map[string]string{"household_id": "h1"},
+			name:       "all required labels present passes",
+			definition: testAgentDefinition("svc.agent", "workflow", "queue", nil, []string{"household_id"}),
+			labels:     map[string]string{"household_id": "h1"},
 		},
 		{
-			name:      "missing required label fails naming the key",
-			reg:       AgentRegistration{ID: "svc.agent", RequiredLabels: []string{"household_id"}},
-			labels:    nil,
-			wantErr:   true,
-			wantInMsg: []string{"household_id", "svc.agent"},
+			name:       "missing required label fails naming the key",
+			definition: testAgentDefinition("svc.agent", "workflow", "queue", nil, []string{"household_id"}),
+			labels:     nil,
+			wantErr:    true,
+			wantInMsg:  []string{"household_id", "svc.agent"},
 		},
 		{
-			name:      "missing subset of multiple required labels names only the missing ones",
-			reg:       AgentRegistration{ID: "svc.agent", RequiredLabels: []string{"household_id", "tenant_id"}},
-			labels:    map[string]string{"household_id": "h1"},
-			wantErr:   true,
-			wantInMsg: []string{"tenant_id"},
+			name:       "missing subset of multiple required labels names only the missing ones",
+			definition: testAgentDefinition("svc.agent", "workflow", "queue", nil, []string{"household_id", "tenant_id"}),
+			labels:     map[string]string{"household_id": "h1"},
+			wantErr:    true,
+			wantInMsg:  []string{"tenant_id"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateRequiredLabels(tc.reg, tc.labels)
+			err := validateRequiredLabels(tc.definition, tc.labels)
 			if !tc.wantErr {
 				require.NoError(t, err)
 				return
@@ -75,61 +72,56 @@ func TestValidateRequiredLabels(t *testing.T) {
 func TestStartRunRejectsMissingRequiredLabels(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:       eng,
-		logger:       telemetry.NoopLogger{},
-		metrics:      telemetry.NoopMetrics{},
-		tracer:       telemetry.NoopTracer{},
-		SessionStore: sessioninmem.New(),
+		Engine:  eng,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
-				ID:             "service.agent",
-				RequiredLabels: []string{"household_id"},
-				Workflow:       engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"},
+				Definition: testAgentDefinition("service.agent", "service.workflow", "q", nil, []string{"household_id"}),
 			},
 		},
 	}
-	_, err := rt.CreateSession(context.Background(), "s1")
+	_, err := createSessionForTest(context.Background(), rt.Store, "s1")
 	require.NoError(t, err)
 
 	client := rt.MustClient(agent.Ident("service.agent"))
 
 	// Missing label: run-start must fail before the engine ever sees a
 	// StartWorkflow call.
-	_, err = client.Start(context.Background(), "s1", nil)
+	_, err = client.Start(context.Background(), "s1", nil, WithRunID("run-1"))
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrMissingLabels)
 	require.ErrorContains(t, err, "household_id")
 	require.Empty(t, eng.last.Workflow, "engine must never be asked to start a workflow when required labels are missing")
 
 	// Present label: run-start proceeds normally.
-	_, err = client.Start(context.Background(), "s1", nil, WithLabels(map[string]string{"household_id": "h1"}))
+	_, err = client.Start(context.Background(), "s1", nil, WithRunID("run-2"), WithLabels(map[string]string{"household_id": "h1"}))
 	require.NoError(t, err)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
 }
 
-// TestStartContinuationUsesCheckpointRequiredLabels proves a continuation does
+// TestStartPreparedContinuationUsesCheckpointRequiredLabels proves a continuation does
 // not require callers to repeat trusted labels that the worker restores from
 // the preceding workflow's checkpoint.
-func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
+func TestStartPreparedContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:        eng,
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
-		SessionStore:  sessioninmem.New(),
+		Engine:  eng,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"svc.agent": {
-				ID:             "svc.agent",
-				RequiredLabels: []string{"household_id"},
-				Workflow:       engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"},
+				Definition: testAgentDefinition("svc.agent", "service.workflow", "q", nil, []string{"household_id"}),
 			},
 		},
 	}
-	spec := newAnyJSONSpec("svc.lookup", "svc")
+	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(rt, spec)
-	_, err := rt.CreateSession(context.Background(), "session-1")
+	_, err := createSessionForTest(context.Background(), rt.Store, "session-1")
 	require.NoError(t, err)
 	suspension := suspensionContractFixtureWithContext(
 		t, spec.Name, "svc.agent", "run-1",
@@ -137,22 +129,22 @@ func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 		map[string]any{"request_id": "request-42"},
 	)
 	now := time.Now().UTC()
-	require.NoError(t, rt.SessionStore.UpsertRun(context.Background(), session.RunMeta{
+	admitRunForTest(t, rt.Store, session.RunMeta{
 		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
-		Status: session.RunStatusSuspended, StartedAt: now, UpdatedAt: now,
-	}))
+		Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now,
+	})
 	data, err := json.Marshal(suspension)
 	require.NoError(t, err)
-	require.NoError(t, rt.SessionStore.SaveRunSuspension(context.Background(), "run-1", session.RunSuspension{
+	require.NoError(t, storeSuspensionForTest(context.Background(), rt.Store, "run-1", session.RunSuspension{
 		ID: suspension.ID, Data: data,
 	}))
 
 	client := rt.MustClient(agent.Ident("svc.agent"))
-	workflowOptions := &WorkflowOptions{
+	workflowOptions := WorkflowOptions{
 		Memo:             map[string]any{"owner": "house-42"},
 		SearchAttributes: map[string]any{"tenant": "house-42"},
 	}
-	handle, err := client.StartContinuation(
+	prepared, err := client.PrepareContinuation(
 		context.Background(),
 		"session-1",
 		"run-1",
@@ -164,17 +156,13 @@ func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 		workflowOptions,
 	)
 	require.NoError(t, err)
+	handle, err := client.StartPrepared(context.Background(), prepared)
+	require.NoError(t, err)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
-	require.Equal(t, workflowOptions.Memo, eng.last.Memo)
+	require.Equal(t, "house-42", decodePreparedMemo[string](t, eng.last.Memo, "owner"))
 	require.Equal(t, workflowOptions.SearchAttributes, eng.last.SearchAttributes)
 	require.Empty(t, eng.last.Input.Labels)
-	run, err := rt.SessionStore.LoadRun(context.Background(), "run-2")
-	require.NoError(t, err)
-	require.Equal(t, map[string]string{"household_id": "house-42"}, run.Labels)
-	require.Equal(t, map[string]any{"request_id": "request-42"}, run.Metadata)
-	observed, ok := handle.(*observedWorkflowHandle)
-	require.True(t, ok)
-	require.Equal(t, map[string]string{"household_id": "house-42"}, observed.labels)
+	require.NotNil(t, handle)
 }
 
 // TestStartOneShotRejectsMissingRequiredLabels proves the same run-start
@@ -183,16 +171,13 @@ func TestStartContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 func TestStartOneShotRejectsMissingRequiredLabels(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:     eng,
-		logger:     telemetry.NoopLogger{},
-		metrics:    telemetry.NoopMetrics{},
-		tracer:     telemetry.NoopTracer{},
-		runHandles: make(map[string]engine.WorkflowHandle),
+		Engine:  eng,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
-				ID:             "service.agent",
-				RequiredLabels: []string{"household_id"},
-				Workflow:       engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"},
+				Definition: testAgentDefinition("service.agent", "service.workflow", "q", nil, []string{"household_id"}),
 			},
 		},
 	}
@@ -216,22 +201,21 @@ func TestStartOneShotRejectsMissingRequiredLabels(t *testing.T) {
 func TestStartRunSucceedsWithoutRequiredLabels(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
-		Engine:       eng,
-		logger:       telemetry.NoopLogger{},
-		metrics:      telemetry.NoopMetrics{},
-		tracer:       telemetry.NoopTracer{},
-		SessionStore: sessioninmem.New(),
+		Engine:  eng,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"service.agent": {
-				ID:       "service.agent",
-				Workflow: engine.WorkflowDefinition{Name: "service.workflow", TaskQueue: "q"},
+				Definition: testAgentDefinition("service.agent", "service.workflow", "q", nil, nil),
 			},
 		},
 	}
-	_, err := rt.CreateSession(context.Background(), "s1")
+	_, err := createSessionForTest(context.Background(), rt.Store, "s1")
 	require.NoError(t, err)
 	client := rt.MustClient(agent.Ident("service.agent"))
-	_, err = client.Start(context.Background(), "s1", nil)
+	_, err = client.Start(context.Background(), "s1", nil, WithRunID("run-1"))
 	require.NoError(t, err)
 	require.Equal(t, "service.workflow", eng.last.Workflow)
 }

@@ -1,3 +1,6 @@
+// This file copies the authored services and JSON-RPC routes before the MCP
+// generator adds its service to the Goa design.
+
 package codegen
 
 import (
@@ -8,22 +11,16 @@ import (
 )
 
 type sourceSnapshot struct {
-	services      []*expr.ServiceExpr
-	jsonrpcRoutes map[string]sourceJSONRPCRoute
+	services     []*expr.ServiceExpr
+	jsonrpcPaths map[string]string
 }
 
-type sourceJSONRPCRoute struct {
-	method string
-	path   string
-}
-
-// collectSourceSnapshot captures the original services and JSON-RPC routes from
-// the current Goa roots. The snapshot is immutable per invocation so generation
-// stays deterministic and reentrant while preserving the source transport
-// contract for validation.
+// collectSourceSnapshot copies the authored services and JSON-RPC routes before
+// the generator adds its MCP service. Later checks use this copy so they do not
+// mistake generated services or routes for user declarations.
 func collectSourceSnapshot(roots []eval.Root) *sourceSnapshot {
 	serviceByName := make(map[string]*expr.ServiceExpr)
-	jsonrpcRoutes := make(map[string]sourceJSONRPCRoute)
+	jsonrpcPaths := make(map[string]string)
 
 	for _, root := range roots {
 		r, ok := root.(*expr.RootExpr)
@@ -40,10 +37,7 @@ func collectSourceSnapshot(roots []eval.Root) *sourceSnapshot {
 			if service.ServiceExpr == nil || service.JSONRPCRoute == nil {
 				continue
 			}
-			jsonrpcRoutes[service.ServiceExpr.Name] = sourceJSONRPCRoute{
-				method: service.JSONRPCRoute.Method,
-				path:   service.JSONRPCRoute.Path,
-			}
+			jsonrpcPaths[service.ServiceExpr.Name] = service.JSONRPCRoute.Path
 		}
 	}
 
@@ -59,20 +53,7 @@ func collectSourceSnapshot(roots []eval.Root) *sourceSnapshot {
 	}
 
 	return &sourceSnapshot{
-		services:      services,
-		jsonrpcRoutes: jsonrpcRoutes,
+		services:     services,
+		jsonrpcPaths: jsonrpcPaths,
 	}
-}
-
-func (s *sourceSnapshot) jsonrpcRoute(serviceName string) (sourceJSONRPCRoute, bool) {
-	route, ok := s.jsonrpcRoutes[serviceName]
-	return route, ok
-}
-
-func (s *sourceSnapshot) jsonrpcPath(serviceName string) (string, bool) {
-	route, ok := s.jsonrpcRoute(serviceName)
-	if !ok || route.path == "" {
-		return "", false
-	}
-	return route.path, true
 }

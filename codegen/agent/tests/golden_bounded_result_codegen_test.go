@@ -2,6 +2,7 @@ package tests
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -41,6 +42,15 @@ func TestGolden_BoundedResult_UsesBoundsSpecAndProjection(t *testing.T) {
 	require.Contains(t, provider, "bounds.Returned = mr.Returned")
 	require.Contains(t, provider, "bounds.Truncated = mr.Truncated")
 	require.Contains(t, provider, "bounds.NextCursor = mr.NextCursor")
+
+	codecs := generatedContentBySuffix(t, files, "toolsets/lookup/codecs.go")
+	require.Contains(t, codecs, `return validateSearchResultJSONValue("", root, "")`)
+	require.Equal(t, 1, strings.Count(codecs, "func validateSearchResultJSON(data []byte) error"))
+	require.NotContains(t, codecs, "func validateSearchCopyResultJSON(data []byte) error")
+	require.Equal(t, 1, strings.Count(codecs, "func validateSearchResultJSONValue("))
+	require.NotContains(t, codecs, "func validateSearchCopyResultJSONValue(")
+	require.Contains(t, codecs, "func validateSearchAllResultJSONValue(")
+	assertGoldenGo(t, "bounded_result", "codecs.go.golden", codecs)
 }
 
 func TestGolden_BoundedResult_ProjectsRequiredExactTotal(t *testing.T) {

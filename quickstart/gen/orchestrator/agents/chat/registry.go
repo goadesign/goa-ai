@@ -13,16 +13,14 @@ import (
 	"fmt"
 	"time"
 
-	specs "example.com/quickstart/gen/orchestrator/agents/chat/specs"
 	helpers "example.com/quickstart/gen/orchestrator/toolsets/helpers"
 	"goa.design/goa-ai/runtime/agent/engine"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 )
 
 // RegisterChatAgent registers the generated agent components with the local runtime.
-// This helper wires generated code into `agentsruntime.Runtime`; it does not
-// implement the clustered `registry` service or the `runtime/toolregistry`
-// wire protocol.
+// This helper registers only with the runtime in this process. It does not
+// publish the agent to a registry service.
 func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatAgentConfig) error {
 	if rt == nil {
 		return errors.New("runtime is required")
@@ -32,13 +30,9 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 		return err
 	}
 	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
-		ID:      "orchestrator.chat",
-		Planner: agent.Planner,
-		Workflow: engine.WorkflowDefinition{
-			Name:      "orchestrator.chat.workflow",
-			TaskQueue: "orchestrator_chat_workflow",
-			Handler:   rt.ExecuteWorkflow,
-		},
+		Definition:       Definition(),
+		Planner:          agent.Planner,
+		WorkflowHandler:  rt.ExecuteWorkflow,
 		PlanActivityName: "orchestrator.chat.plan",
 		PlanActivityOptions: engine.ActivityOptions{
 			Queue:               "orchestrator_chat_workflow",
@@ -67,9 +61,6 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 				BackoffCoefficient: 2,
 			},
 		},
-		Specs:              specs.Specs(),
-		ToolMetadataLookup: specs.MetadataByName,
-		RequiredLabels:     specs.RequiredLabels(),
 		Policy: agentsruntime.RunPolicy{
 			MaxToolCalls:     2,
 			MaxRecoveryTurns: 1,
@@ -79,9 +70,8 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 		return err
 	}
 
-	// Service-backed toolsets (method-backed Used toolsets) are registered by
-	// application code using executors. Agent-exported toolsets are wired via
-	// provider agenttools helpers and consumer-side agent toolset helpers.
+	// Application code registers toolsets that call Goa service methods.
+	// Generated helpers register toolsets provided by another agent.
 	return nil
 }
 
@@ -113,21 +103,20 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 		}
 	}
 	var missing []string
-	if cfg.executors["orchestrator.helpers"] == nil {
-		missing = append(missing, "orchestrator.helpers")
+	if cfg.executors[HelpersToolsetName] == nil {
+		missing = append(missing, HelpersToolsetName)
 	}
 	if len(missing) > 0 {
 		return fmt.Errorf("missing executors for toolsets: %v", missing)
 	}
 	// Register non-MCP used toolsets that are not provided by agent-as-tool exports.
 	{
-		const toolsetID = "orchestrator.helpers"
-		exec := cfg.executors[toolsetID]
+		exec := cfg.executors[HelpersToolsetName]
 		reg := agentsruntime.ToolsetRegistration{
-			Name:               toolsetID,
+			Name:               HelpersToolsetName,
 			Specs:              helpers.Specs(),
 			ToolMetadataLookup: helpers.MetadataByName,
-			ResultMaterializer: cfg.resultMaterializers[toolsetID],
+			ResultMaterializer: cfg.resultMaterializers[HelpersToolsetName],
 			Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
 				if call == nil {
 					return nil, fmt.Errorf("tool request is nil")
@@ -150,16 +139,19 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 	return nil
 }
 
+// HelpersToolsetName is the local registration name for orchestrator.helpers.
+const HelpersToolsetName = "orchestrator.helpers"
+
 // WithHelpersExecutor associates an executor for orchestrator.helpers.
 func WithHelpersExecutor(exec agentsruntime.ToolCallExecutor) func(*usedToolsetRegistrationOptions) {
 	return func(cfg *usedToolsetRegistrationOptions) {
-		cfg.executors["orchestrator.helpers"] = exec
+		cfg.executors[HelpersToolsetName] = exec
 	}
 }
 
 // WithHelpersResultMaterializer associates a result materializer for orchestrator.helpers.
 func WithHelpersResultMaterializer(materializer agentsruntime.ResultMaterializer) func(*usedToolsetRegistrationOptions) {
 	return func(cfg *usedToolsetRegistrationOptions) {
-		cfg.resultMaterializers["orchestrator.helpers"] = materializer
+		cfg.resultMaterializers[HelpersToolsetName] = materializer
 	}
 }

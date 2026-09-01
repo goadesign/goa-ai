@@ -40,7 +40,6 @@ func TestBuildNextResumeRequestKeepsLargePayloadAndResultsOffWire(t *testing.T) 
 			ToolCallID:  "tc-1",
 			Payload:     payload,
 			Result:      result,
-			ResultBytes: len(result),
 			ServerData:  serverData,
 		},
 	}
@@ -70,7 +69,7 @@ func TestBuildNextResumeRequestKeepsLargePayloadAndResultsOffWire(t *testing.T) 
 func TestToolResultContentTruncatesOversizedResults(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{})
 	name := tools.Ident("svc.ts.big")
-	rt.toolSpecs[name] = newAnyJSONSpec(name, "svc.ts")
+	rt.toolSpecs[name] = newAnyJSONSpec(name)
 
 	tr := &planner.ToolResult{
 		Name:       name,

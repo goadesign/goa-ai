@@ -201,27 +201,6 @@ type ToolResult struct {
 	//     using the tool specs/codecs for the corresponding kinds.
 	ServerData rawjson.Message
 
-	// ResultBytes is the size, in bytes, of the canonical JSON result payload when
-	// known. It is populated by the runtime when a tool result crosses a workflow
-	// boundary as an api.ToolEvent.
-	ResultBytes int
-
-	// ResultOmitted indicates that the runtime intentionally omitted the canonical
-	// JSON result payload from the workflow-boundary envelope to satisfy payload
-	// budgets. When true, Result is nil even though the tool produced a result.
-	//
-	// Planners must treat ResultOmitted as a control-plane constraint: use bounded
-	// transcript projections, out-of-band persistence, or follow-up tools to narrow
-	// the request rather than expecting full payloads to be carried in activity
-	// inputs.
-	ResultOmitted bool
-
-	// ResultOmittedReason provides a stable, machine-readable reason for omitting
-	// the result bytes. Empty when ResultOmitted is false.
-	//
-	// Example values: "workflow_budget".
-	ResultOmittedReason string
-
 	// Bounds, when non-nil, describes how the result has been bounded relative
 	// to the full underlying data set (for example, list/window/graph caps).
 	// Tool implementations and adapters populate this field; the runtime and
@@ -300,16 +279,6 @@ type ToolOutput struct {
 	// Result is the canonical JSON result payload encoded with the tool result codec.
 	Result rawjson.Message
 
-	// ResultBytes is the size, in bytes, of the canonical JSON result payload when known.
-	ResultBytes int
-
-	// ResultOmitted indicates that the canonical JSON result payload was intentionally
-	// omitted to satisfy workflow payload budgets.
-	ResultOmitted bool
-
-	// ResultOmittedReason provides a stable, machine-readable reason for omission.
-	ResultOmittedReason string
-
 	// ServerData carries canonical server-only JSON emitted alongside the tool result.
 	ServerData rawjson.Message
 
@@ -346,17 +315,6 @@ type FinalToolResult struct {
 
 	// ServerData carries server-only data associated with the final tool result.
 	ServerData rawjson.Message
-
-	// ResultBytes is the size, in bytes, of the canonical JSON result payload
-	// when known.
-	ResultBytes int
-
-	// ResultOmitted indicates that the canonical JSON result payload was
-	// intentionally omitted to satisfy workflow payload budgets.
-	ResultOmitted bool
-
-	// ResultOmittedReason provides a stable, machine-readable reason for omission.
-	ResultOmittedReason string
 
 	// Bounds describes how the result has been bounded relative to the full data
 	// set when applicable.

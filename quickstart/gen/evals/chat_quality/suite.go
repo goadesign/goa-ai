@@ -23,7 +23,7 @@ type (
 		Question string
 	}
 	// Hooks is implemented by the application running this evaluation suite.
-	// Methods may run concurrently and each owns its complete system interaction.
+	// Methods can run at the same time. Each method completes one scenario.
 	Hooks interface {
 		// GreetingReply executes the greeting_reply scenario.
 		GreetingReply(context.Context, *AskPayload) (eval.Result, error)
@@ -31,15 +31,14 @@ type (
 		HelpersContract(context.Context) (eval.Result, error)
 	}
 
-	// Inputs supplies the application-owned value for every typed scenario.
+	// Inputs contains the application value for every typed scenario.
 	Inputs struct {
 		// GreetingReply is passed to the greeting_reply hook.
 		GreetingReply *AskPayload
 	}
 )
 
-// New validates application inputs and binds hooks to the immutable generated
-// suite definition.
+// New validates application inputs and builds the evaluation suite.
 func New(hooks Hooks, inputs Inputs) (eval.Suite, error) {
 	if hooks == nil {
 		return eval.Suite{}, fmt.Errorf("evaluation hooks are required")
@@ -74,9 +73,9 @@ func New(hooks Hooks, inputs Inputs) (eval.Suite, error) {
 }
 
 // ValidateAskPayload validates a generated evaluation input.
-func ValidateAskPayload(value *AskPayload) (err error) {
+func ValidateAskPayload(value *AskPayload) error {
 	if value == nil {
 		return goa.MissingFieldError("input", "evaluation scenario")
 	}
-	return
+	return nil
 }

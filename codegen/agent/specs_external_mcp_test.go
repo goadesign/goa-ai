@@ -53,8 +53,8 @@ func TestExternalMCPToolset_SelfContainedTypes(t *testing.T) {
 	require.NotNil(t, data)
 	svc := data.Services[0]
 	ag := svc.Agents[0]
-	specs, err := codegen.BuildToolSpecsDataForTest(ag)
-	require.NoError(t, err)
+	require.Len(t, ag.MCPToolsets, 1)
+	specs := codegen.ToolSpecsDataForTest(ag)
 
 	defs := codegen.CollectTypeInfoForTest(specs)
 	// Look for assistant-mcp types; ensure no "= <pkg>." aliasing appears.

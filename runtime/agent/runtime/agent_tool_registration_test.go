@@ -53,59 +53,24 @@ func TestRegisterToolsetValidatesAgentToolExecution(t *testing.T) {
 			wantErr: "requires a generated agent id",
 		},
 		{
-			name: "missing registered agent id",
+			name: "missing generated definition",
 			mutate: func(registration *ToolsetRegistration) {
-				registration.AgentTool.AgentID = ""
+				registration.AgentTool.Definition = AgentDefinition{}
 			},
-			wantErr: "requires a registered agent id",
-		},
-		{
-			name: "missing route agent id",
-			mutate: func(registration *ToolsetRegistration) {
-				registration.AgentTool.Route.ID = ""
-			},
-			wantErr: "requires a route agent id",
+			wantErr: "requires a generated agent definition",
 		},
 		{
 			name: "spec and registration agent ids differ",
 			mutate: func(registration *ToolsetRegistration) {
 				registration.Specs[0].AgentID = otherAgentID
 			},
-			wantErr: `agent ids must match: spec="service.other" registration="service.worker" route="service.worker"`,
-		},
-		{
-			name: "registration and route agent ids differ",
-			mutate: func(registration *ToolsetRegistration) {
-				registration.AgentTool.AgentID = otherAgentID
-			},
-			wantErr: `agent ids must match: spec="service.worker" registration="service.other" route="service.worker"`,
-		},
-		{
-			name: "spec and route agent ids differ",
-			mutate: func(registration *ToolsetRegistration) {
-				registration.AgentTool.Route.ID = otherAgentID
-			},
-			wantErr: `agent ids must match: spec="service.worker" registration="service.worker" route="service.other"`,
-		},
-		{
-			name: "missing route workflow",
-			mutate: func(registration *ToolsetRegistration) {
-				registration.AgentTool.Route.WorkflowName = ""
-			},
-			wantErr: "requires a route workflow name",
-		},
-		{
-			name: "missing route task queue",
-			mutate: func(registration *ToolsetRegistration) {
-				registration.AgentTool.Route.DefaultTaskQueue = ""
-			},
-			wantErr: "requires a route task queue",
+			wantErr: `agent id "service.other" does not match definition "service.worker"`,
 		},
 	}
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			runtime := New()
+			runtime := New(newTestStore())
 			registration := agentToolRegistrationFixture(runtime)
 			if test.mutate != nil {
 				test.mutate(&registration)
@@ -127,8 +92,8 @@ func TestRegisterToolsetValidatesAgentToolExecution(t *testing.T) {
 }
 
 func TestRegisterToolsetLeavesNonAgentToolsUnchanged(t *testing.T) {
-	runtime := New()
-	spec := newAnyJSONSpec("service.tools.lookup", "service.tools")
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("service.tools.lookup")
 
 	err := runtime.RegisterToolset(ToolsetRegistration{
 		Name:  "service.tools",
@@ -143,7 +108,7 @@ func TestRegisterToolsetLeavesNonAgentToolsUnchanged(t *testing.T) {
 }
 
 func TestRegisterToolsetRejectsInvalidAgentToolAtomically(t *testing.T) {
-	runtime := New()
+	runtime := New(newTestStore())
 	registration := agentToolRegistrationFixture(runtime)
 	invalid := registration.Specs[0]
 	invalid.Name = "service.tools.invalid"
@@ -169,17 +134,12 @@ func TestRegisterToolsetRejectsInvalidAgentToolAtomically(t *testing.T) {
 
 func agentToolRegistrationFixture(runtime *Runtime) ToolsetRegistration {
 	const agentID = agent.Ident("service.worker")
-	spec := newAnyJSONSpec("service.tools.run", "service.tools")
+	spec := newAnyJSONSpec("service.tools.run")
 	spec.IsAgentTool = true
 	spec.AgentID = string(agentID)
 	registration := NewAgentToolsetRegistration(runtime, AgentToolConfig{
-		AgentID: agentID,
-		Name:    "service.tools",
-		Route: AgentRoute{
-			ID:               agentID,
-			WorkflowName:     "service.worker.workflow",
-			DefaultTaskQueue: "service.worker.queue",
-		},
+		Definition: testAgentDefinition(agentID, "service.worker.workflow", "service.worker.queue", nil, nil),
+		Name:       "service.tools",
 	})
 	registration.Specs = []tools.ToolSpec{spec}
 	return registration

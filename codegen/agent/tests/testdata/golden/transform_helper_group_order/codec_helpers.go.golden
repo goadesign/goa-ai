@@ -1,0 +1,37 @@
+package records
+
+// Helper transform functions
+func decodeKeyEventTransportToKeyEvent(v *toolhttp.KeyEventTransport) *KeyEvent {
+	res := &KeyEvent{
+		Key: *v.Key,
+	}
+	if v.RuntimeChange != nil {
+		res.RuntimeChange = decodeRuntimeChangeTransportToRuntimeChange(v.RuntimeChange)
+	}
+
+	return res
+}
+func decodeRuntimeChangeTransportToRuntimeChange(v *toolhttp.RuntimeChangeTransport) *RuntimeChange {
+	res := &RuntimeChange{
+		Application: *v.Application,
+	}
+
+	return res
+}
+func encodeKeyEventToKeyEventTransport(v *KeyEvent) *toolhttp.KeyEventTransport {
+	res := &toolhttp.KeyEventTransport{
+		Key: &v.Key,
+	}
+	if v.RuntimeChange != nil {
+		res.RuntimeChange = encodeRuntimeChangeToRuntimeChangeTransport(v.RuntimeChange)
+	}
+
+	return res
+}
+func encodeRuntimeChangeToRuntimeChangeTransport(v *RuntimeChange) *toolhttp.RuntimeChangeTransport {
+	res := &toolhttp.RuntimeChangeTransport{
+		Application: &v.Application,
+	}
+
+	return res
+}

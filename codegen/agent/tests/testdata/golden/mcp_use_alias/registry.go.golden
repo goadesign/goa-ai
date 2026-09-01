@@ -10,18 +10,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	calc_remote "goa.design/goa-ai/alpha/agents/scribe/calc_remote"
-	specs "goa.design/goa-ai/alpha/agents/scribe/specs"
-	calc_remote2 "goa.design/goa-ai/calc/toolsets/calc_remote"
+	calc_remote "goa.design/goa-ai/gen/alpha/agents/scribe/calc_remote"
+	specs "goa.design/goa-ai/gen/alpha/agents/scribe/specs"
+	calc_remote2 "goa.design/goa-ai/gen/calc/toolsets/calc_remote"
 	"goa.design/goa-ai/runtime/agent/engine"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"time"
 )
 
 // RegisterScribeAgent registers the generated agent components with the local runtime.
-// This helper wires generated code into `agentsruntime.Runtime`; it does not
-// implement the clustered `registry` service or the `runtime/toolregistry`
-// wire protocol.
+// This helper registers only with the runtime in this process. It does not
+// publish the agent to a registry service.
 func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ScribeAgentConfig) error {
 	if rt == nil {
 		return errors.New("runtime is required")
@@ -31,13 +30,9 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		return err
 	}
 	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
-		ID:      "alpha.scribe",
-		Planner: agent.Planner,
-		Workflow: engine.WorkflowDefinition{
-			Name:      "alpha.scribe.workflow",
-			TaskQueue: "alpha_scribe_workflow",
-			Handler:   rt.ExecuteWorkflow,
-		},
+		Definition:       Definition(),
+		Planner:          agent.Planner,
+		WorkflowHandler:  rt.ExecuteWorkflow,
 		PlanActivityName: "alpha.scribe.plan",
 		PlanActivityOptions: engine.ActivityOptions{
 			Queue:               "alpha_scribe_workflow",
@@ -66,10 +61,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 				BackoffCoefficient: 2,
 			},
 		},
-		Specs:              specs.Specs(),
-		ToolMetadataLookup: specs.MetadataByName,
-		RequiredLabels:     specs.RequiredLabels(),
-		Policy:             agentsruntime.RunPolicy{},
+		Policy: agentsruntime.RunPolicy{},
 	}); err != nil {
 		return err
 	}
@@ -83,10 +75,10 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 			return fmt.Errorf("mcp caller for %s is required", ScribeCalcServiceCoreSuiteCalcRemoteAliasToolsetID)
 		}
 		exec := calc_remote.NewScribeCalcRemoteMCPExecutor(caller)
-		// Build a runtime ToolsetRegistration inline to avoid exposing method/service adapters.
+		// Register this remote toolset without exposing its generated service caller.
 		reg := agentsruntime.ToolsetRegistration{
 			Name: "calc-remote",
-			// Use the used-toolset specs package for strong-contract payload/result codecs.
+			// Decode calls and results with the schemas generated for this toolset.
 			Specs:              calc_remote2.Specs(),
 			ToolMetadataLookup: calc_remote2.MetadataByName,
 			Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
@@ -109,8 +101,7 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 		}
 	}
 
-	// Service-backed toolsets (method-backed Used toolsets) are registered by
-	// application code using executors. Agent-exported toolsets are wired via
-	// provider agenttools helpers and consumer-side agent toolset helpers.
+	// Application code registers toolsets that call Goa service methods.
+	// Generated helpers register toolsets provided by another agent.
 	return nil
 }

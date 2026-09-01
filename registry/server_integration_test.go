@@ -164,8 +164,8 @@ func TestServerIntegration(t *testing.T) {
 		assert.False(t, different.Ready)
 
 		_, err = rawClient.CheckAdmission(ctx, &registrypb.CheckAdmissionRequest{
-			Name:                      testToolsetName,
-			ExpectedRegistrationToken: "invalid",
+			Name:                      strPtr(testToolsetName),
+			ExpectedRegistrationToken: strPtr("invalid"),
 		})
 		assert.Equal(t, codes.InvalidArgument, status.Code(err))
 	})
@@ -546,6 +546,7 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 		"provider-a",
 	))
 	require.NoError(t, err)
+	wireProtocolVersion := int32(toolregistry.WireProtocolVersion)
 
 	_, err = rawClient.Register(ctx, grpcRegisterRequest(
 		"status-tools",
@@ -556,14 +557,14 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	assert.Equal(t, codes.Unavailable, status.Code(err))
 
 	_, err = rawClient.Unregister(ctx, &registrypb.UnregisterRequest{
-		Name:                      "status-tools",
-		ExpectedRegistrationToken: testStaleToken,
+		Name:                      strPtr("status-tools"),
+		ExpectedRegistrationToken: strPtr(testStaleToken),
 	})
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	_, err = rawClient.Unregister(ctx, &registrypb.UnregisterRequest{
-		Name:                      "status-tools",
-		ExpectedRegistrationToken: first.GetRegistrationToken(),
+		Name:                      strPtr("status-tools"),
+		ExpectedRegistrationToken: strPtr(first.GetRegistrationToken()),
 	})
 	require.NoError(t, err)
 	_, err = rawClient.Register(ctx, grpcRegisterRequest(
@@ -575,13 +576,13 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 
 	_, err = rawClient.CallTool(ctx, &registrypb.CallToolRequest{
-		Toolset:     "status-tools",
-		Tool:        "status.lookup",
+		Toolset:     strPtr("status-tools"),
+		Tool:        strPtr("status.lookup"),
 		PayloadJson: []byte(`{}`),
 		Meta: &registrypb.ToolCallMeta{
-			RunId:      "run-1",
-			SessionId:  "session-1",
-			ToolCallId: "old-consumer-call",
+			RunId:      strPtr("run-1"),
+			SessionId:  strPtr("session-1"),
+			ToolCallId: strPtr("old-consumer-call"),
 		},
 	})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -589,14 +590,14 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 
 	overlongID := strings.Repeat("x", 257)
 	_, err = rawClient.CallTool(ctx, &registrypb.CallToolRequest{
-		Toolset:             "status-tools",
-		Tool:                "status.lookup",
+		Toolset:             strPtr("status-tools"),
+		Tool:                strPtr("status.lookup"),
 		PayloadJson:         []byte(`{}`),
-		WireProtocolVersion: int32(toolregistry.WireProtocolVersion),
+		WireProtocolVersion: &wireProtocolVersion,
 		Meta: &registrypb.ToolCallMeta{
-			RunId:      "run-1",
-			SessionId:  "session-1",
-			ToolCallId: overlongID,
+			RunId:      strPtr("run-1"),
+			SessionId:  strPtr("session-1"),
+			ToolCallId: strPtr(overlongID),
 		},
 	})
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
@@ -605,8 +606,8 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	canceledCtx, cancel := context.WithCancel(ctx)
 	cancel()
 	_, err = rawClient.CheckAdmission(canceledCtx, &registrypb.CheckAdmissionRequest{
-		Name:                      "status-tools",
-		ExpectedRegistrationToken: first.GetRegistrationToken(),
+		Name:                      strPtr("status-tools"),
+		ExpectedRegistrationToken: strPtr(first.GetRegistrationToken()),
 	})
 	assert.Equal(t, codes.Canceled, status.Code(err))
 	_, err = generatedClient.CheckAdmission(canceledCtx, &genregistry.CheckAdmissionPayload{
@@ -635,14 +636,14 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 	require.ErrorAs(t, err, &serviceErr)
 	assert.Equal(t, "call_not_admitted", serviceErr.Name)
 	_, err = rejectedRawClient.CallTool(ctx, &registrypb.CallToolRequest{
-		Toolset:             "status-tools",
-		Tool:                "status.lookup",
+		Toolset:             strPtr("status-tools"),
+		Tool:                strPtr("status.lookup"),
 		PayloadJson:         []byte(`{}`),
-		WireProtocolVersion: int32(toolregistry.WireProtocolVersion),
+		WireProtocolVersion: &wireProtocolVersion,
 		Meta: &registrypb.ToolCallMeta{
-			RunId:      "run-1",
-			SessionId:  "session-1",
-			ToolCallId: "rejected-call",
+			RunId:      strPtr("run-1"),
+			SessionId:  strPtr("session-1"),
+			ToolCallId: strPtr("rejected-call"),
 		},
 	})
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -721,20 +722,21 @@ func startServiceAndClients(
 func grpcRegisterRequest(
 	name, description, revision, providerID string,
 ) *registrypb.RegisterRequest {
+	wireProtocolVersion := int32(toolregistry.WireProtocolVersion)
 	request := &registrypb.RegisterRequest{
-		Name:                  name,
+		Name:                  strPtr(name),
 		Description:           &description,
-		ProviderId:            providerID,
-		ProviderIncarnationId: testIncarnationA,
-		AdmissionRevision:     revision,
-		WireProtocolVersion:   int32(toolregistry.WireProtocolVersion),
+		ProviderId:            strPtr(providerID),
+		ProviderIncarnationId: strPtr(testIncarnationA),
+		AdmissionRevision:     strPtr(revision),
+		WireProtocolVersion:   &wireProtocolVersion,
 		Tools: []*registrypb.ToolSchema{{
-			Name:          "status.lookup",
+			Name:          strPtr("status.lookup"),
 			PayloadSchema: []byte(`{"type":"object"}`),
 			ResultSchema:  []byte(`{"type":"object"}`),
 		}},
 	}
-	request.SchemaFingerprint = toolsetSchemaFingerprint(&genregistry.Toolset{
+	request.SchemaFingerprint = strPtr(toolsetSchemaFingerprint(&genregistry.Toolset{
 		Name:        name,
 		Description: &description,
 		Tools: []*genregistry.ToolSchema{{
@@ -742,7 +744,7 @@ func grpcRegisterRequest(
 			PayloadSchema: []byte(`{"type":"object"}`),
 			ResultSchema:  []byte(`{"type":"object"}`),
 		}},
-	})
+	}))
 	return request
 }
 

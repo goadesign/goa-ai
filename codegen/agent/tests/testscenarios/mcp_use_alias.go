@@ -13,6 +13,9 @@ func MCPUseAlias() func() {
 		API("alpha", func() {})
 		Service("calc", func() {
 			MCP("core", "1.0.0")
+			JSONRPC(func() {
+				POST("/calc")
+			})
 			Method("add", func() {
 				Payload(func() {
 					Attribute("a", Int, "First operand")

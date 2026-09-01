@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -19,11 +20,11 @@ import (
 )
 
 func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
-	tool := newAnyJSONSpec("svc.update", "svc")
+	tool := newAnyJSONSpec("svc.update")
 	tool.Bookkeeping = true
 	tool.TerminalRun = true
 	executions := 0
-	runtime := New(
+	runtime := New(newTestStore(),
 		WithLogger(telemetry.NoopLogger{}),
 		WithToolConfirmation(&ToolConfirmationConfig{Confirm: map[tools.Ident]*ToolConfirmation{
 			tool.Name: {
@@ -67,7 +68,7 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 	require.NotNil(t, first.Suspension)
 	require.Zero(t, executions)
 
-	checkpoint, err := runtime.decodeWorkflowCheckpoint(first.Suspension)
+	checkpoint, err := decodeWorkflowCheckpoint(first.Suspension, testRuntimeDefinition(runtime, "agent-1"))
 	require.NoError(t, err)
 	confirmation := first.Suspension.Pending[0].Confirmation
 	secondInput := &RunInput{
@@ -96,9 +97,9 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 }
 
 func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
-	tool := newAnyJSONSpec("svc.persist", "svc")
+	tool := newAnyJSONSpec("svc.persist")
 	executions := 0
-	runtime := New(
+	runtime := New(newTestStore(),
 		WithLogger(telemetry.NoopLogger{}),
 		WithToolConfirmation(&ToolConfirmationConfig{Confirm: map[tools.Ident]*ToolConfirmation{
 			tool.Name: {
@@ -121,16 +122,13 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 		}),
 		Specs: []tools.ToolSpec{tool},
 	}))
-	registration := AgentRegistration{
-		ID:                  "agent-1",
-		ExecuteToolActivity: "execute",
-		Specs:               []tools.ToolSpec{tool},
-	}
-	runtime.agents[registration.ID] = registration
-	runtime.agentToolSpecs[registration.ID] = registration.Specs
+	registration := AgentRegistration{Definition: testRegistrationDefinition("agent-1", engine.WorkflowDefinition{}, []tools.ToolSpec{tool}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ExecuteToolActivity: "execute"}
+	agentID := registration.Definition.route.ID
+	runtime.agents[agentID] = registration
+	runtime.agentToolSpecs[agentID] = registration.Definition.specs
 
 	firstInput := &RunInput{
-		AgentID:   registration.ID,
+		AgentID:   agentID,
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
@@ -154,11 +152,11 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 	require.NotNil(t, first.Suspension)
 	require.Zero(t, executions)
 
-	checkpoint, err := runtime.decodeWorkflowCheckpoint(first.Suspension)
+	checkpoint, err := decodeWorkflowCheckpoint(first.Suspension, registration.Definition)
 	require.NoError(t, err)
 	confirmation := first.Suspension.Pending[0].Confirmation
 	secondInput := &RunInput{
-		AgentID: registration.ID, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+		AgentID: agentID, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
 		Continuation: &api.RunContinuationInput{
 			Suspension: first.Suspension,
 			Response: &api.PendingInputResponse{Confirmation: &api.ConfirmationDecision{

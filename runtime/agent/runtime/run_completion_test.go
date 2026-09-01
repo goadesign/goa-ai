@@ -1,1257 +1,440 @@
+// Package runtime tests explicit repair of missing terminal records from closed
+// workflow history. Snapshot reads are covered separately and remain read-only.
 package runtime
 
 import (
 	"context"
 	"errors"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	agent "goa.design/goa-ai/runtime/agent"
+
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/rawjson"
-	"goa.design/goa-ai/runtime/agent/run"
-	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	"goa.design/goa-ai/runtime/agent/session"
-	sessioninmem "goa.design/goa-ai/runtime/agent/session/inmem"
-	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/agent/storage"
+	"goa.design/goa-ai/runtime/agent/stream"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-type controlledWaitHandle struct {
-	ready       chan struct{}
-	waitStarted chan struct{}
-	out         *api.RunOutput
-	err         error
+var repairedCompletionTime = time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
+
+type (
+	// completionQueryEngine returns one configured completion while
+	// leaving unrelated engine operations unavailable to the test.
+	completionQueryEngine struct {
+		engine.Engine
+		completion    engine.RunCompletion
+		completionErr error
+	}
+
+	// unavailableTerminalStore reports each terminal repair attempt and then
+	// returns a temporary failure so the repair retry loop remains active.
+	unavailableTerminalStore struct {
+		storage.Store
+		called chan struct{}
+	}
+
+	// workflowTerminalWinsStore records the workflow's terminal event after the
+	// repair read but before the repair write reaches the integrated store.
+	workflowTerminalWinsStore struct {
+		storage.Store
+		workflowTimestamp time.Time
+	}
+
+	// workflowSuspensionWinsStore records the workflow's suspension after the
+	// repair read but before the repair write reaches the integrated store.
+	workflowSuspensionWinsStore struct {
+		storage.Store
+		workflowTimestamp time.Time
+	}
+
+	// countingTerminalRepairStore records how often the runtime asks storage to
+	// apply one terminal repair.
+	countingTerminalRepairStore struct {
+		storage.Store
+		calls int
+	}
+
+	// lostTerminalRepairResponseStore commits its first repair but reports a
+	// temporary response failure so the runtime must repeat the exact command.
+	lostTerminalRepairResponseStore struct {
+		storage.Store
+		calls int
+	}
+)
+
+func (e completionQueryEngine) QueryRunCompletion(context.Context, string) (engine.RunCompletion, error) {
+	return e.completion, e.completionErr
 }
 
-func (h *controlledWaitHandle) Wait(ctx context.Context) (*api.RunOutput, error) {
-	if h.waitStarted != nil {
-		select {
-		case <-h.waitStarted:
-		default:
-			close(h.waitStarted)
-		}
-	}
+func (s unavailableTerminalStore) RepairRunTerminal(context.Context, storage.RunTerminal) (storage.RunRepairResult, error) {
 	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-h.ready:
-		return h.out, h.err
-	}
-}
-
-func (h *controlledWaitHandle) Cancel(context.Context) error {
-	return nil
-}
-
-type controlledWaitEngine struct {
-	stubEngine
-	handle         *controlledWaitHandle
-	reportedStatus engine.RunStatus
-	queryErr       error
-	completionOut  *api.RunOutput
-	completionErr  error
-}
-
-type repairRaceRunlog struct {
-	mu      sync.Mutex
-	events  []*runlog.Event
-	waiters int
-	barrier chan struct{}
-}
-
-func newRepairRaceRunlog() *repairRaceRunlog {
-	return &repairRaceRunlog{
-		barrier: make(chan struct{}),
-	}
-}
-
-func (r *repairRaceRunlog) Append(_ context.Context, e *runlog.Event) (runlog.AppendResult, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, e)
-	return runlog.AppendResult{ID: e.ID, Inserted: true}, nil
-}
-
-func (r *repairRaceRunlog) List(ctx context.Context, _ string, _ string, limit int) (runlog.Page, error) {
-	r.mu.Lock()
-	if !r.hasTerminalEventLocked() && r.waiters < 2 {
-		r.waiters++
-		barrier := r.barrier
-		if r.waiters == 2 {
-			close(r.barrier)
-		}
-		r.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return runlog.Page{}, ctx.Err()
-		case <-barrier:
-		}
-		r.mu.Lock()
-	}
-	events := append([]*runlog.Event(nil), r.events...)
-	r.mu.Unlock()
-	if len(events) > limit {
-		events = events[:limit]
-	}
-	return runlog.Page{Events: events}, nil
-}
-
-func (r *repairRaceRunlog) hasTerminalEventLocked() bool {
-	for _, evt := range r.events {
-		if evt.Type == hooks.RunCompleted {
-			return true
-		}
-	}
-	return false
-}
-
-type waitLazyRepairRaceRunlog struct {
-	mu                 sync.Mutex
-	events             []*runlog.Event
-	initialWaiters     int
-	initialBarrier     chan struct{}
-	firstAppendRelease chan struct{}
-}
-
-func newWaitLazyRepairRaceRunlog() *waitLazyRepairRaceRunlog {
-	return &waitLazyRepairRaceRunlog{
-		initialBarrier:     make(chan struct{}),
-		firstAppendRelease: make(chan struct{}),
-	}
-}
-
-func (r *waitLazyRepairRaceRunlog) Append(ctx context.Context, e *runlog.Event) (runlog.AppendResult, error) {
-	if e.Type == hooks.RunCompleted {
-		r.mu.Lock()
-		release := r.firstAppendRelease
-		shouldBlock := release != nil && !r.hasTerminalEventLocked()
-		r.mu.Unlock()
-		if shouldBlock {
-			select {
-			case <-ctx.Done():
-				return runlog.AppendResult{}, ctx.Err()
-			case <-release:
-			}
-		}
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, e)
-	return runlog.AppendResult{ID: e.ID, Inserted: true}, nil
-}
-
-func (r *waitLazyRepairRaceRunlog) List(ctx context.Context, _ string, _ string, limit int) (runlog.Page, error) {
-	r.mu.Lock()
-	if !r.hasTerminalEventLocked() && r.initialWaiters < 2 {
-		r.initialWaiters++
-		barrier := r.initialBarrier
-		if r.initialWaiters == 2 {
-			close(r.initialBarrier)
-		}
-		r.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return runlog.Page{}, ctx.Err()
-		case <-barrier:
-		}
-		r.mu.Lock()
-	} else if !r.hasTerminalEventLocked() && r.initialWaiters >= 2 && r.firstAppendRelease != nil {
-		close(r.firstAppendRelease)
-		r.firstAppendRelease = nil
-	}
-	events := append([]*runlog.Event(nil), r.events...)
-	r.mu.Unlock()
-	if len(events) > limit {
-		events = events[:limit]
-	}
-	return runlog.Page{Events: events}, nil
-}
-
-func (r *waitLazyRepairRaceRunlog) hasTerminalEventLocked() bool {
-	for _, evt := range r.events {
-		if evt.Type == hooks.RunCompleted {
-			return true
-		}
-	}
-	return false
-}
-
-func (e *controlledWaitEngine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
-	e.last = req
-	return e.handle, nil
-}
-
-func (e *controlledWaitEngine) QueryRunStatus(context.Context, string) (engine.RunStatus, error) {
-	if e.queryErr != nil {
-		return "", e.queryErr
-	}
-	if e.reportedStatus != "" {
-		return e.reportedStatus, nil
-	}
-	select {
-	case <-e.handle.ready:
-		return engine.RunStatusCompleted, nil
+	case s.called <- struct{}{}:
 	default:
-		return engine.RunStatusRunning, nil
+	}
+	return storage.RunRepairResult{}, errors.New("Session unavailable")
+}
+
+func (s workflowTerminalWinsStore) RepairRunTerminal(ctx context.Context, command storage.RunTerminal) (storage.RunRepairResult, error) {
+	workflow := command
+	record := *command.Record
+	record.Timestamp = s.workflowTimestamp
+	workflow.Record = &record
+	if _, err := s.RecordRunTerminal(ctx, workflow); err != nil {
+		return storage.RunRepairResult{}, err
+	}
+	return s.Store.RepairRunTerminal(ctx, command)
+}
+
+func (s workflowSuspensionWinsStore) RepairRunSuspension(ctx context.Context, command storage.RunSuspension) (storage.RunRepairResult, error) {
+	workflow := command
+	record := *command.Record
+	record.Timestamp = s.workflowTimestamp
+	workflow.Record = &record
+	if _, err := s.RecordRunSuspension(ctx, workflow); err != nil {
+		return storage.RunRepairResult{}, err
+	}
+	return s.Store.RepairRunSuspension(ctx, command)
+}
+
+func (s *countingTerminalRepairStore) RepairRunTerminal(ctx context.Context, command storage.RunTerminal) (storage.RunRepairResult, error) {
+	s.calls++
+	return s.Store.RepairRunTerminal(ctx, command)
+}
+
+func (s *lostTerminalRepairResponseStore) RepairRunTerminal(ctx context.Context, command storage.RunTerminal) (storage.RunRepairResult, error) {
+	s.calls++
+	result, err := s.Store.RepairRunTerminal(ctx, command)
+	if err != nil {
+		return storage.RunRepairResult{}, err
+	}
+	if s.calls == 1 {
+		return storage.RunRepairResult{}, errors.New("repair response lost")
+	}
+	return result, nil
+}
+
+func TestRepairRunCompletionStoresSuccessfulResultOnce(t *testing.T) {
+	store := newTestStore()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session",
+		Status: session.RunStatusRunning, Labels: map[string]string{"site": "one"},
+	})
+	runtime := &Runtime{
+		Store: store,
+		Bus:   hooks.NewBus(),
+		Engine: completionQueryEngine{
+			completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: repairedCompletionTime, Output: &api.RunOutput{
+				AgentID: "svc.agent", RunID: "run", Final: &model.Message{},
+			}},
+		},
+	}
+
+	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
+	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
+	meta, err := store.LoadRun(t.Context(), "run")
+	require.NoError(t, err)
+	require.Equal(t, session.RunStatusCompleted, meta.Status)
+	page, err := store.ListRunRecords(t.Context(), "run", "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 2)
+	require.Equal(t, hooks.RunCompleted, page.Events[1].Type)
+	require.Equal(t, repairedCompletionTime, page.Events[1].Timestamp)
+}
+
+func TestValidateRepairCompletionRejectsInvalidWorkflowOutput(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		output *api.RunOutput
+	}{
+		{
+			name:   "missing terminal result",
+			output: &api.RunOutput{AgentID: "svc.agent", RunID: "run"},
+		},
+		{
+			name: "multiple terminal results",
+			output: &api.RunOutput{
+				AgentID:    "svc.agent",
+				RunID:      "run",
+				Final:      &model.Message{},
+				Suspension: &api.RunSuspension{},
+			},
+		},
+		{
+			name: "invalid suspension",
+			output: &api.RunOutput{
+				AgentID:    "svc.agent",
+				RunID:      "run",
+				Suspension: &api.RunSuspension{},
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateRepairCompletion(engine.RunCompletion{
+				Status:      engine.RunStatusCompleted,
+				CompletedAt: repairedCompletionTime,
+				Output:      test.output,
+			}, &RunInput{AgentID: "svc.agent", RunID: "run"})
+
+			require.ErrorIs(t, err, ErrRunCompletionCorrupt)
+		})
 	}
 }
 
-func (e *controlledWaitEngine) QueryRunCompletion(context.Context, string) (*api.RunOutput, error) {
-	if e.completionOut != nil || e.completionErr != nil {
-		return e.completionOut, e.completionErr
-	}
-	switch e.reportedStatus {
-	case engine.RunStatusCompleted:
-		return e.handle.out, nil
-	case engine.RunStatusTimedOut:
-		return nil, context.DeadlineExceeded
-	case engine.RunStatusFailed:
-		return nil, errors.New("workflow failed before runtime emitted RunCompleted")
-	case engine.RunStatusCanceled:
-		return nil, context.Canceled
-	case engine.RunStatusPending, engine.RunStatusRunning, engine.RunStatusPaused:
-		return e.handle.out, e.handle.err
-	default:
-		return e.handle.out, e.handle.err
-	}
-}
-
-func newObservedHandleTestRuntime(handle *controlledWaitHandle) *Runtime {
-	return &Runtime{
-		Engine:        &controlledWaitEngine{handle: handle},
-		RunEventStore: runloginmem.New(),
-		SessionStore:  sessioninmem.New(),
-		Bus:           noopHooks{},
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		runHandles:    make(map[string]engine.WorkflowHandle),
-		agents: map[agent.Ident]AgentRegistration{
-			"service.agent": {
-				ID: "service.agent",
-				Workflow: engine.WorkflowDefinition{
-					Name:      "service.workflow",
-					TaskQueue: "svc.queue",
-				},
+func TestRepairRunCompletionStoresWorkflowFailure(t *testing.T) {
+	store := newTestStore()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+	})
+	runtime := &Runtime{
+		Store: store,
+		Bus:   hooks.NewBus(),
+		Engine: completionQueryEngine{
+			completion: engine.RunCompletion{
+				Status: engine.RunStatusFailed, CompletedAt: repairedCompletionTime, WorkflowError: errors.New("planner failed"),
 			},
 		},
 	}
-}
 
-func TestStartRunSynthesizesTerminalCompletionWhenWorkflowClosesWithoutHook(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	handle := &controlledWaitHandle{
-		ready: make(chan struct{}),
-		err:   context.DeadlineExceeded,
-	}
-	rt := newObservedHandleTestRuntime(handle)
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	labels := map[string]string{"household_id": "house-42"}
-	wfHandle, err := rt.MustClient(agent.Ident("service.agent")).Start(
-		ctx,
-		"sess-1",
-		nil,
-		WithRunID("run-1"),
-		WithTurnID("turn-1"),
-		WithLabels(labels),
-	)
-	require.NoError(t, err)
-
-	close(handle.ready)
-
-	_, err = wfHandle.Wait(ctx)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-
-	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, run.StatusFailed, snapshot.Status)
-	require.Equal(t, run.PhaseFailed, snapshot.Phase)
-
-	meta, err := rt.SessionStore.LoadRun(ctx, "run-1")
+	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
+	meta, err := store.LoadRun(t.Context(), "run")
 	require.NoError(t, err)
 	require.Equal(t, session.RunStatusFailed, meta.Status)
-
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.NotEmpty(t, page.Events)
-	last := page.Events[len(page.Events)-1]
-	require.Equal(t, hooks.RunCompleted, last.Type)
-	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
-		Type:      last.Type,
-		RunID:     last.RunID,
-		AgentID:   last.AgentID,
-		SessionID: last.SessionID,
-		TurnID:    last.TurnID,
-		Payload:   last.Payload,
-	})
-	require.NoError(t, err)
-	completed, ok := decoded.(*hooks.RunCompletedEvent)
-	require.True(t, ok)
-	require.Equal(t, labels, completed.Labels)
 }
 
-func TestStartRunRecordsSuspensionAsTerminalOutcome(t *testing.T) {
-	t.Parallel()
+func TestRepairRunCompletionRetriesStreamWithoutRepeatingStore(t *testing.T) {
+	stored := newTestStore()
+	admitRunForTest(t, stored, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+	})
+	store := &countingTerminalRepairStore{Store: stored}
+	bus := hooks.NewBus()
+	busCalls := 0
+	_, err := bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
+		busCalls++
+		return nil
+	}))
+	require.NoError(t, err)
+	sink := &retryingStreamSink{err: errors.New("stream send failed")}
+	subscriber, err := stream.NewSubscriber(sink)
+	require.NoError(t, err)
+	runtime := &Runtime{
+		Store: store,
+		Bus:   bus,
+		Engine: completionQueryEngine{completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: repairedCompletionTime, Output: &api.RunOutput{
+			AgentID: "svc.agent", RunID: "run", Final: &model.Message{},
+		}}},
+		streamSubscriber: subscriber,
+	}
 
-	ctx := context.Background()
-	suspension := validPublicTestSuspension()
-	handle := &controlledWaitHandle{
-		ready: make(chan struct{}),
-		out: &api.RunOutput{
-			AgentID: "service.agent", RunID: "run-1", Suspension: suspension,
+	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
+	require.Equal(t, 1, store.calls)
+	require.Equal(t, 1, busCalls)
+	require.GreaterOrEqual(t, sink.callCount(), 2)
+}
+
+func TestRepairRunCompletionExactRetryResumesStreamDelivery(t *testing.T) {
+	stored := newTestStore()
+	admitRunForTest(t, stored, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+	})
+	store := &lostTerminalRepairResponseStore{Store: stored}
+	bus := hooks.NewBus()
+	busCalls := 0
+	_, err := bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
+		busCalls++
+		return nil
+	}))
+	require.NoError(t, err)
+	sink := &retryingStreamSink{}
+	subscriber, err := stream.NewSubscriber(sink)
+	require.NoError(t, err)
+	runtime := &Runtime{
+		Store: store,
+		Bus:   bus,
+		Engine: completionQueryEngine{completion: engine.RunCompletion{
+			Status:      engine.RunStatusCompleted,
+			CompletedAt: repairedCompletionTime,
+			Output: &api.RunOutput{
+				AgentID: "svc.agent",
+				RunID:   "run",
+				Final:   &model.Message{},
+			},
+		}},
+		streamSubscriber: subscriber,
+	}
+
+	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
+	require.Equal(t, 2, store.calls)
+	require.Zero(t, busCalls)
+	require.Equal(t, 2, sink.callCount())
+}
+
+func TestRepairRunCompletionStoresSuspension(t *testing.T) {
+	store := newTestStore()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
+	})
+	suspension := suspensionContractFixtureWithContext(
+		t,
+		tools.Ident("svc.tools.lookup"),
+		"svc.agent",
+		"run-1",
+		nil,
+		nil,
+	)
+	runtime := &Runtime{
+		Store: store,
+		Bus:   hooks.NewBus(),
+		Engine: completionQueryEngine{
+			completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: repairedCompletionTime, Output: &api.RunOutput{
+				AgentID: "svc.agent", RunID: "run-1", Suspension: suspension,
+			}},
 		},
 	}
-	rt := newObservedHandleTestRuntime(handle)
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
 
-	wfHandle, err := rt.MustClient(agent.Ident("service.agent")).Start(
-		ctx,
-		"sess-1",
-		nil,
-		WithRunID("run-1"),
-		WithTurnID("turn-1"),
-	)
-	require.NoError(t, err)
-	close(handle.ready)
-
-	out, err := wfHandle.Wait(ctx)
-	require.NoError(t, err)
-	require.Same(t, suspension, out.Suspension)
-	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, run.StatusSuspended, snapshot.Status)
-	require.Equal(t, run.PhaseSuspended, snapshot.Phase)
-	meta, err := rt.SessionStore.LoadRun(ctx, "run-1")
+	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run-1"))
+	meta, err := store.LoadRun(t.Context(), "run-1")
 	require.NoError(t, err)
 	require.Equal(t, session.RunStatusSuspended, meta.Status)
+	stored, err := runtime.LoadRunSuspension(t.Context(), "run-1")
+	require.NoError(t, err)
+	require.Equal(t, suspension.ID, stored.ID)
 }
 
-func TestStartRunDoesNotWaitForCompletionUntilObserved(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	handle := &controlledWaitHandle{
-		ready:       make(chan struct{}),
-		waitStarted: make(chan struct{}),
-	}
-	rt := newObservedHandleTestRuntime(handle)
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	_, err = rt.MustClient(agent.Ident("service.agent")).Start(
-		ctx,
-		"sess-1",
-		nil,
-		WithRunID("run-1"),
-		WithTurnID("turn-1"),
-	)
-	require.NoError(t, err)
-
-	select {
-	case <-handle.waitStarted:
-		t.Fatal("start should not begin waiting for workflow completion eagerly")
-	case <-time.After(100 * time.Millisecond):
-	}
-}
-
-func TestGetRunSnapshotRepairsTerminalCompletionOnDemand(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	handle := &controlledWaitHandle{
-		ready:       make(chan struct{}),
-		waitStarted: make(chan struct{}),
-		err:         context.DeadlineExceeded,
-	}
-	rt := newObservedHandleTestRuntime(handle)
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	_, err = rt.MustClient(agent.Ident("service.agent")).Start(
-		ctx,
-		"sess-1",
-		nil,
-		WithRunID("run-1"),
-		WithTurnID("turn-1"),
-	)
-	require.NoError(t, err)
-
-	select {
-	case <-handle.waitStarted:
-		t.Fatal("start should not begin waiting for workflow completion eagerly")
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	close(handle.ready)
-
-	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, run.StatusFailed, snapshot.Status)
-	require.Equal(t, run.PhaseFailed, snapshot.Phase)
-
-	select {
-	case <-handle.waitStarted:
-	default:
-		t.Fatal("snapshot repair should wait for terminal workflow completion")
-	}
-
-	meta, err := rt.SessionStore.LoadRun(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, session.RunStatusFailed, meta.Status)
-}
-
-func TestStartRunLeavesTerminalRepairLazyWithoutObserver(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	handle := &controlledWaitHandle{
-		ready: make(chan struct{}),
-		err:   context.DeadlineExceeded,
-	}
-	rt := newObservedHandleTestRuntime(handle)
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	_, err = rt.MustClient(agent.Ident("service.agent")).Start(
-		ctx,
-		"sess-1",
-		nil,
-		WithRunID("run-1"),
-		WithTurnID("turn-1"),
-	)
-	require.NoError(t, err)
-
-	close(handle.ready)
-
-	time.Sleep(50 * time.Millisecond)
-	meta, err := rt.SessionStore.LoadRun(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, session.RunStatusPending, meta.Status)
-}
-
-func TestOneShotRunLeavesTerminalRepairLazyWithoutObserver(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	handle := &controlledWaitHandle{
-		ready: make(chan struct{}),
-		err:   context.DeadlineExceeded,
-	}
-	rt := newObservedHandleTestRuntime(handle)
-
-	_, err := rt.startOneShotRun(ctx, &RunInput{
-		AgentID: "service.agent",
-		RunID:   "run-1",
-		TurnID:  "turn-1",
+func TestRepairRunCompletionDoesNotPublishWhenWorkflowTerminalWins(t *testing.T) {
+	store := newTestStore()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
+	workflowTimestamp := repairedCompletionTime
+	bus := hooks.NewBus()
+	published := 0
+	_, err := bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
+		published++
+		return nil
+	}))
 	require.NoError(t, err)
-
-	close(handle.ready)
-
-	time.Sleep(50 * time.Millisecond)
-	page, err := rt.RunEventStore.List(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.Empty(t, page.Events)
-}
-
-func TestStartRunSkipsSynthesizedCompletionWhenRunAlreadyTerminal(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	handle := &controlledWaitHandle{
-		ready: make(chan struct{}),
-		err:   errors.New("workflow execution already completed"),
-	}
-	rt := newObservedHandleTestRuntime(handle)
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	wfHandle, err := rt.MustClient(agent.Ident("service.agent")).Start(
-		ctx,
-		"sess-1",
-		nil,
-		WithRunID("run-1"),
-		WithTurnID("turn-1"),
-	)
-	require.NoError(t, err)
-	require.NoError(t, rt.publishHookErr(
-		ctx,
-		hooks.NewRunCompletedEvent("run-1", "service.agent", "sess-1", runStatusSuccess, run.PhaseCompleted, nil, nil, nil),
-		"turn-1",
-	))
-
-	close(handle.ready)
-
-	_, err = wfHandle.Wait(ctx)
-	require.Error(t, err)
-
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.Len(t, page.Events, 1)
-	require.Equal(t, hooks.RunCompleted, page.Events[0].Type)
-}
-
-func TestGetRunSnapshotRepairsTerminalCompletionWithoutObservedHandle(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{
-		ready: make(chan struct{}),
-	})
-	eng, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	eng.reportedStatus = engine.RunStatusFailed
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	input := RunInput{
-		AgentID:   "service.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		TurnID:    "turn-1",
-	}
-	runCtx := run.Context{
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Attempt:   1,
-	}
-	err = rt.publishHookErr(
-		ctx,
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, input),
-		input.TurnID,
-	)
-	require.NoError(t, err)
-
-	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, run.StatusFailed, snapshot.Status)
-	require.Equal(t, run.PhaseFailed, snapshot.Phase)
-
-	meta, err := rt.SessionStore.LoadRun(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, session.RunStatusFailed, meta.Status)
-
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.NotEmpty(t, page.Events)
-	require.Equal(t, hooks.RunCompleted, page.Events[len(page.Events)-1].Type)
-}
-
-func TestGetRunSnapshotRepairsSuspensionWithoutObservedHandle(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{ready: make(chan struct{})})
-	engineRuntime, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	engineRuntime.reportedStatus = engine.RunStatusCompleted
-	engineRuntime.completionOut = &api.RunOutput{
-		AgentID: "service.agent", RunID: "run-1", Suspension: validPublicTestSuspension(),
-	}
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-	input := RunInput{AgentID: "service.agent", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
-	err = rt.publishHookErr(ctx, hooks.NewRunStartedEvent("run-1", input.AgentID, run.Context{
-		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
-	}, input), "turn-1")
-	require.NoError(t, err)
-
-	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, run.StatusSuspended, snapshot.Status)
-	require.Equal(t, run.PhaseSuspended, snapshot.Phase)
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.Equal(t, hooks.RunSuspended, page.Events[len(page.Events)-1].Type)
-}
-
-func TestGetRunSnapshotRejectsMismatchedQueriedWorkflowOutput(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{ready: make(chan struct{})})
-	engineRuntime, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	engineRuntime.reportedStatus = engine.RunStatusCompleted
-	engineRuntime.completionOut = &api.RunOutput{
-		AgentID: "other.agent", RunID: "run-1", Suspension: validPublicTestSuspension(),
-	}
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-	input := RunInput{AgentID: "service.agent", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
-	err = rt.publishHookErr(ctx, hooks.NewRunStartedEvent("run-1", input.AgentID, run.Context{
-		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
-	}, input), "turn-1")
-	require.NoError(t, err)
-
-	_, err = rt.GetRunSnapshot(ctx, "run-1")
-	require.ErrorContains(t, err, "workflow output agent mismatch")
-}
-
-func validPublicTestSuspension() *api.RunSuspension {
-	await := planner.AwaitClarificationItem(&planner.AwaitClarification{
-		ID: "clarification-1", Question: "Which facility?",
-	})
-	return &api.RunSuspension{
-		ID: "suspension-1", Version: api.RunSuspensionVersion,
-		Checkpoint: rawjson.Message(`{}`),
-		Pending: []*api.PendingInput{{
-			Kind: api.PendingInputKindClarification, Await: &await,
+	runtime := &Runtime{
+		Store: workflowTerminalWinsStore{Store: store, workflowTimestamp: workflowTimestamp},
+		Bus:   bus,
+		Engine: completionQueryEngine{completion: engine.RunCompletion{
+			Status: engine.RunStatusFailed, CompletedAt: repairedCompletionTime,
+			WorkflowError: errors.New("planner failed"),
 		}},
 	}
-}
 
-func TestRunEventPageTreatsSuspensionAsTerminal(t *testing.T) {
-	t.Parallel()
-
-	page := runlog.Page{Events: []*runlog.Event{{Type: hooks.RunSuspended}}}
-	require.False(t, runEventPageNeedsTerminalRepair(page))
-	page.NextCursor = "cursor"
-	require.False(t, repairedTailNeedsCompletionDelta(
-		runlog.Page{Events: []*runlog.Event{{Type: hooks.RunStarted}}},
-		page,
-	))
-}
-
-func TestGetRunSnapshotRepairsTimedOutRunWithTimeoutPublicError(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{
-		ready: make(chan struct{}),
-	})
-	eng, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	eng.reportedStatus = engine.RunStatusTimedOut
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	labels := map[string]string{"household_id": "house-42"}
-	input := RunInput{
-		AgentID:   "service.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		TurnID:    "turn-1",
-		Labels:    labels,
-	}
-	runCtx := run.Context{
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Attempt:   1,
-		Labels:    labels,
-	}
-	err = rt.publishHookErr(
-		ctx,
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, input),
-		input.TurnID,
-	)
-	require.NoError(t, err)
-
-	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, run.StatusFailed, snapshot.Status)
-
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.NotEmpty(t, page.Events)
-
-	last := page.Events[len(page.Events)-1]
-	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
-		Type:      last.Type,
-		RunID:     last.RunID,
-		AgentID:   last.AgentID,
-		SessionID: last.SessionID,
-		TurnID:    last.TurnID,
-		Payload:   last.Payload,
-	})
-	require.NoError(t, err)
-
-	completed, ok := decoded.(*hooks.RunCompletedEvent)
-	require.True(t, ok)
-	require.NotNil(t, completed.Failure)
-	require.Equal(t, hooks.PublicErrorTimeout, completed.Failure.Message)
-	require.Equal(t, hooks.ErrorKindTimeout, completed.Failure.Kind)
-	require.Equal(t, labels, completed.Labels)
-}
-
-func TestGetRunSnapshotRepairsSessionlessRunWithLabelsFromRunLog(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{
-		ready: make(chan struct{}),
-	})
-	eng, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	eng.reportedStatus = engine.RunStatusFailed
-
-	labels := map[string]string{"household_id": "house-42"}
-	input := RunInput{
-		AgentID: "service.agent",
-		RunID:   "run-1",
-		TurnID:  "turn-1",
-		Labels:  labels,
-	}
-	runCtx := run.Context{
-		RunID:   input.RunID,
-		TurnID:  input.TurnID,
-		Attempt: 1,
-		Labels:  labels,
-	}
-	err := rt.publishHookErr(
-		ctx,
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, input),
-		input.TurnID,
-	)
-	require.NoError(t, err)
-
-	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, run.StatusFailed, snapshot.Status)
-	require.Equal(t, labels, snapshot.Labels)
-
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.NotEmpty(t, page.Events)
-
-	last := page.Events[len(page.Events)-1]
-	require.Equal(t, hooks.RunCompleted, last.Type)
-	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
-		Type:      last.Type,
-		RunID:     last.RunID,
-		AgentID:   last.AgentID,
-		SessionID: last.SessionID,
-		TurnID:    last.TurnID,
-		Payload:   last.Payload,
-	})
-	require.NoError(t, err)
-
-	completed, ok := decoded.(*hooks.RunCompletedEvent)
-	require.True(t, ok)
-	require.Equal(t, labels, completed.Labels)
-}
-
-func TestGetRunSnapshotRepairsFailedRunWithQueriedProviderError(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{
-		ready: make(chan struct{}),
-	})
-	eng, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	eng.reportedStatus = engine.RunStatusFailed
-	eng.completionErr = model.NewProviderError(
-		"bedrock",
-		"converse_stream",
-		429,
-		model.ProviderErrorKindRateLimited,
-		"ThrottlingException",
-		"too many requests",
-		"req-1",
-		true,
-		errors.New("throttled"),
-	)
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	input := RunInput{
-		AgentID:   "service.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		TurnID:    "turn-1",
-	}
-	runCtx := run.Context{
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Attempt:   1,
-	}
-	err = rt.publishHookErr(
-		ctx,
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, input),
-		input.TurnID,
-	)
-	require.NoError(t, err)
-
-	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, run.StatusFailed, snapshot.Status)
-
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.NotEmpty(t, page.Events)
-
-	last := page.Events[len(page.Events)-1]
-	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
-		Type:      last.Type,
-		RunID:     last.RunID,
-		AgentID:   last.AgentID,
-		SessionID: last.SessionID,
-		TurnID:    last.TurnID,
-		Payload:   last.Payload,
-	})
-	require.NoError(t, err)
-
-	completed, ok := decoded.(*hooks.RunCompletedEvent)
-	require.True(t, ok)
-	require.NotNil(t, completed.Failure)
-	require.Equal(t, hooks.PublicErrorProviderRateLimited, completed.Failure.Message)
-	require.Equal(t, string(model.ProviderErrorKindRateLimited), completed.Failure.Kind)
-	require.Equal(t, "bedrock", completed.Failure.Provider)
-	require.Equal(t, 429, completed.Failure.HTTPStatus)
-	require.True(t, completed.Failure.Retryable)
-}
-
-func TestGetRunSnapshotRepairsTerminalCompletionOnceAcrossConcurrentReaders(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{
-		ready: make(chan struct{}),
-	})
-	eng, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	eng.reportedStatus = engine.RunStatusFailed
-	rt.RunEventStore = newRepairRaceRunlog()
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	input := RunInput{
-		AgentID:   "service.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		TurnID:    "turn-1",
-	}
-	runCtx := run.Context{
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Attempt:   1,
-	}
-	err = rt.publishHookErr(
-		ctx,
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, input),
-		input.TurnID,
-	)
-	require.NoError(t, err)
-
-	var wait sync.WaitGroup
-	errs := make(chan error, 2)
-	for range 2 {
-		wait.Add(1)
-		go func() {
-			defer wait.Done()
-			_, err := rt.GetRunSnapshot(ctx, "run-1")
-			errs <- err
-		}()
-	}
-	wait.Wait()
-	close(errs)
-	for err := range errs {
-		require.NoError(t, err)
-	}
-
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-
-	completed := 0
-	for _, evt := range page.Events {
-		if evt.Type == hooks.RunCompleted {
-			completed++
-		}
-	}
-	require.Equal(t, 1, completed)
-}
-
-func TestWaitAndLazyRepairPublishSingleTerminalCompletion(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	handle := &controlledWaitHandle{
-		ready: make(chan struct{}),
-		err:   context.DeadlineExceeded,
-	}
-	rt := newObservedHandleTestRuntime(handle)
-	rt.Engine = &controlledWaitEngine{
-		handle:         handle,
-		reportedStatus: engine.RunStatusFailed,
-	}
-	rt.RunEventStore = newWaitLazyRepairRaceRunlog()
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	wfHandle, err := rt.MustClient(agent.Ident("service.agent")).Start(
-		ctx,
-		"sess-1",
-		nil,
-		WithRunID("run-1"),
-		WithTurnID("turn-1"),
-	)
-	require.NoError(t, err)
-
-	var (
-		waitErr     error
-		snapshot    *run.Snapshot
-		snapshotErr error
-	)
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		_, waitErr = wfHandle.Wait(ctx)
-	}()
-	go func() {
-		defer wg.Done()
-		snapshot, snapshotErr = rt.GetRunSnapshot(ctx, "run-1")
-	}()
-
-	close(handle.ready)
-	wg.Wait()
-
-	require.ErrorIs(t, waitErr, context.DeadlineExceeded)
-	require.NoError(t, snapshotErr)
-	require.Equal(t, run.StatusFailed, snapshot.Status)
-
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-
-	completed := 0
-	var completedEvent *hooks.RunCompletedEvent
-	for _, evt := range page.Events {
-		if evt.Type == hooks.RunCompleted {
-			completed++
-			decoded, decodeErr := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
-				Type:      evt.Type,
-				RunID:     evt.RunID,
-				AgentID:   evt.AgentID,
-				SessionID: evt.SessionID,
-				TurnID:    evt.TurnID,
-				Payload:   evt.Payload,
-			})
-			require.NoError(t, decodeErr)
-			var ok bool
-			completedEvent, ok = decoded.(*hooks.RunCompletedEvent)
-			require.True(t, ok)
-		}
-	}
-	require.Equal(t, 1, completed)
-	require.NotNil(t, completedEvent)
-	require.NotNil(t, completedEvent.Failure)
-	require.Equal(t, hooks.PublicErrorTimeout, completedEvent.Failure.Message)
-	require.Equal(t, hooks.ErrorKindTimeout, completedEvent.Failure.Kind)
-}
-
-func TestListRunEventsRepairsTerminalCompletionForTailReads(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{
-		ready: make(chan struct{}),
-	})
-	eng, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	eng.reportedStatus = engine.RunStatusFailed
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	input := RunInput{
-		AgentID:   "service.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		TurnID:    "turn-1",
-	}
-	runCtx := run.Context{
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Attempt:   1,
-	}
-	err = rt.publishHookErr(
-		ctx,
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, input),
-		input.TurnID,
-	)
-	require.NoError(t, err)
-
-	firstPage, err := rt.RunEventStore.List(ctx, "run-1", "", 1)
-	require.NoError(t, err)
-	require.Len(t, firstPage.Events, 1)
-
-	tailPage, err := rt.ListRunEvents(ctx, "run-1", firstPage.Events[0].ID, 10)
-	require.NoError(t, err)
-	require.Len(t, tailPage.Events, 1)
-	require.Equal(t, hooks.RunCompleted, tailPage.Events[0].Type)
-}
-
-func TestListRunEventsRepairsTerminalCompletionForNonEmptyTailPage(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{
-		ready: make(chan struct{}),
-	})
-	eng, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	eng.reportedStatus = engine.RunStatusFailed
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	input := RunInput{
-		AgentID:   "service.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		TurnID:    "turn-1",
-	}
-	runCtx := run.Context{
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Attempt:   1,
-	}
-	err = rt.publishHookErr(
-		ctx,
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, input),
-		input.TurnID,
-	)
-	require.NoError(t, err)
-
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
+	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
+	require.Zero(t, published)
+	page, err := store.ListRunRecords(t.Context(), "run", "", 10)
 	require.NoError(t, err)
 	require.Len(t, page.Events, 2)
-	require.Equal(t, hooks.RunCompleted, page.Events[len(page.Events)-1].Type)
+	require.Equal(t, workflowTimestamp, page.Events[1].Timestamp)
 }
 
-func TestListRunEventsRepairsTerminalCompletionForFullTailPage(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{
-		ready: make(chan struct{}),
+func TestRepairRunCompletionDoesNotPublishWhenWorkflowSuspensionWins(t *testing.T) {
+	store := newTestStore()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
 	})
-	eng, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	eng.reportedStatus = engine.RunStatusFailed
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	input := RunInput{
-		AgentID:   "service.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		TurnID:    "turn-1",
-	}
-	runCtx := run.Context{
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Attempt:   1,
-	}
-	err = rt.publishHookErr(
-		ctx,
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, input),
-		input.TurnID,
+	suspension := suspensionContractFixtureWithContext(
+		t,
+		tools.Ident("svc.tools.lookup"),
+		"svc.agent",
+		"run-1",
+		nil,
+		nil,
 	)
+	workflowTimestamp := repairedCompletionTime.Add(-time.Second)
+	bus := hooks.NewBus()
+	published := 0
+	_, err := bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
+		published++
+		return nil
+	}))
 	require.NoError(t, err)
+	runtime := &Runtime{
+		Store: workflowSuspensionWinsStore{Store: store, workflowTimestamp: workflowTimestamp},
+		Bus:   bus,
+		Engine: completionQueryEngine{completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: repairedCompletionTime, Output: &api.RunOutput{
+			AgentID: "svc.agent", RunID: "run-1", Suspension: suspension,
+		}}},
+	}
 
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 1)
+	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run-1"))
+	require.Zero(t, published)
+	page, err := store.ListRunRecords(t.Context(), "run-1", "", 10)
 	require.NoError(t, err)
 	require.Len(t, page.Events, 2)
-	require.Equal(t, hooks.RunCompleted, page.Events[len(page.Events)-1].Type)
+	require.Equal(t, workflowTimestamp, page.Events[1].Timestamp)
 }
 
-func TestRunCompletedHookClearsStoredHandle(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	handle := &controlledWaitHandle{
-		ready: make(chan struct{}),
-	}
-	rt := newObservedHandleTestRuntime(handle)
-	rt.Engine = &controlledWaitEngine{
-		handle: handle,
-	}
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	_, err = rt.MustClient(agent.Ident("service.agent")).Start(
-		ctx,
-		"sess-1",
-		nil,
-		WithRunID("run-1"),
-		WithTurnID("turn-1"),
-	)
-	require.NoError(t, err)
-
-	stored, ok := rt.workflowHandle("run-1")
-	require.True(t, ok)
-	require.NotNil(t, stored)
-
-	err = rt.publishHookErr(
-		ctx,
-		hooks.NewRunCompletedEvent("run-1", "service.agent", "sess-1", runStatusSuccess, run.PhaseCompleted, nil, nil, nil),
-		"turn-1",
-	)
-	require.NoError(t, err)
-
-	_, ok = rt.workflowHandle("run-1")
-	require.False(t, ok)
-}
-
-func TestGetRunSnapshotUsesObservedHandleBeforeSynthesizing(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	handle := &controlledWaitHandle{
-		ready: make(chan struct{}),
-		err:   context.DeadlineExceeded,
-	}
-	rt := newObservedHandleTestRuntime(handle)
-	rt.Engine = &controlledWaitEngine{
-		handle:         handle,
-		reportedStatus: engine.RunStatusFailed,
-	}
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	wfHandle, err := rt.MustClient(agent.Ident("service.agent")).Start(
-		ctx,
-		"sess-1",
-		nil,
-		WithRunID("run-1"),
-		WithTurnID("turn-1"),
-	)
-	require.NoError(t, err)
-
-	close(handle.ready)
-
-	snapshot, err := rt.GetRunSnapshot(ctx, "run-1")
-	require.NoError(t, err)
-	require.Equal(t, run.StatusFailed, snapshot.Status)
-
-	_, err = wfHandle.Wait(ctx)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-
-	page, err := rt.ListRunEvents(ctx, "run-1", "", 10)
-	require.NoError(t, err)
-	require.NotEmpty(t, page.Events)
-
-	last := page.Events[len(page.Events)-1]
-	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
-		Type:      last.Type,
-		RunID:     last.RunID,
-		AgentID:   last.AgentID,
-		SessionID: last.SessionID,
-		TurnID:    last.TurnID,
-		Payload:   last.Payload,
+func TestRepairRunCompletionDoesNotStoreRetrievalFailure(t *testing.T) {
+	store := newTestStore()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
-	require.NoError(t, err)
+	retrievalErr := errors.New("temporal unavailable")
+	runtime := &Runtime{
+		Store: store,
+		Bus:   hooks.NewBus(),
+		Engine: completionQueryEngine{
+			completionErr: retrievalErr,
+		},
+	}
 
-	completed, ok := decoded.(*hooks.RunCompletedEvent)
-	require.True(t, ok)
-	require.NotNil(t, completed.Failure)
-	require.Equal(t, hooks.PublicErrorTimeout, completed.Failure.Message)
-	require.Equal(t, hooks.ErrorKindTimeout, completed.Failure.Kind)
+	err := runtime.RepairRunCompletion(t.Context(), "run")
+	require.ErrorIs(t, err, retrievalErr)
+	meta, err := store.LoadRun(t.Context(), "run")
+	require.NoError(t, err)
+	require.Equal(t, session.RunStatusRunning, meta.Status)
+	page, err := store.ListRunRecords(t.Context(), "run", "", 10)
+	require.NoError(t, err)
+	require.Len(t, page.Events, 1)
 }
 
-func TestGetRunSnapshotReturnsRepairStatusQueryFailure(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{
-		ready: make(chan struct{}),
+func TestRepairRunCompletionRejectsOpenWorkflow(t *testing.T) {
+	store := newTestStore()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
-	eng, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	eng.queryErr = errors.New("temporal unavailable")
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	input := RunInput{
-		AgentID:   "service.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		TurnID:    "turn-1",
+	runtime := &Runtime{
+		Store:  store,
+		Bus:    hooks.NewBus(),
+		Engine: completionQueryEngine{completion: engine.RunCompletion{Status: engine.RunStatusRunning}},
 	}
-	runCtx := run.Context{
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Attempt:   1,
-	}
-	err = rt.publishHookErr(
-		ctx,
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, input),
-		input.TurnID,
-	)
-	require.NoError(t, err)
 
-	_, err = rt.GetRunSnapshot(ctx, "run-1")
-	require.ErrorContains(t, err, "temporal unavailable")
+	err := runtime.RepairRunCompletion(t.Context(), "run")
+	require.ErrorIs(t, err, ErrRunCompletionNotReady)
 }
 
-func TestListRunEventsReturnsRepairStatusQueryFailure(t *testing.T) {
-	t.Parallel()
-
-	ctx := context.Background()
-	rt := newObservedHandleTestRuntime(&controlledWaitHandle{
-		ready: make(chan struct{}),
+func TestRepairRunCompletionStopsRetryingWhenCallerCancels(t *testing.T) {
+	stored := newTestStore()
+	admitRunForTest(t, stored, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
-	eng, ok := rt.Engine.(*controlledWaitEngine)
-	require.True(t, ok)
-	eng.queryErr = errors.New("temporal unavailable")
-
-	_, err := rt.CreateSession(ctx, "sess-1")
-	require.NoError(t, err)
-
-	input := RunInput{
-		AgentID:   "service.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		TurnID:    "turn-1",
+	called := make(chan struct{}, 1)
+	runtime := &Runtime{
+		Store: unavailableTerminalStore{Store: stored, called: called},
+		Bus:   hooks.NewBus(),
+		Engine: completionQueryEngine{completion: engine.RunCompletion{
+			Status: engine.RunStatusFailed, CompletedAt: repairedCompletionTime, WorkflowError: errors.New("planner failed"),
+		}},
 	}
-	runCtx := run.Context{
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Attempt:   1,
-	}
-	err = rt.publishHookErr(
-		ctx,
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, runCtx, input),
-		input.TurnID,
-	)
-	require.NoError(t, err)
-
-	firstPage, err := rt.RunEventStore.List(ctx, "run-1", "", 1)
-	require.NoError(t, err)
-	require.Len(t, firstPage.Events, 1)
-
-	_, err = rt.ListRunEvents(ctx, "run-1", firstPage.Events[0].ID, 10)
-	require.ErrorContains(t, err, "temporal unavailable")
+	ctx, cancel := context.WithCancel(t.Context())
+	result := make(chan error, 1)
+	go func() {
+		result <- runtime.RepairRunCompletion(ctx, "run")
+	}()
+	<-called
+	cancel()
+	require.ErrorIs(t, <-result, context.Canceled)
 }

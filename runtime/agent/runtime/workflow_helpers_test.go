@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -95,7 +96,7 @@ func TestStepToolRecordsFromExecutionsRestoresCanonicalCallOrder(t *testing.T) {
 }
 
 func TestCommitSelectedModelResponsePreservesCanonicalParts(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 	transcript := []*model.Message{{
@@ -125,7 +126,7 @@ func TestCommitSelectedModelResponsePreservesCanonicalParts(t *testing.T) {
 }
 
 func TestCommitSelectedModelResponseBuildsPlannerAuthoredModelIdentity(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 	result := &PlanResult{ToolCalls: []ToolCall{{
@@ -154,7 +155,7 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 		turnID             = "turn-identity"
 		providerToolCallID = "provider-call-1"
 	)
-	tool := newAnyJSONSpec("service.lookup", "service")
+	tool := newAnyJSONSpec("service.lookup")
 	providerCall := model.ToolCall{
 		ID:      providerToolCallID,
 		Name:    tool.Name,
@@ -204,18 +205,15 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 			return testModelResponse(nil, providerCall), nil
 		},
 	})
-	reg := AgentRegistration{
-		ID:                  agentID,
-		Planner:             pl,
+	reg := AgentRegistration{Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: pl,
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
 		Policy:              RunPolicy{MaxToolCalls: 2},
 	}
 	rt.agents[agentID] = reg
-	_, err := rt.CreateSession(t.Context(), sessionID)
+	_, err := createSessionForTest(t.Context(), rt.Store, sessionID)
 	require.NoError(t, err)
-
 	var activityToolCallID string
 	wfCtx := &routeWorkflowContext{
 		ctx:         t.Context(),
@@ -282,7 +280,7 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 }
 
 func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
@@ -310,7 +308,7 @@ func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 }
 
 func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	seedTestToolSpecs(rt, tools.ToolSpec{
 		Name: tools.Ident("svc.commands.update_record"),
 		Result: tools.TypeSpec{
@@ -346,7 +344,7 @@ func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
 }
 
 func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	seedTestToolSpecs(rt, tools.ToolSpec{
 		Name: tools.Ident("svc.commands.update_record"),
 		Result: tools.TypeSpec{
@@ -440,7 +438,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 }
 
 func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	seedTestToolSpecs(rt, tools.ToolSpec{
 		Name: tools.Ident("svc.read.list_devices"),
 		Result: tools.TypeSpec{
@@ -507,7 +505,7 @@ func TestAppendUserToolResults_UsesContinuationActionNameInBoundsReminder(t *tes
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			rt := New()
+			rt := New(newTestStore())
 			seedTestToolSpecs(rt, search, continuation)
 			base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 			cursor := "opaque-cursor"
@@ -542,7 +540,7 @@ func TestAppendUserToolResults_UsesContinuationActionNameInBoundsReminder(t *tes
 
 func TestAppendUserToolResults_UsesRefinementWithoutContinuationCursor(t *testing.T) {
 	search, continuation := continuationTestSpecs()
-	rt := New()
+	rt := New(newTestStore())
 	seedTestToolSpecs(rt, search, continuation)
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	call := ToolCall{
@@ -576,7 +574,7 @@ func TestAppendUserToolResults_UsesRefinementWithoutContinuationCursor(t *testin
 }
 
 func TestRecoveryReminderIsEphemeralPlannerInput(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
@@ -615,12 +613,12 @@ func TestRecoveryReminderIsEphemeralPlannerInput(t *testing.T) {
 }
 
 func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	seedTestToolSpecs(
 		rt,
-		newAnyJSONSpec("svc.tools.read", "svc.tools"),
+		newAnyJSONSpec("svc.tools.read"),
 		func() tools.ToolSpec {
-			spec := newAnyJSONSpec("workflow.progress.set_step_status", "workflow.progress")
+			spec := newAnyJSONSpec("workflow.progress.set_step_status")
 			spec.Bookkeeping = true
 			return spec
 		}(),
@@ -659,11 +657,11 @@ func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
 }
 
 func TestRecoveryRemindersDescribeSelectedTransition(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	seedTestToolSpecs(
 		rt,
-		newAnyJSONSpec("svc.tools.correct", "svc.tools"),
-		newAnyJSONSpec("svc.tools.finish", "svc.tools"),
+		newAnyJSONSpec("svc.tools.correct"),
+		newAnyJSONSpec("svc.tools.finish"),
 	)
 	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
 	calls := []ToolCall{
@@ -702,11 +700,11 @@ func TestRecoveryRemindersDescribeSelectedTransition(t *testing.T) {
 }
 
 func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	seedTestToolSpecs(
 		rt,
 		func() tools.ToolSpec {
-			spec := newAnyJSONSpec("workflow.progress.complete", "workflow.progress")
+			spec := newAnyJSONSpec("workflow.progress.complete")
 			spec.Bookkeeping = true
 			spec.TerminalRun = true
 			return spec

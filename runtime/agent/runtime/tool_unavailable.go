@@ -32,8 +32,6 @@ var (
 	)
 	toolUnavailableSpec = tools.ToolSpec{
 		Name:        tools.ToolUnavailable,
-		Service:     "goa-ai",
-		Toolset:     toolUnavailableToolsetName,
 		Description: "Runtime-owned tool that represents unavailable tool calls.",
 		Payload: tools.TypeSpec{
 			Name:        "ToolUnavailablePayload",

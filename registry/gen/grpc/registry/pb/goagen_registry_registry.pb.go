@@ -31,7 +31,7 @@ const (
 type RegisterRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unique name for the toolset
-	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	// Human-readable description of the toolset
 	Description *string `protobuf:"bytes,2,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	// Semantic version of the toolset.
@@ -41,21 +41,21 @@ type RegisterRequest struct {
 	// Tool definitions with their schemas
 	Tools []*ToolSchema `protobuf:"bytes,5,rep,name=tools,proto3" json:"tools,omitempty"`
 	// Stable identity of the provider process registering this toolset.
-	ProviderId string `protobuf:"bytes,6,opt,name=provider_id,json=providerId,proto3" json:"provider_id,omitempty"`
+	ProviderId *string `protobuf:"bytes,6,opt,name=provider_id,json=providerId,proto3,oneof" json:"provider_id,omitempty"`
 	// Deployment-issued revision shared by every replica of one fenced admission.
 	// Reuse it for same-contract scaling and rolling updates; change it only to
 	// create a new fenced admission.
-	AdmissionRevision string `protobuf:"bytes,7,opt,name=admission_revision,json=admissionRevision,proto3" json:"admission_revision,omitempty"`
+	AdmissionRevision *string `protobuf:"bytes,7,opt,name=admission_revision,json=admissionRevision,proto3,oneof" json:"admission_revision,omitempty"`
 	// Runtime-generated UUID identifying one Serve lifecycle. The provider runtime
 	// generates it once and reuses it for every renewal.
-	ProviderIncarnationId string `protobuf:"bytes,8,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3" json:"provider_incarnation_id,omitempty"`
+	ProviderIncarnationId *string `protobuf:"bytes,8,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3,oneof" json:"provider_incarnation_id,omitempty"`
 	// Required runtime-owned version of the provider message envelope. The
 	// registry admits only its exact canonical version.
-	WireProtocolVersion int32 `protobuf:"zigzag32,9,opt,name=wire_protocol_version,json=wireProtocolVersion,proto3" json:"wire_protocol_version,omitempty"`
+	WireProtocolVersion *int32 `protobuf:"zigzag32,9,opt,name=wire_protocol_version,json=wireProtocolVersion,proto3,oneof" json:"wire_protocol_version,omitempty"`
 	// Generated lowercase SHA-256 identity of the exact tool schemas sent by this
 	// provider. The registry independently derives the identity and rejects
 	// mismatches before admission.
-	SchemaFingerprint string `protobuf:"bytes,10,opt,name=schema_fingerprint,json=schemaFingerprint,proto3" json:"schema_fingerprint,omitempty"`
+	SchemaFingerprint *string `protobuf:"bytes,10,opt,name=schema_fingerprint,json=schemaFingerprint,proto3,oneof" json:"schema_fingerprint,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -91,8 +91,8 @@ func (*RegisterRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *RegisterRequest) GetName() string {
-	if x != nil {
-		return x.Name
+	if x != nil && x.Name != nil {
+		return *x.Name
 	}
 	return ""
 }
@@ -126,36 +126,36 @@ func (x *RegisterRequest) GetTools() []*ToolSchema {
 }
 
 func (x *RegisterRequest) GetProviderId() string {
-	if x != nil {
-		return x.ProviderId
+	if x != nil && x.ProviderId != nil {
+		return *x.ProviderId
 	}
 	return ""
 }
 
 func (x *RegisterRequest) GetAdmissionRevision() string {
-	if x != nil {
-		return x.AdmissionRevision
+	if x != nil && x.AdmissionRevision != nil {
+		return *x.AdmissionRevision
 	}
 	return ""
 }
 
 func (x *RegisterRequest) GetProviderIncarnationId() string {
-	if x != nil {
-		return x.ProviderIncarnationId
+	if x != nil && x.ProviderIncarnationId != nil {
+		return *x.ProviderIncarnationId
 	}
 	return ""
 }
 
 func (x *RegisterRequest) GetWireProtocolVersion() int32 {
-	if x != nil {
-		return x.WireProtocolVersion
+	if x != nil && x.WireProtocolVersion != nil {
+		return *x.WireProtocolVersion
 	}
 	return 0
 }
 
 func (x *RegisterRequest) GetSchemaFingerprint() string {
-	if x != nil {
-		return x.SchemaFingerprint
+	if x != nil && x.SchemaFingerprint != nil {
+		return *x.SchemaFingerprint
 	}
 	return ""
 }
@@ -164,15 +164,15 @@ func (x *RegisterRequest) GetSchemaFingerprint() string {
 type ToolSchema struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Globally unique tool identifier of the form "toolset.tool".
-	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	// Human-readable description of what the tool does.
 	Description *string `protobuf:"bytes,2,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	// Optional tags used for policy, routing, or UI filtering.
 	Tags []string `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty"`
 	// Canonical JSON schema for the tool payload.
-	PayloadSchema []byte `protobuf:"bytes,4,opt,name=payload_schema,json=payloadSchema,proto3" json:"payload_schema,omitempty"`
+	PayloadSchema []byte `protobuf:"bytes,4,opt,name=payload_schema,json=payloadSchema,proto3,oneof" json:"payload_schema,omitempty"`
 	// Canonical JSON schema for the tool result.
-	ResultSchema []byte `protobuf:"bytes,5,opt,name=result_schema,json=resultSchema,proto3" json:"result_schema,omitempty"`
+	ResultSchema []byte `protobuf:"bytes,5,opt,name=result_schema,json=resultSchema,proto3,oneof" json:"result_schema,omitempty"`
 	// Canonical JSON schema for the tool sidecar (UI-only), when present.
 	SidecarSchema []byte `protobuf:"bytes,6,opt,name=sidecar_schema,json=sidecarSchema,proto3,oneof" json:"sidecar_schema,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -210,8 +210,8 @@ func (*ToolSchema) Descriptor() ([]byte, []int) {
 }
 
 func (x *ToolSchema) GetName() string {
-	if x != nil {
-		return x.Name
+	if x != nil && x.Name != nil {
+		return *x.Name
 	}
 	return ""
 }
@@ -254,13 +254,13 @@ func (x *ToolSchema) GetSidecarSchema() []byte {
 type RegisterResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// ISO 8601 timestamp of registration
-	RegisteredAt string `protobuf:"bytes,1,opt,name=registered_at,json=registeredAt,proto3" json:"registered_at,omitempty"`
+	RegisteredAt *string `protobuf:"bytes,1,opt,name=registered_at,json=registeredAt,proto3,oneof" json:"registered_at,omitempty"`
 	// Deterministic admission-generation token derived from the wire protocol
 	// version, canonical schema fingerprint, and deployment-issued admission
 	// revision
-	RegistrationToken string `protobuf:"bytes,2,opt,name=registration_token,json=registrationToken,proto3" json:"registration_token,omitempty"`
+	RegistrationToken *string `protobuf:"bytes,2,opt,name=registration_token,json=registrationToken,proto3,oneof" json:"registration_token,omitempty"`
 	// Duration of the admitted provider lease in milliseconds
-	LeaseDurationMs int64 `protobuf:"zigzag64,3,opt,name=lease_duration_ms,json=leaseDurationMs,proto3" json:"lease_duration_ms,omitempty"`
+	LeaseDurationMs *int64 `protobuf:"zigzag64,3,opt,name=lease_duration_ms,json=leaseDurationMs,proto3,oneof" json:"lease_duration_ms,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -296,22 +296,22 @@ func (*RegisterResponse) Descriptor() ([]byte, []int) {
 }
 
 func (x *RegisterResponse) GetRegisteredAt() string {
-	if x != nil {
-		return x.RegisteredAt
+	if x != nil && x.RegisteredAt != nil {
+		return *x.RegisteredAt
 	}
 	return ""
 }
 
 func (x *RegisterResponse) GetRegistrationToken() string {
-	if x != nil {
-		return x.RegistrationToken
+	if x != nil && x.RegistrationToken != nil {
+		return *x.RegistrationToken
 	}
 	return ""
 }
 
 func (x *RegisterResponse) GetLeaseDurationMs() int64 {
-	if x != nil {
-		return x.LeaseDurationMs
+	if x != nil && x.LeaseDurationMs != nil {
+		return *x.LeaseDurationMs
 	}
 	return 0
 }
@@ -319,13 +319,13 @@ func (x *RegisterResponse) GetLeaseDurationMs() int64 {
 type ReleaseProviderRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Name of the toolset whose provider is leaving
-	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	// Stable identity of the provider process releasing its lease
-	ProviderId string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3" json:"provider_id,omitempty"`
+	ProviderId *string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3,oneof" json:"provider_id,omitempty"`
 	// Exact admission-generation token returned by Register
-	ExpectedRegistrationToken string `protobuf:"bytes,3,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3" json:"expected_registration_token,omitempty"`
+	ExpectedRegistrationToken *string `protobuf:"bytes,3,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3,oneof" json:"expected_registration_token,omitempty"`
 	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
-	ProviderIncarnationId string `protobuf:"bytes,4,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3" json:"provider_incarnation_id,omitempty"`
+	ProviderIncarnationId *string `protobuf:"bytes,4,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3,oneof" json:"provider_incarnation_id,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -361,29 +361,29 @@ func (*ReleaseProviderRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *ReleaseProviderRequest) GetName() string {
-	if x != nil {
-		return x.Name
+	if x != nil && x.Name != nil {
+		return *x.Name
 	}
 	return ""
 }
 
 func (x *ReleaseProviderRequest) GetProviderId() string {
-	if x != nil {
-		return x.ProviderId
+	if x != nil && x.ProviderId != nil {
+		return *x.ProviderId
 	}
 	return ""
 }
 
 func (x *ReleaseProviderRequest) GetExpectedRegistrationToken() string {
-	if x != nil {
-		return x.ExpectedRegistrationToken
+	if x != nil && x.ExpectedRegistrationToken != nil {
+		return *x.ExpectedRegistrationToken
 	}
 	return ""
 }
 
 func (x *ReleaseProviderRequest) GetProviderIncarnationId() string {
-	if x != nil {
-		return x.ProviderIncarnationId
+	if x != nil && x.ProviderIncarnationId != nil {
+		return *x.ProviderIncarnationId
 	}
 	return ""
 }
@@ -428,15 +428,15 @@ type DrainProviderRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Full provider shutdown duration for which the draining lease must retain
 	// settlement authority.
-	SettlementDurationMs int64 `protobuf:"zigzag64,100,opt,name=settlement_duration_ms,json=settlementDurationMs,proto3" json:"settlement_duration_ms,omitempty"`
+	SettlementDurationMs *int64 `protobuf:"zigzag64,100,opt,name=settlement_duration_ms,json=settlementDurationMs,proto3,oneof" json:"settlement_duration_ms,omitempty"`
 	// Name of the toolset whose provider is leaving
-	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	// Stable identity of the provider process releasing its lease
-	ProviderId string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3" json:"provider_id,omitempty"`
+	ProviderId *string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3,oneof" json:"provider_id,omitempty"`
 	// Exact admission-generation token returned by Register
-	ExpectedRegistrationToken string `protobuf:"bytes,3,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3" json:"expected_registration_token,omitempty"`
+	ExpectedRegistrationToken *string `protobuf:"bytes,3,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3,oneof" json:"expected_registration_token,omitempty"`
 	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
-	ProviderIncarnationId string `protobuf:"bytes,4,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3" json:"provider_incarnation_id,omitempty"`
+	ProviderIncarnationId *string `protobuf:"bytes,4,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3,oneof" json:"provider_incarnation_id,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -472,36 +472,36 @@ func (*DrainProviderRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *DrainProviderRequest) GetSettlementDurationMs() int64 {
-	if x != nil {
-		return x.SettlementDurationMs
+	if x != nil && x.SettlementDurationMs != nil {
+		return *x.SettlementDurationMs
 	}
 	return 0
 }
 
 func (x *DrainProviderRequest) GetName() string {
-	if x != nil {
-		return x.Name
+	if x != nil && x.Name != nil {
+		return *x.Name
 	}
 	return ""
 }
 
 func (x *DrainProviderRequest) GetProviderId() string {
-	if x != nil {
-		return x.ProviderId
+	if x != nil && x.ProviderId != nil {
+		return *x.ProviderId
 	}
 	return ""
 }
 
 func (x *DrainProviderRequest) GetExpectedRegistrationToken() string {
-	if x != nil {
-		return x.ExpectedRegistrationToken
+	if x != nil && x.ExpectedRegistrationToken != nil {
+		return *x.ExpectedRegistrationToken
 	}
 	return ""
 }
 
 func (x *DrainProviderRequest) GetProviderIncarnationId() string {
-	if x != nil {
-		return x.ProviderIncarnationId
+	if x != nil && x.ProviderIncarnationId != nil {
+		return *x.ProviderIncarnationId
 	}
 	return ""
 }
@@ -545,10 +545,10 @@ func (*DrainProviderResponse) Descriptor() ([]byte, []int) {
 type UnregisterRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Name of the toolset to unregister
-	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	// Exact admission-generation token returned by Register for the stopped
 	// provider rollout
-	ExpectedRegistrationToken string `protobuf:"bytes,2,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3" json:"expected_registration_token,omitempty"`
+	ExpectedRegistrationToken *string `protobuf:"bytes,2,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3,oneof" json:"expected_registration_token,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -584,15 +584,15 @@ func (*UnregisterRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *UnregisterRequest) GetName() string {
-	if x != nil {
-		return x.Name
+	if x != nil && x.Name != nil {
+		return *x.Name
 	}
 	return ""
 }
 
 func (x *UnregisterRequest) GetExpectedRegistrationToken() string {
-	if x != nil {
-		return x.ExpectedRegistrationToken
+	if x != nil && x.ExpectedRegistrationToken != nil {
+		return *x.ExpectedRegistrationToken
 	}
 	return ""
 }
@@ -636,13 +636,13 @@ func (*UnregisterResponse) Descriptor() ([]byte, []int) {
 type PongRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// ID of the ping being acknowledged
-	PingId string `protobuf:"bytes,1,opt,name=ping_id,json=pingId,proto3" json:"ping_id,omitempty"`
+	PingId *string `protobuf:"bytes,1,opt,name=ping_id,json=pingId,proto3,oneof" json:"ping_id,omitempty"`
 	// Name of the toolset responding
-	Toolset string `protobuf:"bytes,2,opt,name=toolset,proto3" json:"toolset,omitempty"`
+	Toolset *string `protobuf:"bytes,2,opt,name=toolset,proto3,oneof" json:"toolset,omitempty"`
 	// Stable identity of the provider instance responding to the ping.
-	ProviderId string `protobuf:"bytes,3,opt,name=provider_id,json=providerId,proto3" json:"provider_id,omitempty"`
+	ProviderId *string `protobuf:"bytes,3,opt,name=provider_id,json=providerId,proto3,oneof" json:"provider_id,omitempty"`
 	// Runtime-generated UUID of the Serve lifecycle responding to the ping.
-	ProviderIncarnationId string `protobuf:"bytes,4,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3" json:"provider_incarnation_id,omitempty"`
+	ProviderIncarnationId *string `protobuf:"bytes,4,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3,oneof" json:"provider_incarnation_id,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -678,29 +678,29 @@ func (*PongRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *PongRequest) GetPingId() string {
-	if x != nil {
-		return x.PingId
+	if x != nil && x.PingId != nil {
+		return *x.PingId
 	}
 	return ""
 }
 
 func (x *PongRequest) GetToolset() string {
-	if x != nil {
-		return x.Toolset
+	if x != nil && x.Toolset != nil {
+		return *x.Toolset
 	}
 	return ""
 }
 
 func (x *PongRequest) GetProviderId() string {
-	if x != nil {
-		return x.ProviderId
+	if x != nil && x.ProviderId != nil {
+		return *x.ProviderId
 	}
 	return ""
 }
 
 func (x *PongRequest) GetProviderIncarnationId() string {
-	if x != nil {
-		return x.ProviderIncarnationId
+	if x != nil && x.ProviderIncarnationId != nil {
+		return *x.ProviderIncarnationId
 	}
 	return ""
 }
@@ -835,7 +835,7 @@ func (x *ListToolsetsResponse) GetToolsets() []*ToolsetInfo {
 type ToolsetInfo struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unique name for the toolset
-	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	// Human-readable description
 	Description *string `protobuf:"bytes,2,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	// Semantic version of the toolset.
@@ -843,9 +843,9 @@ type ToolsetInfo struct {
 	// Tags for categorization
 	Tags []string `protobuf:"bytes,4,rep,name=tags,proto3" json:"tags,omitempty"`
 	// Number of tools in the toolset
-	ToolCount int32 `protobuf:"zigzag32,5,opt,name=tool_count,json=toolCount,proto3" json:"tool_count,omitempty"`
+	ToolCount *int32 `protobuf:"zigzag32,5,opt,name=tool_count,json=toolCount,proto3,oneof" json:"tool_count,omitempty"`
 	// ISO 8601 registration timestamp
-	RegisteredAt  string `protobuf:"bytes,6,opt,name=registered_at,json=registeredAt,proto3" json:"registered_at,omitempty"`
+	RegisteredAt  *string `protobuf:"bytes,6,opt,name=registered_at,json=registeredAt,proto3,oneof" json:"registered_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -881,8 +881,8 @@ func (*ToolsetInfo) Descriptor() ([]byte, []int) {
 }
 
 func (x *ToolsetInfo) GetName() string {
-	if x != nil {
-		return x.Name
+	if x != nil && x.Name != nil {
+		return *x.Name
 	}
 	return ""
 }
@@ -909,15 +909,15 @@ func (x *ToolsetInfo) GetTags() []string {
 }
 
 func (x *ToolsetInfo) GetToolCount() int32 {
-	if x != nil {
-		return x.ToolCount
+	if x != nil && x.ToolCount != nil {
+		return *x.ToolCount
 	}
 	return 0
 }
 
 func (x *ToolsetInfo) GetRegisteredAt() string {
-	if x != nil {
-		return x.RegisteredAt
+	if x != nil && x.RegisteredAt != nil {
+		return *x.RegisteredAt
 	}
 	return ""
 }
@@ -925,7 +925,7 @@ func (x *ToolsetInfo) GetRegisteredAt() string {
 type GetToolsetRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Name of the toolset to retrieve
-	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Name          *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -961,8 +961,8 @@ func (*GetToolsetRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *GetToolsetRequest) GetName() string {
-	if x != nil {
-		return x.Name
+	if x != nil && x.Name != nil {
+		return *x.Name
 	}
 	return ""
 }
@@ -970,7 +970,7 @@ func (x *GetToolsetRequest) GetName() string {
 type GetToolsetResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unique name for the toolset
-	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	// Human-readable description
 	Description *string `protobuf:"bytes,2,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	// Semantic version of the toolset.
@@ -980,7 +980,7 @@ type GetToolsetResponse struct {
 	// Tool schemas included in the toolset.
 	Tools []*ToolSchema `protobuf:"bytes,5,rep,name=tools,proto3" json:"tools,omitempty"`
 	// ISO 8601 registration timestamp
-	RegisteredAt  string `protobuf:"bytes,6,opt,name=registered_at,json=registeredAt,proto3" json:"registered_at,omitempty"`
+	RegisteredAt  *string `protobuf:"bytes,6,opt,name=registered_at,json=registeredAt,proto3,oneof" json:"registered_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1016,8 +1016,8 @@ func (*GetToolsetResponse) Descriptor() ([]byte, []int) {
 }
 
 func (x *GetToolsetResponse) GetName() string {
-	if x != nil {
-		return x.Name
+	if x != nil && x.Name != nil {
+		return *x.Name
 	}
 	return ""
 }
@@ -1051,8 +1051,8 @@ func (x *GetToolsetResponse) GetTools() []*ToolSchema {
 }
 
 func (x *GetToolsetResponse) GetRegisteredAt() string {
-	if x != nil {
-		return x.RegisteredAt
+	if x != nil && x.RegisteredAt != nil {
+		return *x.RegisteredAt
 	}
 	return ""
 }
@@ -1060,10 +1060,10 @@ func (x *GetToolsetResponse) GetRegisteredAt() string {
 type CheckAdmissionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Name of the toolset whose admission must be checked.
-	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
 	// Deterministic token derived from the deployed provider's generated schema,
 	// admission revision, and wire protocol.
-	ExpectedRegistrationToken string `protobuf:"bytes,2,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3" json:"expected_registration_token,omitempty"`
+	ExpectedRegistrationToken *string `protobuf:"bytes,2,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3,oneof" json:"expected_registration_token,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -1099,15 +1099,15 @@ func (*CheckAdmissionRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *CheckAdmissionRequest) GetName() string {
-	if x != nil {
-		return x.Name
+	if x != nil && x.Name != nil {
+		return *x.Name
 	}
 	return ""
 }
 
 func (x *CheckAdmissionRequest) GetExpectedRegistrationToken() string {
-	if x != nil {
-		return x.ExpectedRegistrationToken
+	if x != nil && x.ExpectedRegistrationToken != nil {
+		return *x.ExpectedRegistrationToken
 	}
 	return ""
 }
@@ -1116,7 +1116,7 @@ type CheckAdmissionResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// True only when the expected registration token is active and has a routable
 	// provider plus a fresh authenticated pong.
-	Ready         bool `protobuf:"varint,1,opt,name=ready,proto3" json:"ready,omitempty"`
+	Ready         *bool `protobuf:"varint,1,opt,name=ready,proto3,oneof" json:"ready,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1152,8 +1152,8 @@ func (*CheckAdmissionResponse) Descriptor() ([]byte, []int) {
 }
 
 func (x *CheckAdmissionResponse) GetReady() bool {
-	if x != nil {
-		return x.Ready
+	if x != nil && x.Ready != nil {
+		return *x.Ready
 	}
 	return false
 }
@@ -1161,7 +1161,7 @@ func (x *CheckAdmissionResponse) GetReady() bool {
 type SearchRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Search query string
-	Query         string `protobuf:"bytes,1,opt,name=query,proto3" json:"query,omitempty"`
+	Query         *string `protobuf:"bytes,1,opt,name=query,proto3,oneof" json:"query,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1197,8 +1197,8 @@ func (*SearchRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *SearchRequest) GetQuery() string {
-	if x != nil {
-		return x.Query
+	if x != nil && x.Query != nil {
+		return *x.Query
 	}
 	return ""
 }
@@ -1252,18 +1252,18 @@ type CallToolRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Toolset registration identifier used for routing (for example,
 	// "catalog.lookup").
-	Toolset string `protobuf:"bytes,1,opt,name=toolset,proto3" json:"toolset,omitempty"`
+	Toolset *string `protobuf:"bytes,1,opt,name=toolset,proto3,oneof" json:"toolset,omitempty"`
 	// Globally unique tool identifier of the form "toolset.tool" (for example,
 	// "catalog.lookup.find_records").
-	Tool string `protobuf:"bytes,2,opt,name=tool,proto3" json:"tool,omitempty"`
+	Tool *string `protobuf:"bytes,2,opt,name=tool,proto3,oneof" json:"tool,omitempty"`
 	// Canonical JSON payload for the tool call. Must validate against the
 	// registered payload schema.
-	PayloadJson []byte `protobuf:"bytes,3,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
+	PayloadJson []byte `protobuf:"bytes,3,opt,name=payload_json,json=payloadJson,proto3,oneof" json:"payload_json,omitempty"`
 	// Execution metadata propagated alongside the tool call.
 	Meta *ToolCallMeta `protobuf:"bytes,4,opt,name=meta,proto3" json:"meta,omitempty"`
 	// Required runtime-owned version of the consumer message envelope. The
 	// registry accepts only its exact canonical version.
-	WireProtocolVersion int32 `protobuf:"zigzag32,5,opt,name=wire_protocol_version,json=wireProtocolVersion,proto3" json:"wire_protocol_version,omitempty"`
+	WireProtocolVersion *int32 `protobuf:"zigzag32,5,opt,name=wire_protocol_version,json=wireProtocolVersion,proto3,oneof" json:"wire_protocol_version,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1299,15 +1299,15 @@ func (*CallToolRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *CallToolRequest) GetToolset() string {
-	if x != nil {
-		return x.Toolset
+	if x != nil && x.Toolset != nil {
+		return *x.Toolset
 	}
 	return ""
 }
 
 func (x *CallToolRequest) GetTool() string {
-	if x != nil {
-		return x.Tool
+	if x != nil && x.Tool != nil {
+		return *x.Tool
 	}
 	return ""
 }
@@ -1327,8 +1327,8 @@ func (x *CallToolRequest) GetMeta() *ToolCallMeta {
 }
 
 func (x *CallToolRequest) GetWireProtocolVersion() int32 {
-	if x != nil {
-		return x.WireProtocolVersion
+	if x != nil && x.WireProtocolVersion != nil {
+		return *x.WireProtocolVersion
 	}
 	return 0
 }
@@ -1338,13 +1338,13 @@ func (x *CallToolRequest) GetWireProtocolVersion() int32 {
 type ToolCallMeta struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Run identifier for the agent execution that issued this tool call.
-	RunId string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	RunId *string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3,oneof" json:"run_id,omitempty"`
 	// Agent session identifier used to scope tool behavior and persistence.
-	SessionId string `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	SessionId *string `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3,oneof" json:"session_id,omitempty"`
 	// Turn identifier within the session.
 	TurnId *string `protobuf:"bytes,3,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
 	// Tool call identifier used for correlation with model provider tool calls.
-	ToolCallId string `protobuf:"bytes,4,opt,name=tool_call_id,json=toolCallId,proto3" json:"tool_call_id,omitempty"`
+	ToolCallId *string `protobuf:"bytes,4,opt,name=tool_call_id,json=toolCallId,proto3,oneof" json:"tool_call_id,omitempty"`
 	// Parent tool call identifier when the tool call is nested.
 	ParentToolCallId *string `protobuf:"bytes,5,opt,name=parent_tool_call_id,json=parentToolCallId,proto3,oneof" json:"parent_tool_call_id,omitempty"`
 	unknownFields    protoimpl.UnknownFields
@@ -1382,15 +1382,15 @@ func (*ToolCallMeta) Descriptor() ([]byte, []int) {
 }
 
 func (x *ToolCallMeta) GetRunId() string {
-	if x != nil {
-		return x.RunId
+	if x != nil && x.RunId != nil {
+		return *x.RunId
 	}
 	return ""
 }
 
 func (x *ToolCallMeta) GetSessionId() string {
-	if x != nil {
-		return x.SessionId
+	if x != nil && x.SessionId != nil {
+		return *x.SessionId
 	}
 	return ""
 }
@@ -1403,8 +1403,8 @@ func (x *ToolCallMeta) GetTurnId() string {
 }
 
 func (x *ToolCallMeta) GetToolCallId() string {
-	if x != nil {
-		return x.ToolCallId
+	if x != nil && x.ToolCallId != nil {
+		return *x.ToolCallId
 	}
 	return ""
 }
@@ -1419,15 +1419,15 @@ func (x *ToolCallMeta) GetParentToolCallId() string {
 type CallToolResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Global transport identifier derived from required run_id and tool_call_id.
-	ToolUseId string `protobuf:"bytes,1,opt,name=tool_use_id,json=toolUseId,proto3" json:"tool_use_id,omitempty"`
+	ToolUseId *string `protobuf:"bytes,1,opt,name=tool_use_id,json=toolUseId,proto3,oneof" json:"tool_use_id,omitempty"`
 	// Exact admission-generation token stamped on the routed call
-	RegistrationToken string `protobuf:"bytes,2,opt,name=registration_token,json=registrationToken,proto3" json:"registration_token,omitempty"`
+	RegistrationToken *string `protobuf:"bytes,2,opt,name=registration_token,json=registrationToken,proto3,oneof" json:"registration_token,omitempty"`
 	// Absolute Redis-owned deadline that bounds provider execution and caller
 	// waiting.
-	ExecutionDeadline string `protobuf:"bytes,3,opt,name=execution_deadline,json=executionDeadline,proto3" json:"execution_deadline,omitempty"`
+	ExecutionDeadline *string `protobuf:"bytes,3,opt,name=execution_deadline,json=executionDeadline,proto3,oneof" json:"execution_deadline,omitempty"`
 	// Later absolute Redis-owned expiration shared by the call record and result
 	// stream.
-	ResultStreamExpiresAt string `protobuf:"bytes,4,opt,name=result_stream_expires_at,json=resultStreamExpiresAt,proto3" json:"result_stream_expires_at,omitempty"`
+	ResultStreamExpiresAt *string `protobuf:"bytes,4,opt,name=result_stream_expires_at,json=resultStreamExpiresAt,proto3,oneof" json:"result_stream_expires_at,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -1463,29 +1463,29 @@ func (*CallToolResponse) Descriptor() ([]byte, []int) {
 }
 
 func (x *CallToolResponse) GetToolUseId() string {
-	if x != nil {
-		return x.ToolUseId
+	if x != nil && x.ToolUseId != nil {
+		return *x.ToolUseId
 	}
 	return ""
 }
 
 func (x *CallToolResponse) GetRegistrationToken() string {
-	if x != nil {
-		return x.RegistrationToken
+	if x != nil && x.RegistrationToken != nil {
+		return *x.RegistrationToken
 	}
 	return ""
 }
 
 func (x *CallToolResponse) GetExecutionDeadline() string {
-	if x != nil {
-		return x.ExecutionDeadline
+	if x != nil && x.ExecutionDeadline != nil {
+		return *x.ExecutionDeadline
 	}
 	return ""
 }
 
 func (x *CallToolResponse) GetResultStreamExpiresAt() string {
-	if x != nil {
-		return x.ResultStreamExpiresAt
+	if x != nil && x.ResultStreamExpiresAt != nil {
+		return *x.ResultStreamExpiresAt
 	}
 	return ""
 }
@@ -1493,21 +1493,21 @@ func (x *CallToolResponse) GetResultStreamExpiresAt() string {
 type RetryToolRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Exact admission-generation token returned by the original CallTool admission.
-	ExpectedRegistrationToken string `protobuf:"bytes,100,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3" json:"expected_registration_token,omitempty"`
+	ExpectedRegistrationToken *string `protobuf:"bytes,100,opt,name=expected_registration_token,json=expectedRegistrationToken,proto3,oneof" json:"expected_registration_token,omitempty"`
 	// Toolset registration identifier used for routing (for example,
 	// "catalog.lookup").
-	Toolset string `protobuf:"bytes,1,opt,name=toolset,proto3" json:"toolset,omitempty"`
+	Toolset *string `protobuf:"bytes,1,opt,name=toolset,proto3,oneof" json:"toolset,omitempty"`
 	// Globally unique tool identifier of the form "toolset.tool" (for example,
 	// "catalog.lookup.find_records").
-	Tool string `protobuf:"bytes,2,opt,name=tool,proto3" json:"tool,omitempty"`
+	Tool *string `protobuf:"bytes,2,opt,name=tool,proto3,oneof" json:"tool,omitempty"`
 	// Canonical JSON payload for the tool call. Must validate against the
 	// registered payload schema.
-	PayloadJson []byte `protobuf:"bytes,3,opt,name=payload_json,json=payloadJson,proto3" json:"payload_json,omitempty"`
+	PayloadJson []byte `protobuf:"bytes,3,opt,name=payload_json,json=payloadJson,proto3,oneof" json:"payload_json,omitempty"`
 	// Execution metadata propagated alongside the tool call.
 	Meta *ToolCallMeta `protobuf:"bytes,4,opt,name=meta,proto3" json:"meta,omitempty"`
 	// Required runtime-owned version of the consumer message envelope. The
 	// registry accepts only its exact canonical version.
-	WireProtocolVersion int32 `protobuf:"zigzag32,5,opt,name=wire_protocol_version,json=wireProtocolVersion,proto3" json:"wire_protocol_version,omitempty"`
+	WireProtocolVersion *int32 `protobuf:"zigzag32,5,opt,name=wire_protocol_version,json=wireProtocolVersion,proto3,oneof" json:"wire_protocol_version,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
 }
@@ -1543,22 +1543,22 @@ func (*RetryToolRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *RetryToolRequest) GetExpectedRegistrationToken() string {
-	if x != nil {
-		return x.ExpectedRegistrationToken
+	if x != nil && x.ExpectedRegistrationToken != nil {
+		return *x.ExpectedRegistrationToken
 	}
 	return ""
 }
 
 func (x *RetryToolRequest) GetToolset() string {
-	if x != nil {
-		return x.Toolset
+	if x != nil && x.Toolset != nil {
+		return *x.Toolset
 	}
 	return ""
 }
 
 func (x *RetryToolRequest) GetTool() string {
-	if x != nil {
-		return x.Tool
+	if x != nil && x.Tool != nil {
+		return *x.Tool
 	}
 	return ""
 }
@@ -1578,8 +1578,8 @@ func (x *RetryToolRequest) GetMeta() *ToolCallMeta {
 }
 
 func (x *RetryToolRequest) GetWireProtocolVersion() int32 {
-	if x != nil {
-		return x.WireProtocolVersion
+	if x != nil && x.WireProtocolVersion != nil {
+		return *x.WireProtocolVersion
 	}
 	return 0
 }
@@ -1587,15 +1587,15 @@ func (x *RetryToolRequest) GetWireProtocolVersion() int32 {
 type RetryToolResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Global transport identifier derived from required run_id and tool_call_id.
-	ToolUseId string `protobuf:"bytes,1,opt,name=tool_use_id,json=toolUseId,proto3" json:"tool_use_id,omitempty"`
+	ToolUseId *string `protobuf:"bytes,1,opt,name=tool_use_id,json=toolUseId,proto3,oneof" json:"tool_use_id,omitempty"`
 	// Exact admission-generation token stamped on the routed call
-	RegistrationToken string `protobuf:"bytes,2,opt,name=registration_token,json=registrationToken,proto3" json:"registration_token,omitempty"`
+	RegistrationToken *string `protobuf:"bytes,2,opt,name=registration_token,json=registrationToken,proto3,oneof" json:"registration_token,omitempty"`
 	// Absolute Redis-owned deadline that bounds provider execution and caller
 	// waiting.
-	ExecutionDeadline string `protobuf:"bytes,3,opt,name=execution_deadline,json=executionDeadline,proto3" json:"execution_deadline,omitempty"`
+	ExecutionDeadline *string `protobuf:"bytes,3,opt,name=execution_deadline,json=executionDeadline,proto3,oneof" json:"execution_deadline,omitempty"`
 	// Later absolute Redis-owned expiration shared by the call record and result
 	// stream.
-	ResultStreamExpiresAt string `protobuf:"bytes,4,opt,name=result_stream_expires_at,json=resultStreamExpiresAt,proto3" json:"result_stream_expires_at,omitempty"`
+	ResultStreamExpiresAt *string `protobuf:"bytes,4,opt,name=result_stream_expires_at,json=resultStreamExpiresAt,proto3,oneof" json:"result_stream_expires_at,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -1631,29 +1631,29 @@ func (*RetryToolResponse) Descriptor() ([]byte, []int) {
 }
 
 func (x *RetryToolResponse) GetToolUseId() string {
-	if x != nil {
-		return x.ToolUseId
+	if x != nil && x.ToolUseId != nil {
+		return *x.ToolUseId
 	}
 	return ""
 }
 
 func (x *RetryToolResponse) GetRegistrationToken() string {
-	if x != nil {
-		return x.RegistrationToken
+	if x != nil && x.RegistrationToken != nil {
+		return *x.RegistrationToken
 	}
 	return ""
 }
 
 func (x *RetryToolResponse) GetExecutionDeadline() string {
-	if x != nil {
-		return x.ExecutionDeadline
+	if x != nil && x.ExecutionDeadline != nil {
+		return *x.ExecutionDeadline
 	}
 	return ""
 }
 
 func (x *RetryToolResponse) GetResultStreamExpiresAt() string {
-	if x != nil {
-		return x.ResultStreamExpiresAt
+	if x != nil && x.ResultStreamExpiresAt != nil {
+		return *x.ResultStreamExpiresAt
 	}
 	return ""
 }
@@ -1661,21 +1661,21 @@ func (x *RetryToolResponse) GetResultStreamExpiresAt() string {
 type CompleteToolCallRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Toolset whose provider completed the call.
-	Toolset string `protobuf:"bytes,1,opt,name=toolset,proto3" json:"toolset,omitempty"`
+	Toolset *string `protobuf:"bytes,1,opt,name=toolset,proto3,oneof" json:"toolset,omitempty"`
 	// Stable provider process identity that executed the call.
-	ProviderId string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3" json:"provider_id,omitempty"`
+	ProviderId *string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3,oneof" json:"provider_id,omitempty"`
 	// Runtime UUID of the exact Serve lifecycle that executed the call.
-	ProviderIncarnationId string `protobuf:"bytes,3,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3" json:"provider_incarnation_id,omitempty"`
+	ProviderIncarnationId *string `protobuf:"bytes,3,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3,oneof" json:"provider_incarnation_id,omitempty"`
 	// Exact admission-generation token stamped on the call.
-	RegistrationToken string `protobuf:"bytes,4,opt,name=registration_token,json=registrationToken,proto3" json:"registration_token,omitempty"`
+	RegistrationToken *string `protobuf:"bytes,4,opt,name=registration_token,json=registrationToken,proto3,oneof" json:"registration_token,omitempty"`
 	// Global transport identity stamped on the call.
-	ToolUseId string `protobuf:"bytes,5,opt,name=tool_use_id,json=toolUseId,proto3" json:"tool_use_id,omitempty"`
+	ToolUseId *string `protobuf:"bytes,5,opt,name=tool_use_id,json=toolUseId,proto3,oneof" json:"tool_use_id,omitempty"`
 	// Canonical encoded terminal ToolResultMessage.
-	ResultJson []byte `protobuf:"bytes,6,opt,name=result_json,json=resultJson,proto3" json:"result_json,omitempty"`
+	ResultJson []byte `protobuf:"bytes,6,opt,name=result_json,json=resultJson,proto3,oneof" json:"result_json,omitempty"`
 	// Pulse request-stream event claimed by this provider.
-	RequestEventId string `protobuf:"bytes,7,opt,name=request_event_id,json=requestEventId,proto3" json:"request_event_id,omitempty"`
+	RequestEventId *string `protobuf:"bytes,7,opt,name=request_event_id,json=requestEventId,proto3,oneof" json:"request_event_id,omitempty"`
 	// Exact registration token of the provider lease settling the claim.
-	ProviderRegistrationToken string `protobuf:"bytes,8,opt,name=provider_registration_token,json=providerRegistrationToken,proto3" json:"provider_registration_token,omitempty"`
+	ProviderRegistrationToken *string `protobuf:"bytes,8,opt,name=provider_registration_token,json=providerRegistrationToken,proto3,oneof" json:"provider_registration_token,omitempty"`
 	unknownFields             protoimpl.UnknownFields
 	sizeCache                 protoimpl.SizeCache
 }
@@ -1711,36 +1711,36 @@ func (*CompleteToolCallRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *CompleteToolCallRequest) GetToolset() string {
-	if x != nil {
-		return x.Toolset
+	if x != nil && x.Toolset != nil {
+		return *x.Toolset
 	}
 	return ""
 }
 
 func (x *CompleteToolCallRequest) GetProviderId() string {
-	if x != nil {
-		return x.ProviderId
+	if x != nil && x.ProviderId != nil {
+		return *x.ProviderId
 	}
 	return ""
 }
 
 func (x *CompleteToolCallRequest) GetProviderIncarnationId() string {
-	if x != nil {
-		return x.ProviderIncarnationId
+	if x != nil && x.ProviderIncarnationId != nil {
+		return *x.ProviderIncarnationId
 	}
 	return ""
 }
 
 func (x *CompleteToolCallRequest) GetRegistrationToken() string {
-	if x != nil {
-		return x.RegistrationToken
+	if x != nil && x.RegistrationToken != nil {
+		return *x.RegistrationToken
 	}
 	return ""
 }
 
 func (x *CompleteToolCallRequest) GetToolUseId() string {
-	if x != nil {
-		return x.ToolUseId
+	if x != nil && x.ToolUseId != nil {
+		return *x.ToolUseId
 	}
 	return ""
 }
@@ -1753,15 +1753,15 @@ func (x *CompleteToolCallRequest) GetResultJson() []byte {
 }
 
 func (x *CompleteToolCallRequest) GetRequestEventId() string {
-	if x != nil {
-		return x.RequestEventId
+	if x != nil && x.RequestEventId != nil {
+		return *x.RequestEventId
 	}
 	return ""
 }
 
 func (x *CompleteToolCallRequest) GetProviderRegistrationToken() string {
-	if x != nil {
-		return x.ProviderRegistrationToken
+	if x != nil && x.ProviderRegistrationToken != nil {
+		return *x.ProviderRegistrationToken
 	}
 	return ""
 }
@@ -1805,23 +1805,23 @@ func (*CompleteToolCallResponse) Descriptor() ([]byte, []int) {
 type PublishToolOutputDeltaRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Logical output stream such as stdout or stderr.
-	Stream string `protobuf:"bytes,100,opt,name=stream,proto3" json:"stream,omitempty"`
+	Stream *string `protobuf:"bytes,100,opt,name=stream,proto3,oneof" json:"stream,omitempty"`
 	// Output fragment emitted by the running tool.
-	Delta string `protobuf:"bytes,101,opt,name=delta,proto3" json:"delta,omitempty"`
+	Delta *string `protobuf:"bytes,101,opt,name=delta,proto3,oneof" json:"delta,omitempty"`
 	// Toolset whose provider claimed the call.
-	Toolset string `protobuf:"bytes,1,opt,name=toolset,proto3" json:"toolset,omitempty"`
+	Toolset *string `protobuf:"bytes,1,opt,name=toolset,proto3,oneof" json:"toolset,omitempty"`
 	// Stable identity of the provider process.
-	ProviderId string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3" json:"provider_id,omitempty"`
+	ProviderId *string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3,oneof" json:"provider_id,omitempty"`
 	// Runtime UUID of the exact Serve lifecycle.
-	ProviderIncarnationId string `protobuf:"bytes,3,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3" json:"provider_incarnation_id,omitempty"`
+	ProviderIncarnationId *string `protobuf:"bytes,3,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3,oneof" json:"provider_incarnation_id,omitempty"`
 	// Exact registration token of the provider lease.
-	ProviderRegistrationToken string `protobuf:"bytes,4,opt,name=provider_registration_token,json=providerRegistrationToken,proto3" json:"provider_registration_token,omitempty"`
+	ProviderRegistrationToken *string `protobuf:"bytes,4,opt,name=provider_registration_token,json=providerRegistrationToken,proto3,oneof" json:"provider_registration_token,omitempty"`
 	// Admission token stamped on the claimed call.
-	CallRegistrationToken string `protobuf:"bytes,5,opt,name=call_registration_token,json=callRegistrationToken,proto3" json:"call_registration_token,omitempty"`
+	CallRegistrationToken *string `protobuf:"bytes,5,opt,name=call_registration_token,json=callRegistrationToken,proto3,oneof" json:"call_registration_token,omitempty"`
 	// Global transport identity stamped on the claimed call.
-	ToolUseId string `protobuf:"bytes,6,opt,name=tool_use_id,json=toolUseId,proto3" json:"tool_use_id,omitempty"`
+	ToolUseId *string `protobuf:"bytes,6,opt,name=tool_use_id,json=toolUseId,proto3,oneof" json:"tool_use_id,omitempty"`
 	// Pulse request-stream event claimed by this provider.
-	RequestEventId string `protobuf:"bytes,7,opt,name=request_event_id,json=requestEventId,proto3" json:"request_event_id,omitempty"`
+	RequestEventId *string `protobuf:"bytes,7,opt,name=request_event_id,json=requestEventId,proto3,oneof" json:"request_event_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1857,64 +1857,64 @@ func (*PublishToolOutputDeltaRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *PublishToolOutputDeltaRequest) GetStream() string {
-	if x != nil {
-		return x.Stream
+	if x != nil && x.Stream != nil {
+		return *x.Stream
 	}
 	return ""
 }
 
 func (x *PublishToolOutputDeltaRequest) GetDelta() string {
-	if x != nil {
-		return x.Delta
+	if x != nil && x.Delta != nil {
+		return *x.Delta
 	}
 	return ""
 }
 
 func (x *PublishToolOutputDeltaRequest) GetToolset() string {
-	if x != nil {
-		return x.Toolset
+	if x != nil && x.Toolset != nil {
+		return *x.Toolset
 	}
 	return ""
 }
 
 func (x *PublishToolOutputDeltaRequest) GetProviderId() string {
-	if x != nil {
-		return x.ProviderId
+	if x != nil && x.ProviderId != nil {
+		return *x.ProviderId
 	}
 	return ""
 }
 
 func (x *PublishToolOutputDeltaRequest) GetProviderIncarnationId() string {
-	if x != nil {
-		return x.ProviderIncarnationId
+	if x != nil && x.ProviderIncarnationId != nil {
+		return *x.ProviderIncarnationId
 	}
 	return ""
 }
 
 func (x *PublishToolOutputDeltaRequest) GetProviderRegistrationToken() string {
-	if x != nil {
-		return x.ProviderRegistrationToken
+	if x != nil && x.ProviderRegistrationToken != nil {
+		return *x.ProviderRegistrationToken
 	}
 	return ""
 }
 
 func (x *PublishToolOutputDeltaRequest) GetCallRegistrationToken() string {
-	if x != nil {
-		return x.CallRegistrationToken
+	if x != nil && x.CallRegistrationToken != nil {
+		return *x.CallRegistrationToken
 	}
 	return ""
 }
 
 func (x *PublishToolOutputDeltaRequest) GetToolUseId() string {
-	if x != nil {
-		return x.ToolUseId
+	if x != nil && x.ToolUseId != nil {
+		return *x.ToolUseId
 	}
 	return ""
 }
 
 func (x *PublishToolOutputDeltaRequest) GetRequestEventId() string {
-	if x != nil {
-		return x.RequestEventId
+	if x != nil && x.RequestEventId != nil {
+		return *x.RequestEventId
 	}
 	return ""
 }
@@ -1958,19 +1958,19 @@ func (*PublishToolOutputDeltaResponse) Descriptor() ([]byte, []int) {
 type ReportToolCallOverloadRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Toolset whose provider claimed the call.
-	Toolset string `protobuf:"bytes,1,opt,name=toolset,proto3" json:"toolset,omitempty"`
+	Toolset *string `protobuf:"bytes,1,opt,name=toolset,proto3,oneof" json:"toolset,omitempty"`
 	// Stable identity of the provider process.
-	ProviderId string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3" json:"provider_id,omitempty"`
+	ProviderId *string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3,oneof" json:"provider_id,omitempty"`
 	// Runtime UUID of the exact Serve lifecycle.
-	ProviderIncarnationId string `protobuf:"bytes,3,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3" json:"provider_incarnation_id,omitempty"`
+	ProviderIncarnationId *string `protobuf:"bytes,3,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3,oneof" json:"provider_incarnation_id,omitempty"`
 	// Exact registration token of the provider lease.
-	ProviderRegistrationToken string `protobuf:"bytes,4,opt,name=provider_registration_token,json=providerRegistrationToken,proto3" json:"provider_registration_token,omitempty"`
+	ProviderRegistrationToken *string `protobuf:"bytes,4,opt,name=provider_registration_token,json=providerRegistrationToken,proto3,oneof" json:"provider_registration_token,omitempty"`
 	// Admission token stamped on the claimed call.
-	CallRegistrationToken string `protobuf:"bytes,5,opt,name=call_registration_token,json=callRegistrationToken,proto3" json:"call_registration_token,omitempty"`
+	CallRegistrationToken *string `protobuf:"bytes,5,opt,name=call_registration_token,json=callRegistrationToken,proto3,oneof" json:"call_registration_token,omitempty"`
 	// Global transport identity stamped on the claimed call.
-	ToolUseId string `protobuf:"bytes,6,opt,name=tool_use_id,json=toolUseId,proto3" json:"tool_use_id,omitempty"`
+	ToolUseId *string `protobuf:"bytes,6,opt,name=tool_use_id,json=toolUseId,proto3,oneof" json:"tool_use_id,omitempty"`
 	// Pulse request-stream event claimed by this provider.
-	RequestEventId string `protobuf:"bytes,7,opt,name=request_event_id,json=requestEventId,proto3" json:"request_event_id,omitempty"`
+	RequestEventId *string `protobuf:"bytes,7,opt,name=request_event_id,json=requestEventId,proto3,oneof" json:"request_event_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2006,50 +2006,50 @@ func (*ReportToolCallOverloadRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *ReportToolCallOverloadRequest) GetToolset() string {
-	if x != nil {
-		return x.Toolset
+	if x != nil && x.Toolset != nil {
+		return *x.Toolset
 	}
 	return ""
 }
 
 func (x *ReportToolCallOverloadRequest) GetProviderId() string {
-	if x != nil {
-		return x.ProviderId
+	if x != nil && x.ProviderId != nil {
+		return *x.ProviderId
 	}
 	return ""
 }
 
 func (x *ReportToolCallOverloadRequest) GetProviderIncarnationId() string {
-	if x != nil {
-		return x.ProviderIncarnationId
+	if x != nil && x.ProviderIncarnationId != nil {
+		return *x.ProviderIncarnationId
 	}
 	return ""
 }
 
 func (x *ReportToolCallOverloadRequest) GetProviderRegistrationToken() string {
-	if x != nil {
-		return x.ProviderRegistrationToken
+	if x != nil && x.ProviderRegistrationToken != nil {
+		return *x.ProviderRegistrationToken
 	}
 	return ""
 }
 
 func (x *ReportToolCallOverloadRequest) GetCallRegistrationToken() string {
-	if x != nil {
-		return x.CallRegistrationToken
+	if x != nil && x.CallRegistrationToken != nil {
+		return *x.CallRegistrationToken
 	}
 	return ""
 }
 
 func (x *ReportToolCallOverloadRequest) GetToolUseId() string {
-	if x != nil {
-		return x.ToolUseId
+	if x != nil && x.ToolUseId != nil {
+		return *x.ToolUseId
 	}
 	return ""
 }
 
 func (x *ReportToolCallOverloadRequest) GetRequestEventId() string {
-	if x != nil {
-		return x.RequestEventId
+	if x != nil && x.RequestEventId != nil {
+		return *x.RequestEventId
 	}
 	return ""
 }
@@ -2094,21 +2094,21 @@ type ClaimToolCallRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Runtime UUID created once for this claim operation and reused by its
 	// transport retries.
-	ClaimOperationId string `protobuf:"bytes,100,opt,name=claim_operation_id,json=claimOperationId,proto3" json:"claim_operation_id,omitempty"`
+	ClaimOperationId *string `protobuf:"bytes,100,opt,name=claim_operation_id,json=claimOperationId,proto3,oneof" json:"claim_operation_id,omitempty"`
 	// Toolset whose provider claimed the call.
-	Toolset string `protobuf:"bytes,1,opt,name=toolset,proto3" json:"toolset,omitempty"`
+	Toolset *string `protobuf:"bytes,1,opt,name=toolset,proto3,oneof" json:"toolset,omitempty"`
 	// Stable identity of the provider process.
-	ProviderId string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3" json:"provider_id,omitempty"`
+	ProviderId *string `protobuf:"bytes,2,opt,name=provider_id,json=providerId,proto3,oneof" json:"provider_id,omitempty"`
 	// Runtime UUID of the exact Serve lifecycle.
-	ProviderIncarnationId string `protobuf:"bytes,3,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3" json:"provider_incarnation_id,omitempty"`
+	ProviderIncarnationId *string `protobuf:"bytes,3,opt,name=provider_incarnation_id,json=providerIncarnationId,proto3,oneof" json:"provider_incarnation_id,omitempty"`
 	// Exact registration token of the provider lease.
-	ProviderRegistrationToken string `protobuf:"bytes,4,opt,name=provider_registration_token,json=providerRegistrationToken,proto3" json:"provider_registration_token,omitempty"`
+	ProviderRegistrationToken *string `protobuf:"bytes,4,opt,name=provider_registration_token,json=providerRegistrationToken,proto3,oneof" json:"provider_registration_token,omitempty"`
 	// Admission token stamped on the claimed call.
-	CallRegistrationToken string `protobuf:"bytes,5,opt,name=call_registration_token,json=callRegistrationToken,proto3" json:"call_registration_token,omitempty"`
+	CallRegistrationToken *string `protobuf:"bytes,5,opt,name=call_registration_token,json=callRegistrationToken,proto3,oneof" json:"call_registration_token,omitempty"`
 	// Global transport identity stamped on the claimed call.
-	ToolUseId string `protobuf:"bytes,6,opt,name=tool_use_id,json=toolUseId,proto3" json:"tool_use_id,omitempty"`
+	ToolUseId *string `protobuf:"bytes,6,opt,name=tool_use_id,json=toolUseId,proto3,oneof" json:"tool_use_id,omitempty"`
 	// Pulse request-stream event claimed by this provider.
-	RequestEventId string `protobuf:"bytes,7,opt,name=request_event_id,json=requestEventId,proto3" json:"request_event_id,omitempty"`
+	RequestEventId *string `protobuf:"bytes,7,opt,name=request_event_id,json=requestEventId,proto3,oneof" json:"request_event_id,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -2144,57 +2144,57 @@ func (*ClaimToolCallRequest) Descriptor() ([]byte, []int) {
 }
 
 func (x *ClaimToolCallRequest) GetClaimOperationId() string {
-	if x != nil {
-		return x.ClaimOperationId
+	if x != nil && x.ClaimOperationId != nil {
+		return *x.ClaimOperationId
 	}
 	return ""
 }
 
 func (x *ClaimToolCallRequest) GetToolset() string {
-	if x != nil {
-		return x.Toolset
+	if x != nil && x.Toolset != nil {
+		return *x.Toolset
 	}
 	return ""
 }
 
 func (x *ClaimToolCallRequest) GetProviderId() string {
-	if x != nil {
-		return x.ProviderId
+	if x != nil && x.ProviderId != nil {
+		return *x.ProviderId
 	}
 	return ""
 }
 
 func (x *ClaimToolCallRequest) GetProviderIncarnationId() string {
-	if x != nil {
-		return x.ProviderIncarnationId
+	if x != nil && x.ProviderIncarnationId != nil {
+		return *x.ProviderIncarnationId
 	}
 	return ""
 }
 
 func (x *ClaimToolCallRequest) GetProviderRegistrationToken() string {
-	if x != nil {
-		return x.ProviderRegistrationToken
+	if x != nil && x.ProviderRegistrationToken != nil {
+		return *x.ProviderRegistrationToken
 	}
 	return ""
 }
 
 func (x *ClaimToolCallRequest) GetCallRegistrationToken() string {
-	if x != nil {
-		return x.CallRegistrationToken
+	if x != nil && x.CallRegistrationToken != nil {
+		return *x.CallRegistrationToken
 	}
 	return ""
 }
 
 func (x *ClaimToolCallRequest) GetToolUseId() string {
-	if x != nil {
-		return x.ToolUseId
+	if x != nil && x.ToolUseId != nil {
+		return *x.ToolUseId
 	}
 	return ""
 }
 
 func (x *ClaimToolCallRequest) GetRequestEventId() string {
-	if x != nil {
-		return x.RequestEventId
+	if x != nil && x.RequestEventId != nil {
+		return *x.RequestEventId
 	}
 	return ""
 }
@@ -2205,7 +2205,7 @@ type ClaimToolCallResponse struct {
 	// terminal means retained terminal history already exists; claimed means
 	// another request delivery owns execution; expired means Redis time settled
 	// the call.
-	Disposition   string `protobuf:"bytes,1,opt,name=disposition,proto3" json:"disposition,omitempty"`
+	Disposition   *string `protobuf:"bytes,1,opt,name=disposition,proto3,oneof" json:"disposition,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2241,8 +2241,8 @@ func (*ClaimToolCallResponse) Descriptor() ([]byte, []int) {
 }
 
 func (x *ClaimToolCallResponse) GetDisposition() string {
-	if x != nil {
-		return x.Disposition
+	if x != nil && x.Disposition != nil {
+		return *x.Disposition
 	}
 	return ""
 }
@@ -2251,179 +2251,277 @@ var File_goagen_registry_registry_proto protoreflect.FileDescriptor
 
 const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\n" +
-	"\x1egoagen_registry_registry.proto\x12\x0fgoa_ai_registry\"\xb9\x03\n" +
-	"\x0fRegisterRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12%\n" +
-	"\vdescription\x18\x02 \x01(\tH\x00R\vdescription\x88\x01\x01\x12\x1d\n" +
-	"\aversion\x18\x03 \x01(\tH\x01R\aversion\x88\x01\x01\x12\x12\n" +
+	"\x1egoagen_registry_registry.proto\x12\x0fgoa_ai_registry\"\xd4\x04\n" +
+	"\x0fRegisterRequest\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
+	"\vdescription\x18\x02 \x01(\tH\x01R\vdescription\x88\x01\x01\x12\x1d\n" +
+	"\aversion\x18\x03 \x01(\tH\x02R\aversion\x88\x01\x01\x12\x12\n" +
 	"\x04tags\x18\x04 \x03(\tR\x04tags\x121\n" +
-	"\x05tools\x18\x05 \x03(\v2\x1b.goa_ai_registry.ToolSchemaR\x05tools\x12\x1f\n" +
-	"\vprovider_id\x18\x06 \x01(\tR\n" +
-	"providerId\x12-\n" +
-	"\x12admission_revision\x18\a \x01(\tR\x11admissionRevision\x126\n" +
-	"\x17provider_incarnation_id\x18\b \x01(\tR\x15providerIncarnationId\x122\n" +
-	"\x15wire_protocol_version\x18\t \x01(\x11R\x13wireProtocolVersion\x12-\n" +
+	"\x05tools\x18\x05 \x03(\v2\x1b.goa_ai_registry.ToolSchemaR\x05tools\x12$\n" +
+	"\vprovider_id\x18\x06 \x01(\tH\x03R\n" +
+	"providerId\x88\x01\x01\x122\n" +
+	"\x12admission_revision\x18\a \x01(\tH\x04R\x11admissionRevision\x88\x01\x01\x12;\n" +
+	"\x17provider_incarnation_id\x18\b \x01(\tH\x05R\x15providerIncarnationId\x88\x01\x01\x127\n" +
+	"\x15wire_protocol_version\x18\t \x01(\x11H\x06R\x13wireProtocolVersion\x88\x01\x01\x122\n" +
 	"\x12schema_fingerprint\x18\n" +
-	" \x01(\tR\x11schemaFingerprintB\x0e\n" +
+	" \x01(\tH\aR\x11schemaFingerprint\x88\x01\x01B\a\n" +
+	"\x05_nameB\x0e\n" +
 	"\f_descriptionB\n" +
 	"\n" +
-	"\b_version\"\xf6\x01\n" +
+	"\b_versionB\x0e\n" +
+	"\f_provider_idB\x15\n" +
+	"\x13_admission_revisionB\x1a\n" +
+	"\x18_provider_incarnation_idB\x18\n" +
+	"\x16_wire_protocol_versionB\x15\n" +
+	"\x13_schema_fingerprint\"\xb3\x02\n" +
 	"\n" +
-	"ToolSchema\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12%\n" +
-	"\vdescription\x18\x02 \x01(\tH\x00R\vdescription\x88\x01\x01\x12\x12\n" +
-	"\x04tags\x18\x03 \x03(\tR\x04tags\x12%\n" +
-	"\x0epayload_schema\x18\x04 \x01(\fR\rpayloadSchema\x12#\n" +
-	"\rresult_schema\x18\x05 \x01(\fR\fresultSchema\x12*\n" +
-	"\x0esidecar_schema\x18\x06 \x01(\fH\x01R\rsidecarSchema\x88\x01\x01B\x0e\n" +
+	"ToolSchema\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
+	"\vdescription\x18\x02 \x01(\tH\x01R\vdescription\x88\x01\x01\x12\x12\n" +
+	"\x04tags\x18\x03 \x03(\tR\x04tags\x12*\n" +
+	"\x0epayload_schema\x18\x04 \x01(\fH\x02R\rpayloadSchema\x88\x01\x01\x12(\n" +
+	"\rresult_schema\x18\x05 \x01(\fH\x03R\fresultSchema\x88\x01\x01\x12*\n" +
+	"\x0esidecar_schema\x18\x06 \x01(\fH\x04R\rsidecarSchema\x88\x01\x01B\a\n" +
+	"\x05_nameB\x0e\n" +
 	"\f_descriptionB\x11\n" +
-	"\x0f_sidecar_schema\"\x92\x01\n" +
-	"\x10RegisterResponse\x12#\n" +
-	"\rregistered_at\x18\x01 \x01(\tR\fregisteredAt\x12-\n" +
-	"\x12registration_token\x18\x02 \x01(\tR\x11registrationToken\x12*\n" +
-	"\x11lease_duration_ms\x18\x03 \x01(\x12R\x0fleaseDurationMs\"\xc5\x01\n" +
-	"\x16ReleaseProviderRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
-	"\vprovider_id\x18\x02 \x01(\tR\n" +
-	"providerId\x12>\n" +
-	"\x1bexpected_registration_token\x18\x03 \x01(\tR\x19expectedRegistrationToken\x126\n" +
-	"\x17provider_incarnation_id\x18\x04 \x01(\tR\x15providerIncarnationId\"\x19\n" +
-	"\x17ReleaseProviderResponse\"\xf9\x01\n" +
-	"\x14DrainProviderRequest\x124\n" +
-	"\x16settlement_duration_ms\x18d \x01(\x12R\x14settlementDurationMs\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
-	"\vprovider_id\x18\x02 \x01(\tR\n" +
-	"providerId\x12>\n" +
-	"\x1bexpected_registration_token\x18\x03 \x01(\tR\x19expectedRegistrationToken\x126\n" +
-	"\x17provider_incarnation_id\x18\x04 \x01(\tR\x15providerIncarnationId\"\x17\n" +
-	"\x15DrainProviderResponse\"g\n" +
-	"\x11UnregisterRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12>\n" +
-	"\x1bexpected_registration_token\x18\x02 \x01(\tR\x19expectedRegistrationToken\"\x14\n" +
-	"\x12UnregisterResponse\"\x99\x01\n" +
-	"\vPongRequest\x12\x17\n" +
-	"\aping_id\x18\x01 \x01(\tR\x06pingId\x12\x18\n" +
-	"\atoolset\x18\x02 \x01(\tR\atoolset\x12\x1f\n" +
-	"\vprovider_id\x18\x03 \x01(\tR\n" +
-	"providerId\x126\n" +
-	"\x17provider_incarnation_id\x18\x04 \x01(\tR\x15providerIncarnationId\"\x0e\n" +
+	"\x0f_payload_schemaB\x10\n" +
+	"\x0e_result_schemaB\x11\n" +
+	"\x0f_sidecar_schema\"\xe0\x01\n" +
+	"\x10RegisterResponse\x12(\n" +
+	"\rregistered_at\x18\x01 \x01(\tH\x00R\fregisteredAt\x88\x01\x01\x122\n" +
+	"\x12registration_token\x18\x02 \x01(\tH\x01R\x11registrationToken\x88\x01\x01\x12/\n" +
+	"\x11lease_duration_ms\x18\x03 \x01(\x12H\x02R\x0fleaseDurationMs\x88\x01\x01B\x10\n" +
+	"\x0e_registered_atB\x15\n" +
+	"\x13_registration_tokenB\x14\n" +
+	"\x12_lease_duration_ms\"\xae\x02\n" +
+	"\x16ReleaseProviderRequest\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12$\n" +
+	"\vprovider_id\x18\x02 \x01(\tH\x01R\n" +
+	"providerId\x88\x01\x01\x12C\n" +
+	"\x1bexpected_registration_token\x18\x03 \x01(\tH\x02R\x19expectedRegistrationToken\x88\x01\x01\x12;\n" +
+	"\x17provider_incarnation_id\x18\x04 \x01(\tH\x03R\x15providerIncarnationId\x88\x01\x01B\a\n" +
+	"\x05_nameB\x0e\n" +
+	"\f_provider_idB\x1e\n" +
+	"\x1c_expected_registration_tokenB\x1a\n" +
+	"\x18_provider_incarnation_id\"\x19\n" +
+	"\x17ReleaseProviderResponse\"\x82\x03\n" +
+	"\x14DrainProviderRequest\x129\n" +
+	"\x16settlement_duration_ms\x18d \x01(\x12H\x00R\x14settlementDurationMs\x88\x01\x01\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x01R\x04name\x88\x01\x01\x12$\n" +
+	"\vprovider_id\x18\x02 \x01(\tH\x02R\n" +
+	"providerId\x88\x01\x01\x12C\n" +
+	"\x1bexpected_registration_token\x18\x03 \x01(\tH\x03R\x19expectedRegistrationToken\x88\x01\x01\x12;\n" +
+	"\x17provider_incarnation_id\x18\x04 \x01(\tH\x04R\x15providerIncarnationId\x88\x01\x01B\x19\n" +
+	"\x17_settlement_duration_msB\a\n" +
+	"\x05_nameB\x0e\n" +
+	"\f_provider_idB\x1e\n" +
+	"\x1c_expected_registration_tokenB\x1a\n" +
+	"\x18_provider_incarnation_id\"\x17\n" +
+	"\x15DrainProviderResponse\"\x9a\x01\n" +
+	"\x11UnregisterRequest\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12C\n" +
+	"\x1bexpected_registration_token\x18\x02 \x01(\tH\x01R\x19expectedRegistrationToken\x88\x01\x01B\a\n" +
+	"\x05_nameB\x1e\n" +
+	"\x1c_expected_registration_token\"\x14\n" +
+	"\x12UnregisterResponse\"\xf1\x01\n" +
+	"\vPongRequest\x12\x1c\n" +
+	"\aping_id\x18\x01 \x01(\tH\x00R\x06pingId\x88\x01\x01\x12\x1d\n" +
+	"\atoolset\x18\x02 \x01(\tH\x01R\atoolset\x88\x01\x01\x12$\n" +
+	"\vprovider_id\x18\x03 \x01(\tH\x02R\n" +
+	"providerId\x88\x01\x01\x12;\n" +
+	"\x17provider_incarnation_id\x18\x04 \x01(\tH\x03R\x15providerIncarnationId\x88\x01\x01B\n" +
+	"\n" +
+	"\b_ping_idB\n" +
+	"\n" +
+	"\b_toolsetB\x0e\n" +
+	"\f_provider_idB\x1a\n" +
+	"\x18_provider_incarnation_id\"\x0e\n" +
 	"\fPongResponse\")\n" +
 	"\x13ListToolsetsRequest\x12\x12\n" +
 	"\x04tags\x18\x01 \x03(\tR\x04tags\"P\n" +
 	"\x14ListToolsetsResponse\x128\n" +
-	"\btoolsets\x18\x01 \x03(\v2\x1c.goa_ai_registry.ToolsetInfoR\btoolsets\"\xdb\x01\n" +
-	"\vToolsetInfo\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12%\n" +
-	"\vdescription\x18\x02 \x01(\tH\x00R\vdescription\x88\x01\x01\x12\x1d\n" +
-	"\aversion\x18\x03 \x01(\tH\x01R\aversion\x88\x01\x01\x12\x12\n" +
-	"\x04tags\x18\x04 \x03(\tR\x04tags\x12\x1d\n" +
+	"\btoolsets\x18\x01 \x03(\v2\x1c.goa_ai_registry.ToolsetInfoR\btoolsets\"\x94\x02\n" +
+	"\vToolsetInfo\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
+	"\vdescription\x18\x02 \x01(\tH\x01R\vdescription\x88\x01\x01\x12\x1d\n" +
+	"\aversion\x18\x03 \x01(\tH\x02R\aversion\x88\x01\x01\x12\x12\n" +
+	"\x04tags\x18\x04 \x03(\tR\x04tags\x12\"\n" +
 	"\n" +
-	"tool_count\x18\x05 \x01(\x11R\ttoolCount\x12#\n" +
-	"\rregistered_at\x18\x06 \x01(\tR\fregisteredAtB\x0e\n" +
+	"tool_count\x18\x05 \x01(\x11H\x03R\ttoolCount\x88\x01\x01\x12(\n" +
+	"\rregistered_at\x18\x06 \x01(\tH\x04R\fregisteredAt\x88\x01\x01B\a\n" +
+	"\x05_nameB\x0e\n" +
 	"\f_descriptionB\n" +
 	"\n" +
-	"\b_version\"'\n" +
-	"\x11GetToolsetRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\"\xf6\x01\n" +
-	"\x12GetToolsetResponse\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12%\n" +
-	"\vdescription\x18\x02 \x01(\tH\x00R\vdescription\x88\x01\x01\x12\x1d\n" +
-	"\aversion\x18\x03 \x01(\tH\x01R\aversion\x88\x01\x01\x12\x12\n" +
+	"\b_versionB\r\n" +
+	"\v_tool_countB\x10\n" +
+	"\x0e_registered_at\"5\n" +
+	"\x11GetToolsetRequest\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01B\a\n" +
+	"\x05_name\"\x9b\x02\n" +
+	"\x12GetToolsetResponse\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
+	"\vdescription\x18\x02 \x01(\tH\x01R\vdescription\x88\x01\x01\x12\x1d\n" +
+	"\aversion\x18\x03 \x01(\tH\x02R\aversion\x88\x01\x01\x12\x12\n" +
 	"\x04tags\x18\x04 \x03(\tR\x04tags\x121\n" +
-	"\x05tools\x18\x05 \x03(\v2\x1b.goa_ai_registry.ToolSchemaR\x05tools\x12#\n" +
-	"\rregistered_at\x18\x06 \x01(\tR\fregisteredAtB\x0e\n" +
+	"\x05tools\x18\x05 \x03(\v2\x1b.goa_ai_registry.ToolSchemaR\x05tools\x12(\n" +
+	"\rregistered_at\x18\x06 \x01(\tH\x03R\fregisteredAt\x88\x01\x01B\a\n" +
+	"\x05_nameB\x0e\n" +
 	"\f_descriptionB\n" +
 	"\n" +
-	"\b_version\"k\n" +
-	"\x15CheckAdmissionRequest\x12\x12\n" +
-	"\x04name\x18\x01 \x01(\tR\x04name\x12>\n" +
-	"\x1bexpected_registration_token\x18\x02 \x01(\tR\x19expectedRegistrationToken\".\n" +
-	"\x16CheckAdmissionResponse\x12\x14\n" +
-	"\x05ready\x18\x01 \x01(\bR\x05ready\"%\n" +
-	"\rSearchRequest\x12\x14\n" +
-	"\x05query\x18\x01 \x01(\tR\x05query\"J\n" +
+	"\b_versionB\x10\n" +
+	"\x0e_registered_at\"\x9e\x01\n" +
+	"\x15CheckAdmissionRequest\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12C\n" +
+	"\x1bexpected_registration_token\x18\x02 \x01(\tH\x01R\x19expectedRegistrationToken\x88\x01\x01B\a\n" +
+	"\x05_nameB\x1e\n" +
+	"\x1c_expected_registration_token\"=\n" +
+	"\x16CheckAdmissionResponse\x12\x19\n" +
+	"\x05ready\x18\x01 \x01(\bH\x00R\x05ready\x88\x01\x01B\b\n" +
+	"\x06_ready\"4\n" +
+	"\rSearchRequest\x12\x19\n" +
+	"\x05query\x18\x01 \x01(\tH\x00R\x05query\x88\x01\x01B\b\n" +
+	"\x06_query\"J\n" +
 	"\x0eSearchResponse\x128\n" +
-	"\btoolsets\x18\x01 \x03(\v2\x1c.goa_ai_registry.ToolsetInfoR\btoolsets\"\xc9\x01\n" +
-	"\x0fCallToolRequest\x12\x18\n" +
-	"\atoolset\x18\x01 \x01(\tR\atoolset\x12\x12\n" +
-	"\x04tool\x18\x02 \x01(\tR\x04tool\x12!\n" +
-	"\fpayload_json\x18\x03 \x01(\fR\vpayloadJson\x121\n" +
-	"\x04meta\x18\x04 \x01(\v2\x1d.goa_ai_registry.ToolCallMetaR\x04meta\x122\n" +
-	"\x15wire_protocol_version\x18\x05 \x01(\x11R\x13wireProtocolVersion\"\xdc\x01\n" +
-	"\fToolCallMeta\x12\x15\n" +
-	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1d\n" +
+	"\btoolsets\x18\x01 \x03(\v2\x1c.goa_ai_registry.ToolsetInfoR\btoolsets\"\x9d\x02\n" +
+	"\x0fCallToolRequest\x12\x1d\n" +
+	"\atoolset\x18\x01 \x01(\tH\x00R\atoolset\x88\x01\x01\x12\x17\n" +
+	"\x04tool\x18\x02 \x01(\tH\x01R\x04tool\x88\x01\x01\x12&\n" +
+	"\fpayload_json\x18\x03 \x01(\fH\x02R\vpayloadJson\x88\x01\x01\x121\n" +
+	"\x04meta\x18\x04 \x01(\v2\x1d.goa_ai_registry.ToolCallMetaR\x04meta\x127\n" +
+	"\x15wire_protocol_version\x18\x05 \x01(\x11H\x03R\x13wireProtocolVersion\x88\x01\x01B\n" +
 	"\n" +
-	"session_id\x18\x02 \x01(\tR\tsessionId\x12\x1c\n" +
-	"\aturn_id\x18\x03 \x01(\tH\x00R\x06turnId\x88\x01\x01\x12 \n" +
-	"\ftool_call_id\x18\x04 \x01(\tR\n" +
-	"toolCallId\x122\n" +
-	"\x13parent_tool_call_id\x18\x05 \x01(\tH\x01R\x10parentToolCallId\x88\x01\x01B\n" +
+	"\b_toolsetB\a\n" +
+	"\x05_toolB\x0f\n" +
+	"\r_payload_jsonB\x18\n" +
+	"\x16_wire_protocol_version\"\x96\x02\n" +
+	"\fToolCallMeta\x12\x1a\n" +
+	"\x06run_id\x18\x01 \x01(\tH\x00R\x05runId\x88\x01\x01\x12\"\n" +
 	"\n" +
-	"\b_turn_idB\x16\n" +
-	"\x14_parent_tool_call_id\"\xc9\x01\n" +
-	"\x10CallToolResponse\x12\x1e\n" +
-	"\vtool_use_id\x18\x01 \x01(\tR\ttoolUseId\x12-\n" +
-	"\x12registration_token\x18\x02 \x01(\tR\x11registrationToken\x12-\n" +
-	"\x12execution_deadline\x18\x03 \x01(\tR\x11executionDeadline\x127\n" +
-	"\x18result_stream_expires_at\x18\x04 \x01(\tR\x15resultStreamExpiresAt\"\x8a\x02\n" +
-	"\x10RetryToolRequest\x12>\n" +
-	"\x1bexpected_registration_token\x18d \x01(\tR\x19expectedRegistrationToken\x12\x18\n" +
-	"\atoolset\x18\x01 \x01(\tR\atoolset\x12\x12\n" +
-	"\x04tool\x18\x02 \x01(\tR\x04tool\x12!\n" +
-	"\fpayload_json\x18\x03 \x01(\fR\vpayloadJson\x121\n" +
-	"\x04meta\x18\x04 \x01(\v2\x1d.goa_ai_registry.ToolCallMetaR\x04meta\x122\n" +
-	"\x15wire_protocol_version\x18\x05 \x01(\x11R\x13wireProtocolVersion\"\xca\x01\n" +
-	"\x11RetryToolResponse\x12\x1e\n" +
-	"\vtool_use_id\x18\x01 \x01(\tR\ttoolUseId\x12-\n" +
-	"\x12registration_token\x18\x02 \x01(\tR\x11registrationToken\x12-\n" +
-	"\x12execution_deadline\x18\x03 \x01(\tR\x11executionDeadline\x127\n" +
-	"\x18result_stream_expires_at\x18\x04 \x01(\tR\x15resultStreamExpiresAt\"\xe6\x02\n" +
-	"\x17CompleteToolCallRequest\x12\x18\n" +
-	"\atoolset\x18\x01 \x01(\tR\atoolset\x12\x1f\n" +
-	"\vprovider_id\x18\x02 \x01(\tR\n" +
-	"providerId\x126\n" +
-	"\x17provider_incarnation_id\x18\x03 \x01(\tR\x15providerIncarnationId\x12-\n" +
-	"\x12registration_token\x18\x04 \x01(\tR\x11registrationToken\x12\x1e\n" +
-	"\vtool_use_id\x18\x05 \x01(\tR\ttoolUseId\x12\x1f\n" +
-	"\vresult_json\x18\x06 \x01(\fR\n" +
-	"resultJson\x12(\n" +
-	"\x10request_event_id\x18\a \x01(\tR\x0erequestEventId\x12>\n" +
-	"\x1bprovider_registration_token\x18\b \x01(\tR\x19providerRegistrationToken\"\x1a\n" +
-	"\x18CompleteToolCallResponse\"\x82\x03\n" +
-	"\x1dPublishToolOutputDeltaRequest\x12\x16\n" +
-	"\x06stream\x18d \x01(\tR\x06stream\x12\x14\n" +
-	"\x05delta\x18e \x01(\tR\x05delta\x12\x18\n" +
-	"\atoolset\x18\x01 \x01(\tR\atoolset\x12\x1f\n" +
-	"\vprovider_id\x18\x02 \x01(\tR\n" +
-	"providerId\x126\n" +
-	"\x17provider_incarnation_id\x18\x03 \x01(\tR\x15providerIncarnationId\x12>\n" +
-	"\x1bprovider_registration_token\x18\x04 \x01(\tR\x19providerRegistrationToken\x126\n" +
-	"\x17call_registration_token\x18\x05 \x01(\tR\x15callRegistrationToken\x12\x1e\n" +
-	"\vtool_use_id\x18\x06 \x01(\tR\ttoolUseId\x12(\n" +
-	"\x10request_event_id\x18\a \x01(\tR\x0erequestEventId\" \n" +
-	"\x1ePublishToolOutputDeltaResponse\"\xd4\x02\n" +
-	"\x1dReportToolCallOverloadRequest\x12\x18\n" +
-	"\atoolset\x18\x01 \x01(\tR\atoolset\x12\x1f\n" +
-	"\vprovider_id\x18\x02 \x01(\tR\n" +
-	"providerId\x126\n" +
-	"\x17provider_incarnation_id\x18\x03 \x01(\tR\x15providerIncarnationId\x12>\n" +
-	"\x1bprovider_registration_token\x18\x04 \x01(\tR\x19providerRegistrationToken\x126\n" +
-	"\x17call_registration_token\x18\x05 \x01(\tR\x15callRegistrationToken\x12\x1e\n" +
-	"\vtool_use_id\x18\x06 \x01(\tR\ttoolUseId\x12(\n" +
-	"\x10request_event_id\x18\a \x01(\tR\x0erequestEventId\" \n" +
-	"\x1eReportToolCallOverloadResponse\"\xf9\x02\n" +
-	"\x14ClaimToolCallRequest\x12,\n" +
-	"\x12claim_operation_id\x18d \x01(\tR\x10claimOperationId\x12\x18\n" +
-	"\atoolset\x18\x01 \x01(\tR\atoolset\x12\x1f\n" +
-	"\vprovider_id\x18\x02 \x01(\tR\n" +
-	"providerId\x126\n" +
-	"\x17provider_incarnation_id\x18\x03 \x01(\tR\x15providerIncarnationId\x12>\n" +
-	"\x1bprovider_registration_token\x18\x04 \x01(\tR\x19providerRegistrationToken\x126\n" +
-	"\x17call_registration_token\x18\x05 \x01(\tR\x15callRegistrationToken\x12\x1e\n" +
-	"\vtool_use_id\x18\x06 \x01(\tR\ttoolUseId\x12(\n" +
-	"\x10request_event_id\x18\a \x01(\tR\x0erequestEventId\"9\n" +
-	"\x15ClaimToolCallResponse\x12 \n" +
-	"\vdisposition\x18\x01 \x01(\tR\vdisposition2\x88\v\n" +
+	"session_id\x18\x02 \x01(\tH\x01R\tsessionId\x88\x01\x01\x12\x1c\n" +
+	"\aturn_id\x18\x03 \x01(\tH\x02R\x06turnId\x88\x01\x01\x12%\n" +
+	"\ftool_call_id\x18\x04 \x01(\tH\x03R\n" +
+	"toolCallId\x88\x01\x01\x122\n" +
+	"\x13parent_tool_call_id\x18\x05 \x01(\tH\x04R\x10parentToolCallId\x88\x01\x01B\t\n" +
+	"\a_run_idB\r\n" +
+	"\v_session_idB\n" +
+	"\n" +
+	"\b_turn_idB\x0f\n" +
+	"\r_tool_call_idB\x16\n" +
+	"\x14_parent_tool_call_id\"\xb8\x02\n" +
+	"\x10CallToolResponse\x12#\n" +
+	"\vtool_use_id\x18\x01 \x01(\tH\x00R\ttoolUseId\x88\x01\x01\x122\n" +
+	"\x12registration_token\x18\x02 \x01(\tH\x01R\x11registrationToken\x88\x01\x01\x122\n" +
+	"\x12execution_deadline\x18\x03 \x01(\tH\x02R\x11executionDeadline\x88\x01\x01\x12<\n" +
+	"\x18result_stream_expires_at\x18\x04 \x01(\tH\x03R\x15resultStreamExpiresAt\x88\x01\x01B\x0e\n" +
+	"\f_tool_use_idB\x15\n" +
+	"\x13_registration_tokenB\x15\n" +
+	"\x13_execution_deadlineB\x1b\n" +
+	"\x19_result_stream_expires_at\"\x83\x03\n" +
+	"\x10RetryToolRequest\x12C\n" +
+	"\x1bexpected_registration_token\x18d \x01(\tH\x00R\x19expectedRegistrationToken\x88\x01\x01\x12\x1d\n" +
+	"\atoolset\x18\x01 \x01(\tH\x01R\atoolset\x88\x01\x01\x12\x17\n" +
+	"\x04tool\x18\x02 \x01(\tH\x02R\x04tool\x88\x01\x01\x12&\n" +
+	"\fpayload_json\x18\x03 \x01(\fH\x03R\vpayloadJson\x88\x01\x01\x121\n" +
+	"\x04meta\x18\x04 \x01(\v2\x1d.goa_ai_registry.ToolCallMetaR\x04meta\x127\n" +
+	"\x15wire_protocol_version\x18\x05 \x01(\x11H\x04R\x13wireProtocolVersion\x88\x01\x01B\x1e\n" +
+	"\x1c_expected_registration_tokenB\n" +
+	"\n" +
+	"\b_toolsetB\a\n" +
+	"\x05_toolB\x0f\n" +
+	"\r_payload_jsonB\x18\n" +
+	"\x16_wire_protocol_version\"\xb9\x02\n" +
+	"\x11RetryToolResponse\x12#\n" +
+	"\vtool_use_id\x18\x01 \x01(\tH\x00R\ttoolUseId\x88\x01\x01\x122\n" +
+	"\x12registration_token\x18\x02 \x01(\tH\x01R\x11registrationToken\x88\x01\x01\x122\n" +
+	"\x12execution_deadline\x18\x03 \x01(\tH\x02R\x11executionDeadline\x88\x01\x01\x12<\n" +
+	"\x18result_stream_expires_at\x18\x04 \x01(\tH\x03R\x15resultStreamExpiresAt\x88\x01\x01B\x0e\n" +
+	"\f_tool_use_idB\x15\n" +
+	"\x13_registration_tokenB\x15\n" +
+	"\x13_execution_deadlineB\x1b\n" +
+	"\x19_result_stream_expires_at\"\xb2\x04\n" +
+	"\x17CompleteToolCallRequest\x12\x1d\n" +
+	"\atoolset\x18\x01 \x01(\tH\x00R\atoolset\x88\x01\x01\x12$\n" +
+	"\vprovider_id\x18\x02 \x01(\tH\x01R\n" +
+	"providerId\x88\x01\x01\x12;\n" +
+	"\x17provider_incarnation_id\x18\x03 \x01(\tH\x02R\x15providerIncarnationId\x88\x01\x01\x122\n" +
+	"\x12registration_token\x18\x04 \x01(\tH\x03R\x11registrationToken\x88\x01\x01\x12#\n" +
+	"\vtool_use_id\x18\x05 \x01(\tH\x04R\ttoolUseId\x88\x01\x01\x12$\n" +
+	"\vresult_json\x18\x06 \x01(\fH\x05R\n" +
+	"resultJson\x88\x01\x01\x12-\n" +
+	"\x10request_event_id\x18\a \x01(\tH\x06R\x0erequestEventId\x88\x01\x01\x12C\n" +
+	"\x1bprovider_registration_token\x18\b \x01(\tH\aR\x19providerRegistrationToken\x88\x01\x01B\n" +
+	"\n" +
+	"\b_toolsetB\x0e\n" +
+	"\f_provider_idB\x1a\n" +
+	"\x18_provider_incarnation_idB\x15\n" +
+	"\x13_registration_tokenB\x0e\n" +
+	"\f_tool_use_idB\x0e\n" +
+	"\f_result_jsonB\x13\n" +
+	"\x11_request_event_idB\x1e\n" +
+	"\x1c_provider_registration_token\"\x1a\n" +
+	"\x18CompleteToolCallResponse\"\xdd\x04\n" +
+	"\x1dPublishToolOutputDeltaRequest\x12\x1b\n" +
+	"\x06stream\x18d \x01(\tH\x00R\x06stream\x88\x01\x01\x12\x19\n" +
+	"\x05delta\x18e \x01(\tH\x01R\x05delta\x88\x01\x01\x12\x1d\n" +
+	"\atoolset\x18\x01 \x01(\tH\x02R\atoolset\x88\x01\x01\x12$\n" +
+	"\vprovider_id\x18\x02 \x01(\tH\x03R\n" +
+	"providerId\x88\x01\x01\x12;\n" +
+	"\x17provider_incarnation_id\x18\x03 \x01(\tH\x04R\x15providerIncarnationId\x88\x01\x01\x12C\n" +
+	"\x1bprovider_registration_token\x18\x04 \x01(\tH\x05R\x19providerRegistrationToken\x88\x01\x01\x12;\n" +
+	"\x17call_registration_token\x18\x05 \x01(\tH\x06R\x15callRegistrationToken\x88\x01\x01\x12#\n" +
+	"\vtool_use_id\x18\x06 \x01(\tH\aR\ttoolUseId\x88\x01\x01\x12-\n" +
+	"\x10request_event_id\x18\a \x01(\tH\bR\x0erequestEventId\x88\x01\x01B\t\n" +
+	"\a_streamB\b\n" +
+	"\x06_deltaB\n" +
+	"\n" +
+	"\b_toolsetB\x0e\n" +
+	"\f_provider_idB\x1a\n" +
+	"\x18_provider_incarnation_idB\x1e\n" +
+	"\x1c_provider_registration_tokenB\x1a\n" +
+	"\x18_call_registration_tokenB\x0e\n" +
+	"\f_tool_use_idB\x13\n" +
+	"\x11_request_event_id\" \n" +
+	"\x1ePublishToolOutputDeltaResponse\"\x90\x04\n" +
+	"\x1dReportToolCallOverloadRequest\x12\x1d\n" +
+	"\atoolset\x18\x01 \x01(\tH\x00R\atoolset\x88\x01\x01\x12$\n" +
+	"\vprovider_id\x18\x02 \x01(\tH\x01R\n" +
+	"providerId\x88\x01\x01\x12;\n" +
+	"\x17provider_incarnation_id\x18\x03 \x01(\tH\x02R\x15providerIncarnationId\x88\x01\x01\x12C\n" +
+	"\x1bprovider_registration_token\x18\x04 \x01(\tH\x03R\x19providerRegistrationToken\x88\x01\x01\x12;\n" +
+	"\x17call_registration_token\x18\x05 \x01(\tH\x04R\x15callRegistrationToken\x88\x01\x01\x12#\n" +
+	"\vtool_use_id\x18\x06 \x01(\tH\x05R\ttoolUseId\x88\x01\x01\x12-\n" +
+	"\x10request_event_id\x18\a \x01(\tH\x06R\x0erequestEventId\x88\x01\x01B\n" +
+	"\n" +
+	"\b_toolsetB\x0e\n" +
+	"\f_provider_idB\x1a\n" +
+	"\x18_provider_incarnation_idB\x1e\n" +
+	"\x1c_provider_registration_tokenB\x1a\n" +
+	"\x18_call_registration_tokenB\x0e\n" +
+	"\f_tool_use_idB\x13\n" +
+	"\x11_request_event_id\" \n" +
+	"\x1eReportToolCallOverloadResponse\"\xd1\x04\n" +
+	"\x14ClaimToolCallRequest\x121\n" +
+	"\x12claim_operation_id\x18d \x01(\tH\x00R\x10claimOperationId\x88\x01\x01\x12\x1d\n" +
+	"\atoolset\x18\x01 \x01(\tH\x01R\atoolset\x88\x01\x01\x12$\n" +
+	"\vprovider_id\x18\x02 \x01(\tH\x02R\n" +
+	"providerId\x88\x01\x01\x12;\n" +
+	"\x17provider_incarnation_id\x18\x03 \x01(\tH\x03R\x15providerIncarnationId\x88\x01\x01\x12C\n" +
+	"\x1bprovider_registration_token\x18\x04 \x01(\tH\x04R\x19providerRegistrationToken\x88\x01\x01\x12;\n" +
+	"\x17call_registration_token\x18\x05 \x01(\tH\x05R\x15callRegistrationToken\x88\x01\x01\x12#\n" +
+	"\vtool_use_id\x18\x06 \x01(\tH\x06R\ttoolUseId\x88\x01\x01\x12-\n" +
+	"\x10request_event_id\x18\a \x01(\tH\aR\x0erequestEventId\x88\x01\x01B\x15\n" +
+	"\x13_claim_operation_idB\n" +
+	"\n" +
+	"\b_toolsetB\x0e\n" +
+	"\f_provider_idB\x1a\n" +
+	"\x18_provider_incarnation_idB\x1e\n" +
+	"\x1c_provider_registration_tokenB\x1a\n" +
+	"\x18_call_registration_tokenB\x0e\n" +
+	"\f_tool_use_idB\x13\n" +
+	"\x11_request_event_id\"N\n" +
+	"\x15ClaimToolCallResponse\x12%\n" +
+	"\vdisposition\x18\x01 \x01(\tH\x00R\vdisposition\x88\x01\x01B\x0e\n" +
+	"\f_disposition2\x88\v\n" +
 	"\bRegistry\x12O\n" +
 	"\bRegister\x12 .goa_ai_registry.RegisterRequest\x1a!.goa_ai_registry.RegisterResponse\x12d\n" +
 	"\x0fReleaseProvider\x12'.goa_ai_registry.ReleaseProviderRequest\x1a(.goa_ai_registry.ReleaseProviderResponse\x12^\n" +
@@ -2542,9 +2640,27 @@ func file_goagen_registry_registry_proto_init() {
 	}
 	file_goagen_registry_registry_proto_msgTypes[0].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[1].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[2].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[3].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[5].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[7].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[9].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[13].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[14].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[15].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[16].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[17].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[18].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[20].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[21].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[22].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[23].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[24].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[25].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[27].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[29].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[31].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[32].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

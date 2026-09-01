@@ -7,20 +7,20 @@
 package search
 
 import (
-	searchspecs "goa.design/goa-ai/alpha/agents/scribe/exports/search"
+	searchspecs "goa.design/goa-ai/gen/alpha/agents/scribe/exports/search"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	runtime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// Name is the DSL-declared name for the exported toolset "search".
-const Name = "search"
+// ToolsetName identifies this exported toolset during registration.
+const ToolsetName = "search"
 
-// Service identifies the service that defined the toolset.
+// Service identifies the service that exposes the toolset.
 const Service = "alpha"
 
-// AgentID is the fully-qualified identifier of the agent exporting this toolset.
+// AgentID identifies the agent that runs calls to this toolset.
 const AgentID agent.Ident = "alpha.scribe"
 
 // Tool IDs for this exported toolset (globally unique). Use these typed
@@ -32,71 +32,59 @@ const (
 	Find tools.Ident = "search.find"
 )
 
+// agentToolSpecs returns fresh tool specifications for this exported toolset.
+func agentToolSpecs() []tools.ToolSpec {
+	specs := make([]tools.ToolSpec, 0, 1)
+	{
+		spec := searchspecs.SpecFind()
+		spec.IsAgentTool = true
+		spec.AgentID = string(AgentID)
+		specs = append(specs, spec)
+	}
+	return specs
+}
+
 // Type aliases preserve exact tool payload and result identities.
 type FindPayload = searchspecs.FindPayload
 type FindResult = searchspecs.FindResult
 
 // NewScribeToolsetRegistration creates a toolset registration for the scribe agent.
-// The returned registration can be used with runtime.RegisterToolset to make the agent
-// available as a tool to other agents. When invoked, the agent runs its full planning loop
-// and returns the final response as the tool result. DSL-authored CallHintTemplate and
-// ResultHintTemplate declarations are compiled into hint templates so sinks can render
-// concise labels and previews without heuristics.
-//
-// Example usage:
-//
-//	rt := runtime.New(...)
-//	reg := NewScribeToolsetRegistration(rt)
-//	if err := rt.RegisterToolset(reg); err != nil {
-//		// handle error
-//	}
-func NewScribeToolsetRegistration(rt *runtime.Runtime) runtime.ToolsetRegistration {
+// Pass the returned value to runtime.RegisterToolset to let other agents call
+// this agent. Each call starts the agent and returns its final response. The
+// generated registration also includes the labels and previews declared for
+// tool calls and results.
+func NewScribeToolsetRegistration(
+	rt *runtime.Runtime,
+	definition runtime.AgentDefinition,
+) runtime.ToolsetRegistration {
 	cfg := runtime.AgentToolConfig{
-		AgentID:   AgentID,
-		Name:      "search",
-		TaskQueue: "alpha_scribe_search_tasks",
-		Route: runtime.AgentRoute{
-			ID:               AgentID,
-			WorkflowName:     "alpha.scribe.workflow",
-			DefaultTaskQueue: "alpha_scribe_workflow",
-		},
-		PlanActivityName:    "alpha.scribe.plan",
-		ResumeActivityName:  "alpha.scribe.resume",
-		ExecuteToolActivity: "alpha.scribe.executetool",
+		Definition: definition,
+		Name:       ToolsetName,
 	}
 	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
-	reg.Specs = searchspecs.Specs()
+	reg.Specs = agentToolSpecs()
 	reg.ToolMetadataLookup = searchspecs.MetadataByName
 	return reg
 }
 
-// NewRegistration creates a toolset registration with an optional agent-wide
-// system prompt and per-tool content configured via runtime options. Callers
-// can mix text and templates; each tool must be configured in exactly one way.
+// NewRegistration creates a toolset registration with an optional
+// system prompt and content for individual tools. Callers can mix text and
+// templates, but each tool must use exactly one form.
 func NewRegistration(
 	rt *runtime.Runtime,
+	definition runtime.AgentDefinition,
 	systemPrompt string,
 	opts ...runtime.AgentToolOption,
 ) (runtime.ToolsetRegistration, error) {
 	cfg := runtime.AgentToolConfig{
-		AgentID:      AgentID,
-		Name:         "search",
-		TaskQueue:    "alpha_scribe_search_tasks",
+		Definition:   definition,
+		Name:         ToolsetName,
 		SystemPrompt: systemPrompt,
-		// Strong-contract routing for cross-process child workflow composition
-		Route: runtime.AgentRoute{
-			ID:               AgentID,
-			WorkflowName:     "alpha.scribe.workflow",
-			DefaultTaskQueue: "alpha_scribe_workflow",
-		},
-		PlanActivityName:    "alpha.scribe.plan",
-		ResumeActivityName:  "alpha.scribe.resume",
-		ExecuteToolActivity: "alpha.scribe.executetool",
 	}
 	for _, o := range opts {
 		o(&cfg)
 	}
-	// Validate only for the templates explicitly provided (optional)
+	// Check only the templates provided by the caller.
 	if len(cfg.Templates) > 0 {
 		ids := make([]tools.Ident, 0, len(cfg.Templates))
 		for id := range cfg.Templates {
@@ -107,16 +95,15 @@ func NewRegistration(
 		}
 	}
 	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
-	reg.Specs = searchspecs.Specs()
+	reg.Specs = agentToolSpecs()
 	reg.ToolMetadataLookup = searchspecs.MetadataByName
 	return reg, nil
 }
 
-// Typed tool-call helpers for each tool in this exported toolset. These helpers
-// enforce use of the generated tool identifier and accept a typed payload that
-// matches the tool schema.
-// NewSearchFindCall builds a planner-authored request for the
+// Typed call helpers use the generated tool identifier and accept the generated
+// payload type for each tool.
+// NewFindCall builds a planner-authored request for the
 // search.find tool. The runtime assigns its execution ID.
-func NewSearchFindCall(args *FindPayload) (planner.ToolRequest, error) {
+func NewFindCall(args FindPayload) (planner.ToolRequest, error) {
 	return planner.NewToolRequest(searchspecs.FindTool(), args)
 }

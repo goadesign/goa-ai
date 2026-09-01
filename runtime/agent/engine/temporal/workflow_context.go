@@ -19,11 +19,13 @@ import (
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
@@ -38,6 +40,11 @@ type (
 		metrics    telemetry.Metrics
 		tracer     telemetry.Tracer
 		baseCtx    context.Context
+
+		commandCtx                  workflow.Context
+		cancelExecution             workflow.CancelFunc
+		cancellationHandler         engine.CancellationHandler
+		cancellationRegistrationErr error
 	}
 
 	contextKey string
@@ -45,7 +52,6 @@ type (
 	temporalChildHandle struct {
 		future workflow.ChildWorkflowFuture
 		ctx    workflow.Context
-		runID  string
 		cancel workflow.CancelFunc
 	}
 
@@ -79,7 +85,7 @@ const (
 //
 // This is intended for workflows that run in the same Temporal worker as the goa-ai
 // engine but are not started through it, and still need to call runtime helpers
-// (for example ExecuteAgentChildWithRoute).
+// such as ExecuteAgentChild.
 //
 // The returned context uses engine defaults (queue, timeouts, retry) when invoking
 // typed planner/tool/record activities.
@@ -89,21 +95,25 @@ func NewWorkflowContext(e *Engine, ctx workflow.Context) engine.WorkflowContext 
 
 func newTemporalWorkflowContext(e *Engine, ctx workflow.Context) *temporalWorkflowContext {
 	info := workflow.GetInfo(ctx)
+	executionCtx, cancelExecution := workflow.WithCancel(ctx)
 	wfCtx := &temporalWorkflowContext{
-		engine:     e,
-		ctx:        ctx,
-		workflowID: info.WorkflowExecution.ID,
-		runID:      info.WorkflowExecution.RunID,
-		sequence:   new(uint64),
-		logger:     e.logger,
-		metrics:    e.metrics,
-		tracer:     e.tracer,
+		engine:          e,
+		ctx:             executionCtx,
+		workflowID:      info.WorkflowExecution.ID,
+		runID:           info.WorkflowExecution.RunID,
+		sequence:        new(uint64),
+		logger:          e.logger,
+		metrics:         e.metrics,
+		tracer:          e.tracer,
+		commandCtx:      ctx,
+		cancelExecution: cancelExecution,
 		// NOTE: workflow execution is distributed and replayed; we cannot rely on
 		// any process-local "base context registry" to initialize child workflows.
 		// For deterministic behavior, build the base context from scratch and rely
 		// on Temporal interceptors/propagators for trace context.
 		baseCtx: context.Background(),
 	}
+	wfCtx.cancellationRegistrationErr = wfCtx.registerCancellationUpdate()
 	e.trackWorkflowContext(wfCtx.runID, wfCtx)
 	return wfCtx
 }
@@ -144,8 +154,12 @@ func normalizeTemporalPlannerError(err error) error {
 
 func mergeRetryPolicies(base, override engine.RetryPolicy) engine.RetryPolicy {
 	result := base
-	if override.MaxAttempts != 0 {
+	if override.UnlimitedAttempts {
+		result.MaxAttempts = 0
+		result.UnlimitedAttempts = true
+	} else if override.MaxAttempts != 0 {
 		result.MaxAttempts = override.MaxAttempts
+		result.UnlimitedAttempts = false
 	}
 	if override.InitialInterval != 0 {
 		result.InitialInterval = override.InitialInterval
@@ -157,7 +171,7 @@ func mergeRetryPolicies(base, override engine.RetryPolicy) engine.RetryPolicy {
 }
 
 func convertRetryPolicy(r engine.RetryPolicy) *temporal.RetryPolicy {
-	if r.MaxAttempts == 0 && r.InitialInterval == 0 && r.BackoffCoefficient == 0 {
+	if r.MaxAttempts == 0 && !r.UnlimitedAttempts && r.InitialInterval == 0 && r.BackoffCoefficient == 0 {
 		return nil
 	}
 
@@ -185,6 +199,70 @@ func (w *temporalWorkflowContext) SetQueryHandler(name string, handler any) erro
 	return workflow.SetQueryHandler(w.ctx, name, handler)
 }
 
+// SetCancellationHandler supplies the function that records cancellation. The
+// engine update is registered when the workflow context is created so requests
+// that arrive first wait inside this workflow.
+func (w *temporalWorkflowContext) SetCancellationHandler(handler engine.CancellationHandler) error {
+	if handler == nil {
+		return errors.New("cancellation handler is required")
+	}
+	if w.cancellationRegistrationErr != nil {
+		return w.cancellationRegistrationErr
+	}
+	if w.cancellationHandler != nil {
+		return errors.New("cancellation handler is already registered")
+	}
+	w.cancellationHandler = handler
+	return nil
+}
+
+// registerCancellationUpdate installs the engine-owned update before runtime
+// workflow code begins. The update waits for the persistence handler when a
+// request reaches Temporal first.
+func (w *temporalWorkflowContext) registerCancellationUpdate() error {
+	return workflow.SetUpdateHandler(
+		w.commandCtx,
+		cancellationUpdateName,
+		func(ctx workflow.Context, request engine.CancellationRequest) (string, error) {
+			if request.RunID != w.workflowID {
+				return "", temporal.NewNonRetryableApplicationError(
+					"cancellation run id does not match workflow id",
+					"goa_ai_cancellation_contract",
+					nil,
+				)
+			}
+			if err := workflow.Await(ctx, func() bool {
+				return w.cancellationHandler != nil
+			}); err != nil {
+				return "", err
+			}
+			updateCtx := *w
+			updateCtx.ctx = ctx
+			if err := w.cancellationHandler(&updateCtx, request); err != nil {
+				var conflict *engine.CancellationConflictError
+				switch {
+				case errors.As(err, &conflict):
+					return "", temporal.NewNonRetryableApplicationError(
+						conflict.Error(),
+						cancellationConflictErrorType,
+						nil,
+						request,
+					)
+				case errors.Is(err, engine.ErrWorkflowCompleted):
+					return "", temporal.NewNonRetryableApplicationError(
+						engine.ErrWorkflowCompleted.Error(),
+						cancellationCompletedErrorType,
+						nil,
+					)
+				}
+				return "", err
+			}
+			w.cancelExecution()
+			return request.Reason, nil
+		},
+	)
+}
+
 func (w *temporalWorkflowContext) WorkflowID() string {
 	return w.workflowID
 }
@@ -193,18 +271,21 @@ func (w *temporalWorkflowContext) RunID() string {
 	return w.runID
 }
 
-func (w *temporalWorkflowContext) PublishRecords(call engine.RecordActivityCall) error {
+func (w *temporalWorkflowContext) ExecuteStorageActivity(call engine.StorageActivityCall) (*api.StorageActivityResult, error) {
 	if call.Name == "" {
-		return errors.New("record activity name is required")
+		return nil, errors.New("storage activity name is required")
 	}
-	if call.Input == nil {
-		return errors.New("record activity input is required")
+	if call.Command == nil {
+		return nil, errors.New("storage activity command is required")
 	}
 
 	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
-	fut := workflow.ExecuteActivity(actx, call.Name, call.Input)
-	var ignored struct{}
-	return fut.Get(actx, &ignored)
+	fut := workflow.ExecuteActivity(actx, call.Name, call.Command)
+	var output api.StorageActivityResult
+	if err := fut.Get(actx, &output); err != nil {
+		return nil, err
+	}
+	return &output, nil
 }
 
 func (w *temporalWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
@@ -243,6 +324,25 @@ func (w *temporalWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActiv
 	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
 	fut := workflow.ExecuteActivity(actx, call.Name, call.Input)
 	return &temporalFuture[*api.ToolOutput]{future: fut, ctx: actx}, nil
+}
+
+// ExecuteAgentChildActivity prepares one child run through a replay-safe
+// Temporal activity result.
+func (w *temporalWorkflowContext) ExecuteAgentChildActivity(call engine.AgentChildActivityCall) (*api.AgentChildActivityOutput, error) {
+	if call.Name == "" {
+		return nil, errors.New("agent child activity name is required")
+	}
+	if call.Input == nil {
+		return nil, errors.New("agent child activity input is required")
+	}
+
+	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
+	fut := workflow.ExecuteActivity(actx, call.Name, call.Input)
+	var output *api.AgentChildActivityOutput
+	if err := fut.Get(actx, &output); err != nil {
+		return nil, err
+	}
+	return output, nil
 }
 
 func (w *temporalWorkflowContext) Logger() telemetry.Logger {
@@ -352,21 +452,41 @@ func (w *temporalWorkflowContext) activityOptionsFor(name string, override engin
 	}
 }
 
-// StartChildWorkflow starts a Temporal child workflow with explicit workflow name and task queue.
-//
-// This avoids parent-side registration lookups: the caller supplies the workflow name and the
-// engine starts it directly in Temporal.
-func (w *temporalWorkflowContext) StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
+// StartChildWorkflow copies and validates the complete child request, then
+// waits until Temporal accepts or rejects the start. The returned handle tracks
+// completion independently after Temporal accepts the child.
+func (w *temporalWorkflowContext) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
+	if err := engine.ValidateChildWorkflowRequest(req); err != nil {
+		return nil, err
+	}
+	snapshot, err := startrecipe.SnapshotChildRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	req = snapshot.Request
 	opts := workflow.ChildWorkflowOptions{
-		WorkflowID:         req.ID,
-		TaskQueue:          req.TaskQueue,
-		WorkflowRunTimeout: req.RunTimeout,
-		RetryPolicy:        convertRetryPolicy(req.RetryPolicy),
+		WorkflowID:            req.ID,
+		TaskQueue:             req.TaskQueue,
+		WorkflowRunTimeout:    req.RunTimeout,
+		WaitForCancellation:   true,
+		WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
+		RetryPolicy:           convertRetryPolicy(req.RetryPolicy),
 	}
 
 	cctx := workflow.WithChildOptions(w.ctx, opts)
 	cctx, cancel := workflow.WithCancel(cctx)
-	fut := workflow.ExecuteChildWorkflow(cctx, req.Workflow, req.Input)
+	fut := workflow.ExecuteChildWorkflow(
+		cctx,
+		req.Workflow,
+		converter.NewRawValue(snapshot.InputPayload),
+	)
+	if err := fut.GetChildWorkflowExecution().Get(cctx, nil); err != nil {
+		cancel()
+		if temporal.IsWorkflowExecutionAlreadyStartedError(err) {
+			return nil, &engine.ChildWorkflowIDReuseError{ID: req.ID}
+		}
+		return nil, normalizeTemporalError(err)
+	}
 	return &temporalChildHandle{future: fut, ctx: cctx, cancel: cancel}, nil
 }
 
@@ -400,11 +520,6 @@ func (h *temporalChildHandle) IsReady() bool {
 func (h *temporalChildHandle) Cancel(_ context.Context) error {
 	h.cancel()
 	return nil
-}
-
-func (h *temporalChildHandle) RunID() string {
-	// Child run IDs are not always exposed synchronously; return the cached value.
-	return h.runID
 }
 
 func (f *temporalFuture[T]) Get(_ context.Context) (T, error) {

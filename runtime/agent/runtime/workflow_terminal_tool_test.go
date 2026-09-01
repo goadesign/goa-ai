@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -22,9 +23,9 @@ import (
 )
 
 func TestRunLoopStopsAfterTerminalTool(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 
-	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.final_report"), "workflow.progress")
+	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.final_report"))
 	terminalTool.TerminalRun = true
 	terminalTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
@@ -101,11 +102,11 @@ func TestRunLoopRejectsMixedTerminalAndNonTerminalTools(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			rt := New(WithLogger(telemetry.NoopLogger{}))
-			terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+			rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+			terminal := newAnyJSONSpec(tools.Ident("svc.complete"))
 			terminal.Bookkeeping = true
 			terminal.TerminalRun = true
-			ordinary := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
+			ordinary := newAnyJSONSpec(tools.Ident("svc.lookup"))
 			executions := 0
 			require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 				Name: "svc",
@@ -164,8 +165,8 @@ func TestRunLoopRejectsMixedTerminalAndNonTerminalTools(t *testing.T) {
 }
 
 func TestRunLoopRejectsTerminalToolWithPlannerAwait(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
-	terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	terminal := newAnyJSONSpec(tools.Ident("svc.complete"))
 	terminal.TerminalRun = true
 	terminal.Bookkeeping = true
 	executed := false
@@ -216,8 +217,8 @@ func TestRunLoopRejectsTerminalToolWithPlannerAwait(t *testing.T) {
 }
 
 func TestPolicyExcludedToolRejectsTerminalPayloadBeforeTranscriptCommit(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
-	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"))
 	bookkeeping.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
@@ -267,8 +268,8 @@ func TestPolicyExcludedToolRejectsTerminalPayloadBeforeTranscriptCommit(t *testi
 }
 
 func TestRunLoopRejectsTerminalToolClarification(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
-	terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	terminal := newAnyJSONSpec(tools.Ident("svc.complete"))
 	terminal.Bookkeeping = true
 	terminal.TerminalRun = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
@@ -321,10 +322,10 @@ func TestRunLoopRejectsTerminalToolClarification(t *testing.T) {
 }
 
 func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingClarification(t *testing.T) {
-	terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+	terminal := newAnyJSONSpec(tools.Ident("svc.complete"))
 	terminal.Bookkeeping = true
 	terminal.TerminalRun = true
-	rt := New(
+	rt := New(newTestStore(),
 		WithLogger(telemetry.NoopLogger{}),
 		WithToolConfirmation(&ToolConfirmationConfig{
 			Confirm: map[tools.Ident]*ToolConfirmation{
@@ -388,9 +389,9 @@ func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingClarification(t *test
 }
 
 func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 
-	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
+	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"))
 	terminalTool.TerminalRun = true
 	terminalTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
@@ -458,8 +459,8 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 }
 
 func TestRunLoopTerminalResponseBookkeepingExecutesAtBudget(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
-	bookkeepingTool := newAnyJSONSpec(tools.Ident("workflow.progress.record"), "workflow.progress")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	bookkeepingTool := newAnyJSONSpec(tools.Ident("workflow.progress.record"))
 	bookkeepingTool.Bookkeeping = true
 	executions := 0
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
@@ -533,9 +534,9 @@ func TestRunLoopTerminalResponseBookkeepingExecutesAtBudget(t *testing.T) {
 }
 
 func TestRunLoopMixedToolCallsUseOwnedDeadlinesAtBudget(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
-	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
-	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"))
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"))
 	bookkeeping.Bookkeeping = true
 	executed := make([]tools.Ident, 0, 1)
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
@@ -571,10 +572,8 @@ func TestRunLoopMixedToolCallsUseOwnedDeadlinesAtBudget(t *testing.T) {
 		TurnID:    "turn-1",
 	}
 	seedRunMeta(t, rt, input)
-	reg := AgentRegistration{
-		ID:                  input.AgentID,
-		ExecuteToolActivity: "execute",
-		ResumeActivityName:  "resume",
+	reg := AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ExecuteToolActivity: "execute",
+		ResumeActivityName: "resume",
 		Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			return &planner.PlanResult{FinalResponse: wfCtx.planResult.FinalResponse}, nil
 		}},
@@ -618,9 +617,9 @@ func TestRunLoopMixedToolCallsUseOwnedDeadlinesAtBudget(t *testing.T) {
 }
 
 func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 
-	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
+	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"))
 	terminalTool.TerminalRun = true
 	terminalTool.Bookkeeping = true
 	var executed *ToolCall
@@ -853,8 +852,8 @@ func TestFinalizeWithPlannerStopsWhenRecoveryBudgetIsExhausted(t *testing.T) {
 }
 
 func TestFinalizeWithPlannerRecoversCorrectableTerminalTool(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
-	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"))
 	terminalTool.TerminalRun = true
 	terminalTool.Bookkeeping = true
 	executions := 0
@@ -1161,12 +1160,12 @@ func TestFinalizeWithPlannerRejectsTerminalPayloadWithToolCalls(t *testing.T) {
 }
 
 func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 
-	failTool := newAnyJSONSpec(tools.Ident("workflow.progress.fail"), "workflow.progress")
+	failTool := newAnyJSONSpec(tools.Ident("workflow.progress.fail"))
 	failTool.TerminalRun = true
 	failTool.Bookkeeping = true
-	completeTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
+	completeTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"))
 	completeTool.TerminalRun = true
 	completeTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
@@ -1299,8 +1298,8 @@ func runTerminalFinalization(t *testing.T, runPolicy *PolicyOverrides) (*RunOutp
 func newTerminalFinalizationRuntime(t *testing.T) (*Runtime, tools.ToolSpec, *routeWorkflowContext) {
 	t.Helper()
 
-	rt := New(WithLogger(telemetry.NoopLogger{}))
-	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"), "workflow.progress")
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	terminalTool := newAnyJSONSpec(tools.Ident("workflow.progress.complete"))
 	terminalTool.TerminalRun = true
 	terminalTool.Bookkeeping = true
 	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{

@@ -4,15 +4,15 @@ Minimal, copy‑paste runnable example to go from zero → talking agent. Keep y
 
 ## Prerequisites
 
-- Go 1.24+
-- Goa v3 CLI (`go install goa.design/goa/v3/cmd/goa@latest`)
+- Go 1.25.5+
+- Goa v3 CLI (`go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.3`)
 
 ## 1) Scaffold a fresh project
 
 ```
 mkdir -p $GOPATH/src/example.com/quickstart && cd $_
 go mod init example.com/quickstart
-go get goa.design/goa/v3@latest
+go get goa.design/goa/v3@v3.31.0-preview.3
 go get goa.design/goa-ai@latest
 ```
 
@@ -115,7 +115,7 @@ This creates:
   descriptor factory per tool (`helpers.AnswerTool()`) pairing the tool identifier with
   its payload and result codecs
 - **`cmd/orchestrator/main.go`** - Runnable example using the bootstrap
-- **`internal/agents/bootstrap/bootstrap.go`** - Wires runtime, registers agents and toolset executors
+- **`internal/agents/orchestrator/bootstrap/bootstrap.go`** - Wires runtime, registers agents and toolset executors
 - **`internal/agents/chat/planner/planner.go`** - Application-owned planner (edit to connect your LLM)
 - **`gen/<service>/completions/`** - Generated typed direct-completion helpers
 - **`gen/evals/chat_quality/`** - Typed evaluation harness (hooks interface, validated inputs, tool contracts)
@@ -283,7 +283,7 @@ eng, err := temporal.NewWorker(temporal.Options{
 if err != nil {
     log.Fatal(err)
 }
-rt := agentsruntime.New(agentsruntime.WithEngine(eng))
+rt := agentsruntime.New(runtimeStore, agentsruntime.WithEngine(eng))
 ```
 
 The engine always installs Goa-AI's strict data converter and limits one

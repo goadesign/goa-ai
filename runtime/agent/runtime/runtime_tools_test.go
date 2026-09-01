@@ -18,7 +18,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -62,7 +61,6 @@ func newProjectedResultSpec() tools.ToolSpec {
 	}
 	return tools.ToolSpec{
 		Name:    "tool",
-		Toolset: "svc.ts",
 		Payload: tools.TypeSpec{Name: "tool_payload", Codec: payloadCodec},
 		Result:  tools.TypeSpec{Name: "tool_result", Codec: codec},
 		Bounds: &tools.BoundsSpec{
@@ -85,9 +83,9 @@ func TestExecuteToolActivityReturnsFailure(t *testing.T) {
 		}, nil
 	})}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
+		tools.Ident("tool"): newAnyJSONSpec("tool"),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", ParentToolCallID: "parent-1", Payload: []byte("{}")}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", ParentToolCallID: "parent-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -108,14 +106,15 @@ func TestExecuteToolActivityPropagatesLabels(t *testing.T) {
 		}, nil
 	})}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("tool"): newAnyJSONSpec("tool", "svc.ts"),
+		tools.Ident("tool"): newAnyJSONSpec("tool"),
 	}
 	input := ToolInput{
-		AgentID:    "agent",
-		RunID:      "run",
-		ToolName:   "tool",
-		ToolCallID: "tool-1",
-		Payload:    []byte("{}"),
+		AgentID:     "agent",
+		RunID:       "run",
+		ToolsetName: "svc.ts",
+		ToolName:    "tool",
+		ToolCallID:  "tool-1",
+		Payload:     []byte("{}"),
 		Labels: map[string]string{
 			"example.session.id": "sess-1",
 			"kind":               "report",
@@ -133,7 +132,7 @@ func TestExecuteToolActivityPropagatesLabels(t *testing.T) {
 func TestExecuteToolActivityEagerDecodeDefersCorrectionEvidence(t *testing.T) {
 	const toolName = tools.Ident("tool")
 	executionPayload := rawjson.Message(`{"query":42,"credential":"server-owned"}`)
-	spec := newAnyJSONSpec(toolName, "svc.ts")
+	spec := newAnyJSONSpec(toolName)
 	spec.Payload.Codec.FromJSON = func([]byte) (any, error) {
 		return nil, tools.NewValidationError(
 			"query must be a string",
@@ -158,9 +157,10 @@ func TestExecuteToolActivityEagerDecodeDefersCorrectionEvidence(t *testing.T) {
 	}
 
 	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{
-		ToolName:   toolName,
-		ToolCallID: "call-1",
-		Payload:    executionPayload,
+		ToolsetName: "svc.ts",
+		ToolName:    toolName,
+		ToolCallID:  "call-1",
+		Payload:     executionPayload,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -173,7 +173,7 @@ func TestExecuteToolActivityEagerDecodeDefersCorrectionEvidence(t *testing.T) {
 }
 
 func TestCanonicalizeWorkflowToolResultRequiresExplicitBoundsForBoundedTool(t *testing.T) {
-	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec := newAnyJSONSpec("tool")
 	spec.Bounds = &tools.BoundsSpec{
 		Paging: &tools.PagingSpec{
 			CursorField:     "cursor",
@@ -192,7 +192,7 @@ func TestCanonicalizeWorkflowToolResultRequiresExplicitBoundsForBoundedTool(t *t
 }
 
 func TestCanonicalizeWorkflowToolResultAcceptsExplicitBoundsForBoundedTool(t *testing.T) {
-	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec := newAnyJSONSpec("tool")
 	spec.Bounds = &tools.BoundsSpec{
 		Paging: &tools.PagingSpec{
 			CursorField:     "cursor",
@@ -213,7 +213,7 @@ func TestCanonicalizeWorkflowToolResultAcceptsExplicitBoundsForBoundedTool(t *te
 }
 
 func TestCanonicalizeWorkflowToolResultRejectsTruncatedBoundsWithoutContinuation(t *testing.T) {
-	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec := newAnyJSONSpec("tool")
 	spec.Bounds = &tools.BoundsSpec{
 		Paging: &tools.PagingSpec{
 			CursorField:     "cursor",
@@ -235,7 +235,7 @@ func TestCanonicalizeWorkflowToolResultRejectsTruncatedBoundsWithoutContinuation
 }
 
 func TestCanonicalizeWorkflowToolResultRejectsEmptyNextCursor(t *testing.T) {
-	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec := newAnyJSONSpec("tool")
 	spec.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
 		CursorField: "cursor", NextCursorField: "next_cursor",
 	}}
@@ -255,7 +255,7 @@ func TestCanonicalizeWorkflowToolResultRejectsEmptyNextCursor(t *testing.T) {
 }
 
 func TestCanonicalizeWorkflowToolResultRejectsCursorWithoutTruncation(t *testing.T) {
-	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec := newAnyJSONSpec("tool")
 	spec.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
 		CursorField: "cursor", NextCursorField: "next_cursor",
 	}}
@@ -271,7 +271,7 @@ func TestCanonicalizeWorkflowToolResultRejectsCursorWithoutTruncation(t *testing
 }
 
 func TestCanonicalizeWorkflowToolResultRejectsNilToolResultWithoutCriticalPrefix(t *testing.T) {
-	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec := newAnyJSONSpec("tool")
 	call := ToolCall{Name: "tool", ToolCallID: "tool-1"}
 
 	err := canonicalizeAndValidateWorkflowToolResult(spec, call, nil)
@@ -290,9 +290,9 @@ func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 		}, nil
 	})}}}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("tool"): withAnyServerDataSpec(newAnyJSONSpec("tool", "svc.ts"), "example.evidence", tools.AudienceEvidence),
+		tools.Ident("tool"): withAnyServerDataSpec(newAnyJSONSpec("tool"), "example.evidence", tools.AudienceEvidence),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -317,10 +317,12 @@ func TestExecuteToolActivityRunsResultMaterializer(t *testing.T) {
 			return nil
 		},
 	}}}
-	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
-		tools.Ident("tool"): withAnyServerDataSpec(newAnyJSONSpec("tool", "svc.ts"), "example.materialized", tools.AudienceTimeline),
-	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte(`{"input":"ok"}`)}
+	seedTestToolset(
+		rt,
+		"svc.ts",
+		withAnyServerDataSpec(newAnyJSONSpec("tool"), "example.materialized", tools.AudienceTimeline),
+	)
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte(`{"input":"ok"}`)}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -341,12 +343,12 @@ func TestExecuteToolActivityPropagatesBounds(t *testing.T) {
 			},
 		}, nil
 	})}}}
-	spec := newAnyJSONSpec("tool", "svc.ts")
+	spec := newAnyJSONSpec("tool")
 	spec.Bounds = &tools.BoundsSpec{}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): spec,
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -420,7 +422,7 @@ func TestExecuteToolActivityProjectsBoundsIntoEncodedResult(t *testing.T) {
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): newProjectedResultSpec(),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -454,7 +456,7 @@ func TestExecuteToolActivityDropsStaleOptionalBoundFieldsFromSemanticResult(t *t
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): newProjectedResultSpec(),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
+	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -474,8 +476,8 @@ func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) 
 	recorder := &recordingHooks{}
 	exec := &toolBatchExec{
 		r: &Runtime{
-			Bus:           recorder,
-			RunEventStore: runloginmem.New(),
+			Bus:   recorder,
+			Store: newTestStore(),
 			toolSpecs: map[tools.Ident]tools.ToolSpec{
 				toolName: newProjectedResultSpec(),
 			},
@@ -514,15 +516,10 @@ func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) 
 }
 
 func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
-	rt := New()
+	rt := New(newTestStore())
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
-		AgentID: "svc.agent",
-		Name:    "svc.tools",
-		Route: AgentRoute{
-			ID:               "svc.agent",
-			WorkflowName:     "wf",
-			DefaultTaskQueue: "default",
-		},
+		Definition: testAgentDefinition("svc.agent", "wf", "default", nil, nil),
+		Name:       "svc.tools",
 	})
 
 	err := rt.RegisterToolset(reg)
@@ -532,13 +529,13 @@ func TestRegisterToolset_RejectsAgentToolsetWithoutSpecs(t *testing.T) {
 }
 
 func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
-	childSpec := newAnyJSONSpec("child", "svc.export")
+	childSpec := newAnyJSONSpec("child")
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.export": {TaskQueue: "q1", Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		return &planner.ToolResult{
 			Name: call.Name,
 		}, nil
 	})}}, Bus: noopHooks{}}
-	seedTestToolSpecs(rt, childSpec)
+	seedTestToolset(rt, "svc.export", childSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
@@ -547,9 +544,7 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 		Name:       tools.Ident("child"),
 		Payload:    rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, "", nil)
@@ -560,13 +555,13 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 }
 
 func TestPreserveModelProvidedToolCallID(t *testing.T) {
-	toolSpec := newAnyJSONSpec("tool", "svc.ts")
+	toolSpec := newAnyJSONSpec("tool")
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		// Ensure the ID provided by the planner/model flows into the executor unchanged
 		require.Equal(t, "model-123", call.ToolCallID)
 		return &planner.ToolResult{Name: call.Name}, nil
 	})}}, Bus: noopHooks{}}
-	seedTestToolSpecs(rt, toolSpec)
+	seedTestToolset(rt, "svc.ts", toolSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
@@ -576,9 +571,7 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 		ToolCallID: "model-123",
 		Payload:    rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{
-		ID:                  input.AgentID,
-		Planner:             &stubPlanner{},
+	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, "", nil)
@@ -598,20 +591,20 @@ func TestActivityToolExecutorExecute(t *testing.T) {
 	require.Equal(t, []byte("123"), []byte(out.Payload))
 }
 
-func TestServiceToolEventsUseChildRunContext(t *testing.T) {
+func TestServiceToolEventsUseChildExecutionContext(t *testing.T) {
 	recorder := &recordingHooks{}
-	toolSpec := newAnyJSONSpec("svc.tools.fetch_time_series", "svc.tools")
+	toolSpec := newAnyJSONSpec("svc.tools.fetch_time_series")
 	rt := &Runtime{
-		Bus:           recorder,
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:     recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
 	}
-	seedTestToolSpecs(rt, toolSpec)
+	seedTestToolset(rt, "svc.tools", toolSpec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -656,21 +649,21 @@ func TestServiceToolEventsUseChildRunContext(t *testing.T) {
 func TestServiceToolEventsPropagateServerData(t *testing.T) {
 	recorder := &recordingHooks{}
 	toolSpec := withAnyServerDataSpec(
-		newAnyJSONSpec("svc.tools.example", "svc.tools"),
+		newAnyJSONSpec("svc.tools.example"),
 		"example.evidence",
 		tools.AudienceEvidence,
 	)
 	rt := &Runtime{
-		Bus:           recorder,
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:     recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
 	}
-	seedTestToolSpecs(rt, toolSpec)
+	seedTestToolset(rt, "svc.tools", toolSpec)
 	server := rawjson.Message([]byte(`[{"kind":"example.evidence","audience":"evidence","data":[{"uri":"example://points/123","kind":"time_series"}]}]`))
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
@@ -705,11 +698,11 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 	recorder := &recordingHooks{}
 	rt := &Runtime{
-		Bus:           recorder,
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:     recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {
 				ResultMaterializer: func(ctx context.Context, meta ToolCallMeta, call *ToolCall, result *planner.ToolResult) error {
@@ -725,8 +718,8 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 			},
 		},
 	}
-	seedTestToolSpecs(rt, withAnyServerDataSpec(
-		newAnyJSONSpec("svc.tools.example", "svc.tools"),
+	seedTestToolset(rt, "svc.tools", withAnyServerDataSpec(
+		newAnyJSONSpec("svc.tools.example"),
 		"example.materialized",
 		tools.AudienceTimeline,
 	))
@@ -790,7 +783,7 @@ func TestConsumeProvidedToolResultsRejectsAmbiguousSuccessAndFailure(t *testing.
 			"svc.tools": {},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
+			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example"),
 		},
 	}
 	call := ToolCall{
@@ -819,7 +812,7 @@ func TestConsumeProvidedToolResultsRejectsMissingOutcome(t *testing.T) {
 			"svc.tools": {},
 		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
-			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example", "svc.tools"),
+			tools.Ident("svc.tools.example"): newAnyJSONSpec("svc.tools.example"),
 		},
 	}
 	call := ToolCall{
@@ -837,9 +830,7 @@ func TestConsumeProvidedToolResultsRejectsMissingOutcome(t *testing.T) {
 func TestDecodeProvidedNoResultSuccess(t *testing.T) {
 	name := tools.Ident("svc.tools.notify")
 	spec := tools.ToolSpec{
-		Name:    name,
-		Service: "svc",
-		Toolset: "svc.tools",
+		Name: name,
 	}
 	rt := &Runtime{
 		toolsets:  map[string]ToolsetRegistration{"svc.tools": {}},
@@ -880,14 +871,33 @@ func TestDecodeProvidedNoResultSuccess(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, result.Failure)
 	require.NotNil(t, result.Failure.Error.Cause)
-	require.Contains(t, result.Failure.Error.Cause.Message, "no result contract")
+	require.Contains(t, result.Failure.Error.Cause.Message, "does not define a result")
+	require.Empty(t, resultJSON)
+
+	result, resultJSON, err = rt.decodeProvidedToolResult(
+		context.Background(),
+		spec,
+		call,
+		&api.ProvidedToolResult{
+			Name:       name,
+			ToolCallID: call.ToolCallID,
+			Success: &api.ProvidedToolSuccess{
+				Result: rawjson.Message(` `),
+			},
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, result.Failure)
+	require.NotNil(t, result.Failure.Error.Cause)
+	require.Contains(t, result.Failure.Error.Cause.Message, "does not define a result")
 	require.Empty(t, resultJSON)
 }
 
 func TestDecodeProvidedToolResultDerivesCorrectionMetadata(t *testing.T) {
 	t.Parallel()
 
-	spec := newAnyJSONSpec("svc.tools.example", "svc.tools")
+	spec := newAnyJSONSpec("svc.tools.example")
 	spec.Payload.ExampleJSON = rawjson.Message(`{"query":"example"}`)
 	call := ToolCall{
 		Name:            spec.Name,
@@ -935,7 +945,7 @@ func TestCanonicalizeWorkflowToolResultRejectsAmbiguousErrorAndResult(t *testing
 		Failure:    testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "failed"),
 	}
 
-	err := canonicalizeAndValidateWorkflowToolResult(newAnyJSONSpec(call.Name, "svc.tools"), call, tr)
+	err := canonicalizeAndValidateWorkflowToolResult(newAnyJSONSpec(call.Name), call, tr)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failure and result are both set")
 }
@@ -948,9 +958,8 @@ func TestConsumeProvidedToolResultsRejectsTruncatedBoundsWithoutContinuation(t *
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
 			tools.Ident("svc.tools.example"): {
 				Name:    tools.Ident("svc.tools.example"),
-				Toolset: "svc.tools",
-				Payload: newAnyJSONSpec("svc.tools.example", "svc.tools").Payload,
-				Result:  newAnyJSONSpec("svc.tools.example", "svc.tools").Result,
+				Payload: newAnyJSONSpec("svc.tools.example").Payload,
+				Result:  newAnyJSONSpec("svc.tools.example").Result,
 				Bounds: &tools.BoundsSpec{
 					Paging: &tools.PagingSpec{
 						CursorField:     "cursor",
@@ -987,22 +996,21 @@ func TestServiceToolEventsPropagateBounds(t *testing.T) {
 	recorder := &recordingHooks{}
 	toolSpec := tools.ToolSpec{
 		Name:    tools.Ident("svc.tools.example"),
-		Toolset: "svc.tools",
 		Payload: tools.TypeSpec{},
 		Result:  tools.TypeSpec{},
 		Bounds:  &tools.BoundsSpec{},
 	}
 	rt := &Runtime{
-		Bus:           recorder,
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:     recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 		toolsets: map[string]ToolsetRegistration{
 			"svc.tools": {},
 		},
 	}
-	seedTestToolSpecs(rt, toolSpec)
+	seedTestToolset(rt, "svc.tools", toolSpec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -1048,13 +1056,13 @@ func TestServiceToolEventsPropagateBounds(t *testing.T) {
 
 func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	recorder := &recordingHooks{}
-	inlineSpec := newAnyJSONSpec("child.get_time_series", "child.tools")
+	inlineSpec := newAnyJSONSpec("child.get_time_series")
 	rt := &Runtime{
-		Bus:           recorder,
-		logger:        telemetry.NoopLogger{},
-		metrics:       telemetry.NoopMetrics{},
-		tracer:        telemetry.NoopTracer{},
-		RunEventStore: runloginmem.New(),
+		Bus:     recorder,
+		logger:  telemetry.NoopLogger{},
+		metrics: telemetry.NoopMetrics{},
+		tracer:  telemetry.NoopTracer{},
+		Store:   newTestStore(),
 	}
 	rt.toolsets = map[string]ToolsetRegistration{
 		"child.tools": {
@@ -1071,7 +1079,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 			}),
 		},
 	}
-	seedTestToolSpecs(rt, inlineSpec)
+	seedTestToolset(rt, "child.tools", inlineSpec)
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		hookRuntime: rt,
@@ -1097,9 +1105,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	}}}
 	_, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{
-			ID:                  input.AgentID,
-			Planner:             &stubPlanner{},
+		AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 			ExecuteToolActivity: "execute",
 			ResumeActivityName:  "resume",
 		},

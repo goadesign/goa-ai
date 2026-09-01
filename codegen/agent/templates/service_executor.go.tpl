@@ -1,81 +1,72 @@
-// Default service executor for {{ .Toolset.Name }}
-// This factory builds a runtime.ToolCallExecutor that dispatches tool calls to
-// user-provided per-tool callers. It decodes tool payloads with generated codecs,
-// allows optional payload/result mappers, and returns results as-is (or mapped).
-//
-// The executor automatically wires the provided service client to the tool callers.
-// You can override individual callers using the generated With<Tool> options.
+// This file calls the Goa service methods used by {{ .Toolset.Name }} tools.
+// It decodes each tool request, fills server-owned fields, calls the service,
+// and returns the service result as a tool result.
 //
 // Example:
 //
-//   client := catalog.NewClient(...)
-//   exec := {{ .Toolset.PackageName }}.New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(client)
-//
-//   // Register:
-//   // reg := {{ .Agent.GoName }}{{ goify .Toolset.PathName true }}.New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}ToolsetRegistration(exec)
-//   // rt.RegisterToolset(reg)
+//   client := atlasdata.NewClient(...)
+//   exec := {{ .Toolset.PackageName }}.{{ .Constructor }}({{ .Toolset.PackageName }}.{{ .Names.WithClient }}(client))
 
 type (
-    seCfg struct {
-        callers    map[tools.Ident]func(context.Context, any) (any, error)
+    {{ .Names.ConfigType }} struct {
+        {{- range .Tools }}
+        {{- if .IsMethodBacked }}
+        {{ .CallerField }} func(context.Context, any) (any, error)
+        {{- end }}
+        {{- end }}
         mapPayload func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)
         mapResult  func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)
-        injectors  []ToolInterceptor
+        injectors  []{{ .Names.InterceptorType }}
     }
-    // ExecOpt customizes the default service executor.
-    ExecOpt interface{ apply(*seCfg) }
+    // {{ .Names.OptionType }} changes how the generated executor calls the service.
+    {{ .Names.OptionType }} interface{ apply(*{{ .Names.ConfigType }}) }
 
-    // ToolInterceptor hooks into tool execution to inject context or modify payloads.
-    ToolInterceptor interface {
-        // Inject mutates the service method payload before the client call.
-        // It receives the fully mapped service payload (e.g. *SearchRecordsPayload)
-        // and the tool call metadata.
+    // {{ .Names.InterceptorType }} can fill service input fields before a call.
+    {{ .Names.InterceptorType }} interface {
+        // Inject receives the service input and information about the tool call.
         Inject(ctx context.Context, payload any, meta *runtime.ToolCallMeta) error
     }
-    
-    ToolInterceptorFunc func(context.Context, any, *runtime.ToolCallMeta) error
+
+    // {{ .Names.InterceptorFuncType }} lets a function fill service input fields.
+    {{ .Names.InterceptorFuncType }} func(context.Context, any, *runtime.ToolCallMeta) error
 )
 
-func (f ToolInterceptorFunc) Inject(ctx context.Context, p any, m *runtime.ToolCallMeta) error {
+// Inject calls f with the service input and tool call information.
+func (f {{ .Names.InterceptorFuncType }}) Inject(ctx context.Context, p any, m *runtime.ToolCallMeta) error {
     return f(ctx, p, m)
 }
 
-type execOptFunc func(*seCfg)
+type {{ .Names.OptionFuncType }} func(*{{ .Names.ConfigType }})
 
-func (f execOptFunc) apply(c *seCfg) { f(c) }
+func (f {{ .Names.OptionFuncType }}) apply(c *{{ .Names.ConfigType }}) { f(c) }
 
-// WithPayloadMapper installs a mapper for tool payload -> method payload.
-func WithPayloadMapper(f func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)) ExecOpt {
-    return execOptFunc(func(c *seCfg) { c.mapPayload = f })
+// {{ .Names.WithPayloadMapper }} sets the function that converts tool input into service input.
+func {{ .Names.WithPayloadMapper }}(f func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)) {{ .Names.OptionType }} {
+    return {{ .Names.OptionFuncType }}(func(c *{{ .Names.ConfigType }}) { c.mapPayload = f })
 }
 
-// WithResultMapper installs a mapper for method result -> tool result.
-func WithResultMapper(f func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)) ExecOpt {
-    return execOptFunc(func(c *seCfg) { c.mapResult = f })
+// {{ .Names.WithResultMapper }} sets the function that converts a service result into a tool result.
+func {{ .Names.WithResultMapper }}(f func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)) {{ .Names.OptionType }} {
+    return {{ .Names.OptionFuncType }}(func(c *{{ .Names.ConfigType }}) { c.mapResult = f })
 }
 
-// WithInterceptors adds interceptors to the executor.
-func WithInterceptors(interceptors ...ToolInterceptor) ExecOpt {
-    return execOptFunc(func(c *seCfg) {
+// {{ .Names.WithInterceptors }} adds functions that fill service input fields before each call.
+func {{ .Names.WithInterceptors }}(interceptors ...{{ .Names.InterceptorType }}) {{ .Names.OptionType }} {
+    return {{ .Names.OptionFuncType }}(func(c *{{ .Names.ConfigType }}) {
         c.injectors = append(c.injectors, interceptors...)
     })
 }
 
-// WithClient wires default callers for all method-backed tools using the
-// provided service client. This is a convenience for direct service wiring;
-// adapter-style executors can instead provide callers via the With<Tool>
-// options without supplying a client.
-func WithClient(client *{{ .ServicePkgAlias }}.Client) ExecOpt {
-    return execOptFunc(func(c *seCfg) {
+// {{ .Names.WithClient }} calls each tool's Goa method through client.
+// Callers can replace an individual method with its generated With<Tool> option.
+func {{ .Names.WithClient }}(client *{{ .ServiceClientRef }}) {{ .Names.OptionType }} {
+    return {{ .Names.OptionFuncType }}(func(c *{{ .Names.ConfigType }}) {
         if client == nil {
             return
         }
-        if c.callers == nil {
-            c.callers = make(map[tools.Ident]func(context.Context, any) (any, error))
-        }
-        {{- range .Toolset.Tools }}
+        {{- range .Tools }}
         {{- if .IsMethodBacked }}
-        c.callers[tools.Ident({{ printf "%q" .QualifiedName }})] = func(ctx context.Context, args any) (any, error) {
+        c.{{ .CallerField }} = func(ctx context.Context, args any) (any, error) {
             {{- if .HasResult }}
                 {{- if .MethodPayloadTypeRef }}
             return client.{{ .MethodGoName }}(ctx, args.({{ .MethodPayloadTypeRef }}))
@@ -96,56 +87,41 @@ func WithClient(client *{{ .ServicePkgAlias }}.Client) ExecOpt {
     })
 }
 
-{{- range .Toolset.Tools }}
+{{- range .Tools }}
 {{- if .IsMethodBacked }}
-// With{{ goify .Name true }} sets the caller for {{ .QualifiedName }}.
-func With{{ goify .Name true }}(f func(context.Context, any) (any, error)) ExecOpt {
-    return execOptFunc(func(c *seCfg) {
-        if c.callers == nil {
-            c.callers = make(map[tools.Ident]func(context.Context, any) (any, error))
-        }
-        c.callers[tools.Ident({{ printf "%q" .QualifiedName }})] = f
+// {{ .HelperCallerOption }} sets the caller for {{ .QualifiedName }}.
+func {{ .HelperCallerOption }}(f func(context.Context, any) (any, error)) {{ $.Names.OptionType }} {
+    return {{ $.Names.OptionFuncType }}(func(c *{{ $.Names.ConfigType }}) {
+        c.{{ .CallerField }} = f
     })
 }
 {{- end }}
 {{- end }}
-
-// New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec returns a ToolCallExecutor that
-// decodes tool payloads with generated codecs, applies optional mappers, calls user-provided
-// per-tool callers (wired from the client via WithClient), and maps results back.
-func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOpt) runtime.ToolCallExecutor {
-    var cfg seCfg
-    cfg.callers = make(map[tools.Ident]func(context.Context, any) (any, error))
+// {{ .Constructor }} returns an executor for the Goa methods used by this toolset.
+func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecutor {
+    var cfg {{ .Names.ConfigType }}
 
     for _, o := range opts {
         if o != nil {
             o.apply(&cfg)
         }
     }
-    // Preflight: ensure callers are provided for all method-backed tools.
-    {
-        var missing []string
-        {{- range .Toolset.Tools }}
-        {{- if .IsMethodBacked }}
-        if cfg.callers == nil || cfg.callers[tools.Ident({{ printf "%q" .QualifiedName }})] == nil {
-            // report the fully-qualified tool for clarity
-            missing = append(missing, {{ printf "%q" .QualifiedName }})
-        }
-        {{- end }}
-        {{- end }}
-        if len(missing) > 0 {
-            panic(fmt.Errorf("service executor missing callers for tools: %s", strings.Join(missing, ", ")))
-        }
+    {{- range .Tools }}
+    {{- if .IsMethodBacked }}
+    if cfg.{{ .CallerField }} == nil {
+        panic(fmt.Errorf("service executor missing caller for tool %q", {{ printf "%q" .QualifiedName }}))
     }
+    {{- end }}
+    {{- end }}
     return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
         if call == nil {
-            return runtime.Executed(failedServiceToolResult("", errors.New("tool request is nil"))), nil
+            return runtime.Executed({{ .Names.FailedToolResult }}("", errors.New("tool request is nil"))), nil
         }
         if meta == nil {
-            return runtime.Executed(failedServiceToolResult(call.Name, errors.New("tool call meta is nil"))), nil
+            return runtime.Executed({{ .Names.FailedToolResult }}(call.Name, errors.New("tool call meta is nil"))), nil
         }
         switch call.Name {
-        {{- range .Toolset.Tools }}
+        {{- range .Tools }}
         {{- if .IsMethodBacked }}
             {{- $toolHasSource := false }}
             {{- range .ServerData }}
@@ -155,23 +131,19 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             {{- end }}
             {{- $hasBoundsProjection := and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
         case tools.Ident({{ printf "%q" .QualifiedName }}):
-            caller := cfg.callers[call.Name]
-            if caller == nil {
-                panic(fmt.Errorf("service executor missing caller for tool %q", call.Name))
-            }
             var toolArgs any
             {{- if .MethodPayloadTypeRef }}
             {
-                val, err := {{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}PayloadCodec().FromJSON(call.Payload)
+                val, err := {{ $.Toolset.SpecsPackageName }}.{{ .PayloadCodecName }}().FromJSON(call.Payload)
                 if err != nil {
-                    return runtime.Executed(invalidServiceToolCall(
+                    return runtime.Executed({{ $.Names.InvalidToolCall }}(
                         call,
                         err,
                     )), nil
                 }
                 {{- if .Injected }}
-                if err := {{ $.Toolset.SpecsPackageName }}.Inject{{ .ConstName }}(val, *meta, call.Labels); err != nil {
-                    return runtime.Executed(failedServiceCallResult(
+                if err := {{ $.Toolset.SpecsPackageName }}.{{ .InjectFunc }}(val, *meta, call.Labels); err != nil {
+                    return runtime.Executed({{ $.Names.FailedCallResult }}(
                         call,
                         err,
                     )), nil
@@ -185,7 +157,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 var err error
                 methodIn, err = cfg.mapPayload(call.Name, toolArgs, meta)
                 if err != nil {
-                    return runtime.Executed(failedServiceCallResult(
+                    return runtime.Executed({{ $.Names.FailedCallResult }}(
                         call,
                         err,
                     )), nil
@@ -195,21 +167,21 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     {{- if .PayloadAliasesMethod }}
                 methodIn = toolArgs
                     {{- else }}
-                methodIn = {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}MethodPayload(toolArgs.(*{{ $.Toolset.SpecsPackageName }}.{{ .ConstName }}Payload))
+                methodIn = {{ $.Toolset.SpecsPackageName }}.{{ .MethodPayloadTransform }}(toolArgs.({{ if .PayloadPointer }}*{{ end }}{{ $.Toolset.SpecsPackageName }}.{{ .PayloadTypeName }}))
                     {{- end }}
                 {{- end }}
             }
             for _, inj := range cfg.injectors {
                 if err := inj.Inject(ctx, methodIn, meta); err != nil {
-                    return runtime.Executed(failedServiceCallResult(
+                    return runtime.Executed({{ $.Names.FailedCallResult }}(
                         call,
                         err,
                     )), nil
                 }
             }
-            methodOut, err := caller(ctx, methodIn)
+            methodOut, err := cfg.{{ .CallerField }}(ctx, methodIn)
             if err != nil {
-                return runtime.Executed(failedServiceCallResult(
+                return runtime.Executed({{ $.Names.FailedCallResult }}(
                     call,
                     err,
                 )), nil
@@ -219,7 +191,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                 var e error
                 result, e = cfg.mapResult(call.Name, methodOut, meta)
                 if e != nil {
-                    return runtime.Executed(failedServiceCallResult(
+                    return runtime.Executed({{ $.Names.FailedCallResult }}(
                         call,
                         e,
                     )), nil
@@ -229,32 +201,31 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
                     {{- if .ResultAliasesMethod }}
                 result = methodOut
                     {{- else }}
-                result = {{ $.Toolset.SpecsPackageName }}.Init{{ goify .Name true }}ToolResult(methodOut.({{ .MethodResultTypeRef }}))
+                result = {{ $.Toolset.SpecsPackageName }}.{{ .ToolResultTransform }}(methodOut.({{ .MethodResultTypeRef }}))
                     {{- end }}
                 {{- end }}
             }
             {{- if or $hasBoundsProjection $toolHasSource }}
             mr, ok := methodOut.({{ .MethodResultTypeRef }})
             if !ok {
-                return runtime.Executed(failedServiceCallResult(
+                return runtime.Executed({{ $.Names.FailedCallResult }}(
                     call,
                     fmt.Errorf("unexpected method result type for %q: %T", call.Name, methodOut),
                 )), nil
             }
             {{- end }}
             {{- if $hasBoundsProjection }}
-            bounds := init{{ goify .Name true }}Bounds(mr)
+            bounds := {{ .BoundsFunc }}(mr)
             {{- end }}
             {{- if $toolHasSource }}
             var serverItems []*toolregistry.ServerDataItem
-            {{- $tool := . }}
             {{- range .ServerData }}
             {{- if .MethodResultField }}
             {
-                data := {{ $.Toolset.SpecsPackageName }}.Init{{ $tool.ConstName }}{{ goify .Kind true }}ServerData(mr.{{ goify .MethodResultField true }})
-                dataJSON, err := {{ $.Toolset.SpecsPackageName }}.{{ $tool.ConstName }}{{ goify .Kind true }}ServerDataCodec().ToJSON(data)
+                data := {{ $.Toolset.SpecsPackageName }}.{{ .Transform }}(mr.{{ .MethodResultFieldName }})
+                dataJSON, err := {{ $.Toolset.SpecsPackageName }}.{{ .CodecName }}().ToJSON(data)
                 if err != nil {
-                    return runtime.Executed(failedServiceCallResult(
+                    return runtime.Executed({{ $.Names.FailedCallResult }}(
                         call,
                         err,
                     )), nil
@@ -273,7 +244,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
             if len(serverItems) > 0 {
                 b, err := json.Marshal(serverItems)
                 if err != nil {
-                    return runtime.Executed(failedServiceCallResult(
+                    return runtime.Executed({{ $.Names.FailedCallResult }}(
                         call,
                         err,
                     )), nil
@@ -294,7 +265,7 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
         {{- end }}
         {{- end }}
         default:
-            return runtime.Executed(failedServiceToolResult(
+            return runtime.Executed({{ $.Names.FailedToolResult }}(
                 call.Name,
                 fmt.Errorf("unknown tool %q for toolset %q", call.Name, "{{ .Toolset.QualifiedName }}"),
             )), nil
@@ -302,9 +273,8 @@ func New{{ .Agent.GoName }}{{ goify .Toolset.PathName true }}Exec(opts ...ExecOp
     })
 }
 
-// failedServiceToolResult converts a service-executor invariant failure into a
-// terminal internal tool failure.
-func failedServiceToolResult(name tools.Ident, err error) *planner.ToolResult {
+// {{ .Names.FailedToolResult }} returns an internal failure that ends this run.
+func {{ .Names.FailedToolResult }}(name tools.Ident, err error) *planner.ToolResult {
     return &planner.ToolResult{
         Name: name,
         Failure: &planner.ToolFailure{
@@ -317,12 +287,12 @@ func failedServiceToolResult(name tools.Ident, err error) *planner.ToolResult {
     }
 }
 
-// failedServiceCallResult applies a service-owned failure classification at
-// every stage of an admitted call. The workflow owns correction evidence.
-func failedServiceCallResult(call *runtime.ToolCall, err error) *planner.ToolResult {
+// {{ .Names.FailedCallResult }} preserves a failure supplied by the service.
+// Other errors become internal failures that end the run.
+func {{ .Names.FailedCallResult }}(call *runtime.ToolCall, err error) *planner.ToolResult {
     var provider planner.ToolFailureProvider
     if !errors.As(err, &provider) {
-        return failedServiceToolResult(call.Name, err)
+        return {{ .Names.FailedToolResult }}(call.Name, err)
     }
     failure := planner.CloneToolFailure(provider.ToolFailure(call.Name))
     return &planner.ToolResult{
@@ -331,9 +301,8 @@ func failedServiceCallResult(call *runtime.ToolCall, err error) *planner.ToolRes
     }
 }
 
-// invalidServiceToolCall preserves generated validation issues for the
-// workflow to combine with its retained model call.
-func invalidServiceToolCall(call *runtime.ToolCall, err error) *planner.ToolResult {
+// {{ .Names.InvalidToolCall }} returns the validation issues needed to correct a tool request.
+func {{ .Names.InvalidToolCall }}(call *runtime.ToolCall, err error) *planner.ToolResult {
     var issuer interface {
         Issues() []*tools.FieldIssue
     }
@@ -354,13 +323,11 @@ func invalidServiceToolCall(call *runtime.ToolCall, err error) *planner.ToolResu
     }
 }
 
-{{- range .Toolset.Tools }}
+{{- range .Tools }}
 {{- if and .IsMethodBacked .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
-{{- $tool := . }}
 
-// init{{ goify .Name true }}Bounds projects canonical bounds metadata from the
-// bound method result.
-func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) *agent.Bounds {
+// {{ .BoundsFunc }} copies result size and continuation values from the service result.
+func {{ .BoundsFunc }}(mr {{ .MethodResultTypeRef }}) *agent.Bounds {
     bounds := &agent.Bounds{}
     {{- with .Bounds.Projection.Returned }}
     bounds.Returned = mr.{{ .Name }}

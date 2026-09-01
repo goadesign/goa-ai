@@ -1,15 +1,13 @@
 type (
-	// Provider dispatches tool call messages to the bound Goa service methods and
-	// returns canonical JSON tool results and typed server-only data.
+	// Provider calls the bound Goa service method for each tool request and
+	// returns the JSON result and any data kept only by the server.
 	//
-	// Provider is intended to run inside the toolset-owning service process,
-	// paired with a Pulse subscription loop whose Serve lifecycle owns one
-	// immutable registry admission generation, renews its provider lease, and
-	// releases that exact lease only after consumption, terminal results, and
-	// acknowledgements settle. The registry grants one durable dispatch claim
-	// before Serve invokes a bound method, so redelivery never repeats handler
-	// execution. Serve also stamps best-effort output deltas published from the
-	// call context with that admission token (see runtime/toolregistry/provider).
+	// Run Provider in the service that implements the toolset. The serving loop
+	// registers it, keeps that registration active, and stops new calls before
+	// unregistering it. The registry records a call before the service method
+	// runs, so delivering the same request again does not run the method twice.
+	// Output updates carry the registration token so the registry can reject
+	// updates from a process that no longer owns the toolset.
 	Provider struct {
 		svc {{ .ServiceTypeRef }}
 	}
@@ -36,9 +34,9 @@ func NewProvider(svc {{ .ServiceTypeRef }}) *Provider {
 	return &Provider{svc: svc}
 }
 
-// HandleToolCall executes the requested tool and returns a terminal result that
-// echoes the call's admission-generation token on every success and error path.
-// The bound method receives ctx and must return promptly on cancellation.
+// HandleToolCall checks the registry message, calls the bound service method,
+// and returns one success or failure with the same registration token and tool
+// use ID. The service method receives ctx and must stop when it is canceled.
 func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
 	if msg.ToolUseID == "" {
 		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, "", "invalid_call", "tool_use_id is required"), nil
@@ -66,9 +64,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- if .IsMethodBacked }}
 	case {{ .ConstName }}:
 {{- if or .HasMethodPayload .Injected }}
-		args, err := {{ .ConstName }}PayloadCodec().FromJSON(msg.Payload)
+		args, err := {{ .PayloadCodecName }}().FromJSON(msg.Payload)
 {{- else }}
-		_, err := {{ .ConstName }}PayloadCodec().FromJSON(msg.Payload)
+		_, err := {{ .PayloadCodecName }}().FromJSON(msg.Payload)
 {{- end }}
 		if err != nil {
 			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
@@ -77,12 +75,12 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 {{- if .Injected }}
-		if err := Inject{{ .ConstName }}(args, meta, meta.Labels); err != nil {
+		if err := {{ .InjectFunc }}(args, meta, meta.Labels); err != nil {
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
 		}
 {{- end }}
 {{- if .HasMethodPayload }}
-		methodIn := Init{{ .ConstName }}MethodPayload(args)
+		methodIn := {{ .MethodPayloadTransform }}(args)
 {{- end }}
 {{- if .HasMethodResult }}
 		methodOut, err := p.svc.{{ .MethodGoName }}(ctx{{ if .HasMethodPayload }}, methodIn{{ end }})
@@ -93,21 +91,20 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			return toolregistry.NewToolResultServiceErrorMessage(msg.RegistrationToken, msg.ToolUseID, msg.Tool, toolErrorCode(err), err), nil
 		}
 {{- if .HasResult }}
-		result := Init{{ .ConstName }}ToolResult(methodOut)
-		resultJSON, err := {{ .ConstName }}ResultCodec().ToJSON(result)
+		result := {{ .ToolResultTransform }}(methodOut)
+		resultJSON, err := {{ .ResultCodecName }}().ToJSON(result)
 		if err != nil {
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 		}
 {{- if and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
-		bounds := init{{ goify .Name true }}Bounds(methodOut)
+		bounds := {{ .BoundsFunc }}(methodOut)
 {{- end }}
 		var server []*toolregistry.ServerDataItem
-{{- $tool := . }}
 {{- range .ServerData }}
 {{- if .MethodResultField }}
 		{
-			data := Init{{ $tool.ConstName }}{{ goify .Kind true }}ServerData(methodOut.{{ goify .MethodResultField true }})
-			dataJSON, err := {{ $tool.ConstName }}{{ goify .Kind true }}ServerDataCodec().ToJSON(data)
+			data := {{ .Transform }}(methodOut.{{ .MethodResultFieldName }})
+			dataJSON, err := {{ .CodecName }}().ToJSON(data)
 			if err != nil {
 				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 			}
@@ -153,9 +150,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- range .Tools }}
 {{- if and .IsMethodBacked .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
 
-// init{{ goify .Name true }}Bounds projects canonical bounds metadata from the
+// {{ .BoundsFunc }} projects canonical bounds metadata from the
 // bound method result.
-func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) *agent.Bounds {
+func {{ .BoundsFunc }}(mr {{ .MethodResultTypeRef }}) *agent.Bounds {
 	bounds := &agent.Bounds{}
 	{{- with .Bounds.Projection.Returned }}
 	bounds.Returned = mr.{{ .Name }}
@@ -187,5 +184,3 @@ func init{{ goify .Name true }}Bounds(mr {{ .MethodResultTypeRef }}) *agent.Boun
 }
 {{- end }}
 {{- end }}
-
-

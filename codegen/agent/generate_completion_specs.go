@@ -1,12 +1,15 @@
+// Package codegen writes generated completion result types, JSON functions, and the
+// functions that run direct completions.
 package codegen
 
 import (
-	"path"
+	"fmt"
 	"path/filepath"
 	"sort"
 
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
 type (
@@ -17,26 +20,28 @@ type (
 
 	completionEntry struct {
 		Name        string
-		GoName      string
 		ConstName   string
+		SpecFunc    string
+		Example     string
+		Complete    string
+		Stream      string
 		Description string
 		Result      *typeData
 	}
 )
 
-// completionSpecsFiles emits one service-owned completions package per service
-// that declares typed assistant-output contracts.
-func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
+// completionSpecsFiles writes one completion package for each service that
+// declares completion results.
+func completionSpecsFiles(data *GeneratorData, planned *toolSpecsPlan) ([]*codegen.File, error) {
 	if data == nil || len(data.Services) == 0 {
 		return nil, nil
 	}
 
 	const (
-		packageName       = "completions"
-		dirName           = "completions"
-		transportDirName  = "http"
-		transportPkgName  = "http"
-		transportPkgAlias = "toolhttp"
+		packageName      = "completions"
+		dirName          = "completions"
+		transportDirName = "http"
+		transportPkgName = "http"
 	)
 
 	out := make([]*codegen.File, 0, len(data.Services)*6)
@@ -44,16 +49,15 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 		if svc == nil || svc.Service == nil || len(svc.Completions) == 0 {
 			continue
 		}
-		specsData, err := buildCompletionSpecsData(data.Genpkg, svc.Service, svc.Completions)
-		if err != nil {
-			return nil, err
+		packagePlan := planned.completions[svc.Service.Name]
+		if packagePlan == nil {
+			return nil, fmt.Errorf("service %q completion package was not planned", svc.Service.Name)
 		}
+		specsData := packagePlan.completion
 		if specsData == nil {
-			continue
+			return nil, fmt.Errorf("service %q has no planned completion specs data", svc.Service.Name)
 		}
 		dir := filepath.Join(codegen.Gendir, svc.Service.PathName, dirName)
-		importPath := path.Join(data.Genpkg, svc.Service.PathName, dirName)
-
 		transportTypes := make([]*typeData, 0)
 		for _, td := range specsData.typesList() {
 			if td != nil && td.TransportDef != "" {
@@ -61,7 +65,7 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 			}
 		}
 		if len(transportTypes) > 0 {
-			timports := specsData.transportTypeImports()
+			timports := packagePlan.fileImports.transportTypes.Imports()
 			transportSections := []*codegen.SectionTemplate{
 				codegen.Header(svc.Service.Name+" completion transport types", transportPkgName, timports),
 				{
@@ -76,39 +80,23 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 				SectionTemplates: transportSections,
 			})
 
-			validateImports := []*codegen.ImportSpec{
-				codegen.SimpleImport("encoding/json"),
-				codegen.SimpleImport("fmt"),
-				codegen.GoaImport(""),
+			if validateImports := packagePlan.fileImports.transportValidate.Imports(); len(validateImports) > 0 {
+				validateSections := []*codegen.SectionTemplate{
+					codegen.Header(svc.Service.Name+" completion transport validators", transportPkgName, validateImports),
+					{
+						Name:    "completion-transport-validate",
+						Source:  agentsTemplates.Read(toolTransportValidateFileT),
+						Data:    toolTransportTypesFileData{Types: transportTypes},
+						FuncMap: templateFuncMap(),
+					},
+				}
+				out = append(out, &codegen.File{
+					Path:             filepath.Join(dir, transportDirName, "validate.go"),
+					SectionTemplates: validateSections,
+				})
 			}
-			validateImports = append(validateImports, timports...)
-			if specsData.needsUnicodeImport() {
-				validateImports = append(validateImports, codegen.SimpleImport("unicode/utf8"))
-			}
-			validateSections := []*codegen.SectionTemplate{
-				codegen.Header(svc.Service.Name+" completion transport validators", transportPkgName, validateImports),
-				{
-					Name:    "completion-transport-validate",
-					Source:  agentsTemplates.Read(toolTransportValidateFileT),
-					Data:    toolTransportTypesFileData{Types: transportTypes},
-					FuncMap: templateFuncMap(),
-				},
-			}
-			out = append(out, &codegen.File{
-				Path:             filepath.Join(dir, transportDirName, "validate.go"),
-				SectionTemplates: validateSections,
-			})
 			if len(specsData.TransportUnions) > 0 {
-				unionImports := make([]*codegen.ImportSpec, 0, 3+len(timports))
-				unionImports = append(unionImports,
-					codegen.SimpleImport("bytes"),
-					codegen.SimpleImport("encoding/json"),
-					codegen.SimpleImport("errors"),
-					codegen.SimpleImport("fmt"),
-					codegen.SimpleImport("io"),
-					codegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
-				)
-				unionImports = append(unionImports, timports...)
+				unionImports := packagePlan.fileImports.transportUnions.Imports()
 				unionSections := []*codegen.SectionTemplate{
 					codegen.Header(svc.Service.Name+" completion transport union types", transportPkgName, unionImports),
 					{
@@ -127,7 +115,7 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 
 		if pure := specsData.pureTypes(); len(pure) > 0 {
 			sections := []*codegen.SectionTemplate{
-				codegen.Header(svc.Service.Name+" completion types", packageName, specsData.typeImports()),
+				codegen.Header(svc.Service.Name+" completion types", packageName, packagePlan.fileImports.publicTypes.Imports()),
 				{
 					Name:    "completion-spec-types",
 					Source:  agentsTemplates.Read(toolTypesFileT),
@@ -141,17 +129,7 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 			})
 		}
 		if len(specsData.Unions) > 0 {
-			typeImports := specsData.typeImports()
-			unionImports := make([]*codegen.ImportSpec, 0, 3+len(typeImports))
-			unionImports = append(unionImports,
-				codegen.SimpleImport("bytes"),
-				codegen.SimpleImport("encoding/json"),
-				codegen.SimpleImport("errors"),
-				codegen.SimpleImport("fmt"),
-				codegen.SimpleImport("io"),
-				codegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
-			)
-			unionImports = append(unionImports, typeImports...)
+			unionImports := packagePlan.fileImports.publicUnions.Imports()
 			unionSections := []*codegen.SectionTemplate{
 				codegen.Header(svc.Service.Name+" completion union types", packageName, unionImports),
 				{
@@ -167,24 +145,18 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 			})
 		}
 
-		codecImports := specsData.codecsImports()
-		if len(transportTypes) > 0 {
-			transportImport := &codegen.ImportSpec{Name: transportPkgAlias, Path: importPath + "/" + transportDirName}
-			if len(codecImports) > 0 && codecImports[len(codecImports)-1].Path == "strings" {
-				codecImports = append(codecImports[:len(codecImports)-1], append([]*codegen.ImportSpec{transportImport}, codecImports[len(codecImports)-1:]...)...)
-			} else {
-				codecImports = append(codecImports, transportImport)
-			}
-		}
+		codecImports := packagePlan.fileImports.publicCodecs.Imports()
 		codecsSections := []*codegen.SectionTemplate{
 			codegen.Header(svc.Service.Name+" completion codecs", packageName, codecImports),
 			{
 				Name:   "completion-spec-codecs",
 				Source: agentsTemplates.Read(toolCodecsFileT),
 				Data: toolCodecsFileData{
-					Types:           specsData.typesList(),
-					Helpers:         specsData.CodecTransformHelpers,
-					EmitToolLookups: false,
+					Types:                  specsData.typesList(),
+					JSONDocumentValidators: specsData.JSONDocumentValidators,
+					JSONValidators:         specsData.JSONValidators,
+					Helpers:                specsData.CodecTransformHelpers,
+					EmitToolLookups:        false,
 				},
 				FuncMap: templateFuncMap(),
 			},
@@ -194,13 +166,7 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 			SectionTemplates: codecsSections,
 		})
 
-		specImports := []*codegen.ImportSpec{
-			{Path: "context"},
-			{Path: "slices"},
-			{Path: "goa.design/goa-ai/runtime/agent/completion"},
-			{Path: "goa.design/goa-ai/runtime/agent/model"},
-			{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
-		}
+		specImports := packagePlan.fileImports.publicSpecs.Imports()
 		specSections := []*codegen.SectionTemplate{
 			codegen.Header(svc.Service.Name+" completion specs", packageName, specImports),
 			{
@@ -223,44 +189,47 @@ func completionSpecsFiles(data *GeneratorData) ([]*codegen.File, error) {
 	return out, nil
 }
 
-// buildCompletionSpecsData reuses the shared contract type builder to
-// materialize result types, schemas, unions, and codecs for direct completions
-// without cloning the type-generation pipeline.
-func buildCompletionSpecsData(genpkg string, svc *service.Data, completions []*CompletionData) (*completionSpecsData, error) {
+// buildCompletionSpecsDataForPackage builds one service's completion results,
+// schemas, and JSON functions with the saved package names.
+func buildCompletionSpecsDataForPackage(genpkg string, svc *service.Data, completions []*CompletionData, planned *toolSpecsPackagePlan, api *goaexpr.APIExpr) (*completionSpecsData, error) {
 	if svc == nil || len(completions) == 0 {
 		return nil, nil
 	}
 	data := &completionSpecsData{toolSpecsData: newToolSpecsData(genpkg, svc)}
-	builder := newToolSpecBuilder(genpkg, svc)
+	builder := newToolSpecBuilder(svc, planned, api)
 	for _, completion := range completions {
 		if completion == nil {
 			continue
 		}
-		scope := builder.scopeForTool()
-		constName := scope.Unique(completion.GoName)
+		names := planned.completionNames[completion.Name]
 		result, err := builder.typeFor(newCompletionContractTypeOwner(svc, completion), completion.Result, usageResult)
 		if err != nil {
 			return nil, err
 		}
-		// Completion callers use the generated Complete<Name> and
-		// StreamComplete<Name> operations. Keep their codec plumbing private so
-		// applications cannot bypass those typed boundaries.
-		result.ExportedCodec = "new" + result.TypeName + "Codec"
-		result.MarshalFunc = "marshal" + result.TypeName
-		result.UnmarshalFunc = "unmarshal" + result.TypeName
-		data.completions = append(data.completions, &completionEntry{
+		entry := &completionEntry{
 			Name:        completion.Name,
-			GoName:      completion.GoName,
-			ConstName:   constName,
+			ConstName:   names.constant.Name(),
+			SpecFunc:    names.spec.Name(),
+			Example:     names.example.Name(),
+			Complete:    names.complete.Name(),
+			Stream:      names.streamComplete.Name(),
 			Description: completion.Description,
 			Result:      result,
-		})
+		}
+		completion.ConstName = entry.ConstName
+		completion.SpecFunc = entry.SpecFunc
+		completion.ExampleFunc = entry.Example
+		completion.CompleteFunc = entry.Complete
+		completion.StreamFunc = entry.Stream
+		data.completions = append(data.completions, entry)
 		data.addType(result)
 	}
 	data.Scope = builder.helperScope
 	data.Unions = builder.unionTypes()
 	data.TransportUnions = builder.transportUnionTypes()
 	data.CodecTransformHelpers = builder.codecTransformHelpers
+	data.JSONValidators = materializeJSONValidators(planned.jsonValidators)
+	data.JSONDocumentValidators = materializeJSONDocumentValidators(planned.jsonDocumentValidators)
 	if len(builder.types) > 0 {
 		infos := make([]*typeData, 0, len(builder.types))
 		for _, info := range builder.types {

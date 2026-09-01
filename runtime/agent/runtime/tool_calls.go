@@ -107,6 +107,12 @@ func collectToolCallIDs(calls []ToolCall) []string {
 }
 
 func (e *toolBatchExec) normalizeToolCall(call ToolCall) ToolCall {
+	if call.RunID == "" {
+		call.RunID = e.runID
+	}
+	if call.AgentID == "" {
+		call.AgentID = e.agentID
+	}
 	if call.SessionID == "" {
 		call.SessionID = e.sessionID
 	}
@@ -278,10 +284,6 @@ func (e *toolBatchExec) publishToolResultReceived(
 	duration time.Duration,
 ) (*RecordActivityInput, error) {
 	parentID := parentToolCallID(call, e.runCtx)
-	resultBytes := tr.ResultBytes
-	if !tr.ResultOmitted {
-		resultBytes = len(resultJSON)
-	}
 	preview, err := formatToolResultPreviewForCall(ctx, e.r, &call, tr)
 	if err != nil {
 		return nil, err
@@ -295,9 +297,6 @@ func (e *toolBatchExec) publishToolResultReceived(
 		call.ToolCallID,
 		parentID,
 		resultJSON,
-		resultBytes,
-		tr.ResultOmitted,
-		tr.ResultOmittedReason,
 		tr.ServerData,
 		preview,
 		tr.Bounds,
@@ -413,9 +412,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			}
 			continue
 		}
-		e.r.mu.RLock()
-		ts, hasTS := e.r.toolsets[spec.Toolset]
-		e.r.mu.RUnlock()
+		toolsetName, ts, hasTS := e.r.toolsetForTool(call.Name)
 
 		queue := ""
 		if hasTS && !ts.Inline {
@@ -441,7 +438,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		if hasTS && ts.Inline {
 			// Agent-as-tool: start child workflows concurrently and fan in results later.
 			if spec.IsAgentTool {
-				messages, nestedRunCtx, err := e.r.buildAgentChildRequest(ctx, ts.AgentTool, &call, e.messages, e.runCtx)
+				request, err := e.r.prepareAgentChild(wfCtx, call, e.messages, *e.runCtx)
 				if err != nil {
 					tr, err := agentToolRequestFailureResult(call, err)
 					if err != nil {
@@ -465,32 +462,13 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 					}
 					continue
 				}
-				if err := e.r.publishHook(wfCtx.Context(), hooks.NewChildRunLinkedEvent(call.RunID, call.AgentID, call.SessionID, call.Name, call.ToolCallID, nestedRunCtx.RunID, ts.AgentTool.AgentID), ""); err != nil {
+				input, err := agentChildRunInput(ts.AgentTool.Definition, request)
+				if err != nil {
 					executionErr = errors.Join(executionErr, err)
 					continue
 				}
-				route := ts.AgentTool.Route
-				if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
-					executionErr = errors.Join(
-						executionErr,
-						fmt.Errorf("agent tool route is incomplete for %s", call.Name),
-					)
-					continue
-				}
-				input := RunInput{
-					AgentID:          route.ID,
-					RunID:            nestedRunCtx.RunID,
-					SessionID:        nestedRunCtx.SessionID,
-					TurnID:           nestedRunCtx.TurnID,
-					ParentToolCallID: nestedRunCtx.ParentToolCallID,
-					ParentRunID:      nestedRunCtx.ParentRunID,
-					ParentAgentID:    nestedRunCtx.ParentAgentID,
-					Tool:             nestedRunCtx.Tool,
-					ToolArgs:         nestedRunCtx.ToolArgs,
-					Labels:           nestedRunCtx.Labels,
-					Messages:         messages,
-				}
-				handle, err := wfCtx.StartChildWorkflow(wfCtx.Context(), engine.ChildWorkflowRequest{ID: input.RunID, Workflow: route.WorkflowName, TaskQueue: route.DefaultTaskQueue, Input: &input})
+				route := ts.AgentTool.Definition.route
+				handle, err := wfCtx.StartChildWorkflow(wfCtx.Context(), engine.ChildWorkflowRequest{ID: input.RunID, Workflow: route.WorkflowName, TaskQueue: route.DefaultTaskQueue, Input: input})
 				if err != nil {
 					executionErr = errors.Join(
 						executionErr,
@@ -502,7 +480,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 					handle:    handle,
 					call:      call,
 					cfg:       ts.AgentTool,
-					nestedRun: nestedRunCtx,
+					nestedRun: request.runContext,
 					startTime: wfCtx.Now(),
 				})
 				if e.parentTracker != nil {
@@ -557,7 +535,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		toolInput := ToolInput{
 			AgentID:          e.agentID,
 			RunID:            e.runID,
-			ToolsetName:      spec.Toolset,
+			ToolsetName:      toolsetName,
 			ToolName:         call.Name,
 			ToolCallID:       call.ToolCallID,
 			Payload:          append(rawjson.Message(nil), call.Payload...),
@@ -777,7 +755,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 				}
 				continue
 			}
-			if err := validateWorkflowOutput(outPtr, info.cfg.Route.ID, info.nestedRun.RunID); err != nil {
+			if err := validateWorkflowOutput(outPtr, info.cfg.Definition.route.ID, info.nestedRun.RunID); err != nil {
 				executionErr = errors.Join(executionErr, err)
 				continue
 			}
@@ -792,7 +770,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 				}
 				continue
 			}
-			tr, err := e.r.adaptAgentChildOutput(ctx, info.cfg, &info.call, info.nestedRun, outPtr)
+			tr, err := e.r.adaptAgentChildOutput(info.cfg, &info.call, info.nestedRun, outPtr)
 			if err != nil {
 				executionErr = errors.Join(executionErr, err)
 				continue
@@ -906,11 +884,9 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 		for _, call := range calls {
 			call = exec.normalizeToolCall(call)
 			queue := ""
-			spec, ok := r.toolSpec(call.Name)
+			_, ok := r.toolSpec(call.Name)
 			if ok {
-				r.mu.RLock()
-				ts, hasTS := r.toolsets[spec.Toolset]
-				r.mu.RUnlock()
+				_, ts, hasTS := r.toolsetForTool(call.Name)
 				if hasTS && !ts.Inline {
 					queue = toolActOptions.Queue
 					if queue == "" {
@@ -967,12 +943,17 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 	}
 	if isRunCancellationError(executionErr) {
 		cancelExecOnce()
+		executionErr = errors.Join(
+			executionErr,
+			exec.cancelAndWaitForAgentChildren(wfCtx, batch.childFutures),
+		)
 		return availableToolExecutionsInCallOrder(batch.calls, nil, batch.inlineByID), false, executionErr
 	}
 
 	activityByID, pendingActs, timedOutActs, err := exec.collectActivityResultsAsComplete(wfCtx, batch.futures, finalizeTimer)
 	if isRunCancellationError(err) {
 		cancelExecOnce()
+		err = errors.Join(err, exec.cancelAndWaitForAgentChildren(wfCtx, batch.childFutures))
 		return availableToolExecutionsInCallOrder(batch.calls, activityByID, batch.inlineByID), false, err
 	}
 	if err != nil {
@@ -982,18 +963,19 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 	childByID, pendingChildren, timedOutChildren, err := exec.collectAgentChildResults(wfCtx, batch.childFutures, finalizeTimer)
 	if isRunCancellationError(err) {
 		cancelExecOnce()
+		err = errors.Join(err, exec.cancelAndWaitForAgentChildren(wfCtx, pendingChildren))
 		return availableToolExecutionsInCallOrder(batch.calls, activityByID, batch.inlineByID), false, err
 	}
 	if err != nil {
 		executionErr = errors.Join(executionErr, err)
 	}
-	if executionErr != nil {
-		cancelExecOnce()
-	}
-
 	timedOut := timedOutActs || timedOutChildren
-	if timedOut {
+	if executionErr != nil || timedOut {
 		cancelExecOnce()
+		executionErr = errors.Join(
+			executionErr,
+			exec.cancelAndWaitForAgentChildren(wfCtx, pendingChildren),
+		)
 	}
 
 	for id, tr := range childByID {
@@ -1001,14 +983,6 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 	}
 
 	if timedOut {
-		for _, info := range pendingChildren {
-			if info.handle != nil {
-				if err := info.handle.Cancel(ctx); err != nil {
-					executionErr = errors.Join(executionErr, err)
-				}
-			}
-		}
-
 		// Synthesize tool results for in-flight activities/children so the planner sees a
 		// complete tool_use → tool_result handshake even when we stop waiting to finalize.
 		for _, info := range pendingActs {
@@ -1055,6 +1029,28 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 		return nil, false, err
 	}
 	return merged, timedOut, nil
+}
+
+// cancelAndWaitForAgentChildren keeps the parent alive until every child it
+// started has finished cancellation. Child workflows use that time to store
+// their terminal state before the parent can store its own terminal state.
+func (e *toolBatchExec) cancelAndWaitForAgentChildren(wfCtx engine.WorkflowContext, children []agentChildFutureInfo) error {
+	if len(children) == 0 {
+		return nil
+	}
+	ctx := wfCtx.Detached().Context()
+	var waitErr error
+	for _, info := range children {
+		if err := info.handle.Cancel(ctx); err != nil {
+			waitErr = errors.Join(waitErr, err)
+		}
+	}
+	for _, info := range children {
+		if _, err := info.handle.Get(ctx); err != nil && !isRunCancellationError(err) {
+			waitErr = errors.Join(waitErr, err)
+		}
+	}
+	return waitErr
 }
 
 // completeToolScheduleState attaches the canonical schedule envelope to every

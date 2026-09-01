@@ -12,7 +12,7 @@ PROTOC_GEN_GO_GRPC_TARGET := $(shell grep '^google.golang.org/grpc/cmd/protoc-ge
 PROTOC_GEN_GO_VERSION := $(word 2,$(subst @, ,$(PROTOC_GEN_GO_TARGET)))
 PROTOC_GEN_GO_GRPC_VERSION := $(word 2,$(subst @, ,$(PROTOC_GEN_GO_GRPC_TARGET)))
 
-.PHONY: all setup build lint test itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example example-gen
+.PHONY: all setup build lint test itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example gen-example
 
 all: build lint test
 
@@ -31,13 +31,11 @@ test: tools
 
 # Run integration tests: end-to-end scenarios under integration_tests/ and
 # Docker-backed tests guarded by the `integration` build tag (registry health
-# tracking against real Redis and run-log migration against a Mongo replica
-# set). `make test` excludes both so the default suite stays fast and
-# deterministic.
+# tracking against real Redis). `make test` excludes both so the default suite
+# stays fast and deterministic.
 itest: tools
 	$(GO) test -race -vet=off -parallel 1 ./integration_tests/...
 	$(GO) test -race -tags integration ./registry/...
-	$(GO) test -race -tags integration ./features/runlog/mongo/clients/mongo/...
 
 ci: build lint test
 
@@ -70,7 +68,7 @@ protoc-check:
 		echo "Run 'make setup' to install protoc $(PROTOC_VERSION)."; \
 		exit 1; \
 	fi
-	@version="$$(protoc --version | awk '{ print $$2 }')"; \
+	@version="$$( $(PROTOC) --version | awk '{ print $$2 }')"; \
 	if [ "$$version" != "$(PROTOC_VERSION)" ]; then \
 		echo "Error: protoc $(PROTOC_VERSION) is required, but $$version is in PATH."; \
 		echo "Run 'make setup' to install the required version."; \
@@ -78,10 +76,10 @@ protoc-check:
 	fi
 
 run-example:
-	cd example/complete && $(GO) run ./cmd/orchestrator --http-port $(HTTP_PORT)
+	cd quickstart && $(GO) run ./cmd/orchestrator --http-port $(HTTP_PORT)
 
 gen-example:
-	cd example/complete && goa gen example.com/assistant/design
+	cd quickstart && $(GO) run goa.design/goa/v3/cmd/goa gen example.com/quickstart/design
 
 gen-registry:
-	goa gen goa.design/goa-ai/registry/design -o registry
+	$(GO) run goa.design/goa/v3/cmd/goa gen goa.design/goa-ai/registry/design -o registry

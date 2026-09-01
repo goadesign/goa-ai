@@ -172,15 +172,8 @@ func (c *simplePlannerContext) RenderPrompt(ctx context.Context, id prompt.Ident
 		SessionID: c.sessionID,
 		Labels:    cloneLabels(c.labels),
 	}
-	renderContext := withPromptRenderHookContext(ctx, PromptRenderHookContext{
-		RunID:     c.runID,
-		AgentID:   c.agent,
-		SessionID: c.sessionID,
-		TurnID:    c.turnID,
-	})
-	if events, ok := c.ev.(*runtimePlannerEvents); ok {
-		renderContext = withPlannerEventCollector(renderContext, events)
-	}
+	events := c.ev.(*runtimePlannerEvents)
+	renderContext := prompt.WithRenderRecorder(ctx, events.prompts)
 	return c.rt.PromptRegistry.Render(renderContext, id, scope, data)
 }
 

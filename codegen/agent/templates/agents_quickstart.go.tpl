@@ -23,7 +23,7 @@ Here’s a map of what Goa-AI just built for you based on your `design/*.go` fil
         * **Uses Toolsets:**
             {{- if .UsedToolsets }}
             {{- range .UsedToolsets }}
-            * `{{ .QualifiedName }}`{{ if isMCPBacked . }} (from remote MCP service `{{ mcpService . }}.{{ .Name }}`){{ end }}
+            * `{{ .QualifiedName }}`{{ if .ProviderLabel }} (from remote MCP service `{{ .ProviderLabel }}`){{ end }}
             {{- end }}
             {{- else }}*none*
             {{- end }}
@@ -69,7 +69,7 @@ go run ./cmd/<service>/
 ```
 
 This generates:
-- `internal/agents/bootstrap/bootstrap.go` — Wires runtime and registers agents
+- `internal/agents/<service>/bootstrap/bootstrap.go` — Wires runtime and registers that service's agents
 - `internal/agents/<agent>/planner/planner.go` — Stub planner (edit to connect your LLM)
 - `cmd/<service>/main.go` — Example main that uses the bootstrap
 - `gen/<service>/completions/` — Typed completion helpers when your service declares `Completion(...)`
@@ -118,19 +118,19 @@ Here are the detailed cheat sheets for each agent you designed.
 
 * **Package:** `{{ .ImportPath }}`
 * **Directory:** `{{ .Dir }}`
-* **Config Struct:** `{{ .StructName }}Config`
-* **Register Function:** `Register{{ .StructName }}(ctx, rt, cfg)`
+* **Config Struct:** `{{ .ConfigType }}`
+* **Register Function:** `{{ .PackageNames.Register }}(ctx, rt, cfg)`
 * **How to Run:**
-    * **Sessions are first-class:** call `rt.CreateSession(ctx, sessionID)` once before you start any runs under that session ID.
+    * **Sessions are first-class:** ask the service that owns sessions to create `sessionID` before starting a run, and supply a stable run ID for each workflow. The agent runtime receives a storage client but does not administer sessions.
     * **Synchronous (wait for result):**
         ```go
         client := {{ .PackageName }}.NewClient(rt)
-        out, err := client.Run(ctx, sessionID, messages)
+        out, err := client.Run(ctx, sessionID, messages, runtime.WithRunID(runID))
         ```
     * **Asynchronous (get a handle):**
         ```go
         client := {{ .PackageName }}.NewClient(rt)
-        handle, err := client.Start(ctx, sessionID, messages)
+        handle, err := client.Start(ctx, sessionID, messages, runtime.WithRunID(runID))
         ```
 * **Workflow Name:** `{{ .Runtime.Workflow.Name }}` (Queue: `{{ .Runtime.Workflow.Queue }}`)
 
@@ -139,13 +139,13 @@ Here are the detailed cheat sheets for each agent you designed.
 {{- $agent := . -}}
 
 ```go
-cfg := {{ .PackageName }}.{{ .StructName }}Config{
+cfg := {{ .PackageName }}.{{ .ConfigType }}{
     Planner: myPlanner,
     {{- if .MCPToolsets }}
     MCPCallers: map[string]mcpruntime.Caller{
         {{- range .MCPToolsets }}
         // Expects a caller for the '{{ .SuiteName }}' suite
-        {{ $agent.PackageName }}.{{ .ConstName }}: your_mcp_caller_for_{{ .SuiteName | ToLower }},
+        {{ $agent.PackageName }}.{{ .ConstName }}: your_mcp_caller_for_{{ .CallerName }},
         {{- end }}
     },
     {{- end }}
@@ -290,7 +290,7 @@ func Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.Tool
 }
 ```
 
-{{- if hasServiceSideProviders .GeneratorData }}
+{{- if .HasServiceProviders }}
 ---
 
 #### Service-Side Tool Providers (Registry-Routed Execution)
@@ -320,6 +320,10 @@ go func() {
         toolprovider.Registration{
             AdmissionRevision: admissionRevision,
             Register: func(ctx context.Context, toolset, providerID, incarnationID, admissionRevision string) (toolprovider.RegistrationLease, error) {
+                schemaFingerprint, err := toolsetpkg.SchemaFingerprint(toolset)
+                if err != nil {
+                    return toolprovider.RegistrationLease{}, err
+                }
                 result, err := registryClient.Register(ctx, &registry.RegisterPayload{
                     Name:              toolset,
                     Tools:             toolSchemas,
@@ -327,7 +331,7 @@ go func() {
                     ProviderIncarnationID: incarnationID,
                     AdmissionRevision: admissionRevision,
                     WireProtocolVersion: registrywire.WireProtocolVersion,
-                    SchemaFingerprint: toolsetpkg.SchemaFingerprint,
+                    SchemaFingerprint: schemaFingerprint,
                 })
                 if err != nil {
                     return toolprovider.RegistrationLease{}, err
@@ -449,16 +453,23 @@ Notes:
 
 If your agent uses tools from another service via MCP (`Use(MCPToolset(...))`):
 
-1.  Get the generated Goa client for the remote service.
-2.  Wrap it in an `mcpruntime.Caller`.
+1.  Get the generated JSON-RPC client for the remote MCP service.
+2.  Use the generated MCP adapter to make an `mcpruntime.Caller`.
 3.  Pass it to your agent's config, using the generated constant for the key.
 
 ```go
-// 1. Get the generated Goa client for the remote service.
-remoteClient := <jsonrpc_client_pkg>.NewClient(/* your endpoints */)
+// 1. Get the generated JSON-RPC client for the remote MCP service.
+remoteClient := <mcp_jsonrpc_client_pkg>.NewClient(/* your endpoints */)
 
-// 2. Wrap it in an MCP Caller.
-caller := mcpruntime.NewCaller(remoteClient)
+// 2. Identify this program, initialize the MCP session, and build the runtime caller.
+clientInfo := mcpruntime.ClientInfo{
+    Name:    "<client_name>",
+    Version: "<client_version>",
+}
+caller, err := <mcp_jsonrpc_client_pkg>.NewCaller(ctx, remoteClient, clientInfo)
+if err != nil {
+    return fmt.Errorf("initialize MCP caller: %w", err)
+}
 
 // 3. Supply it in the agent config.
 cfg := <agentpkg>.<AgentConfig>{
@@ -483,7 +494,7 @@ cfg := <agentpkg>.<AgentConfig>{
 * **Tools this agent can USE:**
 {{- if .UsedToolsets }}
 {{- range .UsedToolsets }}
-* **`{{ .QualifiedName }}`** {{ if isMCPBacked . }}(MCP Suite: `{{ mcpService . }}.{{ .Name }}`){{ end }}
+* **`{{ .QualifiedName }}`** {{ if .ProviderLabel }}(MCP Suite: `{{ .ProviderLabel }}`){{ end }}
 {{- if .Tools }}
 {{- range .Tools }}
 * **Tool: `{{ .QualifiedName }}`**
@@ -514,6 +525,7 @@ When an agent `Exports` a toolset, other agents can call it. Goa-AI generates a 
 
 ```go
 // In your main.go, register the exported toolset so others can find it.
+// <agenttools>.ToolsetName contains the exact registration route.
 reg, err := <agenttools>.NewRegistration(
     rt,
     "You are a helpful specialist assistant.",  // A system prompt for the nested agent (optional)
@@ -612,22 +624,22 @@ Rerun `goa gen` to get a typed harness under `gen/evals/<suite>/` (one hook per 
 
 ## 9. Ready for Prime Time: Advanced Features 🔭
 
-* **Sessions & Runs:** Sessions are explicit. Create them with `rt.CreateSession(ctx, sessionID)` and end them with `rt.DeleteSession(ctx, sessionID)`. Runs (`client.Run`/`client.Start`) require an active session.
+* **Sessions & Runs:** Sessions are explicit and owned by the host service. Create and end them through that service. Runs (`client.Run`/`client.Start`) require an active session.
 * **Session-Owned Streaming (for UIs):** In production, stream consumers should attach to the **session-owned stream** (`session/<session_id>`) and filter by `run_id`. Close SSE when you observe a `run_stream_end` event for the attached run ID. Nested agent runs emit `child_run_linked` links and their own `run_stream_end`; parent runs only emit `run_stream_end` after all child runs have ended.
 * **Asynchronous Runs:** Use `client.Start()` to get a workflow handle. This is great for long-running tasks, cancellation, and non-interactive integrations.
-* **Human Input:** Clarifications, confirmations, and external results end the current workflow with a typed suspension. Keep the complete suspension in trusted server-side storage, atomically claim it once, and submit one answer with `client.StartContinuation()` to start the next workflow.
+* **Human Input:** Clarifications, confirmations, and external results end the current workflow with a typed suspension. Call `PrepareContinuation` with the new workflow ID, call `MarshalBinary`, then store that ID from `RunID()` alongside the prepared bytes and accepted answer in one application database transaction. A later process can load those bytes, call `ParsePreparedRun`, and submit the result with `StartPrepared`.
 * **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
-* **Persistence & Observability:** The `runtime.New` function accepts `runtime.Options` to configure production-grade components like a Temporal engine, MongoDB for memory, and telemetry hooks.
+* **Persistence & Observability:** The `runtime.New` function requires one `storage.Store` that owns run metadata, continuation checkpoints, and ordered run records. Options configure the engine, memory, streaming, and telemetry.
 * **Temporal DataConverter:** The Temporal engine always installs its strict, bounded data converter. Applications provide connection and namespace settings through `ClientOptions`; they cannot replace the workflow data contract.
-* **Registries & Discovery:** When you declare registries and `FromRegistry(...)` toolsets in your DSL, Goa-AI generates typed registry HTTP clients under `gen/<svc>/registry/<name>/` plus per-toolset specs helpers (with `DiscoverAndPopulate`, `Specs`, and `RegistryToolsetID`) so you can discover tools at runtime and register executors using `runtime.ToolsetRegistration`.
+* **Registries & Discovery:** When you declare registries and `FromRegistry(...)` toolsets in your DSL, Goa-AI generates typed registry HTTP clients under `gen/<svc>/registry/<name>/` plus per-toolset specs helpers such as `DiscoverAndPopulate` and `Specs`. Use the generated `<Toolset>ToolsetName` constant from the agent or service package when registering the discovered tools with `runtime.ToolsetRegistration`.
 
 ```go
 // Example of production-ready runtime options
-rt := runtime.New(runtime.Options{
-    // Engine: myTemporalEngine,
-    // MemoryStore: myMongoMemoryStore,
-    // Stream: myEventStreamSink,
-})
+rt := runtime.New(runtimeStore,
+    // runtime.WithEngine(myTemporalEngine),
+    // runtime.WithMemoryStore(myMongoMemoryStore),
+    // runtime.WithStream(myEventStreamSink),
+)
 ```
 
 Example: constructing a Temporal worker engine:
@@ -672,7 +684,7 @@ defer eng.Close()
 * **Error: "session id is required"**
     * **Fix:** Always provide a unique, non-empty string for the `sessionID` when calling `agent.Run(...)`.
 * **Error: "session not found"**
-    * **Fix:** Sessions are explicit—call `rt.CreateSession(ctx, sessionID)` once before starting runs under that session ID.
+    * **Fix:** Sessions are explicit. Create the session through the host service before starting runs under that session ID.
 * **Error: "mcp caller is required for <suite>"**
     * **Fix:** Your agent's config is missing an entry in the `MCPCallers` map for the specified toolset ID. See section 5.
 * **Agent-as-Tool isn't working?**

@@ -1,15 +1,16 @@
+// Package codegen builds JSON schemas, examples, and field details used by generated
+// tool descriptions and JSON errors.
 package codegen
 
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"goa.design/goa/v3/codegen"
-	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
 	"goa.design/goa/v3/http/codegen/openapi"
+	openapiv2 "goa.design/goa/v3/http/codegen/openapi/v2"
 )
 
 const (
@@ -19,9 +20,8 @@ const (
 )
 
 type (
-	// exampleData keeps one canonical JSON-native example in both generated
-	// byte form and schema annotation form so tool specs do not derive the same
-	// contract twice.
+	// exampleData keeps one JSON example in the two forms needed by generated
+	// source and JSON Schema.
 	exampleData struct {
 		JSON  []byte
 		Value any
@@ -65,9 +65,16 @@ func buildFieldDescriptions(att *goaexpr.AttributeExpr) map[string]string {
 				walk(path, nat.Attribute)
 			}
 		case *goaexpr.Array:
-			walk(prefix, dt.ElemType)
+			elementPath := generatedElementPath(prefix)
+			switch {
+			case dt.ElemType.Description != "":
+				out[elementPath] = dt.ElemType.Description
+			case out[prefix] != "":
+				out[elementPath] = out[prefix]
+			}
+			walk(elementPath, dt.ElemType)
 		case *goaexpr.Map:
-			elementPath := generatedMapElementPath(prefix)
+			elementPath := generatedElementPath(prefix)
 			switch {
 			case dt.ElemType.Description != "":
 				out[elementPath] = dt.ElemType.Description
@@ -133,9 +140,9 @@ func buildFieldJSONTypes(att *goaexpr.AttributeExpr) map[string]string {
 				walk(path, nat.Attribute)
 			}
 		case *goaexpr.Array:
-			walk(prefix, dt.ElemType)
+			walk(generatedElementPath(prefix), dt.ElemType)
 		case *goaexpr.Map:
-			walk(generatedMapElementPath(prefix), dt.ElemType)
+			walk(generatedElementPath(prefix), dt.ElemType)
 		case *goaexpr.Union:
 			// Union branch payload types are discriminator-specific. The unqualified
 			// {type,value} envelope path is intentionally not used as contract
@@ -149,60 +156,8 @@ func buildFieldJSONTypes(att *goaexpr.AttributeExpr) map[string]string {
 	return out
 }
 
-// buildFieldAllowedObjectKeys collects accepted JSON object keys at each closed
-// object path. It follows arrays into their element type and uses "*" for each
-// open map key so closed objects stored beneath maps still reject unknown fields.
-func buildFieldAllowedObjectKeys(att *goaexpr.AttributeExpr) map[string][]string {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return nil
-	}
-	out := make(map[string][]string)
-	seen := make(map[string]struct{})
-	var walk func(prefix string, a *goaexpr.AttributeExpr)
-	walk = func(prefix string, a *goaexpr.AttributeExpr) {
-		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
-			return
-		}
-		switch dt := a.Type.(type) {
-		case goaexpr.UserType:
-			id := dt.ID()
-			if _, ok := seen[id]; ok {
-				return
-			}
-			seen[id] = struct{}{}
-			defer delete(seen, id)
-			walk(prefix, dt.Attribute())
-		case *goaexpr.Object:
-			keys := make([]string, 0, len(*dt))
-			for _, nat := range *dt {
-				keys = append(keys, nat.Name)
-			}
-			sort.Strings(keys)
-			out[prefix] = keys
-			for _, nat := range *dt {
-				path := nat.Name
-				if prefix != "" {
-					path = prefix + "." + nat.Name
-				}
-				walk(path, nat.Attribute)
-			}
-		case *goaexpr.Array:
-			walk(prefix, dt.ElemType)
-		case *goaexpr.Map:
-			walk(generatedMapElementPath(prefix), dt.ElemType)
-		case *goaexpr.Union:
-			return
-		}
-	}
-	walk("", att)
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// generatedMapElementPath names the schema beneath any caller-chosen map key.
-func generatedMapElementPath(prefix string) string {
+// generatedElementPath names one array item or caller-chosen map value.
+func generatedElementPath(prefix string) string {
 	if prefix == "" {
 		return "*"
 	}
@@ -269,64 +224,26 @@ func isEmptyStruct(att *goaexpr.AttributeExpr) bool {
 	}
 }
 
-// serviceName returns the declaring service name for a tool.
-//
-// Tool specs are provider-owned: they should identify the service that
-// declares/implements the toolset, not the consuming agent service that happens
-// to reference it.
-func serviceName(tool *ToolData) string {
-	ts := tool.Toolset
-	if ts.SourceServiceName != "" {
-		return ts.SourceServiceName
-	}
-	if ts.ServiceName != "" {
-		return ts.ServiceName
-	}
-	return ""
-}
-
-// toolsetName returns the name of the toolset that contains the tool.
-func toolsetName(tool *ToolData) string {
-	return tool.Toolset.QualifiedName
-}
-
-// servicePkgAlias returns the import alias for the service package using the
-// last path segment if available, falling back to the service PkgName.
-func servicePkgAlias(svc *service.Data) string {
-	// Always use the service package name so it matches the alias
-	// used by Goa's NameScope when computing full type references.
-	// Deriving the alias from the filesystem path (path.Base(PathName))
-	// can diverge from the actual package identifier (e.g., underscores
-	// vs. sanitized names), leading to mismatched qualifiers like
-	// "catalogagent" vs "catalog_agent" in generated code.
-	return svc.PkgName
-}
-
-// schemaVariantsForAttribute generates the annotated and plain OpenAPI JSON
-// schema views for att from one Goa schema graph. Both views omit Goa's
-// synthesized examples and retain examples explicitly authored on nested
-// attributes. The annotated view also contains the authored root example; the
-// plain view omits that root so provider adapters can carry it outside the
-// schema without reprocessing JSON at runtime.
-func schemaVariantsForAttribute(att *goaexpr.AttributeExpr, example any) ([]byte, []byte, error) {
+// schemaVariantsForAttribute builds two JSON schemas for att. Both keep nested
+// examples written in the design and remove examples invented by Goa. The first
+// also keeps the root example written in the design; the second leaves it out.
+func schemaVariantsForAttribute(
+	api *goaexpr.APIExpr,
+	att *goaexpr.AttributeExpr,
+	example any,
+	identity goaexpr.ExampleIdentity,
+) ([]byte, []byte, error) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return nil, nil, nil
 	}
-	prev := openapi.Definitions
-	openapi.Definitions = make(map[string]*openapi.Schema)
-	defer func() { openapi.Definitions = prev }()
-	schema := openapi.AttributeTypeSchema(goaexpr.Root.API, att)
+	examples := goaexpr.NewExampleGenerator(api.RandomizerFactory).At(identity)
+	schema := openapiv2.BuildAttributeSchema(api, att, examples)
 	if schema == nil {
 		return nil, nil, nil
 	}
-	if len(openapi.Definitions) > 0 {
-		schema.Defs = openapi.Definitions
-	}
-	// Prefer a concrete root schema: for user types, inline the referenced
-	// definition as the root so that the top-level contains "type":"object".
-	// Retain definitions to allow nested $ref resolution.
+	// For a named root type, copy its definition to the root and keep the other
+	// definitions for nested references.
 	if ut, ok := att.Type.(goaexpr.UserType); ok {
-		// Compute type name
 		tname := ""
 		switch u := ut.(type) {
 		case *goaexpr.UserTypeExpr:
@@ -335,12 +252,12 @@ func schemaVariantsForAttribute(att *goaexpr.AttributeExpr, example any) ([]byte
 			tname = u.TypeName
 		}
 		if tname != "" {
-			if def, ok := openapi.Definitions[tname]; ok && def != nil {
+			if def, ok := schema.Defs[tname]; ok && def != nil {
 				// Build a new definitions map excluding the root to avoid
 				// self-referential cycles during JSON marshaling.
-				if len(openapi.Definitions) > 0 {
-					defs := make(map[string]*openapi.Schema, len(openapi.Definitions))
-					for k, v := range openapi.Definitions {
+				if len(schema.Defs) > 0 {
+					defs := make(map[string]*openapi.Schema, len(schema.Defs))
+					for k, v := range schema.Defs {
 						if k == tname {
 							continue
 						}
@@ -477,8 +394,8 @@ func restoreSchemaChildExamples(att *goaexpr.AttributeExpr, schema, defs map[str
 	}
 }
 
-// removeSchemaExamples recursively removes OpenAPI example annotations from a
-// generated schema graph, including definitions and union branches.
+// removeSchemaExamples removes every example value from a generated schema,
+// including named definitions and union branches.
 func removeSchemaExamples(node any) {
 	switch actual := node.(type) {
 	case map[string]any:
@@ -493,12 +410,9 @@ func removeSchemaExamples(node any) {
 	}
 }
 
-// specializeUnionSchemas rewrites Goa's generic OneOf schema projection into
-// the discriminated JSON envelope generated codecs require. The owning contract
-// is the generated union codec: callers must send {type:<variant>,
-// value:<variant-payload>}. The schema keeps that envelope as an object so model
-// providers see the payload field as JSON, while nested union values are still
-// recursively specialized.
+// specializeUnionSchemas changes each union schema to the {type,value} JSON
+// object accepted by generated decoders. It applies the same change to nested
+// unions.
 func specializeUnionSchemas(schemaBytes []byte, att *goaexpr.AttributeExpr) ([]byte, error) {
 	if len(schemaBytes) == 0 || att == nil || !containsUnion(att) {
 		return schemaBytes, nil
@@ -519,22 +433,32 @@ func specializeUnionSchemas(schemaBytes []byte, att *goaexpr.AttributeExpr) ([]b
 }
 
 func containsUnion(att *goaexpr.AttributeExpr) bool {
+	return containsUnionNode(att, make(map[*goaexpr.AttributeExpr]struct{}))
+}
+
+// containsUnionNode checks each reachable attribute once because named types
+// may refer back to themselves.
+func containsUnionNode(att *goaexpr.AttributeExpr, seen map[*goaexpr.AttributeExpr]struct{}) bool {
 	if att == nil || att.Type == nil {
 		return false
 	}
+	if _, ok := seen[att]; ok {
+		return false
+	}
+	seen[att] = struct{}{}
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
-		return containsUnion(dt.Attribute())
+		return containsUnionNode(dt.Attribute(), seen)
 	case *goaexpr.Object:
 		for _, nat := range *dt {
-			if containsUnion(nat.Attribute) {
+			if containsUnionNode(nat.Attribute, seen) {
 				return true
 			}
 		}
 	case *goaexpr.Array:
-		return containsUnion(dt.ElemType)
+		return containsUnionNode(dt.ElemType, seen)
 	case *goaexpr.Map:
-		return containsUnion(dt.ElemType)
+		return containsUnionNode(dt.ElemType, seen)
 	case *goaexpr.Union:
 		return true
 	}
@@ -660,8 +584,8 @@ func schemaRefName(schema map[string]any) string {
 	return strings.TrimPrefix(ref, "#/$defs/")
 }
 
-// authoredExampleForAttribute returns the last explicit Example(...) declared
-// on source, normalized to the canonical model-facing JSON contract.
+// authoredExampleForAttribute returns the last Example(...) written for source
+// in the same JSON shape accepted by the generated decoder.
 func authoredExampleForAttribute(source *goaexpr.AttributeExpr) *exampleData {
 	if source == nil {
 		return nil
@@ -673,8 +597,8 @@ func authoredExampleForAttribute(source *goaexpr.AttributeExpr) *exampleData {
 	return normalizeExampleValue(source, examples[len(examples)-1].Value)
 }
 
-// normalizeExampleValue canonicalizes one example value into JSON-native shapes
-// and rewrites union nodes to the canonical {type,value} encoding.
+// normalizeExampleValue changes one example to ordinary JSON values and writes
+// each union as the {type,value} object accepted by the generated decoder.
 func normalizeExampleValue(att *goaexpr.AttributeExpr, v any) *exampleData {
 	// Normalize to JSON-native shapes (map[string]any, []any, float64, string, bool)
 	// so downstream rewriting logic doesn't have to handle typed maps/slices that
@@ -755,8 +679,8 @@ func projectExampleFieldNames(att *goaexpr.AttributeExpr, example any) any {
 	}
 }
 
-// projectUnionExampleFieldNames preserves the canonical union envelope and
-// projects the selected branch payload.
+// projectUnionExampleFieldNames keeps a union's {type,value} object and changes
+// field names inside the selected value to their JSON names.
 func projectUnionExampleFieldNames(u *goaexpr.Union, example any) any {
 	m, ok := example.(map[string]any)
 	if !ok {
@@ -800,21 +724,18 @@ func exampleValue(example *exampleData) any {
 	return example.Value
 }
 
-// canonicalizeUnionExamples rewrites Goa's "flattened" union examples into the
-// canonical JSON shape required by Goa-generated codecs: {type,value}.
+// canonicalizeUnionExamples changes Goa's branch-only union examples to the
+// {type,value} JSON object accepted by generated decoders.
 //
-// Goa's Union.Example returns only the selected branch value, which is useful
-// for documentation but misleading for tool specs where the runtime decoder
-// expects explicit discriminators. This helper preserves the structure produced
-// by the standard example generator and wraps only union nodes.
+// Goa returns only the selected branch value. This function keeps all other
+// example values unchanged and wraps each union value with its branch name.
 func canonicalizeUnionExamples(att *goaexpr.AttributeExpr, example any) any {
 	normalized, _ := canonicalizeUnionExampleValue(att, example, true)
 	return normalized
 }
 
-// canonicalizeSchemaExample rewrites auto-generated schema examples when they
-// match the generated codec contract. It returns false when Goa produced a
-// documentation-only union example that cannot be mapped to a real branch.
+// canonicalizeSchemaExample adds the branch name to a generated union example.
+// It returns false when no branch matches the example.
 func canonicalizeSchemaExample(att *goaexpr.AttributeExpr, example any) (any, bool) {
 	return canonicalizeUnionExampleValue(att, example, false)
 }
@@ -926,8 +847,8 @@ func exampleChildAttribute(att *goaexpr.AttributeExpr, key string) *goaexpr.Attr
 	return nil
 }
 
-// canonicalUnionExample returns an already-tagged union example with nested
-// unions normalized inside the selected variant value.
+// canonicalUnionExample reads an example that already names its union branch
+// and fixes any union examples inside the selected value.
 func canonicalUnionExample(u *goaexpr.Union, example any, typeKey, valueKey string, strict bool) (any, bool) {
 	m, ok := example.(map[string]any)
 	if !ok {

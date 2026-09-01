@@ -13,10 +13,14 @@ import (
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	agentrun "goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	runloginmem "goa.design/goa-ai/runtime/agent/runlog/inmem"
+	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
+	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
@@ -452,7 +456,7 @@ func replayedBedrockToolLoopMessages(t *testing.T) []*model.Message {
 	t.Helper()
 
 	ctx := context.Background()
-	store := runloginmem.New()
+	store := newBedrockReplayStore(t, ctx)
 	appendBedrockReplayDelta(t, ctx, store, []*model.Message{{
 		Role:  model.ConversationRoleUser,
 		Parts: []model.Part{model.TextPart{Text: "Summarize sales"}},
@@ -482,13 +486,13 @@ func replayedBedrockToolLoopMessages(t *testing.T) []*model.Message {
 	return messages
 }
 
-func appendBedrockReplayDelta(t *testing.T, ctx context.Context, store runlog.Store, messages []*model.Message) {
+func appendBedrockReplayDelta(t *testing.T, ctx context.Context, store storage.Store, messages []*model.Message) {
 	t.Helper()
 
 	payload, err := transcript.EncodeRunLogDelta(messages)
 	require.NoError(t, err)
 
-	_, err = store.Append(ctx, &runlog.Event{
+	_, err = store.AppendRunRecord(ctx, &runlog.Event{
 		EventKey:  time.Now().UTC().Format(time.RFC3339Nano),
 		RunID:     "run-1",
 		AgentID:   agent.Ident("agent-1"),
@@ -496,9 +500,53 @@ func appendBedrockReplayDelta(t *testing.T, ctx context.Context, store runlog.St
 		TurnID:    "turn-1",
 		Type:      transcript.RunLogMessagesAppended,
 		Payload:   payload,
-		Timestamp: time.Now().UTC(),
+		Timestamp: time.Now().UTC().Truncate(time.Millisecond),
 	})
 	require.NoError(t, err)
+}
+
+// newBedrockReplayStore creates the run used by transcript encoding tests.
+func newBedrockReplayStore(t *testing.T, ctx context.Context) *storageinmem.Store {
+	t.Helper()
+	store := storageinmem.New()
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	_, err := store.CreateSession(ctx, "session-1", now)
+	require.NoError(t, err)
+	started := bedrockLifecycleRecord(t, hooks.NewRunStartedEvent("run-1", "agent-1", "session-1", "", "", nil), "run-started", now)
+	canceled := bedrockLifecycleRecord(t, hooks.NewRunCompletedEvent(
+		"run-1",
+		"agent-1",
+		"session-1",
+		"canceled",
+		agentrun.PhaseCanceled,
+		nil,
+		context.Canceled,
+		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
+	), "run-canceled", now)
+	_, err = store.StartRootRun(ctx, storage.RootRunStart{
+		Run:     session.RunStart{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", StartedAt: now},
+		Started: started, Canceled: canceled,
+	})
+	require.NoError(t, err)
+	return store
+}
+
+// bedrockLifecycleRecord encodes a typed lifecycle event for transcript replay
+// tests that set up the integrated store directly.
+func bedrockLifecycleRecord(t *testing.T, event hooks.Event, key string, at time.Time) *runlog.Event {
+	t.Helper()
+	input, err := hooks.EncodeToRecordInput(event, hooks.EncodeOptions{EventKey: key, TimestampMS: at.UnixMilli()})
+	require.NoError(t, err)
+	return &runlog.Event{
+		EventKey:  input.EventKey,
+		RunID:     input.RunID,
+		AgentID:   input.AgentID,
+		SessionID: input.SessionID,
+		TurnID:    input.TurnID,
+		Type:      input.Type,
+		Payload:   input.Payload,
+		Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
+	}
 }
 
 func TestEncodeMessagesDoesNotRewriteHistoricalToolUseToToolUnavailable(t *testing.T) {

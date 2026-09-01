@@ -1,9 +1,5 @@
-// Package ir builds the canonical generator-facing model from evaluated Goa and
-// goa-ai roots.
-//
-// The builder performs ownership selection, output path derivation, and
-// deterministic ordering exactly once so downstream generators can consume a
-// stable design graph instead of rebuilding the same facts independently.
+// Package ir builds the saved services, agents, toolsets, and output paths used
+// while goa-ai writes files.
 package ir
 
 import (
@@ -31,6 +27,10 @@ const (
 
 type toolsetOwnerRef struct {
 	kind toolsetOwnerRefKind
+	expr *agentsExpr.ToolsetExpr
+
+	service *Service
+	agent   *Agent
 
 	serviceName     string
 	servicePathName string
@@ -39,8 +39,11 @@ type toolsetOwnerRef struct {
 	agentSlug string
 }
 
-// Build constructs a Design IR from evaluated Goa roots.
-func Build(genpkg string, roots []eval.Root) (*Design, error) {
+// Build reads one Goa generation and its service plan, then returns all values
+// needed to generate agent code. The service plan supplies the exact package
+// paths chosen by Goa for this generation.
+func Build(generation *goacodegen.Generation, servicePlan *service.Plan) (*Design, error) {
+	roots := generation.Roots()
 	agentsRoot, err := findAgentsRoot(roots)
 	if err != nil {
 		return nil, err
@@ -49,15 +52,19 @@ func Build(genpkg string, roots []eval.Root) (*Design, error) {
 	if err != nil {
 		return nil, err
 	}
-	goacodegen.NormalizeRoot(goaRoot)
-
-	servicesData := service.NewServicesData(goaRoot)
-	services := buildServices(goaRoot, servicesData)
+	if servicePlan.Root() != goaRoot {
+		return nil, fmt.Errorf("agent IR and Goa service plan use different design roots")
+	}
+	services, err := buildServices(generation, goaRoot, servicePlan)
+	if err != nil {
+		return nil, err
+	}
 	servicesByName := make(map[string]*Service, len(services))
 	for _, svc := range services {
 		servicesByName[svc.Name] = svc
 	}
 
+	genpkg := generation.GenPkg()
 	agents, err := buildAgents(genpkg, agentsRoot, servicesByName)
 	if err != nil {
 		return nil, err
@@ -83,24 +90,37 @@ func Build(genpkg string, roots []eval.Root) (*Design, error) {
 			return strings.Compare(a.Name, b.Name)
 		})
 	}
+	registries := buildRegistries(agentsRoot)
 
 	refsByToolset := collectToolsetOwnerRefs(agentsRoot, servicesByName)
 	toolsets, toolsetsByName, err := buildToolsets(genpkg, agentsRoot, refsByToolset, servicesByName)
 	if err != nil {
 		return nil, err
 	}
-	if err := attachToolsetRefs(genpkg, servicesData, servicesByName, toolsetsByName, agents); err != nil {
+	serviceExports, err := buildServiceExports(genpkg, agentsRoot, servicesByName, toolsetsByName)
+	if err != nil {
+		return nil, err
+	}
+	for _, export := range serviceExports {
+		export.Service.Exports = append(export.Service.Exports, export)
+	}
+	if err := attachToolsetRefs(genpkg, servicesByName, toolsetsByName, agents); err != nil {
+		return nil, err
+	}
+	if err := linkOwnerReferences(toolsets, serviceExports); err != nil {
 		return nil, err
 	}
 
 	return &Design{
-		Genpkg:      genpkg,
-		GoaRoot:     goaRoot,
-		AgentsRoot:  agentsRoot,
-		Services:    services,
-		Agents:      agents,
-		Toolsets:    toolsets,
-		Completions: completions,
+		Genpkg:         genpkg,
+		GoaRoot:        goaRoot,
+		AgentsRoot:     agentsRoot,
+		Services:       services,
+		Agents:         agents,
+		Toolsets:       toolsets,
+		ServiceExports: serviceExports,
+		Completions:    completions,
+		Registries:     registries,
 	}, nil
 }
 
@@ -122,26 +142,116 @@ func findGoaRoot(roots []eval.Root) (*goaexpr.RootExpr, error) {
 	return nil, fmt.Errorf("goa root not found in eval roots")
 }
 
-func buildServices(root *goaexpr.RootExpr, servicesData *service.ServicesData) []*Service {
+// buildServices copies each service name together with the exact generated
+// directory already chosen by Goa.
+func buildServices(generation *goacodegen.Generation, root *goaexpr.RootExpr, plan *service.Plan) ([]*Service, error) {
 	out := make([]*Service, 0, len(root.Services))
 	for _, svc := range root.Services {
 		if svc == nil {
 			continue
 		}
-		sd := servicesData.Get(svc.Name)
-		if sd == nil {
-			continue
+		serviceImport, _, err := plan.ServicePackageImports(svc)
+		if err != nil {
+			return nil, err
+		}
+		pkg := generation.Package(serviceImport.Path)
+		if pkg == nil {
+			return nil, fmt.Errorf("service %q generated package is not claimed", svc.Name)
 		}
 		out = append(out, &Service{
-			Name:     sd.Name,
-			PathName: sd.PathName,
-			Goa:      sd,
+			Expr:       svc,
+			Name:       svc.Name,
+			PathName:   path.Base(serviceImport.Path),
+			ImportPath: pkg.ImportPath(),
+			Dir:        pkg.OutputDirectory(),
 		})
 	}
 	slices.SortFunc(out, func(a, b *Service) int {
 		return strings.Compare(a.Name, b.Name)
 	})
-	return out
+	return out, nil
+}
+
+// buildServiceExports keeps every explicit service export separate from the
+// reusable toolset definition and its selected file location.
+func buildServiceExports(
+	genpkg string,
+	root *agentsExpr.RootExpr,
+	servicesByName map[string]*Service,
+	toolsetsByName map[string]*Toolset,
+) ([]*ToolsetRef, error) {
+	exports := make([]*ToolsetRef, 0)
+	for _, group := range root.ServiceExports {
+		service := servicesByName[group.Service.Name]
+		if service == nil {
+			return nil, fmt.Errorf("service %q not found for toolset exports", group.Service.Name)
+		}
+		for _, expr := range group.Toolsets {
+			ref, err := newToolsetRef(
+				genpkg,
+				servicesByName,
+				toolsetsByName,
+				service,
+				nil,
+				expr,
+				ToolsetRefKindServiceExport,
+			)
+			if err != nil {
+				return nil, err
+			}
+			exports = append(exports, ref)
+		}
+	}
+	slices.SortFunc(exports, func(a, b *ToolsetRef) int {
+		if compared := strings.Compare(a.Service.Name, b.Service.Name); compared != 0 {
+			return compared
+		}
+		return strings.Compare(a.QualifiedName, b.QualifiedName)
+	})
+	return exports, nil
+}
+
+// linkOwnerReferences attaches the complete selected reference after agent and
+// service references have been built.
+func linkOwnerReferences(toolsets []*Toolset, serviceExports []*ToolsetRef) error {
+	for _, toolset := range toolsets {
+		selected := toolset.Owner.pendingRef
+		if selected == nil {
+			return fmt.Errorf("toolset %q has no pending owner reference", toolset.Name)
+		}
+		switch selected.kind {
+		case toolsetOwnerRefUsed, toolsetOwnerRefExported:
+			var refs []*ToolsetRef
+			if selected.kind == toolsetOwnerRefUsed {
+				refs = selected.agent.UsedToolsets
+			} else {
+				refs = selected.agent.ExportedToolsets
+			}
+			for _, candidate := range refs {
+				if candidate.Expr == selected.expr {
+					toolset.Owner.Ref = candidate
+					break
+				}
+			}
+			if toolset.Owner.Ref == nil {
+				return fmt.Errorf("toolset %q selected agent owner reference was not built", toolset.Name)
+			}
+		case toolsetOwnerRefServiceExpo:
+			for _, candidate := range serviceExports {
+				if candidate.Expr == selected.expr && candidate.Service == selected.service {
+					toolset.Owner.Ref = candidate
+					break
+				}
+			}
+			if toolset.Owner.Ref == nil {
+				return fmt.Errorf("toolset %q selected service export was not built", toolset.Name)
+			}
+		default:
+			return fmt.Errorf("toolset %q has unknown owner reference kind %q", toolset.Name, selected.kind)
+		}
+		toolset.Owner.pendingRef = nil
+	}
+	return nil
 }
 
 func buildAgents(genpkg string, root *agentsExpr.RootExpr, servicesByName map[string]*Service) ([]*Agent, error) {
@@ -227,6 +337,21 @@ func buildCompletions(root *agentsExpr.RootExpr, servicesByName map[string]*Serv
 	return completions, nil
 }
 
+// buildRegistries copies registry definitions into name order.
+func buildRegistries(root *agentsExpr.RootExpr) []*Registry {
+	registries := make([]*Registry, 0, len(root.Registries))
+	for _, registry := range root.Registries {
+		if registry == nil {
+			continue
+		}
+		registries = append(registries, &Registry{Expr: registry, Name: registry.Name})
+	}
+	slices.SortFunc(registries, func(a, b *Registry) int {
+		return strings.Compare(a.Name, b.Name)
+	})
+	return registries
+}
+
 func collectToolsetOwnerRefs(root *agentsExpr.RootExpr, servicesByName map[string]*Service) map[string][]toolsetOwnerRef {
 	refsByToolset := make(map[string][]toolsetOwnerRef)
 	record := func(ts *agentsExpr.ToolsetExpr, kind toolsetOwnerRefKind, svc *Service, agent *Agent) {
@@ -242,6 +367,9 @@ func collectToolsetOwnerRefs(root *agentsExpr.RootExpr, servicesByName map[strin
 		}
 		ref := toolsetOwnerRef{
 			kind:            kind,
+			expr:            ts,
+			service:         svc,
+			agent:           agent,
 			serviceName:     svc.Name,
 			servicePathName: svc.PathName,
 		}
@@ -332,42 +460,17 @@ func buildToolsets(
 
 func collectDefiningToolsets(root *agentsExpr.RootExpr) map[string]*agentsExpr.ToolsetExpr {
 	toolsets := make(map[string]*agentsExpr.ToolsetExpr)
-	consider := func(ts *agentsExpr.ToolsetExpr) {
-		if ts == nil || ts.Name == "" || ts.Origin != nil {
-			return
-		}
+	for _, ts := range root.DefiningToolsets() {
 		toolsets[ts.Name] = ts
-	}
-	for _, ts := range root.Toolsets {
-		consider(ts)
-	}
-	for _, serviceExport := range root.ServiceExports {
-		if serviceExport == nil {
-			continue
-		}
-		for _, ts := range serviceExport.Toolsets {
-			consider(ts)
-		}
-	}
-	for _, agent := range root.Agents {
-		if agent == nil {
-			continue
-		}
-		if agent.Exported != nil {
-			for _, ts := range agent.Exported.Toolsets {
-				consider(ts)
-			}
-		}
-		if agent.Used != nil {
-			for _, ts := range agent.Used.Toolsets {
-				consider(ts)
-			}
-		}
 	}
 	return toolsets
 }
 
 func selectOwner(def *agentsExpr.ToolsetExpr, refs []toolsetOwnerRef, servicesByName map[string]*Service) (Owner, error) {
+	ref, ownerKind, err := selectPackageOwnerRef(def, refs)
+	if err != nil {
+		return Owner{}, err
+	}
 	if def != nil && def.Provider != nil && def.Provider.Kind == agentsExpr.ProviderMCP && def.Provider.MCPService != "" {
 		svc := servicesByName[def.Provider.MCPService]
 		if svc == nil {
@@ -375,54 +478,45 @@ func selectOwner(def *agentsExpr.ToolsetExpr, refs []toolsetOwnerRef, servicesBy
 		}
 		return Owner{
 			Kind:            OwnerKindService,
+			pendingRef:      &ref,
 			ServiceName:     svc.Name,
 			ServicePathName: svc.PathName,
 		}, nil
 	}
+	return Owner{
+		Kind:            ownerKind,
+		pendingRef:      &ref,
+		ServiceName:     ref.serviceName,
+		ServicePathName: ref.servicePathName,
+		AgentName:       ref.agentName,
+		AgentSlug:       ref.agentSlug,
+	}, nil
+}
 
-	exported := selectOwnerRefs(refs, toolsetOwnerRefExported)
-	if len(exported) > 0 {
-		slices.SortFunc(exported, func(a, b toolsetOwnerRef) int {
-			if delta := strings.Compare(a.serviceName, b.serviceName); delta != 0 {
-				return delta
+// selectPackageOwnerRef chooses the service or agent package where one
+// defining toolset's reusable specs are written.
+func selectPackageOwnerRef(def *agentsExpr.ToolsetExpr, refs []toolsetOwnerRef) (toolsetOwnerRef, OwnerKind, error) {
+	for _, candidate := range []struct {
+		kind      toolsetOwnerRefKind
+		ownerKind OwnerKind
+	}{
+		{toolsetOwnerRefExported, OwnerKindAgentExport},
+		{toolsetOwnerRefServiceExpo, OwnerKindService},
+		{toolsetOwnerRefUsed, OwnerKindService},
+	} {
+		selected := selectOwnerRefs(refs, candidate.kind)
+		if len(selected) == 0 {
+			continue
+		}
+		slices.SortFunc(selected, func(a, b toolsetOwnerRef) int {
+			if compared := strings.Compare(a.serviceName, b.serviceName); compared != 0 {
+				return compared
 			}
 			return strings.Compare(a.agentName, b.agentName)
 		})
-		ref := exported[0]
-		return Owner{
-			Kind:            OwnerKindAgentExport,
-			ServiceName:     ref.serviceName,
-			ServicePathName: ref.servicePathName,
-			AgentName:       ref.agentName,
-			AgentSlug:       ref.agentSlug,
-		}, nil
+		return selected[0], candidate.ownerKind, nil
 	}
-
-	serviceExports := selectOwnerRefs(refs, toolsetOwnerRefServiceExpo)
-	if len(serviceExports) > 0 {
-		slices.SortFunc(serviceExports, func(a, b toolsetOwnerRef) int {
-			return strings.Compare(a.serviceName, b.serviceName)
-		})
-		ref := serviceExports[0]
-		return Owner{
-			Kind:            OwnerKindService,
-			ServiceName:     ref.serviceName,
-			ServicePathName: ref.servicePathName,
-		}, nil
-	}
-
-	if len(refs) == 0 {
-		return Owner{}, fmt.Errorf("toolset %q has no owning references", def.Name)
-	}
-	slices.SortFunc(refs, func(a, b toolsetOwnerRef) int {
-		return strings.Compare(a.serviceName, b.serviceName)
-	})
-	ref := refs[0]
-	return Owner{
-		Kind:            OwnerKindService,
-		ServiceName:     ref.serviceName,
-		ServicePathName: ref.servicePathName,
-	}, nil
+	return toolsetOwnerRef{}, "", fmt.Errorf("toolset %q has no owning references", def.Name)
 }
 
 func selectOwnerRefs(refs []toolsetOwnerRef, kind toolsetOwnerRefKind) []toolsetOwnerRef {
@@ -454,9 +548,6 @@ func newToolset(genpkg string, expr *agentsExpr.ToolsetExpr, owner Owner) (*Tool
 	case OwnerKindAgentExport:
 		toolset.SpecsDir = filepath.Join(goacodegen.Gendir, owner.ServicePathName, "agents", owner.AgentSlug, "exports", slug)
 		toolset.SpecsImportPath = path.Join(genpkg, owner.ServicePathName, "agents", owner.AgentSlug, "exports", slug)
-		toolset.AgentToolsPackage = slug
-		toolset.AgentToolsDir = filepath.Join(goacodegen.Gendir, owner.ServicePathName, "agents", owner.AgentSlug, "agenttools", slug)
-		toolset.AgentToolsImportPath = path.Join(genpkg, owner.ServicePathName, "agents", owner.AgentSlug, "agenttools", slug)
 	default:
 		return nil, fmt.Errorf("unknown toolset owner kind %q for toolset %q", owner.Kind, expr.Name)
 	}
@@ -465,29 +556,80 @@ func newToolset(genpkg string, expr *agentsExpr.ToolsetExpr, owner Owner) (*Tool
 
 func attachToolsetRefs(
 	genpkg string,
-	servicesData *service.ServicesData,
 	servicesByName map[string]*Service,
 	toolsetsByName map[string]*Toolset,
 	agents []*Agent,
 ) error {
+	exportsByExpr := make(map[*agentsExpr.ToolsetExpr]*ToolsetRef)
+	exportsByDefinition := make(map[*Toolset][]*ToolsetRef)
 	for _, agent := range agents {
-		used, err := buildAgentToolsetRefs(genpkg, servicesData, servicesByName, toolsetsByName, agent, agent.Expr.Used, ToolsetRefKindUsed)
+		exported, err := buildAgentToolsetRefs(genpkg, servicesByName, toolsetsByName, agent, agent.Expr.Exported, ToolsetRefKindExported)
 		if err != nil {
 			return err
 		}
-		exported, err := buildAgentToolsetRefs(genpkg, servicesData, servicesByName, toolsetsByName, agent, agent.Expr.Exported, ToolsetRefKindExported)
+		agent.ExportedToolsets = exported
+		for _, ref := range exported {
+			exportsByExpr[ref.Expr] = ref
+			exportsByDefinition[ref.Definition] = append(exportsByDefinition[ref.Definition], ref)
+		}
+	}
+	for _, agent := range agents {
+		used, err := buildAgentToolsetRefs(genpkg, servicesByName, toolsetsByName, agent, agent.Expr.Used, ToolsetRefKindUsed)
 		if err != nil {
 			return err
+		}
+		for _, ref := range used {
+			if err := linkSourceExport(ref, exportsByExpr, exportsByDefinition[ref.Definition]); err != nil {
+				return err
+			}
 		}
 		agent.UsedToolsets = used
-		agent.ExportedToolsets = exported
 	}
 	return nil
 }
 
+// linkSourceExport records the exact agent that executes a used toolset. An
+// explicit AgentToolset reference wins. A plain Use is linked only when one
+// agent in another service exports the definition.
+func linkSourceExport(ref *ToolsetRef, exportsByExpr map[*agentsExpr.ToolsetExpr]*ToolsetRef, exports []*ToolsetRef) error {
+	if ref.Expr.Origin != nil && ref.Expr.Origin.Agent != nil {
+		selected := exportsByExpr[ref.Expr.Origin]
+		if selected == nil {
+			return fmt.Errorf("toolset %q selects an agent export that was not built", ref.Name)
+		}
+		linkAgentToolExport(ref, selected)
+		return nil
+	}
+	candidates := make([]*ToolsetRef, 0, len(exports))
+	for _, export := range exports {
+		if export.Service != ref.Service {
+			candidates = append(candidates, export)
+		}
+	}
+	switch len(candidates) {
+	case 0:
+		return nil
+	case 1:
+		linkAgentToolExport(ref, candidates[0])
+		return nil
+	default:
+		return fmt.Errorf("agent %q uses toolset %q exported by more than one agent; select one with AgentToolset", ref.Agent.Name, ref.Name)
+	}
+}
+
+// linkAgentToolExport records the generated provider package selected by one
+// consuming agent. Later planning can then classify and name the consumer
+// helper without repeating export selection.
+func linkAgentToolExport(ref, selected *ToolsetRef) {
+	ref.SourceExport = selected
+	ref.QualifiedName = selected.QualifiedName
+	ref.AgentToolsPackage = selected.AgentToolsPackage
+	ref.AgentToolsImportPath = selected.AgentToolsImportPath
+	ref.AgentToolsDir = selected.AgentToolsDir
+}
+
 func buildAgentToolsetRefs(
 	genpkg string,
-	servicesData *service.ServicesData,
 	servicesByName map[string]*Service,
 	toolsetsByName map[string]*Toolset,
 	agent *Agent,
@@ -499,7 +641,7 @@ func buildAgentToolsetRefs(
 	}
 	refs := make([]*ToolsetRef, 0, len(group.Toolsets))
 	for _, expr := range group.Toolsets {
-		ref, err := newToolsetRef(genpkg, servicesData, servicesByName, toolsetsByName, agent, expr, kind)
+		ref, err := newToolsetRef(genpkg, servicesByName, toolsetsByName, agent.Service, agent, expr, kind)
 		if err != nil {
 			return nil, err
 		}
@@ -513,20 +655,17 @@ func buildAgentToolsetRefs(
 
 func newToolsetRef(
 	genpkg string,
-	servicesData *service.ServicesData,
 	servicesByName map[string]*Service,
 	toolsetsByName map[string]*Toolset,
+	service *Service,
 	agent *Agent,
 	expr *agentsExpr.ToolsetExpr,
 	kind ToolsetRefKind,
 ) (*ToolsetRef, error) {
 	if expr == nil {
-		return nil, fmt.Errorf("agent %q has a nil toolset reference", agent.Name)
+		return nil, fmt.Errorf("service %q has a nil toolset reference", service.Name)
 	}
-	defName := expr.Name
-	if expr.Origin != nil && expr.Origin.Name != "" {
-		defName = expr.Origin.Name
-	}
+	defName := definingToolsetExpr(expr).Name
 	def := toolsetsByName[defName]
 	if def == nil {
 		return nil, fmt.Errorf("toolset %q has no defining IR entry", defName)
@@ -535,41 +674,56 @@ func newToolsetRef(
 	if slug == "" {
 		return nil, fmt.Errorf("toolset reference %q has no sanitized identifier", expr.Name)
 	}
-	sourceService, sourceServiceName := resolveSourceService(servicesData, servicesByName, agent.Service, expr)
-	qualifiedName := qualifyToolsetName(agent, expr, kind, sourceServiceName)
+	sourceService, sourceServiceName := resolveSourceService(servicesByName, service, expr)
+	qualifiedName := qualifyServiceToolsetName(service.Name, expr.Name)
+	if agent != nil {
+		qualifiedName = qualifyToolsetName(agent, expr, kind, sourceServiceName)
+	}
 	ref := &ToolsetRef{
-		Expr:                 expr,
-		Definition:           def,
-		Kind:                 kind,
-		Name:                 expr.Name,
-		Slug:                 slug,
-		QualifiedName:        qualifiedName,
-		Description:          expr.Description,
-		Tags:                 slices.Clone(expr.Tags),
-		Service:              agent.Service,
-		ServiceName:          agent.Service.Name,
-		Agent:                agent,
-		SourceService:        sourceService,
-		SourceServiceName:    sourceServiceName,
-		TaskQueue:            naming.QueueName(agent.Service.PathName, agent.Slug, slug, "tasks"),
-		PackageName:          slug,
-		PackageImportPath:    path.Join(agent.ImportPath, slug),
-		Dir:                  filepath.Join(agent.Dir, slug),
-		SpecsPackageName:     def.SpecsPackageName,
-		SpecsImportPath:      def.SpecsImportPath,
-		SpecsDir:             def.SpecsDir,
-		AgentToolsPackage:    def.AgentToolsPackage,
-		AgentToolsImportPath: def.AgentToolsImportPath,
-		AgentToolsDir:        def.AgentToolsDir,
+		Expr:              expr,
+		Definition:        def,
+		Kind:              kind,
+		Name:              expr.Name,
+		Slug:              slug,
+		QualifiedName:     qualifiedName,
+		Description:       expr.Description,
+		Tags:              slices.Clone(expr.Tags),
+		Service:           service,
+		ServiceName:       service.Name,
+		Agent:             agent,
+		SourceService:     sourceService,
+		SourceServiceName: sourceServiceName,
+		SpecsPackageName:  def.SpecsPackageName,
+		SpecsImportPath:   def.SpecsImportPath,
+		SpecsDir:          def.SpecsDir,
+	}
+	if agent != nil {
+		ref.TaskQueue = naming.QueueName(agent.Service.PathName, agent.Slug, slug, "tasks")
+		ref.PackageName = slug
+		ref.PackageImportPath = path.Join(agent.ImportPath, slug)
+		ref.Dir = filepath.Join(agent.Dir, slug)
+	}
+	if kind == ToolsetRefKindExported {
+		ref.AgentToolsPackage = slug
+		ref.AgentToolsImportPath = path.Join(agent.ImportPath, "agenttools", slug)
+		ref.AgentToolsDir = filepath.Join(agent.Dir, "agenttools", slug)
 	}
 	if expr.Provider != nil {
-		ref.Provider = buildToolsetProvider(genpkg, agent, ref, expr)
+		ref.Provider = buildToolsetProvider(genpkg, service, agent, ref, expr)
 	}
 	return ref, nil
 }
 
+// definingToolsetExpr follows references to the declaration that owns the
+// reusable tool contract.
+func definingToolsetExpr(expr *agentsExpr.ToolsetExpr) *agentsExpr.ToolsetExpr {
+	for expr.Origin != nil {
+		expr = expr.Origin
+	}
+	return expr
+}
+
 func resolveSourceService(
-	servicesData *service.ServicesData,
 	servicesByName map[string]*Service,
 	defaultService *Service,
 	expr *agentsExpr.ToolsetExpr,
@@ -586,7 +740,7 @@ func resolveSourceService(
 		}
 	}
 	isMCPBacked := expr.Provider != nil && expr.Provider.Kind == agentsExpr.ProviderMCP
-	if !isMCPBacked && servicesData != nil && len(expr.Tools) > 0 {
+	if !isMCPBacked && len(expr.Tools) > 0 {
 		if svcName := expr.Tools[0].BoundServiceName(); svcName != "" {
 			if svc := servicesByName[svcName]; svc != nil {
 				sourceService = svc
@@ -611,17 +765,27 @@ func qualifyToolsetName(agent *Agent, expr *agentsExpr.ToolsetExpr, kind Toolset
 	}
 	if kind == ToolsetRefKindUsed && !isMCPBacked {
 		if originServiceName == "" || originServiceName == agent.Service.Name {
-			qualifiedName = fmt.Sprintf("%s.%s", sourceServiceName, expr.Name)
+			qualifiedName = qualifyServiceToolsetName(sourceServiceName, expr.Name)
 		}
 	}
 	return qualifiedName
 }
 
-func buildToolsetProvider(genpkg string, agent *Agent, ref *ToolsetRef, expr *agentsExpr.ToolsetExpr) *ToolsetProvider {
+// qualifyServiceToolsetName returns the route owned by a service. Authored dots
+// remain part of the toolset name.
+func qualifyServiceToolsetName(serviceName, toolsetName string) string {
+	return serviceName + "." + toolsetName
+}
+
+func buildToolsetProvider(genpkg string, service *Service, agent *Agent, ref *ToolsetRef, expr *agentsExpr.ToolsetExpr) *ToolsetProvider {
 	switch expr.Provider.Kind {
 	case agentsExpr.ProviderLocal:
 		return nil
 	case agentsExpr.ProviderMCP:
+		constName := ""
+		if agent != nil {
+			constName = mcpToolsetConstName(agent, expr.Provider.MCPService, expr.Provider.MCPToolset, ref.Slug)
+		}
 		return &ToolsetProvider{
 			Kind: agentsExpr.ProviderMCP,
 			MCP: &MCPToolsetMeta{
@@ -629,7 +793,7 @@ func buildToolsetProvider(genpkg string, agent *Agent, ref *ToolsetRef, expr *ag
 				SuiteName:     expr.Provider.MCPToolset,
 				Source:        expr.Provider.MCPSource,
 				QualifiedName: ref.QualifiedName,
-				ConstName:     mcpToolsetConstName(agent, expr.Provider.MCPService, expr.Provider.MCPToolset, ref.Slug),
+				ConstName:     constName,
 			},
 		}
 	case agentsExpr.ProviderRegistry:
@@ -644,7 +808,7 @@ func buildToolsetProvider(genpkg string, agent *Agent, ref *ToolsetRef, expr *ag
 				ToolsetName:              expr.Provider.ToolsetName,
 				Version:                  expr.Provider.Version,
 				QualifiedName:            ref.QualifiedName,
-				RegistryClientImportPath: path.Join(genpkg, agent.Service.PathName, "registry", goacodegen.SnakeCase(registryName)),
+				RegistryClientImportPath: path.Join(genpkg, service.PathName, "registry", goacodegen.SnakeCase(registryName)),
 				RegistryClientAlias:      "reg" + goacodegen.Goify(registryName, false),
 			},
 		}

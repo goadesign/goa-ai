@@ -104,9 +104,6 @@ func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 		"call-1",
 		"",
 		nil,
-		0,
-		false,
-		"",
 		server,
 		"",
 		nil,
@@ -124,12 +121,13 @@ func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 	require.JSONEq(t, string(server), string(end.ServerData))
 }
 
-func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
+func TestStreamSubscriber_ToolEnd_PreservesCompleteResult(t *testing.T) {
 	sink := &mockSink{}
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
 
+	result := rawjson.Message(`{"value":"done"}`)
 	evt := hooks.NewToolResultReceivedEvent(
 		"r1",
 		agent.Ident("agent1"),
@@ -138,10 +136,7 @@ func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
 		tools.Ident("svc.tool"),
 		"call-1",
 		"",
-		nil,
-		4096,
-		true,
-		"workflow_budget",
+		result,
 		nil,
 		"",
 		nil,
@@ -154,9 +149,7 @@ func TestStreamSubscriber_ToolEnd_AllowsMissingResult(t *testing.T) {
 	require.Equal(t, EventToolEnd, sink.events[0].Type())
 	end, ok := sink.events[0].(ToolEnd)
 	require.True(t, ok)
-	require.True(t, end.Data.ResultOmitted)
-	require.Equal(t, "workflow_budget", end.Data.ResultOmittedReason)
-	require.Equal(t, 4096, end.Data.ResultBytes)
+	require.JSONEq(t, string(result), string(end.Data.Result))
 }
 
 func TestStreamSubscriber_ToolEnd_RejectsMissingCallRunID(t *testing.T) {
@@ -173,9 +166,6 @@ func TestStreamSubscriber_ToolEnd_RejectsMissingCallRunID(t *testing.T) {
 		"call-1",
 		"",
 		nil,
-		0,
-		false,
-		"",
 		nil,
 		"",
 		nil,
@@ -505,9 +495,6 @@ func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 		"call-1",
 		"",
 		rawjson.Message([]byte(`{"ok":true}`)),
-		len(`{"ok":true}`),
-		false,
-		"",
 		nil,
 		"",
 		nil,

@@ -15,33 +15,27 @@ import (
 
 // Endpoints wraps the "assistant" service endpoints.
 type Endpoints struct {
-	ListDocuments       goa.Endpoint
-	SystemInfo          goa.Endpoint
-	ConversationHistory goa.Endpoint
-	GeneratePrompts     goa.Endpoint
-	SendNotification    goa.Endpoint
-	AnalyzeSentiment    goa.Endpoint
-	ExtractKeywords     goa.Endpoint
-	SummarizeText       goa.Endpoint
-	Search              goa.Endpoint
-	ExecuteCode         goa.Endpoint
-	ProcessBatch        goa.Endpoint
+	ListDocuments    goa.Endpoint
+	SystemInfo       goa.Endpoint
+	AnalyzeSentiment goa.Endpoint
+	ExtractKeywords  goa.Endpoint
+	SummarizeText    goa.Endpoint
+	Search           goa.Endpoint
+	ExecuteCode      goa.Endpoint
+	ProcessBatch     goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "assistant" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		ListDocuments:       NewListDocumentsEndpoint(s),
-		SystemInfo:          NewSystemInfoEndpoint(s),
-		ConversationHistory: NewConversationHistoryEndpoint(s),
-		GeneratePrompts:     NewGeneratePromptsEndpoint(s),
-		SendNotification:    NewSendNotificationEndpoint(s),
-		AnalyzeSentiment:    NewAnalyzeSentimentEndpoint(s),
-		ExtractKeywords:     NewExtractKeywordsEndpoint(s),
-		SummarizeText:       NewSummarizeTextEndpoint(s),
-		Search:              NewSearchEndpoint(s),
-		ExecuteCode:         NewExecuteCodeEndpoint(s),
-		ProcessBatch:        NewProcessBatchEndpoint(s),
+		ListDocuments:    NewListDocumentsEndpoint(s),
+		SystemInfo:       NewSystemInfoEndpoint(s),
+		AnalyzeSentiment: NewAnalyzeSentimentEndpoint(s),
+		ExtractKeywords:  NewExtractKeywordsEndpoint(s),
+		SummarizeText:    NewSummarizeTextEndpoint(s),
+		Search:           NewSearchEndpoint(s),
+		ExecuteCode:      NewExecuteCodeEndpoint(s),
+		ProcessBatch:     NewProcessBatchEndpoint(s),
 	}
 }
 
@@ -49,9 +43,6 @@ func NewEndpoints(s Service) *Endpoints {
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListDocuments = m(e.ListDocuments)
 	e.SystemInfo = m(e.SystemInfo)
-	e.ConversationHistory = m(e.ConversationHistory)
-	e.GeneratePrompts = m(e.GeneratePrompts)
-	e.SendNotification = m(e.SendNotification)
 	e.AnalyzeSentiment = m(e.AnalyzeSentiment)
 	e.ExtractKeywords = m(e.ExtractKeywords)
 	e.SummarizeText = m(e.SummarizeText)
@@ -73,33 +64,6 @@ func NewListDocumentsEndpoint(s Service) goa.Endpoint {
 func NewSystemInfoEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		return s.SystemInfo(ctx)
-	}
-}
-
-// NewConversationHistoryEndpoint returns an endpoint function that calls the
-// method "conversation_history" of service "assistant".
-func NewConversationHistoryEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*ConversationHistoryPayload)
-		return s.ConversationHistory(ctx, p)
-	}
-}
-
-// NewGeneratePromptsEndpoint returns an endpoint function that calls the
-// method "generate_prompts" of service "assistant".
-func NewGeneratePromptsEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*GeneratePromptsPayload)
-		return s.GeneratePrompts(ctx, p)
-	}
-}
-
-// NewSendNotificationEndpoint returns an endpoint function that calls the
-// method "send_notification" of service "assistant".
-func NewSendNotificationEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*SendNotificationPayload)
-		return nil, s.SendNotification(ctx, p)
 	}
 }
 

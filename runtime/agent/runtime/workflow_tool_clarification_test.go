@@ -22,10 +22,10 @@ import (
 )
 
 func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	events := &recordingHooks{}
 	rt.Bus = events
-	tool := newAnyJSONSpec(tools.Ident("assistant.ask_clarification"), "assistant")
+	tool := newAnyJSONSpec(tools.Ident("assistant.ask_clarification"))
 	seedTestToolSpecs(rt, tool)
 
 	wfCtx := &testWorkflowContext{ctx: t.Context()}
@@ -78,7 +78,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	require.Equal(t, "provider-clarification-call-1", await.ModelToolCallID)
 	require.NotEqual(t, await.ToolCallID, await.ModelToolCallID)
 
-	checkpoint, err := rt.decodeWorkflowCheckpoint(out.Suspension)
+	checkpoint, err := decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(rt, "svc.agent"))
 	require.NoError(t, err)
 	continuedCtx := &testWorkflowContext{
 		ctx:           t.Context(),
@@ -142,10 +142,10 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 }
 
 func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	events := &recordingHooks{}
 	rt.Bus = events
-	tool := newAnyJSONSpec(tools.Ident("assistant.ask_question"), "assistant")
+	tool := newAnyJSONSpec(tools.Ident("assistant.ask_question"))
 	seedTestToolSpecs(rt, tool)
 
 	base := &planner.PlanInput{RunContext: run.Context{
@@ -185,7 +185,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 	require.Equal(t, "provider-question-call-1", await.ModelToolCallID)
 	require.NotEqual(t, await.ToolCallID, await.ModelToolCallID)
 
-	checkpoint, err := rt.decodeWorkflowCheckpoint(out.Suspension)
+	checkpoint, err := decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(rt, "svc.agent"))
 	require.NoError(t, err)
 	continuedCtx := &testWorkflowContext{
 		ctx:         t.Context(),
@@ -241,11 +241,11 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 }
 
 func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing.T) {
-	rt := New(WithLogger(telemetry.NoopLogger{}))
+	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	events := &recordingHooks{}
 	rt.Bus = events
-	firstTool := newAnyJSONSpec(tools.Ident("external.read_first"), "external")
-	secondTool := newAnyJSONSpec(tools.Ident("external.read_second"), "external")
+	firstTool := newAnyJSONSpec(tools.Ident("external.read_first"))
+	secondTool := newAnyJSONSpec(tools.Ident("external.read_second"))
 	seedTestToolSpecs(rt, firstTool, secondTool)
 
 	base := &planner.PlanInput{RunContext: run.Context{
@@ -297,7 +297,7 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 	require.Equal(t, "provider-external-call-1", await.Items[0].ModelToolCallID)
 	require.Equal(t, "provider-external-call-2", await.Items[1].ModelToolCallID)
 
-	checkpoint, err := rt.decodeWorkflowCheckpoint(out.Suspension)
+	checkpoint, err := decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(rt, "svc.agent"))
 	require.NoError(t, err)
 	continuedCtx := &testWorkflowContext{
 		ctx:         t.Context(),
@@ -383,7 +383,7 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 }
 
 func TestRunLoopSessionlessRunRejectsExternalInput(t *testing.T) {
-	runtime := New(WithLogger(telemetry.NoopLogger{}))
+	runtime := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", TurnID: "turn-1"}
 	base := &planner.PlanInput{RunContext: run.Context{
 		RunID: "run-1", TurnID: "turn-1", Attempt: 1,

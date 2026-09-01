@@ -29,7 +29,7 @@ import (
 func TestConfirmationPlanOverrideKeepsCanonicalPayload(t *testing.T) {
 	t.Parallel()
 
-	rt := New()
+	rt := New(newTestStore())
 	rt.toolConfirmation = &ToolConfirmationConfig{
 		Confirm: map[tools.Ident]*ToolConfirmation{
 			tools.Ident("tool.confirm"): {
@@ -67,7 +67,7 @@ func TestConfirmationDecisionRejectsMissingToolCallID(t *testing.T) {
 		t.Run(fmt.Sprintf("approved=%t", approved), func(t *testing.T) {
 			t.Parallel()
 
-			rt := New()
+			rt := New(newTestStore())
 			_, _, _, err := rt.resolveConfirmationDecision(
 				&testWorkflowContext{ctx: context.Background()},
 				AgentRegistration{},
@@ -96,11 +96,11 @@ func TestConfirmationDecisionRejectsMissingToolCallID(t *testing.T) {
 }
 
 func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
-	terminal := newAnyJSONSpec(tools.Ident("svc.complete"), "svc")
+	terminal := newAnyJSONSpec(tools.Ident("svc.complete"))
 	terminal.Bookkeeping = true
 	terminal.TerminalRun = true
 	executions := 0
-	rt := New(
+	rt := New(newTestStore(),
 		WithLogger(telemetry.NoopLogger{}),
 		WithToolConfirmation(&ToolConfirmationConfig{
 			Confirm: map[tools.Ident]*ToolConfirmation{
@@ -180,9 +180,9 @@ func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 }
 
 func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.T) {
-	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"))
 	bookkeeping.Bookkeeping = true
-	rt := New(
+	rt := New(newTestStore(),
 		WithLogger(telemetry.NoopLogger{}),
 		WithToolConfirmation(&ToolConfirmationConfig{
 			Confirm: map[tools.Ident]*ToolConfirmation{
@@ -242,8 +242,8 @@ func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.
 }
 
 func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testing.T) {
-	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
-	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"), "svc")
+	budgeted := newAnyJSONSpec(tools.Ident("svc.lookup"))
+	bookkeeping := newAnyJSONSpec(tools.Ident("svc.record"))
 	bookkeeping.Bookkeeping = true
 	confirmation := func(name tools.Ident) *ToolConfirmation {
 		return &ToolConfirmation{
@@ -255,7 +255,7 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 			},
 		}
 	}
-	rt := New(
+	rt := New(newTestStore(),
 		WithLogger(telemetry.NoopLogger{}),
 		WithToolConfirmation(&ToolConfirmationConfig{
 			Confirm: map[tools.Ident]*ToolConfirmation{
@@ -286,10 +286,8 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 		TurnID:    "turn-1",
 	}
 	seedRunMeta(t, rt, input)
-	reg := AgentRegistration{
-		ID:                  input.AgentID,
-		ExecuteToolActivity: "execute",
-		ResumeActivityName:  "resume",
+	reg := AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ExecuteToolActivity: "execute",
+		ResumeActivityName: "resume",
 		Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
@@ -348,8 +346,8 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 }
 
 func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
-	first := newAnyJSONSpec(tools.Ident("svc.first"), "svc")
-	second := newAnyJSONSpec(tools.Ident("svc.second"), "svc")
+	first := newAnyJSONSpec(tools.Ident("svc.first"))
+	second := newAnyJSONSpec(tools.Ident("svc.second"))
 	confirmation := func(name tools.Ident) *ToolConfirmation {
 		return &ToolConfirmation{
 			Prompt: func(context.Context, *ToolCall) (string, error) {
@@ -360,7 +358,7 @@ func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
 			},
 		}
 	}
-	rt := New(
+	rt := New(newTestStore(),
 		WithLogger(telemetry.NoopLogger{}),
 		WithToolConfirmation(&ToolConfirmationConfig{Confirm: map[tools.Ident]*ToolConfirmation{
 			first.Name: confirmation(first.Name), second.Name: confirmation(second.Name),
@@ -406,9 +404,9 @@ func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
 }
 
 func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
-	immediate := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
-	confirmed := newAnyJSONSpec(tools.Ident("svc.update"), "svc")
-	rt := New(
+	immediate := newAnyJSONSpec(tools.Ident("svc.lookup"))
+	confirmed := newAnyJSONSpec(tools.Ident("svc.update"))
+	rt := New(newTestStore(),
 		WithLogger(telemetry.NoopLogger{}),
 		WithToolConfirmation(&ToolConfirmationConfig{Confirm: map[tools.Ident]*ToolConfirmation{
 			confirmed.Name: {
@@ -461,9 +459,9 @@ func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
 }
 
 func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *testing.T) {
-	lookup := newAnyJSONSpec(tools.Ident("svc.lookup"), "svc")
-	confirm := newAnyJSONSpec(tools.Ident("svc.confirm"), "svc")
-	rt := New(
+	lookup := newAnyJSONSpec(tools.Ident("svc.lookup"))
+	confirm := newAnyJSONSpec(tools.Ident("svc.confirm"))
+	rt := New(newTestStore(),
 		WithLogger(telemetry.NoopLogger{}),
 		WithToolConfirmation(&ToolConfirmationConfig{
 			Confirm: map[tools.Ident]*ToolConfirmation{

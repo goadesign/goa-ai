@@ -15,22 +15,23 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// NewProtoRegisterRequest builds the gRPC request type from the payload of the
-// "Register" endpoint of the "registry" service.
+// NewProtoRegisterRequest builds *registrypb.RegisterRequest from
+// *registry.RegisterPayload.
 func NewProtoRegisterRequest(payload *registry.RegisterPayload) *registrypb.RegisterRequest {
 	message := &registrypb.RegisterRequest{
-		Name:                  payload.Name,
+		Name:                  &payload.Name,
 		Description:           payload.Description,
-		ProviderId:            payload.ProviderID,
-		AdmissionRevision:     payload.AdmissionRevision,
-		ProviderIncarnationId: payload.ProviderIncarnationID,
-		WireProtocolVersion:   int32(payload.WireProtocolVersion),
-		SchemaFingerprint:     payload.SchemaFingerprint,
+		ProviderId:            &payload.ProviderID,
+		AdmissionRevision:     &payload.AdmissionRevision,
+		ProviderIncarnationId: &payload.ProviderIncarnationID,
+		SchemaFingerprint:     &payload.SchemaFingerprint,
 	}
 	if payload.Version != nil {
 		version := string(*payload.Version)
 		message.Version = &version
 	}
+	wireProtocolVersion := int32(payload.WireProtocolVersion)
+	message.WireProtocolVersion = &wireProtocolVersion
 	if payload.Tags != nil {
 		message.Tags = make([]string, len(payload.Tags))
 		for i, val := range payload.Tags {
@@ -41,7 +42,7 @@ func NewProtoRegisterRequest(payload *registry.RegisterPayload) *registrypb.Regi
 		message.Tools = make([]*registrypb.ToolSchema, len(payload.Tools))
 		for i, val := range payload.Tools {
 			message.Tools[i] = &registrypb.ToolSchema{
-				Name:          val.Name,
+				Name:          &val.Name,
 				Description:   val.Description,
 				PayloadSchema: val.PayloadSchema,
 				ResultSchema:  val.ResultSchema,
@@ -58,66 +59,66 @@ func NewProtoRegisterRequest(payload *registry.RegisterPayload) *registrypb.Regi
 	return message
 }
 
-// NewRegisterResult builds the result type of the "Register" endpoint of the
-// "registry" service from the gRPC response type.
+// NewRegisterResult builds *registry.RegisterResult from
+// *registrypb.RegisterResponse.
 func NewRegisterResult(message *registrypb.RegisterResponse) *registry.RegisterResult {
 	result := &registry.RegisterResult{
-		RegisteredAt:      message.RegisteredAt,
-		RegistrationToken: message.RegistrationToken,
-		LeaseDurationMs:   message.LeaseDurationMs,
+		RegisteredAt:      *message.RegisteredAt,
+		RegistrationToken: *message.RegistrationToken,
+		LeaseDurationMs:   *message.LeaseDurationMs,
 	}
 	return result
 }
 
-// NewProtoReleaseProviderRequest builds the gRPC request type from the payload
-// of the "ReleaseProvider" endpoint of the "registry" service.
+// NewProtoReleaseProviderRequest builds *registrypb.ReleaseProviderRequest
+// from *registry.ReleaseProviderPayload.
 func NewProtoReleaseProviderRequest(payload *registry.ReleaseProviderPayload) *registrypb.ReleaseProviderRequest {
 	message := &registrypb.ReleaseProviderRequest{
-		Name:                      payload.Name,
-		ProviderId:                payload.ProviderID,
-		ExpectedRegistrationToken: payload.ExpectedRegistrationToken,
-		ProviderIncarnationId:     payload.ProviderIncarnationID,
+		Name:                      &payload.Name,
+		ProviderId:                &payload.ProviderID,
+		ExpectedRegistrationToken: &payload.ExpectedRegistrationToken,
+		ProviderIncarnationId:     &payload.ProviderIncarnationID,
 	}
 	return message
 }
 
-// NewProtoDrainProviderRequest builds the gRPC request type from the payload
-// of the "DrainProvider" endpoint of the "registry" service.
+// NewProtoDrainProviderRequest builds *registrypb.DrainProviderRequest from
+// *registry.DrainProviderPayload.
 func NewProtoDrainProviderRequest(payload *registry.DrainProviderPayload) *registrypb.DrainProviderRequest {
 	message := &registrypb.DrainProviderRequest{
-		SettlementDurationMs:      payload.SettlementDurationMs,
-		Name:                      payload.Name,
-		ProviderId:                payload.ProviderID,
-		ExpectedRegistrationToken: payload.ExpectedRegistrationToken,
-		ProviderIncarnationId:     payload.ProviderIncarnationID,
+		SettlementDurationMs:      &payload.SettlementDurationMs,
+		Name:                      &payload.Name,
+		ProviderId:                &payload.ProviderID,
+		ExpectedRegistrationToken: &payload.ExpectedRegistrationToken,
+		ProviderIncarnationId:     &payload.ProviderIncarnationID,
 	}
 	return message
 }
 
-// NewProtoUnregisterRequest builds the gRPC request type from the payload of
-// the "Unregister" endpoint of the "registry" service.
+// NewProtoUnregisterRequest builds *registrypb.UnregisterRequest from
+// *registry.UnregisterPayload.
 func NewProtoUnregisterRequest(payload *registry.UnregisterPayload) *registrypb.UnregisterRequest {
 	message := &registrypb.UnregisterRequest{
-		Name:                      payload.Name,
-		ExpectedRegistrationToken: payload.ExpectedRegistrationToken,
+		Name:                      &payload.Name,
+		ExpectedRegistrationToken: &payload.ExpectedRegistrationToken,
 	}
 	return message
 }
 
-// NewProtoPongRequest builds the gRPC request type from the payload of the
-// "Pong" endpoint of the "registry" service.
+// NewProtoPongRequest builds *registrypb.PongRequest from
+// *registry.PongPayload.
 func NewProtoPongRequest(payload *registry.PongPayload) *registrypb.PongRequest {
 	message := &registrypb.PongRequest{
-		PingId:                payload.PingID,
-		Toolset:               payload.Toolset,
-		ProviderId:            payload.ProviderID,
-		ProviderIncarnationId: payload.ProviderIncarnationID,
+		PingId:                &payload.PingID,
+		Toolset:               &payload.Toolset,
+		ProviderId:            &payload.ProviderID,
+		ProviderIncarnationId: &payload.ProviderIncarnationID,
 	}
 	return message
 }
 
-// NewProtoListToolsetsRequest builds the gRPC request type from the payload of
-// the "ListToolsets" endpoint of the "registry" service.
+// NewProtoListToolsetsRequest builds *registrypb.ListToolsetsRequest from
+// *registry.ListToolsetsPayload.
 func NewProtoListToolsetsRequest(payload *registry.ListToolsetsPayload) *registrypb.ListToolsetsRequest {
 	message := &registrypb.ListToolsetsRequest{}
 	if payload.Tags != nil {
@@ -129,18 +130,18 @@ func NewProtoListToolsetsRequest(payload *registry.ListToolsetsPayload) *registr
 	return message
 }
 
-// NewListToolsetsResult builds the result type of the "ListToolsets" endpoint
-// of the "registry" service from the gRPC response type.
+// NewListToolsetsResult builds *registry.ListToolsetsResult from
+// *registrypb.ListToolsetsResponse.
 func NewListToolsetsResult(message *registrypb.ListToolsetsResponse) *registry.ListToolsetsResult {
 	result := &registry.ListToolsetsResult{}
 	if message.Toolsets != nil {
 		result.Toolsets = make([]*registry.ToolsetInfo, len(message.Toolsets))
 		for i, val := range message.Toolsets {
 			result.Toolsets[i] = &registry.ToolsetInfo{
-				Name:         val.Name,
+				Name:         *val.Name,
 				Description:  val.Description,
-				ToolCount:    int(val.ToolCount),
-				RegisteredAt: val.RegisteredAt,
+				ToolCount:    int(*val.ToolCount),
+				RegisteredAt: *val.RegisteredAt,
 			}
 			if val.Version != nil {
 				version := registry.SemVer(*val.Version)
@@ -157,22 +158,22 @@ func NewListToolsetsResult(message *registrypb.ListToolsetsResponse) *registry.L
 	return result
 }
 
-// NewProtoGetToolsetRequest builds the gRPC request type from the payload of
-// the "GetToolset" endpoint of the "registry" service.
+// NewProtoGetToolsetRequest builds *registrypb.GetToolsetRequest from
+// *registry.GetToolsetPayload.
 func NewProtoGetToolsetRequest(payload *registry.GetToolsetPayload) *registrypb.GetToolsetRequest {
 	message := &registrypb.GetToolsetRequest{
-		Name: payload.Name,
+		Name: &payload.Name,
 	}
 	return message
 }
 
-// NewGetToolsetResult builds the result type of the "GetToolset" endpoint of
-// the "registry" service from the gRPC response type.
+// NewGetToolsetResult builds *registry.Toolset from
+// *registrypb.GetToolsetResponse.
 func NewGetToolsetResult(message *registrypb.GetToolsetResponse) *registry.Toolset {
 	result := &registry.Toolset{
-		Name:         message.Name,
+		Name:         *message.Name,
 		Description:  message.Description,
-		RegisteredAt: message.RegisteredAt,
+		RegisteredAt: *message.RegisteredAt,
 	}
 	if message.Version != nil {
 		version := registry.SemVer(*message.Version)
@@ -188,7 +189,7 @@ func NewGetToolsetResult(message *registrypb.GetToolsetResponse) *registry.Tools
 		result.Tools = make([]*registry.ToolSchema, len(message.Tools))
 		for i, val := range message.Tools {
 			result.Tools[i] = &registry.ToolSchema{
-				Name:          val.Name,
+				Name:          *val.Name,
 				Description:   val.Description,
 				PayloadSchema: val.PayloadSchema,
 				ResultSchema:  val.ResultSchema,
@@ -205,46 +206,46 @@ func NewGetToolsetResult(message *registrypb.GetToolsetResponse) *registry.Tools
 	return result
 }
 
-// NewProtoCheckAdmissionRequest builds the gRPC request type from the payload
-// of the "CheckAdmission" endpoint of the "registry" service.
+// NewProtoCheckAdmissionRequest builds *registrypb.CheckAdmissionRequest from
+// *registry.CheckAdmissionPayload.
 func NewProtoCheckAdmissionRequest(payload *registry.CheckAdmissionPayload) *registrypb.CheckAdmissionRequest {
 	message := &registrypb.CheckAdmissionRequest{
-		Name:                      payload.Name,
-		ExpectedRegistrationToken: payload.ExpectedRegistrationToken,
+		Name:                      &payload.Name,
+		ExpectedRegistrationToken: &payload.ExpectedRegistrationToken,
 	}
 	return message
 }
 
-// NewCheckAdmissionResult builds the result type of the "CheckAdmission"
-// endpoint of the "registry" service from the gRPC response type.
+// NewCheckAdmissionResult builds *registry.AdmissionStatus from
+// *registrypb.CheckAdmissionResponse.
 func NewCheckAdmissionResult(message *registrypb.CheckAdmissionResponse) *registry.AdmissionStatus {
 	result := &registry.AdmissionStatus{
-		Ready: message.Ready,
+		Ready: *message.Ready,
 	}
 	return result
 }
 
-// NewProtoSearchRequest builds the gRPC request type from the payload of the
-// "Search" endpoint of the "registry" service.
+// NewProtoSearchRequest builds *registrypb.SearchRequest from
+// *registry.SearchPayload.
 func NewProtoSearchRequest(payload *registry.SearchPayload) *registrypb.SearchRequest {
 	message := &registrypb.SearchRequest{
-		Query: payload.Query,
+		Query: &payload.Query,
 	}
 	return message
 }
 
-// NewSearchResult builds the result type of the "Search" endpoint of the
-// "registry" service from the gRPC response type.
+// NewSearchResult builds *registry.SearchResult from
+// *registrypb.SearchResponse.
 func NewSearchResult(message *registrypb.SearchResponse) *registry.SearchResult {
 	result := &registry.SearchResult{}
 	if message.Toolsets != nil {
 		result.Toolsets = make([]*registry.ToolsetInfo, len(message.Toolsets))
 		for i, val := range message.Toolsets {
 			result.Toolsets[i] = &registry.ToolsetInfo{
-				Name:         val.Name,
+				Name:         *val.Name,
 				Description:  val.Description,
-				ToolCount:    int(val.ToolCount),
-				RegisteredAt: val.RegisteredAt,
+				ToolCount:    int(*val.ToolCount),
+				RegisteredAt: *val.RegisteredAt,
 			}
 			if val.Version != nil {
 				version := registry.SemVer(*val.Version)
@@ -261,160 +262,424 @@ func NewSearchResult(message *registrypb.SearchResponse) *registry.SearchResult 
 	return result
 }
 
-// NewProtoCallToolRequest builds the gRPC request type from the payload of the
-// "CallTool" endpoint of the "registry" service.
+// NewProtoCallToolRequest builds *registrypb.CallToolRequest from
+// *registry.CallToolPayload.
 func NewProtoCallToolRequest(payload *registry.CallToolPayload) *registrypb.CallToolRequest {
 	message := &registrypb.CallToolRequest{
-		Toolset:             payload.Toolset,
-		Tool:                payload.Tool,
-		PayloadJson:         payload.PayloadJSON,
-		WireProtocolVersion: int32(payload.WireProtocolVersion),
+		Toolset:     &payload.Toolset,
+		Tool:        &payload.Tool,
+		PayloadJson: payload.PayloadJSON,
 	}
+	wireProtocolVersion := int32(payload.WireProtocolVersion)
+	message.WireProtocolVersion = &wireProtocolVersion
 	if payload.Meta != nil {
-		message.Meta = svcRegistryToolCallMetaToRegistrypbToolCallMeta(payload.Meta)
+		message.Meta = transformToolCallMetaToProtoToolCallMeta(payload.Meta)
 	}
 	return message
 }
 
-// NewCallToolResult builds the result type of the "CallTool" endpoint of the
-// "registry" service from the gRPC response type.
+// NewCallToolResult builds *registry.CallToolResult from
+// *registrypb.CallToolResponse.
 func NewCallToolResult(message *registrypb.CallToolResponse) *registry.CallToolResult {
 	result := &registry.CallToolResult{
-		ToolUseID:             message.ToolUseId,
-		RegistrationToken:     message.RegistrationToken,
-		ExecutionDeadline:     message.ExecutionDeadline,
-		ResultStreamExpiresAt: message.ResultStreamExpiresAt,
+		ToolUseID:             *message.ToolUseId,
+		RegistrationToken:     *message.RegistrationToken,
+		ExecutionDeadline:     *message.ExecutionDeadline,
+		ResultStreamExpiresAt: *message.ResultStreamExpiresAt,
 	}
 	return result
 }
 
-// NewProtoRetryToolRequest builds the gRPC request type from the payload of
-// the "RetryTool" endpoint of the "registry" service.
+// NewProtoRetryToolRequest builds *registrypb.RetryToolRequest from
+// *registry.RetryToolPayload.
 func NewProtoRetryToolRequest(payload *registry.RetryToolPayload) *registrypb.RetryToolRequest {
 	message := &registrypb.RetryToolRequest{
-		ExpectedRegistrationToken: payload.ExpectedRegistrationToken,
-		Toolset:                   payload.Toolset,
-		Tool:                      payload.Tool,
+		ExpectedRegistrationToken: &payload.ExpectedRegistrationToken,
+		Toolset:                   &payload.Toolset,
+		Tool:                      &payload.Tool,
 		PayloadJson:               payload.PayloadJSON,
-		WireProtocolVersion:       int32(payload.WireProtocolVersion),
 	}
+	wireProtocolVersion := int32(payload.WireProtocolVersion)
+	message.WireProtocolVersion = &wireProtocolVersion
 	if payload.Meta != nil {
-		message.Meta = svcRegistryToolCallMetaToRegistrypbToolCallMeta(payload.Meta)
+		message.Meta = transformToolCallMetaToProtoToolCallMeta(payload.Meta)
 	}
 	return message
 }
 
-// NewRetryToolResult builds the result type of the "RetryTool" endpoint of the
-// "registry" service from the gRPC response type.
+// NewRetryToolResult builds *registry.CallToolResult from
+// *registrypb.RetryToolResponse.
 func NewRetryToolResult(message *registrypb.RetryToolResponse) *registry.CallToolResult {
 	result := &registry.CallToolResult{
-		ToolUseID:             message.ToolUseId,
-		RegistrationToken:     message.RegistrationToken,
-		ExecutionDeadline:     message.ExecutionDeadline,
-		ResultStreamExpiresAt: message.ResultStreamExpiresAt,
+		ToolUseID:             *message.ToolUseId,
+		RegistrationToken:     *message.RegistrationToken,
+		ExecutionDeadline:     *message.ExecutionDeadline,
+		ResultStreamExpiresAt: *message.ResultStreamExpiresAt,
 	}
 	return result
 }
 
-// NewProtoCompleteToolCallRequest builds the gRPC request type from the
-// payload of the "CompleteToolCall" endpoint of the "registry" service.
+// NewProtoCompleteToolCallRequest builds *registrypb.CompleteToolCallRequest
+// from *registry.CompleteToolCallPayload.
 func NewProtoCompleteToolCallRequest(payload *registry.CompleteToolCallPayload) *registrypb.CompleteToolCallRequest {
 	message := &registrypb.CompleteToolCallRequest{
-		Toolset:                   payload.Toolset,
-		ProviderId:                payload.ProviderID,
-		ProviderIncarnationId:     payload.ProviderIncarnationID,
-		RegistrationToken:         payload.RegistrationToken,
-		ToolUseId:                 payload.ToolUseID,
+		Toolset:                   &payload.Toolset,
+		ProviderId:                &payload.ProviderID,
+		ProviderIncarnationId:     &payload.ProviderIncarnationID,
+		RegistrationToken:         &payload.RegistrationToken,
+		ToolUseId:                 &payload.ToolUseID,
 		ResultJson:                payload.ResultJSON,
-		RequestEventId:            payload.RequestEventID,
-		ProviderRegistrationToken: payload.ProviderRegistrationToken,
+		RequestEventId:            &payload.RequestEventID,
+		ProviderRegistrationToken: &payload.ProviderRegistrationToken,
 	}
 	return message
 }
 
-// NewProtoPublishToolOutputDeltaRequest builds the gRPC request type from the
-// payload of the "PublishToolOutputDelta" endpoint of the "registry" service.
+// NewProtoPublishToolOutputDeltaRequest builds
+// *registrypb.PublishToolOutputDeltaRequest from
+// *registry.PublishToolOutputDeltaPayload.
 func NewProtoPublishToolOutputDeltaRequest(payload *registry.PublishToolOutputDeltaPayload) *registrypb.PublishToolOutputDeltaRequest {
 	message := &registrypb.PublishToolOutputDeltaRequest{
-		Stream:                    payload.Stream,
-		Delta:                     payload.Delta,
-		Toolset:                   payload.Toolset,
-		ProviderId:                payload.ProviderID,
-		ProviderIncarnationId:     payload.ProviderIncarnationID,
-		ProviderRegistrationToken: payload.ProviderRegistrationToken,
-		CallRegistrationToken:     payload.CallRegistrationToken,
-		ToolUseId:                 payload.ToolUseID,
-		RequestEventId:            payload.RequestEventID,
+		Stream:                    &payload.Stream,
+		Delta:                     &payload.Delta,
+		Toolset:                   &payload.Toolset,
+		ProviderId:                &payload.ProviderID,
+		ProviderIncarnationId:     &payload.ProviderIncarnationID,
+		ProviderRegistrationToken: &payload.ProviderRegistrationToken,
+		CallRegistrationToken:     &payload.CallRegistrationToken,
+		ToolUseId:                 &payload.ToolUseID,
+		RequestEventId:            &payload.RequestEventID,
 	}
 	return message
 }
 
-// NewProtoReportToolCallOverloadRequest builds the gRPC request type from the
-// payload of the "ReportToolCallOverload" endpoint of the "registry" service.
+// NewProtoReportToolCallOverloadRequest builds
+// *registrypb.ReportToolCallOverloadRequest from
+// *registry.ProviderToolCallClaimPayload.
 func NewProtoReportToolCallOverloadRequest(payload *registry.ProviderToolCallClaimPayload) *registrypb.ReportToolCallOverloadRequest {
 	message := &registrypb.ReportToolCallOverloadRequest{
-		Toolset:                   payload.Toolset,
-		ProviderId:                payload.ProviderID,
-		ProviderIncarnationId:     payload.ProviderIncarnationID,
-		ProviderRegistrationToken: payload.ProviderRegistrationToken,
-		CallRegistrationToken:     payload.CallRegistrationToken,
-		ToolUseId:                 payload.ToolUseID,
-		RequestEventId:            payload.RequestEventID,
+		Toolset:                   &payload.Toolset,
+		ProviderId:                &payload.ProviderID,
+		ProviderIncarnationId:     &payload.ProviderIncarnationID,
+		ProviderRegistrationToken: &payload.ProviderRegistrationToken,
+		CallRegistrationToken:     &payload.CallRegistrationToken,
+		ToolUseId:                 &payload.ToolUseID,
+		RequestEventId:            &payload.RequestEventID,
 	}
 	return message
 }
 
-// NewProtoClaimToolCallRequest builds the gRPC request type from the payload
-// of the "ClaimToolCall" endpoint of the "registry" service.
+// NewProtoClaimToolCallRequest builds *registrypb.ClaimToolCallRequest from
+// *registry.ClaimToolCallPayload.
 func NewProtoClaimToolCallRequest(payload *registry.ClaimToolCallPayload) *registrypb.ClaimToolCallRequest {
 	message := &registrypb.ClaimToolCallRequest{
-		ClaimOperationId:          payload.ClaimOperationID,
-		Toolset:                   payload.Toolset,
-		ProviderId:                payload.ProviderID,
-		ProviderIncarnationId:     payload.ProviderIncarnationID,
-		ProviderRegistrationToken: payload.ProviderRegistrationToken,
-		CallRegistrationToken:     payload.CallRegistrationToken,
-		ToolUseId:                 payload.ToolUseID,
-		RequestEventId:            payload.RequestEventID,
+		ClaimOperationId:          &payload.ClaimOperationID,
+		Toolset:                   &payload.Toolset,
+		ProviderId:                &payload.ProviderID,
+		ProviderIncarnationId:     &payload.ProviderIncarnationID,
+		ProviderRegistrationToken: &payload.ProviderRegistrationToken,
+		CallRegistrationToken:     &payload.CallRegistrationToken,
+		ToolUseId:                 &payload.ToolUseID,
+		RequestEventId:            &payload.RequestEventID,
 	}
 	return message
 }
 
-// NewClaimToolCallResult builds the result type of the "ClaimToolCall"
-// endpoint of the "registry" service from the gRPC response type.
+// NewClaimToolCallResult builds *registry.ClaimToolCallResult from
+// *registrypb.ClaimToolCallResponse.
 func NewClaimToolCallResult(message *registrypb.ClaimToolCallResponse) *registry.ClaimToolCallResult {
 	result := &registry.ClaimToolCallResult{
-		Disposition: message.Disposition,
+		Disposition: *message.Disposition,
 	}
 	return result
 }
 
-// ValidateToolSchema runs the validations defined on ToolSchema.
-func ValidateToolSchema(elem *registrypb.ToolSchema) (err error) {
-	if utf8.RuneCountInString(elem.Name) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("elem.name", elem.Name, utf8.RuneCountInString(elem.Name), 1, true))
+// ValidateRegisterRequest runs the validations defined on RegisterRequest.
+func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
 	}
-	if utf8.RuneCountInString(elem.Name) > 256 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("elem.name", elem.Name, utf8.RuneCountInString(elem.Name), 256, false))
+	if message.Tools == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tools", "message"))
 	}
-	if len(elem.PayloadSchema) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("elem.payload_schema", elem.PayloadSchema, len(elem.PayloadSchema), 1, true))
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
 	}
-	if len(elem.ResultSchema) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("elem.result_schema", elem.ResultSchema, len(elem.ResultSchema), 1, true))
+	if message.AdmissionRevision == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("admission_revision", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.WireProtocolVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("wire_protocol_version", "message"))
+	}
+	if message.SchemaFingerprint == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("schema_fingerprint", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.Description != nil {
+		if utf8.RuneCountInString(*message.Description) > 4096 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.description", *message.Description, utf8.RuneCountInString(*message.Description), 4096, false))
+		}
+	}
+	if message.Version != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.version", string(*message.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
+	}
+	for _, e := range message.Tools {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.AdmissionRevision != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.admission_revision", *message.AdmissionRevision, "^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,255}$"))
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
+	}
+	if message.WireProtocolVersion != nil {
+		if !(*message.WireProtocolVersion == 8) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{8}))
+		}
+	}
+	if message.SchemaFingerprint != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.schema_fingerprint", *message.SchemaFingerprint, "^[0-9a-f]{64}$"))
+	}
+	return
+}
+
+// validateregistry_registry_ToolSchema_At_elem runs the validations defined on
+// ToolSchema.
+func validateregistry_registry_ToolSchema_At_elem(elem *registrypb.ToolSchema) (err error) {
+	if elem.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "elem"))
+	}
+	if elem.PayloadSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("payload_schema", "elem"))
+	}
+	if elem.ResultSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("result_schema", "elem"))
+	}
+	if elem.Name != nil {
+		if utf8.RuneCountInString(*elem.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.name", *elem.Name, utf8.RuneCountInString(*elem.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*elem.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.name", *elem.Name, utf8.RuneCountInString(*elem.Name), 256, false))
+		}
+	}
+	if elem.PayloadSchema != nil {
+		if len(elem.PayloadSchema) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.payload_schema", elem.PayloadSchema, len(elem.PayloadSchema), 1, true))
+		}
+	}
+	if elem.ResultSchema != nil {
+		if len(elem.ResultSchema) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.result_schema", elem.ResultSchema, len(elem.ResultSchema), 1, true))
+		}
 	}
 	return
 }
 
 // ValidateRegisterResponse runs the validations defined on RegisterResponse.
 func ValidateRegisterResponse(message *registrypb.RegisterResponse) (err error) {
-	err = goa.MergeErrors(err, goa.ValidateFormat("message.registered_at", message.RegisteredAt, goa.FormatDateTime))
-	err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", message.RegistrationToken, "^[0-9a-f]{64}$"))
-	if message.LeaseDurationMs < 1 {
-		err = goa.MergeErrors(err, goa.InvalidRangeError("message.lease_duration_ms", message.LeaseDurationMs, 1, true))
+	if message.RegisteredAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registered_at", "message"))
 	}
-	if message.LeaseDurationMs > 8.64e+07 {
-		err = goa.MergeErrors(err, goa.InvalidRangeError("message.lease_duration_ms", message.LeaseDurationMs, 8.64e+07, false))
+	if message.RegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registration_token", "message"))
+	}
+	if message.LeaseDurationMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("lease_duration_ms", "message"))
+	}
+	if message.RegisteredAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.registered_at", *message.RegisteredAt, goa.FormatDateTime))
+	}
+	if message.RegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", *message.RegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.LeaseDurationMs != nil {
+		if *message.LeaseDurationMs < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("message.lease_duration_ms", *message.LeaseDurationMs, 1, true))
+		}
+		if *message.LeaseDurationMs > 8.64e+07 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("message.lease_duration_ms", *message.LeaseDurationMs, 8.64e+07, false))
+		}
+	}
+	return
+}
+
+// ValidateReleaseProviderRequest runs the validations defined on
+// ReleaseProviderRequest.
+func ValidateReleaseProviderRequest(message *registrypb.ReleaseProviderRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
+	}
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
+	}
+	return
+}
+
+// ValidateDrainProviderRequest runs the validations defined on
+// DrainProviderRequest.
+func ValidateDrainProviderRequest(message *registrypb.DrainProviderRequest) (err error) {
+	if message.SettlementDurationMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("settlement_duration_ms", "message"))
+	}
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
+	}
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.SettlementDurationMs != nil {
+		if *message.SettlementDurationMs < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("message.settlement_duration_ms", *message.SettlementDurationMs, 1, true))
+		}
+		if *message.SettlementDurationMs > 8.64e+07 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("message.settlement_duration_ms", *message.SettlementDurationMs, 8.64e+07, false))
+		}
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
+	}
+	return
+}
+
+// ValidateUnregisterRequest runs the validations defined on UnregisterRequest.
+func ValidateUnregisterRequest(message *registrypb.UnregisterRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	return
+}
+
+// ValidatePongRequest runs the validations defined on PongRequest.
+func ValidatePongRequest(message *registrypb.PongRequest) (err error) {
+	if message.PingId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ping_id", "message"))
+	}
+	if message.Toolset == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
+	}
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.PingId != nil {
+		if utf8.RuneCountInString(*message.PingId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.ping_id", *message.PingId, utf8.RuneCountInString(*message.PingId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.PingId) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.ping_id", *message.PingId, utf8.RuneCountInString(*message.PingId), 256, false))
+		}
+	}
+	if message.Toolset != nil {
+		if utf8.RuneCountInString(*message.Toolset) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Toolset) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 256, false))
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	return
 }
@@ -424,7 +689,7 @@ func ValidateRegisterResponse(message *registrypb.RegisterResponse) (err error) 
 func ValidateListToolsetsResponse(message *registrypb.ListToolsetsResponse) (err error) {
 	for _, e := range message.Toolsets {
 		if e != nil {
-			if err2 := ValidateToolsetInfo(e); err2 != nil {
+			if err2 := validateregistry_registry_ToolsetInfo_At_elem(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -432,47 +697,134 @@ func ValidateListToolsetsResponse(message *registrypb.ListToolsetsResponse) (err
 	return
 }
 
-// ValidateToolsetInfo runs the validations defined on ToolsetInfo.
-func ValidateToolsetInfo(elem *registrypb.ToolsetInfo) (err error) {
-	if utf8.RuneCountInString(elem.Name) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("elem.name", elem.Name, utf8.RuneCountInString(elem.Name), 1, true))
+// validateregistry_registry_ToolsetInfo_At_elem runs the validations defined
+// on ToolsetInfo.
+func validateregistry_registry_ToolsetInfo_At_elem(elem *registrypb.ToolsetInfo) (err error) {
+	if elem.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "elem"))
 	}
-	if utf8.RuneCountInString(elem.Name) > 256 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("elem.name", elem.Name, utf8.RuneCountInString(elem.Name), 256, false))
+	if elem.ToolCount == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool_count", "elem"))
+	}
+	if elem.RegisteredAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registered_at", "elem"))
+	}
+	if elem.Name != nil {
+		if utf8.RuneCountInString(*elem.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.name", *elem.Name, utf8.RuneCountInString(*elem.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*elem.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.name", *elem.Name, utf8.RuneCountInString(*elem.Name), 256, false))
+		}
 	}
 	if elem.Version != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("elem.version", string(*elem.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
 	}
-	if elem.ToolCount < 0 {
-		err = goa.MergeErrors(err, goa.InvalidRangeError("elem.tool_count", elem.ToolCount, 0, true))
+	if elem.ToolCount != nil {
+		if *elem.ToolCount < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("elem.tool_count", *elem.ToolCount, 0, true))
+		}
 	}
-	err = goa.MergeErrors(err, goa.ValidateFormat("elem.registered_at", elem.RegisteredAt, goa.FormatDateTime))
+	if elem.RegisteredAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("elem.registered_at", *elem.RegisteredAt, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateGetToolsetRequest runs the validations defined on GetToolsetRequest.
+func ValidateGetToolsetRequest(message *registrypb.GetToolsetRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+	}
 	return
 }
 
 // ValidateGetToolsetResponse runs the validations defined on
 // GetToolsetResponse.
 func ValidateGetToolsetResponse(message *registrypb.GetToolsetResponse) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
 	if message.Tools == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("tools", "message"))
 	}
-	if utf8.RuneCountInString(message.Name) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", message.Name, utf8.RuneCountInString(message.Name), 1, true))
+	if message.RegisteredAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registered_at", "message"))
 	}
-	if utf8.RuneCountInString(message.Name) > 256 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", message.Name, utf8.RuneCountInString(message.Name), 256, false))
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
 	}
 	if message.Version != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("message.version", string(*message.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
 	}
 	for _, e := range message.Tools {
 		if e != nil {
-			if err2 := ValidateToolSchema(e); err2 != nil {
+			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	}
-	err = goa.MergeErrors(err, goa.ValidateFormat("message.registered_at", message.RegisteredAt, goa.FormatDateTime))
+	if message.RegisteredAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.registered_at", *message.RegisteredAt, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateCheckAdmissionRequest runs the validations defined on
+// CheckAdmissionRequest.
+func ValidateCheckAdmissionRequest(message *registrypb.CheckAdmissionRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	return
+}
+
+// ValidateCheckAdmissionResponse runs the validations defined on
+// CheckAdmissionResponse.
+func ValidateCheckAdmissionResponse(message *registrypb.CheckAdmissionResponse) (err error) {
+	if message.Ready == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ready", "message"))
+	}
+	return
+}
+
+// ValidateSearchRequest runs the validations defined on SearchRequest.
+func ValidateSearchRequest(message *registrypb.SearchRequest) (err error) {
+	if message.Query == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("query", "message"))
+	}
+	if message.Query != nil {
+		if utf8.RuneCountInString(*message.Query) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.query", *message.Query, utf8.RuneCountInString(*message.Query), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Query) > 1024 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.query", *message.Query, utf8.RuneCountInString(*message.Query), 1024, false))
+		}
+	}
 	return
 }
 
@@ -480,7 +832,7 @@ func ValidateGetToolsetResponse(message *registrypb.GetToolsetResponse) (err err
 func ValidateSearchResponse(message *registrypb.SearchResponse) (err error) {
 	for _, e := range message.Toolsets {
 		if e != nil {
-			if err2 := ValidateToolsetInfo(e); err2 != nil {
+			if err2 := validateregistry_registry_ToolsetInfo_At_elem(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -488,66 +840,552 @@ func ValidateSearchResponse(message *registrypb.SearchResponse) (err error) {
 	return
 }
 
+// ValidateCallToolRequest runs the validations defined on CallToolRequest.
+func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
+	if message.Toolset == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
+	}
+	if message.Tool == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool", "message"))
+	}
+	if message.PayloadJson == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("payload_json", "message"))
+	}
+	if message.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("meta", "message"))
+	}
+	if message.WireProtocolVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("wire_protocol_version", "message"))
+	}
+	if message.Toolset != nil {
+		if utf8.RuneCountInString(*message.Toolset) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Toolset) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 256, false))
+		}
+	}
+	if message.Tool != nil {
+		if utf8.RuneCountInString(*message.Tool) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool", *message.Tool, utf8.RuneCountInString(*message.Tool), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Tool) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool", *message.Tool, utf8.RuneCountInString(*message.Tool), 256, false))
+		}
+	}
+	if message.PayloadJson != nil {
+		if len(message.PayloadJson) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.payload_json", message.PayloadJson, len(message.PayloadJson), 1, true))
+		}
+	}
+	if message.Meta != nil {
+		if err2 := validateregistry_registry_ToolCallMeta_At_meta(message.Meta); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if message.WireProtocolVersion != nil {
+		if !(*message.WireProtocolVersion == 8) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{8}))
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolCallMeta_At_meta runs the validations defined
+// on ToolCallMeta.
+func validateregistry_registry_ToolCallMeta_At_meta(meta *registrypb.ToolCallMeta) (err error) {
+	if meta.RunId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("run_id", "meta"))
+	}
+	if meta.SessionId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("session_id", "meta"))
+	}
+	if meta.ToolCallId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool_call_id", "meta"))
+	}
+	if meta.RunId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("meta.run_id", *meta.RunId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*meta.RunId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.run_id", *meta.RunId, utf8.RuneCountInString(*meta.RunId), 1, true))
+		}
+		if utf8.RuneCountInString(*meta.RunId) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.run_id", *meta.RunId, utf8.RuneCountInString(*meta.RunId), 256, false))
+		}
+	}
+	if meta.SessionId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("meta.session_id", *meta.SessionId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*meta.SessionId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.session_id", *meta.SessionId, utf8.RuneCountInString(*meta.SessionId), 1, true))
+		}
+		if utf8.RuneCountInString(*meta.SessionId) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.session_id", *meta.SessionId, utf8.RuneCountInString(*meta.SessionId), 256, false))
+		}
+	}
+	if meta.TurnId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("meta.turn_id", *meta.TurnId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*meta.TurnId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.turn_id", *meta.TurnId, utf8.RuneCountInString(*meta.TurnId), 1, true))
+		}
+		if utf8.RuneCountInString(*meta.TurnId) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.turn_id", *meta.TurnId, utf8.RuneCountInString(*meta.TurnId), 256, false))
+		}
+	}
+	if meta.ToolCallId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("meta.tool_call_id", *meta.ToolCallId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*meta.ToolCallId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.tool_call_id", *meta.ToolCallId, utf8.RuneCountInString(*meta.ToolCallId), 1, true))
+		}
+		if utf8.RuneCountInString(*meta.ToolCallId) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.tool_call_id", *meta.ToolCallId, utf8.RuneCountInString(*meta.ToolCallId), 256, false))
+		}
+	}
+	if meta.ParentToolCallId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("meta.parent_tool_call_id", *meta.ParentToolCallId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*meta.ParentToolCallId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.parent_tool_call_id", *meta.ParentToolCallId, utf8.RuneCountInString(*meta.ParentToolCallId), 1, true))
+		}
+		if utf8.RuneCountInString(*meta.ParentToolCallId) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.parent_tool_call_id", *meta.ParentToolCallId, utf8.RuneCountInString(*meta.ParentToolCallId), 256, false))
+		}
+	}
+	return
+}
+
 // ValidateCallToolResponse runs the validations defined on CallToolResponse.
 func ValidateCallToolResponse(message *registrypb.CallToolResponse) (err error) {
-	if utf8.RuneCountInString(message.ToolUseId) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool_use_id", message.ToolUseId, utf8.RuneCountInString(message.ToolUseId), 1, true))
+	if message.ToolUseId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool_use_id", "message"))
 	}
-	if utf8.RuneCountInString(message.ToolUseId) > 256 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool_use_id", message.ToolUseId, utf8.RuneCountInString(message.ToolUseId), 256, false))
+	if message.RegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registration_token", "message"))
 	}
-	err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", message.RegistrationToken, "^[0-9a-f]{64}$"))
-	err = goa.MergeErrors(err, goa.ValidateFormat("message.execution_deadline", message.ExecutionDeadline, goa.FormatDateTime))
-	err = goa.MergeErrors(err, goa.ValidateFormat("message.result_stream_expires_at", message.ResultStreamExpiresAt, goa.FormatDateTime))
+	if message.ExecutionDeadline == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("execution_deadline", "message"))
+	}
+	if message.ResultStreamExpiresAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("result_stream_expires_at", "message"))
+	}
+	if message.ToolUseId != nil {
+		if utf8.RuneCountInString(*message.ToolUseId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool_use_id", *message.ToolUseId, utf8.RuneCountInString(*message.ToolUseId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ToolUseId) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool_use_id", *message.ToolUseId, utf8.RuneCountInString(*message.ToolUseId), 256, false))
+		}
+	}
+	if message.RegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", *message.RegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ExecutionDeadline != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.execution_deadline", *message.ExecutionDeadline, goa.FormatDateTime))
+	}
+	if message.ResultStreamExpiresAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.result_stream_expires_at", *message.ResultStreamExpiresAt, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateRetryToolRequest runs the validations defined on RetryToolRequest.
+func ValidateRetryToolRequest(message *registrypb.RetryToolRequest) (err error) {
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.Toolset == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
+	}
+	if message.Tool == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool", "message"))
+	}
+	if message.PayloadJson == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("payload_json", "message"))
+	}
+	if message.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("meta", "message"))
+	}
+	if message.WireProtocolVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("wire_protocol_version", "message"))
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.Toolset != nil {
+		if utf8.RuneCountInString(*message.Toolset) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Toolset) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 256, false))
+		}
+	}
+	if message.Tool != nil {
+		if utf8.RuneCountInString(*message.Tool) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool", *message.Tool, utf8.RuneCountInString(*message.Tool), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Tool) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool", *message.Tool, utf8.RuneCountInString(*message.Tool), 256, false))
+		}
+	}
+	if message.PayloadJson != nil {
+		if len(message.PayloadJson) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.payload_json", message.PayloadJson, len(message.PayloadJson), 1, true))
+		}
+	}
+	if message.Meta != nil {
+		if err2 := validateregistry_registry_ToolCallMeta_At_meta(message.Meta); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if message.WireProtocolVersion != nil {
+		if !(*message.WireProtocolVersion == 8) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{8}))
+		}
+	}
 	return
 }
 
 // ValidateRetryToolResponse runs the validations defined on RetryToolResponse.
 func ValidateRetryToolResponse(message *registrypb.RetryToolResponse) (err error) {
-	if utf8.RuneCountInString(message.ToolUseId) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool_use_id", message.ToolUseId, utf8.RuneCountInString(message.ToolUseId), 1, true))
+	if message.ToolUseId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool_use_id", "message"))
 	}
-	if utf8.RuneCountInString(message.ToolUseId) > 256 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool_use_id", message.ToolUseId, utf8.RuneCountInString(message.ToolUseId), 256, false))
+	if message.RegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registration_token", "message"))
 	}
-	err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", message.RegistrationToken, "^[0-9a-f]{64}$"))
-	err = goa.MergeErrors(err, goa.ValidateFormat("message.execution_deadline", message.ExecutionDeadline, goa.FormatDateTime))
-	err = goa.MergeErrors(err, goa.ValidateFormat("message.result_stream_expires_at", message.ResultStreamExpiresAt, goa.FormatDateTime))
+	if message.ExecutionDeadline == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("execution_deadline", "message"))
+	}
+	if message.ResultStreamExpiresAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("result_stream_expires_at", "message"))
+	}
+	if message.ToolUseId != nil {
+		if utf8.RuneCountInString(*message.ToolUseId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool_use_id", *message.ToolUseId, utf8.RuneCountInString(*message.ToolUseId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ToolUseId) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool_use_id", *message.ToolUseId, utf8.RuneCountInString(*message.ToolUseId), 256, false))
+		}
+	}
+	if message.RegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", *message.RegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ExecutionDeadline != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.execution_deadline", *message.ExecutionDeadline, goa.FormatDateTime))
+	}
+	if message.ResultStreamExpiresAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.result_stream_expires_at", *message.ResultStreamExpiresAt, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateCompleteToolCallRequest runs the validations defined on
+// CompleteToolCallRequest.
+func ValidateCompleteToolCallRequest(message *registrypb.CompleteToolCallRequest) (err error) {
+	if message.Toolset == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
+	}
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.RegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registration_token", "message"))
+	}
+	if message.ToolUseId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool_use_id", "message"))
+	}
+	if message.ResultJson == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("result_json", "message"))
+	}
+	if message.RequestEventId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("request_event_id", "message"))
+	}
+	if message.ProviderRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_registration_token", "message"))
+	}
+	if message.Toolset != nil {
+		if utf8.RuneCountInString(*message.Toolset) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Toolset) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 256, false))
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
+	}
+	if message.RegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", *message.RegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ToolUseId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.tool_use_id", *message.ToolUseId, "^[^\\x00]{1,256}$"))
+	}
+	if message.ResultJson != nil {
+		if len(message.ResultJson) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.result_json", message.ResultJson, len(message.ResultJson), 1, true))
+		}
+	}
+	if message.RequestEventId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.request_event_id", *message.RequestEventId, "^\\d+-\\d+$"))
+	}
+	if message.ProviderRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_registration_token", *message.ProviderRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	return
+}
+
+// ValidatePublishToolOutputDeltaRequest runs the validations defined on
+// PublishToolOutputDeltaRequest.
+func ValidatePublishToolOutputDeltaRequest(message *registrypb.PublishToolOutputDeltaRequest) (err error) {
+	if message.Stream == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("stream", "message"))
+	}
+	if message.Delta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("delta", "message"))
+	}
+	if message.Toolset == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
+	}
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.ProviderRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_registration_token", "message"))
+	}
+	if message.CallRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("call_registration_token", "message"))
+	}
+	if message.ToolUseId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool_use_id", "message"))
+	}
+	if message.RequestEventId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("request_event_id", "message"))
+	}
+	if message.Stream != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.stream", *message.Stream, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.Stream) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.stream", *message.Stream, utf8.RuneCountInString(*message.Stream), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Stream) > 128 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.stream", *message.Stream, utf8.RuneCountInString(*message.Stream), 128, false))
+		}
+	}
+	if message.Delta != nil {
+		if utf8.RuneCountInString(*message.Delta) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.delta", *message.Delta, utf8.RuneCountInString(*message.Delta), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Delta) > 65536 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.delta", *message.Delta, utf8.RuneCountInString(*message.Delta), 65536, false))
+		}
+	}
+	if message.Toolset != nil {
+		if utf8.RuneCountInString(*message.Toolset) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Toolset) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 256, false))
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
+	}
+	if message.ProviderRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_registration_token", *message.ProviderRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.CallRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.call_registration_token", *message.CallRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ToolUseId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.tool_use_id", *message.ToolUseId, "^[^\\x00]{1,256}$"))
+	}
+	if message.RequestEventId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.request_event_id", *message.RequestEventId, "^\\d+-\\d+$"))
+	}
+	return
+}
+
+// ValidateReportToolCallOverloadRequest runs the validations defined on
+// ReportToolCallOverloadRequest.
+func ValidateReportToolCallOverloadRequest(message *registrypb.ReportToolCallOverloadRequest) (err error) {
+	if message.Toolset == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
+	}
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.ProviderRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_registration_token", "message"))
+	}
+	if message.CallRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("call_registration_token", "message"))
+	}
+	if message.ToolUseId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool_use_id", "message"))
+	}
+	if message.RequestEventId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("request_event_id", "message"))
+	}
+	if message.Toolset != nil {
+		if utf8.RuneCountInString(*message.Toolset) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Toolset) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 256, false))
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
+	}
+	if message.ProviderRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_registration_token", *message.ProviderRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.CallRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.call_registration_token", *message.CallRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ToolUseId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.tool_use_id", *message.ToolUseId, "^[^\\x00]{1,256}$"))
+	}
+	if message.RequestEventId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.request_event_id", *message.RequestEventId, "^\\d+-\\d+$"))
+	}
+	return
+}
+
+// ValidateClaimToolCallRequest runs the validations defined on
+// ClaimToolCallRequest.
+func ValidateClaimToolCallRequest(message *registrypb.ClaimToolCallRequest) (err error) {
+	if message.ClaimOperationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("claim_operation_id", "message"))
+	}
+	if message.Toolset == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
+	}
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.ProviderRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_registration_token", "message"))
+	}
+	if message.CallRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("call_registration_token", "message"))
+	}
+	if message.ToolUseId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool_use_id", "message"))
+	}
+	if message.RequestEventId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("request_event_id", "message"))
+	}
+	if message.ClaimOperationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.claim_operation_id", *message.ClaimOperationId, goa.FormatUUID))
+	}
+	if message.Toolset != nil {
+		if utf8.RuneCountInString(*message.Toolset) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Toolset) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 256, false))
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
+	}
+	if message.ProviderRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_registration_token", *message.ProviderRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.CallRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.call_registration_token", *message.CallRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ToolUseId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.tool_use_id", *message.ToolUseId, "^[^\\x00]{1,256}$"))
+	}
+	if message.RequestEventId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.request_event_id", *message.RequestEventId, "^\\d+-\\d+$"))
+	}
 	return
 }
 
 // ValidateClaimToolCallResponse runs the validations defined on
 // ClaimToolCallResponse.
 func ValidateClaimToolCallResponse(message *registrypb.ClaimToolCallResponse) (err error) {
-	if !(message.Disposition == "execute" || message.Disposition == "terminal" || message.Disposition == "claimed" || message.Disposition == "expired") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.disposition", message.Disposition, []any{"execute", "terminal", "claimed", "expired"}))
+	if message.Disposition == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("disposition", "message"))
+	}
+	if message.Disposition != nil {
+		if !(*message.Disposition == "execute" || *message.Disposition == "terminal" || *message.Disposition == "claimed" || *message.Disposition == "expired") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.disposition", *message.Disposition, []any{"execute", "terminal", "claimed", "expired"}))
+		}
 	}
 	return
 }
 
-// protobufRegistrypbToolCallMetaToRegistryToolCallMeta builds a value of type
-// *registry.ToolCallMeta from a value of type *registrypb.ToolCallMeta.
-func protobufRegistrypbToolCallMetaToRegistryToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
-	res := &registry.ToolCallMeta{
-		RunID:            v.RunId,
-		SessionID:        v.SessionId,
-		TurnID:           v.TurnId,
-		ToolCallID:       v.ToolCallId,
-		ParentToolCallID: v.ParentToolCallId,
+// transformToolCallMetaToProtoToolCallMeta builds a value of type
+// *registrypb.ToolCallMeta from a value of type *registry.ToolCallMeta.
+func transformToolCallMetaToProtoToolCallMeta(v *registry.ToolCallMeta) *registrypb.ToolCallMeta {
+	res := &registrypb.ToolCallMeta{
+		RunId:            &v.RunID,
+		SessionId:        &v.SessionID,
+		TurnId:           v.TurnID,
+		ToolCallId:       &v.ToolCallID,
+		ParentToolCallId: v.ParentToolCallID,
 	}
 
 	return res
 }
 
-// svcRegistryToolCallMetaToRegistrypbToolCallMeta builds a value of type
-// *registrypb.ToolCallMeta from a value of type *registry.ToolCallMeta.
-func svcRegistryToolCallMetaToRegistrypbToolCallMeta(v *registry.ToolCallMeta) *registrypb.ToolCallMeta {
-	res := &registrypb.ToolCallMeta{
-		RunId:            v.RunID,
-		SessionId:        v.SessionID,
-		TurnId:           v.TurnID,
-		ToolCallId:       v.ToolCallID,
-		ParentToolCallId: v.ParentToolCallID,
+// transformProtoToolCallMetaToToolCallMeta builds a value of type
+// *registry.ToolCallMeta from a value of type *registrypb.ToolCallMeta.
+func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
+	res := &registry.ToolCallMeta{
+		RunID:            *v.RunId,
+		SessionID:        *v.SessionId,
+		TurnID:           v.TurnId,
+		ToolCallID:       *v.ToolCallId,
+		ParentToolCallID: v.ParentToolCallId,
 	}
 
 	return res

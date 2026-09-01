@@ -42,8 +42,8 @@ Think of it as a pipeline from intention to execution:
 4. **Engine** (`runtime/agent/engine`) — Swap backends without changing code. In‑memory for fast
    iteration; Temporal for production durability.
 
-5. **Features** (`features/*`) — Plug in what you need: Mongo for memory/sessions/run event logs and prompt
-   overrides, Pulse for real‑time streams, Bedrock/OpenAI/Gateway model clients, policy engines.
+5. **Features** (`features/*`) — Plug in what you need: Mongo for memory and prompt overrides,
+   Pulse for real-time streams, Bedrock/OpenAI/Gateway model clients, policy engines.
 
 ## Ways to Work
 
@@ -69,8 +69,10 @@ handling, retries, and tracing baked in.
 
 ### Full Observability (Streaming & Telemetry)
 
-Configure a memory store and stream sink once. The runtime automatically persists transcripts,
-publishes real‑time events, and instruments everything with OTEL‑aware logging, metrics, and traces.
+Configure a runtime store and stream sink once. The runtime stores the canonical
+transcript records needed for replay, publishes real‑time events, and instruments
+everything with OTEL‑aware logging, metrics, and traces. Product transcripts remain
+owned by the application and may use a separate memory store.
 
 ---
 
@@ -298,11 +300,13 @@ package main
 import (
 	"context"
 	"fmt"
+	"time"
 
 	chat "example.com/quickstart/gen/orchestrator/agents/chat"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/runtime"
+	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 )
 
 // A tiny planner: always replies, no tools (perfect for first run)
@@ -337,7 +341,11 @@ func (p *StubPlanner) PlanResume(
 }
 
 func main() {
-	rt := runtime.New() // in‑memory engine by default
+	runtimeStore := storageinmem.New()
+	if _, err := runtimeStore.CreateSession(context.Background(), "session-1", time.Now().UTC()); err != nil {
+		panic(err)
+	}
+	rt := runtime.New(runtimeStore) // in-memory engine by default
 
 	if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{
 		Planner: &StubPlanner{},
@@ -353,6 +361,7 @@ func main() {
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Say hi"}},
 		}},
+		runtime.WithRunID("run-1"),
 	)
 	if err != nil {
 		panic(err)
@@ -376,7 +385,7 @@ History compression is design-owned. Declare `History(...)` inside the agent's
 **Want durability?** Just swap in a Temporal engine:
 
 ```go
-rt := runtime.New(runtime.WithEngine(temporalEngine))
+rt := runtime.New(runtimeStore, runtime.WithEngine(temporalEngine))
 ```
 
 Then use `Start/Wait` for asynchronous runs with task queues, memos, and search attributes.
@@ -410,13 +419,12 @@ Per‑turn enforcement of:
 |---------------------|--------------------------------------------------------------------------------------|
 | **Native toolsets** | Your implementations + generated codecs = typed, validated tools                     |
 | **Agent‑as‑tool**   | Child workflow executes the nested agent with linked streams and run links           |
-| **MCP toolsets**    | Generated wrappers preserve JSON schemas and typed transport failures across HTTP/SSE/stdio |
+| **MCP toolsets**    | Generated wrappers preserve JSON schemas and typed transport failures across HTTP and stdio |
 
-MCP callers in `runtime/mcp` support multiple transports:
+MCP callers in `runtime/mcp` support two transports:
 
 - **`StdioCaller`** — Spawns MCP server as subprocess, communicates via stdin/stdout
-- **`HTTPCaller`** — HTTP POST to MCP endpoints
-- **`SSECaller`** — Server‑Sent Events for streaming MCP responses
+- **`HTTPCaller`** — Sends JSON-RPC over HTTP and accepts JSON or event-stream responses
 
 All callers implement the `Caller` interface, preserve structured MCP error data, and include
 distributed tracing. Recovery is selected by the runtime from the typed failure contract rather
@@ -426,7 +434,7 @@ than by parsing error text or retrying transport calls implicitly.
 
 The hook bus publishes events (`tool_start`, `tool_result`, `assistant_message`, `prompt_rendered`, ...) that:
 
-- **Memory/session stores** (e.g., Mongo) subscribe to for transcript persistence
+- **Memory stores** subscribe to for transcript persistence
 - **Stream sinks** (e.g., Pulse) carry to real‑time UIs
 - **OTEL instrumentation** captures for logs, metrics, and traces
 
@@ -447,10 +455,14 @@ workflow open:
   the workflow with a typed suspension.
 - **Await External Tools** — Planner requests out‑of‑band tool execution and the
   workflow ends with the exact calls awaiting results.
-- **Continue** — The runtime stores the opaque suspension in its configured
-  session store before the workflow completes. The caller atomically accepts
-  one answer and passes the completed run ID to `AgentClient.Continue`;
-  multiple pending requests are consumed in order, one workflow per answer.
+- **Continue** — The runtime stores the opaque suspension in its required
+  runtime store before the workflow completes. `AgentClient.Continue` is a
+  convenience call for applications that need no database write between
+  validating an answer and starting its workflow. An application that must
+  accept one answer in a database transaction uses `PrepareContinuation`,
+  stores `MarshalBinary` bytes in that transaction, then uses
+  `ParsePreparedRun` and `StartPrepared`. Multiple pending requests are
+  consumed in order, one workflow per answer.
 
 The suspension records the remaining active-time budget and the tool names
 needed by the next worker. The next worker validates the concrete saved values
@@ -586,12 +598,11 @@ the toolsets with the runtime.
 | `MCP(name, version, opts...)` | Enable MCP support for a service |
 | `ProtocolVersion(string)` | Configure MCP protocol version |
 | `Resource(name, uri, mimeType)` | Mark method as MCP resource provider |
-| `WatchableResource(name, uri, mimeType)` | Mark method as subscribable MCP resource |
 | `StaticPrompt(name, desc, messages...)` | Add static prompt template |
-| `DynamicPrompt(name, desc)` | Mark method as dynamic prompt generator |
-| `Notification(name, desc)` | Mark method as MCP notification sender |
-| `Subscription(resourceName)` | Mark method as subscription handler |
-| `SubscriptionMonitor(name)` | Mark method as SSE subscription monitor |
+
+An MCP service must also declare a service-level JSON-RPC `POST` route. For
+example, `JSONRPC(func() { POST("/mcp") })` exposes the generated MCP methods at
+`/mcp`.
 
 ---
 
@@ -600,8 +611,9 @@ the toolsets with the runtime.
 ### Runtime Construction
 
 ```go
-// Create runtime with functional options
+// Pass the required host-owned runtime store, then functional options.
 rt := runtime.New(
+    runtimeStore,
     runtime.WithEngine(temporalEngine),
     runtime.WithMemoryStore(memoryMongo),
     runtime.WithPolicy(basicPolicy),
@@ -610,25 +622,24 @@ rt := runtime.New(
     runtime.WithLogger(logger),
     runtime.WithMetrics(metrics),
     runtime.WithTracer(tracer),
-    runtime.WithWorker(agentID, runtime.WorkerConfig{Queue: "custom"}),
 )
 ```
 
-`runtime.WithWorker(...)` handles placement only. Keep planner/tool attempt
-budgets in `RunPolicy.Timing` or `runtime.WithTiming(...)`; configure
-Temporal-specific queue-wait and liveness behavior on the Temporal engine
-itself.
+Each generated `AgentDefinition` owns the workflow name and default task queue.
+Keep planner and tool attempt budgets in `RunPolicy.Timing` or
+`runtime.WithTiming(...)`. Configure Temporal queue-wait and liveness behavior
+on the Temporal engine itself. A caller may select another queue for one run
+with `runtime.WithTaskQueue(...)`.
 
 ### Agent Registration
 
 ```go
 // Register generated agent (typically called by generated code)
 err := rt.RegisterAgent(ctx, runtime.AgentRegistration{
-    ID:       agent.Ident("service.agent"),
-    Planner:  myPlanner,
-    Workflow: workflow,
-    Toolsets: toolsets,
-    Policy:   policy,
+    Definition:      serviceagent.Definition(),
+    Planner:         myPlanner,
+    WorkflowHandler: rt.ExecuteWorkflow,
+    Policy:          policy,
     // ... activity names and options
 })
 
@@ -651,12 +662,8 @@ client, err := rt.Client(agent.Ident("service.agent"))
 // or panic variant:
 client := rt.MustClient(agent.Ident("service.agent"))
 
-// Get client for remote agent (workers elsewhere)
-client, err := rt.ClientFor(runtime.AgentRoute{
-    ID:               agent.Ident("service.agent"),
-    WorkflowName:     "ServiceAgentWorkflow",
-    DefaultTaskQueue: "service.agent",
-})
+// Get client for a generated agent whose worker runs elsewhere.
+client, err := rt.ClientFor(serviceagent.Definition())
 
 // Synchronous run
 out, err := client.Run(ctx, "session-1", messages,
@@ -693,6 +700,7 @@ next, err := client.Continue(
         ID:     pending.Await.Clarification.ID,
         Answer: "The user meant Unit 7",
     }},
+    runtime.WorkflowOptions{},
 )
 ```
 
@@ -911,8 +919,19 @@ Prompt rendering is runtime-native and versioned:
 - Register immutable baseline prompts as `prompt.PromptSpec` in `Runtime.PromptRegistry`.
 - Optionally configure scoped overrides with `runtime.WithPromptStore(...)` using a `prompt.Store`
   implementation (for example, `features/prompt/mongo`).
-- Render prompts from planners with `PlannerContext.RenderPrompt(...)`; rendered text includes a
-  `prompt.PromptRef` (`id`, `version`) for provenance.
+- Rendering returns text and a `prompt.PromptRef`; it does not write runtime
+  storage.
+- A context carrying `prompt.RenderRecorder` collects one `prompt.RenderEvent`
+  for each successful render. The event contains the resolved prompt ID,
+  version, and scope. Failed renders add no event.
+- Before `Start`, pass `recorder.Events()` through
+  `runtime.WithRenderedPrompts(...)` with the messages containing the rendered
+  text. The accepted workflow stores those events after its start record and
+  before planner work.
+- Planner rendering, consumer-side child prompt rendering, and `RunOneShot`
+  use the same event shape. The runtime carries planner events in the accepted
+  activity result, child events in the accepted child input, and one-shot events
+  to the already-created one-shot run.
 - Carry prompt provenance through model calls by setting `model.Request.PromptRefs`.
 - Observe render lifecycle through hook/stream `prompt_rendered` events.
 
@@ -957,7 +976,7 @@ Use the generated `NewClient(rt)` to get a `runtime.AgentClient`, then:
 
 - **Synchronous**: `Run(ctx, sessionID, messages, ...opts)` — start and wait
 - **Asynchronous**: `Start(ctx, sessionID, messages, ...opts)` → `engine.WorkflowHandle` → `Wait/Cancel`
-- **Continuation**: `Continue(ctx, sessionID, predecessorRunID, newRunID, newTurnID, response)` — start a new workflow from one stored request
+- **Continuation**: `Continue(ctx, sessionID, predecessorRunID, newRunID, newTurnID, response, runtime.WorkflowOptions{})` — start a new workflow from one stored request
 
 The `sessionID` argument is required and must be a non-empty, non-whitespace string.
 
@@ -990,15 +1009,36 @@ engine-level queue-wait or heartbeat tuning.
 
 ### 2. Engine Start
 
-`AgentClient.Start` calls `runtime.startRun`, which resolves the agent and delegates to
-`startRunOn`. This constructs an `engine.WorkflowStartRequest` with:
+`AgentClient.Start` calls `Prepare`, then passes the returned `PreparedRun` to
+`StartPrepared`. Preparation checks the generated agent definition and builds
+an `engine.WorkflowStartRequest` with:
 
-- `ID` (generated if absent)
+- `ID` equal to `Input.RunID`; sessionful callers provide it, while one-shot
+  preparation generates it when absent
 - `Workflow` (from registration)
 - `TaskQueue`, `Input` (`*runtime.RunInput`)
-- Optional `Memo`, `SearchAttributes`, `RetryPolicy`
+- Optional encoded `Memo` and typed `SearchAttributes`
+
+`StartPrepared` checks the immutable request against the current generated
+definition, closes registration, and submits it to the engine. `Start` does not
+serialize the optional durable JSON form. Applications call `MarshalBinary`
+only when they need to store the exact request before submission.
+
+The agent runtime deliberately does not expose whole-workflow retries. One
+accepted workflow owns one durable run lifecycle, including its terminal
+record. Activities may retry temporary failures because each activity command
+is safe to repeat.
 
 `Engine.StartWorkflow` returns an `engine.WorkflowHandle` for waiting or cancellation.
+Custom engines call `engine/contract.NormalizeRootRequest` before retaining a
+root request and `contract.NormalizeChildRequest` before retaining a child.
+They call `contract.CopyRunInput` before every initial or retry handler attempt,
+retain one private `contract.CopyRunOutput` result, and copy that result again
+for every wait, query, or other caller-facing read. Shared normalization fixes
+portable search values and the root digest; each adapter still submits those
+values through its own backend. These functions apply the same ownership,
+validation, exact-retry identity, and size rules as the shipped engines without
+exposing backend types.
 
 ### 3. Worker Execution
 
@@ -1032,7 +1072,7 @@ The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
 | Path         | When           | How                                                               |
 |--------------|----------------|-------------------------------------------------------------------|
 | **Activity** | Default        | JSON‑encode via codec, schedule `ExecuteToolActivity`, collect futures |
-| **Child**    | Agent‑as‑tool  | Execute as child workflow via `ExecuteAgentChildWithRoute`        |
+| **Child**    | Agent‑as‑tool  | Execute as a child workflow using its generated definition        |
 
 `ExecuteToolActivity` decodes payloads, calls the toolset's `Execute`, re‑encodes results.
 Validation errors become `FailureInvalidCall` with a `RecoveryCorrectCall`
@@ -1074,9 +1114,11 @@ as child workflows, enabling linked streams and run links.
 ### Generated Provider Helpers
 
 - **Tool IDs** (fully qualified) and type aliases for codecs
-- **`New<Agent>ToolsetRegistration(rt *runtime.Runtime)`** — creates registration with routing info
-- **`NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)`** — configure per‑tool
-  text/templates
+- **`New<Agent>ToolsetRegistration(rt, definition)`** — creates a provider
+  registration from that agent's generated definition
+- **`NewRegistration(rt, definition, systemPrompt, ...runtime.AgentToolOption)`**
+  — configures per-tool text or templates while keeping the generated
+  definition as the only route and contract owner
 - **Typed call builders** like `New<Tool>Call(args)`. The runtime assigns the
   execution ID after the planner returns its `PlanResult`.
 
@@ -1085,7 +1127,8 @@ as child workflows, enabling linked streams and run links.
 1. Consumer registers with `rt.RegisterToolset(reg)`
 2. When the runtime sees a toolset call with `AgentTool` config:
    - Publishes `ChildRunLinkedEvent` linking parent to child
-   - Starts child workflow via `ExecuteAgentChildWithRoute`
+   - Starts the child workflow through `ExecuteAgentChild` using the child
+     `AgentDefinition`
    - Child runs full plan/execute/resume loop
 3. Results flow back through `ToolResult` with `RunLink` for correlation
 
@@ -1093,10 +1136,10 @@ as child workflows, enabling linked streams and run links.
 
 | Type                                   | Purpose                                          |
 |----------------------------------------|--------------------------------------------------|
-| `runtime.ToolsetRegistration`          | Name, Specs, Execute, TaskQueue, AgentTool       |
-| `runtime.AgentRoute`                   | ID, WorkflowName, DefaultTaskQueue               |
-| `runtime.AgentToolConfig`              | Route, activity names, prompts, templates        |
-| `runtime.ExecuteAgentChildWithRoute`   | Execute nested child workflow                    |
+| `runtime.ToolsetRegistration`          | Tool specifications and execution implementation |
+| `runtime.AgentDefinition`              | Agent route, tool contracts, labels, policy, and reachable children |
+| `runtime.AgentToolConfig`              | Child definition and optional prompt content     |
+| `runtime.ExecuteAgentChild`            | Execute a nested child workflow                  |
 
 ---
 
@@ -1106,8 +1149,8 @@ as child workflows, enabling linked streams and run links.
 
 - Implement `planner.Planner` (`PlanStart`, `PlanResume`)
 - Provide tool executors via `runtime.ToolCallExecutor`
-- Configure runtime: `runtime.New(WithEngine, WithMemoryStore, WithHooks, WithStream,
-  WithLogger, WithMetrics, WithTracer, WithWorker)`
+- Configure runtime: `runtime.New(runtimeStore, WithEngine, WithMemoryStore,
+  WithHooks, WithStream, WithLogger, WithMetrics, WithTracer)`
 - Register models: `rt.RegisterModel("model-id", client)`
 - Submit runs via generated clients
 - For agent‑as‑tool: configure text/templates with `runtime.WithText`, `runtime.WithTemplate`
@@ -1116,18 +1159,24 @@ as child workflows, enabling linked streams and run links.
 
 - Per agent: `AgentID`, `WorkflowName`, `DefaultTaskQueue`, activity names
 - `Register<Agent>(ctx, rt, Config)` — full registration
-- `NewWorker(...runtime.WorkerOption)` — worker configuration
-- `Route()` and `NewClient(rt)` — remote access
+- `Definition()` and `NewClient(rt)` — the shared caller and worker contract
 - Per toolset: `New<Agent><Toolset>ToolsetRegistration`
 
 ### Runtime/Library
 
 - `runtime.RegisterAgent`, `runtime.RegisterToolset`
 - `runtime.Client`, `runtime.ClientFor`, `runtime.MustClient`, `runtime.MustClientFor`
-- `runtime.AgentClient` with `Run/Start/Continue/StartContinuation`
+- `runtime.AgentClient` with sessionful `Run`, `Prepare`, and `Start`, one-shot
+  `OneShotRun`, `PrepareOneShot`, and `StartOneShot`, plus
+  `PrepareContinuation`, `StartPrepared`, and `Continue`
+- `runtime.PreparedRun` with `RunID`, `MarshalBinary`, and
+  `runtime.ParsePreparedRun` for identifying and storing one exact accepted
+  start request across process restarts
 - `engine.Engine`, `engine.WorkflowDefinition`, `engine.ActivityDefinition`, `engine.WorkflowHandle`
+- `engine/contract.NormalizeRootRequest`, `NormalizeChildRequest`,
+  `CopyRunInput`, and `CopyRunOutput` for custom engine adapters
 - Activities: `PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`
-- Child composition: `runtime.ExecuteAgentChildWithRoute`
+- Child composition: `runtime.ExecuteAgentChild`
 - Tool infrastructure: `tools.ToolSpec`, `tools.JSONCodec`
 - Tool errors: `toolerrors.ToolError` for structured error reporting
 - Hooks: `hooks.Bus`, `hooks.Subscriber`, `hooks.Event` for runtime observability
@@ -1160,7 +1209,7 @@ func (s *MySink) Close(ctx context.Context) error {
 
 ```go
 sink := &MySink{}
-rt := runtime.New(runtime.WithStream(sink))
+rt := runtime.New(runtimeStore, runtime.WithStream(sink))
 ```
 
 ### Manual Bridge (Direct Bus Access)
@@ -1205,15 +1254,13 @@ profile := stream.MetricsProfile()
 | Runtime guide   | `docs/runtime.md`                                  |
 | Quickstart      | `quickstart/README.md`                             |
 | MCP integration | `codegen/mcp` and `runtime/mcp`                    |
-| Features        | `features/*` (memory, session, run, stream, model clients) |
+| Features        | `features/*` (memory, prompt, stream, and model integrations) |
 
 ### Feature Packages
 
 | Package                  | Purpose                                                |
 |--------------------------|--------------------------------------------------------|
 | `features/memory/mongo`  | Mongo‑backed memory store for transcripts              |
-| `features/runlog/mongo`  | Mongo‑backed run event log store for run introspection |
-| `features/session/mongo` | Mongo‑backed session store for multi‑turn state        |
 | `features/stream/pulse`  | Pulse message bus sink for real‑time streaming         |
 | `features/model/bedrock` | AWS Bedrock model client (Claude, etc.)                |
 | `features/model/openai`  | OpenAI‑compatible model client                         |

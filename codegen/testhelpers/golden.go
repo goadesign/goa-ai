@@ -12,55 +12,59 @@ import (
 	codegen "goa.design/goa-ai/codegen/agent"
 	evalsExpr "goa.design/goa-ai/eval/expr"
 	agentsExpr "goa.design/goa-ai/expr/agent"
+	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/testutil"
 	gcodegen "goa.design/goa/v3/codegen"
+	"goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// SetupEvalRoots initializes and registers eval roots for testing.
-func SetupEvalRoots(t *testing.T) {
+// SetupEvalRoots creates and registers the design roots used by one test run.
+// It returns the roots that code generation must read after evaluation.
+func SetupEvalRoots(t *testing.T) []eval.Root {
 	t.Helper()
 	eval.Reset()
 	goaexpr.Root = new(goaexpr.RootExpr)
 	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
+	mcpexpr.Root = mcpexpr.NewRoot()
+	agentsExpr.Root = &agentsExpr.RootExpr{}
+	evalsExpr.Root = new(evalsExpr.RootExpr)
+
+	roots := []eval.Root{goaexpr.Root, mcpexpr.Root, agentsExpr.Root, evalsExpr.Root}
 	require.NoError(t, eval.Register(goaexpr.Root))
 	require.NoError(t, eval.Register(goaexpr.GeneratedResultTypes))
-	agentsExpr.Root = &agentsExpr.RootExpr{}
-	require.NoError(t, eval.Register(agentsExpr.Root))
-	evalsExpr.Root = new(evalsExpr.RootExpr)
-	require.NoError(t, eval.Register(evalsExpr.Root))
+	for _, root := range roots[1:] {
+		require.NoError(t, eval.Register(root))
+	}
+	return roots
 }
 
 // RunDesign prepares roots for generation by executing the DSL.
 func RunDesign(t *testing.T, design func()) (string, []eval.Root) {
 	t.Helper()
-	SetupEvalRoots(t)
+	roots := SetupEvalRoots(t)
 	ok := eval.Execute(design, nil)
 	require.True(t, ok, eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	return "goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root, evalsExpr.Root}
+	return "goa.design/goa-ai/gen", roots
 }
 
 // BuildAndGenerate executes the DSL, runs codegen and returns generated files.
 func BuildAndGenerate(t *testing.T, design func()) []*gcodegen.File {
 	t.Helper()
 	genpkg, roots := RunDesign(t, design)
-	files, err := codegen.Generate(genpkg, roots, nil)
-	require.NoError(t, err)
-	return files
+	return buildAgentFiles(t, genpkg, roots, false)
 }
 
 // BuildAndGenerateWithPkg executes the DSL with a custom package path.
 func BuildAndGenerateWithPkg(t *testing.T, genpkg string, design func()) []*gcodegen.File {
 	t.Helper()
-	SetupEvalRoots(t)
+	roots := SetupEvalRoots(t)
 	ok := eval.Execute(design, nil)
 	require.True(t, ok, eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	files, err := codegen.Generate(genpkg, []eval.Root{goaexpr.Root, agentsExpr.Root, evalsExpr.Root}, nil)
-	require.NoError(t, err)
-	return files
+	return buildAgentFiles(t, genpkg, roots, false)
 }
 
 // BuildAndGenerateWithExamplePkg runs agent and application-example generation
@@ -68,24 +72,52 @@ func BuildAndGenerateWithPkg(t *testing.T, genpkg string, design func()) []*gcod
 // generated import contract into a standalone module.
 func BuildAndGenerateWithExamplePkg(t *testing.T, genpkg string, design func()) []*gcodegen.File {
 	t.Helper()
-	SetupEvalRoots(t)
+	roots := SetupEvalRoots(t)
 	ok := eval.Execute(design, nil)
 	require.True(t, ok, eval.Context.Error())
 	require.NoError(t, eval.RunDSL())
-	roots := []eval.Root{goaexpr.Root, agentsExpr.Root, evalsExpr.Root}
-	require.NoError(t, codegen.Prepare(genpkg, roots))
-	files, err := codegen.Generate(genpkg, roots, nil)
-	require.NoError(t, err)
-	files, err = codegen.GenerateExample(genpkg, roots, files)
-	require.NoError(t, err)
-	return files
+	return buildAgentFiles(t, genpkg, roots, true)
 }
 
 // BuildAndGenerateExample executes the DSL, runs example-phase codegen and returns files.
 func BuildAndGenerateExample(t *testing.T, design func()) []*gcodegen.File {
 	t.Helper()
 	genpkg, roots := RunDesign(t, design)
-	files, err := codegen.GenerateExample(genpkg, roots, nil)
+	return buildAgentFiles(t, genpkg, roots, true)
+}
+
+// buildAgentFiles runs the typed Goa and agent plans used by production
+// plugins and returns their in-memory files.
+func buildAgentFiles(t *testing.T, genpkg string, roots []eval.Root, example bool) []*gcodegen.File {
+	t.Helper()
+	require.NoError(t, codegen.Prepare(genpkg, roots))
+	generation, err := gcodegen.NewGeneration(genpkg, roots)
+	require.NoError(t, err)
+	var goaRoot *goaexpr.RootExpr
+	for _, root := range generation.Roots() {
+		if candidate, ok := root.(*goaexpr.RootExpr); ok {
+			goaRoot = candidate
+			break
+		}
+	}
+	require.NotNil(t, goaRoot)
+	servicePlan, err := service.NewPlan(
+		goaRoot,
+		generation,
+		goaexpr.NewExampleGenerator(goaRoot.API.RandomizerFactory),
+	)
+	require.NoError(t, err)
+	var agentPlan *codegen.Plan
+	if example {
+		agentPlan, err = codegen.NewExamplePlan(generation, servicePlan)
+	} else {
+		agentPlan, err = codegen.NewPlan(generation, servicePlan)
+	}
+	require.NoError(t, err)
+	require.NoError(t, generation.Freeze())
+	require.NoError(t, servicePlan.Link())
+	require.NoError(t, agentPlan.Link())
+	files, err := agentPlan.Files(nil)
 	require.NoError(t, err)
 	return files
 }

@@ -1,93 +1,54 @@
+// Package codegen writes agent packages from names and types chosen before file
+// generation starts.
 package codegen
 
 import (
 	"fmt"
-	"path"
+	"maps"
 	"path/filepath"
 	"slices"
-	"strings"
 
 	"goa.design/goa-ai/codegen/shared"
-	agentsExpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
-// Generate is the code generation entry point for the agents plugin. It is called
-// by the Goa code generation framework during the `goa gen` command execution.
-//
-// The function scans the provided DSL roots for agent and completion
-// declarations, transforms them into template-ready data structures, and
-// generates all necessary Go files. Generated artifacts include:
-//   - agent.go: agent struct and constructor
-//   - config.go: configuration types and validation
-//   - workflow.go: workflow definition and handler
-//   - activities.go: activity definitions (plan, resume, execute_tool)
-//   - registry.go: engine registration helpers
-//   - specs/<toolset>/: per-toolset specifications, types, and codecs
-//   - specs/specs.go: agent-level aggregator of all toolset specs
-//   - completions/: service-owned typed completion specs, types, and codecs
-//   - agenttools/: helpers for exported toolsets (agent-as-tool pattern)
-//   - (optional) service_toolset.go: executor-first registration for method-backed toolsets
-//
-// Parameters:
-//   - genpkg: Go import path to the generated code root (e.g., "myapp/gen")
-//   - roots: evaluated DSL roots; must include both goaexpr.RootExpr (for services)
-//     and agentsExpr.Root (for agents)
-//   - files: existing generated files from other Goa plugins; agent files are appended
-//
-// Returns the input files slice with agent-generated files appended. If no agents are
-// declared in the DSL, returns the input slice unchanged. Returns an error if:
-//   - The agents root cannot be located in roots
-//   - A service referenced by an agent is not found
-//   - Template rendering fails
-//   - Tool spec generation fails
-//
-// Generated files follow the structure:
-//
-//	gen/<service>/agents/<agent>/*.go
-//	gen/<service>/agents/<agent>/specs/<toolset>/*.go
-//	gen/<service>/agents/<agent>/specs/specs.go
-//	gen/<service>/agents/<agent>/agenttools/<toolset>/helpers.go
-//	# Note: service_toolset.go is not emitted in the current generator path; registrations
-//	# are built at application boundaries via runtime APIs. The template and builder remain
-//	# for potential future use.
-//
-// The function is safe to call multiple times during generation but expects DSL
-// evaluation to be complete before invocation.
-func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codegen.File, error) {
-	data, err := buildGeneratorData(genpkg, roots)
+// generateAgentFiles appends the agent, tool specification, completion, and
+// helper files described by data.
+func generateAgentFiles(data *GeneratorData, roots []eval.Root, specsPlan *toolSpecsPlan, helpersPlan *toolsetHelperPackagesPlan, aggregates *aggregateSpecsPackagesPlan, exportsPlan *serviceExportPackagesPlan, registryPlan *registryClientPlan, files []*codegen.File) ([]*codegen.File, error) {
+	generated := serviceExportFiles(exportsPlan)
+	generated = append(generated, toolsetSpecsFiles(specsPlan)...)
+	helperFiles, err := toolsetHelperFiles(helpersPlan)
 	if err != nil {
 		return nil, err
 	}
+	generated = append(generated, helperFiles...)
+	if registryPlan != nil {
+		generated = append(generated, registryClientFiles(registryPlan.clientData)...)
+	}
 	if len(data.Services) == 0 {
-		return files, nil
+		return append(files, generated...), nil
 	}
 
-	var generated []*codegen.File
-
-	// Emit owner-scoped toolset specs/codecs once per defining toolset.
-	generated = append(generated, toolsetSpecsFiles(data)...)
-	completionFiles, err := completionSpecsFiles(data)
+	completionFiles, err := completionSpecsFiles(data, specsPlan)
 	if err != nil {
 		return nil, err
 	}
 	generated = append(generated, completionFiles...)
 
 	for _, svc := range data.Services {
-		// Emit registry client packages for declared registries.
-		if regFiles := registryClientFiles(genpkg, svc); len(regFiles) > 0 {
-			generated = append(generated, regFiles...)
-		}
-
 		for _, agent := range svc.Agents {
-			afiles := agentFiles(agent)
+			afiles, err := agentFiles(agent, aggregates)
+			if err != nil {
+				return nil, err
+			}
 			generated = append(generated, afiles...)
 		}
 	}
 
-	// Emit contextual quickstart README at module root unless disabled via DSL.
-	if !agentsExpr.Root.DisableAgentDocs {
+	// Write the starter guide unless the design disabled it.
+	if !data.DisableAgentDocs {
 		if qf := quickstartReadmeFile(data, roots); qf != nil {
 			generated = append(generated, qf)
 		}
@@ -96,51 +57,43 @@ func Generate(genpkg string, roots []eval.Root, files []*codegen.File) ([]*codeg
 	return append(files, generated...), nil
 }
 
-// agentSpecsAggregatorFile emits specs/specs.go that aggregates Specs and metadata
-// from all specs/<toolset> packages into a single package for convenience.
-func agentSpecsAggregatorFile(agent *AgentData) *codegen.File {
-	// Build import list: runtime + per-toolset packages
-	// Always alias runtime tools to avoid conflicts with toolsets named "tools"
-	imports := []*codegen.ImportSpec{
-		{Path: "goa.design/goa-ai/runtime/agent/policy"},
-		{Path: "goa.design/goa-ai/runtime/agent/tools", Name: "tools"},
+// serviceExportFiles writes the route constants owned by Goa service packages.
+func serviceExportFiles(plan *serviceExportPackagesPlan) []*codegen.File {
+	if plan == nil {
+		return nil
 	}
-	added := make(map[string]struct{})
-	toolsets := make([]*ToolsetData, 0, len(agent.AllToolsets))
-	for _, ts := range agent.AllToolsets {
-		if len(ts.Tools) == 0 || ts.SpecsImportPath == "" {
-			continue
-		}
-		if _, ok := added[ts.SpecsImportPath]; ok {
-			continue
-		}
-		// Alias toolset package to avoid conflicts with runtime tools package
-		alias := ts.SpecsPackageName
-		if alias == "tools" {
-			alias = ts.SpecsPackageName + "specs"
-		}
-		imports = append(imports, &codegen.ImportSpec{Path: ts.SpecsImportPath, Name: alias})
-		added[ts.SpecsImportPath] = struct{}{}
-		// Update toolset data with the alias for template use
-		tsCopy := *ts
-		tsCopy.SpecsPackageName = alias
-		toolsets = append(toolsets, &tsCopy)
+	files := make([]*codegen.File, 0, len(plan.files))
+	for _, data := range plan.files {
+		files = append(files, &codegen.File{
+			Path: filepath.Join(data.Dir, "toolset_exports.go"),
+			SectionTemplates: []*codegen.SectionTemplate{
+				codegen.Header("Exported toolset routes", data.PackageName, nil),
+				{
+					Name:   "service-toolset-exports",
+					Source: agentsTemplates.Read(serviceToolsetExportsT),
+					Data:   data,
+				},
+			},
+		})
 	}
-	if len(toolsets) == 0 {
+	return files
+}
+
+// agentSpecsAggregatorFile writes the fully planned package that lists every
+// tool available to one agent.
+func agentSpecsAggregatorFile(data *aggregateSpecsFileData) *codegen.File {
+	if data == nil {
 		return nil
 	}
 	sections := []*codegen.SectionTemplate{
-		codegen.Header(agent.StructName+" aggregated tool specs", "specs", imports),
+		codegen.Header(data.Description, data.PackageName, data.Imports),
 		{
 			Name:   "tool-specs-aggregate",
 			Source: agentsTemplates.Read(toolSpecsAggregateT),
-			Data: toolSpecsAggregateData{
-				Toolsets:       toolsets,
-				RequiredLabels: unionRequiredLabels(toolsets),
-			},
+			Data:   data.Template,
 		},
 	}
-	return &codegen.File{Path: filepath.Join(agent.Dir, "specs", "specs.go"), SectionTemplates: sections}
+	return &codegen.File{Path: data.Path, SectionTemplates: sections}
 }
 
 // unionRequiredLabels returns the sorted, deduplicated union of every
@@ -164,220 +117,55 @@ func unionRequiredLabels(toolsets []*ToolsetData) []string {
 	return out
 }
 
+// agentImplFile writes the agent identifiers, constructor, and client helpers
+// using imports selected by the package plan.
 func agentImplFile(agent *AgentData) *codegen.File {
-	imports := []*codegen.ImportSpec{
-		{Path: "errors"},
-		{Path: "strings"},
-		{Path: "context"},
-		{Path: "goa.design/goa-ai/runtime/agent/engine"},
-		{Path: "goa.design/goa-ai/runtime/agent", Name: "agent"},
-		{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
-		{Path: "goa.design/goa-ai/runtime/agent/planner"},
+	if agent.packageFiles == nil || agent.packageFiles.implementation == nil {
+		panic(fmt.Sprintf("agent codegen: agent %q has no linked implementation file", agent.ID))
 	}
+	data := agent.packageFiles.implementation
 	sections := []*codegen.SectionTemplate{
-		codegen.Header(agent.StructName+" implementation", agent.PackageName, imports),
+		codegen.Header(agent.StructName+" implementation", agent.PackageName, data.Imports),
 		{
 			Name:   "agent-impl",
 			Source: agentsTemplates.Read(agentFileT),
-			Data:   agent,
+			Data:   data,
 		},
 	}
 	return &codegen.File{Path: filepath.Join(agent.Dir, "agent.go"), SectionTemplates: sections}
 }
 
+// agentConfigFile writes the dependencies supplied when the agent starts.
 func agentConfigFile(agent *AgentData) *codegen.File {
-	imports := []*codegen.ImportSpec{
-		{Path: "errors"},
-		{Path: "goa.design/goa-ai/runtime/agent/planner"},
+	if agent.packageFiles == nil || agent.packageFiles.config == nil {
+		panic(fmt.Sprintf("agent codegen: agent %q has no linked config file", agent.ID))
 	}
-	// Import model client when a compress-history policy is configured so the
-	// generated config can reference model.Client in the HistoryModel field.
-	if agent.RunPolicy.History != nil && agent.RunPolicy.History.Mode == "compress" {
-		imports = append(imports,
-			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/model", Name: "model"},
-			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "agentsruntime"},
-		)
-	}
-	// Determine whether fmt is needed. The config Validate() uses fmt.Errorf for
-	// missing method-backed toolset dependencies and for MCP callers.
-	needsFmt := false
-	if len(agent.MCPToolsets) > 0 {
-		needsFmt = true
-		imports = append(imports,
-			&codegen.ImportSpec{Name: "mcpruntime", Path: "goa.design/goa-ai/runtime/mcp"},
-		)
-	}
-	// Scan toolsets to see if any tool is method-backed; if so, fmt is also required.
-	if !needsFmt {
-		for _, ts := range agent.AllToolsets {
-			for _, t := range ts.Tools {
-				if t.IsMethodBacked {
-					needsFmt = true
-					break
-				}
-			}
-			if needsFmt {
-				break
-			}
-		}
-	}
-	if needsFmt {
-		imports = append(imports, &codegen.ImportSpec{Path: "fmt"})
-	}
-	// Import toolset packages that define method-backed tools so config can reference their Config types.
-	for _, ts := range agent.AllToolsets {
-		has := false
-		for _, t := range ts.Tools {
-			if t.IsMethodBacked {
-				has = true
-				break
-			}
-		}
-		if has && ts.PackageImportPath != "" {
-			imports = append(imports, &codegen.ImportSpec{Path: ts.PackageImportPath, Name: ts.PackageName})
-		}
-	}
+	data := agent.packageFiles.config
 	sections := []*codegen.SectionTemplate{
-		codegen.Header(agent.StructName+" config", agent.PackageName, imports),
+		codegen.Header(agent.StructName+" config", agent.PackageName, data.Imports),
 		{
 			Name:    "agent-config",
 			Source:  agentsTemplates.Read(configFileT),
-			Data:    agent,
+			Data:    data,
 			FuncMap: templateFuncMap(),
 		},
 	}
 	return &codegen.File{Path: filepath.Join(agent.Dir, "config.go"), SectionTemplates: sections}
 }
 
+// agentRegistryFile writes the functions that add the agent and its toolsets
+// to one running process.
 func agentRegistryFile(agent *AgentData) *codegen.File {
-	imports := []*codegen.ImportSpec{
-		{Path: "context"},
-		{Path: "errors"},
-		{Path: "fmt"},
-		{Path: "goa.design/goa-ai/runtime/agent/engine"},
-		{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "agentsruntime"},
+	if agent.packageFiles == nil || agent.packageFiles.registry == nil {
+		panic(fmt.Sprintf("agent codegen: agent %q has no linked registry file", agent.ID))
 	}
-	// fmt needed for error messages in registry (used in both MCP and Used toolsets paths)
-	hasExternal := false
-	for _, ts := range agent.AllToolsets {
-		if ts.Expr != nil && ts.Expr.Provider != nil && ts.Expr.Provider.Kind == agentsExpr.ProviderMCP {
-			hasExternal = true
-			break
-		}
-	}
-	// Import toolset packages that have method-backed tools so we can call their registration helpers.
-	for _, ts := range agent.AllToolsets {
-		// Import for method-backed (app-supplied executor) or external MCP (local executor)
-		needs := false
-		for _, t := range ts.Tools {
-			if t.IsMethodBacked {
-				needs = true
-				break
-			}
-		}
-		if ts.Expr != nil && ts.Expr.Provider != nil && ts.Expr.Provider.Kind == agentsExpr.ProviderMCP {
-			needs = true
-		}
-		if needs && ts.PackageImportPath != "" {
-			imports = append(imports, &codegen.ImportSpec{Path: ts.PackageImportPath, Name: ts.PackageName})
-		}
-	}
-	// Import tools/hints only when a non-MCP Used toolset without agenttools
-	// helpers actually defines hint templates. The registry template now omits
-	// hint code entirely when no templates are present.
-	needsTools := false
-	for _, ts := range agent.UsedToolsets {
-		if ts.Expr != nil && ts.Expr.Provider != nil && ts.Expr.Provider.Kind == agentsExpr.ProviderMCP {
-			continue
-		}
-		if ts.AgentToolsImportPath != "" {
-			continue
-		}
-		if !toolsetHasHintTemplates(ts) {
-			continue
-		}
-		needsTools = true
-		break
-	}
-	if needsTools {
-		imports = append(imports,
-			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"},
-			&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/runtime/hints", Name: "hints"},
-		)
-	}
-	usedAliases := make(map[string]struct{})
-	for _, imp := range imports {
-		alias := imp.Name
-		if alias == "" {
-			alias = path.Base(imp.Path)
-		}
-		if alias == "" {
-			continue
-		}
-		usedAliases[alias] = struct{}{}
-	}
-	nextAlias := func(base string) string {
-		alias := base
-		if alias == "" {
-			alias = "specs"
-		}
-		if _, exists := usedAliases[alias]; !exists {
-			usedAliases[alias] = struct{}{}
-			return alias
-		}
-		suffix := 2
-		for {
-			candidate := fmt.Sprintf("%s%d", alias, suffix)
-			if _, exists := usedAliases[candidate]; !exists {
-				usedAliases[candidate] = struct{}{}
-				return candidate
-			}
-			suffix++
-		}
-	}
-	// RegisterAgent/RegisterUsedToolsets bind each used toolset registration to
-	// that toolset's own specs package so runtime codecs and hint templates use
-	// the canonical payload/result contracts.
-	usedSpecsImports := make(map[string]struct{})
-	usedSpecsAliases := make(map[string]string)
-	for _, ts := range agent.UsedToolsets {
-		if ts.AgentToolsImportPath != "" || ts.SpecsImportPath == "" || ts.SpecsPackageName == "" {
-			continue
-		}
-		alias, ok := usedSpecsAliases[ts.QualifiedName]
-		if !ok {
-			alias = nextAlias(ts.SpecsPackageName)
-			usedSpecsAliases[ts.QualifiedName] = alias
-		}
-		if _, seen := usedSpecsImports[ts.SpecsImportPath]; seen {
-			continue
-		}
-		imports = append(imports, &codegen.ImportSpec{
-			Path: ts.SpecsImportPath,
-			Name: alias,
-		})
-		usedSpecsImports[ts.SpecsImportPath] = struct{}{}
-	}
-	if needsTimeImport(agent) {
-		imports = append(imports, &codegen.ImportSpec{Path: "time"})
-	}
-	if len(agent.Tools) > 0 {
-		imports = append(imports, &codegen.ImportSpec{Path: agent.ToolSpecsImportPath, Name: agent.ToolSpecsPackage})
-	}
-	agentForRegistry := *agent
-	if len(usedSpecsAliases) > 0 {
-		agentForRegistry.UsedToolsets = cloneToolsetsWithSpecsAliases(agent.UsedToolsets, usedSpecsAliases)
-		agentForRegistry.AllToolsets = cloneToolsetsWithSpecsAliases(agent.AllToolsets, usedSpecsAliases)
-	}
+	data := newAgentRegistryFileData(agent)
 	sections := []*codegen.SectionTemplate{
-		codegen.Header(agent.StructName+" registry", agent.PackageName, imports),
+		codegen.Header(agent.StructName+" registry", agent.PackageName, data.Imports),
 		{
-			Name:   "agent-registry",
-			Source: agentsTemplates.Read(registryFileT),
-			Data: struct {
-				*AgentData
-				HasExternalMCP bool
-			}{AgentData: &agentForRegistry, HasExternalMCP: hasExternal},
+			Name:    "agent-registry",
+			Source:  agentsTemplates.Read(registryFileT),
+			Data:    data,
 			FuncMap: templateFuncMap(),
 		},
 	}
@@ -385,47 +173,6 @@ func agentRegistryFile(agent *AgentData) *codegen.File {
 		Path:             filepath.Join(agent.Dir, "registry.go"),
 		SectionTemplates: sections,
 	}
-}
-
-func cloneToolsetsWithSpecsAliases(toolsets []*ToolsetData, aliases map[string]string) []*ToolsetData {
-	if len(toolsets) == 0 {
-		return toolsets
-	}
-	copies := make([]*ToolsetData, 0, len(toolsets))
-	for _, ts := range toolsets {
-		if ts == nil {
-			continue
-		}
-		tsCopy := *ts
-		if alias, ok := aliases[ts.QualifiedName]; ok {
-			tsCopy.SpecsPackageName = alias
-		}
-		copies = append(copies, &tsCopy)
-	}
-	return copies
-}
-
-func activityNeedsTime(act ActivityArtifact) bool {
-	return act.ScheduleToStartTimeout > 0 ||
-		act.StartToCloseTimeout > 0 ||
-		act.HeartbeatTimeout > 0 ||
-		act.RetryPolicy.InitialInterval > 0
-}
-
-func agentActivitiesNeedTimeImport(agent *AgentData) bool {
-	for _, act := range agent.Runtime.Activities {
-		if activityNeedsTime(act) {
-			return true
-		}
-	}
-	return false
-}
-
-func needsTimeImport(agent *AgentData) bool {
-	if agent.RunPolicy.TimeBudget > 0 {
-		return true
-	}
-	return agentActivitiesNeedTimeImport(agent)
 }
 
 func agentToolsFiles(agent *AgentData) []*codegen.File {
@@ -437,37 +184,12 @@ func agentToolsFiles(agent *AgentData) []*codegen.File {
 		if ts.AgentToolsDir == "" {
 			continue
 		}
-		// Build tool entries so templates can reuse the same type/codec naming
-		// decisions as specs generation.
-		svc := ts.SourceService
-		if svc == nil {
-			svc = agent.Service
-		}
-		specs, err := buildToolSpecsDataFor(agent.Genpkg, svc, ts.Tools)
-		if err != nil {
-			continue
-		}
-		data := agentToolsetFileData{
-			PackageName: ts.AgentToolsPackage,
-			Toolset:     ts,
-			Tools:       specs.tools,
-		}
-		imports := []*codegen.ImportSpec{
-			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
-			{Path: "goa.design/goa-ai/runtime/agent", Name: "agent"},
-			{Path: "goa.design/goa-ai/runtime/agent/tools"},
-			{Path: "goa.design/goa-ai/runtime/agent/planner"},
-			// Per-toolset specs package for typed payloads
-			{Path: ts.SpecsImportPath, Name: ts.SpecsPackageName + "specs"},
-		}
-		if toolsetHasHintTemplates(ts) {
-			imports = append(imports, &codegen.ImportSpec{
-				Path: "goa.design/goa-ai/runtime/agent/runtime/hints",
-				Name: "hints",
-			})
+		data := ts.agentTools
+		if data == nil {
+			panic(fmt.Sprintf("agent codegen: exported toolset %q has no linked helper package", ts.QualifiedName))
 		}
 		sections := []*codegen.SectionTemplate{
-			codegen.Header(ts.Name+" agent tools", ts.AgentToolsPackage, imports),
+			codegen.Header(ts.Name+" agent tools", ts.AgentToolsPackage, data.Imports),
 			{
 				Name:    "agent-tools",
 				Source:  agentsTemplates.Read(agentToolsFileT),
@@ -499,20 +221,22 @@ func agentToolsConsumerFiles(agent *AgentData) []*codegen.File {
 		if ts.AgentToolsImportPath == "" || len(ts.Tools) == 0 {
 			continue
 		}
-		data := agentToolsetConsumerFileData{
-			Agent:         agent,
-			Toolset:       ts,
-			ProviderAlias: ts.AgentToolsPackage,
+		if len(ts.agentToolsConsumerImports) == 0 {
+			panic(fmt.Sprintf("agent codegen: consumed agent toolset %q has no linked helper", ts.QualifiedName))
 		}
-		imports := []*codegen.ImportSpec{
-			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
-			{Path: ts.AgentToolsImportPath, Name: ts.AgentToolsPackage},
+		data := agentToolsetConsumerFileData{
+			Toolset:                         ts,
+			Imports:                         ts.agentToolsConsumerImports,
+			RuntimeAlias:                    ts.agentToolsRuntimeAlias,
+			ProviderAlias:                   ts.agentToolsProviderAlias,
+			ProviderRegistrationConstructor: ts.AgentToolsProviderRegistrationConstructor,
+			Definition:                      agent.PackageNames.Definition,
 		}
 		sections := []*codegen.SectionTemplate{
 			codegen.Header(
 				ts.Name+" agent toolset client",
 				agent.PackageName,
-				imports,
+				data.Imports,
 			),
 			{
 				Name:    "agent-tools-consumer",
@@ -530,309 +254,115 @@ func agentToolsConsumerFiles(agent *AgentData) []*codegen.File {
 	return files
 }
 
-// mcpExecutorFiles emits per-MCP-backed-toolset MCP executors that adapt runtime
-// ToolCallExecutor to an mcpruntime.Caller using generated codecs.
-func mcpExecutorFiles(agent *AgentData) []*codegen.File {
-	out := make([]*codegen.File, 0, len(agent.AllToolsets))
-	seen := make(map[string]struct{}, len(agent.AllToolsets))
-	for _, ts := range agent.AllToolsets {
-		if ts.Expr == nil || ts.Expr.Provider == nil || ts.Expr.Provider.Kind != agentsExpr.ProviderMCP {
-			continue
-		}
-		path := filepath.Join(ts.Dir, "mcp_executor.go")
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		tools := make([]mcpExecutorToolData, 0, len(ts.Tools))
-		if len(ts.Tools) > 0 {
-			specs, err := buildToolSpecsDataFor(agent.Genpkg, ts.SourceService, ts.Tools)
-			if err != nil {
-				panic(fmt.Sprintf("agent codegen: MCP executor specs for toolset %q: %v", ts.QualifiedName, err))
-			}
-			entries := make(map[string]*toolEntry, len(specs.tools))
-			for _, entry := range specs.tools {
-				entries[entry.Name] = entry
-			}
-			for _, tool := range ts.Tools {
-				entry := entries[tool.QualifiedName]
-				if entry == nil {
-					panic(fmt.Sprintf("agent codegen: missing MCP tool spec for %q", tool.QualifiedName))
-				}
-				tools = append(tools, mcpExecutorToolData{
-					LocalName: tool.Name,
-					ConstName: entry.ConstName,
-					HasResult: entry.HasResult,
-				})
-			}
-		}
-		data := mcpExecutorFileData{
-			PackageName: ts.PackageName,
-			Agent:       agent,
-			Toolset:     ts,
-			Tools:       tools,
-		}
-		imports := []*codegen.ImportSpec{
-			{Path: "context"},
-			{Path: "encoding/json"},
-			{Path: "errors"},
-			{Path: "goa.design/goa-ai/runtime/agent/planner"},
-			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
-			{Path: "goa.design/goa-ai/runtime/agent/telemetry"},
-			{Path: "goa.design/goa-ai/runtime/agent/tools"},
-			{Path: "goa.design/goa-ai/runtime/mcp", Name: "mcpruntime"},
-			// Per-toolset specs package (codecs + schemas)
-			{Path: ts.SpecsImportPath, Name: ts.SpecsPackageName},
-		}
-		sections := []*codegen.SectionTemplate{
-			codegen.Header(ts.Name+" MCP executor", ts.PackageName, imports),
-			{
-				Name:    "mcp-executor",
-				Source:  agentsTemplates.Read(mcpExecutorFileT),
-				Data:    data,
-				FuncMap: templateFuncMap(),
-			},
-		}
-		out = append(out, &codegen.File{Path: path, SectionTemplates: sections})
+// toolsetHelperFiles emits each helper package once from the package plan that
+// owns its names, imports, and file contents.
+func toolsetHelperFiles(plan *toolsetHelperPackagesPlan) ([]*codegen.File, error) {
+	if plan == nil {
+		return nil, nil
 	}
-	return out
+	var files []*codegen.File
+	for _, path := range slices.Sorted(maps.Keys(plan.byPath)) {
+		planned := plan.byPath[path]
+		if planned.usedTools != nil {
+			files = append(files, usedToolsFile(planned))
+		}
+		if planned.serviceExecutor != nil {
+			files = append(files, serviceExecutorFile(planned))
+		}
+		if planned.mcpExecutor != nil {
+			file, err := mcpExecutorFile(planned)
+			if err != nil {
+				return nil, err
+			}
+			files = append(files, file)
+		}
+	}
+	return files, nil
 }
 
-// usedToolsFiles emits typed call builders and type aliases for method-backed Used toolsets
-// to align UX with agent-as-tool helpers.
-func usedToolsFiles(agent *AgentData) []*codegen.File {
-	if len(agent.MethodBackedToolsets) == 0 {
-		return nil
-	}
-	files := make([]*codegen.File, 0, len(agent.MethodBackedToolsets))
-	for _, ts := range agent.MethodBackedToolsets {
-		// Only emit when specs are present
-		if ts.SpecsImportPath == "" || len(ts.Tools) == 0 {
-			continue
-		}
-		svc := ts.SourceService
-		if svc == nil {
-			svc = agent.Service
-		}
-		specs, err := buildToolSpecsDataFor(agent.Genpkg, svc, ts.Tools)
-		if err != nil {
-			continue
-		}
-		data := agentToolsetFileData{PackageName: ts.PackageName, Toolset: ts, Tools: specs.tools}
-		imports := []*codegen.ImportSpec{
-			{Path: "goa.design/goa-ai/runtime/agent/tools"},
-			{Path: "goa.design/goa-ai/runtime/agent/planner"},
-			// Per-toolset specs package for typed payloads
-			{Path: ts.SpecsImportPath, Name: ts.SpecsPackageName + "specs"},
-		}
-		sections := []*codegen.SectionTemplate{
-			codegen.Header(ts.Name+" used tool helpers", ts.PackageName, imports),
+// usedToolsFile writes typed calls for one method-backed helper package.
+func usedToolsFile(plan *toolsetHelperPackagePlan) *codegen.File {
+	data := plan.usedTools
+	return &codegen.File{
+		Path: filepath.Join(plan.toolset.Dir, "used_tools.go"),
+		SectionTemplates: []*codegen.SectionTemplate{
+			codegen.Header(plan.toolset.Name+" used tool helpers", plan.toolset.PackageName, data.Imports),
 			{
 				Name:    "used-tools",
 				Source:  agentsTemplates.Read(usedToolsFileT),
 				Data:    data,
 				FuncMap: templateFuncMap(),
 			},
-		}
-		path := filepath.Join(ts.Dir, "used_tools.go")
-		files = append(files, &codegen.File{Path: path, SectionTemplates: sections})
+		},
 	}
-	return files
 }
 
-// serviceExecutorFiles emits per-toolset service executors that adapt runtime
-// ToolCallExecutor to user-provided callers using generated codecs and optional mappers.
-func serviceExecutorFiles(agent *AgentData) []*codegen.File {
-	if len(agent.MethodBackedToolsets) == 0 {
-		return nil
+// serviceExecutorFile writes the service caller for one method-backed helper
+// package.
+func serviceExecutorFile(plan *toolsetHelperPackagePlan) *codegen.File {
+	linked := plan.serviceExecutor
+	toolset := *plan.toolset
+	toolset.SpecsPackageName = linked.SpecsPackageAlias
+	data := serviceToolsetFileData{
+		PackageName:      toolset.PackageName,
+		Toolset:          &toolset,
+		Tools:            linked.Tools,
+		ServiceClientRef: linked.ServiceClientRef,
+		Constructor:      linked.Constructor,
+		Names:            linked.Names,
 	}
-	files := make([]*codegen.File, 0, len(agent.MethodBackedToolsets))
-	for _, ts := range agent.MethodBackedToolsets {
-		if ts.Expr == nil || len(ts.Tools) == 0 {
-			continue
-		}
-		svc := ts.SourceService
-		if svc == nil {
-			svc = agent.Service
-		}
-		// Use a NameScope to guarantee unique import aliases for the service client
-		// and specs packages within this file (for example, service "todos" with
-		// toolset "todos"). Keep the service alias derived from the original
-		// package name so precomputed method type references remain valid and
-		// assign a distinct alias to the specs package when needed.
-		aliasScope := codegen.NewNameScope()
-		svcAlias := ""
-		if svc != nil {
-			svcAlias = aliasScope.Unique(servicePkgAlias(svc))
-		}
-		specsAlias := aliasScope.Unique(ts.SpecsPackageName, "specs")
-		// Gather additional imports required by method payload/result types so
-		// that type assertions in the executor (for example, args.(*types.Foo))
-		// compile even when the payload/result types live in external packages
-		// such as the shared gen/types module.
-		extraImports := make(map[string]*codegen.ImportSpec)
-		for _, t := range ts.Tools {
-			if !t.IsMethodBacked {
-				continue
-			}
-			for _, im := range shared.GatherAttributeImports(agent.Genpkg, t.MethodPayloadAttr) {
-				if im != nil && im.Path != "" {
-					extraImports[im.Path] = im
-				}
-			}
-			for _, im := range shared.GatherAttributeImports(agent.Genpkg, t.MethodResultAttr) {
-				if im != nil && im.Path != "" {
-					extraImports[im.Path] = im
-				}
-			}
-			for _, sd := range t.ServerData {
-				if sd == nil || sd.Schema == nil || sd.Schema.Type == nil {
-					continue
-				}
-				for _, im := range shared.GatherAttributeImports(agent.Genpkg, sd.Schema) {
-					if im != nil && im.Path != "" {
-						extraImports[im.Path] = im
-					}
-				}
-			}
-		}
-
-		// Use a local copy of the toolset so we can override the SpecsPackageName
-		// alias for this file without affecting other generated artifacts.
-		tsCopy := *ts
-		tsCopy.SpecsPackageName = specsAlias
-		specs, err := buildToolSpecsDataFor(agent.Genpkg, svc, ts.Tools)
-		if err != nil {
-			panic(fmt.Sprintf("agent codegen: service executor specs for toolset %q: %v", ts.QualifiedName, err))
-		}
-		entries := make(map[string]*toolEntry, len(specs.tools))
-		for _, entry := range specs.tools {
-			entries[entry.Name] = entry
-		}
-		tsCopy.Tools = make([]*ToolData, 0, len(ts.Tools))
-		for _, tool := range ts.Tools {
-			toolCopy := *tool
-			if entry := entries[tool.QualifiedName]; entry != nil {
-				toolCopy.ConstName = entry.ConstName
-			} else {
-				panic(fmt.Sprintf("agent codegen: missing service executor tool spec for %q", tool.QualifiedName))
-			}
-			tsCopy.Tools = append(tsCopy.Tools, &toolCopy)
-		}
-
-		data := serviceToolsetFileData{
-			PackageName:     ts.PackageName,
-			Agent:           agent,
-			Toolset:         &tsCopy,
-			ServicePkgAlias: svcAlias,
-		}
-		needsSharedTypes := false
-		for _, t := range ts.Tools {
-			if t == nil || !t.IsMethodBacked {
-				continue
-			}
-			if strings.Contains(t.MethodPayloadTypeRef, "types.") || strings.Contains(t.MethodResultTypeRef, "types.") {
-				needsSharedTypes = true
-				break
-			}
-		}
-		needsRawJSON := false
-		for _, t := range ts.Tools {
-			if t == nil || !t.IsMethodBacked {
-				continue
-			}
-			for _, sd := range t.ServerData {
-				if sd != nil && sd.MethodResultField != "" {
-					needsRawJSON = true
-					break
-				}
-			}
-			if needsRawJSON {
-				break
-			}
-		}
-		needsAgentBounds := false
-		for _, t := range ts.Tools {
-			if t == nil || !t.IsMethodBacked || t.Bounds == nil || t.Bounds.Projection == nil {
-				continue
-			}
-			if t.Bounds.Projection.Returned != nil && t.Bounds.Projection.Truncated != nil {
-				needsAgentBounds = true
-				break
-			}
-		}
-		imports := []*codegen.ImportSpec{
-			{Path: "context"},
-			{Path: "errors"},
-			{Path: "fmt"},
-			{Path: "strings"},
-			{Path: "goa.design/goa-ai/runtime/agent/planner"},
-			{Path: "goa.design/goa-ai/runtime/agent/runtime", Name: "runtime"},
-			{Path: "goa.design/goa-ai/runtime/agent/tools"},
-			{Path: ts.SpecsImportPath, Name: specsAlias},
-		}
-		if needsAgentBounds {
-			imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent", Name: "agent"})
-		}
-		if needsRawJSON {
-			imports = append(imports,
-				&codegen.ImportSpec{Path: "encoding/json"},
-				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/rawjson"},
-				&codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/toolregistry"},
-			)
-		}
-		if needsSharedTypes {
-			typesPath := filepath.ToSlash(filepath.Join(agent.Genpkg, "types"))
-			imports = append(imports, &codegen.ImportSpec{Path: typesPath})
-			delete(extraImports, typesPath)
-		}
-		if svc != nil {
-			// Import the service client package (for example, gen/catalog)
-			clientPath := filepath.Join(agent.Genpkg, svc.PathName)
-			// Check for slash/backslash issues if Genpkg has slashes
-			clientPath = strings.ReplaceAll(clientPath, "\\", "/")
-			imports = append(imports, &codegen.ImportSpec{Path: clientPath, Name: svcAlias})
-			// Avoid duplicating the client import when also discovered via
-			// gatherAttributeImports on method payload/result types.
-			delete(extraImports, clientPath)
-		}
-		// Append any remaining external imports needed for payload/result
-		// types (for example, the shared gen/types package).
-		for _, im := range extraImports {
-			if im == nil || im.Path == "" {
-				continue
-			}
-			// Specs and service client imports are already in the list.
-			if im.Path == ts.SpecsImportPath {
-				continue
-			}
-			imports = append(imports, im)
-		}
-		sections := []*codegen.SectionTemplate{
-			codegen.Header(ts.Name+" service executor", ts.PackageName, imports),
+	return &codegen.File{
+		Path: filepath.Join(toolset.Dir, "service_executor.go"),
+		SectionTemplates: []*codegen.SectionTemplate{
+			codegen.Header(toolset.Name+" service executor", toolset.PackageName, linked.Imports),
 			{
 				Name:    "service-executor",
 				Source:  agentsTemplates.Read(serviceExecutorFileT),
 				Data:    data,
 				FuncMap: templateFuncMap(),
 			},
-		}
-		path := filepath.Join(ts.Dir, "service_executor.go")
-		files = append(files, &codegen.File{Path: path, SectionTemplates: sections})
+		},
 	}
-	return files
 }
 
-// Note: we intentionally avoid parsing type references to infer imports. All
-// needed user type imports come from Goa's UserTypeLocation captured in ToolData.
-
-// toolsetHasHintTemplates reports whether any tool in the toolset defines a
-// DSL-authored call or result hint template.
-func toolsetHasHintTemplates(ts *ToolsetData) bool {
-	for _, tool := range ts.Tools {
-		if tool.CallHintTemplate != "" || tool.ResultHintTemplate != "" {
-			return true
-		}
+// mcpExecutorFile writes the caller for one MCP-backed helper package.
+func mcpExecutorFile(plan *toolsetHelperPackagePlan) (*codegen.File, error) {
+	toolset := plan.toolset
+	tools := make([]mcpExecutorToolData, 0, len(toolset.Tools))
+	entries := make(map[string]*toolEntry, len(toolset.specs.tools))
+	for _, entry := range toolset.specs.tools {
+		entries[entry.Name] = entry
 	}
-	return false
+	for _, tool := range toolset.Tools {
+		entry := entries[tool.QualifiedName]
+		if entry == nil {
+			return nil, fmt.Errorf("toolset %q MCP spec for %q is missing", toolset.QualifiedName, tool.QualifiedName)
+		}
+		tools = append(tools, mcpExecutorToolData{
+			LocalName:        tool.Name,
+			ConstName:        entry.ConstName,
+			SpecVar:          entry.SpecVar,
+			HasResult:        entry.HasResult,
+			StructuredResult: entry.HasResult && goaexpr.AsObject(tool.Return.Type) != nil,
+			TextResult:       entry.HasResult && shared.IsStringType(tool.Return.Type),
+		})
+	}
+	data := mcpExecutorFileData{
+		PackageName:     toolset.PackageName,
+		Toolset:         toolset,
+		mcpExecutorData: plan.mcpExecutor,
+		Tools:           tools,
+	}
+	return &codegen.File{
+		Path: filepath.Join(toolset.Dir, "mcp_executor.go"),
+		SectionTemplates: []*codegen.SectionTemplate{
+			codegen.Header(toolset.Name+" MCP executor", toolset.PackageName, plan.mcpExecutor.Imports),
+			{
+				Name:    "mcp-executor",
+				Source:  agentsTemplates.Read(mcpExecutorFileT),
+				Data:    data,
+				FuncMap: templateFuncMap(),
+			},
+		},
+	}, nil
 }

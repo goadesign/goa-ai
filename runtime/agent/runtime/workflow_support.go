@@ -686,14 +686,6 @@ func (r *Runtime) missingFieldsQuestion(tool tools.Ident, fields []string) (stri
 	return question.String(), nil
 }
 
-// errRunSessionEnded terminates the run loop when a planner activity observes
-// that the run's durable session was ended mid-run. It wraps context.Canceled
-// so the terminal mapping (isRunCancellationError) classifies the run as
-// canceled; the refusing planner activity recorded
-// CancellationReasonSessionEnded on the run, so the terminal RunCompleted
-// event carries the canonical reason.
-var errRunSessionEnded = fmt.Errorf("run session ended: %w", context.Canceled)
-
 // runPlanActivity schedules a plan/resume activity with the configured options.
 func (r *Runtime) runPlanActivity(
 	wfCtx engine.WorkflowContext,
@@ -732,9 +724,6 @@ func (r *Runtime) runPlanActivity(
 	if out == nil {
 		return nil, fmt.Errorf("runPlanActivity received nil PlanActivityOutput")
 	}
-	if out.SessionEnded {
-		return nil, errRunSessionEnded
-	}
 	switch {
 	case out.OutputContractFailure != nil:
 		if out.Result != nil || out.ModelInvocationRecovery != nil {
@@ -759,7 +748,7 @@ func (r *Runtime) runPlanActivity(
 		return nil, fmt.Errorf("runPlanActivity received PlanResult with no ToolCalls, FinalResponse, FinalToolResult, or Await")
 	}
 	if out.Result != nil {
-		if _, err := r.normalizePlanResultForExecution(wfCtx.Context(), out.Result); err != nil {
+		if _, err := r.normalizePlanResultForExecution(wfCtx.Context(), out.Result, input.RunContext.Tool); err != nil {
 			return nil, err
 		}
 	}
@@ -1001,12 +990,11 @@ func publishPlannerPublicationBatch(
 	if len(records) == 0 {
 		return nil
 	}
-	return wfCtx.PublishRecords(engine.RecordActivityCall{
-		Name: recordActivityName,
-		Input: &api.RecordActivityBatchInput{
-			Records: records,
-		},
+	_, err := wfCtx.ExecuteStorageActivity(engine.StorageActivityCall{
+		Name:    storageActivityName,
+		Command: appendStorageCommand(records...),
 	})
+	return err
 }
 
 // formatPlannerPublicationEventKey identifies one immutable record within one

@@ -54,8 +54,8 @@ func TestBuildToolSpecsDataUsesScopedConstNameForInjectDecoder(t *testing.T) {
 	require.Len(t, data.Services, 1)
 	require.Len(t, data.Services[0].Agents, 1)
 	agent := data.Services[0].Agents[0]
-	specs, err := codegen.BuildToolSpecsDataForTest(agent)
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(agent)
+	require.NotNil(t, specs)
 
 	var sourceName string
 	for _, tool := range agent.Tools {
@@ -66,7 +66,7 @@ func TestBuildToolSpecsDataUsesScopedConstNameForInjectDecoder(t *testing.T) {
 	}
 	constNames, injectDecoders := codegen.CollectToolNamesForTest(specs)
 	require.NotEmpty(t, sourceName)
-	require.NotEqual(t, sourceName, constNames["helpers.lookup_1"])
+	require.Equal(t, sourceName, constNames["helpers.lookup_1"])
 	require.Equal(
 		t,
 		"Decode"+constNames["helpers.lookup_1"],
@@ -116,8 +116,7 @@ func TestBuildToolSpecsData_DeterministicRefs(t *testing.T) {
 	require.Len(t, data.Services, 1)
 
 	ag := data.Services[0].Agents[0]
-	specs, err := codegen.BuildToolSpecsDataForTest(ag)
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(ag)
 	require.NotNil(t, specs)
 
 	// Look for summarize_doc payload/result types and assert deterministic generation:
@@ -181,14 +180,14 @@ func TestBuildToolSpecsData_FieldJSONTypes(t *testing.T) {
 
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
-	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
 	jsonTypes := codegen.CollectTypeJSONTypesForTest(specs)
 
 	require.Equal(t, "object", jsonTypes["CompletePayload"]["$payload"])
 	require.Equal(t, "array", jsonTypes["CompletePayload"]["sections"])
-	require.Equal(t, "string", jsonTypes["CompletePayload"]["sections.heading"])
+	require.Equal(t, "object", jsonTypes["CompletePayload"]["sections.*"])
+	require.Equal(t, "string", jsonTypes["CompletePayload"]["sections.*.heading"])
 	require.Equal(t, "object", jsonTypes["CompletePayload"]["lead"])
 	require.Equal(t, "string", jsonTypes["CompletePayload"]["lead.heading"])
 	require.Equal(t, "object", jsonTypes["CompletePayload"]["backup"])
@@ -232,8 +231,7 @@ func TestBuildToolSpecsData_FieldJSONTypes_DoNotFlattenUnionVariants(t *testing.
 
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
-	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
 	jsonTypes := codegen.CollectTypeJSONTypesForTest(specs)
 
@@ -278,8 +276,7 @@ func TestBuildToolSpecsData_UnionSchemasUseCanonicalEnvelope(t *testing.T) {
 
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
-	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
 	schemas := codegen.CollectTypeSchemasForTest(specs)
 	var schema map[string]any
@@ -330,6 +327,7 @@ func TestBuildToolSpecsData_UnionSchemasSpecializeDefinitions(t *testing.T) {
 		})
 		var Block = goadsl.Type("Block", func() {
 			goadsl.OneOf("block", func() {
+				goadsl.TypeName("BlockChoice")
 				goadsl.Attribute("markdown", Markdown, "Markdown block")
 				goadsl.Attribute("figure", Figure, "Figure block")
 			})
@@ -358,8 +356,7 @@ func TestBuildToolSpecsData_UnionSchemasSpecializeDefinitions(t *testing.T) {
 
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
-	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
 	schemas := codegen.CollectTypeSchemasForTest(specs)
 	var schema map[string]any
@@ -405,6 +402,7 @@ func TestBuildToolSpecsData_UnionSchemasIncludeEmptyObjectVariants(t *testing.T)
 		})
 		var Source = goadsl.Type("Source", func() {
 			goadsl.OneOf("source", func() {
+				goadsl.TypeName("SourceChoice")
 				goadsl.Attribute("static", StaticSource, "Static source")
 				goadsl.Attribute("dynamic", DynamicSource, "Dynamic source")
 			})
@@ -440,8 +438,7 @@ func TestBuildToolSpecsData_UnionSchemasIncludeEmptyObjectVariants(t *testing.T)
 
 	data, err := codegen.BuildDataForTest("goa.design/goa-ai", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
-	specs, err := codegen.BuildToolSpecsDataForTest(data.Services[0].Agents[0])
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
 	schemas := codegen.CollectTypeSchemasForTest(specs)
 	var schema map[string]any
@@ -516,8 +513,7 @@ func TestBuildToolSpecsData_ExtendFieldsMaterialized(t *testing.T) {
 	require.Len(t, data.Services, 1)
 
 	ag := data.Services[0].Agents[0]
-	specs, err := codegen.BuildToolSpecsDataForTest(ag)
-	require.NoError(t, err)
+	specs := codegen.ToolSpecsDataForTest(ag)
 	require.NotNil(t, specs)
 
 	schemas := codegen.CollectTypeSchemasForTest(specs)

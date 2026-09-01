@@ -43,14 +43,13 @@ type (
 	ServerDataCanonicalizer func(data rawjson.Message) (rawjson.Message, error)
 
 	// ToolSpec enumerates the metadata and JSON codecs for a tool.
+	//
+	// ToolSpec describes what a tool accepts and returns. The runtime route that
+	// executes the tool belongs to runtime.ToolsetRegistration, not this shared
+	// contract.
 	ToolSpec struct {
 		// Name is the globally unique tool identifier (`toolset.tool`).
 		Name Ident
-		// Service identifies the Goa service that declared the tool.
-		Service string
-		// Toolset is the toolset registration identifier used for routing.
-		// It is typically the DSL toolset name.
-		Toolset string
 		// Description provides human-readable context for planners and tooling.
 		Description string
 		// Tags carries flat labels used by generic policy and UI filtering.
