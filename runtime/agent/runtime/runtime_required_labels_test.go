@@ -123,15 +123,16 @@ func TestStartPreparedContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 	seedTestToolSpecs(rt, spec)
 	_, err := createSessionForTest(context.Background(), rt.Store, "session-1")
 	require.NoError(t, err)
+	labels := map[string]string{"household_id": "house-42"}
 	suspension := suspensionContractFixtureWithContext(
 		t, spec.Name, "svc.agent", "run-1",
-		map[string]string{"household_id": "house-42"},
+		labels,
 		map[string]any{"request_id": "request-42"},
 	)
 	now := time.Now().UTC()
 	admitRunForTest(t, rt.Store, session.RunMeta{
 		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
-		Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now,
+		Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now, Labels: labels,
 	})
 	data, err := json.Marshal(suspension)
 	require.NoError(t, err)

@@ -454,7 +454,8 @@ func (w *temporalWorkflowContext) activityOptionsFor(name string, override engin
 
 // StartChildWorkflow copies and validates the complete child request, then
 // waits until Temporal accepts or rejects the start. The returned handle tracks
-// completion independently after Temporal accepts the child.
+// completion independently after Temporal accepts the child. Temporal
+// terminates the child if its parent closes first.
 func (w *temporalWorkflowContext) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
 	if err := engine.ValidateChildWorkflowRequest(req); err != nil {
 		return nil, err
@@ -469,6 +470,7 @@ func (w *temporalWorkflowContext) StartChildWorkflow(_ context.Context, req engi
 		TaskQueue:             req.TaskQueue,
 		WorkflowRunTimeout:    req.RunTimeout,
 		WaitForCancellation:   true,
+		ParentClosePolicy:     enumspb.PARENT_CLOSE_POLICY_TERMINATE,
 		WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 		RetryPolicy:           convertRetryPolicy(req.RetryPolicy),
 	}

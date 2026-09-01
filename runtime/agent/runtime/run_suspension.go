@@ -167,54 +167,38 @@ func (r *Runtime) LoadRunSuspension(ctx context.Context, runID string) (*api.Run
 	if err != nil {
 		return nil, err
 	}
+	suspension, err := validateStoredRunSuspension(stored, run)
+	if err != nil {
+		return nil, fmt.Errorf("%w: run %q checkpoint: %w", ErrRunSuspensionCorrupt, runID, err)
+	}
+	return suspension, nil
+}
+
+// validateStoredRunSuspension checks the exact public suspension, its private
+// checkpoint, and the run identity before any caller reads or redelivers it.
+func validateStoredRunSuspension(stored session.RunSuspension, run session.RunMeta) (*api.RunSuspension, error) {
 	var suspension api.RunSuspension
 	if err := decodeStoredRunSuspension(stored.Data, &suspension); err != nil {
-		return nil, fmt.Errorf(
-			"%w: decode run %q checkpoint envelope: %w",
-			ErrRunSuspensionCorrupt,
-			runID,
-			err,
-		)
+		return nil, fmt.Errorf("decode checkpoint envelope: %w", err)
 	}
 	if suspension.ID != stored.ID {
-		return nil, fmt.Errorf(
-			"%w: run %q stored checkpoint id does not match payload",
-			ErrRunSuspensionCorrupt,
-			runID,
-		)
+		return nil, errors.New("stored checkpoint id does not match payload")
 	}
 	checkpoint, err := decodeWorkflowCheckpointState(&suspension)
 	if err != nil {
-		return nil, fmt.Errorf(
-			"%w: decode run %q checkpoint state: %w",
-			ErrRunSuspensionCorrupt,
-			runID,
-			err,
-		)
+		return nil, fmt.Errorf("decode checkpoint state: %w", err)
 	}
-	if checkpoint.PreviousRunID != runID {
-		return nil, fmt.Errorf(
-			"%w: stored checkpoint belongs to run %q instead of %q",
-			ErrRunSuspensionCorrupt,
-			checkpoint.PreviousRunID,
-			runID,
-		)
+	if checkpoint.PreviousRunID != run.RunID {
+		return nil, fmt.Errorf("stored checkpoint belongs to run %q instead of %q", checkpoint.PreviousRunID, run.RunID)
 	}
 	if checkpoint.AgentID != run.AgentID {
-		return nil, fmt.Errorf(
-			"%w: stored checkpoint agent %q does not match run agent %q",
-			ErrRunSuspensionCorrupt,
-			checkpoint.AgentID,
-			run.AgentID,
-		)
+		return nil, fmt.Errorf("stored checkpoint agent %q does not match run agent %q", checkpoint.AgentID, run.AgentID)
 	}
 	if checkpoint.SessionID != run.SessionID {
-		return nil, fmt.Errorf(
-			"%w: stored checkpoint session %q does not match run session %q",
-			ErrRunSuspensionCorrupt,
-			checkpoint.SessionID,
-			run.SessionID,
-		)
+		return nil, fmt.Errorf("stored checkpoint session %q does not match run session %q", checkpoint.SessionID, run.SessionID)
+	}
+	if checkpoint.Context.ParentRunID != run.ParentRunID {
+		return nil, fmt.Errorf("stored checkpoint parent %q does not match run parent %q", checkpoint.Context.ParentRunID, run.ParentRunID)
 	}
 	return &suspension, nil
 }

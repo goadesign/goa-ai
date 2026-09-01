@@ -38,60 +38,55 @@ func (r *Runtime) storageCommandUntilApplied(ctx context.Context, command *api.S
 	}
 }
 
-// repairRunSuspensionUntilApplied retries one repair and publishes its event
-// only when the supplied repair record owns the stored suspension.
-func (r *Runtime) repairRunSuspensionUntilApplied(ctx context.Context, command storage.RunSuspension, event hooks.Event) error {
-	return r.runRepairUntilApplied(ctx, event, session.RunStatusSuspended, func(callCtx context.Context) (storage.RunRepairResult, error) {
+// repairRunSuspensionUntilApplied retries one repair until storage identifies
+// which terminal record owns the run.
+func (r *Runtime) repairRunSuspensionUntilApplied(ctx context.Context, command storage.RunSuspension) (storage.RunRepairResult, error) {
+	return r.runRepairUntilApplied(ctx, session.RunStatusSuspended, func(callCtx context.Context) (storage.RunRepairResult, error) {
 		return r.Store.RepairRunSuspension(callCtx, command)
 	})
 }
 
-// repairRunTerminalUntilApplied retries one repair and publishes its event only
-// when the supplied repair record owns the stored terminal result.
-func (r *Runtime) repairRunTerminalUntilApplied(ctx context.Context, command storage.RunTerminal, event hooks.Event) error {
-	return r.runRepairUntilApplied(ctx, event, command.Status, func(callCtx context.Context) (storage.RunRepairResult, error) {
+// repairRunTerminalUntilApplied retries one repair until storage identifies
+// which terminal record owns the run.
+func (r *Runtime) repairRunTerminalUntilApplied(ctx context.Context, command storage.RunTerminal) (storage.RunRepairResult, error) {
+	return r.runRepairUntilApplied(ctx, command.Status, func(callCtx context.Context) (storage.RunRepairResult, error) {
 		return r.Store.RepairRunTerminal(callCtx, command)
 	})
 }
 
-// runRepairUntilApplied retries temporary store failures. Once the repair is
-// stored, local observers run once and keyed stream delivery retries without
-// asking the store to repair a terminal run again.
-func (r *Runtime) runRepairUntilApplied(ctx context.Context, event hooks.Event, expected session.RunStatus, call runRepairCall) error {
+// runRepairUntilApplied retries temporary store failures without publishing a
+// record before the caller knows which terminal result won.
+func (r *Runtime) runRepairUntilApplied(ctx context.Context, expected session.RunStatus, call runRepairCall) (storage.RunRepairResult, error) {
 	delay := 100 * time.Millisecond
 	for {
 		result, err := call(ctx)
 		if err == nil {
 			if resultErr := validateRunRepairResult(result, expected); resultErr != nil {
-				return resultErr
+				return storage.RunRepairResult{}, resultErr
 			}
-			if result.Outcome == storage.RunRepairDifferentTerminal {
-				return nil
-			}
-			if result.Outcome == storage.RunRepairStored {
-				r.publishInsertedHook(ctx, event, result.Record)
-			}
-			return r.publishRepairStreamUntilApplied(ctx, event, result.Record)
+			return result, nil
 		} else {
 			err = classifyStorageActivityError(err)
 		}
 		if engine.IsActivityErrorNonRetryable(err) {
-			return err
+			return storage.RunRepairResult{}, err
 		}
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return storage.RunRepairResult{}, ctx.Err()
 		case <-timer.C:
 		}
 		delay = min(delay*2, 5*time.Second)
 	}
 }
 
-// publishRepairStreamUntilApplied retries only live stream delivery after a
-// repair write succeeds. It never repeats the repair store operation.
-func (r *Runtime) publishRepairStreamUntilApplied(ctx context.Context, event hooks.Event, result storage.AppendResult) error {
+// publishStoredHookStreamUntilApplied retries delivery of one stored event. It
+// never repeats the store operation that returned the record identifier. The
+// Session status returned with that write decides whether delivery is required:
+// an event accepted while active remains due even if the Session later ends.
+func (r *Runtime) publishStoredHookStreamUntilApplied(ctx context.Context, event hooks.Event, result storage.AppendResult) error {
 	delay := 100 * time.Millisecond
 	for {
 		if err := r.publishStoredHookStream(ctx, event, result); err == nil {

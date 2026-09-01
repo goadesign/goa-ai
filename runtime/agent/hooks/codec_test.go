@@ -582,6 +582,57 @@ func TestDecodeFromRecordInputRunSuspendedRoundTrip(t *testing.T) {
 	require.Equal(t, []tools.Ident{"svc.read", "svc.write"}, got.RequiredTools)
 }
 
+func TestDecodeFromRecordInputRejectsFieldsAndValuesOutsideLifecyclePayload(t *testing.T) {
+	for _, event := range []Event{
+		NewRunCompletedEvent(
+			testRunID,
+			agent.Ident("agent-1"),
+			testSessionID,
+			"success",
+			run.PhaseCompleted,
+			nil,
+			nil,
+			nil,
+		),
+		NewRunSuspendedEvent(
+			testRunID,
+			agent.Ident("agent-1"),
+			testSessionID,
+			"suspension-1",
+			"v1",
+			1,
+			nil,
+		),
+		NewChildRunLinkedEvent(
+			"parent-run",
+			agent.Ident("parent-agent"),
+			testSessionID,
+			tools.Ident("parent.tools.child"),
+			"tool-call-1",
+			testRunID,
+			agent.Ident("agent-1"),
+		),
+	} {
+		t.Run(string(event.Type()), func(t *testing.T) {
+			record, err := EncodeToRecordInput(event, EncodeOptions{
+				EventKey:    "strict-lifecycle-record",
+				TimestampMS: 106,
+			})
+			require.NoError(t, err)
+
+			unknown := *record
+			unknown.Payload = rawjson.Message(strings.TrimSuffix(string(record.Payload), "}") + `,"unknown":true}`)
+			_, err = DecodeFromRecordInput(&unknown)
+			require.ErrorContains(t, err, `unknown field "unknown"`)
+
+			trailing := *record
+			trailing.Payload = rawjson.Message(string(record.Payload) + ` {}`)
+			_, err = DecodeFromRecordInput(&trailing)
+			require.ErrorContains(t, err, "multiple JSON values")
+		})
+	}
+}
+
 func TestDecodeFromRecordInput_RunCompletedRejectsFailedPayloadWithoutFailure(t *testing.T) {
 	payload, err := json.Marshal(runCompletedPayload{
 		Status: "failed",

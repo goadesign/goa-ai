@@ -563,6 +563,7 @@ A root start always stores `RunStarted`. If the session has ended, it then
 stores `RunCompleted` with canceled status and the workflow does no planner or
 tool work. A child start always stores `ChildRunLinked` followed by
 `RunStarted`; an ended session adds the canceled `RunCompleted` record. A
+Temporal child is terminated if its parent workflow closes first. A
 continued run puts the exact run ID whose
 checkpoint it restored in `RunStarted.PredecessorRunID`; initial runs leave it
 empty. The same value is part of `session.RunStart`. Before writing any part of
@@ -612,7 +613,9 @@ separate copy and an oversized or unserializable result fails in both engines.
 A child link
 stores the tool and call that created the child plus the child run and agent;
 tool arguments, budgets, attempts, and repeated identity remain in workflow
-input or dedicated event fields.
+input or dedicated event fields. A new child start is accepted only while its
+parent is running. An exact retry of an already stored child start remains valid
+after the parent stops.
 
 Cancellation stores its first reason and matching record before engine
 cancellation, retains it through every engine outcome, and never rolls it back.
@@ -624,18 +627,30 @@ active-run listing and its cancellation request also returns idempotent success.
 Suspension and terminal writes retry until the store either accepts the exact
 state change or returns a contract error that another retry cannot fix. Runtime
 reads never repair lifecycle state. If engine history is already closed while
-the stored run remains active, `Runtime.RepairRunCompletion` is the explicit
+the stored run remains active, `Runtime.EnsureRunCompletion` is the explicit
 command that retrieves the final engine result and writes the missing
-suspension or terminal record through a repair-only store operation. The store
-atomically writes the repair while the run is active or reports the terminal
-state that a workflow stored first. The runtime publishes the reconstructed
-event only when the repair owns the stored record. A failure to retrieve the
-engine result is distinct from the workflow's own final error and cannot be
-saved as the workflow outcome. The engine also returns the stable time at which
-it closed the workflow. Repair uses that time for the recovered record, so an
-exact retry cannot create a different timestamp. Every accepted lifecycle
-timestamp uses millisecond precision because runtime records carry time as
-integer milliseconds.
+suspension or terminal record through a repair-only store operation. If the run
+is already closed, the command validates and redelivers the exact stored result.
+The store atomically writes a missing result while the run is active or reports
+the terminal state that a workflow stored first. The runtime publishes a
+reconstructed event only when that event owns the stored record; otherwise it
+reloads and redelivers the stored winner. Before delivering a child terminal
+event, it validates the child's stored start and redelivers the exact parent
+link. `Runtime.EnsureChildRunLink` exposes that exact link delivery separately
+when a host must restore nested parent relationships before it replays final
+results in their stored order. Active Sessions require `Runtime.WithStream` for
+either ensure command. When the store response reports that this process
+inserted the completion, the runtime sends it to the local hook bus once before
+stream delivery. Retries redeliver only the exact stored stream events. Ended
+Sessions retain their results and suppress stream delivery. The Session status
+returned with the stored record decides the obligation, so an event accepted
+while active remains due if the Session ends during a delivery retry. A
+failure to retrieve the engine result is distinct from the workflow's
+own final error and cannot be saved as the workflow outcome. The engine also
+returns the stable time at which it closed the workflow. A recovered record
+uses that time, so an exact retry cannot create a different timestamp. Every
+accepted lifecycle timestamp uses millisecond precision because runtime records
+carry time as integer milliseconds.
 
 `RunOneShot` stores its start before invoking application code. It records
 prompt events and the terminal result after the callback returns, even when the

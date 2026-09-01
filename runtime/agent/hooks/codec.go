@@ -193,7 +193,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 	var evt Event
 	switch input.Type {
 	case RunStarted:
-		p, err := decodeRunStartedPayload(input.Payload)
+		p, err := decodeRecordPayload[runStartedPayload](input.Payload)
 		if err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", RunStarted, err)
 		}
@@ -221,15 +221,15 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		evt = NewPromptRenderedEvent(input.RunID, input.AgentID, input.SessionID, p.PromptID, p.Version, p.Scope)
 
 	case RunSuspended:
-		var p RunSuspendedEvent
-		if err := json.Unmarshal(input.Payload, &p); err != nil {
+		p, err := decodeRecordPayload[RunSuspendedEvent](input.Payload)
+		if err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", RunSuspended, err)
 		}
 		evt = NewRunSuspendedEvent(input.RunID, input.AgentID, input.SessionID, p.SuspensionID, p.Version, p.PendingCount, p.RequiredTools)
 
 	case RunCompleted:
-		var p runCompletedPayload
-		if err := json.Unmarshal(input.Payload, &p); err != nil {
+		p, err := decodeRecordPayload[runCompletedPayload](input.Payload)
+		if err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", RunCompleted, err)
 		}
 		rc, err := newRunCompletedEventFromPayload(
@@ -248,8 +248,8 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		evt = rc
 
 	case ChildRunLinked:
-		var p ChildRunLinkedEvent
-		if err := json.Unmarshal(input.Payload, &p); err != nil {
+		p, err := decodeRecordPayload[ChildRunLinkedEvent](input.Payload)
+		if err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ChildRunLinked, err)
 		}
 		evt = NewChildRunLinkedEvent(
@@ -475,20 +475,20 @@ func DecodeRunlogEvent(event *runlog.Event) (Event, error) {
 	return decoded, nil
 }
 
-// decodeRunStartedPayload rejects fields outside the current durable record
-// shape so stored records must be converted before this runtime reads them.
-func decodeRunStartedPayload(data []byte) (runStartedPayload, error) {
-	var payload runStartedPayload
+// decodeRecordPayload rejects fields and trailing values outside one durable
+// record shape so stored records must match the current typed contract.
+func decodeRecordPayload[T any](data []byte) (T, error) {
+	var payload T
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&payload); err != nil {
-		return runStartedPayload{}, err
+		return payload, err
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return runStartedPayload{}, errors.New("multiple JSON values")
+			return payload, errors.New("multiple JSON values")
 		}
-		return runStartedPayload{}, err
+		return payload, err
 	}
 	return payload, nil
 }

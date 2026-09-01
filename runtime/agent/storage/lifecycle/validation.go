@@ -52,7 +52,7 @@ func ValidateRootRunStart(command storage.RootRunStart) error {
 	if err := session.ValidateRunStart(command.Run, false); err != nil {
 		return err
 	}
-	if err := validateStartedRecord(command.Started, command.Run); err != nil {
+	if err := validateRunStartedRecord(command.Started, command.Run); err != nil {
 		return fmt.Errorf("started record: %w", err)
 	}
 	if err := validateStoppedRecord(command.Canceled, command.Run); err != nil {
@@ -73,7 +73,7 @@ func ValidateChildRunStart(command storage.ChildRunStart) error {
 	if err := validateChildLinkRecord(command.ParentLinked, command.Run); err != nil {
 		return fmt.Errorf("parent link record: %w", err)
 	}
-	if err := validateStartedRecord(command.Started, command.Run); err != nil {
+	if err := validateRunStartedRecord(command.Started, command.Run); err != nil {
 		return fmt.Errorf("started record: %w", err)
 	}
 	if err := validateStoppedRecord(command.Canceled, command.Run); err != nil {
@@ -104,7 +104,7 @@ func ValidateOneShotRunStart(command storage.OneShotRunStart) error {
 	case !command.Run.StartedAt.Equal(command.Run.StartedAt.Truncate(time.Millisecond)):
 		return errors.New("started_at must use millisecond precision")
 	}
-	if err := validateStartedRecord(command.Started, command.Run); err != nil {
+	if err := validateRunStartedRecord(command.Started, command.Run); err != nil {
 		return fmt.Errorf("started record: %w", err)
 	}
 	return nil
@@ -132,7 +132,7 @@ func ValidateOneShotChildRunStart(command storage.OneShotChildRunStart) error {
 	if err := validateChildLinkRecord(command.ParentLinked, command.Run); err != nil {
 		return fmt.Errorf("parent link record: %w", err)
 	}
-	if err := validateStartedRecord(command.Started, command.Run); err != nil {
+	if err := validateRunStartedRecord(command.Started, command.Run); err != nil {
 		return fmt.Errorf("started record: %w", err)
 	}
 	if command.ParentLinked.EventKey == command.Started.EventKey {
@@ -225,13 +225,70 @@ func ValidateRunTerminal(command storage.RunTerminal, meta session.RunMeta) erro
 	return nil
 }
 
-// validateStartedRecord decodes one run-started hook and compares all immutable
-// facts copied into run metadata.
-func validateStartedRecord(record *runlog.Event, start session.RunStart) error {
+// ValidateStoredRunStart checks a saved run-started event against the run data
+// returned by the store. The predecessor remains in the event because run
+// metadata does not keep a second copy of continuation history.
+func ValidateStoredRunStart(record *runlog.Event, meta session.RunMeta) error {
 	event, err := decodeHookRecord(record, hooks.RunStarted)
 	if err != nil {
 		return err
 	}
+	started := event.(*hooks.RunStartedEvent)
+	start := session.RunStart{
+		AgentID:          meta.AgentID,
+		RunID:            meta.RunID,
+		SessionID:        meta.SessionID,
+		ParentRunID:      meta.ParentRunID,
+		PredecessorRunID: started.PredecessorRunID,
+		StartedAt:        meta.StartedAt,
+		Labels:           meta.Labels,
+	}
+	if err := session.ValidateRunStart(start, meta.ParentRunID != ""); err != nil {
+		return err
+	}
+	return validateRunStartedEvent(record, event, start)
+}
+
+// ValidateStoredChildLink checks a saved parent event against the parent and
+// child run data returned by the store.
+func ValidateStoredChildLink(record *runlog.Event, parent, child session.RunMeta) error {
+	if parent.RunID != child.ParentRunID {
+		return errors.New("stored parent run does not match child parent id")
+	}
+	if parent.SessionID != child.SessionID {
+		return errors.New("stored parent and child belong to different sessions")
+	}
+	event, err := decodeHookRecord(record, hooks.ChildRunLinked)
+	if err != nil {
+		return err
+	}
+	if err := validateChildLinkEvent(event, session.RunStart{
+		AgentID:     child.AgentID,
+		RunID:       child.RunID,
+		SessionID:   child.SessionID,
+		ParentRunID: child.ParentRunID,
+	}); err != nil {
+		return err
+	}
+	if event.AgentID() != parent.AgentID {
+		return errors.New("parent agent does not match stored run")
+	}
+	return nil
+}
+
+// validateRunStartedRecord decodes one run-started hook and compares every
+// immutable fact supplied when the run was created.
+func validateRunStartedRecord(record *runlog.Event, start session.RunStart) error {
+	event, err := decodeHookRecord(record, hooks.RunStarted)
+	if err != nil {
+		return err
+	}
+	return validateRunStartedEvent(record, event, start)
+}
+
+// validateRunStartedEvent compares a decoded event with the run start that the
+// same storage operation writes.
+func validateRunStartedEvent(record *runlog.Event, event hooks.Event, start session.RunStart) error {
 	if err := validateEventOwner(event, start.RunID, start.AgentID, start.SessionID); err != nil {
 		return err
 	}
@@ -283,12 +340,21 @@ func validateChildLinkRecord(record *runlog.Event, start session.RunStart) error
 	if err != nil {
 		return err
 	}
+	return validateChildLinkEvent(event, start)
+}
+
+// validateChildLinkEvent checks the parent call and child identity stored in a
+// decoded child-link event.
+func validateChildLinkEvent(event hooks.Event, start session.RunStart) error {
 	linked := event.(*hooks.ChildRunLinkedEvent)
 	if linked.RunID() != start.ParentRunID || linked.SessionID() != start.SessionID {
 		return errors.New("parent identity does not match child run")
 	}
 	if linked.ChildRunID != start.RunID || linked.ChildAgentID != agent.Ident(start.AgentID) {
 		return errors.New("child identity does not match run")
+	}
+	if linked.ToolName == "" || linked.ToolCallID == "" {
+		return errors.New("parent tool name and call id are required")
 	}
 	return nil
 }

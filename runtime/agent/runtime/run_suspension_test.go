@@ -39,17 +39,28 @@ func TestLoadRunSuspensionRejectsCheckpointOwnerMismatch(t *testing.T) {
 			},
 			wantText: "does not match run session",
 		},
+		{
+			name: "parent",
+			mutate: func(run *session.RunMeta) {
+				run.ParentRunID = "parent-other"
+			},
+			wantText: "does not match run parent",
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			suspension := suspensionContractFixtureWithContext(
-				t, "svc.lookup", "svc.agent", "run-1", nil, nil,
+				t, "svc.lookup", "svc.agent", "run-1", map[string]string{"site": "one"}, nil,
 			)
+			rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+				checkpoint.Context.ParentRunID = "parent"
+			})
 			data, err := json.Marshal(suspension)
 			require.NoError(t, err)
 			run := session.RunMeta{
 				RunID: "run-1", AgentID: "svc.agent", SessionID: "session-1",
-				Status: session.RunStatusSuspended,
+				ParentRunID: "parent", Status: session.RunStatusSuspended,
+				Labels: map[string]string{"site": "one"},
 			}
 			test.mutate(&run)
 			store := suspensionReadStore{
@@ -64,6 +75,28 @@ func TestLoadRunSuspensionRejectsCheckpointOwnerMismatch(t *testing.T) {
 			require.ErrorContains(t, err, test.wantText)
 		})
 	}
+}
+
+func TestLoadRunSuspensionAcceptsLabelsAddedAfterRunStart(t *testing.T) {
+	suspension := suspensionContractFixtureWithContext(
+		t, "svc.lookup", "svc.agent", "run-1", map[string]string{
+			"site":   "one",
+			"policy": "approved",
+		}, nil,
+	)
+	data, err := json.Marshal(suspension)
+	require.NoError(t, err)
+	store := suspensionReadStore{
+		run: session.RunMeta{
+			RunID: "run-1", AgentID: "svc.agent", SessionID: "session-1",
+			Status: session.RunStatusSuspended, Labels: map[string]string{"site": "one"},
+		},
+		suspension: session.RunSuspension{ID: suspension.ID, Data: data},
+	}
+
+	stored, err := New(store).LoadRunSuspension(t.Context(), store.run.RunID)
+	require.NoError(t, err)
+	require.Equal(t, suspension, stored)
 }
 
 func (s suspensionReadStore) LoadRun(context.Context, string) (session.RunMeta, error) {
