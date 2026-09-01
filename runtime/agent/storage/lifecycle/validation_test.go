@@ -15,6 +15,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestValidateOrdinaryRunRecordRejectsLifecycleTypes(t *testing.T) {
@@ -179,6 +180,85 @@ func TestValidateOneShotChildRunStart(t *testing.T) {
 	withoutParent := command
 	withoutParent.Run.ParentRunID = ""
 	require.ErrorIs(t, ValidateOneShotChildRunStart(withoutParent), session.ErrParentRunIDRequired)
+}
+
+func TestValidateChildRunStartRequiresParentToolIdentity(t *testing.T) {
+	startedAt := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
+	parent := session.RunStart{
+		AgentID: "parent.agent", RunID: "parent", SessionID: "session", StartedAt: startedAt,
+	}
+	child := session.RunStart{
+		AgentID: "child.agent", RunID: "child", SessionID: parent.SessionID,
+		ParentRunID: parent.RunID, StartedAt: startedAt,
+	}
+	started := lifecycleRecord(t, hooks.NewRunStartedEvent(
+		child.RunID, agent.Ident(child.AgentID), child.SessionID, child.ParentRunID, "", nil,
+	), startedAt)
+	canceled := lifecycleRecord(t, hooks.NewRunCompletedEvent(
+		child.RunID,
+		agent.Ident(child.AgentID),
+		child.SessionID,
+		"canceled",
+		run.PhaseCanceled,
+		nil,
+		context.Canceled,
+		&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
+	), startedAt)
+
+	for _, test := range []struct {
+		name       string
+		toolName   string
+		toolCallID string
+	}{
+		{name: "missing tool name", toolCallID: "call-1"},
+		{name: "missing tool call id", toolName: "parent.tools.child"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			linked := lifecycleRecord(t, hooks.NewChildRunLinkedEvent(
+				parent.RunID,
+				agent.Ident(parent.AgentID),
+				parent.SessionID,
+				tools.Ident(test.toolName),
+				test.toolCallID,
+				child.RunID,
+				agent.Ident(child.AgentID),
+			), startedAt)
+
+			err := ValidateChildRunStart(storage.ChildRunStart{
+				Run: child, ParentLinked: linked, Started: started, Canceled: canceled,
+			})
+			require.ErrorContains(t, err, "parent tool name and call id are required")
+		})
+	}
+}
+
+func TestValidateStoredChildLinkRequiresExactStoredParent(t *testing.T) {
+	startedAt := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
+	parent := session.RunMeta{
+		AgentID: "parent.agent", RunID: "parent", SessionID: "session",
+		StartedAt: startedAt,
+	}
+	child := session.RunMeta{
+		AgentID: "child.agent", RunID: "child", SessionID: parent.SessionID,
+		ParentRunID: parent.RunID, StartedAt: startedAt,
+	}
+	linked := lifecycleRecord(t, hooks.NewChildRunLinkedEvent(
+		parent.RunID,
+		agent.Ident(parent.AgentID),
+		parent.SessionID,
+		"parent.tools.child",
+		"call-1",
+		child.RunID,
+		agent.Ident(child.AgentID),
+	), startedAt)
+	require.NoError(t, ValidateStoredChildLink(linked, parent, child))
+
+	wrongID := parent
+	wrongID.RunID = "other"
+	require.ErrorContains(t, ValidateStoredChildLink(linked, wrongID, child), "does not match child parent id")
+	wrongSession := parent
+	wrongSession.SessionID = "other"
+	require.ErrorContains(t, ValidateStoredChildLink(linked, wrongSession, child), "different sessions")
 }
 
 func TestValidateSessionRunStartRejectsStartedAndCanceledKeyCollision(t *testing.T) {

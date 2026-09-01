@@ -1,26 +1,32 @@
-// Package runtime tests explicit repair of missing terminal records from closed
+// Package runtime tests explicit completion recovery and redelivery from closed
 // workflow history. Snapshot reads are covered separately and remain read-only.
 package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-var repairedCompletionTime = time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
+const completionParentRunID = "parent"
+
+var ensuredCompletionTime = time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
 
 type (
 	// completionQueryEngine returns one configured completion while
@@ -43,6 +49,8 @@ type (
 	workflowTerminalWinsStore struct {
 		storage.Store
 		workflowTimestamp time.Time
+		endSession        bool
+		reportedStatus    session.RunStatus
 	}
 
 	// workflowSuspensionWinsStore records the workflow's suspension after the
@@ -50,6 +58,13 @@ type (
 	workflowSuspensionWinsStore struct {
 		storage.Store
 		workflowTimestamp time.Time
+		endSession        bool
+	}
+
+	// differentTerminalRepairStore reports that another terminal record owns a
+	// run even when repair supplies the stored record.
+	differentTerminalRepairStore struct {
+		storage.Store
 	}
 
 	// countingTerminalRepairStore records how often the runtime asks storage to
@@ -59,11 +74,35 @@ type (
 		calls int
 	}
 
+	// sessionStatusRepairStore changes only the Session status returned beside
+	// a successfully stored terminal record.
+	sessionStatusRepairStore struct {
+		storage.Store
+		status session.SessionStatus
+	}
+
 	// lostTerminalRepairResponseStore commits its first repair but reports a
 	// temporary response failure so the runtime must repeat the exact command.
 	lostTerminalRepairResponseStore struct {
 		storage.Store
 		calls int
+	}
+
+	// completionReplayStore observes or changes stored completion reads for
+	// focused recovery tests.
+	completionReplayStore struct {
+		storage.Store
+		list              func(runlog.Page) runlog.Page
+		listRun           func(string, runlog.Page) runlog.Page
+		loadRun           func(session.RunMeta) session.RunMeta
+		loadSuspension    func(session.RunSuspension) session.RunSuspension
+		terminalCommand   *storage.RunTerminal
+		suspensionCommand *storage.RunSuspension
+	}
+
+	// completionEventSink records the events sent while ensuring completion.
+	completionEventSink struct {
+		events []stream.Event
 	}
 )
 
@@ -87,7 +126,19 @@ func (s workflowTerminalWinsStore) RepairRunTerminal(ctx context.Context, comman
 	if _, err := s.RecordRunTerminal(ctx, workflow); err != nil {
 		return storage.RunRepairResult{}, err
 	}
-	return s.Store.RepairRunTerminal(ctx, command)
+	if s.endSession {
+		host := s.Store.(interface {
+			EndSession(context.Context, string, time.Time) (session.Session, error)
+		})
+		if _, err := host.EndSession(ctx, command.Record.SessionID, time.Now().UTC()); err != nil {
+			return storage.RunRepairResult{}, err
+		}
+	}
+	result, err := s.Store.RepairRunTerminal(ctx, command)
+	if err == nil && s.reportedStatus != "" {
+		result.Status = s.reportedStatus
+	}
+	return result, err
 }
 
 func (s workflowSuspensionWinsStore) RepairRunSuspension(ctx context.Context, command storage.RunSuspension) (storage.RunRepairResult, error) {
@@ -98,12 +149,35 @@ func (s workflowSuspensionWinsStore) RepairRunSuspension(ctx context.Context, co
 	if _, err := s.RecordRunSuspension(ctx, workflow); err != nil {
 		return storage.RunRepairResult{}, err
 	}
+	if s.endSession {
+		host := s.Store.(interface {
+			EndSession(context.Context, string, time.Time) (session.Session, error)
+		})
+		if _, err := host.EndSession(ctx, command.Record.SessionID, time.Now().UTC()); err != nil {
+			return storage.RunRepairResult{}, err
+		}
+	}
 	return s.Store.RepairRunSuspension(ctx, command)
+}
+
+func (s differentTerminalRepairStore) RepairRunTerminal(context.Context, storage.RunTerminal) (storage.RunRepairResult, error) {
+	return storage.RunRepairResult{
+		Outcome: storage.RunRepairDifferentTerminal,
+		Status:  session.RunStatusCompleted,
+	}, nil
 }
 
 func (s *countingTerminalRepairStore) RepairRunTerminal(ctx context.Context, command storage.RunTerminal) (storage.RunRepairResult, error) {
 	s.calls++
 	return s.Store.RepairRunTerminal(ctx, command)
+}
+
+func (s sessionStatusRepairStore) RepairRunTerminal(ctx context.Context, command storage.RunTerminal) (storage.RunRepairResult, error) {
+	result, err := s.Store.RepairRunTerminal(ctx, command)
+	if err == nil {
+		result.Record.SessionStatus = s.status
+	}
+	return result, err
 }
 
 func (s *lostTerminalRepairResponseStore) RepairRunTerminal(ctx context.Context, command storage.RunTerminal) (storage.RunRepairResult, error) {
@@ -118,7 +192,65 @@ func (s *lostTerminalRepairResponseStore) RepairRunTerminal(ctx context.Context,
 	return result, nil
 }
 
-func TestRepairRunCompletionStoresSuccessfulResultOnce(t *testing.T) {
+func (s *completionReplayStore) ListRunRecords(ctx context.Context, runID, cursor string, limit int) (runlog.Page, error) {
+	page, err := s.Store.ListRunRecords(ctx, runID, cursor, limit)
+	if err != nil {
+		return page, err
+	}
+	if s.list != nil {
+		page = s.list(page)
+	}
+	if s.listRun != nil {
+		page = s.listRun(runID, page)
+	}
+	return page, nil
+}
+
+func (s *completionReplayStore) LoadRun(ctx context.Context, runID string) (session.RunMeta, error) {
+	meta, err := s.Store.LoadRun(ctx, runID)
+	if err != nil || s.loadRun == nil {
+		return meta, err
+	}
+	return s.loadRun(meta), nil
+}
+
+func (s *completionReplayStore) LoadRunSuspension(ctx context.Context, runID string) (session.RunSuspension, error) {
+	suspension, err := s.Store.LoadRunSuspension(ctx, runID)
+	if err != nil || s.loadSuspension == nil {
+		return suspension, err
+	}
+	return s.loadSuspension(suspension), nil
+}
+
+func (s *completionReplayStore) RepairRunTerminal(ctx context.Context, command storage.RunTerminal) (storage.RunRepairResult, error) {
+	s.terminalCommand = &command
+	return s.Store.RepairRunTerminal(ctx, command)
+}
+
+func (s *completionReplayStore) RepairRunSuspension(ctx context.Context, command storage.RunSuspension) (storage.RunRepairResult, error) {
+	s.suspensionCommand = &command
+	return s.Store.RepairRunSuspension(ctx, command)
+}
+
+func (s *completionEventSink) Send(_ context.Context, event stream.Event) error {
+	s.events = append(s.events, event)
+	return nil
+}
+
+func (s *completionEventSink) Close(context.Context) error {
+	return nil
+}
+
+// newCompletionSubscriber provides a working stream for tests whose success
+// includes delivery to an active Session.
+func newCompletionSubscriber(t *testing.T) *stream.Subscriber {
+	t.Helper()
+	subscriber, err := stream.NewSubscriber(&completionEventSink{})
+	require.NoError(t, err)
+	return subscriber
+}
+
+func TestEnsureRunCompletionStoresSuccessfulResultOnce(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
 		AgentID: "svc.agent", RunID: "run", SessionID: "session",
@@ -128,14 +260,15 @@ func TestRepairRunCompletionStoresSuccessfulResultOnce(t *testing.T) {
 		Store: store,
 		Bus:   hooks.NewBus(),
 		Engine: completionQueryEngine{
-			completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: repairedCompletionTime, Output: &api.RunOutput{
+			completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime, Output: &api.RunOutput{
 				AgentID: "svc.agent", RunID: "run", Final: &model.Message{},
 			}},
 		},
+		streamSubscriber: newCompletionSubscriber(t),
 	}
 
-	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
-	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
+	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), "run"))
+	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), "run"))
 	meta, err := store.LoadRun(t.Context(), "run")
 	require.NoError(t, err)
 	require.Equal(t, session.RunStatusCompleted, meta.Status)
@@ -143,113 +276,36 @@ func TestRepairRunCompletionStoresSuccessfulResultOnce(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Events, 2)
 	require.Equal(t, hooks.RunCompleted, page.Events[1].Type)
-	require.Equal(t, repairedCompletionTime, page.Events[1].Timestamp)
+	require.Equal(t, ensuredCompletionTime, page.Events[1].Timestamp)
 }
 
-func TestValidateRepairCompletionRejectsInvalidWorkflowOutput(t *testing.T) {
-	t.Parallel()
-
-	for _, test := range []struct {
-		name   string
-		output *api.RunOutput
-	}{
-		{
-			name:   "missing terminal result",
-			output: &api.RunOutput{AgentID: "svc.agent", RunID: "run"},
-		},
-		{
-			name: "multiple terminal results",
-			output: &api.RunOutput{
-				AgentID:    "svc.agent",
-				RunID:      "run",
-				Final:      &model.Message{},
-				Suspension: &api.RunSuspension{},
-			},
-		},
-		{
-			name: "invalid suspension",
-			output: &api.RunOutput{
-				AgentID:    "svc.agent",
-				RunID:      "run",
-				Suspension: &api.RunSuspension{},
-			},
-		},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-
-			err := validateRepairCompletion(engine.RunCompletion{
-				Status:      engine.RunStatusCompleted,
-				CompletedAt: repairedCompletionTime,
-				Output:      test.output,
-			}, &RunInput{AgentID: "svc.agent", RunID: "run"})
-
-			require.ErrorIs(t, err, ErrRunCompletionCorrupt)
-		})
-	}
-}
-
-func TestRepairRunCompletionStoresWorkflowFailure(t *testing.T) {
-	store := newTestStore()
-	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
-	})
-	runtime := &Runtime{
-		Store: store,
-		Bus:   hooks.NewBus(),
-		Engine: completionQueryEngine{
-			completion: engine.RunCompletion{
-				Status: engine.RunStatusFailed, CompletedAt: repairedCompletionTime, WorkflowError: errors.New("planner failed"),
-			},
-		},
-	}
-
-	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
-	meta, err := store.LoadRun(t.Context(), "run")
-	require.NoError(t, err)
-	require.Equal(t, session.RunStatusFailed, meta.Status)
-}
-
-func TestRepairRunCompletionRetriesStreamWithoutRepeatingStore(t *testing.T) {
+func TestEnsureRunCompletionReplaysStoredTerminalExactly(t *testing.T) {
 	stored := newTestStore()
-	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+	meta := session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session",
+		Status: session.RunStatusRunning, Labels: map[string]string{"site": "one"},
+	}
+	admitRunForTest(t, stored, meta)
+	at := ensuredCompletionTime.Add(123 * time.Millisecond)
+	record := testHookRecord(t, hooks.NewRunCompletedEvent(
+		meta.RunID,
+		agent.Ident(meta.AgentID),
+		meta.SessionID,
+		"failed",
+		run.PhaseFailed,
+		meta.Labels,
+		errors.New("planner kept its exact failure"),
+		nil,
+	), "stored-terminal", at)
+	_, err := stored.RecordRunTerminal(t.Context(), storage.RunTerminal{
+		RunID: meta.RunID, Status: session.RunStatusFailed, Record: record,
 	})
-	store := &countingTerminalRepairStore{Store: stored}
+	require.NoError(t, err)
+
+	store := &completionReplayStore{Store: stored}
 	bus := hooks.NewBus()
 	busCalls := 0
-	_, err := bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
-		busCalls++
-		return nil
-	}))
-	require.NoError(t, err)
-	sink := &retryingStreamSink{err: errors.New("stream send failed")}
-	subscriber, err := stream.NewSubscriber(sink)
-	require.NoError(t, err)
-	runtime := &Runtime{
-		Store: store,
-		Bus:   bus,
-		Engine: completionQueryEngine{completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: repairedCompletionTime, Output: &api.RunOutput{
-			AgentID: "svc.agent", RunID: "run", Final: &model.Message{},
-		}}},
-		streamSubscriber: subscriber,
-	}
-
-	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
-	require.Equal(t, 1, store.calls)
-	require.Equal(t, 1, busCalls)
-	require.GreaterOrEqual(t, sink.callCount(), 2)
-}
-
-func TestRepairRunCompletionExactRetryResumesStreamDelivery(t *testing.T) {
-	stored := newTestStore()
-	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
-	})
-	store := &lostTerminalRepairResponseStore{Store: stored}
-	bus := hooks.NewBus()
-	busCalls := 0
-	_, err := bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
+	_, err = bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
 		busCalls++
 		return nil
 	}))
@@ -260,181 +316,655 @@ func TestRepairRunCompletionExactRetryResumesStreamDelivery(t *testing.T) {
 	runtime := &Runtime{
 		Store: store,
 		Bus:   bus,
-		Engine: completionQueryEngine{completion: engine.RunCompletion{
-			Status:      engine.RunStatusCompleted,
-			CompletedAt: repairedCompletionTime,
-			Output: &api.RunOutput{
-				AgentID: "svc.agent",
-				RunID:   "run",
-				Final:   &model.Message{},
-			},
-		}},
+		Engine: completionQueryEngine{
+			completionErr: errors.New("engine history must not be queried"),
+		},
 		streamSubscriber: subscriber,
 	}
 
-	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
-	require.Equal(t, 2, store.calls)
+	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), meta.RunID))
+	require.NotNil(t, store.terminalCommand)
+	require.Equal(t, record.EventKey, store.terminalCommand.Record.EventKey)
+	require.Equal(t, record.Timestamp, store.terminalCommand.Record.Timestamp)
+	require.Equal(t, []byte(record.Payload), []byte(store.terminalCommand.Record.Payload))
 	require.Zero(t, busCalls)
 	require.Equal(t, 2, sink.callCount())
 }
 
-func TestRepairRunCompletionStoresSuspension(t *testing.T) {
-	store := newTestStore()
-	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
-	})
-	suspension := suspensionContractFixtureWithContext(
-		t,
-		tools.Ident("svc.tools.lookup"),
-		"svc.agent",
-		"run-1",
+func TestEnsureRunCompletionRequiresStreamForActiveSession(t *testing.T) {
+	stored := newTestStore()
+	meta := session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session",
+		Status: session.RunStatusRunning,
+	}
+	admitRunForTest(t, stored, meta)
+	record := testHookRecord(t, hooks.NewRunCompletedEvent(
+		meta.RunID,
+		agent.Ident(meta.AgentID),
+		meta.SessionID,
+		"success",
+		run.PhaseCompleted,
 		nil,
 		nil,
-	)
-	runtime := &Runtime{
-		Store: store,
-		Bus:   hooks.NewBus(),
-		Engine: completionQueryEngine{
-			completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: repairedCompletionTime, Output: &api.RunOutput{
-				AgentID: "svc.agent", RunID: "run-1", Suspension: suspension,
-			}},
-		},
-	}
-
-	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run-1"))
-	meta, err := store.LoadRun(t.Context(), "run-1")
-	require.NoError(t, err)
-	require.Equal(t, session.RunStatusSuspended, meta.Status)
-	stored, err := runtime.LoadRunSuspension(t.Context(), "run-1")
-	require.NoError(t, err)
-	require.Equal(t, suspension.ID, stored.ID)
-}
-
-func TestRepairRunCompletionDoesNotPublishWhenWorkflowTerminalWins(t *testing.T) {
-	store := newTestStore()
-	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
-	})
-	workflowTimestamp := repairedCompletionTime
-	bus := hooks.NewBus()
-	published := 0
-	_, err := bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
-		published++
-		return nil
-	}))
-	require.NoError(t, err)
-	runtime := &Runtime{
-		Store: workflowTerminalWinsStore{Store: store, workflowTimestamp: workflowTimestamp},
-		Bus:   bus,
-		Engine: completionQueryEngine{completion: engine.RunCompletion{
-			Status: engine.RunStatusFailed, CompletedAt: repairedCompletionTime,
-			WorkflowError: errors.New("planner failed"),
-		}},
-	}
-
-	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run"))
-	require.Zero(t, published)
-	page, err := store.ListRunRecords(t.Context(), "run", "", 10)
-	require.NoError(t, err)
-	require.Len(t, page.Events, 2)
-	require.Equal(t, workflowTimestamp, page.Events[1].Timestamp)
-}
-
-func TestRepairRunCompletionDoesNotPublishWhenWorkflowSuspensionWins(t *testing.T) {
-	store := newTestStore()
-	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
-	})
-	suspension := suspensionContractFixtureWithContext(
-		t,
-		tools.Ident("svc.tools.lookup"),
-		"svc.agent",
-		"run-1",
 		nil,
-		nil,
-	)
-	workflowTimestamp := repairedCompletionTime.Add(-time.Second)
-	bus := hooks.NewBus()
-	published := 0
-	_, err := bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
-		published++
-		return nil
-	}))
-	require.NoError(t, err)
-	runtime := &Runtime{
-		Store: workflowSuspensionWinsStore{Store: store, workflowTimestamp: workflowTimestamp},
-		Bus:   bus,
-		Engine: completionQueryEngine{completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: repairedCompletionTime, Output: &api.RunOutput{
-			AgentID: "svc.agent", RunID: "run-1", Suspension: suspension,
-		}}},
-	}
-
-	require.NoError(t, runtime.RepairRunCompletion(t.Context(), "run-1"))
-	require.Zero(t, published)
-	page, err := store.ListRunRecords(t.Context(), "run-1", "", 10)
-	require.NoError(t, err)
-	require.Len(t, page.Events, 2)
-	require.Equal(t, workflowTimestamp, page.Events[1].Timestamp)
-}
-
-func TestRepairRunCompletionDoesNotStoreRetrievalFailure(t *testing.T) {
-	store := newTestStore()
-	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+	), "stored-terminal", ensuredCompletionTime)
+	_, err := stored.RecordRunTerminal(t.Context(), storage.RunTerminal{
+		RunID: meta.RunID, Status: session.RunStatusCompleted, Record: record,
 	})
-	retrievalErr := errors.New("temporal unavailable")
-	runtime := &Runtime{
-		Store: store,
-		Bus:   hooks.NewBus(),
-		Engine: completionQueryEngine{
-			completionErr: retrievalErr,
-		},
-	}
-
-	err := runtime.RepairRunCompletion(t.Context(), "run")
-	require.ErrorIs(t, err, retrievalErr)
-	meta, err := store.LoadRun(t.Context(), "run")
 	require.NoError(t, err)
-	require.Equal(t, session.RunStatusRunning, meta.Status)
-	page, err := store.ListRunRecords(t.Context(), "run", "", 10)
-	require.NoError(t, err)
-	require.Len(t, page.Events, 1)
-}
-
-func TestRepairRunCompletionRejectsOpenWorkflow(t *testing.T) {
-	store := newTestStore()
-	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
-	})
+	store := &completionReplayStore{Store: stored}
 	runtime := &Runtime{
 		Store:  store,
 		Bus:    hooks.NewBus(),
-		Engine: completionQueryEngine{completion: engine.RunCompletion{Status: engine.RunStatusRunning}},
+		Engine: completionQueryEngine{completionErr: errors.New("engine history must not be queried")},
 	}
 
-	err := runtime.RepairRunCompletion(t.Context(), "run")
-	require.ErrorIs(t, err, ErrRunCompletionNotReady)
+	err = runtime.EnsureRunCompletion(t.Context(), meta.RunID)
+
+	require.ErrorContains(t, err, `active Session "session" requires Runtime.WithStream`)
+	require.NotNil(t, store.terminalCommand)
+	require.Nil(t, store.suspensionCommand)
 }
 
-func TestRepairRunCompletionStopsRetryingWhenCallerCancels(t *testing.T) {
+func TestEnsureRunCompletionNotifiesBusOnceBeforeMissingStream(t *testing.T) {
+	store := newTestStore()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+	})
+	bus := hooks.NewBus()
+	busCalls := 0
+	_, err := bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
+		busCalls++
+		return nil
+	}))
+	require.NoError(t, err)
+	runtime := &Runtime{
+		Store: store,
+		Bus:   bus,
+		Engine: completionQueryEngine{completion: engine.RunCompletion{
+			Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime,
+			Output: &api.RunOutput{AgentID: "svc.agent", RunID: "run", Final: &model.Message{}},
+		}},
+	}
+
+	err = runtime.EnsureRunCompletion(t.Context(), "run")
+	require.ErrorContains(t, err, `active Session "session" requires Runtime.WithStream`)
+	require.Equal(t, 1, busCalls)
+
+	sink := &retryingStreamSink{}
+	runtime.streamSubscriber, err = stream.NewSubscriber(sink)
+	require.NoError(t, err)
+	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), "run"))
+	require.Equal(t, 1, busCalls)
+	require.Equal(t, 2, sink.callCount())
+}
+
+func TestEnsureRunCompletionValidatesSessionStatusBeforeBus(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
 		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
-	called := make(chan struct{}, 1)
+	bus := hooks.NewBus()
+	busCalls := 0
+	_, err := bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
+		busCalls++
+		return nil
+	}))
+	require.NoError(t, err)
 	runtime := &Runtime{
-		Store: unavailableTerminalStore{Store: stored, called: called},
-		Bus:   hooks.NewBus(),
+		Store: sessionStatusRepairStore{Store: stored, status: "unknown"},
+		Bus:   bus,
 		Engine: completionQueryEngine{completion: engine.RunCompletion{
-			Status: engine.RunStatusFailed, CompletedAt: repairedCompletionTime, WorkflowError: errors.New("planner failed"),
+			Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime,
+			Output: &api.RunOutput{AgentID: "svc.agent", RunID: "run", Final: &model.Message{}},
 		}},
+		streamSubscriber: newCompletionSubscriber(t),
 	}
-	ctx, cancel := context.WithCancel(t.Context())
-	result := make(chan error, 1)
-	go func() {
-		result <- runtime.RepairRunCompletion(ctx, "run")
-	}()
-	<-called
-	cancel()
-	require.ErrorIs(t, <-result, context.Canceled)
+
+	err = runtime.EnsureRunCompletion(t.Context(), "run")
+	require.ErrorContains(t, err, `Session "session" has unsupported status "unknown"`)
+	require.Zero(t, busCalls)
+}
+
+func TestEnsureRunCompletionReplaysStoredSuspensionExactly(t *testing.T) {
+	stored := newTestStore()
+	meta := session.RunMeta{
+		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Status: session.RunStatusRunning,
+	}
+	admitRunForTest(t, stored, meta)
+	publicSuspension := suspensionContractFixture(t, tools.Ident("svc.tools.lookup"))
+	data, err := json.Marshal(publicSuspension)
+	require.NoError(t, err)
+	suspension := session.RunSuspension{ID: publicSuspension.ID, Data: data}
+	at := ensuredCompletionTime.Add(456 * time.Millisecond)
+	record := testHookRecord(t, hooks.NewRunSuspendedEvent(
+		meta.RunID,
+		agent.Ident(meta.AgentID),
+		meta.SessionID,
+		suspension.ID,
+		publicSuspension.Version,
+		len(publicSuspension.Pending),
+		publicSuspension.RequiredTools,
+	), "stored-suspension", at)
+	_, err = stored.RecordRunSuspension(t.Context(), storage.RunSuspension{
+		RunID: meta.RunID, Suspension: suspension, Record: record,
+	})
+	require.NoError(t, err)
+
+	store := &completionReplayStore{Store: stored}
+	sink := &retryingStreamSink{}
+	subscriber, err := stream.NewSubscriber(sink)
+	require.NoError(t, err)
+	runtime := &Runtime{
+		Store:            store,
+		Bus:              hooks.NewBus(),
+		Engine:           completionQueryEngine{completionErr: errors.New("engine history must not be queried")},
+		streamSubscriber: subscriber,
+	}
+
+	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), meta.RunID))
+	require.NotNil(t, store.suspensionCommand)
+	require.Equal(t, suspension, store.suspensionCommand.Suspension)
+	require.Equal(t, record.EventKey, store.suspensionCommand.Record.EventKey)
+	require.Equal(t, record.Timestamp, store.suspensionCommand.Record.Timestamp)
+	require.Equal(t, []byte(record.Payload), []byte(store.suspensionCommand.Record.Payload))
+	require.Equal(t, 2, sink.callCount())
+}
+
+func TestEnsureRunCompletionRejectsSuspensionEventMismatch(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*hooks.RunSuspendedEvent)
+	}{
+		{
+			name: "checkpoint id",
+			mutate: func(event *hooks.RunSuspendedEvent) {
+				event.SuspensionID = "different"
+			},
+		},
+		{
+			name: "checkpoint version",
+			mutate: func(event *hooks.RunSuspendedEvent) {
+				event.Version = "different"
+			},
+		},
+		{
+			name: "pending input count",
+			mutate: func(event *hooks.RunSuspendedEvent) {
+				event.PendingCount++
+			},
+		},
+		{
+			name: "required tools",
+			mutate: func(event *hooks.RunSuspendedEvent) {
+				event.RequiredTools = append(event.RequiredTools, "svc.tools.other")
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stored := newTestStore()
+			meta := session.RunMeta{
+				AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+				Status: session.RunStatusRunning,
+			}
+			admitRunForTest(t, stored, meta)
+			publicSuspension := suspensionContractFixture(t, tools.Ident("svc.tools.lookup"))
+			data, err := json.Marshal(publicSuspension)
+			require.NoError(t, err)
+			suspension := session.RunSuspension{ID: publicSuspension.ID, Data: data}
+			record := testHookRecord(t, hooks.NewRunSuspendedEvent(
+				meta.RunID,
+				agent.Ident(meta.AgentID),
+				meta.SessionID,
+				suspension.ID,
+				publicSuspension.Version,
+				len(publicSuspension.Pending),
+				publicSuspension.RequiredTools,
+			), "stored-suspension", ensuredCompletionTime)
+			_, err = stored.RecordRunSuspension(t.Context(), storage.RunSuspension{
+				RunID: meta.RunID, Suspension: suspension, Record: record,
+			})
+			require.NoError(t, err)
+
+			store := &completionReplayStore{
+				Store: stored,
+				list: func(page runlog.Page) runlog.Page {
+					page = cloneCompletionPage(page)
+					storedEvent := page.Events[len(page.Events)-1]
+					decoded, decodeErr := hooks.DecodeRunlogEvent(storedEvent)
+					require.NoError(t, decodeErr)
+					suspended := decoded.(*hooks.RunSuspendedEvent)
+					test.mutate(suspended)
+					payload, encodeErr := hooks.EncodeRecordPayload(suspended)
+					require.NoError(t, encodeErr)
+					storedEvent.Payload = payload
+					return page
+				},
+			}
+			runtime := &Runtime{
+				Store: store,
+				Bus:   hooks.NewBus(),
+				Engine: completionQueryEngine{
+					completionErr: errors.New("engine history must not be queried"),
+				},
+			}
+
+			err = runtime.EnsureRunCompletion(t.Context(), meta.RunID)
+			require.ErrorIs(t, err, ErrRunCompletionCorrupt)
+			require.Nil(t, store.suspensionCommand)
+		})
+	}
+}
+
+func TestEnsureRunCompletionDoesNotReplayStoredCompletionForEndedSession(t *testing.T) {
+	stored := newTestStore()
+	meta := session.RunMeta{
+		AgentID: "svc.agent", RunID: "run", SessionID: "session",
+		Status: session.RunStatusCompleted,
+	}
+	admitRunForTest(t, stored, meta)
+	_, err := stored.EndSession(t.Context(), meta.SessionID, ensuredCompletionTime)
+	require.NoError(t, err)
+	store := &completionReplayStore{Store: stored}
+	runtime := &Runtime{
+		Store:  store,
+		Bus:    hooks.NewBus(),
+		Engine: completionQueryEngine{completionErr: errors.New("engine history must not be queried")},
+	}
+
+	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), meta.RunID))
+	require.NotNil(t, store.terminalCommand)
+}
+
+func TestEnsureChildRunLinkRequiresStreamForActiveSession(t *testing.T) {
+	stored := newTestStore()
+	admitRunForTest(t, stored, session.RunMeta{
+		AgentID: "parent.agent", RunID: "parent", SessionID: "session",
+		Status: session.RunStatusRunning,
+	})
+	admitRunForTest(t, stored, session.RunMeta{
+		AgentID: "child.agent", RunID: "child", SessionID: "session",
+		ParentRunID: "parent", Status: session.RunStatusCompleted,
+	})
+	runtime := &Runtime{Store: stored, Bus: hooks.NewBus()}
+
+	err := runtime.EnsureChildRunLink(t.Context(), "child")
+
+	require.ErrorContains(t, err, `active Session "session" requires Runtime.WithStream`)
+}
+
+func TestEnsureChildRunLinkRejectsCorruptionBeforeMissingStream(t *testing.T) {
+	stored := newTestStore()
+	admitRunForTest(t, stored, session.RunMeta{
+		AgentID: "parent.agent", RunID: "parent", SessionID: "session",
+		Status: session.RunStatusRunning,
+	})
+	admitRunForTest(t, stored, session.RunMeta{
+		AgentID: "child.agent", RunID: "child", SessionID: "session",
+		ParentRunID: "parent", Status: session.RunStatusCompleted,
+	})
+	store := &completionReplayStore{
+		Store: stored,
+		loadRun: func(meta session.RunMeta) session.RunMeta {
+			if meta.RunID == "parent" {
+				meta.SessionID = "other"
+			}
+			return meta
+		},
+	}
+	runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
+
+	err := runtime.EnsureChildRunLink(t.Context(), "child")
+	require.ErrorIs(t, err, ErrRunCompletionCorrupt)
+	require.ErrorContains(t, err, "stored parent and child belong to different sessions")
+	require.NotContains(t, err.Error(), "requires Runtime.WithStream")
+}
+
+func TestEnsureRunCompletionRedeliversStoredChildLinkBeforeCompletion(t *testing.T) {
+	stored := newTestStore()
+	admitRunForTest(t, stored, session.RunMeta{
+		AgentID: "parent.agent", RunID: "parent", SessionID: "session", Status: session.RunStatusRunning,
+	})
+	started, err := prepareHookRecordInput(t.Context(), hooks.NewRunStartedEvent(
+		"child",
+		agent.Ident("child.agent"),
+		"session",
+		"parent",
+		"",
+		nil,
+	), "turn")
+	require.NoError(t, err)
+	linkedInput, err := prepareHookRecordInput(t.Context(), hooks.NewChildRunLinkedEvent(
+		"parent",
+		agent.Ident("parent.agent"),
+		"session",
+		tools.Ident("parent.tools.child"),
+		"tool-call",
+		"child",
+		agent.Ident("child.agent"),
+	), "turn")
+	require.NoError(t, err)
+	failedSubscriber, err := stream.NewSubscriber(failingStreamSink{err: errors.New("child link delivery failed")})
+	require.NoError(t, err)
+	startRuntime := &Runtime{
+		Store: stored, Bus: hooks.NewBus(), streamSubscriber: failedSubscriber,
+	}
+	_, err = startRuntime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
+		ChildStart: &api.ChildRunStartCommand{ParentLinked: linkedInput, Started: started},
+	})
+	require.ErrorContains(t, err, "child link delivery failed")
+	completed := testHookRecord(t, hooks.NewRunCompletedEvent(
+		"child",
+		agent.Ident("child.agent"),
+		"session",
+		"success",
+		run.PhaseCompleted,
+		nil,
+		nil,
+		nil,
+	), terminalRunEventKey, time.Now().UTC().Truncate(time.Millisecond))
+	_, err = stored.RecordRunTerminal(t.Context(), storage.RunTerminal{
+		RunID: "child", Status: session.RunStatusCompleted, Record: completed,
+	})
+	require.NoError(t, err)
+	parentRecords, err := stored.ListRunRecords(t.Context(), "parent", "", 10)
+	require.NoError(t, err)
+	require.Equal(t, hooks.ChildRunLinked, parentRecords.Events[1].Type)
+	childRecords, err := stored.ListRunRecords(t.Context(), "child", "", 10)
+	require.NoError(t, err)
+	require.Equal(t, []runlog.Type{hooks.RunStarted, hooks.RunCompleted}, []runlog.Type{
+		childRecords.Events[0].Type,
+		childRecords.Events[1].Type,
+	})
+
+	bus := hooks.NewBus()
+	busCalls := 0
+	_, err = bus.Register(hooks.SubscriberFunc(func(context.Context, hooks.Event) error {
+		busCalls++
+		return nil
+	}))
+	require.NoError(t, err)
+	sink := &completionEventSink{}
+	subscriber, err := stream.NewSubscriber(sink)
+	require.NoError(t, err)
+	runtime := &Runtime{
+		Store:            stored,
+		Bus:              bus,
+		Engine:           completionQueryEngine{completionErr: errors.New("engine history must not be queried")},
+		streamSubscriber: subscriber,
+	}
+
+	require.NoError(t, runtime.EnsureChildRunLink(t.Context(), "child"))
+	require.Zero(t, busCalls)
+	require.Len(t, sink.events, 1)
+	linked, ok := sink.events[0].(stream.ChildRunLinked)
+	require.True(t, ok)
+	require.Equal(t, "child", linked.Data.ChildRunID)
+	sink.events = nil
+
+	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), "child"))
+	require.Zero(t, busCalls)
+	require.Len(t, sink.events, 3)
+	linked, ok = sink.events[0].(stream.ChildRunLinked)
+	require.True(t, ok)
+	require.Equal(t, "child", linked.Data.ChildRunID)
+	require.Equal(t, agent.Ident("child.agent"), linked.Data.ChildAgentID)
+	require.Equal(t, parentRecords.Events[1].EventKey, linked.EventKey())
+	require.Equal(t, parentRecords.Events[1].Timestamp, linked.OccurredAt())
+	require.Equal(t, stream.EventWorkflow, sink.events[1].Type())
+	require.Equal(t, stream.EventRunStreamEnd, sink.events[2].Type())
+}
+
+func TestEnsureRunCompletionRejectsCorruptStoredChildPublication(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(string, runlog.Page) runlog.Page
+	}{
+		{
+			name: "unknown child link field",
+			mutate: func(runID string, page runlog.Page) runlog.Page {
+				if runID != completionParentRunID {
+					return page
+				}
+				page = cloneCompletionPage(page)
+				link := page.Events[len(page.Events)-1]
+				link.Payload = append(link.Payload[:len(link.Payload)-1], []byte(`,"unknown":true}`)...)
+				return page
+			},
+		},
+		{
+			name: "trailing child start value",
+			mutate: func(runID string, page runlog.Page) runlog.Page {
+				if runID != "child" {
+					return page
+				}
+				page = cloneCompletionPage(page)
+				page.Events[0].Payload = append(page.Events[0].Payload, []byte(` {}`)...)
+				return page
+			},
+		},
+		{
+			name: "missing parent tool name",
+			mutate: func(runID string, page runlog.Page) runlog.Page {
+				if runID != completionParentRunID {
+					return page
+				}
+				page = cloneCompletionPage(page)
+				link := page.Events[len(page.Events)-1]
+				decoded, err := hooks.DecodeRunlogEvent(link)
+				require.NoError(t, err)
+				linked := decoded.(*hooks.ChildRunLinkedEvent)
+				linked.ToolName = ""
+				payload, err := hooks.EncodeRecordPayload(linked)
+				require.NoError(t, err)
+				link.Payload = payload
+				return page
+			},
+		},
+		{
+			name: "missing parent tool call id",
+			mutate: func(runID string, page runlog.Page) runlog.Page {
+				if runID != completionParentRunID {
+					return page
+				}
+				page = cloneCompletionPage(page)
+				link := page.Events[len(page.Events)-1]
+				decoded, err := hooks.DecodeRunlogEvent(link)
+				require.NoError(t, err)
+				linked := decoded.(*hooks.ChildRunLinkedEvent)
+				linked.ToolCallID = ""
+				payload, err := hooks.EncodeRecordPayload(linked)
+				require.NoError(t, err)
+				link.Payload = payload
+				return page
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stored := newTestStore()
+			admitRunForTest(t, stored, session.RunMeta{
+				AgentID: "parent.agent", RunID: completionParentRunID, SessionID: "session", Status: session.RunStatusRunning,
+			})
+			admitRunForTest(t, stored, session.RunMeta{
+				AgentID: "child.agent", RunID: "child", SessionID: "session",
+				ParentRunID: completionParentRunID, Status: session.RunStatusCompleted,
+			})
+			store := &completionReplayStore{Store: stored, listRun: test.mutate}
+			runtime := &Runtime{
+				Store:  store,
+				Bus:    hooks.NewBus(),
+				Engine: completionQueryEngine{completionErr: errors.New("engine history must not be queried")},
+			}
+
+			err := runtime.EnsureRunCompletion(t.Context(), "child")
+			require.ErrorIs(t, err, ErrRunCompletionCorrupt)
+			require.ErrorContains(t, err, `run "child" stored lifecycle`)
+			require.NotContains(t, err.Error(), "requires Runtime.WithStream")
+		})
+	}
+}
+
+func TestEnsureRunCompletionRejectsCorruptStoredStartBeforeWritingCompletion(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*runlog.Event)
+	}{
+		{
+			name: "malformed payload",
+			mutate: func(record *runlog.Event) {
+				record.Payload = []byte(`{`)
+			},
+		},
+		{
+			name: "unknown payload field",
+			mutate: func(record *runlog.Event) {
+				record.Payload = []byte(`{"labels":{"site":"one"},"unknown":true}`)
+			},
+		},
+		{
+			name: "different timestamp",
+			mutate: func(record *runlog.Event) {
+				record.Timestamp = record.Timestamp.Add(time.Millisecond)
+			},
+		},
+		{
+			name: "different parent",
+			mutate: func(record *runlog.Event) {
+				record.Payload = []byte(`{"parent_run_id":"other","labels":{"site":"one"}}`)
+			},
+		},
+		{
+			name: "self predecessor",
+			mutate: func(record *runlog.Event) {
+				record.Payload = []byte(`{"predecessor_run_id":"run","labels":{"site":"one"}}`)
+			},
+		},
+		{
+			name: "different labels",
+			mutate: func(record *runlog.Event) {
+				record.Payload = []byte(`{"labels":{"site":"other"}}`)
+			},
+		},
+		{
+			name: "different session",
+			mutate: func(record *runlog.Event) {
+				record.SessionID = "other"
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stored := newTestStore()
+			meta := session.RunMeta{
+				AgentID: "svc.agent", RunID: "run", SessionID: "session",
+				Status: session.RunStatusRunning, Labels: map[string]string{"site": "one"},
+			}
+			admitRunForTest(t, stored, meta)
+			store := &completionReplayStore{
+				Store: stored,
+				list: func(page runlog.Page) runlog.Page {
+					page = cloneCompletionPage(page)
+					test.mutate(page.Events[0])
+					return page
+				},
+			}
+			runtime := &Runtime{
+				Store: store,
+				Bus:   hooks.NewBus(),
+				Engine: completionQueryEngine{completion: engine.RunCompletion{
+					Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime,
+					Output: &api.RunOutput{
+						AgentID: agent.Ident(meta.AgentID), RunID: meta.RunID, Final: &model.Message{},
+					},
+				}},
+			}
+
+			err := runtime.EnsureRunCompletion(t.Context(), meta.RunID)
+			require.ErrorIs(t, err, ErrRunCompletionCorrupt)
+			require.Nil(t, store.terminalCommand)
+			storedMeta, loadErr := stored.LoadRun(t.Context(), meta.RunID)
+			require.NoError(t, loadErr)
+			require.Equal(t, session.RunStatusRunning, storedMeta.Status)
+		})
+	}
+}
+
+func TestEnsureRunCompletionRejectsCorruptStoredCompletion(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		status         session.RunStatus
+		list           func(runlog.Page) runlog.Page
+		loadRun        func(session.RunMeta) session.RunMeta
+		loadSuspension func(session.RunSuspension) session.RunSuspension
+	}{
+		{
+			name:   "malformed payload",
+			status: session.RunStatusCompleted,
+			list: func(page runlog.Page) runlog.Page {
+				page = cloneCompletionPage(page)
+				page.Events[len(page.Events)-1].Payload = []byte(`{`)
+				return page
+			},
+		},
+		{
+			name:   "multiple completion records",
+			status: session.RunStatusCompleted,
+			list: func(page runlog.Page) runlog.Page {
+				page = cloneCompletionPage(page)
+				duplicate := *page.Events[len(page.Events)-1]
+				duplicate.ID += "-duplicate"
+				page.Events = append(page.Events, &duplicate)
+				return page
+			},
+		},
+		{
+			name:   "mismatched owner",
+			status: session.RunStatusCompleted,
+			list: func(page runlog.Page) runlog.Page {
+				page = cloneCompletionPage(page)
+				page.Events[len(page.Events)-1].AgentID = "other.agent"
+				return page
+			},
+		},
+		{
+			name:   "mismatched status",
+			status: session.RunStatusCompleted,
+			loadRun: func(meta session.RunMeta) session.RunMeta {
+				meta.Status = session.RunStatusFailed
+				return meta
+			},
+		},
+		{
+			name:   "mismatched suspension checkpoint",
+			status: session.RunStatusSuspended,
+			loadSuspension: func(suspension session.RunSuspension) session.RunSuspension {
+				suspension.ID = "other-suspension"
+				return suspension
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			stored := newTestStore()
+			meta := session.RunMeta{
+				AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: test.status,
+			}
+			admitRunForTest(t, stored, meta)
+			store := &completionReplayStore{
+				Store: stored, list: test.list, loadRun: test.loadRun,
+				loadSuspension: test.loadSuspension,
+			}
+			runtime := &Runtime{
+				Store: store,
+				Bus:   hooks.NewBus(),
+				Engine: completionQueryEngine{
+					completionErr: errors.New("engine history must not be queried"),
+				},
+			}
+
+			err := runtime.EnsureRunCompletion(t.Context(), meta.RunID)
+			require.ErrorIs(t, err, ErrRunCompletionCorrupt)
+			require.Nil(t, store.terminalCommand)
+			require.Nil(t, store.suspensionCommand)
+		})
+	}
 }

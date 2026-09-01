@@ -543,6 +543,7 @@ Parent runs receive a tool result with a child run link. The engine first
 accepts the child workflow under its stable, single-use run ID. A second
 explicit child start with that ID is rejected even after the first child
 finishes; deterministic Temporal replay remains part of the original start.
+Temporal explicitly terminates the child if its parent workflow closes first.
 The child's first write atomically creates its session metadata and appends
 `ChildRunLinked` followed by `RunStarted`. If session ending wins that race, it
 also appends the canceled `RunCompleted` record; the link and exact start
@@ -1133,12 +1134,28 @@ cancellation reason conflicts.
 
 Normal workflows retry their suspension and terminal writes until the runtime
 store accepts them. If a workflow closes in the engine while its stored run is
-still active, an operator may call `Runtime.RepairRunCompletion` with that run
+still active, an operator may call `Runtime.EnsureRunCompletion` with that run
 ID. The command reads the final engine result and stores the missing suspension
-or terminal record through a repair-only store method. The store writes the
-repair only while the run is active; if the workflow stored another final
-record first, that record remains authoritative. Repair uses the completion
-time returned by the engine, so every retry submits the same record timestamp.
+or terminal record through a repair-only store method. If the run is already
+closed, it validates and redelivers the exact stored result. If the workflow
+stores another final record while the command is running, that stored record
+remains authoritative and is the one redelivered. For a child run, the command
+also validates its stored start and redelivers the exact parent link before the
+terminal stream events. A recovered record uses the completion time returned by
+the engine, so every retry submits the same record timestamp.
+Both ensure commands require `Runtime.WithStream` while their Session is active.
+When the store response reports that this process inserted the completion, the
+runtime notifies the local hook bus once before stream delivery. A later retry
+only redelivers the exact stored stream events. An ended Session keeps its
+durable result and suppresses stream delivery. The Session status returned with
+the stored record decides this: an event accepted while active remains due even
+if the Session ends while delivery is retrying.
+Hosts that must restore several nested children before replaying their final
+results can call `Runtime.EnsureChildRunLink` in parent-first order. The command
+validates and redelivers only the exact stored parent link; it does not deliver
+the child's final result. A new child start requires its parent to be running,
+while an exact retry of an already stored child start remains valid after the
+parent stops.
 All accepted lifecycle timestamps use millisecond precision because runtime
 records carry time as integer milliseconds.
 `GetRunSnapshot`, `ListRunEvents`, and other reads never change stored state.

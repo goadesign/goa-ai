@@ -510,6 +510,68 @@ func TestOneShotChildStartRequiresRunningSessionlessParent(t *testing.T) {
 	})
 }
 
+func TestSessionChildStartRequiresRunningParent(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Millisecond)
+	newStore := func(t *testing.T) (*Store, session.RunStart) {
+		t.Helper()
+		store := New()
+		_, err := store.CreateSession(t.Context(), "session", now)
+		require.NoError(t, err)
+		parent := session.RunStart{
+			AgentID: "parent", RunID: "parent", SessionID: "session", StartedAt: now,
+		}
+		_, err = store.StartRootRun(t.Context(), rootStartCommand(t, parent))
+		require.NoError(t, err)
+		return store, parent
+	}
+	childCommand := func(t *testing.T, parent session.RunStart) storage.ChildRunStart {
+		t.Helper()
+		child := session.RunStart{
+			AgentID: "child", RunID: "child", SessionID: parent.SessionID,
+			ParentRunID: parent.RunID, StartedAt: now,
+		}
+		return storage.ChildRunStart{
+			Run: child, ParentLinked: childLinkRecord(t, "child-link", parent, child),
+			Started: startedRecord(t, "child-start", child),
+			Canceled: completedRecord(
+				t, "child-stop", child, "canceled",
+				&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
+			),
+		}
+	}
+
+	t.Run("new child", func(t *testing.T) {
+		store, parent := newStore(t)
+		_, err := store.RecordRunTerminal(t.Context(), storage.RunTerminal{
+			RunID: parent.RunID, Status: session.RunStatusCompleted,
+			Record: completedRecord(t, "parent-complete", parent, "success", nil),
+		})
+		require.NoError(t, err)
+
+		_, err = store.StartChildRun(t.Context(), childCommand(t, parent))
+		require.ErrorIs(t, err, session.ErrRunNotActive)
+	})
+
+	t.Run("exact retry", func(t *testing.T) {
+		store, parent := newStore(t)
+		command := childCommand(t, parent)
+		first, err := store.StartChildRun(t.Context(), command)
+		require.NoError(t, err)
+		_, err = store.RecordRunTerminal(t.Context(), storage.RunTerminal{
+			RunID: parent.RunID, Status: session.RunStatusCompleted,
+			Record: completedRecord(t, "parent-complete", parent, "success", nil),
+		})
+		require.NoError(t, err)
+
+		retry, err := store.StartChildRun(t.Context(), command)
+		require.NoError(t, err)
+		require.False(t, retry.ParentRecord.Inserted)
+		require.False(t, retry.Started.Inserted)
+		require.Equal(t, first.ParentRecord.ID, retry.ParentRecord.ID)
+		require.Equal(t, first.Started.ID, retry.Started.ID)
+	})
+}
+
 func TestChildStartAfterPurgeReportsPurgedSession(t *testing.T) {
 	ctx := t.Context()
 	now := time.Now().UTC().Truncate(time.Millisecond)

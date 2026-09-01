@@ -40,7 +40,9 @@ type (
 	Store interface {
 		// StartRootRun records the first state and record for a session root run.
 		StartRootRun(context.Context, RootRunStart) (RootRunStartResult, error)
-		// StartChildRun records the parent link and first child state together.
+		// StartChildRun records the parent link and first child state together. A
+		// new child requires a running parent. An exact retry remains valid after
+		// the parent stops.
 		StartChildRun(context.Context, ChildRunStart) (ChildRunStartResult, error)
 		// StartOneShotRun records a sessionless run before it does any work.
 		StartOneShotRun(context.Context, OneShotRunStart) (OneShotRunStartResult, error)
@@ -64,6 +66,9 @@ type (
 		RepairRunTerminal(context.Context, RunTerminal) (RunRepairResult, error)
 		// LoadRun returns durable lifecycle facts for one run.
 		LoadRun(context.Context, string) (session.RunMeta, error)
+		// LoadSessionStatus returns whether the Session currently accepts event
+		// delivery. Sessionless runs return ErrSessionNotFound.
+		LoadSessionStatus(context.Context, string) (session.SessionStatus, error)
 		// LoadRunSuspension returns the exact checkpoint stored for one run.
 		LoadRunSuspension(context.Context, string) (session.RunSuspension, error)
 		// ListRunRecords returns one ordered page for a run.

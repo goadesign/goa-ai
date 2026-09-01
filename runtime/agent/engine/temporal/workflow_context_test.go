@@ -18,6 +18,7 @@ import (
 	"go.temporal.io/sdk/client"
 	temporalsdk "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -411,9 +412,37 @@ func TestStartChildWorkflowSnapshotsCallerInput(t *testing.T) {
 	require.NoError(t, env.GetWorkflowError())
 }
 
+func TestStartChildWorkflowTerminatesWithParent(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.RegisterWorkflowWithOptions(
+		func(ctx workflow.Context, _ *api.RunInput) (*api.RunOutput, error) {
+			if err := workflow.NewTimer(ctx, time.Hour).Get(ctx, nil); err != nil {
+				return nil, err
+			}
+			return nil, errors.New("child outlived its parent")
+		},
+		workflow.RegisterOptions{Name: "owned-child"},
+	)
+	env.ExecuteWorkflow(func(ctx workflow.Context) error {
+		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		_, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
+			ID:        "owned-child-run",
+			Workflow:  "owned-child",
+			TaskQueue: "test.queue",
+			Input:     &api.RunInput{RunID: "owned-child-run"},
+		})
+		return err
+	})
+
+	require.NoError(t, env.GetWorkflowError())
+	require.True(t, temporalsdk.IsTerminatedError(env.GetWorkflowErrorByID("owned-child-run")))
+}
+
 func TestStartChildWorkflowEnforcesExactPayloadLimit(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
+	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: 5 * time.Second})
 	exact := temporalInputAtWorkflowBudget(t, "child1", "child", "test.queue", 0, 0)
 	oversized := temporalInputAtWorkflowBudget(t, "child2", "child", "test.queue", 0, 1)
 	env.RegisterWorkflowWithOptions(

@@ -2310,6 +2310,7 @@ nested agents execute as child workflows with their own run IDs and event stream
 2. Runtime identifies it as an agent-tool via `ToolSpec.IsAgentTool`
 3. Runtime starts the child workflow using the route in its generated
    `AgentDefinition`
+   Temporal terminates the child if its parent workflow closes first.
 4. Child agent executes its own plan/execute loop
 5. Runtime returns a parent `ToolResult` derived from the child run output (final text and/or finalizer output, plus aggregated telemetry). **Artifacts are not propagated to the parent tool result**; they remain attached to the child tool events.
 6. `ChildRunLinked` event links parent and child for streaming
@@ -3385,22 +3386,38 @@ The runtime exposes:
 
 - `Runtime.ListRunEvents(ctx, runID, cursor, limit)` for cursor-paginated listing
 - `Runtime.GetRunSnapshot(ctx, runID)` for a compact snapshot derived from replaying the run log
-- `Runtime.RepairRunCompletion(ctx, runID)` for the exceptional case where
-  engine history is closed but the stored run is still active
+- `Runtime.EnsureChildRunLink(ctx, runID)` to validate and redeliver one
+  session-backed child's exact stored parent link without delivering its final result
+- `Runtime.EnsureRunCompletion(ctx, runID)` to store a completion missing from
+  an active run or redeliver the exact result of a run that is already closed
 
 The first two operations are read-only. They never infer or store a missing
 terminal result. Normal workflow completion retries suspension and terminal
-writes until the store accepts them. `RepairRunCompletion` is a separate
-operator command: it verifies that engine history is terminal, retrieves the
-final workflow output and workflow error, and stores the missing suspension or
-terminal record through a repair-only store method. That method atomically
-writes the supplied repair while the run is active or reports that a workflow
-already stored a terminal result. The runtime publishes the reconstructed event
-only in the first case. A failure to retrieve the engine result is returned to
-the operator and is never stored as the workflow's final error. Repeating a
-successful repair is a no-op.
-The engine supplies one stable workflow completion time. Repair uses that time
-for the recovered record, so a retry submits the exact same timestamp.
+writes until the store accepts them. `EnsureRunCompletion` is a separate
+operator command. For an active run, it verifies that engine history is closed,
+retrieves the final workflow output and workflow error, and stores the missing
+suspension or terminal record through a repair-only store method. For a closed
+run, it validates and redelivers the exact stored result. If the workflow stores
+a different final record while the command is running, the command reloads and
+redelivers that stored winner instead of publishing its reconstructed result.
+For a child run, it first validates the stored child start and redelivers the
+exact stored parent link. This guarantees that stream consumers receive child
+attribution before the terminal child event. A failure to retrieve the engine
+result is returned to the operator and is never stored as the workflow's final
+error.
+`EnsureChildRunLink` lets a host restore nested links in parent-first order
+before it redelivers final results in stored order. New child starts require a
+running parent; exact retries of already stored child starts remain valid after
+the parent stops.
+Both ensure commands require `Runtime.WithStream` while the Session is active.
+When the store response reports that the ensure command inserted the missing
+completion, the runtime notifies the local hook bus once before stream delivery.
+Retrying the command redelivers only the exact stored stream events. An ended
+Session retains its durable result and suppresses stream delivery. The Session
+status returned with the stored record decides whether delivery is required. An
+event accepted while active remains due even if the Session ends during a retry.
+The engine supplies one stable workflow completion time. A recovered record
+uses that time, so a retry submits the exact same timestamp.
 Every accepted lifecycle timestamp uses millisecond precision because runtime
 records carry time as integer milliseconds. Stores reject finer timestamps
 instead of changing them, so an exact retry always carries the same value.
@@ -3863,7 +3880,7 @@ non-terminal status. Closed runs return their terminal status, stable
 `CompletedAt` time, and output or workflow error. The method's separate `error`
 reports that the adapter could not retrieve this information. There is no
 separate status method.
-Adapters must preserve this distinction so completion repair cannot record a
+Adapters must preserve this distinction so completion recovery cannot record a
 network or backend query error as the workflow's own failure.
 
 The activity methods and `Await` no longer accept a separate

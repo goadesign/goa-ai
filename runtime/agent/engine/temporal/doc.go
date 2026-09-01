@@ -74,7 +74,8 @@
 //   - PublishRecord schedules record persistence outside the workflow thread
 //   - ExecutePlannerActivity runs planner activities
 //   - ExecuteToolActivity/ExecuteToolActivityAsync run tool activities
-//   - StartChildWorkflow starts nested workflows
+//   - StartChildWorkflow starts nested workflows that Temporal terminates when
+//     their parent closes
 //
 // Planners and tool executors run inside activities, which are not constrained
 // by determinism. The workflow handler (generated code) coordinates activities

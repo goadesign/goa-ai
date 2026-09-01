@@ -119,6 +119,15 @@ func (s *Store) LoadSession(_ context.Context, sessionID string) (session.Sessio
 	return cloneSession(stored), nil
 }
 
+// LoadSessionStatus returns whether the host-owned Session is active or ended.
+func (s *Store) LoadSessionStatus(ctx context.Context, sessionID string) (session.SessionStatus, error) {
+	stored, err := s.LoadSession(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	return stored.Status, nil
+}
+
 // EndSession prevents future workflows from proceeding. Existing workflows
 // may still store terminal records.
 //
@@ -667,6 +676,9 @@ func (s *Store) startSessionRun(start session.RunStart, child bool, parent, star
 		}
 		if parentMeta.SessionID != start.SessionID {
 			return sessionRunStartResult{}, session.ErrRunSessionMismatch
+		}
+		if parentMeta.Status != session.RunStatusRunning {
+			return sessionRunStartResult{}, session.ErrRunNotActive
 		}
 	}
 	outcome := session.RunStartProceed
