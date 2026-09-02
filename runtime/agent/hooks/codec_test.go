@@ -80,6 +80,24 @@ func TestRunStartedCodecOmitsMissingPredecessor(t *testing.T) {
 	assert.Empty(t, started.PredecessorRunID)
 }
 
+func TestRunStartedCodecAcceptsEmptyPayload(t *testing.T) {
+	t.Parallel()
+
+	decoded, err := DecodeFromRecordInput(&runlog.ActivityInput{
+		Type:    RunStarted,
+		RunID:   testRunID,
+		AgentID: agent.Ident("service.agent"),
+		Payload: rawjson.Message(`{}`),
+	})
+	require.NoError(t, err)
+
+	started, ok := decoded.(*RunStartedEvent)
+	require.True(t, ok)
+	assert.Empty(t, started.ParentRunID)
+	assert.Empty(t, started.PredecessorRunID)
+	assert.Empty(t, started.Labels)
+}
+
 func TestRunStartedCodecRejectsLegacyAndUnknownPayloadFields(t *testing.T) {
 	t.Parallel()
 
@@ -629,6 +647,33 @@ func TestDecodeFromRecordInputRejectsFieldsAndValuesOutsideLifecyclePayload(t *t
 			trailing.Payload = rawjson.Message(string(record.Payload) + ` {}`)
 			_, err = DecodeFromRecordInput(&trailing)
 			require.ErrorContains(t, err, "multiple JSON values")
+		})
+	}
+}
+
+func TestDecodeFromRecordInputRejectsNullLifecyclePayload(t *testing.T) {
+	t.Parallel()
+
+	for _, eventType := range []EventType{
+		RunStarted,
+		RunSuspended,
+		RunCompleted,
+		ChildRunLinked,
+	} {
+		t.Run(string(eventType), func(t *testing.T) {
+			t.Parallel()
+
+			_, err := DecodeFromRecordInput(&runlog.ActivityInput{
+				Type:    eventType,
+				RunID:   testRunID,
+				AgentID: agent.Ident("service.agent"),
+				Payload: rawjson.Message(`null`),
+			})
+			require.EqualError(
+				t,
+				err,
+				"decode "+string(eventType)+" payload: record payload must not be null",
+			)
 		})
 	}
 }

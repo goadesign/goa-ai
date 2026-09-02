@@ -475,22 +475,27 @@ func DecodeRunlogEvent(event *runlog.Event) (Event, error) {
 	return decoded, nil
 }
 
-// decodeRecordPayload rejects fields and trailing values outside one durable
-// record shape so stored records must match the current typed contract.
+// decodeRecordPayload requires one non-null JSON object that matches the
+// durable record shape. It rejects unknown fields and any value after that
+// object.
 func decodeRecordPayload[T any](data []byte) (T, error) {
-	var payload T
+	var zero T
+	var payload *T
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&payload); err != nil {
-		return payload, err
+		return zero, err
+	}
+	if payload == nil {
+		return zero, errors.New("record payload must not be null")
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		if err == nil {
-			return payload, errors.New("multiple JSON values")
+			return zero, errors.New("multiple JSON values")
 		}
-		return payload, err
+		return zero, err
 	}
-	return payload, nil
+	return *payload, nil
 }
 
 func stampTurnID(evt Event, turnID string) {
