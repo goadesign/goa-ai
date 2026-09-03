@@ -305,12 +305,12 @@ Typed completion helpers are intentionally strict:
   them through planner streaming helpers, which are for assistant transcript
   text and tool execution events.
 - Providers that do not implement structured output surface `model.ErrStructuredOutputUnsupported`.
-- Generated schemas are canonical and provider-neutral. The Gemini adapter
-  omits only validation and annotation keywords Vertex rejects, then the
-  validated client applies the complete canonical schema to returned tool
-  calls. Unknown structural keywords fail before the request is sent; other
-  provider adapters must likewise fail explicitly when they cannot preserve
-  the declared contract.
+- Generated schemas are the provider-neutral source of truth. The Gemini
+  adapter translates `oneOf` choices to `anyOf` and omits only validation and
+  annotation keywords Vertex rejects. The validated client then applies the
+  complete original schema to returned tool calls. Unknown structural keywords
+  fail before the request is sent; other provider adapters must likewise fail
+  explicitly when they cannot preserve the declared contract.
 
 ### Unadvertised tool name recovery
 

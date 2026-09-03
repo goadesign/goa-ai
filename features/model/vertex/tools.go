@@ -12,9 +12,9 @@ import (
 )
 
 // encodeTools declares the request's tools as one genai.Tool with a
-// FunctionDeclaration per definition. Each canonical schema is projected onto
-// Gemini's documented function-schema vocabulary; the validated model client
-// remains authoritative for every canonical constraint Gemini cannot express.
+// FunctionDeclaration per definition. Each complete schema is prepared for
+// Gemini's smaller function-schema vocabulary; the validated model client
+// still applies every original rule Gemini cannot express.
 // Definitions without a description are rejected, matching the Bedrock
 // provider's convention rather than silently sending empty descriptions to
 // Gemini.
@@ -44,16 +44,16 @@ func encodeTools(defs []*model.ToolDefinition, canonToProv map[string]string) ([
 	return []*genai.Tool{{FunctionDeclarations: decls}}, nil
 }
 
-// normalizeToolSchema projects a canonical JSON Schema onto the subset Gemini
-// accepts for function arguments. It removes only validation and annotation
-// keywords that the request-owned canonical validator enforces after Gemini
-// returns a call; an unknown keyword fails instead of being reinterpreted.
+// normalizeToolSchema prepares a complete JSON Schema for Gemini function
+// arguments. It removes only rules and labels the validated model client checks
+// after Gemini returns a call; an unknown keyword fails instead of being
+// reinterpreted.
 func normalizeToolSchema(raw []byte) (any, error) {
 	schema, err := normalizeSchema(raw)
 	if err != nil {
 		return nil, err
 	}
-	if err := projectGeminiToolSchema(schema); err != nil {
+	if err := prepareGeminiToolSchema(schema); err != nil {
 		return nil, err
 	}
 	return schema, nil
@@ -106,13 +106,18 @@ func normalizeSchema(raw []byte) (any, error) {
 	return schema, nil
 }
 
-// projectGeminiToolSchema mutates one parsed schema after normalizeSchema has
+// prepareGeminiToolSchema mutates one parsed schema after normalizeSchema has
 // established that its root is an object. Properties and definitions contain
 // arbitrary names, so only their child values are interpreted as schemas.
-func projectGeminiToolSchema(schema any) error {
+func prepareGeminiToolSchema(schema any) error {
 	object, ok := schema.(map[string]any)
 	if !ok {
 		return errors.New("gemini tool schema must be an object")
+	}
+	if _, hasOneOf := object["oneOf"]; hasOneOf {
+		if _, hasAnyOf := object["anyOf"]; hasAnyOf {
+			return errors.New("gemini tool schema cannot contain both \"oneOf\" and \"anyOf\"")
+		}
 	}
 	for keyword, value := range object {
 		switch keyword {
@@ -122,30 +127,34 @@ func projectGeminiToolSchema(schema any) error {
 				return fmt.Errorf("gemini tool schema %q must be an object", keyword)
 			}
 			for _, child := range children {
-				if err := projectGeminiToolSchema(child); err != nil {
+				if err := prepareGeminiToolSchema(child); err != nil {
 					return err
 				}
 			}
 		case "items":
-			if err := projectGeminiToolSchema(value); err != nil {
+			if err := prepareGeminiToolSchema(value); err != nil {
 				return err
 			}
 		case "additionalProperties":
 			if _, ok := value.(bool); ok {
 				continue
 			}
-			if err := projectGeminiToolSchema(value); err != nil {
+			if err := prepareGeminiToolSchema(value); err != nil {
 				return err
 			}
-		case "anyOf":
+		case "anyOf", "oneOf":
 			choices, ok := value.([]any)
 			if !ok {
-				return errors.New("gemini tool schema \"anyOf\" must be an array")
+				return fmt.Errorf("gemini tool schema %q must be an array", keyword)
 			}
 			for _, choice := range choices {
-				if err := projectGeminiToolSchema(choice); err != nil {
+				if err := prepareGeminiToolSchema(choice); err != nil {
 					return err
 				}
+			}
+			if keyword == "oneOf" {
+				object["anyOf"] = choices
+				delete(object, "oneOf")
 			}
 		case "$ref", "type", "nullable", "required", "format", "description", "enum", "propertyOrdering":
 			// Gemini accepts these keywords unchanged.

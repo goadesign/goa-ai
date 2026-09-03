@@ -40,7 +40,12 @@ func TestEncodeTools(t *testing.T) {
 			"properties":{
 				"candidates":{
 					"type":"array",
-					"items":{"$ref":"#/$defs/Candidate"},
+					"items":{
+						"oneOf":[
+							{"$ref":"#/$defs/Candidate"},
+							{"type":"string"}
+						]
+					},
 					"maxItems":20
 				}
 			}
@@ -64,7 +69,11 @@ func TestEncodeTools(t *testing.T) {
 	candidates := props["candidates"].(map[string]any)
 	assert.NotContains(t, candidates, "maxItems")
 	items := candidates["items"].(map[string]any)
-	assert.Equal(t, "#/$defs/Candidate", items["$ref"])
+	assert.NotContains(t, items, "oneOf")
+	choices := items["anyOf"].([]any)
+	require.Len(t, choices, 2)
+	assert.Equal(t, "#/$defs/Candidate", choices[0].(map[string]any)["$ref"])
+	assert.Equal(t, "string", choices[1].(map[string]any)["type"])
 	definitions := schema["$defs"].(map[string]any)
 	candidate := definitions["Candidate"].(map[string]any)
 	assert.NotContains(t, candidate, "title")
@@ -116,6 +125,12 @@ func TestNormalizeSchemaPreservesLargeIntegers(t *testing.T) {
 func TestNormalizeToolSchemaRejectsUnknownKeyword(t *testing.T) {
 	schema, err := normalizeToolSchema([]byte(`{"type":"object","properties":{"answer":{"type":"string","const":"yes"}}}`))
 	require.EqualError(t, err, `gemini tool schema keyword "const" is unsupported`)
+	assert.Nil(t, schema)
+}
+
+func TestNormalizeToolSchemaRejectsCombinedChoices(t *testing.T) {
+	schema, err := normalizeToolSchema([]byte(`{"type":"object","oneOf":[{"type":"string"}],"anyOf":[{"type":"string"}]}`))
+	require.EqualError(t, err, `gemini tool schema cannot contain both "oneOf" and "anyOf"`)
 	assert.Nil(t, schema)
 }
 
