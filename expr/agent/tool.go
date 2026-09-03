@@ -375,6 +375,9 @@ func validateInjectedFields(t *ToolExpr, targets []injectTarget, verr *eval.Vali
 		}
 		seen[name] = struct{}{}
 		names = append(names, name)
+		if t.Bounds != nil && t.Bounds.Paging != nil && name == t.Bounds.Paging.CursorField {
+			verr.Add(t, "Inject field %q cannot be the paging cursor; continuation handling supplies the cursor before the tool reaches its provider", name)
+		}
 	}
 
 	for i, target := range targets {

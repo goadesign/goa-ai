@@ -674,9 +674,13 @@ var ToolSchema = Type("ToolSchema", func() {
 	Field(3, "tags", ArrayOf(String), "Optional tags used for policy, routing, or UI filtering.", func() {
 		Example([]string{"catalog", "records", "read"})
 	})
-	Field(4, "payload_schema", Bytes, "Canonical JSON schema for the tool payload.", func() {
+	Field(4, "payload_schema", Bytes, "Canonical JSON schema for arguments accepted from the model.", func() {
 		MinLength(1)
 		Example([]byte(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`))
+	})
+	Field(7, "execution_payload_schema", Bytes, "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.", func() {
+		MinLength(1)
+		Example([]byte(`{"type":"object","properties":{"query":{"type":"string"},"cursor":{"type":"string"}},"required":["query","cursor"]}`))
 	})
 	Field(5, "result_schema", Bytes, "Canonical JSON schema for the tool result.", func() {
 		MinLength(1)
@@ -685,7 +689,7 @@ var ToolSchema = Type("ToolSchema", func() {
 	Field(6, "sidecar_schema", Bytes, "Canonical JSON schema for the tool sidecar (UI-only), when present.", func() {
 		Example([]byte(`{"type":"object","properties":{"artifact_kind":{"type":"string"}}}`))
 	})
-	Required("name", "payload_schema", "result_schema")
+	Required("name", "payload_schema", "execution_payload_schema", "result_schema")
 })
 
 var ToolError = Type("ToolError", func() {

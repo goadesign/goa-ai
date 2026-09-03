@@ -1103,7 +1103,7 @@ func (s *Service) validatePreparedToolCall(
 			prepared.toolset,
 		))
 	}
-	if err := s.validator.ValidatePayload(schema.PayloadSchema, prepared.payload); err != nil {
+	if err := s.validator.ValidatePayload(schema.ExecutionPayloadSchema, prepared.payload); err != nil {
 		return genregistry.MakeValidationError(fmt.Errorf(
 			"payload validation failed: %w",
 			err,

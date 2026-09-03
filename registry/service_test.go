@@ -261,10 +261,11 @@ func genToolSchema() gopter.Gen {
 			desc = vals[1].(*string)
 		}
 		return &genregistry.ToolSchema{
-			Name:          vals[0].(string),
-			Description:   desc,
-			PayloadSchema: vals[2].([]byte),
-			ResultSchema:  vals[3].([]byte),
+			Name:                   vals[0].(string),
+			Description:            desc,
+			PayloadSchema:          vals[2].([]byte),
+			ExecutionPayloadSchema: vals[2].([]byte),
+			ResultSchema:           vals[3].([]byte),
 		}
 	})
 }
@@ -445,9 +446,10 @@ func TestCallToolDerivesGlobalTransportIdentity(t *testing.T) {
 		Name: "toolset-1",
 		Tools: []*genregistry.ToolSchema{
 			{
-				Name:          "lookup",
-				PayloadSchema: []byte(`{"type":"object"}`),
-				ResultSchema:  []byte(`{"type":"object"}`),
+				Name:                   "lookup",
+				PayloadSchema:          []byte(`{"type":"object"}`),
+				ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+				ResultSchema:           []byte(`{"type":"object"}`),
 			},
 		},
 		RegisteredAt: "2024-01-15T10:30:00Z",
@@ -526,9 +528,10 @@ func TestRetryToolRejectsAdmissionRolloverBeforePublication(t *testing.T) {
 	toolset := &genregistry.Toolset{
 		Name: "toolset-1",
 		Tools: []*genregistry.ToolSchema{{
-			Name:          "lookup",
-			PayloadSchema: []byte(`{"type":"object"}`),
-			ResultSchema:  []byte(`{"type":"object"}`),
+			Name:                   "lookup",
+			PayloadSchema:          []byte(`{"type":"object"}`),
+			ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+			ResultSchema:           []byte(`{"type":"object"}`),
 		}},
 		RegisteredAt: "2024-01-15T10:30:00Z",
 	}
@@ -594,9 +597,10 @@ func TestCallToolMapsPreAdmissionHealthFailures(t *testing.T) {
 	toolset := &genregistry.Toolset{
 		Name: "toolset-1",
 		Tools: []*genregistry.ToolSchema{{
-			Name:          "lookup",
-			PayloadSchema: []byte(`{"type":"object"}`),
-			ResultSchema:  []byte(`{"type":"object"}`),
+			Name:                   "lookup",
+			PayloadSchema:          []byte(`{"type":"object"}`),
+			ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+			ResultSchema:           []byte(`{"type":"object"}`),
 		}},
 		RegisteredAt: "2024-01-15T10:30:00Z",
 	}
@@ -658,9 +662,10 @@ func TestCallToolWaitsForHealthyProviderBeforeAdmission(t *testing.T) {
 	toolset := &genregistry.Toolset{
 		Name: "toolset-1",
 		Tools: []*genregistry.ToolSchema{{
-			Name:          "lookup",
-			PayloadSchema: []byte(`{"type":"object"}`),
-			ResultSchema:  []byte(`{"type":"object"}`),
+			Name:                   "lookup",
+			PayloadSchema:          []byte(`{"type":"object"}`),
+			ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+			ResultSchema:           []byte(`{"type":"object"}`),
 		}},
 		RegisteredAt: "2024-01-15T10:30:00Z",
 	}
@@ -708,9 +713,10 @@ func TestCallToolCancellationDoesNotRejectWaitingCall(t *testing.T) {
 	toolset := &genregistry.Toolset{
 		Name: "toolset-1",
 		Tools: []*genregistry.ToolSchema{{
-			Name:          "lookup",
-			PayloadSchema: []byte(`{"type":"object"}`),
-			ResultSchema:  []byte(`{"type":"object"}`),
+			Name:                   "lookup",
+			PayloadSchema:          []byte(`{"type":"object"}`),
+			ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+			ResultSchema:           []byte(`{"type":"object"}`),
 		}},
 		RegisteredAt: "2024-01-15T10:30:00Z",
 	}
@@ -818,9 +824,10 @@ func genPayloadValidationTestCase() gopter.Gen {
 			desc := "A test tool"
 
 			tool := &genregistry.ToolSchema{
-				Name:          toolName,
-				Description:   &desc,
-				PayloadSchema: schema,
+				Name:                   toolName,
+				Description:            &desc,
+				PayloadSchema:          schema,
+				ExecutionPayloadSchema: schema,
 			}
 
 			// Create the toolset.
@@ -1267,6 +1274,12 @@ func TestRegisterRejectsSemanticallyInvalidSchemaWithoutSideEffects(t *testing.T
 			},
 		},
 		{
+			name: "execution payload schema",
+			mutate: func(tool *genregistry.ToolSchema) {
+				tool.ExecutionPayloadSchema = []byte(`{"type":"definitely-not-a-json-schema-type"}`)
+			},
+		},
+		{
 			name: "result schema",
 			mutate: func(tool *genregistry.ToolSchema) {
 				tool.ResultSchema = []byte(`{"properties":{"value":{"type":"not-a-real-type"}}}`)
@@ -1380,30 +1393,33 @@ func genInvalidToolSchema(invalidType string) gopter.Gen {
 			// Invalid JSON in input schema.
 			return []*genregistry.ToolSchema{
 				{
-					Name:          toolName,
-					Description:   &desc,
-					PayloadSchema: []byte(`{not valid json`),
-					ResultSchema:  []byte(`{"type":"object"}`),
+					Name:                   toolName,
+					Description:            &desc,
+					PayloadSchema:          []byte(`{not valid json`),
+					ExecutionPayloadSchema: []byte(`{not valid json`),
+					ResultSchema:           []byte(`{"type":"object"}`),
 				},
 			}
 		case "invalid-json-output":
 			// Invalid JSON in output schema.
 			return []*genregistry.ToolSchema{
 				{
-					Name:          toolName,
-					Description:   &desc,
-					PayloadSchema: []byte(`{"type":"object"}`),
-					ResultSchema:  []byte(`{not valid json`),
+					Name:                   toolName,
+					Description:            &desc,
+					PayloadSchema:          []byte(`{"type":"object"}`),
+					ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+					ResultSchema:           []byte(`{not valid json`),
 				},
 			}
 		default:
 			// Fallback to empty input schema.
 			return []*genregistry.ToolSchema{
 				{
-					Name:          toolName,
-					Description:   &desc,
-					PayloadSchema: []byte{},
-					ResultSchema:  nil,
+					Name:                   toolName,
+					Description:            &desc,
+					PayloadSchema:          []byte{},
+					ExecutionPayloadSchema: []byte{},
+					ResultSchema:           nil,
 				},
 			}
 		}

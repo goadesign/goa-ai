@@ -31,8 +31,8 @@ func newSchemaValidator() *schemaValidator {
 }
 
 // ValidateToolSchemas enforces the registration contract for every tool schema
-// the registry admits. Payload and result schemas are required; sidecar schema
-// is optional but must compile when present.
+// the registry admits. Model payload, execution payload, and result schemas are
+// required; sidecar schema is optional but must compile when present.
 func (v *schemaValidator) ValidateToolSchemas(tools []*genregistry.ToolSchema) error {
 	names := make(map[string]struct{}, len(tools))
 	for _, tool := range tools {
@@ -47,6 +47,9 @@ func (v *schemaValidator) ValidateToolSchemas(tools []*genregistry.ToolSchema) e
 		}
 		names[tool.Name] = struct{}{}
 		if err := v.validateRequiredSchema(tool.Name, "payload", tool.PayloadSchema); err != nil {
+			return err
+		}
+		if err := v.validateRequiredSchema(tool.Name, "execution payload", tool.ExecutionPayloadSchema); err != nil {
 			return err
 		}
 		if err := v.validateRequiredSchema(tool.Name, "result", tool.ResultSchema); err != nil {

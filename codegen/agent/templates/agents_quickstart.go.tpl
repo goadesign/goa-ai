@@ -311,6 +311,19 @@ To serve tool calls from the registry gateway, run the provider loop inside the 
 ```go
 // In your service composition root, import the generated toolset package as
 // toolsetpkg and construct its provider around the service implementation.
+generatedSpecs := toolsetpkg.Specs()
+toolSchemas := make([]*registry.ToolSchema, len(generatedSpecs))
+for i, spec := range generatedSpecs {
+    description := spec.Description
+    toolSchemas[i] = &registry.ToolSchema{
+        Name:                   string(spec.Name),
+        Description:            &description,
+        Tags:                   spec.Tags,
+        PayloadSchema:          spec.Payload.Schema,
+        ExecutionPayloadSchema: spec.ExecutionPayloadSchema,
+        ResultSchema:           spec.Result.Schema,
+    }
+}
 handler := toolsetpkg.NewProvider(svcImpl)
 podName := mustRequiredEnv("HOSTNAME")
 providerID := podName + "/" + toolsetID

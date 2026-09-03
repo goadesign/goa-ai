@@ -677,10 +677,10 @@ type (
 		// payload attribute (bound method payload or tool Args).
 		Injected []*InjectedFieldData
 
-		// ModelHiddenPayloadFields names execution-only payload fields omitted from
-		// the model tool schema while remaining present in the generated codec.
-		// Dedicated continuation cursors use this boundary: the runtime supplies the
-		// cursor from the preceding bounded result.
+		// ModelHiddenPayloadFields names payload fields omitted from the model tool
+		// schema while remaining present in the generated codec. Continuation handling
+		// supplies paging fields before registry delivery. The provider supplies
+		// Inject fields after delivery.
 		ModelHiddenPayloadFields []string
 
 		// Bounds describes result limits such as returned rows and a next cursor.

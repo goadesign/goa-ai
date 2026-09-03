@@ -116,6 +116,10 @@ type (
 		// When set, runtimes may request explicit out-of-band user confirmation before
 		// executing the tool. Runtime configuration can override or extend this policy.
 		Confirmation *ConfirmationSpec
+		// ExecutionPayloadSchema is the JSON Schema for the payload sent through
+		// the tool registry. It includes fields supplied by runtime continuation
+		// logic and excludes fields that the provider injects after delivery.
+		ExecutionPayloadSchema RawJSON
 		// Payload describes the request schema for the tool.
 		Payload TypeSpec
 		// Result describes the response schema for the tool. It is the zero

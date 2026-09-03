@@ -120,6 +120,9 @@ func (p *toolSpecsPlan) link(data *GeneratorData) error {
 // and server data before generated declarations request names in the same Go
 // package.
 func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agent.ToolExpr) error {
+	// Planning hides only fields the provider supplies after it receives the
+	// call. Continuation fields remain so generated registry schemas describe
+	// the complete payload sent to the provider.
 	owner := &contractTypeOwner{
 		Kind:                     contractTypeOwnerTool,
 		Name:                     tool.Name,
@@ -165,6 +168,9 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 // declareToolTypes records the input, result, and server-data types generated
 // for tool.
 func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.ToolExpr) error {
+	// Planning hides only fields the provider supplies after it receives the
+	// call. Continuation fields remain so generated registry schemas describe
+	// the complete payload sent to the provider.
 	owner := &contractTypeOwner{
 		Kind:                     contractTypeOwnerTool,
 		Name:                     tool.Name,

@@ -47,7 +47,9 @@ func TestInjectBoundToolUsesGeneratedContext(t *testing.T) {
 		"registry-served bound tools receive the same immutable run labels as local executors")
 
 	specs := fileContent(t, files, "gen/catalog/toolsets/helpers/specs.go")
+	require.Contains(t, specs, "ExecutionPayloadSchema:tools.RawJSON(")
 	require.NotContains(t, specs, `"session_id"`, "session_id must stay hidden from the model-facing schema")
+	require.NotContains(t, specs, `\"session_id\"`, "session_id must stay absent from the registry execution schema")
 	require.NotContains(t, specs, `\"household_id\"`, "household_id must stay hidden from the model-facing schema")
 }
 

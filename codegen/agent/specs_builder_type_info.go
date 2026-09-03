@@ -104,12 +104,19 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	if err != nil {
 		return nil, fmt.Errorf("build %s %s schema: %w", owner.QualifiedName, usage, err)
 	}
+	var executionSchemaBytes []byte
+	if usage == usagePayload {
+		executionSchemaBytes, err = specializeExecutionPayloadSchema(schemaWithoutRootExampleBytes, owner.Bounds)
+		if err != nil {
+			return nil, fmt.Errorf("build %s execution payload schema: %w", owner.QualifiedName, err)
+		}
+	}
 	if usage == usagePayload && len(owner.ModelHiddenPayloadFields) > 0 {
-		schemaBytes, err = projectHiddenPayloadSchema(schemaBytes, owner.ModelHiddenPayloadFields)
+		schemaBytes, err = removePayloadSchemaFields(schemaBytes, owner.ModelHiddenPayloadFields)
 		if err != nil {
 			return nil, err
 		}
-		schemaWithoutRootExampleBytes, err = projectHiddenPayloadSchema(
+		schemaWithoutRootExampleBytes, err = removePayloadSchemaFields(
 			schemaWithoutRootExampleBytes,
 			owner.ModelHiddenPayloadFields,
 		)
@@ -214,6 +221,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		Doc:                          doc,
 		Def:                          defLine,
 		SchemaJSON:                   schemaBytes,
+		ExecutionSchemaJSON:          executionSchemaBytes,
 		SchemaWithoutRootExampleJSON: schemaWithoutRootExampleBytes,
 		ExampleJSON:                  exampleBytes,
 		ScaffoldExampleJSON:          exampleJSON(authoredExample),
@@ -289,12 +297,45 @@ func (p *toolSpecsPackagePlan) typeFor(owner *contractTypeOwner, usage typeUsage
 	}
 }
 
-// projectHiddenPayloadSchema removes runtime-supplied root fields from the
-// model contract while leaving the generated execution codec unchanged.
-func projectHiddenPayloadSchema(schemaBytes []byte, fields []string) ([]byte, error) {
+// specializeExecutionPayloadSchema gives each dedicated paging tool the exact
+// payload it receives from continuation handling. The first tool cannot accept
+// a cursor. Its continuation requires one.
+func specializeExecutionPayloadSchema(schemaBytes []byte, bounds *ToolBoundsData) ([]byte, error) {
+	if bounds == nil || bounds.Paging == nil || bounds.Paging.ContinueTool == "" {
+		return append([]byte(nil), schemaBytes...), nil
+	}
+	paging := bounds.Paging
+	if paging.SourceTool == "" {
+		return removePayloadSchemaFields(schemaBytes, []string{paging.CursorField})
+	}
+
 	var schema map[string]any
 	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
-		return nil, fmt.Errorf("decode model payload schema: %w", err)
+		return nil, fmt.Errorf("decode payload schema: %w", err)
+	}
+	properties, ok := schema["properties"].(map[string]any)
+	if !ok || properties[paging.CursorField] == nil {
+		return nil, fmt.Errorf("continuation payload schema is missing cursor field %q", paging.CursorField)
+	}
+	required, _ := schema["required"].([]any)
+	for _, item := range required {
+		if name, ok := item.(string); ok && name == paging.CursorField {
+			return append([]byte(nil), schemaBytes...), nil
+		}
+	}
+	schema["required"] = append(required, paging.CursorField)
+	projected, err := json.Marshal(schema)
+	if err != nil {
+		return nil, fmt.Errorf("encode payload schema: %w", err)
+	}
+	return projected, nil
+}
+
+// removePayloadSchemaFields removes root fields from a generated JSON schema.
+func removePayloadSchemaFields(schemaBytes []byte, fields []string) ([]byte, error) {
+	var schema map[string]any
+	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
+		return nil, fmt.Errorf("decode payload schema: %w", err)
 	}
 	properties, _ := schema["properties"].(map[string]any)
 	for _, field := range fields {
@@ -325,7 +366,7 @@ func projectHiddenPayloadSchema(schemaBytes []byte, fields []string) ([]byte, er
 	}
 	projected, err := json.Marshal(schema)
 	if err != nil {
-		return nil, fmt.Errorf("encode model payload schema: %w", err)
+		return nil, fmt.Errorf("encode payload schema: %w", err)
 	}
 	return projected, nil
 }

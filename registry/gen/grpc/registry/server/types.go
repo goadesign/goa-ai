@@ -41,11 +41,12 @@ func NewRegisterPayload(message *registrypb.RegisterRequest) *registry.RegisterP
 		v.Tools = make([]*registry.ToolSchema, len(message.Tools))
 		for i, val := range message.Tools {
 			v.Tools[i] = &registry.ToolSchema{
-				Name:          *val.Name,
-				Description:   val.Description,
-				PayloadSchema: val.PayloadSchema,
-				ResultSchema:  val.ResultSchema,
-				SidecarSchema: val.SidecarSchema,
+				Name:                   *val.Name,
+				Description:            val.Description,
+				PayloadSchema:          val.PayloadSchema,
+				ExecutionPayloadSchema: val.ExecutionPayloadSchema,
+				ResultSchema:           val.ResultSchema,
+				SidecarSchema:          val.SidecarSchema,
 			}
 			if val.Tags != nil {
 				v.Tools[i].Tags = make([]string, len(val.Tags))
@@ -215,11 +216,12 @@ func NewProtoGetToolsetResponse(result *registry.Toolset) *registrypb.GetToolset
 		message.Tools = make([]*registrypb.ToolSchema, len(result.Tools))
 		for i, val := range result.Tools {
 			message.Tools[i] = &registrypb.ToolSchema{
-				Name:          &val.Name,
-				Description:   val.Description,
-				PayloadSchema: val.PayloadSchema,
-				ResultSchema:  val.ResultSchema,
-				SidecarSchema: val.SidecarSchema,
+				Name:                   &val.Name,
+				Description:            val.Description,
+				PayloadSchema:          val.PayloadSchema,
+				ExecutionPayloadSchema: val.ExecutionPayloadSchema,
+				ResultSchema:           val.ResultSchema,
+				SidecarSchema:          val.SidecarSchema,
 			}
 			if val.Tags != nil {
 				message.Tools[i].Tags = make([]string, len(val.Tags))
@@ -502,8 +504,8 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 9) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{9}))
+		if !(*message.WireProtocolVersion == 10) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
 		}
 	}
 	if message.SchemaFingerprint != nil {
@@ -521,6 +523,9 @@ func validateregistry_registry_ToolSchema_At_elem(elem *registrypb.ToolSchema) (
 	if elem.PayloadSchema == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("payload_schema", "elem"))
 	}
+	if elem.ExecutionPayloadSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("execution_payload_schema", "elem"))
+	}
 	if elem.ResultSchema == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("result_schema", "elem"))
 	}
@@ -535,6 +540,11 @@ func validateregistry_registry_ToolSchema_At_elem(elem *registrypb.ToolSchema) (
 	if elem.PayloadSchema != nil {
 		if len(elem.PayloadSchema) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.payload_schema", elem.PayloadSchema, len(elem.PayloadSchema), 1, true))
+		}
+	}
+	if elem.ExecutionPayloadSchema != nil {
+		if len(elem.ExecutionPayloadSchema) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.execution_payload_schema", elem.ExecutionPayloadSchema, len(elem.ExecutionPayloadSchema), 1, true))
 		}
 	}
 	if elem.ResultSchema != nil {
@@ -798,8 +808,8 @@ func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 9) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{9}))
+		if !(*message.WireProtocolVersion == 10) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
 		}
 	}
 	return
@@ -915,8 +925,8 @@ func ValidateRetryToolRequest(message *registrypb.RetryToolRequest) (err error) 
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 9) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{9}))
+		if !(*message.WireProtocolVersion == 10) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
 		}
 	}
 	return

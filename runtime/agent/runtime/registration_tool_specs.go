@@ -163,6 +163,7 @@ func cloneToolSpecs(specs []tools.ToolSpec) []tools.ToolSpec {
 // functions, which become owned by the first accepted registration.
 func cloneToolSpec(spec tools.ToolSpec) tools.ToolSpec {
 	spec.Tags = append([]string(nil), spec.Tags...)
+	spec.ExecutionPayloadSchema = append(tools.RawJSON(nil), spec.ExecutionPayloadSchema...)
 	if spec.Meta != nil {
 		meta := spec.Meta
 		spec.Meta = make(map[string][]string, len(meta))

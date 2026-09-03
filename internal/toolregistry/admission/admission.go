@@ -25,21 +25,23 @@ type (
 
 	// ToolSchema contains every tool field that changes registry routing identity.
 	ToolSchema struct {
-		Name          string
-		Description   *string
-		Tags          []string
-		PayloadSchema []byte
-		ResultSchema  []byte
-		SidecarSchema []byte
+		Name                   string
+		Description            *string
+		Tags                   []string
+		PayloadSchema          []byte
+		ExecutionPayloadSchema []byte
+		ResultSchema           []byte
+		SidecarSchema          []byte
 	}
 
 	fingerprintTool struct {
-		Name          string   `json:"name"`
-		Description   *string  `json:"description,omitempty"`
-		Tags          []string `json:"tags,omitempty"`
-		PayloadSchema string   `json:"payload_schema"`
-		ResultSchema  string   `json:"result_schema"`
-		SidecarSchema string   `json:"sidecar_schema,omitempty"`
+		Name                   string   `json:"name"`
+		Description            *string  `json:"description,omitempty"`
+		Tags                   []string `json:"tags,omitempty"`
+		PayloadSchema          string   `json:"payload_schema"`
+		ExecutionPayloadSchema string   `json:"execution_payload_schema"`
+		ResultSchema           string   `json:"result_schema"`
+		SidecarSchema          string   `json:"sidecar_schema,omitempty"`
 	}
 )
 
@@ -52,12 +54,13 @@ func SchemaFingerprint(schema Schema) string {
 	tools := make([]fingerprintTool, len(schema.Tools))
 	for i, tool := range schema.Tools {
 		tools[i] = fingerprintTool{
-			Name:          tool.Name,
-			Description:   tool.Description,
-			Tags:          sortedStrings(tool.Tags),
-			PayloadSchema: string(tool.PayloadSchema),
-			ResultSchema:  string(tool.ResultSchema),
-			SidecarSchema: string(tool.SidecarSchema),
+			Name:                   tool.Name,
+			Description:            tool.Description,
+			Tags:                   sortedStrings(tool.Tags),
+			PayloadSchema:          string(tool.PayloadSchema),
+			ExecutionPayloadSchema: string(tool.ExecutionPayloadSchema),
+			ResultSchema:           string(tool.ResultSchema),
+			SidecarSchema:          string(tool.SidecarSchema),
 		}
 	}
 	sort.SliceStable(tools, func(i, j int) bool {

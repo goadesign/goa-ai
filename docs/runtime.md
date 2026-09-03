@@ -1574,6 +1574,19 @@ That generated provider implements a dispatcher that decodes the tool payload JS
 To run it, wire the generated provider into the runtime provider loop:
 
 ```go
+generatedSpecs := toolsetpkg.Specs()
+toolSchemas := make([]*genregistry.ToolSchema, len(generatedSpecs))
+for i, spec := range generatedSpecs {
+    description := spec.Description
+    toolSchemas[i] = &genregistry.ToolSchema{
+        Name:                   string(spec.Name),
+        Description:            &description,
+        Tags:                   spec.Tags,
+        PayloadSchema:          spec.Payload.Schema,
+        ExecutionPayloadSchema: spec.ExecutionPayloadSchema,
+        ResultSchema:           spec.Result.Schema,
+    }
+}
 handler := toolsetpkg.NewProvider(serviceImpl)
 providerID := podName + "/" + toolsetID
 admissionRevision := mustRequiredEnv("TOOL_REGISTRY_ADMISSION_REVISION")
@@ -1582,6 +1595,10 @@ go func() {
         toolprovider.Registration{
             AdmissionRevision: admissionRevision,
             Register: func(ctx context.Context, toolset, providerID, incarnationID, admissionRevision string) (toolprovider.RegistrationLease, error) {
+                schemaFingerprint, err := toolsetpkg.SchemaFingerprint(toolset)
+                if err != nil {
+                    return toolprovider.RegistrationLease{}, err
+                }
                 result, err := registryClient.Register(ctx, &genregistry.RegisterPayload{
                     Name:              toolset,
                     Description:       toolsetDescription,
@@ -1592,7 +1609,7 @@ go func() {
                     ProviderIncarnationID: incarnationID,
                     AdmissionRevision: admissionRevision,
                     WireProtocolVersion: registrywire.WireProtocolVersion,
-                    SchemaFingerprint: toolsetpkg.SchemaFingerprint,
+                    SchemaFingerprint: schemaFingerprint,
                 })
                 if err != nil {
                     return toolprovider.RegistrationLease{}, err
@@ -1887,9 +1904,10 @@ version, the raw 32-byte schema fingerprint, a uint32 big-endian
 admission-revision byte length, and the revision bytes. It is
 identity, not a secret, and every API and Pulse boundary requires the canonical
 `^[0-9a-f]{64}$` spelling. Tool order and toolset/tool tag order are normalized,
-while payload, result, and sidecar schema bytes are hashed exactly. Generated
-raw schemas must therefore be canonical: reformatting semantically equivalent
-schema JSON changes schema and admission identity.
+while model payload, registry execution payload, result, and sidecar schema
+bytes are hashed exactly. Generated raw schemas must therefore be canonical:
+reformatting semantically equivalent schema JSON changes schema and admission
+identity.
 
 This version is an exact wire fence, not capability negotiation. There is no
 optional fallback or dual decoder. The registry rejects a missing version
@@ -2300,6 +2318,17 @@ advance several independent actions, but may call each action at most once. A
 continuation result that repeats its input cursor is rejected because it cannot
 make progress.
 
+Generated tool specifications keep two input schemas. `Payload.Schema` is the
+closed input the model may write. `ExecutionPayloadSchema` is the closed payload
+sent through the registry after the runtime restores continuation fields. It
+still omits fields declared with `Inject`, because the provider adds those only
+after receiving the call. Provider registration sends both schemas, the
+registry includes both in admission identity, and `CallTool` validates the
+restored payload only against the execution schema. Neither schema is derived
+or repaired at runtime. For a dedicated continuation, the first tool's
+execution schema rejects a cursor and the continuation tool's execution schema
+requires the restored cursor.
+
 ```go
 type Bounds struct {
     Returned       int     // Items in this response
@@ -2633,17 +2662,21 @@ For MCP services:
   packages; their constructors, adapters, and transport files are generated
   from the new contract.
 
-For tool registry wire protocol 9:
+For tool registry wire protocol 10:
 
-- Regenerate registry clients and providers together. A handwritten
+- Regenerate registry clients and providers together. Registration must send
+  both generated input schemas: `Payload.Schema` describes arguments accepted
+  from the model, while `ExecutionPayloadSchema` describes the payload sent to
+  the provider after continuation handling. A handwritten
   `executor.Client` adapter must copy `ToolCallMeta.Labels` into both the first
   call and every retry, as shown in
   [Registry-Routed Execution](#registry-routed-execution-agentconsumer-side).
-- Before replacing protocol 8, stop new tool work and let every admitted call
-  finish. Prove that retained call records are terminal, the global and
-  per-provider settlement indexes are empty, and each provider consumer group
-  has no pending messages or lag. Then stop every protocol-8 registry,
-  provider, and consumer process.
+- Before replacing protocol 8 or 9, prevent consumers from starting new tool
+  calls and let every admitted call finish. Prove that retained call records
+  are terminal, the global and per-provider settlement indexes are empty, and
+  each provider consumer group has no pending messages or lag. Then stop every
+  old registry, provider, and consumer process. Mixed versions reject each
+  other instead of translating the required registration schema.
 - Save the catalog hash before changing it. For a registry named `<name>`, the
   hash is `map:<name>:toolsets:content`. Delete only hash fields whose names
   start with `registry:toolset:`. Keep Pulse's `=rev` and `=kind` fields. The
@@ -2658,15 +2691,16 @@ For tool registry wire protocol 9:
   returns no matching fields and that `HMGET map:<name>:toolsets:content =rev
   =kind` still returns the reserved map state.
 - Do not delete retained call records, settlement records, or Pulse streams.
-  Once drained, they do not block protocol-9 startup and retain the evidence
+  Once drained, they do not block protocol-10 startup and retain the evidence
   needed to prevent an old call from executing twice. Their configured expiry
   removes call-specific state.
-- Start the protocol-9 registry, providers, and consumers as one release, then
-  verify every expected toolset registered with protocol 9 before accepting new
+- After the old processes have stopped and the catalog fields have been removed,
+  start the protocol-10 registry, providers, and consumers as one release. Then
+  verify every expected toolset registered with protocol 10 before accepting new
   work. The catalog contains no product data; providers recreate its schemas,
-  leases, health, and tokens. The operation discards protocol-8 retirement
-  history, so rollback to protocol 8 is unsupported after protocol-9 traffic
-  starts.
+  leases, health, and tokens. The operation discards protocol-8 and protocol-9
+  retirement history, so rollback to either older protocol is unsupported after
+  protocol-10 traffic starts.
 
 For runtime storage and workflow adapters:
 

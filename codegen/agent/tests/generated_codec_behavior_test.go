@@ -612,12 +612,16 @@ func TestGeneratedSpecsReturnIsolatedContracts(t *testing.T) {
 		t.Fatalf("unexpected specs lengths: %d and %d", len(first), len(second))
 	}
 	first[0].Description = "changed"
+	first[0].ExecutionPayloadSchema[0] = '['
 	first[0].Payload.Schema[0] = '['
 	for key := range first[0].Payload.FieldDescriptions {
 		first[0].Payload.FieldDescriptions[key] = "changed"
 	}
 	if second[0].Description == "changed" {
 		t.Fatal("description mutation escaped returned spec")
+	}
+	if second[0].ExecutionPayloadSchema[0] == '[' {
+		t.Fatal("execution schema mutation escaped returned spec")
 	}
 	if second[0].Payload.Schema[0] == '[' {
 		t.Fatal("schema mutation escaped returned spec")

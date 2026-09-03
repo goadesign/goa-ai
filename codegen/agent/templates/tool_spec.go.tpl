@@ -119,6 +119,7 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
             DeniedResultTemplate: {{ printf "%q" .Confirmation.DeniedResultTemplate }},
         },
         {{- end }}
+		ExecutionPayloadSchema: {{- if and .Payload (gt (len .Payload.ExecutionSchemaJSON) 0) }}tools.RawJSON({{ printf "%q" .Payload.ExecutionSchemaJSON }}){{ else }}nil{{ end }},
         Payload: tools.TypeSpec{
             Name: {{ if .Payload }}{{ printf "%q" .Payload.TypeName }}{{ else }}""{{ end }},
             {{- if .Payload }}
