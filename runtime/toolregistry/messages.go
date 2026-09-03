@@ -202,6 +202,14 @@ func DecodeServerData(data []byte) ([]*ServerDataItem, error) {
 	if err := json.Unmarshal(data, &items); err != nil {
 		return nil, fmt.Errorf("decode server data: %w", err)
 	}
+	if items == nil {
+		return nil, fmt.Errorf("decode server data: expected array")
+	}
+	for index, item := range items {
+		if item == nil {
+			return nil, fmt.Errorf("decode server data: item %d is null", index)
+		}
+	}
 	return items, nil
 }
 
