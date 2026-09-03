@@ -12,7 +12,7 @@ import (
 )
 
 type (
-	// Subscriber receives persisted hook events and provisional model events,
+	// Subscriber receives persisted hook events and live model output events,
 	// applies one audience profile, and forwards allowed client events to a
 	// stream.Sink such as a WebSocket, SSE connection, or message bus.
 	//
@@ -70,24 +70,19 @@ func NewSubscriberWithProfile(sink Sink, profile StreamProfile) (*Subscriber, er
 	}, nil
 }
 
-// HandleProvisionalEvent applies the configured audience profile to one
-// activity-owned model presentation event and sends it to the same sink used
-// for hook-derived events. Only assistant text, planner thinking, and their
-// shared lifecycle may enter this path.
-func (s *Subscriber) HandleProvisionalEvent(ctx context.Context, event Event) error {
+// HandleModelOutputEvent applies the configured audience profile to one live
+// model text or thinking event and sends it to the same sink used for
+// hook-derived events.
+func (s *Subscriber) HandleModelOutputEvent(ctx context.Context, event Event) error {
 	eventType := event.Type()
 	if eventType != EventAssistantReply &&
-		eventType != EventPlannerThought &&
-		eventType != EventModelPresentation {
-		return fmt.Errorf("unsupported provisional stream event %q", eventType)
+		eventType != EventPlannerThought {
+		return fmt.Errorf("unsupported live model output event %q", eventType)
 	}
 	if eventType == EventAssistantReply && !s.profile.Assistant {
 		return nil
 	}
 	if eventType == EventPlannerThought && !s.profile.Thoughts {
-		return nil
-	}
-	if eventType == EventModelPresentation && !s.profile.Assistant && !s.profile.Thoughts {
 		return nil
 	}
 	return s.sink.Send(ctx, event)

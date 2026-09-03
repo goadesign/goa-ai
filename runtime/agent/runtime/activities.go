@@ -456,13 +456,10 @@ func (r *Runtime) preparePlannerActivityWithSpecs(
 	events := newPlannerEvents(input.AgentID, input.RunID, input.RunContext.SessionID)
 	publicationBatchID := uuid.NewString()
 	invocations := &modelInvocationJournal{
-		runtime:        r,
-		runID:          input.RunID,
-		sessionID:      input.RunContext.SessionID,
-		presentationID: publicationBatchID,
-	}
-	if err := invocations.startPresentation(ctx); err != nil {
-		return nil, fmt.Errorf("start provisional model presentation: %w", err)
+		runtime:    r,
+		runID:      input.RunID,
+		sessionID:  input.RunContext.SessionID,
+		responseID: publicationBatchID,
 	}
 	reg, agentCtx, err := r.plannerContext(
 		ctx,
@@ -591,9 +588,6 @@ func (a *plannerActivityInvocation) outputContractFailure(
 	ctx context.Context,
 	err error,
 ) (*PlanActivityOutput, error) {
-	if discardErr := a.invocations.discardPresentations(ctx); discardErr != nil {
-		return nil, rejectedPresentationFailure(err, discardErr)
-	}
 	var outputErr *planner.OutputContractError
 	if !errors.As(err, &outputErr) {
 		return nil, err
@@ -655,20 +649,6 @@ func (a *plannerActivityInvocation) outputContractFailure(
 		return boundedPlanActivityOutputFailure(a.publicationBatchID, usage, failure, budgetErr), nil
 	}
 	return output, nil
-}
-
-// rejectedPresentationFailure preserves the model rejection before any failure
-// raised while discarding its provisional output. A single failure remains the
-// original error chain; two failures are returned in execution order.
-func rejectedPresentationFailure(modelErr, discardErr error) error {
-	if discardErr == nil {
-		return modelErr
-	}
-	cleanupErr := fmt.Errorf("discard rejected model presentation: %w", discardErr)
-	if modelErr == nil {
-		return cleanupErr
-	}
-	return errors.Join(modelErr, cleanupErr)
 }
 
 // terminalPlannerOutputContractFailure records a deterministic planner

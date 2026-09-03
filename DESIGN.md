@@ -11,13 +11,13 @@ Build intelligent agents, MCP servers, and registry-integrated toolsets from you
 - **Registries**: Centralized tool catalogs with federation, caching, and semantic search
 - **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
 
-Agent streams send validated assistant text and thinking from the designated
-planner model call directly to clients as provisional output. One
-execution-scoped presentation ID associates its fragments with a discard marker
-and differs from every retry execution. The workflow's
-canonical assistant-turn event alone finalizes accepted output. Provisional
-fragments never enter the run log, hook bus, or memory. Tool argument fragments
-and completed calls stay inside model validation until the provider's terminal
+Agent streams assistant text and thinking from the designated planner model call
+directly to clients. Emitted assistant text is append-only: later tool or output
+validation cannot retract it. One execution-scoped response ID groups fragments
+from the same planner activity and differs from every retry execution. The
+workflow's canonical assistant-turn event records accepted output in model
+history. Live fragments do not enter the run log, hook bus, or memory. Tool
+argument fragments and completed calls stay inside model validation until the provider's terminal
 response reconciles with the stream and the originating advertised schema plus
 attached decoder accept every payload. A raw remote gateway transports provider
 output without replacing those request-owned checks. After planner selection,

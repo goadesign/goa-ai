@@ -691,67 +691,6 @@ func TestPlanStartActivityRejectsRecoverableOutputForForeignResponse(t *testing.
 	require.Equal(t, 1, modelCalls)
 }
 
-func TestPlanStartActivityRetriesFailedRejectedPresentationCleanup(t *testing.T) {
-	var modelRejection *planner.OutputContractError
-	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
-		client, ok := input.Agent.ModelClient("test")
-		require.True(t, ok)
-		response, err := client.Complete(ctx, &model.Request{Model: "test"})
-		require.NoError(t, err)
-		modelRejection = planner.NewRecoverableModelOutputError(
-			errors.New("too many references"),
-			&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
-			"Use at most eight references.",
-		)
-		return nil, modelRejection
-	}}
-	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	rt.models["test"] = newRecoveryTestModel(t)
-	cleanupErr := errors.New("stream unavailable")
-	sink := &failOnceDiscardSink{err: cleanupErr}
-	rt.streamSubscriber = runtimeWithPresentationSink(t, sink).streamSubscriber
-	_, err := createSessionForTest(t.Context(), rt.Store, "session-123")
-	require.NoError(t, err)
-
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
-		AgentID:    "service.agent",
-		RunID:      "run-123",
-		RunContext: run.Context{RunID: "run-123", SessionID: "session-123"},
-	})
-
-	require.Nil(t, out)
-	var typedRejection *planner.OutputContractError
-	require.ErrorAs(t, err, &typedRejection)
-	require.Same(t, modelRejection, typedRejection)
-	require.ErrorIs(t, err, cleanupErr)
-	require.ErrorContains(t, err, "discard rejected model presentation")
-	branches, ok := err.(interface{ Unwrap() []error })
-	require.True(t, ok)
-	require.Len(t, branches.Unwrap(), 2)
-	require.Same(t, modelRejection, branches.Unwrap()[0])
-	require.ErrorIs(t, branches.Unwrap()[1], cleanupErr)
-}
-
-func TestRejectedPresentationFailurePreservesSingleErrors(t *testing.T) {
-	primary := errors.New("model output rejected")
-	cleanup := errors.New("stream unavailable")
-	t.Run("primary only", func(t *testing.T) {
-		err := rejectedPresentationFailure(primary, nil)
-
-		require.Same(t, primary, err)
-		_, joined := err.(interface{ Unwrap() []error })
-		require.False(t, joined)
-	})
-	t.Run("cleanup only", func(t *testing.T) {
-		err := rejectedPresentationFailure(nil, cleanup)
-
-		require.ErrorIs(t, err, cleanup)
-		require.EqualError(t, err, "discard rejected model presentation: stream unavailable")
-		_, joined := err.(interface{ Unwrap() []error })
-		require.False(t, joined)
-	})
-}
-
 func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 	termination := &planner.Termination{Reason: planner.TerminationReasonToolFailure}
 	for _, test := range []struct {
