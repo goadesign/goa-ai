@@ -111,21 +111,12 @@ type (
 	}
 
 	// AssistantReply streams incremental assistant message content as the planner
-	// receives validated provider chunks. Clients display these provisional
-	// fragments immediately, remove them after a matching discard event, and
-	// finalize them only when the canonical AssistantTurn arrives.
+	// receives provider text chunks. Once emitted, text is append-only; later
+	// validation of tool calls cannot retract it.
 	AssistantReply struct {
 		Base
-		// Data contains one text fragment and the presentation it belongs to.
+		// Data contains one text fragment and the model response it belongs to.
 		Data AssistantReplyPayload
-	}
-
-	// ModelPresentation marks the lifecycle of one provisional model response.
-	// Clients use the presentation ID to reject late output from an earlier
-	// activity execution without disturbing canonical assistant turns.
-	ModelPresentation struct {
-		Base
-		Data ModelPresentationPayload
 	}
 
 	// AssistantTurn streams a canonical assistant transcript message after the
@@ -270,18 +261,11 @@ type (
 	}
 
 	// AssistantReplyPayload is the typed wire payload for assistant reply events.
-	// PresentationID binds the fragment to the exact model invocation that
-	// produced it so retries and rejection can be handled without heuristics.
+	// ResponseID binds the fragment to the exact planner activity that produced
+	// it so clients can group separate responses without guessing from timing.
 	AssistantReplyPayload struct {
-		PresentationID string `json:"presentation_id"`
-		Text           string `json:"text"`
-	}
-
-	// ModelPresentationPayload identifies one provisional model response and
-	// reports whether clients should start or remove its visible output.
-	ModelPresentationPayload struct {
-		PresentationID string                 `json:"presentation_id"`
-		State          ModelPresentationState `json:"state"`
+		ResponseID string `json:"response_id"`
+		Text       string `json:"text"`
 	}
 
 	// AssistantTurnPayload carries the committed assistant transcript message.
@@ -294,13 +278,13 @@ type (
 	// Structured thinking blocks also populate Text/Signature or Redacted with
 	// ContentIndex and Final flags matching the provider content blocks.
 	PlannerThoughtPayload struct {
-		PresentationID string `json:"presentation_id,omitempty"`
-		Note           string `json:"note,omitempty"`
-		Text           string `json:"text,omitempty"`
-		Signature      string `json:"signature,omitempty"`
-		Redacted       []byte `json:"redacted,omitempty"`
-		ContentIndex   int    `json:"content_index,omitempty"`
-		Final          bool   `json:"final,omitempty"`
+		ResponseID   string `json:"response_id,omitempty"`
+		Note         string `json:"note,omitempty"`
+		Text         string `json:"text,omitempty"`
+		Signature    string `json:"signature,omitempty"`
+		Redacted     []byte `json:"redacted,omitempty"`
+		ContentIndex int    `json:"content_index,omitempty"`
+		Final        bool   `json:"final,omitempty"`
 	}
 
 	// PromptRenderedPayload describes one rendered prompt reference and scope.
@@ -718,24 +702,10 @@ func MetricsProfile() StreamProfile {
 	}
 }
 
-type (
-	// EventType enumerates stream payload flavors.
-	EventType string
-
-	// ModelPresentationState identifies the client action for one provisional
-	// model response.
-	ModelPresentationState string
-)
+// EventType enumerates stream payload flavors.
+type EventType string
 
 const (
-	// ModelPresentationStarted tells clients that subsequent text and thought
-	// fragments belong to a new model invocation.
-	ModelPresentationStarted ModelPresentationState = "started"
-
-	// ModelPresentationDiscarded tells clients to remove provisional output
-	// from this model response because it failed or was not selected.
-	ModelPresentationDiscarded ModelPresentationState = "discarded"
-
 	// EventPlannerThought streams incremental planner reasoning and annotations during
 	// execution. These events allow clients to display "thinking..." indicators and show
 	// intermediate planner thoughts before tool calls complete. Emitted by StreamSubscriber
@@ -773,10 +743,6 @@ const (
 	// progressively (streaming typewriter effect). Emitted by StreamSubscriber when
 	// AssistantMessageEvent hooks fire. Payload is AssistantReplyPayload.
 	EventAssistantReply EventType = "assistant_reply"
-
-	// EventModelPresentation reports the lifecycle of one provisional model
-	// response so clients can replace retries and remove rejected output.
-	EventModelPresentation EventType = "model_presentation"
 
 	// EventAssistantTurn streams one canonical assistant transcript message after
 	// the runtime has durably appended it to the run log.

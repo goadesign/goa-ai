@@ -246,7 +246,7 @@ func TestStreamSubscriber_PromptRenderedRespectsProfileToggle(t *testing.T) {
 	require.Empty(t, sink.events)
 }
 
-func TestStreamSubscriberProvisionalEventsRespectProfile(t *testing.T) {
+func TestStreamSubscriberModelOutputEventsRespectProfile(t *testing.T) {
 	profile := DefaultProfile()
 	profile.Assistant = false
 	profile.Thoughts = false
@@ -254,15 +254,7 @@ func TestStreamSubscriberProvisionalEventsRespectProfile(t *testing.T) {
 	subscriber, err := NewSubscriberWithProfile(sink, profile)
 	require.NoError(t, err)
 
-	startedPayload := ModelPresentationPayload{
-		PresentationID: "presentation-1",
-		State:          ModelPresentationStarted,
-	}
 	events := []Event{
-		ModelPresentation{
-			Base: NewBase(EventModelPresentation, "run-1", "session-1", startedPayload),
-			Data: startedPayload,
-		},
 		AssistantReply{
 			Base: NewBase(EventAssistantReply, "run-1", "session-1", AssistantReplyPayload{}),
 		},
@@ -271,7 +263,7 @@ func TestStreamSubscriberProvisionalEventsRespectProfile(t *testing.T) {
 		},
 	}
 	for _, event := range events {
-		require.NoError(t, subscriber.HandleProvisionalEvent(t.Context(), event))
+		require.NoError(t, subscriber.HandleModelOutputEvent(t.Context(), event))
 	}
 	require.Empty(t, sink.events)
 }
