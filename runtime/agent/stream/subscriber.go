@@ -21,7 +21,6 @@ type (
 	// the sink using its Send method.
 	//
 	// The following hook events are streamed to clients:
-	//   - AssistantMessage      → EventAssistantReply
 	//   - AssistantTurnCommitted → EventAssistantTurn
 	//   - PlannerNote           → EventPlannerThought
 	//   - PromptRendered        → EventPromptRendered
@@ -92,7 +91,6 @@ func (s *Subscriber) HandleModelOutputEvent(ctx context.Context, event Event) er
 // into stream events and forwarding them to the configured sink.
 //
 // Event translation:
-//   - AssistantMessage → EventAssistantReply
 //   - AssistantTurnCommitted → EventAssistantTurn
 //   - PlannerNote → EventPlannerThought
 //   - PromptRendered → EventPromptRendered
@@ -224,18 +222,6 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		}
 		return s.sink.Send(ctx, ToolStart{
 			Base: newBaseFromHook(evt, EventToolStart, payload),
-			Data: payload,
-		})
-	case *hooks.AssistantMessageEvent:
-		if !s.profile.Assistant {
-			return nil
-		}
-		// Publish a typed payload object on the wire (no string-wrapping).
-		payload := AssistantReplyPayload{
-			Text: evt.Message,
-		}
-		return s.sink.Send(ctx, AssistantReply{
-			Base: newBaseFromHook(evt, EventAssistantReply, payload),
 			Data: payload,
 		})
 	case *hooks.AssistantTurnCommittedEvent:
