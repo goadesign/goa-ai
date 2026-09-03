@@ -95,6 +95,8 @@ const (
 	DefaultPingInterval = 10 * time.Second
 	// DefaultMissedPingThreshold is the tolerated number of missed pings.
 	DefaultMissedPingThreshold = 3
+	// HealthSweepSpanName is the root span for one periodic registry health check.
+	HealthSweepSpanName = "toolregistry.health.sweep"
 
 	// revFloorSlack guards revision repair against a wall clock that stepped
 	// backwards between two pins: a repair target is never below the last
@@ -291,7 +293,7 @@ func (h *healthTracker) run() {
 func (h *healthTracker) runHealthSweep(ctx context.Context) {
 	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(
 		ctx,
-		"toolregistry.health.sweep",
+		HealthSweepSpanName,
 		trace.WithAttributes(attribute.String("toolregistry.registry", h.leaseScope)),
 	)
 	defer span.End()
