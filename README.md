@@ -404,6 +404,9 @@ var Docs = Toolset("docs", func() {
   correction guidance that omits rejected arguments; ordinary decoder and
   internal errors stop the run. See the
   [runtime tool-input contract](docs/runtime.md#model-visible-tool-arguments).
+  A provider output-limit status is returned to the planner with the complete
+  response. The runtime preserves the planner's decision to accept or reject
+  that exact response instead of imposing a replacement policy.
   Streaming tool argument fragments and completed calls remain withheld until
   the complete provider response matches the stream; the runtime can then
   schedule one replacement planning activity while retaining final usage and

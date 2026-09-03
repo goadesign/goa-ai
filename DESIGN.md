@@ -299,9 +299,11 @@ validation failures remain terminal.
 
 When a completed model reply or planner result breaks its required shape, the
 planner returns `OutputContractError`. The runtime validates the full result
-before publishing any selected model text or tool call. Ordinary output
-contract errors are terminal and Temporal does not retry them. When the planner
-can give exact replacement guidance for one completed model answer, it may
+before accepting its selected tool calls or storing its selected response. The
+provider's output-limit status is part of the response given to the planner;
+the runtime does not override a planner that accepts that exact response.
+Ordinary output contract errors are terminal and Temporal does not retry them.
+When the planner can give exact replacement guidance for one completed model answer, it may
 instead return `NewRecoverableModelOutputError`. This separate, response-
 fingerprint-bound path records the answer fingerprint and usage while keeping
 the rejected body private, then spends one recovery turn on a synthesis-only

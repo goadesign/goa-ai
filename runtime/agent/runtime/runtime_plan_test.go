@@ -527,7 +527,7 @@ func TestPlanStartActivityCorrelatesRecoverableModelOutput(t *testing.T) {
 	require.Equal(t, "Use at most eight references.", out.OutputContractFailure.Correction)
 }
 
-func TestPlanStartActivityRejectsOutputLimitedFinalResponse(t *testing.T) {
+func TestPlanStartActivityAcceptsPlannerSelectedOutputLimitedFinalResponse(t *testing.T) {
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		client, ok := input.Agent.PlannerModelClient("test")
 		require.True(t, ok)
@@ -567,11 +567,9 @@ func TestPlanStartActivityRejectsOutputLimitedFinalResponse(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.Nil(t, out.Result)
-	require.NotNil(t, out.OutputContractFailure)
-	require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
-	require.Equal(t, outputLimitCorrection, out.OutputContractFailure.Correction)
-	require.True(t, out.OutputContractFailure.ModelResponsePresent)
+	require.NotNil(t, out.Result)
+	require.Nil(t, out.OutputContractFailure)
+	require.Equal(t, "partial", out.Result.FinalResponse.Message.Parts[0].(model.TextPart).Text)
 }
 
 func TestPlanStartActivityRejectsAlteredRecoverableModelOutput(t *testing.T) {
