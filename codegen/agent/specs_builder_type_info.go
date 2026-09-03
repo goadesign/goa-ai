@@ -102,7 +102,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		exampleIdentity,
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("build %s %s schema: %w", owner.QualifiedName, usage, err)
 	}
 	if usage == usagePayload && len(owner.ModelHiddenPayloadFields) > 0 {
 		schemaBytes, err = projectHiddenPayloadSchema(schemaBytes, owner.ModelHiddenPayloadFields)
