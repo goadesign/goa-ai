@@ -5,9 +5,10 @@ var {{ .Register.HelperName }}ToolSpecs = []tools.ToolSpec{
 		Name:        {{ printf "%q" .ID }},
 		Description: {{ printf "%q" .Description }},
 		Payload: tools.TypeSpec{
-			Name:        {{ printf "%q" .PayloadType }},
-			Schema:      []byte({{ printf "%q" .InputSchema }}),
-			ExampleJSON: []byte({{ printf "%q" .ExampleArgs }}),
+			Name:                     {{ printf "%q" .PayloadType }},
+			Schema:                   []byte({{ printf "%q" .InputSchema }}),
+			SchemaWithoutRootExample: []byte({{ printf "%q" .InputSchema }}),
+			ExampleJSON:              []byte({{ printf "%q" .ExampleArgs }}),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					{{- if .HasPayload }}

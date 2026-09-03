@@ -502,8 +502,8 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 8) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{8}))
+		if !(*message.WireProtocolVersion == 9) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{9}))
 		}
 	}
 	if message.SchemaFingerprint != nil {
@@ -798,8 +798,8 @@ func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 8) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{8}))
+		if !(*message.WireProtocolVersion == 9) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{9}))
 		}
 	}
 	return
@@ -915,8 +915,8 @@ func ValidateRetryToolRequest(message *registrypb.RetryToolRequest) (err error) 
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 8) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{8}))
+		if !(*message.WireProtocolVersion == 9) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{9}))
 		}
 	}
 	return
@@ -1204,6 +1204,14 @@ func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *regis
 		TurnID:           v.TurnId,
 		ToolCallID:       *v.ToolCallId,
 		ParentToolCallID: v.ParentToolCallId,
+	}
+	if v.Labels != nil {
+		res.Labels = make(map[string]string, len(v.Labels))
+		for key, val := range v.Labels {
+			tk := key
+			tv := val
+			res.Labels[tk] = tv
+		}
 	}
 
 	return res

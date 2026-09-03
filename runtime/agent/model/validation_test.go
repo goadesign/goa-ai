@@ -127,17 +127,7 @@ func TestValidateResponse(t *testing.T) {
 					ID: "call-1", Name: "svc.lookup", Input: rawjson.Message(`{`),
 				}},
 			}}},
-			wantErr: "payload is not valid JSON",
-		},
-		{
-			name: "non-object tool payload",
-			response: &Response{Content: []Message{{
-				Role: ConversationRoleAssistant,
-				Parts: []Part{ToolUsePart{
-					ID: "call-1", Name: "svc.lookup", Input: rawjson.Message(`[]`),
-				}},
-			}}},
-			wantErr: "payload must be a JSON object",
+			wantErr: "tool arguments are not valid JSON",
 		},
 		{
 			name: "negative usage",

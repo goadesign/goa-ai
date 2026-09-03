@@ -16,6 +16,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,8 +24,11 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
-	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
 
@@ -59,34 +63,30 @@ type (
 	healthTrackerOptions struct {
 		pingInterval        time.Duration
 		missedPingThreshold int
-		logger              telemetry.Logger
+		expectedToolsets    []string
 	}
 
 	healthTracker struct {
-		streamManager       StreamManager
-		catalog             *toolsetCatalog
-		catalogMap          catalogMap
-		redis               *redis.Client
-		nodeID              string
-		leaseScope          string
-		revisionHashKey     string
-		pingInterval        time.Duration
-		missedPingThreshold int
-		stalenessThreshold  time.Duration
-		logger              telemetry.Logger
+		streamManager      StreamManager
+		catalog            *toolsetCatalog
+		catalogMap         catalogMap
+		redis              *redis.Client
+		nodeID             string
+		leaseScope         string
+		revisionHashKey    string
+		pingInterval       time.Duration
+		stalenessThreshold time.Duration
+		expectedToolsets   []string
 
 		// revFloors remembers the highest revision this node pinned or
 		// observed per replicated-map hash key; a Redis counter below the
 		// floor proves state loss.
 		revFloors map[string]int64
 
-		stateMu             sync.Mutex
-		lastObservedHealthy map[string]bool
-		lastObservedPong    map[string]int64
-
-		closeCh   chan struct{}
-		doneCh    chan struct{}
-		closeOnce sync.Once
+		schedulerCtx    context.Context
+		cancelScheduler context.CancelFunc
+		doneCh          chan struct{}
+		closeOnce       sync.Once
 	}
 )
 
@@ -95,6 +95,8 @@ const (
 	DefaultPingInterval = 10 * time.Second
 	// DefaultMissedPingThreshold is the tolerated number of missed pings.
 	DefaultMissedPingThreshold = 3
+	// HealthSweepSpanName is the root span for one periodic registry health check.
+	HealthSweepSpanName = "toolregistry.health.sweep"
 
 	// revFloorSlack guards revision repair against a wall clock that stepped
 	// backwards between two pins: a repair target is never below the last
@@ -130,10 +132,11 @@ func WithMissedPingThreshold(count int) HealthTrackerOption {
 	}
 }
 
-// WithHealthLogger sets the health transition logger.
-func WithHealthLogger(logger telemetry.Logger) HealthTrackerOption {
+// withExpectedToolsets records the application-owned toolset names whose
+// presence is checked after each successful catalog read.
+func withExpectedToolsets(toolsets []string) HealthTrackerOption {
 	return func(options *healthTrackerOptions) {
-		options.logger = logger
+		options.expectedToolsets = slices.Clone(toolsets)
 	}
 }
 
@@ -162,28 +165,26 @@ func newHealthTracker(
 	options := healthTrackerOptions{
 		pingInterval:        DefaultPingInterval,
 		missedPingThreshold: DefaultMissedPingThreshold,
-		logger:              telemetry.NewNoopLogger(),
 	}
 	for _, option := range opts {
 		option(&options)
 	}
+	schedulerCtx, cancelScheduler := context.WithCancel(context.Background()) //nolint:gosec // Close owns cancellation.
 	tracker := &healthTracker{
-		streamManager:       streamManager,
-		catalog:             catalog,
-		catalogMap:          catalog.m,
-		redis:               rdb,
-		nodeID:              uuid.NewString(),
-		leaseScope:          registryMapName,
-		revisionHashKey:     "map:" + registryMapName + ":content",
-		pingInterval:        options.pingInterval,
-		missedPingThreshold: options.missedPingThreshold,
-		stalenessThreshold:  deriveStalenessThreshold(options.pingInterval, options.missedPingThreshold),
-		logger:              options.logger,
-		revFloors:           make(map[string]int64),
-		lastObservedHealthy: make(map[string]bool),
-		lastObservedPong:    make(map[string]int64),
-		closeCh:             make(chan struct{}),
-		doneCh:              make(chan struct{}),
+		streamManager:      streamManager,
+		catalog:            catalog,
+		catalogMap:         catalog.m,
+		redis:              rdb,
+		nodeID:             uuid.NewString(),
+		leaseScope:         registryMapName,
+		revisionHashKey:    "map:" + registryMapName + ":content",
+		pingInterval:       options.pingInterval,
+		stalenessThreshold: deriveStalenessThreshold(options.pingInterval, options.missedPingThreshold),
+		expectedToolsets:   options.expectedToolsets,
+		revFloors:          make(map[string]int64),
+		schedulerCtx:       schedulerCtx,
+		cancelScheduler:    cancelScheduler,
+		doneCh:             make(chan struct{}),
 	}
 	go tracker.run()
 	return tracker, nil
@@ -229,7 +230,7 @@ func (h *healthTracker) Health(
 // EnsurePingLoop implements HealthTracker.
 func (h *healthTracker) EnsurePingLoop(ctx context.Context, toolset string) error {
 	select {
-	case <-h.closeCh:
+	case <-h.schedulerCtx.Done():
 		return fmt.Errorf("health tracker is closed")
 	default:
 	}
@@ -244,7 +245,7 @@ func (h *healthTracker) EnsurePingLoop(ctx context.Context, toolset string) erro
 // Close implements HealthTracker.
 func (h *healthTracker) Close() error {
 	h.closeOnce.Do(func() {
-		close(h.closeCh)
+		h.cancelScheduler()
 		<-h.doneCh
 	})
 	return nil
@@ -277,35 +278,33 @@ func (h *healthTracker) run() {
 
 	for {
 		select {
-		case <-h.closeCh:
+		case <-h.schedulerCtx.Done():
 			return
 		case <-ticker.C:
-			h.repairMapRevisions(context.Background())
-			h.pingRegisteredToolsets()
+			h.runHealthSweep(h.schedulerCtx)
 		}
 	}
 }
 
-// repairMapRevisions guards the catalog replicated map against Redis state
-// loss. Pulse rmap replicas apply an update only when its revision exceeds
-// their local revision, and a flushed hash restarts "=rev" at zero, so
-// without repair every replica that outlived the loss would silently drop
-// all subsequent catalog writes — registrations, provider leases, membership
-// epochs, and pongs all ride this one map. The scheduler keeps the map's
-// Redis counter pinned above the wall clock, which strictly dominates every
-// replica's local revision; replicated content then converges as periodic
-// writers (provider renewals, pongs) rewrite their keys.
-func (h *healthTracker) repairMapRevisions(ctx context.Context) {
+// runHealthSweep records one scheduler attempt, repairs the catalog revision,
+// and samples every toolset whose lease this registry node wins. Failures before
+// a toolset sample are recorded on this span because no readiness result exists
+// for that toolset.
+func (h *healthTracker) runHealthSweep(ctx context.Context) {
+	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(
+		ctx,
+		HealthSweepSpanName,
+		trace.WithAttributes(attribute.String("toolregistry.registry", h.leaseScope)),
+	)
+	defer span.End()
+
 	if err := h.ensureMapRevision(ctx, h.revisionHashKey); err != nil {
-		h.logger.Error(
-			ctx,
-			"repair replicated map revision failed",
-			"event", "repair_map_revision_failed",
-			"component", "tool-registry-health",
-			"map", h.leaseScope,
-			"err", err,
-		)
+		if ctx.Err() != nil {
+			return
+		}
+		recordHealthSweepError(ctx, "repair_revision", "", err)
 	}
+	h.pingRegisteredToolsets(ctx)
 }
 
 // ensureMapRevision pins one replicated map's Redis revision counter above
@@ -347,64 +346,94 @@ func (h *healthTracker) ensureMapRevision(ctx context.Context, hashKey string) e
 	if !raised || floor == 0 {
 		return nil
 	}
-	h.logger.Warn(
-		ctx,
-		"repaired replicated map revision after Redis state loss",
-		"event", "repaired_map_revision",
-		"component", "tool-registry-health",
-		"map", h.leaseScope,
-		"redis_revision", rev,
-		"restored_revision", final,
+	trace.SpanFromContext(ctx).AddEvent(
+		"repaired catalog revision",
+		trace.WithAttributes(
+			attribute.String("toolregistry.registry", h.leaseScope),
+			attribute.Int64("toolregistry.previous_revision", rev),
+			attribute.Int64("toolregistry.restored_revision", final),
+		),
 	)
 	return nil
 }
 
-// pingRegisteredToolsets enumerates catalog-registered toolsets and, for each
-// lease this node wins, observes health and publishes one ping. Losing the
-// lease means another node (or a previous tick) already owns the current
-// ping interval.
-func (h *healthTracker) pingRegisteredToolsets() {
-	ctx := context.Background()
-	keys, err := h.catalogMap.AuthoritativeKeys(ctx)
+// pingRegisteredToolsets reads the active toolsets from the shared catalog.
+// Every registry replica records the active names it sees. The replica that
+// wins a toolset's lease also records whether that toolset can accept calls and
+// publishes a ping when at least one provider can receive it. Losing the lease
+// means another replica or a previous check already sampled the current
+// interval.
+func (h *healthTracker) pingRegisteredToolsets(ctx context.Context) {
+	toolsets, err := h.catalog.ListToolsets(ctx, nil)
 	if err != nil {
-		h.logger.Error(
-			ctx,
-			"enumerate catalog toolsets failed",
-			"event", "enumerate_catalog_failed",
-			"component", "tool-registry-health",
-			"err", err,
-		)
+		if ctx.Err() != nil {
+			return
+		}
+		recordHealthSweepError(ctx, "enumerate_toolsets", "", err)
 		return
 	}
-	for _, key := range keys {
-		toolset := toolsetFromCatalogKey(key)
-		if toolset == "" {
-			continue
-		}
-		if _, _, err := h.catalog.HealthIdentity(ctx, toolset); err != nil {
-			if !errors.Is(err, errToolsetNotFound) {
-				h.logger.Error(ctx, "resolve ping identity failed", "toolset", toolset, "err", err)
-			}
-			continue
-		}
+	active := make(map[string]struct{}, len(toolsets))
+	for _, registered := range toolsets {
+		active[registered.Name] = struct{}{}
+	}
+	h.recordCatalogExpectations(ctx, active)
+	for _, registered := range toolsets {
+		toolset := registered.Name
+		h.recordCatalogEntry(ctx, toolset)
 		acquired, err := h.acquirePingLease(ctx, toolset)
 		if err != nil {
-			h.logger.Error(
-				ctx,
-				"acquire ping lease failed",
-				"event", "acquire_ping_lease_failed",
-				"component", "tool-registry-health",
-				"toolset", toolset,
-				"err", err,
-			)
+			if ctx.Err() != nil {
+				return
+			}
+			recordHealthSweepError(ctx, "acquire_lease", toolset, err)
 			continue
 		}
 		if !acquired {
 			continue
 		}
-		h.observeHealth(ctx, toolset)
-		h.sendPing(ctx, toolset)
+		h.sampleRegisteredToolset(ctx, toolset)
 	}
+}
+
+// recordCatalogExpectations reports whether each application-required toolset
+// was present in a successful catalog read. It emits no result when the read
+// fails, so missing telemetry remains unknown rather than being reported as an
+// absent catalog entry.
+func (h *healthTracker) recordCatalogExpectations(ctx context.Context, active map[string]struct{}) {
+	for _, toolset := range h.expectedToolsets {
+		present := 0
+		if _, exists := active[toolset]; exists {
+			present = 1
+		}
+		_, span := otel.Tracer("goa.design/goa-ai/registry").Start(
+			ctx,
+			"toolregistry.catalog.expectation",
+			trace.WithAttributes(
+				attribute.String("toolregistry.registry", h.leaseScope),
+				attribute.String("toolregistry.toolset", toolset),
+				attribute.Int("toolregistry.present", present),
+			),
+		)
+		span.SetStatus(codes.Ok, "checked")
+		span.End()
+	}
+}
+
+// recordCatalogEntry reports one active name returned by the shared catalog.
+// Every registry replica records this before competing to send the health ping,
+// so each replica reports the active catalog it observed even when another
+// replica sends the ping.
+func (h *healthTracker) recordCatalogEntry(ctx context.Context, toolset string) {
+	_, span := otel.Tracer("goa.design/goa-ai/registry").Start(
+		ctx,
+		"toolregistry.catalog.entry",
+		trace.WithAttributes(
+			attribute.String("toolregistry.registry", h.leaseScope),
+			attribute.String("toolregistry.toolset", toolset),
+		),
+	)
+	span.SetStatus(codes.Ok, "observed")
+	span.End()
 }
 
 // acquirePingLease attempts to win the current ping interval for a toolset.
@@ -428,14 +457,17 @@ func (h *healthTracker) schedulerTickPeriod() time.Duration {
 	return max(h.pingInterval/4, time.Millisecond)
 }
 
-// sendPing publishes one token-and-epoch-fenced ping.
-func (h *healthTracker) sendPing(ctx context.Context, toolset string) {
+// sendPing publishes one ping only while the catalog still has a live provider
+// for the admission. A provider that leaves after the readiness sample is an
+// expected race and receives no ping. Catalog and publication failures are
+// returned to the health span.
+func (h *healthTracker) sendPing(ctx context.Context, toolset string) error {
 	token, epoch, err := h.catalog.HealthIdentity(ctx, toolset)
 	if err != nil {
-		if !errors.Is(err, errToolsetNotFound) {
-			h.logger.Error(ctx, "resolve ping identity failed", "toolset", toolset, "err", err)
+		if errors.Is(err, errToolsetNotFound) {
+			return nil
 		}
-		return
+		return fmt.Errorf("resolve ping identity: %w", err)
 	}
 	pingID := newPingID(token, epoch)
 	if err := h.streamManager.PublishToolCall(
@@ -443,45 +475,76 @@ func (h *healthTracker) sendPing(ctx context.Context, toolset string) {
 		toolset,
 		toolregistry.NewPingMessage(token, pingID),
 	); err != nil {
-		h.logger.Error(ctx, "publish ping failed", "toolset", toolset, "ping_id", pingID, "err", err)
+		return fmt.Errorf("publish ping: %w", err)
 	}
+	return nil
 }
 
-// observeHealth samples and logs meaningful health transitions.
-func (h *healthTracker) observeHealth(ctx context.Context, toolset string) {
-	token, _, err := h.catalog.HealthIdentity(ctx, toolset)
-	if err != nil {
-		return
-	}
-	health, err := h.Health(ctx, toolset, token)
-	if err != nil {
-		return
-	}
-	h.noteHealth(ctx, toolset, health)
-}
+// sampleRegisteredToolset records one periodic health span after this node wins
+// the toolset's sampling lease. A successful catalog read records whether the
+// toolset can accept a call. A missing catalog entry records no readiness
+// because another operation may have removed it during sampling. Other read
+// failures are recorded as errors on the span.
+func (h *healthTracker) sampleRegisteredToolset(ctx context.Context, toolset string) {
+	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(
+		ctx,
+		"toolregistry.health",
+		trace.WithAttributes(
+			attribute.String("toolregistry.registry", h.leaseScope),
+			attribute.String("toolregistry.toolset", toolset),
+		),
+	)
+	defer span.End()
 
-// noteHealth logs healthy-to-unhealthy transitions without tick-level spam.
-func (h *healthTracker) noteHealth(ctx context.Context, toolset string, health ToolsetHealth) {
-	h.stateMu.Lock()
-	defer h.stateMu.Unlock()
-	previousHealthy, observed := h.lastObservedHealthy[toolset]
-	previousPong := h.lastObservedPong[toolset]
-	var pong int64
+	entry, now, err := h.catalog.healthEntry(ctx, toolset)
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		if !errors.Is(err, errToolsetNotFound) {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "read toolset health")
+		}
+		return
+	}
+	health := h.healthFromEntry(entry, now)
+	ready := 0
+	if health.Healthy {
+		ready = 1
+	}
+	span.SetAttributes(
+		attribute.Int("toolregistry.ready", ready),
+		attribute.Int("toolregistry.provider_count", health.ProviderCount),
+		attribute.Bool("toolregistry.pong_seen", !health.LastPong.IsZero()),
+		attribute.Int64("toolregistry.staleness_threshold_ms", health.StalenessThreshold.Milliseconds()),
+	)
 	if !health.LastPong.IsZero() {
-		pong = health.LastPong.UnixNano()
+		span.SetAttributes(attribute.Int64("toolregistry.last_pong_age_ms", health.Age.Milliseconds()))
 	}
-	h.lastObservedHealthy[toolset] = health.Healthy
-	h.lastObservedPong[toolset] = pong
-	if observed && previousHealthy && !health.Healthy && previousPong != pong {
-		h.logger.Warn(
-			ctx,
-			"toolset became unhealthy",
-			"toolset", toolset,
-			"provider_count", health.ProviderCount,
-			"last_pong", health.LastPong,
-			"age", health.Age,
-		)
+	if health.ProviderCount > 0 {
+		if err := h.sendPing(ctx, toolset); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "send toolset health ping")
+			return
+		}
 	}
+	span.SetStatus(codes.Ok, "observed")
+}
+
+// recordHealthSweepError records why the scheduler could not produce one or
+// more toolset readiness samples. The toolset is included only when the failed
+// operation had already selected one.
+func recordHealthSweepError(ctx context.Context, step, toolset string, err error) {
+	span := trace.SpanFromContext(ctx)
+	attrs := []attribute.KeyValue{attribute.String("toolregistry.step", step)}
+	if toolset != "" {
+		attrs = append(attrs, attribute.String("toolregistry.toolset", toolset))
+	}
+	span.RecordError(err, trace.WithAttributes(attrs...))
+	span.SetStatus(codes.Error, "health sweep failed")
 }
 
 // deriveStalenessThreshold defines the shared-pong freshness window.
@@ -516,12 +579,4 @@ func parsePingID(pingID string) (string, uint64, bool) {
 		return "", 0, false
 	}
 	return parts[0], epoch, true
-}
-
-// toolsetFromCatalogKey extracts a toolset name from a catalog map key.
-func toolsetFromCatalogKey(key string) string {
-	if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
-		return ""
-	}
-	return strings.TrimPrefix(key, toolsetCatalogKeyPrefix)
 }

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"time"
 
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
@@ -1050,6 +1051,7 @@ func prepareToolCallIdentity(
 		TurnID:           derefString(meta.TurnID),
 		ToolCallID:       meta.ToolCallID,
 		ParentToolCallID: derefString(meta.ParentToolCallID),
+		Labels:           maps.Clone(meta.Labels),
 	}
 	body, err := json.Marshal(struct {
 		Toolset string                     `json:"toolset"`

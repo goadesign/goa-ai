@@ -260,7 +260,7 @@ on agent/tool contracts.
 | Function                                      | Context                                | Purpose                                                                                             |
 | --------------------------------------------- | -------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | `Tool(name, description?, dsl?)`              | Inside `Toolset` or `Method`           | Declares a callable tool                                                                            |
-| `Args(type)`                                  | Inside `Tool`                          | Defines input parameter schema                                                                      |
+| `Args(type)`                                  | Inside `Tool`                          | Defines an object-shaped input schema                                                               |
 | `Return(type)`                                | Inside `Tool` or `Completion`          | Defines the model-visible result schema                                                             |
 | `ServerData(kind, type, dsl?)`                | Inside `Tool`                          | Defines server-only data emitted alongside results (never sent to model providers)                  |
 | `ServerDataDefault("on"                       | "off")`                                | Inside `Tool`                                                                                       |
@@ -755,8 +755,14 @@ Service("calculator", func() {
 
 ### Args and Return
 
-`Args` defines the input parameter schema for a tool. It follows the same patterns as Goa's
-`Payload` function:
+`Args` defines the model-visible input object for a tool. It accepts an inline
+object or an object-shaped user type. Primitive, array, map, and `OneOf` roots
+are rejected; wrap those values in an object instead.
+Omitting `Args` on an unbound tool defines the empty object `{}`, never `null`.
+On a tool with `BindTo`, omitting `Args` uses the bound method payload, which
+must also be object-shaped. See the
+[runtime tool-input contract](runtime.md#model-visible-tool-arguments) for
+nested object, union, validation, and correction behavior.
 
 ```go
 // Inline schema
@@ -769,11 +775,14 @@ Args(func() {
 // Reuse existing type
 Args(SearchParams)
 
-// Primitive type for simple tools
-Args(String)  // Single string parameter
+// Wrap a primitive value in an object
+Args(func() {
+    Attribute("text", String, "Text to echo")
+    Required("text")
+})
 ```
 
-`Return` defines the output result schema, following the same patterns as Goa's `Result`:
+`Return` is unchanged and accepts the same result shapes as Goa's `Result`:
 
 ```go
 // Inline schema
@@ -921,7 +930,7 @@ Codegen produces transform helpers when shapes are compatible:
 `Inject` marks payload fields as server-populated. Injected fields are:
 
 1. Hidden from the LLM (excluded from the JSON schema and the model-facing required list)
-2. Required `String` fields on the tool's effective payload (the explicit `Args()` when given, otherwise the bound method's payload)
+2. Required `String` fields on the tool's effective payload (the explicit `Args()` when given, otherwise the bound method's payload). Named Goa `String` types are supported; fields that replace their Go type with `struct:field:type` are rejected because injection supplies a string value.
 3. Populated by generated code, from one of two generation-time-resolved sources
 
 **Meta-backed** names Goify to one of the five fixed `runtime.ToolCallMeta`
@@ -929,11 +938,11 @@ fields -- `run_id`/`runId`, `session_id`/`sessionId`, `turn_id`/`turnId`,
 `tool_call_id`/`toolCallId`, `parent_tool_call_id`/`parentToolCallId` -- and
 compile to a direct meta read. **Every other name is label-backed**: it
 compiles to a run-label lookup (label key = the design name verbatim), with
-the field's own declared validation (`Pattern`, `Length`, enum, ...) applied
-to the label value, and callers must supply it via
-`runtime.WithLabels(...)` when starting the run. A label-backed field cannot
-be declared on a `BindTo` tool, because the registry wire protocol used by
-registry-served bound tools carries no run labels.
+the field's own declared validation (`Pattern`, `MinLength`, enum, and other
+String rules) applied before assignment, and callers must supply it via
+`runtime.WithLabels(...)` when starting the run. Metadata-backed values pass
+through the same validation before assignment. Registry calls carry the run
+labels needed by bound tools.
 
 ```go
 Tool("get_data", "Get user data", func() {

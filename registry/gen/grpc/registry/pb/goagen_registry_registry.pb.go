@@ -1347,8 +1347,11 @@ type ToolCallMeta struct {
 	ToolCallId *string `protobuf:"bytes,4,opt,name=tool_call_id,json=toolCallId,proto3,oneof" json:"tool_call_id,omitempty"`
 	// Parent tool call identifier when the tool call is nested.
 	ParentToolCallId *string `protobuf:"bytes,5,opt,name=parent_tool_call_id,json=parentToolCallId,proto3,oneof" json:"parent_tool_call_id,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Run labels and runtime-supplied values fixed for this call. Providers use
+	// them to fill fields declared with Inject; models never see them.
+	Labels        map[string]string `protobuf:"bytes,6,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ToolCallMeta) Reset() {
@@ -1414,6 +1417,13 @@ func (x *ToolCallMeta) GetParentToolCallId() string {
 		return *x.ParentToolCallId
 	}
 	return ""
+}
+
+func (x *ToolCallMeta) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
 }
 
 type CallToolResponse struct {
@@ -2393,7 +2403,7 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\b_toolsetB\a\n" +
 	"\x05_toolB\x0f\n" +
 	"\r_payload_jsonB\x18\n" +
-	"\x16_wire_protocol_version\"\x96\x02\n" +
+	"\x16_wire_protocol_version\"\x94\x03\n" +
 	"\fToolCallMeta\x12\x1a\n" +
 	"\x06run_id\x18\x01 \x01(\tH\x00R\x05runId\x88\x01\x01\x12\"\n" +
 	"\n" +
@@ -2401,7 +2411,11 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\aturn_id\x18\x03 \x01(\tH\x02R\x06turnId\x88\x01\x01\x12%\n" +
 	"\ftool_call_id\x18\x04 \x01(\tH\x03R\n" +
 	"toolCallId\x88\x01\x01\x122\n" +
-	"\x13parent_tool_call_id\x18\x05 \x01(\tH\x04R\x10parentToolCallId\x88\x01\x01B\t\n" +
+	"\x13parent_tool_call_id\x18\x05 \x01(\tH\x04R\x10parentToolCallId\x88\x01\x01\x12A\n" +
+	"\x06labels\x18\x06 \x03(\v2).goa_ai_registry.ToolCallMeta.LabelsEntryR\x06labels\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\t\n" +
 	"\a_run_idB\r\n" +
 	"\v_session_idB\n" +
 	"\n" +
@@ -2553,7 +2567,7 @@ func file_goagen_registry_registry_proto_rawDescGZIP() []byte {
 	return file_goagen_registry_registry_proto_rawDescData
 }
 
-var file_goagen_registry_registry_proto_msgTypes = make([]protoimpl.MessageInfo, 33)
+var file_goagen_registry_registry_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_goagen_registry_registry_proto_goTypes = []any{
 	(*RegisterRequest)(nil),                // 0: goa_ai_registry.RegisterRequest
 	(*ToolSchema)(nil),                     // 1: goa_ai_registry.ToolSchema
@@ -2588,6 +2602,7 @@ var file_goagen_registry_registry_proto_goTypes = []any{
 	(*ReportToolCallOverloadResponse)(nil), // 30: goa_ai_registry.ReportToolCallOverloadResponse
 	(*ClaimToolCallRequest)(nil),           // 31: goa_ai_registry.ClaimToolCallRequest
 	(*ClaimToolCallResponse)(nil),          // 32: goa_ai_registry.ClaimToolCallResponse
+	nil,                                    // 33: goa_ai_registry.ToolCallMeta.LabelsEntry
 }
 var file_goagen_registry_registry_proto_depIdxs = []int32{
 	1,  // 0: goa_ai_registry.RegisterRequest.tools:type_name -> goa_ai_registry.ToolSchema
@@ -2595,42 +2610,43 @@ var file_goagen_registry_registry_proto_depIdxs = []int32{
 	1,  // 2: goa_ai_registry.GetToolsetResponse.tools:type_name -> goa_ai_registry.ToolSchema
 	13, // 3: goa_ai_registry.SearchResponse.toolsets:type_name -> goa_ai_registry.ToolsetInfo
 	21, // 4: goa_ai_registry.CallToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
-	21, // 5: goa_ai_registry.RetryToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
-	0,  // 6: goa_ai_registry.Registry.Register:input_type -> goa_ai_registry.RegisterRequest
-	3,  // 7: goa_ai_registry.Registry.ReleaseProvider:input_type -> goa_ai_registry.ReleaseProviderRequest
-	5,  // 8: goa_ai_registry.Registry.DrainProvider:input_type -> goa_ai_registry.DrainProviderRequest
-	7,  // 9: goa_ai_registry.Registry.Unregister:input_type -> goa_ai_registry.UnregisterRequest
-	9,  // 10: goa_ai_registry.Registry.Pong:input_type -> goa_ai_registry.PongRequest
-	11, // 11: goa_ai_registry.Registry.ListToolsets:input_type -> goa_ai_registry.ListToolsetsRequest
-	14, // 12: goa_ai_registry.Registry.GetToolset:input_type -> goa_ai_registry.GetToolsetRequest
-	16, // 13: goa_ai_registry.Registry.CheckAdmission:input_type -> goa_ai_registry.CheckAdmissionRequest
-	18, // 14: goa_ai_registry.Registry.Search:input_type -> goa_ai_registry.SearchRequest
-	20, // 15: goa_ai_registry.Registry.CallTool:input_type -> goa_ai_registry.CallToolRequest
-	23, // 16: goa_ai_registry.Registry.RetryTool:input_type -> goa_ai_registry.RetryToolRequest
-	25, // 17: goa_ai_registry.Registry.CompleteToolCall:input_type -> goa_ai_registry.CompleteToolCallRequest
-	27, // 18: goa_ai_registry.Registry.PublishToolOutputDelta:input_type -> goa_ai_registry.PublishToolOutputDeltaRequest
-	29, // 19: goa_ai_registry.Registry.ReportToolCallOverload:input_type -> goa_ai_registry.ReportToolCallOverloadRequest
-	31, // 20: goa_ai_registry.Registry.ClaimToolCall:input_type -> goa_ai_registry.ClaimToolCallRequest
-	2,  // 21: goa_ai_registry.Registry.Register:output_type -> goa_ai_registry.RegisterResponse
-	4,  // 22: goa_ai_registry.Registry.ReleaseProvider:output_type -> goa_ai_registry.ReleaseProviderResponse
-	6,  // 23: goa_ai_registry.Registry.DrainProvider:output_type -> goa_ai_registry.DrainProviderResponse
-	8,  // 24: goa_ai_registry.Registry.Unregister:output_type -> goa_ai_registry.UnregisterResponse
-	10, // 25: goa_ai_registry.Registry.Pong:output_type -> goa_ai_registry.PongResponse
-	12, // 26: goa_ai_registry.Registry.ListToolsets:output_type -> goa_ai_registry.ListToolsetsResponse
-	15, // 27: goa_ai_registry.Registry.GetToolset:output_type -> goa_ai_registry.GetToolsetResponse
-	17, // 28: goa_ai_registry.Registry.CheckAdmission:output_type -> goa_ai_registry.CheckAdmissionResponse
-	19, // 29: goa_ai_registry.Registry.Search:output_type -> goa_ai_registry.SearchResponse
-	22, // 30: goa_ai_registry.Registry.CallTool:output_type -> goa_ai_registry.CallToolResponse
-	24, // 31: goa_ai_registry.Registry.RetryTool:output_type -> goa_ai_registry.RetryToolResponse
-	26, // 32: goa_ai_registry.Registry.CompleteToolCall:output_type -> goa_ai_registry.CompleteToolCallResponse
-	28, // 33: goa_ai_registry.Registry.PublishToolOutputDelta:output_type -> goa_ai_registry.PublishToolOutputDeltaResponse
-	30, // 34: goa_ai_registry.Registry.ReportToolCallOverload:output_type -> goa_ai_registry.ReportToolCallOverloadResponse
-	32, // 35: goa_ai_registry.Registry.ClaimToolCall:output_type -> goa_ai_registry.ClaimToolCallResponse
-	21, // [21:36] is the sub-list for method output_type
-	6,  // [6:21] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	33, // 5: goa_ai_registry.ToolCallMeta.labels:type_name -> goa_ai_registry.ToolCallMeta.LabelsEntry
+	21, // 6: goa_ai_registry.RetryToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
+	0,  // 7: goa_ai_registry.Registry.Register:input_type -> goa_ai_registry.RegisterRequest
+	3,  // 8: goa_ai_registry.Registry.ReleaseProvider:input_type -> goa_ai_registry.ReleaseProviderRequest
+	5,  // 9: goa_ai_registry.Registry.DrainProvider:input_type -> goa_ai_registry.DrainProviderRequest
+	7,  // 10: goa_ai_registry.Registry.Unregister:input_type -> goa_ai_registry.UnregisterRequest
+	9,  // 11: goa_ai_registry.Registry.Pong:input_type -> goa_ai_registry.PongRequest
+	11, // 12: goa_ai_registry.Registry.ListToolsets:input_type -> goa_ai_registry.ListToolsetsRequest
+	14, // 13: goa_ai_registry.Registry.GetToolset:input_type -> goa_ai_registry.GetToolsetRequest
+	16, // 14: goa_ai_registry.Registry.CheckAdmission:input_type -> goa_ai_registry.CheckAdmissionRequest
+	18, // 15: goa_ai_registry.Registry.Search:input_type -> goa_ai_registry.SearchRequest
+	20, // 16: goa_ai_registry.Registry.CallTool:input_type -> goa_ai_registry.CallToolRequest
+	23, // 17: goa_ai_registry.Registry.RetryTool:input_type -> goa_ai_registry.RetryToolRequest
+	25, // 18: goa_ai_registry.Registry.CompleteToolCall:input_type -> goa_ai_registry.CompleteToolCallRequest
+	27, // 19: goa_ai_registry.Registry.PublishToolOutputDelta:input_type -> goa_ai_registry.PublishToolOutputDeltaRequest
+	29, // 20: goa_ai_registry.Registry.ReportToolCallOverload:input_type -> goa_ai_registry.ReportToolCallOverloadRequest
+	31, // 21: goa_ai_registry.Registry.ClaimToolCall:input_type -> goa_ai_registry.ClaimToolCallRequest
+	2,  // 22: goa_ai_registry.Registry.Register:output_type -> goa_ai_registry.RegisterResponse
+	4,  // 23: goa_ai_registry.Registry.ReleaseProvider:output_type -> goa_ai_registry.ReleaseProviderResponse
+	6,  // 24: goa_ai_registry.Registry.DrainProvider:output_type -> goa_ai_registry.DrainProviderResponse
+	8,  // 25: goa_ai_registry.Registry.Unregister:output_type -> goa_ai_registry.UnregisterResponse
+	10, // 26: goa_ai_registry.Registry.Pong:output_type -> goa_ai_registry.PongResponse
+	12, // 27: goa_ai_registry.Registry.ListToolsets:output_type -> goa_ai_registry.ListToolsetsResponse
+	15, // 28: goa_ai_registry.Registry.GetToolset:output_type -> goa_ai_registry.GetToolsetResponse
+	17, // 29: goa_ai_registry.Registry.CheckAdmission:output_type -> goa_ai_registry.CheckAdmissionResponse
+	19, // 30: goa_ai_registry.Registry.Search:output_type -> goa_ai_registry.SearchResponse
+	22, // 31: goa_ai_registry.Registry.CallTool:output_type -> goa_ai_registry.CallToolResponse
+	24, // 32: goa_ai_registry.Registry.RetryTool:output_type -> goa_ai_registry.RetryToolResponse
+	26, // 33: goa_ai_registry.Registry.CompleteToolCall:output_type -> goa_ai_registry.CompleteToolCallResponse
+	28, // 34: goa_ai_registry.Registry.PublishToolOutputDelta:output_type -> goa_ai_registry.PublishToolOutputDeltaResponse
+	30, // 35: goa_ai_registry.Registry.ReportToolCallOverload:output_type -> goa_ai_registry.ReportToolCallOverloadResponse
+	32, // 36: goa_ai_registry.Registry.ClaimToolCall:output_type -> goa_ai_registry.ClaimToolCallResponse
+	22, // [22:37] is the sub-list for method output_type
+	7,  // [7:22] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_goagen_registry_registry_proto_init() }
@@ -2667,7 +2683,7 @@ func file_goagen_registry_registry_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_goagen_registry_registry_proto_rawDesc), len(file_goagen_registry_registry_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   33,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

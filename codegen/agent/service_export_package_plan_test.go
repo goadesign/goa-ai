@@ -122,11 +122,15 @@ func serviceExportSpecs(t *testing.T, withConsumer bool) map[string]string {
 		})
 		Service("alpha", func() {
 			Method("Ping", func() {
-				Payload(String)
+				Payload(func() {
+					Attribute("message", String)
+				})
 				Result(String)
 			})
 			Method("Pong", func() {
-				Payload(String)
+				Payload(func() {
+					Attribute("message", String)
+				})
 				Result(String)
 			})
 			Export(shared)

@@ -69,13 +69,6 @@ type (
 		toolName   tools.Ident
 		correction string
 	}
-
-	// malformedToolArgumentsError marks provider output that named an
-	// advertised tool but could not represent its arguments as JSON. Its fixed
-	// correction contains no provider-authored values.
-	malformedToolArgumentsError struct {
-		cause error
-	}
 )
 
 // NewRequestContract validates request and copies every value used to accept
@@ -181,9 +174,6 @@ func (c *RequestContract) RejectProviderOutput(
 	usage *TokenUsage,
 	cause error,
 ) *OutputValidationError {
-	if kind == OutputValidationToolArguments {
-		cause = &malformedToolArgumentsError{cause: cause}
-	}
 	return newOutputValidationError(
 		kind,
 		cause,
@@ -264,10 +254,10 @@ func (e *OutputValidationError) Usage() *TokenUsage {
 	return &usage
 }
 
-// RecoveryCorrection returns framework-authored guidance when generated tool
-// validation identified a safe way to replace the rejected invocation. The
-// guidance contains no provider payload or submitted values. An empty string
-// means the rejection remains terminal.
+// RecoveryCorrection returns framework-authored guidance when an advertised
+// tool input contract identified a safe way to replace the rejected invocation.
+// The guidance contains no provider payload or submitted values. An empty
+// string means the rejection remains terminal.
 func (e *OutputValidationError) RecoveryCorrection() string {
 	if e == nil {
 		return ""
@@ -598,9 +588,8 @@ func validateToolChoice(
 	}
 }
 
-// configuredToolCallValidators snapshots the names and generated payload checks
-// attached to the exact tool definitions advertised in request. Caller-authored
-// definitions remain valid entries with no generated check.
+// configuredToolCallValidators snapshots the names and payload checks attached
+// to the exact tool definitions advertised in request.
 func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallValidator, error) {
 	validators := make(map[tools.Ident]toolCallValidator, len(request.Tools))
 	for _, definition := range request.Tools {
@@ -615,7 +604,6 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 			return nil, fmt.Errorf("model request contains duplicate tool definition %q", name)
 		}
 		validate := definition.Input.validate
-		fieldJSONTypes := definition.Input.fieldJSONTypes
 		if validate == nil {
 			return nil, fmt.Errorf("model request tool %q has no payload validator", name)
 		}
@@ -633,19 +621,49 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 		}
 		validators[name] = func(call ToolCall) error {
 			if err := validate(call.Payload); err != nil {
-				correction := generatedToolCallCorrection(call.Name, fieldJSONTypes, err)
-				if correction == "" {
+				if !isToolInputContractRejection(err) {
 					return fmt.Errorf("model tool %q payload failed its request contract: %w", call.Name, err)
 				}
 				return &toolCallValidationError{
 					toolName:   call.Name,
-					correction: correction,
+					correction: advertisedToolInputCorrection,
 				}
 			}
 			return nil
 		}
 	}
 	return validators, nil
+}
+
+// isToolInputContractRejection reports whether the advertised input schema or a
+// typed payload validator rejected arguments before the tool ran. A plain codec
+// error lacks that typed proof and therefore stays terminal.
+func isToolInputContractRejection(err error) bool {
+	// Inspect this exact node. Following wrapped errors here would let one
+	// accepted child hide an unrelated failure in the same error tree.
+	//nolint:errorlint
+	switch rejection := err.(type) {
+	case *tools.ValidationError:
+		return rejection != nil
+	case *advertisedInputValidationError:
+		return rejection != nil
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		children := joined.Unwrap()
+		if len(children) == 0 {
+			return false
+		}
+		for _, child := range children {
+			if !isToolInputContractRejection(child) {
+				return false
+			}
+		}
+		return true
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return isToolInputContractRejection(cause)
+	}
+	return false
 }
 
 // validateConfiguredToolCalls applies request-owned generated payload checks
@@ -672,34 +690,16 @@ func validateConfiguredToolCalls(
 	return nil
 }
 
-// Error reports which generated tool contract rejected the call without
-// retaining the codec message or provider arguments.
+// Error reports which advertised tool contract rejected the call without
+// retaining the validator message or provider arguments.
 func (e *toolCallValidationError) Error() string {
-	return fmt.Sprintf("model tool %q payload failed its generated request contract", e.toolName)
+	return fmt.Sprintf("model tool %q payload failed its request contract", e.toolName)
 }
 
 // modelRecoveryCorrection gives OutputValidationError the bounded safe
 // guidance derived before the rejected payload leaves validation.
 func (e *toolCallValidationError) modelRecoveryCorrection() string {
 	return e.correction
-}
-
-// Error describes the canonical contract failure without rendering provider
-// argument bytes or adapter diagnostics.
-func (e *malformedToolArgumentsError) Error() string {
-	return "model tool arguments are not valid JSON"
-}
-
-// Unwrap preserves the provider adapter's private cause for in-process
-// diagnostics.
-func (e *malformedToolArgumentsError) Unwrap() error {
-	return e.cause
-}
-
-// modelRecoveryCorrection supplies the fixed replacement instruction consumed
-// by the existing bounded model-invocation recovery path.
-func (e *malformedToolArgumentsError) modelRecoveryCorrection() string {
-	return malformedToolArgumentsCorrection
 }
 
 // validateToolChoiceResponse enforces the exact tool-use constraint copied
@@ -853,6 +853,10 @@ func newOutputValidationError(
 	if cause == nil {
 		panic("model: output validation error requires a cause")
 	}
+	var malformed *malformedToolArgumentsError
+	if errors.As(cause, &malformed) && kind != OutputValidationToolArguments {
+		panic("model: malformed tool arguments require the tool_arguments validation kind")
+	}
 	correction := recoveryCorrectionFromError(cause)
 	if correction != "" {
 		rejected = nil
@@ -867,18 +871,47 @@ func newOutputValidationError(
 	}
 }
 
-// recoveryCorrectionFromError preserves generated correction guidance while
-// validation wraps the rejection with response and usage evidence.
+// recoveryCorrectionFromError accepts correction guidance only when every
+// error leaf describes the same correctable rejection. Any unrelated failure
+// keeps the combined error terminal.
 func recoveryCorrectionFromError(err error) string {
-	var source interface {
-		modelRecoveryCorrection() string
-	}
-	if errors.As(err, &source) {
+	// Inspect this exact node before walking every child. errors.As would accept
+	// one correctable child while ignoring an unrelated failure beside it.
+	//nolint:errorlint
+	switch source := err.(type) {
+	case *toolCallValidationError:
+		if source == nil {
+			return ""
+		}
 		return source.modelRecoveryCorrection()
+	case *malformedToolArgumentsError:
+		if source == nil {
+			return ""
+		}
+		return source.modelRecoveryCorrection()
+	case *OutputValidationError:
+		if source == nil || !source.restored {
+			return ""
+		}
+		return source.RecoveryCorrection()
 	}
-	var validationErr *OutputValidationError
-	if errors.As(err, &validationErr) {
-		return validationErr.RecoveryCorrection()
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var correction string
+		children := joined.Unwrap()
+		if len(children) == 0 {
+			return ""
+		}
+		for _, child := range children {
+			childCorrection := recoveryCorrectionFromError(child)
+			if childCorrection == "" || correction != "" && childCorrection != correction {
+				return ""
+			}
+			correction = childCorrection
+		}
+		return correction
+	}
+	if cause := errors.Unwrap(err); cause != nil {
+		return recoveryCorrectionFromError(cause)
 	}
 	return ""
 }

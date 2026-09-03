@@ -73,6 +73,7 @@ func (p *toolSpecsPackagePlan) declareToolNames(toolset string, tool *agent.Tool
 		serverDataTypes:          make(map[string]*plannedSpecType),
 		serverDataTransformPlans: make(map[string]*goacodegen.TransformPlan),
 		injectedFieldLayouts:     make(map[string]*goacodegen.GoTypePlan),
+		injectedFieldValidations: make(map[string]*goacodegen.ValidationPlan),
 	}
 	var err error
 	names.constructor, err = p.public.DeclareDependentName(

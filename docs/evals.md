@@ -94,10 +94,10 @@ The rules are:
 - Every suite and scenario needs a `Description`. Every suite needs a positive
   `Timeout`; a scenario `Timeout` replaces the suite one for that scenario.
 - `Input` is optional. A scenario without `Input` generates a hook that
-  receives only a `context.Context`. `Input` accepts the same forms as tool
-  `Args`: a named Goa type, a primitive, an array or map, or an inline
-  function listing attributes. `OneOf` (a field that can hold one of several
-  types) is not supported in evaluation inputs.
+  receives only a `context.Context`. `Input` accepts a named Goa type, a
+  primitive, an array or map, or an inline function listing attributes.
+  `OneOf` (a field that can hold one of several types) is not supported in
+  evaluation inputs.
 - A suite can be declared at the top level of the design or inside an `Agent`.
   Declaring it inside an agent additionally gives the generated package access
   to that agent's tool contracts (explained below).

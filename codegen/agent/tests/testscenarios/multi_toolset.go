@@ -17,11 +17,15 @@ func MultiToolset() func() {
 		var AddResult = Type("AddResult", func() {
 			Attribute("sum", Int32, "Sum")
 		})
+		var EchoPayload = Type("EchoPayload", func() {
+			Attribute("text", String, "Text to echo")
+			Required("text")
+		})
 		Service("alpha", func() {
 			Agent("scribe", "Doc helper", func() {
 				Use("ops", func() {
 					Tool("echo", "Echo", func() {
-						Args(String)
+						Args(EchoPayload)
 						Return(String)
 					})
 				})

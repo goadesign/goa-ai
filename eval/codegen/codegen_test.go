@@ -171,13 +171,17 @@ func TestGenerateAgentAttachedReachableToolContracts(t *testing.T) {
 			aidls.Agent("catalog", "Retrieves catalog records.", func() {
 				aidls.Export("records", func() {
 					aidls.Tool("lookup", "Look up records.", func() {
-						aidls.Args(goadsl.String)
+						aidls.Args(func() {
+							goadsl.Attribute("query", goadsl.String)
+						})
 						aidls.Return(goadsl.String)
 					})
 				})
 				aidls.Export("private", func() {
 					aidls.Tool("hidden", "Not reachable from the assistant.", func() {
-						aidls.Args(goadsl.String)
+						aidls.Args(func() {
+							goadsl.Attribute("query", goadsl.String)
+						})
 						aidls.Return(goadsl.String)
 					})
 				})
@@ -187,7 +191,9 @@ func TestGenerateAgentAttachedReachableToolContracts(t *testing.T) {
 			aidls.Agent("assistant", "Answers user questions.", func() {
 				aidls.Use("assistant_tools", func() {
 					aidls.Tool("answer", "Answer directly.", func() {
-						aidls.Args(goadsl.String)
+						aidls.Args(func() {
+							goadsl.Attribute("answer", goadsl.String)
+						})
 						aidls.Return(goadsl.String)
 					})
 				})

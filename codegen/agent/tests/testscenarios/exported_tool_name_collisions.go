@@ -10,19 +10,23 @@ import (
 func ExportedToolNameCollisions() func() {
 	return func() {
 		API("agent_tool_names", func() {})
+		var Input = Type("Input", func() {
+			Attribute("value", String, "Input value")
+			Required("value")
+		})
 		Service("alpha", func() {
 			Agent("scribe", "Writes documents", func() {
 				Export("helpers", func() {
 					Tool("agent-id", "Find an agent by ID", func() {
-						Args(String)
+						Args(Input)
 						Return(String)
 					})
 					Tool("agent_id", "Load an agent by ID", func() {
-						Args(String)
+						Args(Input)
 						Return(String)
 					})
 					Tool("service", "Describe a service", func() {
-						Args(String)
+						Args(Input)
 						Return(String)
 					})
 				})

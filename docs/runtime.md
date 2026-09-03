@@ -416,26 +416,27 @@ error text and the lost-recovery behavior when validation and provider cleanup
 fail together. The older-worker restriction in the preceding paragraph applies
 only to runtime versions from before `ModelInvocationRecovery` existed.
 
-### Generated tool validation across model gateways
+### Tool input validation across model gateways
 
 A raw model gateway transports provider chunks and the complete response; it
-does not replace the request owner's generated payload decoder with a validator
-compiled from transported JSON Schema. Provider adapters still reject malformed
-JSON, unknown tool names, invalid identifiers, illegal event order, incomplete
-streams, and provider errors before output crosses the transport. For malformed
-tool argument JSON, an adapter may finish reading only terminal completion and
-usage events, then return fixed replacement guidance through the existing typed
-output rejection. It never exposes or repairs the malformed bytes.
+does not replace the request owner's tool input contract. The consuming process
+keeps the exact advertised schema and any attached generated decoder together.
+Provider adapters still reject malformed JSON, unknown tool names, invalid
+identifiers, illegal event order, incomplete streams, and provider errors
+before output crosses the transport. For malformed tool argument JSON, an
+adapter may finish reading only terminal completion and usage events, then
+return fixed replacement guidance through the existing typed output rejection.
+It never exposes or repairs the malformed bytes.
 
 The consuming `model.Client` retains streamed tool argument fragments and
 completed calls, drains the provider through terminal usage and response, and
-first reconciles every chunk with that response. It then runs each generated
-payload decoder exactly once. If a decoder returns structured field issues, the
-client exposes no argument fragment or completed call from that response and
-returns bounded replacement guidance derived from generated field metadata.
-Submitted field values are not copied into that guidance. A stream mismatch or
-provider-protocol failure remains terminal and takes precedence over payload
-correction.
+first reconciles every chunk with that response. It then applies each tool's
+advertised schema before its generated payload decoder. The correction and
+terminal-error rules are the same as
+[Model-Visible Tool Arguments](#model-visible-tool-arguments). The client
+exposes no argument fragment or completed call from a rejected response. A
+stream mismatch or provider-protocol failure remains terminal and takes
+precedence over argument correction.
 
 Provider processes that need adaptive token admission can apply
 `AdaptiveRateLimiter.WrapProvider` while preserving this raw gateway contract.
@@ -903,17 +904,16 @@ Workflow step boundary:
 - when one of those limits is reached, the workflow selects the matching call
   without loading saved messages, adds current run identifiers and labels,
   and executes the call through the existing terminal-tool path,
-- when a model returns malformed tool argument JSON, the model boundary may
-  produce fixed guidance requiring one JSON object; when a canonical tool call
-  instead fails its generated input codec, guidance may use the generated tool
-  name, field path, expected JSON type, required-field rule, legal enum, or
-  union discriminator; neither form copies submitted values, raw provider
-  output, provider diagnostics, or unknown property names into that guidance,
+- when a model returns malformed tool argument JSON, fails an advertised input
+  schema, or receives a non-nil `*tools.ValidationError` from its input decoder,
+  the model boundary produces fixed replacement guidance; that guidance never
+  copies tool names, submitted values, schema details, raw provider output, or
+  provider diagnostics,
 - the workflow ties that guidance to the exact rejected invocation selected in
   invocation start order, records its token usage, keeps the malformed call out
   of transcript history, and schedules one normal resume activity with the
-  executable tool catalog still available; a generated validation failure
-  without safe structured issues remains terminal,
+  executable tool catalog still available; ordinary decoder and internal
+  errors remain terminal,
 - Temporal histories written before this behavior replay unchanged. Once a
   history contains a `ModelInvocationRecovery` planner activity result, every
   worker that may process that history must run a runtime version that
@@ -1064,7 +1064,7 @@ The runtime applies them in this order:
 
 `SynthesizeAfterTools` therefore does not create a second recovery policy.
 `ToolFailure.Recovery` is the single transition contract: `correct_call` keeps
-the failed tool available and attaches generated correction evidence without
+the failed tool available and attaches correction evidence without
 requiring a retry. Its `PriorInput` is a clone of the exact model-authored
 payload; execution keeps the separately compiled or injected `Payload`.
 Executors and tool activities return the failure classification, error,
@@ -1215,7 +1215,7 @@ restoration is the error decoded from that output-validation variant; it is not
 an independent provider or internal error transmitted alongside the variant.
 The variant's restoration metadata is limited to a closed
 `OutputValidationKind`, `ResponseEvidence`, validated `TokenUsage`, and, when
-generated validation already produced it, a separate safe
+advertised input validation already produced it, a separate fixed
 `RecoveryCorrection`; it never carries the rejected response body. The kind
 contains no response text, provider text, tool names, arguments, identifiers,
 or schema paths. Do not derive correction guidance from the kind, rejected
@@ -1239,7 +1239,7 @@ Neither function reconstructs or exposes the rejected response. The correction
 applies only to that rejected invocation and its immediate replacement planner
 turn. The workflow remains responsible for scheduling the replacement and
 enforcing `MaxRecoveryTurns`; provider failures, stream failures, and output
-failures without safe structured guidance remain terminal.
+failures without fixed replacement guidance remain terminal.
 
 This restoration signature is an API break for custom model transports. Upgrade
 the transport producer and consumer together, regenerate application code
@@ -1267,6 +1267,40 @@ type PlannerEvents interface {
     UsageDelta(ctx context.Context, usage model.TokenUsage)
 }
 ```
+
+---
+
+## Model-Visible Tool Arguments
+
+Every tool input shown to a model is a JSON object. `Args` may define an inline
+object or an object-shaped user type. Primitive, array, map, and `OneOf` roots
+are rejected when the design is evaluated. Primitive, array, map, and `OneOf`
+fields remain valid inside that object. Omitting `Args` on an unbound tool defines the empty
+object `{}`, never `null`. Omitting `Args` on a tool with `BindTo` uses the bound
+method payload, which must satisfy the same object-shape rule. This restriction
+does not apply to `Return`; tool results may use any Goa type.
+
+Generated input schemas and codecs agree on nested object behavior:
+
+- Generated objects reject properties that the design did not declare.
+- Maps remain open and accept keys supplied at runtime.
+- A `OneOf` value accepts only `type` and `value`. Both properties are required
+  and non-null. `type` must name a declared branch, and `value` must satisfy
+  that branch's complete nested contract.
+
+The validated model client checks each complete tool call before planner code
+can observe it. It first applies the exact JSON Schema advertised with that
+tool, then calls any input decoder attached to the same definition. A
+schema rejection is eligible for a replacement turn within the configured
+recovery limit. A decoder rejection is eligible only when it returns a non-nil
+`*tools.ValidationError`,
+the typed error generated decoders use for invalid model-authored fields.
+Correction text is fixed and never includes tool names, schema details, or
+rejected argument values. An ordinary decoder or internal error is terminal. If an error combines
+several causes, the call is correctable only when every cause is an
+advertised-schema rejection or a non-nil `*tools.ValidationError`; one internal
+cause makes the combined error terminal. The runtime still enforces its
+configured recovery-turn limit.
 
 ---
 
@@ -1381,11 +1415,13 @@ point cannot change which output the stream accepts.
 
 Tool definitions built from a generated `tools.ToolSpec` retain that tool's
 generated payload decoder inside the process. Unary responses and final
-streamed tool-call chunks must name a tool present in the request and pass that
-decoder before planner code receives them. Caller-authored tools built with
+streamed tool-call chunks must name a tool present in the request and satisfy
+the checks described in
+[Model-Visible Tool Arguments](#model-visible-tool-arguments) before planner
+code receives them. Caller-authored tools built with
 `model.AdvertisedToolInputFromSchema` compile their JSON Schema once and apply
-it at the same boundary. Requests reject tool definitions that carry only
-schema bytes without either validation path.
+it at the same point. Requests reject tool definitions that carry schema bytes
+without an input validator.
 When `PlanResult` contains tool calls, the runtime
 matches their model-facing IDs, names, and payload bytes to exactly one
 candidate and persists only that response's assistant transcript. Mixed,
@@ -2007,10 +2043,33 @@ import (
     toolregexec "goa.design/goa-ai/runtime/toolregistry/executor"
 )
 
-exec := toolregexec.New(registryClient, pulseClient, specs)
+exec, err := toolregexec.New(registryClient, pulseClient, "myservice.helpers", specs)
+if err != nil {
+    return err
+}
 
 // Use exec.Execute as the executor for registry-backed toolsets.
 ```
+
+`executor.Client` receives `toolregistry.ToolCallMeta` by value. A handwritten
+adapter to the generated registry client must copy every field, including
+`Labels`, into both `CallToolPayload.Meta` and `RetryToolPayload.Meta`:
+
+```go
+func registryMeta(meta toolregistry.ToolCallMeta) *genregistry.ToolCallMeta {
+    return &genregistry.ToolCallMeta{
+        RunID:            meta.RunID,
+        SessionID:        meta.SessionID,
+        TurnID:           meta.TurnID,
+        ToolCallID:       meta.ToolCallID,
+        ParentToolCallID: meta.ParentToolCallID,
+        Labels:           maps.Clone(meta.Labels),
+    }
+}
+```
+
+Use the same conversion for a retry. Labels are part of the immutable call
+identity, so changing or omitting them on a retry is rejected.
 
 The registry wire protocol and deterministic stream IDs are defined in `runtime/toolregistry`:
 
@@ -2087,7 +2146,10 @@ the labels map itself.
    field name(s) on the tool. DSL `Validate` resolves each name against the
    tool's effective payload (the explicit `Args()` when given, otherwise the
    bound method's payload) and rejects the design if the field is missing,
-   optional, non-`String`, or (for a `BindTo` tool) label-backed.
+   optional, or non-`String`. Named Goa `String` types are valid. A field that
+   uses `struct:field:type` to replace its generated Go type is rejected because
+   injection supplies a string and the replacement type defines no general
+   string conversion contract.
 2. Codegen time: each name is classified against the fixed
    `runtime.ToolCallMeta` field set (`sessionId`/`session_id` -> `SessionID`,
    `runId`/`run_id` -> `RunID`, `turnId`/`turn_id` -> `TurnID`,
@@ -2095,15 +2157,16 @@ the labels map itself.
    `parentToolCallId`/`parent_tool_call_id` -> `ParentToolCallID`). A match is
    **meta-backed**; anything else is **label-backed**, using the design name
    verbatim as the label key. `codegen/agent/prepare.go`'s `flattenAndHide`
-   removes the field from the model-facing schema and required list, which
-   makes every injected field a **pointer** on the generated tool payload
-   struct. Each toolset's `inject.go` (beside its `codecs.go`/`specs.go`) gets
+   removes the field from the model-facing schema and required list. The public
+   generated tool input keeps the required field, and injection fills it after
+   the model-visible JSON is decoded. Each toolset's `inject.go` (beside its
+   `codecs.go`/`specs.go`) gets
    one generated `Inject<Tool>(p *<Tool>Payload, meta runtime.ToolCallMeta,
    labels map[string]string) error` function per injecting tool: meta-backed
-   fields copy directly from `meta`; label-backed fields look the key up in
-   `labels`, run the field's own declared validation (reusing Goa's
-   attribute-validation codegen, not hand-duplicated), and return a precise
-   error naming the tool and key on a missing or invalid label. The toolset's
+   fields read from `meta`; label-backed fields look the key up in `labels`.
+   Both sources run the field's declared Goa validation before assignment and
+   return a precise error naming the tool and field when a value is invalid.
+   Missing labels name the required key. The toolset's
    `RequiredLabels` (sorted, deduplicated label keys) is generated onto its
    specs package and included in the agent's immutable `AgentDefinition`.
 3. Runtime time: both execution topologies call the **same** generated
@@ -2114,10 +2177,8 @@ the labels map itself.
      `WithPayloadMapper` customization or method-payload conversion, using
      the run's `ToolCallMeta` and runtime-owned `ToolCall.Labels`.
    - Registry-served (bound) tools: the generated provider (`provider.go`)
-     calls the same `Inject<Tool>` function with a `nil` labels map --
-     sound only because a `BindTo` tool can never declare a label-backed
-     field (rejected at design time), since the registry wire protocol
-     carries no run labels.
+     calls the same `Inject<Tool>` function with the call metadata and its run
+     labels.
    - Custom (hand-written) `ToolCallExecutor`s -- for tools with no `BindTo`,
      registered directly with the runtime -- have no generated call site.
      **Use the toolset's generated `Decode<Tool>(payload []byte, meta
@@ -2567,6 +2628,41 @@ For MCP services:
   packages; their constructors, adapters, and transport files are generated
   from the new contract.
 
+For tool registry wire protocol 9:
+
+- Regenerate registry clients and providers together. A handwritten
+  `executor.Client` adapter must copy `ToolCallMeta.Labels` into both the first
+  call and every retry, as shown in
+  [Registry-Routed Execution](#registry-routed-execution-agentconsumer-side).
+- Before replacing protocol 8, stop new tool work and let every admitted call
+  finish. Prove that retained call records are terminal, the global and
+  per-provider settlement indexes are empty, and each provider consumer group
+  has no pending messages or lag. Then stop every protocol-8 registry,
+  provider, and consumer process.
+- Save the catalog hash before changing it. For a registry named `<name>`, the
+  hash is `map:<name>:toolsets:content`. Delete only hash fields whose names
+  start with `registry:toolset:`. Keep Pulse's `=rev` and `=kind` fields. The
+  following atomic Redis command returns every field it removes:
+
+  ```text
+  EVAL "local fields=redis.call('HKEYS',KEYS[1]); local removed={}; for _,field in ipairs(fields) do if string.sub(field,1,17)=='registry:toolset:' then redis.call('HDEL',KEYS[1],field); table.insert(removed,field); end; end; return removed" 1 map:<name>:toolsets:content
+  ```
+
+  Verify afterward that
+  `HSCAN map:<name>:toolsets:content 0 MATCH registry:toolset:* COUNT 1000`
+  returns no matching fields and that `HMGET map:<name>:toolsets:content =rev
+  =kind` still returns the reserved map state.
+- Do not delete retained call records, settlement records, or Pulse streams.
+  Once drained, they do not block protocol-9 startup and retain the evidence
+  needed to prevent an old call from executing twice. Their configured expiry
+  removes call-specific state.
+- Start the protocol-9 registry, providers, and consumers as one release, then
+  verify every expected toolset registered with protocol 9 before accepting new
+  work. The catalog contains no product data; providers recreate its schemas,
+  leases, health, and tokens. The operation discards protocol-8 retirement
+  history, so rollback to protocol 8 is unsupported after protocol-9 traffic
+  starts.
+
 For runtime storage and workflow adapters:
 
 - Regenerate every agent package. Generated callers and workers now share one
@@ -2693,8 +2789,8 @@ For runtime storage and workflow adapters:
   state and ordered run records.
 - Remove `ToolCallArgsDeltaEvent` handling from hook and stream subscribers.
   Partial tool arguments remain private until the provider finishes the call
-  and the generated payload decoder accepts it. Consumers observe the complete
-  `ToolCallScheduled` event afterward.
+  and the advertised schema plus attached decoder accept it. Consumers observe
+  the complete `ToolCallScheduled` event afterward.
 - Remove `ResultOmitted` and `ResultOmittedReason` from API, planner, hook, and
   stream values. Successful typed tool results are stored in full, and planner
   activities load those exact bytes from run records by ID. There is no
@@ -3998,6 +4094,60 @@ type Tracer interface {
 }
 ```
 
+### Registry and model-request traces
+
+Every registry replica emits `toolregistry.catalog.entry` for each active
+toolset returned by the shared catalog. Retired records remain stored but do
+not produce this span. Its `toolregistry.registry` and
+`toolregistry.toolset` attributes identify the registry and toolset. This span
+records catalog membership only; it does not report whether a provider is
+ready.
+
+Applications may list required names in `Registry.Config.ExpectedToolsets`.
+After each successful catalog read, every replica emits
+`toolregistry.catalog.expectation` for every configured name.
+`toolregistry.present` is `1` when the active catalog contains the name and `0`
+when it does not. A failed catalog read emits no expectation result, so an
+application can alert on observed absence without treating missing telemetry
+as proof that a toolset is missing. This list observes application requirements
+only; it does not change registration, routing, or call admission.
+
+After recording the catalog entry, registry replicas compete for an expiring
+Redis lease. The replica that wins emits `toolregistry.health` for that toolset
+and ping interval. Its attributes are:
+
+- `toolregistry.registry` and `toolregistry.toolset` identify the registry and
+  toolset.
+- `toolregistry.ready` is `1` only when at least one provider lease can accept
+  calls and a pong for the current provider set is still fresh. It is `0`
+  otherwise.
+- `toolregistry.provider_count` is the number of provider leases that can
+  accept calls.
+- `toolregistry.pong_seen` says whether the current provider set has returned
+  a pong. `toolregistry.last_pong_age_ms` is present only after one has been
+  seen, and `toolregistry.staleness_threshold_ms` states when it becomes stale.
+
+A missing `toolregistry.catalog.entry` does not prove absence because the
+catalog read or trace delivery may have failed. Use an observed expectation
+span with `toolregistry.present=0` when the application configures required
+names. A missing `toolregistry.health` span does not mean the provider is unready because
+another replica may have won the lease. Each registry replica emits
+`toolregistry.health.sweep` for its scheduler attempt. Revision, catalog
+enumeration, and lease errors are recorded on that span with
+`toolregistry.step`; a toolset name is included when the failing step had
+already selected one. A health span records catalog-read and ping-publication
+errors on itself.
+
+These spans use the application's configured OpenTelemetry sampling policy.
+An application that alerts when scheduler or catalog spans are absent must
+always sample the `toolregistry.health.sweep` root. Its catalog-entry and
+health child spans then inherit the same recorded decision.
+
+Each planner model-call span records `goa_ai.request.tool_count` and
+`goa_ai.request.tool_names`. These fields show the exact catalog advertised to
+that request. They contain names only; tool arguments and run labels are not
+recorded.
+
 ---
 
 ## Feature Modules
@@ -4141,40 +4291,19 @@ the call came from a model tool use and overwrites both fields from its retained
 
 ### Validation Issues and Tool Failures
 
-Tool calls can fail because the input payload is missing fields, violates constraints,
-or has the wrong JSON shape. When that happens, callers generally need actionable,
-field-level feedback rather than a generic failure string.
+The model-output checks described in
+[Model-Visible Tool Arguments](#model-visible-tool-arguments) happen before a
+tool is scheduled. A qualifying rejection produces limited-size guidance for a
+replacement model call without including rejected argument values; ordinary
+decoder and internal errors are terminal.
 
-Goa‑AI supports two complementary paths that produce
-`planner.FailureInvalidCall` with `planner.RecoveryCorrectCall`:
-
-1. **Decode‑time validation (generated codecs)**  
-   The generated tool codec validates the tool JSON payload before execution.
-   If validation fails, the codec returns a generated validation error that exposes
-   structured issues (`Issues() []*tools.FieldIssue`) and descriptions. The runtime
-   converts these into `planner.ToolFailure` automatically. Generated codecs also
-   turn JSON type mismatches into `invalid_field_type` issues with expected and
-   actual JSON type metadata, so callers can produce guidance such as
-   ``sections` must be a JSON array, not a JSON string`` without parsing schemas
-   or error strings.
-
-2. **Execution‑time validation (service / tool provider errors)**  
-   When a tool provider calls a bound service method, the method may return a Goa
-   validation error (for example `goa.MissingFieldError`, `goa.InvalidLengthError`, …).
-   Providers should surface these as **structured validation issues** in the tool result
-   message so consumers can build a `ToolFailure` without parsing error strings.
-
-   - **Provider behavior (generated)**: generated providers call
-     `toolregistry.ValidationIssues(err)` and, when issues are present, emit an error
-     result that includes them.
-   - **Wire protocol**: tool result errors may include `issues` (`[]FieldIssue`).
-   - **Consumer behavior**: registry executors preserve the provider's failure
-     classification, recovery action, and `issues`. The workflow supplies the
-     exact model-authored input and generated tool example only after verifying
-     the retained provider tool-call ID.
-
-This keeps the contract strong and deterministic: validation stays at boundaries,
-and “what to retry with” is computed from structured data, not heuristics.
+A tool can separately fail after execution begins because a bound service
+method rejects a domain value. Generated providers convert supported Goa
+validation errors into `[]tools.FieldIssue`, and registry executors preserve
+those issues in `planner.ToolFailure`. The workflow supplies the original
+model-authored input and generated example only after matching the saved tool
+call ID. This execution-time path does not change which model-response decoder
+errors qualify for correction.
 
 ---
 

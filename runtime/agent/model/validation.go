@@ -4,7 +4,6 @@
 package model
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -252,10 +251,9 @@ func validateToolCallOutput(call *ToolCall) (OutputValidationKind, error) {
 		return OutputValidationToolIdentity, fmt.Errorf("tool call %q is missing its name", call.ID)
 	}
 	if !json.Valid(call.Payload) {
-		return OutputValidationToolArguments, fmt.Errorf("tool call %q payload is not valid JSON", call.ID)
-	}
-	if data := bytes.TrimSpace(call.Payload); len(data) == 0 || data[0] != '{' {
-		return OutputValidationToolArguments, fmt.Errorf("tool call %q payload must be a JSON object", call.ID)
+		return OutputValidationToolArguments, NewMalformedToolArgumentsError(
+			fmt.Errorf("tool call %q payload is not valid JSON", call.ID),
+		)
 	}
 	return "", nil
 }

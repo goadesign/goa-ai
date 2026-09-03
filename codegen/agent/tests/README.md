@@ -55,7 +55,7 @@ go test ./codegen/agent/tests -run Quickstart_Renders_Minimal -update
 
 Planned additions (recommended next):
 
-- Tool args/return variants (primitive, inline object, user type w/ customization)
+- Tool result variants (primitive, inline object, user type w/ customization)
 - Tags surfaced in specs
 - BindTo cross‑service (imports/aliases, type refs)
 - Deterministic user type imports (custom packages, alias stability)

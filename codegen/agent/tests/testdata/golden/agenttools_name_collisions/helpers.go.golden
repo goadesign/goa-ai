@@ -128,18 +128,18 @@ func NewRegistration(
 // payload type for each tool.
 // NewAgentIDCall builds a planner-authored request for the
 // helpers.agent-id tool. The runtime assigns its execution ID.
-func NewAgentIDCall(args AgentIDPayload) (planner.ToolRequest, error) {
+func NewAgentIDCall(args *AgentIDPayload) (planner.ToolRequest, error) {
 	return planner.NewToolRequest(helpersspecs.AgentIDTool(), args)
 }
 
 // NewAgentIDCall2 builds a planner-authored request for the
 // helpers.agent_id tool. The runtime assigns its execution ID.
-func NewAgentIDCall2(args AgentIDPayload2) (planner.ToolRequest, error) {
+func NewAgentIDCall2(args *AgentIDPayload2) (planner.ToolRequest, error) {
 	return planner.NewToolRequest(helpersspecs.AgentID2Tool(), args)
 }
 
 // NewServiceCall builds a planner-authored request for the
 // helpers.service tool. The runtime assigns its execution ID.
-func NewServiceCall(args ServicePayload) (planner.ToolRequest, error) {
+func NewServiceCall(args *ServicePayload) (planner.ToolRequest, error) {
 	return planner.NewToolRequest(helpersspecs.ServiceTool(), args)
 }

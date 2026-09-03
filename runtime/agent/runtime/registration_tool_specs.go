@@ -11,6 +11,7 @@ import (
 	"maps"
 	"reflect"
 
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -22,40 +23,68 @@ type toolSpecRegistration struct {
 
 // validateToolSpecRegistrations compares incoming contracts against the
 // runtime registry and against earlier entries in the same registration.
-func (r *Runtime) validateToolSpecRegistrations(registrations ...toolSpecRegistration) error {
+func (r *Runtime) validateToolSpecRegistrations(
+	registrations ...toolSpecRegistration,
+) (map[tools.Ident]*model.ToolDefinition, error) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	specs := make(map[tools.Ident]tools.ToolSpec, len(r.toolSpecs))
 	for name, spec := range r.toolSpecs {
 		specs[name] = spec
+	}
+	definitions := make(map[tools.Ident]*model.ToolDefinition, len(r.toolDefinitions))
+	for name, definition := range r.toolDefinitions {
+		definitions[name] = definition
 	}
 	metadata := make(map[tools.Ident]policy.ToolMetadata, len(r.policyToolMetadata))
 	for name, meta := range r.policyToolMetadata {
 		metadata[name] = meta
 	}
+	r.mu.RUnlock()
+
 	for _, registration := range registrations {
 		for _, spec := range registration.specs {
 			if err := validateToolResultSpec(spec); err != nil {
-				return err
+				return nil, err
 			}
 			meta := canonicalToolMetadata(spec, registration.lookup)
 			if existing, ok := specs[spec.Name]; ok {
 				if !equivalentToolSpec(existing, spec) ||
 					!reflect.DeepEqual(metadata[spec.Name], meta) {
-					return fmt.Errorf(
+					return nil, fmt.Errorf(
 						"%w: tool %q is already registered with a different contract",
+						ErrInvalidConfig,
+						spec.Name,
+					)
+				}
+				if definitions[spec.Name] == nil {
+					return nil, fmt.Errorf(
+						"%w: tool %q has no compiled input contract",
 						ErrInvalidConfig,
 						spec.Name,
 					)
 				}
 				continue
 			}
+			definition, err := model.NewToolDefinitionFromSpec(spec)
+			if err != nil {
+				return nil, fmt.Errorf("%w: tool %q input contract: %w", ErrInvalidConfig, spec.Name, err)
+			}
 			specs[spec.Name] = spec
+			definitions[spec.Name] = definition
 			metadata[spec.Name] = meta
 		}
 	}
-	return nil
+	return definitions, nil
+}
+
+// mustToolDefinitions compiles runtime-owned specifications whose validity is
+// guaranteed by generated code or test construction.
+func mustToolDefinitions(specs []tools.ToolSpec) map[tools.Ident]*model.ToolDefinition {
+	definitions := make(map[tools.Ident]*model.ToolDefinition, len(specs))
+	for _, spec := range specs {
+		definitions[spec.Name] = model.ToolDefinitionFromSpec(spec)
+	}
+	return definitions
 }
 
 // validateToolResultSpec requires either no result declaration or a complete

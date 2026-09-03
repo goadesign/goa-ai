@@ -254,7 +254,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 	tool.ModelHiddenPayloadFields = modelHiddenPayloadFields(expr)
 	// Resolve each injected field from the complete public input. The private
 	// JSON input hides these fields separately.
-	tool.Injected = buildInjectedFields(tool.Args, tool.InjectedFields)
+	tool.Injected = buildInjectedFields(tool.InjectedFields)
 	tool.ServerData = serverDataData(expr.ServerData)
 	if expr.Confirmation != nil {
 		tool.Confirmation = &ToolConfirmationData{

@@ -134,6 +134,9 @@ type (
 		agents    map[agent.Ident]AgentRegistration
 		toolsets  map[string]ToolsetRegistration
 		toolSpecs map[tools.Ident]tools.ToolSpec
+		// toolDefinitions stores the input schema validator compiled when each
+		// tool specification is first registered.
+		toolDefinitions map[tools.Ident]*model.ToolDefinition
 		// toolsetNames maps each global tool name to the one registered toolset
 		// that executes it in this runtime.
 		toolsetNames map[tools.Ident]string
@@ -735,6 +738,7 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 		agents:                 make(map[agent.Ident]AgentRegistration),
 		toolsets:               make(map[string]ToolsetRegistration),
 		toolSpecs:              make(map[tools.Ident]tools.ToolSpec),
+		toolDefinitions:        make(map[tools.Ident]*model.ToolDefinition),
 		toolsetNames:           make(map[tools.Ident]string),
 		policyToolMetadata:     make(map[tools.Ident]policy.ToolMetadata),
 		toolSchemas:            make(map[string]map[string]any),
@@ -747,7 +751,8 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 	// Install runtime-owned toolsets before any agent registration so planners
 	// and transcripts can rely on a stable tool vocabulary.
 	rt.mu.Lock()
-	rt.addToolsetLocked(toolUnavailableToolsetRegistration())
+	unavailable := toolUnavailableToolsetRegistration()
+	rt.addToolsetLocked(unavailable, mustToolDefinitions(unavailable.Specs))
 	rt.mu.Unlock()
 	if _, err := bus.Register(hooks.SubscriberFunc(rt.recordGenAITelemetryEvent)); err != nil {
 		panic(fmt.Errorf("register GenAI telemetry subscriber: %w", err))
@@ -981,10 +986,11 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err := validateSpecs(reg.Definition.specs, reg.Definition.metadataFor); err != nil {
 		return err
 	}
-	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
+	definitions, err := r.validateToolSpecRegistrations(toolSpecRegistration{
 		specs:  reg.Definition.specs,
 		lookup: reg.Definition.metadataFor,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 	if r.Engine == nil {
@@ -1049,7 +1055,7 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 
 	r.mu.Lock()
 	r.agents[reg.Definition.route.ID] = reg
-	r.addToolSpecsLocked(reg.Definition.specs, reg.Definition.metadataFor)
+	r.addToolSpecsLocked(reg.Definition.specs, reg.Definition.metadataFor, definitions)
 	if len(reg.Definition.specs) > 0 {
 		// store a shallow copy to avoid external mutation
 		cp := make([]tools.ToolSpec, len(reg.Definition.specs))
@@ -1154,16 +1160,17 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	if err := r.validateToolsetRoutes(ts); err != nil {
 		return err
 	}
-	if err := r.validateToolSpecRegistrations(toolSpecRegistration{
+	definitions, err := r.validateToolSpecRegistrations(toolSpecRegistration{
 		specs:  ts.Specs,
 		lookup: ts.ToolMetadataLookup,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
 	}
 	ts = cloneToolsetRegistration(ts)
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.addToolsetLocked(ts)
+	r.addToolsetLocked(ts, definitions)
 	return nil
 }
 
@@ -1806,7 +1813,10 @@ func isTerminalRunEventType(eventType runlog.Type) bool {
 // addToolsetLocked registers a toolset, specs, metadata, and hints without
 // acquiring the lock.
 // Caller must hold r.mu.
-func (r *Runtime) addToolsetLocked(ts ToolsetRegistration) {
+func (r *Runtime) addToolsetLocked(
+	ts ToolsetRegistration,
+	definitions map[tools.Ident]*model.ToolDefinition,
+) {
 	r.toolsets[ts.Name] = ts
 	if r.toolsetNames == nil {
 		r.toolsetNames = make(map[tools.Ident]string)
@@ -1814,7 +1824,7 @@ func (r *Runtime) addToolsetLocked(ts ToolsetRegistration) {
 	for _, spec := range ts.Specs {
 		r.toolsetNames[spec.Name] = ts.Name
 	}
-	r.addToolSpecsLocked(ts.Specs, ts.ToolMetadataLookup)
+	r.addToolSpecsLocked(ts.Specs, ts.ToolMetadataLookup, definitions)
 	if len(ts.CallHints) > 0 {
 		rthints.RegisterCallHints(ts.CallHints)
 	}
@@ -1825,18 +1835,30 @@ func (r *Runtime) addToolsetLocked(ts ToolsetRegistration) {
 
 // addToolSpecsLocked registers tool specs without acquiring the lock.
 // Caller must hold r.mu.
-func (r *Runtime) addToolSpecsLocked(specs []tools.ToolSpec, lookup ToolMetadataLookup) {
+func (r *Runtime) addToolSpecsLocked(
+	specs []tools.ToolSpec,
+	lookup ToolMetadataLookup,
+	definitions map[tools.Ident]*model.ToolDefinition,
+) {
 	if r.toolSpecs == nil {
 		r.toolSpecs = make(map[tools.Ident]tools.ToolSpec)
 	}
 	if r.policyToolMetadata == nil {
 		r.policyToolMetadata = make(map[tools.Ident]policy.ToolMetadata)
 	}
+	if r.toolDefinitions == nil {
+		r.toolDefinitions = make(map[tools.Ident]*model.ToolDefinition)
+	}
 	for _, spec := range specs {
 		if _, exists := r.toolSpecs[spec.Name]; exists {
 			continue
 		}
 		r.toolSpecs[spec.Name] = spec
+		definition := definitions[spec.Name]
+		if definition == nil {
+			panic(fmt.Sprintf("runtime: tool %q has no compiled model definition", spec.Name))
+		}
+		r.toolDefinitions[spec.Name] = definition
 		r.policyToolMetadata[spec.Name] = canonicalToolMetadata(spec, lookup)
 	}
 }

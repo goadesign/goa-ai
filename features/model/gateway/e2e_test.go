@@ -280,7 +280,11 @@ func TestE2EStreamGeneratedValidationRunsAfterRawGateway(t *testing.T) {
 	require.Nil(t, chunk)
 	var outputErr *model.OutputValidationError
 	require.ErrorAs(t, err, &outputErr)
-	require.Contains(t, outputErr.RecoveryCorrection(), `Field "k" must contain a JSON number.`)
+	require.Equal(t,
+		"The previous tool call did not match its advertised input schema. Return a replacement tool call with valid arguments.",
+		outputErr.RecoveryCorrection(),
+	)
+	require.NotContains(t, outputErr.RecoveryCorrection(), `"k"`)
 	require.NotContains(t, outputErr.RecoveryCorrection(), `"v"`)
 	require.Equal(t, &model.TokenUsage{
 		InputTokens:  1,

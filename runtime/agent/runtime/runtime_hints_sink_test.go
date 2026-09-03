@@ -91,15 +91,16 @@ func TestHintingSinkRendersHintForNilAndEmptyPayload(t *testing.T) {
 func TestAddToolsetLockedRegistersHints(t *testing.T) {
 	toolID := tools.Ident("runtime.hints.test.canonical_registration")
 	rt := New(newTestStore())
-
-	rt.mu.Lock()
-	rt.addToolsetLocked(ToolsetRegistration{
+	registration := ToolsetRegistration{
 		Name:  "runtime.hints.test",
 		Specs: []tools.ToolSpec{newAnyJSONSpec(toolID)},
 		CallHints: map[tools.Ident]*template.Template{
 			toolID: mustTemplate(t, toolID, "Checking {{.target}}"),
 		},
-	})
+	}
+
+	rt.mu.Lock()
+	rt.addToolsetLocked(registration, mustToolDefinitions(registration.Specs))
 	rt.mu.Unlock()
 
 	hint, ok, err := rthints.RenderCallHint(toolID, map[string]any{

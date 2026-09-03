@@ -222,6 +222,9 @@ var ToolCallMeta = Type("ToolCallMeta", func() {
 		Pattern(`^[^\x00]+$`)
 		Example("call_01J3K9Q9T6E2G7N0G2ZQH2KX19Z")
 	})
+	Field(6, "labels", MapOf(String, String), "Run labels and runtime-supplied values fixed for this call. Providers use them to fill fields declared with Inject; models never see them.", func() {
+		Example(map[string]string{"site_id": "site-123"})
+	})
 	Required("run_id", "session_id", "tool_call_id")
 })
 

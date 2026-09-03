@@ -8,10 +8,12 @@
 //   - Names that Goify to a runtime.ToolCallMeta field (SessionID, RunID,
 //     TurnID, ToolCallID, ParentToolCallID) compile to a direct meta read.
 //   - Every other name compiles to a run-label lookup, with a compiled
-//     missing-label error and the field's own generated validation (via
-//     goa's codegen.AttributeValidationCode, the same helper Goa itself uses
-//     to validate individual HTTP path/query parameters) applied to the
+//     missing-label error and the field's own Goa validation applied to the
 //     label value.
+//
+// Validation is planned before Goa chooses import names and rendered after
+// the tool package is linked. Type references, validation calls, and runtime
+// imports therefore use the same final package names in inject.go.
 //
 // Each toolset's generated inject.go (see templates/tool_inject.go.tpl) also
 // exports a composed Decode<Tool> function per injecting tool, chaining
@@ -29,7 +31,6 @@ package codegen
 
 import (
 	"slices"
-	"strings"
 
 	"goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
@@ -59,12 +60,15 @@ type (
 		// MetaField is the runtime.ToolCallMeta field name to copy from. Set
 		// only when IsMetaBacked is true.
 		MetaField string
+		// TargetType is the generated Go type used to convert the String value.
+		// It is empty when the target field uses the built-in string type.
+		TargetType string
 		// LabelKey is the run label key to look up. Set only when
 		// IsMetaBacked is false; always equal to Name.
 		LabelKey string
-		// ValidationCode is the Go source (assuming a local variable "v" of
-		// type string and a pre-existing "err error" variable) that runs the
-		// field's declared validations (pattern, length, enum, format).
+		// ValidationCode is the linked Go source (assuming a local variable "v"
+		// of type string and a pre-existing "err error" variable) that runs the
+		// field's declared validations.
 		// Empty when the field declares no extra validation beyond being
 		// required, which Inject already enforces via the label lookup.
 		ValidationCode string
@@ -81,32 +85,20 @@ var metaFieldByGoName = map[string]struct{}{
 	"ParentToolCallID": {},
 }
 
-// buildInjectedFields resolves tool.InjectedFields against the effective
-// tool Args (post codegen Prepare: explicit Args when declared, otherwise the
-// bound method payload copied in for method-backed tools) into compiled
-// InjectedFieldData entries.
-//
-// payload must be part of the attribute sets expr/agent/tool.go's Validate
-// already checked the injected names against (see injectTargets there):
-// every name is guaranteed to exist, be required, and be a String.
-func buildInjectedFields(payload *goaexpr.AttributeExpr, names []string) []*InjectedFieldData {
+// buildInjectedFields records each field that the generator already verified
+// as a required string in the effective tool input.
+func buildInjectedFields(names []string) []*InjectedFieldData {
 	if len(names) == 0 {
 		return nil
 	}
-	obj := effectiveObject(payload)
 	out := make([]*InjectedFieldData, 0, len(names))
 	for _, name := range names {
-		field := obj.Attribute(name)
-		data := &InjectedFieldData{
-			Name:        name,
-			GoFieldName: codegen.Goify(name, true),
-		}
+		data := &InjectedFieldData{Name: name}
 		if metaField, ok := injectedFieldSource(name); ok {
 			data.IsMetaBacked = true
 			data.MetaField = metaField
 		} else {
 			data.LabelKey = name
-			data.ValidationCode = fieldValidationCode(field, name)
 		}
 		out = append(out, data)
 	}
@@ -193,20 +185,4 @@ func effectiveObject(payload *goaexpr.AttributeExpr) *goaexpr.Object {
 	}
 	obj, _ := att.Type.(*goaexpr.Object)
 	return obj
-}
-
-// fieldValidationCode generates the Go source that runs field's declared
-// validations (pattern, length, enum, format) against a local string
-// variable named "v", reusing goa's own per-attribute validation codegen
-// (the same helper that generates HTTP path/query parameter validation) so
-// Inject never duplicates validation rules by hand. Returns "" when the
-// field declares no validation beyond being required (already enforced by
-// the compiled missing-label check).
-func fieldValidationCode(field *goaexpr.AttributeExpr, attName string) string {
-	if field == nil {
-		return ""
-	}
-	attCtx := codegen.NewAttributeContext(false, false, false, "", codegen.NewNameScope())
-	code := codegen.AttributeValidationCode(field, nil, attCtx, true, false, "v", attName)
-	return strings.TrimSpace(code)
 }

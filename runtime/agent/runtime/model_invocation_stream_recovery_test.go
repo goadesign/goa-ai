@@ -104,7 +104,7 @@ func TestRunLoopRecoversMalformedStreamedToolCallBeforeExecution(t *testing.T) {
 			require.Len(t, summary.ToolCalls, 1)
 			require.Len(t, input.Reminders, 1)
 			assert.Equal(t, "model_invocation_recovery", input.Reminders[0].ID)
-			assert.Contains(t, input.Reminders[0].Text, `Field "query" must contain a JSON string.`)
+			assert.Contains(t, input.Reminders[0].Text, "did not match its advertised input schema")
 			assert.NotContains(t, input.Reminders[0].Text, "privateSecret")
 			assert.NotContains(t, input.Reminders[0].Text, "submitted-secret")
 			return &planner.PlanResult{ToolCalls: summary.ToolCalls}, nil
@@ -392,7 +392,9 @@ func newProviderMalformedJSONStreamModel(t *testing.T, providerCalls *int) model
 				return &chunkStreamer{terminalErr: contract.RejectProviderOutput(
 					model.OutputValidationToolArguments,
 					&usage,
-					errors.New("privateSecret malformed provider payload"),
+					model.NewMalformedToolArgumentsError(
+						errors.New("privateSecret malformed provider payload"),
+					),
 				)}, nil
 			}
 			call := model.ToolCall{

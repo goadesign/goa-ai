@@ -12,11 +12,15 @@ import (
 func ExportsNoResult() func() {
 	return func() {
 		API("alpha", func() {})
+		var PurgeInput = Type("PurgeInput", func() {
+			Attribute("before", String, "Remove documents that expired before this date")
+			Required("before")
+		})
 		Service("alpha", func() {
 			Agent("scribe", "Maintains documents", func() {
 				Export("maintenance", func() {
 					Tool("purge", "Remove expired documents", func() {
-						Args(String, "Remove documents that expired before this date.")
+						Args(PurgeInput)
 					})
 				})
 			})

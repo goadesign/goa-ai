@@ -62,6 +62,111 @@ func TestInjectAcceptsExistingSessionIDDesignUnchanged(t *testing.T) {
 	require.Equal(t, []string{"session_id"}, tool.InjectedFields)
 }
 
+// TestInjectAcceptsNamedString verifies that a named Goa String remains a
+// valid injected field.
+func TestInjectAcceptsNamedString(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		runtimeSessionID := Type("RuntimeSessionID", String)
+		Service("calc", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("lookup", "Lookup", func() {
+						Args(func() {
+							Attribute("session_id", runtimeSessionID, "Server-injected session identifier.")
+							Required("session_id")
+						})
+						Inject("session_id")
+					})
+				})
+			})
+		})
+	})
+}
+
+// TestInjectRejectsCustomGoFieldType verifies that Inject does not emit a
+// string conversion for a field whose Goa design replaces its Go type.
+func TestInjectRejectsCustomGoFieldType(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		API("test", func() {})
+		Service("calc", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("lookup", "Lookup", func() {
+						Args(func() {
+							Attribute("session_id", String, "Server-injected session identifier.", func() {
+								Meta("struct:field:type", "time.Time", "time")
+							})
+							Required("session_id")
+						})
+						Inject("session_id")
+					})
+				})
+			})
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, `Inject field "session_id" on the tool payload uses struct:field:type "time.Time"`)
+}
+
+// TestInjectRejectsCustomGoFieldTypeOnBoundMethod verifies that the same
+// design error is reported when BindTo supplies the effective tool input.
+func TestInjectRejectsCustomGoFieldTypeOnBoundMethod(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		API("test", func() {})
+		Service("calc", func() {
+			Method("lookup", func() {
+				Payload(func() {
+					Attribute("session_id", String, "Server-injected session identifier.", func() {
+						Meta("struct:field:type", "time.Time", "time")
+					})
+					Required("session_id")
+				})
+				Result(String)
+			})
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("lookup", "Lookup", func() {
+						BindTo("lookup")
+						Inject("session_id")
+					})
+				})
+			})
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, `Inject field "session_id" on the bound method payload uses struct:field:type "time.Time"`)
+}
+
+// TestInjectRejectsNamedStringWithCustomGoType verifies that a Go type
+// override cannot be hidden inside an otherwise valid named Goa String.
+func TestInjectRejectsNamedStringWithCustomGoType(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		API("test", func() {})
+		runtimeSessionID := Type("RuntimeSessionID", String, func() {
+			Meta("struct:field:type", "time.Time", "time")
+		})
+		Service("calc", func() {
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("lookup", "Lookup", func() {
+						Args(func() {
+							Attribute("session_id", runtimeSessionID, "Server-injected session identifier.")
+							Required("session_id")
+						})
+						Inject("session_id")
+					})
+				})
+			})
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, `Inject field "session_id" on the tool payload uses struct:field:type "time.Time"`)
+}
+
 func TestInjectRejectsMissingField(t *testing.T) {
 	err := runDSLWithError(t, func() {
 		API("test", func() {})
@@ -108,26 +213,52 @@ func TestInjectRejectsOptionalField(t *testing.T) {
 }
 
 func TestInjectRejectsNonStringField(t *testing.T) {
-	err := runDSLWithError(t, func() {
-		API("test", func() {})
-		Service("calc", func() {
-			Agent("scribe", "Doc helper", func() {
-				Use("helpers", func() {
-					Tool("lookup", "Lookup", func() {
-						Args(func() {
-							Attribute("retries", Int, "Retry count.")
-							Attribute("query", String, "Search query.")
-							Required("retries", "query")
+	tests := []struct {
+		name      string
+		fieldType func() any
+	}{
+		{name: "array", fieldType: func() any { return ArrayOf(String) }},
+		{name: "named number", fieldType: func() any { return Type("RetryCount", Int) }},
+		{name: "number", fieldType: func() any { return Int }},
+		{name: "object", fieldType: func() any {
+			return Type("Scope", func() {
+				Attribute("name", String)
+			})
+		}},
+		{name: "result type", fieldType: func() any {
+			return ResultType("application/vnd.inject-result", func() {
+				Attribute("value", String)
+				View("default", func() {
+					Attribute("value")
+				})
+			})
+		}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := runDSLWithError(t, func() {
+				API("test", func() {})
+				fieldType := test.fieldType()
+				Service("calc", func() {
+					Agent("scribe", "Doc helper", func() {
+						Use("helpers", func() {
+							Tool("lookup", "Lookup", func() {
+								Args(func() {
+									Attribute("value", fieldType, "Server-injected value.")
+									Required("value")
+								})
+								Inject("value")
+							})
 						})
-						Inject("retries")
 					})
 				})
 			})
-		})
-	})
 
-	require.Error(t, err)
-	require.ErrorContains(t, err, `Inject field "retries" must be a String on the tool payload`)
+			require.Error(t, err)
+			require.ErrorContains(t, err, `Inject field "value" must be a String on the tool payload`)
+		})
+	}
 }
 
 func TestInjectRejectsDuplicateNames(t *testing.T) {

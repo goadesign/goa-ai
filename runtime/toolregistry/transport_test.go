@@ -205,6 +205,22 @@ func TestDecodeServerDataPreservesTypedPayload(t *testing.T) {
 	assert.JSONEq(t, `[{"index":1}]`, string(items[0].Data))
 }
 
+func TestDecodeServerDataRequiresObjectItems(t *testing.T) {
+	t.Parallel()
+
+	for _, data := range [][]byte{nil, []byte(`[]`)} {
+		items, err := DecodeServerData(data)
+		require.NoError(t, err)
+		assert.Empty(t, items)
+	}
+
+	_, err := DecodeServerData([]byte(`null`))
+	require.EqualError(t, err, "decode server data: expected array")
+
+	_, err = DecodeServerData([]byte(`[null]`))
+	require.EqualError(t, err, "decode server data: item 0 is null")
+}
+
 func TestNewToolResultServiceErrorMessagePreservesFailure(t *testing.T) {
 	t.Parallel()
 

@@ -663,8 +663,12 @@ func anyJSONToolSpec(name tools.Ident) tools.ToolSpec {
 		},
 	}
 	return tools.ToolSpec{
-		Name:    name,
-		Payload: tools.TypeSpec{Name: string(name) + "_payload", Codec: codec},
-		Result:  tools.TypeSpec{Name: string(name) + "_result", Codec: codec},
+		Name: name,
+		Payload: tools.TypeSpec{
+			Name:   string(name) + "_payload",
+			Schema: rawjson.Message(`{"type":"object"}`),
+			Codec:  codec,
+		},
+		Result: tools.TypeSpec{Name: string(name) + "_result", Codec: codec},
 	}
 }

@@ -161,7 +161,7 @@ func mutateEveryToolCallField(call *ToolCall) {
 	call.AgentID = "mutated.agent"
 	call.RunID = "mutated-run"
 	call.SessionID = "mutated-session"
-	call.Labels["scope"] = "mutated"
+	call.Labels["scope"] = mutatedTestValue
 	call.TurnID = "mutated-turn"
 	call.ToolCallID = "mutated-call"
 	call.ParentToolCallID = "mutated-parent"

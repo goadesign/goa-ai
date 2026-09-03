@@ -169,6 +169,14 @@ func TestServiceToolsetCrossServiceBindTo(t *testing.T) {
 
 	design := func() {
 		goadsl.API("multi", func() {})
+		var LookupInput = goadsl.Type("LookupInput", func() {
+			goadsl.Attribute("id", goadsl.String, "Identifier")
+			goadsl.Required("id")
+		})
+		var LookupResult = goadsl.Type("LookupResult", func() {
+			goadsl.Attribute("ok", goadsl.Boolean, "Whether the record exists")
+			goadsl.Required("ok")
+		})
 		// Service B provides the bound method.
 		goadsl.Service("bravo", func() {
 			goadsl.Method("Lookup", func() {
@@ -188,8 +196,8 @@ func TestServiceToolsetCrossServiceBindTo(t *testing.T) {
 			Agent("scribe", "Doc helper", func() {
 				Use("lookup", func() {
 					Tool("by_id", "Lookup by ID", func() {
-						Args(goadsl.String)
-						Return(goadsl.Boolean)
+						Args(LookupInput)
+						Return(LookupResult)
 						BindTo("bravo", "Lookup")
 					})
 				})

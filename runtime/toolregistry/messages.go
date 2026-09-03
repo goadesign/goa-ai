@@ -35,8 +35,8 @@ type (
 		// ToolCallID.
 		ToolCallID       string `json:"tool_call_id"`
 		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
-		// Labels carries immutable run-scoped context supplied by the caller.
-		// Providers expose it to generated executors but never to model payloads.
+		// Labels carries run labels and runtime-supplied values fixed for this call.
+		// Providers expose them to generated executors but never to model payloads.
 		Labels map[string]string `json:"labels,omitempty"`
 	}
 
@@ -201,6 +201,14 @@ func DecodeServerData(data []byte) ([]*ServerDataItem, error) {
 	var items []*ServerDataItem
 	if err := json.Unmarshal(data, &items); err != nil {
 		return nil, fmt.Errorf("decode server data: %w", err)
+	}
+	if items == nil {
+		return nil, fmt.Errorf("decode server data: expected array")
+	}
+	for index, item := range items {
+		if item == nil {
+			return nil, fmt.Errorf("decode server data: item %d is null", index)
+		}
 	}
 	return items, nil
 }

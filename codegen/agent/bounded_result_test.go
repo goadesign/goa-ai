@@ -257,7 +257,7 @@ func TestBoundedResultGeneratesDedicatedContinuation(t *testing.T) {
 	require.NotEmpty(t, specs, "expected generated specs.go at %s", expectedPath)
 	require.Contains(t, specs, `ContinueTool: tools.Ident("tools.continue_search")`)
 	require.NotContains(t, specs, `Continuation reference for the next page.`)
-	require.Contains(t, specs, `Schema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\"}")`)
+	require.Contains(t, specs, `Schema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}")`)
 	require.NotContains(t, specs, `Call the same tool again with the same parameters`)
 }
 
@@ -329,7 +329,7 @@ func TestBoundedResultGeneratesReplayContinuation(t *testing.T) {
 	require.NotEmpty(t, specs, "expected generated specs.go at %s", expectedPath)
 	require.Contains(t, specs, `SourceTool: tools.Ident("tools.search")`)
 	require.Contains(t, specs, `ReplayPayload: true`)
-	require.Contains(t, specs, `Schema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\"}")`)
+	require.Contains(t, specs, `Schema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}")`)
 }
 
 // TestBoundedResultRequiresRequiredReturnedAndTruncated verifies that bounded

@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
@@ -960,7 +961,7 @@ func TestAnthropicChunkProcessorPreservesInitialToolInput(t *testing.T) {
 		{
 			name:              "ordinary tool without input",
 			start:             missingInputToolStart,
-			wantErrorContains: "tool payload is not valid JSON",
+			wantErrorContains: "tool arguments are not valid JSON",
 		},
 	}
 	for _, test := range tests {
@@ -983,6 +984,11 @@ func TestAnthropicChunkProcessorPreservesInitialToolInput(t *testing.T) {
 			err := processor.Handle(toolStop)
 			if test.wantErrorContains != "" {
 				require.ErrorContains(t, err, test.wantErrorContains)
+				contract, contractErr := model.NewRequestContract(&model.Request{})
+				require.NoError(t, contractErr)
+				rejected := contract.RejectProviderOutput(outputvalidation.RequiredKind(err), nil, err)
+				require.NotEmpty(t, rejected.RecoveryCorrection())
+				require.NotContains(t, rejected.RecoveryCorrection(), "catalog.continue_results")
 				require.Empty(t, calls)
 				return
 			}

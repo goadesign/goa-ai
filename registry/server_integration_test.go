@@ -35,6 +35,7 @@ const (
 type callCountingService struct {
 	genregistry.Service
 	calls         atomic.Int64
+	lastCall      atomic.Pointer[genregistry.CallToolPayload]
 	callToolError error
 }
 
@@ -630,11 +631,13 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 			RunID:      "run-1",
 			SessionID:  "session-1",
 			ToolCallID: "rejected-call",
+			Labels:     map[string]string{"facility": "allentown"},
 		},
 	})
 	var serviceErr *goa.ServiceError
 	require.ErrorAs(t, err, &serviceErr)
 	assert.Equal(t, "call_not_admitted", serviceErr.Name)
+	require.Equal(t, map[string]string{"facility": "allentown"}, rejected.lastCall.Load().Meta.Labels)
 	_, err = rejectedRawClient.CallTool(ctx, &registrypb.CallToolRequest{
 		Toolset:             strPtr("status-tools"),
 		Tool:                strPtr("status.lookup"),
@@ -654,6 +657,7 @@ func (s *callCountingService) CallTool(
 	payload *genregistry.CallToolPayload,
 ) (*genregistry.CallToolResult, error) {
 	s.calls.Add(1)
+	s.lastCall.Store(payload)
 	if s.callToolError != nil {
 		return nil, s.callToolError
 	}

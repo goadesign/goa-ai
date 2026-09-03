@@ -13,6 +13,35 @@ func TestToolsetExpr_EvalName(t *testing.T) {
 	require.Equal(t, `toolset "my-toolset"`, ts.EvalName())
 }
 
+func TestToolArgsShapeUsesBoundMethodPayload(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		payload goaexpr.DataType
+		valid   bool
+	}{
+		{name: "object", payload: &goaexpr.Object{}, valid: true},
+		{name: "union", payload: &goaexpr.Union{TypeName: "choice"}},
+		{name: "primitive", payload: goaexpr.String},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			tool := &ToolExpr{
+				Name: "lookup",
+				Args: &goaexpr.AttributeExpr{Type: goaexpr.Empty},
+				Method: &goaexpr.MethodExpr{
+					Payload: &goaexpr.AttributeExpr{Type: test.payload},
+				},
+			}
+			verr := new(eval.ValidationErrors)
+			validateToolArgsShape(tool, verr)
+			if test.valid {
+				require.Empty(t, verr.Errors)
+				return
+			}
+			require.ErrorContains(t, verr, "Args must define an object")
+		})
+	}
+}
+
 func TestToolsetExpr_Validate_ProviderMCP(t *testing.T) {
 	// Set up Goa root with a service for MCP provider validation
 	eval.Reset()

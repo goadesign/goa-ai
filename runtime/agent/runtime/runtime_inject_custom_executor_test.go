@@ -14,14 +14,12 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// lookupHouseholdPayload mirrors the shape codegen generates for a tool
-// payload with a label-backed Inject() field: HouseholdID is a pointer
-// tagged `json:"-"` (hidden from the wire codec and optional in the
-// model-facing contract, matching prepare.go's flattenAndHide) so it can
-// only ever be populated by injection, never by the model.
+// lookupHouseholdPayload mirrors the public payload generated for a required
+// primitive field marked with Inject. The field is a value in service code and
+// absent from the model JSON transport.
 type lookupHouseholdPayload struct {
-	HouseholdID *string `json:"-"`
-	Query       string  `json:"query"`
+	HouseholdID string `json:"-"`
+	Query       string `json:"query"`
 }
 
 // lookupHouseholdPayloadCodecFromJSON is a hand-written stand-in for the
@@ -46,16 +44,15 @@ func lookupHouseholdPayloadCodecFromJSON(data []byte) (*lookupHouseholdPayload, 
 // custom executor can call a function shaped exactly like this one to get
 // the same compiled meta/label population and validation semantics as a
 // generated executor, without any additional runtime interception.
-func injectLookupHousehold(p *lookupHouseholdPayload, meta ToolCallMeta, labels map[string]string) error {
+func injectLookupHousehold(p *lookupHouseholdPayload, _ ToolCallMeta, labels map[string]string) error {
 	v, ok := labels["household_id"]
 	if !ok {
 		return fmt.Errorf("tool %q: required label %q is missing; call WithLabels(%q, ...) at run start", "helpers.lookup_household", "household_id", "household_id")
 	}
 	if err := goa.ValidatePattern("household_id", v, "^[a-z0-9-]+$"); err != nil {
-		return fmt.Errorf("tool %q: label %q failed validation: %w", "helpers.lookup_household", "household_id", err)
+		return fmt.Errorf("tool %q: injected field %q failed validation: %w", "helpers.lookup_household", "household_id", err)
 	}
-	p.HouseholdID = &v
-	_ = meta // unused in this fixture; a real meta-backed field would read meta.SessionID etc.
+	p.HouseholdID = v
 	return nil
 }
 
@@ -102,7 +99,7 @@ func newCustomLookupHouseholdToolset(t *testing.T, resultHouseholdID *string) To
 					Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryFinish, err.Error()),
 				}, nil
 			}
-			*resultHouseholdID = *p.HouseholdID
+			*resultHouseholdID = p.HouseholdID
 			return &planner.ToolResult{Name: call.Name, Result: map[string]any{"ok": true}}, nil
 		}),
 		Specs: []tools.ToolSpec{newAnyJSONSpec(tools.Ident("helpers.lookup_household"))},
@@ -119,7 +116,7 @@ func TestCustomExecutorLabelInjection_TypedFieldPopulated(t *testing.T) {
 	var gotHouseholdID string
 	ts := newCustomLookupHouseholdToolset(t, &gotHouseholdID)
 	rt.mu.Lock()
-	rt.addToolsetLocked(ts)
+	rt.addToolsetLocked(ts, mustToolDefinitions(ts.Specs))
 	rt.mu.Unlock()
 
 	input := ToolInput{
@@ -145,7 +142,7 @@ func TestCustomExecutorLabelInjection_MissingLabelProducesPreciseToolError(t *te
 	var gotHouseholdID string
 	ts := newCustomLookupHouseholdToolset(t, &gotHouseholdID)
 	rt.mu.Lock()
-	rt.addToolsetLocked(ts)
+	rt.addToolsetLocked(ts, mustToolDefinitions(ts.Specs))
 	rt.mu.Unlock()
 
 	input := ToolInput{
@@ -165,15 +162,14 @@ func TestCustomExecutorLabelInjection_MissingLabelProducesPreciseToolError(t *te
 
 // TestCustomExecutorLabelInjection_MalformedLabelProducesPreciseToolError
 // proves a present-but-invalid label value fails the field's own declared
-// validation (reused, not hand-duplicated -- see
-// codegen/agent/inject.go:fieldValidationCode) with a precise error instead
-// of silently accepting a malformed value.
+// validation with a precise error instead of silently accepting a malformed
+// value.
 func TestCustomExecutorLabelInjection_MalformedLabelProducesPreciseToolError(t *testing.T) {
 	rt := New(newTestStore())
 	var gotHouseholdID string
 	ts := newCustomLookupHouseholdToolset(t, &gotHouseholdID)
 	rt.mu.Lock()
-	rt.addToolsetLocked(ts)
+	rt.addToolsetLocked(ts, mustToolDefinitions(ts.Specs))
 	rt.mu.Unlock()
 
 	input := ToolInput{
@@ -186,7 +182,7 @@ func TestCustomExecutorLabelInjection_MalformedLabelProducesPreciseToolError(t *
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.Failure)
-	require.Contains(t, out.Failure.Error.Error(), `label "household_id" failed validation`)
+	require.Contains(t, out.Failure.Error.Error(), `injected field "household_id" failed validation`)
 	require.Empty(t, gotHouseholdID)
 }
 

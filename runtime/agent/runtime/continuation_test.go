@@ -540,7 +540,8 @@ func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {
 func continuationTestRuntime() (*Runtime, tools.ToolSpec, tools.ToolSpec) {
 	search, continuation := continuationTestSpecs()
 	return &Runtime{
-		Store: newTestStore(),
+		Store:           newTestStore(),
+		toolDefinitions: mustToolDefinitions([]tools.ToolSpec{search, continuation}),
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
 			search.Name:       search,
 			continuation.Name: continuation,

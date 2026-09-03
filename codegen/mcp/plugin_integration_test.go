@@ -65,9 +65,9 @@ func (d *countingDoer) Do(*http.Request) (*http.Response, error) {
 	return nil, context.Canceled
 }
 
-func (s *echoService) Echo(_ context.Context, value string) (string, error) {
+func (s *echoService) Echo(context.Context) (string, error) {
 	s.calls++
-	return value, nil
+	return "hello", nil
 }
 
 func TestCallerRejectsIncompleteClientInfoBeforeRequest(t *testing.T) {
@@ -207,7 +207,7 @@ func TestCallerReadsEventStreamAndAnswersServerPing(t *testing.T) {
 	}
 	result, err := caller.CallTool(context.Background(), mcpruntime.CallRequest{
 		Tool:    "echo",
-		Payload: json.RawMessage("\"hello\""),
+		Payload: json.RawMessage("{}"),
 	})
 	if err != nil {
 		t.Fatalf("call tool: %v", err)
@@ -314,7 +314,7 @@ func TestCallerInitializesBeforeCallingTool(t *testing.T) {
 
 	result, err := caller.CallTool(context.Background(), mcpruntime.CallRequest{
 		Tool:    "echo",
-		Payload: json.RawMessage(` + "`\"hello\"`" + `),
+		Payload: json.RawMessage(` + "`{}`" + `),
 	})
 	if err != nil {
 		t.Fatalf("call echo tool: %v", err)
@@ -410,7 +410,7 @@ func TestCallerStartsNewSessionAfterExpiryWithoutRepeatingTool(t *testing.T) {
 	}
 	_, err = caller.CallTool(context.Background(), mcpruntime.CallRequest{
 		Tool:    "echo",
-		Payload: json.RawMessage(` + "`\"hello\"`" + `),
+		Payload: json.RawMessage(` + "`{}`" + `),
 	})
 	if err == nil {
 		t.Fatal("expired tool call succeeded")
@@ -423,7 +423,7 @@ func TestCallerStartsNewSessionAfterExpiryWithoutRepeatingTool(t *testing.T) {
 	}
 	result, err := caller.CallTool(context.Background(), mcpruntime.CallRequest{
 		Tool:    "echo",
-		Payload: json.RawMessage(` + "`\"hello\"`" + `),
+		Payload: json.RawMessage(` + "`{}`" + `),
 	})
 	if err != nil {
 		t.Fatalf("call tool with replacement session: %v", err)
@@ -647,7 +647,6 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	selector, selectorMethods := testService("selector", "read_value", "read-value")
 	contextService, contextMethods := testService("context", "ping")
 	fmtService, fmtMethods := testService("fmt", "echo")
-	fmtMethods["echo"].Payload = &expr.AttributeExpr{Type: expr.String}
 	prompts, _ := testService("prompts")
 	staticPrompts, _ := testService("static_prompts")
 	resources, resourceMethods := testService("resources", "read_document")
@@ -817,9 +816,9 @@ replace goa.design/goa/v3 => %s
 	require.NotContains(t, string(adapterServer), "\n\t\"strings\"\n")
 	register, err := generatedRoot.ReadFile("mcp_calc/register.go")
 	require.NoError(t, err)
-	require.Contains(t, string(register), `Name:        "*shared.CalculationRequest"`)
+	require.Contains(t, string(register), `Name:                     "*shared.CalculationRequest"`)
 	require.Contains(t, string(register), `Name:   "*calc.CalculationResponse"`)
-	require.Contains(t, string(register), `Name:        "*shared2.SubtractRequest"`)
+	require.Contains(t, string(register), `Name:                     "*shared2.SubtractRequest"`)
 	require.Contains(t, string(register), `Name:   "*shared2.SubtractResponse"`)
 	_, err = os.Stat(filepath.Join(dir, "gen", "jsonrpc", "calc", "client"))
 	require.ErrorIs(t, err, os.ErrNotExist)

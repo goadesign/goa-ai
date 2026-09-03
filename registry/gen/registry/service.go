@@ -432,6 +432,9 @@ type ToolCallMeta struct {
 	ToolCallID string
 	// Parent tool call identifier when the tool call is nested.
 	ParentToolCallID *string
+	// Run labels and runtime-supplied values fixed for this call. Providers use
+	// them to fill fields declared with Inject; models never see them.
+	Labels map[string]string
 }
 
 // Tool schema declaration for registration with the tool registry gateway.

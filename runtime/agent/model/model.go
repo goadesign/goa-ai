@@ -297,7 +297,6 @@ type (
 		schemaWithoutRootExample rawjson.Message
 		exampleJSON              rawjson.Message
 		validate                 func(rawjson.Message) error
-		fieldJSONTypes           map[string]string
 		acceptsNoArguments       bool
 	}
 
@@ -1086,27 +1085,51 @@ func (r *Response) ToolCalls() []ToolCall {
 	return calls
 }
 
-// ToolDefinitionFromSpec converts a generated Goa tool specification into the
-// model-facing contract advertised to providers and retains its payload decoder
-// for response validation. Generated schema bytes and codecs are compile-time
-// artifacts; invalid JSON or a missing decoder is an invariant violation and
-// panics.
-func ToolDefinitionFromSpec(spec tools.ToolSpec) *ToolDefinition {
+// NewToolDefinitionFromSpec converts a Goa tool specification into the contract
+// advertised to providers. Returned arguments must first satisfy the advertised
+// schema and then decode through the specification's payload codec.
+func NewToolDefinitionFromSpec(spec tools.ToolSpec) (*ToolDefinition, error) {
 	if spec.Payload.Codec.FromJSON == nil {
-		panic(fmt.Sprintf("model: generated tool %q payload decoder is required", spec.Name))
+		return nil, fmt.Errorf("model: tool %q payload decoder is required", spec.Name)
 	}
-	input := advertisedToolInputFromSpec(spec.Payload)
+	input, err := ToolInputFromContract(spec.Name.String(), ToolInputContract{
+		Schema:                   spec.Payload.Schema,
+		SchemaWithoutRootExample: spec.Payload.SchemaWithoutRootExample,
+		ExampleJSON:              spec.Payload.ExampleJSON,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("model: tool %q: %w", spec.Name, err)
+	}
+	validateSchema := input.validate
 	input.validate = func(payload rawjson.Message) error {
+		if err := validateSchema(payload); err != nil {
+			return err
+		}
 		_, err := spec.Payload.Codec.FromJSON(payload)
 		return err
 	}
-	input.fieldJSONTypes = maps.Clone(spec.Payload.FieldJSONTypes)
+	if len(input.exampleJSON) > 0 {
+		if err := input.validate(input.exampleJSON); err != nil {
+			return nil, fmt.Errorf("model: tool %q example JSON does not satisfy its payload contract: %w", spec.Name, err)
+		}
+	}
 	input.acceptsNoArguments = typeSpecDeclaresNoArguments(spec.Payload)
 	return &ToolDefinition{
 		Name:        spec.Name.String(),
 		Description: spec.Description,
 		Input:       input,
+	}, nil
+}
+
+// ToolDefinitionFromSpec converts a Goa tool specification into the contract
+// advertised to providers. Invalid schema bytes or a missing payload decoder
+// are construction errors and panic.
+func ToolDefinitionFromSpec(spec tools.ToolSpec) *ToolDefinition {
+	definition, err := NewToolDefinitionFromSpec(spec)
+	if err != nil {
+		panic(err)
 	}
+	return definition
 }
 
 // typeSpecDeclaresNoArguments reads generated field metadata instead of
@@ -1135,15 +1158,18 @@ func AdvertisedToolInputFromSchema(schema rawjson.Message) (ToolInput, error) {
 	}, nil
 }
 
-// advertisedToolInputFromSpec projects generated documents for
-// ToolDefinitionFromSpec, which attaches the generated decoder before exposing
-// the completed definition.
+// advertisedToolInputFromSpec projects generated documents for tests and
+// construction paths whose generated input is already known to be valid.
 func advertisedToolInputFromSpec(spec tools.TypeSpec) ToolInput {
-	return ToolInput{
-		jsonSchema:               validateGeneratedJSON(spec.Name, "payload schema", spec.Schema),
-		schemaWithoutRootExample: validateGeneratedJSON(spec.Name, "schema without root example", spec.SchemaWithoutRootExample),
-		exampleJSON:              validateGeneratedJSON(spec.Name, "example JSON", spec.ExampleJSON),
+	input, err := ToolInputFromContract(spec.Name, ToolInputContract{
+		Schema:                   spec.Schema,
+		SchemaWithoutRootExample: spec.SchemaWithoutRootExample,
+		ExampleJSON:              spec.ExampleJSON,
+	})
+	if err != nil {
+		panic(err)
 	}
+	return input
 }
 
 // ToolInputFromContract reconstructs a ToolInput from a provider-neutral
@@ -1179,6 +1205,11 @@ func ToolInputFromContract(toolName string, contract ToolInputContract) (ToolInp
 	validate, err := compileToolSchemaValidator(schema)
 	if err != nil {
 		return ToolInput{}, fmt.Errorf("model: tool %q input schema: %w", toolName, err)
+	}
+	if len(exampleJSON) > 0 {
+		if err := validate(exampleJSON); err != nil {
+			return ToolInput{}, fmt.Errorf("model: tool %q example JSON does not satisfy its input schema: %w", toolName, err)
+		}
 	}
 	return ToolInput{
 		jsonSchema:               schema,
@@ -1459,16 +1490,6 @@ func (ToolUsePart) isPart() {}
 func (ToolResultPart) isPart() {}
 
 func (CacheCheckpointPart) isPart() {}
-
-func validateGeneratedJSON(name, label string, data rawjson.Message) rawjson.Message {
-	if len(bytes.TrimSpace(data)) == 0 {
-		return nil
-	}
-	if !json.Valid(data) {
-		panic(fmt.Errorf("model: invalid generated %s for %s", label, name))
-	}
-	return cloneRawJSON(data)
-}
 
 func validateContractJSON(toolName, label string, data rawjson.Message) (rawjson.Message, error) {
 	if len(bytes.TrimSpace(data)) == 0 {

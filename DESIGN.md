@@ -18,9 +18,9 @@ and differs from every retry execution. The workflow's
 canonical assistant-turn event alone finalizes accepted output. Provisional
 fragments never enter the run log, hook bus, or memory. Tool argument fragments
 and completed calls stay inside model validation until the provider's terminal
-response reconciles with the stream and the originating generated decoder
-accepts every payload. A raw remote gateway transports provider output without
-replacing that decoder with a schema-only validator. After planner selection,
+response reconciles with the stream and the originating advertised schema plus
+attached decoder accept every payload. A raw remote gateway transports provider
+output without replacing those request-owned checks. After planner selection,
 the canonical response is persisted once, and its ordered runtime records are
 published through one idempotent activity batch.
 
@@ -257,13 +257,15 @@ model response. When planner code compiles model output into different
 executable intent, the runtime retains the original model name and payload
 separately for the transcript.
 
-The runtime validates model tool calls with the generated input codec before a
-response becomes canonical. When that codec returns safe structured field
-issues, validation derives bounded replacement guidance from generated names
-and constraints only. The workflow records usage, keeps the malformed call out
-of transcript history, and spends one recovery turn on a normal planner resume
-with executable tools available. It selects the rejected invocation by
-invocation start order, never by a model-supplied value or completion order.
+The validated model client applies each tool's advertised schema before its
+attached input decoder and before a response becomes canonical. A schema
+rejection or non-nil `*tools.ValidationError` can produce limited-size
+replacement guidance without copying rejected argument values. Ordinary
+decoder and internal errors remain terminal. The workflow records usage, keeps
+the rejected call out of transcript history, and spends one recovery turn on a
+normal planner resume with executable tools available. It selects the rejected
+invocation by invocation start order, never by a model-supplied value or
+completion order.
 When a provider cannot represent a completed tool call because its arguments
 are not valid JSON, the adapter reads only the stream's terminal usage and
 completion evidence. The same recovery path supplies fixed JSON replacement
@@ -272,7 +274,7 @@ identity.
 When a supported provider instead returns a valid tool name absent from the
 request's advertised catalog, the adapter rejects the complete response. The
 same invocation-recovery value carries only that untouched name, mutually
-exclusive with generated correction guidance. The replacement starts from the
+exclusive with tool-input correction guidance. The replacement starts from the
 last accepted conversation with its current executable catalog. Unstructured
 validation failures remain terminal.
 
@@ -953,9 +955,15 @@ run-scoped decision is retained, so the executor may safely replan. Generated
 decision record. Errors after request publication remain ambiguous and produce
 `outcome_unknown`, which forbids replacement execution because an effect may
 have occurred.
-The explicit decision record is wire protocol version 8. Registry replicas,
+The explicit decision record is wire protocol version 9. Registry replicas,
 providers, and consumers use that exact protocol. Records with another shape
 are rejected and never rewritten.
+Protocol 8 catalog entries must be removed while all protocol-8 participants
+are stopped before protocol 9 can start. Only the per-toolset fields in the
+registry's catalog hash are removed; drained call records and Pulse streams
+remain until their normal expiry so an old call cannot execute twice. The
+executable procedure is documented in the
+[preview upgrade guide](docs/runtime.md#preview-upgrade-guide).
 `CallTool` owns only initial admission and publication. `RetryTool` owns overload
 republication and requires both the
 existing admission record and its still-active token. The request-stream append
@@ -1046,14 +1054,16 @@ redeploys.
   accepted emits `PlannerOutputRejected` instead, with only the bounded private
   cause identity.
 - **Generated tool validation**: A model definition created from a generated
-  tool specification retains its generated payload decoder inside the process.
+  tool specification retains its advertised schema and generated payload
+  decoder inside the process.
   Unary tool calls and streamed tool calls must match a definition in the exact
   model request. A completed streamed call remains withheld until terminal
   usage arrives and the complete response matches every retained chunk. The
-  originating generated decoder then validates all calls before planner code
-  can observe them. Invalid generated payloads can therefore carry final usage
-  into bounded replacement planning without executing the rejected call.
-  Incomplete or inconsistent streams remain terminal. The activity validates
+  originating schema then validates each call before its decoder runs and
+  before planner code can observe it. Only schema rejections and typed
+  tool-input validation errors can carry final usage into bounded replacement
+  planning without executing the rejected call. Ordinary decoder failures and
+  incomplete or inconsistent streams remain terminal. The activity validates
   the selected planner request again before scheduling effects.
 - **Planner-transparent provenance**: Each model call produces an isolated
   canonical response and ordered presentation before planner code observes
@@ -1323,6 +1333,22 @@ Prompt content, chat history, tool arguments, and tool results remain opt-in
 application policy. The runtime records identifiers, names, counts, timings,
 errors, and token usage by default.
 
+Planner model-call spans also record `goa_ai.request.tool_count` and
+`goa_ai.request.tool_names`, which expose the exact names advertised to that
+request without recording arguments or labels. Every registry replica emits a
+`toolregistry.catalog.entry` span for each active toolset returned by the
+shared catalog; retired records are not reported. The replicas then compete to
+send the provider ping, and the winner emits one `toolregistry.health` sample
+for that toolset and interval. Each replica also emits a
+`toolregistry.health.sweep` span for every scheduler attempt. An application
+may configure `Registry.Config.ExpectedToolsets`; after a successful catalog
+read, every replica emits `toolregistry.catalog.expectation` with an exact
+present or absent result for each required name. Failed reads emit no presence
+result. Applications that alert on these spans must keep the scheduler root
+trace in their sampling policy. The full catalog, readiness, and error contract is
+documented in
+[Registry and model-request traces](docs/runtime.md#registry-and-model-request-traces).
+
 ## Temporal Worker Activation Contract
 
 Temporal worker startup is a real runtime contract, not a background best-effort
@@ -1346,6 +1372,25 @@ side effect:
   Integrating services should treat that callback as process-fatal and exit.
 
 ## Tool Input Schema
+
+Every model-visible tool input is an object. Designs may use an inline object or
+an object-shaped user type; omitting `Args` on an
+unbound tool means `{}`, while omitting it on a tool with `BindTo` uses the
+bound method payload, which must follow the same object-shape rule. Primitive,
+array, map, and `OneOf` roots are rejected, while `Return` remains
+unrestricted. Generated objects and unions reject undeclared properties, maps
+accept dynamic keys, and the validated model client applies the advertised
+schema before any attached input decoder. Only schema rejections and typed
+tool-input validation errors qualify for limited-size correction guidance that
+omits rejected arguments. The complete contract lives in
+[Model-Visible Tool Arguments](docs/runtime.md#model-visible-tool-arguments).
+
+Fields marked with `Inject` are absent from the model-visible input and filled
+from call metadata or run labels before the tool executes. They must be Goa
+`String` fields or named Goa `String` types; custom Go field replacements are
+rejected. The generated injection function applies the field's Goa validation
+to either source before assigning the value. The complete contract lives in
+[Injected Fields](docs/runtime.md#injected-fields-inject).
 
 ### Pagination Ownership
 
@@ -1387,9 +1432,9 @@ continuation tools. Agent and toolset registration reject that exact format;
 similar names such as `continue_search` and qualified canonical tools such as
 `tools.continue_search` remain valid.
 
-For each tool with a non-empty payload, the plugin derives JSON Schema from the
-Goa attribute using Goa's `openapi.Schema` type for complete JSON Schema draft
-2020-12 support. The generated tool spec is the canonical model-facing contract:
+For each tool, the plugin derives JSON Schema from its effective Goa input
+using Goa's `openapi.Schema` type for complete JSON Schema draft 2020-12
+support. The generated tool spec is the canonical model-facing contract:
 it contains the annotated schema, a schema with the root `example` removed,
 the raw authored example JSON, and a parsed `ExampleInput` object when the
 payload has an authored top-level Goa `Example(...)`.

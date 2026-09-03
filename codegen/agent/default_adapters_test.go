@@ -49,7 +49,9 @@ func TestServiceToolset_ConfigNoDefaults(t *testing.T) {
 			Agent("a", "", func() {
 				Use("ts", func() {
 					Tool("do", "", func() {
-						Args(String)
+						Args(func() {
+							Attribute("q", String, "Query")
+						})
 						Return(Boolean)
 						BindTo("Do")
 					})

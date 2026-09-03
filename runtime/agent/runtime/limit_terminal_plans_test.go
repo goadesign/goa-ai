@@ -588,6 +588,7 @@ func strictLimitTerminalSpec() tools.ToolSpec {
 		Bookkeeping: true,
 		TerminalRun: true,
 		Payload: tools.TypeSpec{
+			Schema: rawjson.Message(`{"type":"object","properties":{"result":{"type":"string","minLength":1}},"required":["result"],"additionalProperties":false}`),
 			Codec: tools.JSONCodec[any]{
 				FromJSON: func(data []byte) (any, error) {
 					decoder := json.NewDecoder(bytes.NewReader(data))

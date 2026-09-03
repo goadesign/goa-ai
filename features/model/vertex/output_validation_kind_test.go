@@ -245,6 +245,9 @@ func requireVertexOutputValidationKind(t *testing.T, err error, kind model.Outpu
 	require.ErrorAs(t, err, &validationErr)
 	require.Equal(t, kind, validationErr.Kind())
 	require.EqualError(t, validationErr, "model output does not meet its request contract")
+	if kind == model.OutputValidationToolArguments {
+		require.Empty(t, validationErr.RecoveryCorrection())
+	}
 }
 
 // requireVertexProviderError verifies transport failures never become model

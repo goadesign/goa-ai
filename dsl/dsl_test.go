@@ -190,7 +190,9 @@ func TestBindToSelfServiceMethod(t *testing.T) {
 		API("test", func() {})
 		Service("svc", func() {
 			Method("GetX", func() {
-				Payload(String)
+				Payload(func() {
+					Attribute("value", String)
+				})
 				Result(String)
 			})
 			Agent("agent", "desc", func() {
@@ -228,7 +230,9 @@ func TestBindToCrossServiceMethod(t *testing.T) {
 		})
 		Service("svcB", func() {
 			Method("GetY", func() {
-				Payload(String)
+				Payload(func() {
+					Attribute("value", String)
+				})
 				Result(String)
 			})
 		})
@@ -372,6 +376,73 @@ func TestToolRejectsDuplicateDSLFunctions(t *testing.T) {
 	require.ErrorContains(t, err, "Tool accepts at most one DSL function")
 }
 
+func TestToolArgsRequireObjectShape(t *testing.T) {
+	tests := []struct {
+		name string
+		args func() any
+	}{
+		{name: "primitive", args: func() any { return String }},
+		{name: "array", args: func() any { return ArrayOf(String) }},
+		{name: "map", args: func() any { return MapOf(String, String) }},
+		{name: "primitive alias", args: func() any { return Type("Message", String) }},
+		{name: "array alias", args: func() any { return Type("Messages", ArrayOf(String)) }},
+		{name: "map alias", args: func() any { return Type("Labels", MapOf(String, String)) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := runDSLWithError(t, func() {
+				args := test.args()
+				Service("assistant", func() {
+					Agent("planner", "Plans work", func() {
+						Use("local", func() {
+							Tool("echo", "Echo a value", func() {
+								Args(args)
+							})
+						})
+					})
+				})
+			})
+
+			require.ErrorContains(t, err, "Args must define an object")
+		})
+	}
+}
+
+func TestBoundToolArgsRequireObjectShapedMethodPayload(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload func() any
+	}{
+		{name: "primitive", payload: func() any { return String }},
+		{name: "array", payload: func() any { return ArrayOf(String) }},
+		{name: "map", payload: func() any { return MapOf(String, String) }},
+		{name: "primitive alias", payload: func() any { return Type("BoundMessage", String) }},
+		{name: "array alias", payload: func() any { return Type("BoundMessages", ArrayOf(String)) }},
+		{name: "map alias", payload: func() any { return Type("BoundLabels", MapOf(String, String)) }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := runDSLWithError(t, func() {
+				payload := test.payload()
+				Service("assistant", func() {
+					Method("Echo", func() {
+						Payload(payload)
+					})
+					Agent("planner", "Plans work", func() {
+						Use("local", func() {
+							Tool("echo", "Echo a value", func() {
+								BindTo("Echo")
+							})
+						})
+					})
+				})
+			})
+
+			require.ErrorContains(t, err, "Args must define an object")
+		})
+	}
+}
+
 func TestToolRejectsInvalidArgumentType(t *testing.T) {
 	err := runDSLWithError(t, func() {
 		Toolset("local", func() {
@@ -414,15 +485,19 @@ func TestExportRejectsMultipleDSLFunctions(t *testing.T) {
 func TestPassthroughWithServiceAndMethodNames(t *testing.T) {
 	runDSL(t, func() {
 		API("test", func() {})
+		var LogPayload = Type("LogPayload", func() {
+			Attribute("message", String, "Message to log")
+			Required("message")
+		})
 		Service("logging", func() {
 			Method("LogMessage", func() {
-				Payload(String)
+				Payload(LogPayload)
 				Result(String)
 			})
 			Agent("agent", "desc", func() {
 				Export("logging-tools", func() {
 					Tool("log_message", "Log a message", func() {
-						Args(String)
+						Args(LogPayload)
 						Return(String)
 						Passthrough("log_message", "logging", "LogMessage")
 					})
@@ -447,10 +522,14 @@ func TestPassthroughWithServiceAndMethodNames(t *testing.T) {
 func TestPassthroughWithMethodExpr(t *testing.T) {
 	runDSL(t, func() {
 		API("test", func() {})
+		var LogPayload = Type("LogPayload", func() {
+			Attribute("message", String, "Message to log")
+			Required("message")
+		})
 		Service("logging", func() {
 			var logMethod *goaexpr.MethodExpr
 			Method("LogMessage", func() {
-				Payload(String)
+				Payload(LogPayload)
 				Result(String)
 			})
 			// Get the method expression after it's created
@@ -458,7 +537,7 @@ func TestPassthroughWithMethodExpr(t *testing.T) {
 			Agent("agent", "desc", func() {
 				Export("logging-tools", func() {
 					Tool("log_message", "Log a message", func() {
-						Args(String)
+						Args(LogPayload)
 						Return(String)
 						Passthrough("log_message", logMethod)
 					})

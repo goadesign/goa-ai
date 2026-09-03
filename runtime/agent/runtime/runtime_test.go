@@ -1380,6 +1380,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 		newAnyJSONSpec("child2"),
 		newAnyJSONSpec("child3"),
 	)
+	seedTestToolDefinitions(rt, rt.toolSpecs["child1"], rt.toolSpecs["child2"], rt.toolSpecs["child3"])
 	rt.agentToolSpecs["nested.agent"] = []tools.ToolSpec{
 		rt.toolSpecs["child1"],
 		rt.toolSpecs["child2"],

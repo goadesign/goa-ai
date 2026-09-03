@@ -277,7 +277,16 @@ func (s *tracedStream) end(code codes.Code, desc string) {
 
 func modelSpanAttrs(ctx context.Context, req *model.Request) []attribute.KeyValue {
 	attrs := telemetry.GenAIOperationAttrs(ctx, telemetry.GenAIOperationChat)
-	attrs = append(attrs, telemetry.AttrGenAIRequestModel.String(requestedModelName(req)))
+	toolNames := make([]string, len(req.Tools))
+	for i, tool := range req.Tools {
+		toolNames[i] = tool.Name
+	}
+	attrs = append(
+		attrs,
+		telemetry.AttrGenAIRequestModel.String(requestedModelName(req)),
+		attribute.Int("goa_ai.request.tool_count", len(toolNames)),
+		attribute.StringSlice("goa_ai.request.tool_names", toolNames),
+	)
 	if req.MaxTokens > 0 {
 		attrs = append(attrs, telemetry.AttrGenAIRequestMaxTokens.Int(req.MaxTokens))
 	}

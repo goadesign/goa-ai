@@ -903,6 +903,7 @@ func TestPlanStartActivityRejectsModelToolPayloadBeforeRecovery(t *testing.T) {
 		return payload, nil
 	}
 	seedTestToolSpecs(rt, spec)
+	seedTestToolDefinitions(rt, spec)
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
 		"service.agent": {spec},
 	}
@@ -961,6 +962,7 @@ func TestPlanStartActivityRejectsStreamedToolPayloadBeforePlannerExposure(t *tes
 		return payload, nil
 	}
 	seedTestToolSpecs(rt, spec)
+	seedTestToolDefinitions(rt, spec)
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
 		"service.agent": {spec},
 	}
@@ -2331,6 +2333,7 @@ func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	seedTestToolSpecs(rt, search, continuation)
+	seedTestToolDefinitions(rt, search, continuation)
 	rt.agentToolSpecs = make(map[agent.Ident][]tools.ToolSpec)
 	rt.agentToolSpecs["service.agent"] = []tools.ToolSpec{search, continuation}
 	store := newTestStore()
@@ -2435,6 +2438,7 @@ func TestPlanResumeActivityBindsModelSelectedContinuation(t *testing.T) {
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	seedTestToolSpecs(rt, search, continuation)
+	seedTestToolDefinitions(rt, search, continuation)
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
 		"service.agent": {search, continuation},
 	}
@@ -2736,6 +2740,7 @@ func TestPlanStartActivityAdvertisesPolicyFilteredTools(t *testing.T) {
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
 		"service.agent": {visible, blocked},
 	}
+	seedTestToolDefinitions(rt, visible, blocked)
 	input := PlanActivityInput{
 		AgentID:  "service.agent",
 		RunID:    "run-123",
@@ -2861,6 +2866,7 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	search, continuation := continuationTestSpecs()
 	seedTestToolSpecs(rt, search, continuation)
+	seedTestToolDefinitions(rt, search, continuation)
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
 		"service.agent": {search, continuation},
 	}
@@ -2938,6 +2944,7 @@ func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) 
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	seedTestToolSpecs(rt, specs...)
+	seedTestToolDefinitions(rt, specs...)
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{"service.agent": specs}
 
 	for _, failed := range []struct {
@@ -3075,6 +3082,7 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 	}
 	other := newAnyJSONSpec("svc.other.tool")
 	seedTestToolSpecs(rt, source, other)
+	seedTestToolDefinitions(rt, source, other)
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{"service.agent": {source, other}}
 	require.NoError(t, rt.publishHookErr(
 		context.Background(),
@@ -3248,7 +3256,7 @@ func TestBuildNextResumeRequestCarriesTurnScopedRecoveryIdentity(t *testing.T) {
 	require.Equal(t, tools.Ident("svc.tools.first"), req.Policy.RestrictToTool)
 	require.Equal(t, []string{"call-rejected"}, req.RecoveryToolCallIDs)
 
-	recovery[0].ToolCallID = "mutated"
+	recovery[0].ToolCallID = mutatedTestValue
 	require.Equal(t, []string{"call-rejected"}, req.RecoveryToolCallIDs)
 }
 

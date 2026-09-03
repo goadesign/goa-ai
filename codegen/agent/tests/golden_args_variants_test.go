@@ -8,19 +8,6 @@ import (
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 )
 
-func TestGolden_Args_Primitive(t *testing.T) {
-	files := buildAndGenerate(t, testscenarios.ArgsPrimitive())
-	types := fileContent(t, files, "gen/alpha/toolsets/ops/types.go")
-	codecs := fileContent(t, files, "gen/alpha/toolsets/ops/codecs.go")
-	specs := fileContent(t, files, "gen/alpha/toolsets/ops/specs.go")
-	assertGoldenGo(t, "args_primitive", "types.go.golden", types)
-	assertGoldenGo(t, "args_primitive", "codecs.go.golden", codecs)
-	assertGoldenGo(t, "args_primitive", "specs.go.golden", specs)
-
-	complete := buildCompleteGeneratedFiles(t, testscenarios.ArgsPrimitive())
-	runCompleteGeneratedPackageTest(t, complete, "./gen/alpha/toolsets/ops/...")
-}
-
 func TestGolden_Args_InlineObject(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.ArgsInlineObject())
 	types := fileContent(t, files, "gen/alpha/toolsets/math/types.go")

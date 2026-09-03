@@ -67,9 +67,13 @@ func TestPlainUseLinksUniqueAgentExporter(t *testing.T) {
 func multiExporterAgentToolsetDesign(explicit bool) func() {
 	return func() {
 		API("multi_exporter", func() {})
+		var LookupInput = Type("LookupInput", func() {
+			Attribute("query", String, "Lookup query")
+			Required("query")
+		})
 		shared := Toolset("shared", func() {
 			Tool("lookup", "Look up a value.", func() {
-				Args(String)
+				Args(LookupInput)
 				Return(String)
 			})
 		})
@@ -100,9 +104,13 @@ func multiExporterAgentToolsetDesign(explicit bool) func() {
 func uniqueExporterAgentToolsetDesign() func() {
 	return func() {
 		API("unique_exporter", func() {})
+		var LookupInput = Type("LookupInput", func() {
+			Attribute("query", String, "Lookup query")
+			Required("query")
+		})
 		shared := Toolset("shared", func() {
 			Tool("lookup", "Look up a value.", func() {
-				Args(String)
+				Args(LookupInput)
 				Return(String)
 			})
 		})

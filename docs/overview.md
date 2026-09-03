@@ -173,11 +173,13 @@ Each entry contains the canonical tool ID with full JSON Schemas:
 Schemas derive from the same DSL as your generated specs and codecs. If schema generation fails,
 `goa gen` fails fast—no silent drift between runtime contracts and the JSON catalogue.
 
-`OneOf` values are emitted in the same canonical discriminated envelope used by
-the generated codecs: each variant is a `oneOf` object with a fixed `type`
-value and a typed `value` payload. For example, a markdown block variant is
-described as `{ "type": "markdown", "value": { "text": "..." } }`, never as a
-raw string or as an untyped `value.anyOf` branch.
+Tool inputs are always objects. Generated objects reject unknown properties,
+maps keep accepting dynamic keys, and each `OneOf` value accepts only
+`{ "type": ..., "value": ... }`, with the selected value checked
+recursively. The runtime enforces the advertised schema before any attached
+input decoder. See the
+[runtime tool-input contract](runtime.md#model-visible-tool-arguments) for the
+accepted `Args` shapes and correction rules.
 
 ### Bounded Tool Results and Bounds Metadata
 
@@ -514,7 +516,7 @@ policies, and MCP servers within Goa service designs.
 | Function | Purpose |
 |----------|---------|
 | `Tool(name, description?, func()?)` | Define a tool within a toolset or mark a method as MCP tool |
-| `Args(type)` | Define tool input schema (inline func, user type, or primitive) |
+| `Args(type)` | Define an object-shaped tool input (inline object or object user type) |
 | `Return(type)` | Define tool output schema |
 | `ServerData(kind, type, func()?)` | Attach server-only data alongside results (never sent to models) |
 | `ServerDataDefault("on" \| "off")` | Default emission for optional server-data when `server_data` is omitted or `"auto"` |
@@ -1074,25 +1076,17 @@ The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
 | **Activity** | Default        | JSON‑encode via codec, schedule `ExecuteToolActivity`, collect futures |
 | **Child**    | Agent‑as‑tool  | Execute as a child workflow using its generated definition        |
 
-`ExecuteToolActivity` decodes payloads, calls the toolset's `Execute`, re‑encodes results.
-Validation errors become `FailureInvalidCall` with a `RecoveryCorrectCall`
-directive for planners.
+Before either path is scheduled, the validated model client applies the tool's
+advertised schema and attached decoder. Only the input rejections listed in the
+[runtime tool-input contract](runtime.md#model-visible-tool-arguments) qualify
+for a replacement model call; ordinary decoder and internal errors are
+terminal.
 
-#### Validation Errors → Correctable ToolFailure
-
-Goa‑AI produces correctable tool failures from validation failures in two places:
-
-- **Codec validation (decode‑time)**: generated tool codecs validate JSON payloads before
-  execution. When validation fails, the runtime extracts structured `FieldIssue` entries
-  (missing fields, invalid enum values, length/range constraints, and JSON type
-  mismatches) and converts them into `planner.ToolFailure` so planners/UIs can ask
-  for the missing/corrected fields. JSON type mismatches carry generated
-  expected/actual JSON type metadata instead of requiring runtime schema parsing.
-
-- **Provider/service validation (execution‑time)**: tool providers may call a bound service
-  method that returns a Goa validation error. Providers should include structured field
-  issues in the tool result message (instead of only returning a string error) so registry
-  consumers can build the same `ToolFailure` deterministically.
+`ExecuteToolActivity` decodes an accepted payload, calls the toolset's
+`Execute`, and encodes the result. A service can separately reject a domain
+value after execution begins. Generated providers preserve supported Goa
+validation errors as structured field issues in `planner.ToolFailure` instead
+of requiring callers to parse error text.
 
 ### 6. Completion
 

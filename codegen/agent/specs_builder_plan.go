@@ -182,6 +182,7 @@ type (
 		serverDataTransforms       map[string]*goacodegen.NameDeclaration
 		bounds                     *goacodegen.NameDeclaration
 		injectedFieldLayouts       map[string]*goacodegen.GoTypePlan
+		injectedFieldValidations   map[string]*goacodegen.ValidationPlan
 		payloadType                *plannedSpecType
 		resultType                 *plannedSpecType
 		serverDataTypes            map[string]*plannedSpecType

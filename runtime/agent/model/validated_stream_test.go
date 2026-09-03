@@ -438,7 +438,7 @@ func TestNestedValidatedStreamGeneratedCorrectionRetainsUsageWithoutExposingResp
 	require.Nil(t, chunk)
 	var outputErr *OutputValidationError
 	require.ErrorAs(t, err, &outputErr)
-	require.Contains(t, outputErr.RecoveryCorrection(), `Field "query" must contain a JSON string.`)
+	require.Equal(t, advertisedToolInputCorrection, outputErr.RecoveryCorrection())
 	require.NotContains(t, outputErr.RecoveryCorrection(), "submitted-secret")
 	require.Equal(t, &usage, outputErr.Usage())
 	require.Nil(t, stream.Response())
