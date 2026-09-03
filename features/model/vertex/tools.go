@@ -114,10 +114,12 @@ func prepareGeminiToolSchema(schema any) error {
 	if !ok {
 		return errors.New("gemini tool schema must be an object")
 	}
-	if _, hasOneOf := object["oneOf"]; hasOneOf {
+	if oneOf, hasOneOf := object["oneOf"]; hasOneOf {
 		if _, hasAnyOf := object["anyOf"]; hasAnyOf {
 			return errors.New("gemini tool schema cannot contain both \"oneOf\" and \"anyOf\"")
 		}
+		object["anyOf"] = oneOf
+		delete(object, "oneOf")
 	}
 	for keyword, value := range object {
 		switch keyword {
@@ -142,19 +144,15 @@ func prepareGeminiToolSchema(schema any) error {
 			if err := prepareGeminiToolSchema(value); err != nil {
 				return err
 			}
-		case "anyOf", "oneOf":
+		case "anyOf":
 			choices, ok := value.([]any)
 			if !ok {
-				return fmt.Errorf("gemini tool schema %q must be an array", keyword)
+				return errors.New("gemini tool schema \"anyOf\" must be an array")
 			}
 			for _, choice := range choices {
 				if err := prepareGeminiToolSchema(choice); err != nil {
 					return err
 				}
-			}
-			if keyword == "oneOf" {
-				object["anyOf"] = choices
-				delete(object, "oneOf")
 			}
 		case "$ref", "type", "nullable", "required", "format", "description", "enum", "propertyOrdering":
 			// Gemini accepts these keywords unchanged.
