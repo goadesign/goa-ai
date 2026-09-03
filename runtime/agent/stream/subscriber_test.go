@@ -29,18 +29,14 @@ func (m *mockSink) Send(ctx context.Context, evt Event) error {
 
 func (m *mockSink) Close(ctx context.Context) error { return nil }
 
-func TestStreamSubscriber(t *testing.T) {
+func TestStreamSubscriber_DoesNotStreamCompletedAssistantMessageAsLiveOutput(t *testing.T) {
 	sink := &mockSink{}
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
 	evt := hooks.NewAssistantMessageEvent("r1", agent.Ident("agent1"), "session-1", "hello", nil)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
-	require.Len(t, sink.events, 1)
-	require.Equal(t, EventAssistantReply, sink.events[0].Type())
-	v, ok := sink.events[0].(AssistantReply)
-	require.True(t, ok)
-	require.Equal(t, "hello", v.Data.Text)
+	require.Empty(t, sink.events)
 }
 
 func TestStreamSubscriber_AssistantTurnCommitted(t *testing.T) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 	"goa.design/goa-ai/runtime/agent/stream"
@@ -33,12 +34,20 @@ func Example_broadcast() {
 	sub, _ := streambridge.Register(rt.Bus, sink)
 	defer func() { _ = sub.Close() }()
 
-	// Publish a user-facing hook event; the subscriber forwards it.
-	_ = rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent("run-1", "svc.agent", "session-1", "hello", nil))
+	// Publish a completed assistant turn; the subscriber forwards it.
+	_ = rt.Bus.Publish(ctx, hooks.NewAssistantTurnCommittedEvent(
+		"run-1",
+		"svc.agent",
+		"session-1",
+		&model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "hello"}},
+		},
+	))
 
 	// The sink received a typed stream event.
 	fmt.Println(sink.events[0].Type())
-	// Output: assistant_reply
+	// Output: assistant_turn
 }
 
 // Example demonstrating per-request streaming by registering a temporary

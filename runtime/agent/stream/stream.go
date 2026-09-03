@@ -740,8 +740,9 @@ const (
 
 	// EventAssistantReply streams incremental assistant message content as the planner
 	// produces the final response. Clients receive text chunks that can be displayed
-	// progressively (streaming typewriter effect). Emitted by StreamSubscriber when
-	// AssistantMessageEvent hooks fire. Payload is AssistantReplyPayload.
+	// progressively. The runtime emits these events directly from live model output;
+	// completed assistant-message hooks do not recreate them.
+	// Payload is AssistantReplyPayload.
 	EventAssistantReply EventType = "assistant_reply"
 
 	// EventAssistantTurn streams one canonical assistant transcript message after
