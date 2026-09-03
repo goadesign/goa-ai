@@ -10,6 +10,7 @@
         "name": "AnswerPayload",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
           "example": {
             "question": "What is the capital of Japan?"
           },
@@ -29,6 +30,7 @@
         "name": "AnswerResult",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
           "properties": {
             "text": {
               "description": "Answer text",

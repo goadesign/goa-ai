@@ -111,6 +111,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 	originalCatalog := newAnyJSONSpec("catalog.items.list_original")
 	catalog := newAnyJSONSpec("catalog.items.list_items")
 	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	seedTestToolDefinitions(rt, catalog)
 	sessionID := "session-unadvertised-tool"
 	_, err := createSessionForTest(t.Context(), rt.Store, sessionID)
 	require.NoError(t, err)
@@ -246,6 +247,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
 	catalog := newAnyJSONSpec("catalog.items.list_items")
 	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	seedTestToolDefinitions(rt, catalog)
 	sessionID := "session-repeated-unadvertised-tool"
 	_, err := createSessionForTest(t.Context(), rt.Store, sessionID)
 	require.NoError(t, err)

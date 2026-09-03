@@ -84,10 +84,10 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
  descriptions and JSON field types. UI, retry, and clarification code should
  consume `TypeSpec.FieldDescriptions` and `TypeSpec.FieldJSONTypes`; do not
  parse JSON Schema to rediscover labels or expected types.
-- Generated codecs own JSON boundary validation, including unknown-field
- rejection, required fields, scalar validation, union decoding, and typed
- transforms. Service code should call the generated codec instead of compiling
- or walking generated schemas.
+- The model boundary validates complete tool arguments against the exact JSON
+  Schema advertised to the model, then calls the generated codec for typed
+  decoding and Goa validation. Service code should call the generated codec;
+  it must not compile or walk generated schemas again.
 - Keep template directive indentation independent from emitted Go code. Prefer `{{- ... }}` to control whitespace.
 - Write fast deterministic table-driven tests in `*_test.go`. Prefer `testify/assert`; use `testify/require` only when the test cannot continue.
 - Do not test impossible internal invariant breaks; test boundaries such as malformed JSON, third-party failures, DB nulls, context extraction, and failed type assertions.

@@ -35,6 +35,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+const mutatedTestValue = "mutated"
+
 type testStore struct {
 	*storageinmem.Store
 }
@@ -405,6 +407,15 @@ func seedTestToolSpecs(rt *Runtime, specs ...tools.ToolSpec) {
 				specs, registration.Definition.requiredLabels)
 		}
 		rt.agents[id] = registration
+	}
+}
+
+func seedTestToolDefinitions(rt *Runtime, specs ...tools.ToolSpec) {
+	if rt.toolDefinitions == nil {
+		rt.toolDefinitions = make(map[tools.Ident]*model.ToolDefinition)
+	}
+	for name, definition := range mustToolDefinitions(specs) {
+		rt.toolDefinitions[name] = definition
 	}
 }
 
@@ -1276,8 +1287,12 @@ func newAnyJSONSpec(name tools.Ident) tools.ToolSpec {
 		},
 	}
 	return tools.ToolSpec{
-		Name:    name,
-		Payload: tools.TypeSpec{Name: string(name) + "_payload", Codec: codec},
-		Result:  tools.TypeSpec{Name: string(name + "_result"), Codec: codec},
+		Name: name,
+		Payload: tools.TypeSpec{
+			Name:   string(name) + "_payload",
+			Schema: rawjson.Message(`{"type":"object"}`),
+			Codec:  codec,
+		},
+		Result: tools.TypeSpec{Name: string(name + "_result"), Codec: codec},
 	}
 }

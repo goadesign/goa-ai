@@ -20,7 +20,6 @@ import (
 	"github.com/stretchr/testify/require"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
-	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/goa-ai/runtime/toolregistry/provider"
 	"goa.design/pulse/rmap"
@@ -250,7 +249,6 @@ func TestConcurrentRevisionPinsConverge(t *testing.T) {
 		trackers[i] = &healthTracker{
 			redis:     rdb,
 			revFloors: map[string]int64{},
-			logger:    telemetry.NewNoopLogger(),
 		}
 	}
 	var wg sync.WaitGroup

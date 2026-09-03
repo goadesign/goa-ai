@@ -142,7 +142,6 @@ func Tool(name string, args ...any) {
 // Args follows the same patterns as Goa's Payload function for methods. It accepts:
 //   - A function to define an inline object schema with Attribute() calls
 //   - A Goa user type (Type, ResultType, etc.) to reuse existing type definitions
-//   - A primitive type (String, Int, etc.) for simple single-value inputs
 //
 // When using a function to define the schema inline, you can use:
 //   - Attribute(name, type, description) to define each parameter
@@ -174,14 +173,20 @@ func Tool(name string, args ...any) {
 //	    Return(func() { ... })
 //	})
 //
-// Example (primitive type for simple tools):
+// Tool arguments must be a JSON object because model providers invoke tools
+// with named properties. Wrap a single value in an object with one named field:
 //
 //	Tool("echo", "Echo a message", func() {
-//	    Args(String)  // Single string parameter
+//	    Args(func() {
+//	        Attribute("text", String, "Text to echo")
+//	        Required("text")
+//	    })
 //	    Return(String)
 //	})
 //
-// If Args is not called, the tool accepts no parameters (empty/null payload).
+// If Args and BindTo are both omitted, the tool accepts the empty object `{}`.
+// If Args is omitted on a bound tool, the bound method payload becomes the
+// model-facing argument object and must satisfy the same object-shape rule.
 func Args(val any, args ...any) {
 	if len(args) > 2 {
 		eval.TooManyArgError()
@@ -236,7 +241,10 @@ func Args(val any, args ...any) {
 // Example (primitive type for simple tools):
 //
 //	Tool("count_words", "Count words in text", func() {
-//	    Args(String)
+//	    Args(func() {
+//	        Attribute("text", String, "Text to count")
+//	        Required("text")
+//	    })
 //	    Return(Int)  // Returns single integer count
 //	})
 //
@@ -572,13 +580,8 @@ func BindTo(args ...string) {
 //     Inject<Tool> right after decoding the tool payload, threading the run's
 //     ToolCallMeta and call labels.
 //   - Registry-served (bound) tools: the generated provider calls the same
-//     Inject<Tool> function with the wire ToolCallMeta and a nil labels map.
-//     A bound (BindTo) tool cannot declare a label-backed Inject() field --
-//     it is a generation-time error -- precisely because the registry wire
-//     protocol carries no run labels; the registry-served
-//     Runtime.ClientFor(route)/AgentRoute gateway topology also never
-//     validates RequiredLabels locally (see below), so a bound tool would
-//     otherwise silently receive an empty label value.
+//     Inject<Tool> function with the call metadata and immutable run labels
+//     carried by the registry request.
 //
 // Custom (hand-written) ToolCallExecutors -- for tools with no BindTo,
 // registered directly with the runtime -- have no generated call site.
@@ -594,12 +597,9 @@ func BindTo(args ...string) {
 // contributes its key to a generated, sorted, deduplicated RequiredLabels
 // list. Runtime.Start/StartOneShot (and their route variants) validate the
 // caller-supplied labels against this list before scheduling any workflow or
-// activity, failing fast with every missing key named in one error. This
-// check is a no-op when the starting process has not locally registered the
-// agent -- for example, a pure Runtime.ClientFor(AgentRoute) gateway/
-// orchestration start -- because RequiredLabels lives on the local
-// AgentRegistration; in that topology a missing label is caught later, when
-// the specific tool call reaches Inject<Tool>, not before the run starts.
+// activity, failing fast with every missing key named in one error. Generated
+// agent definitions carry this list, so remote Runtime.ClientFor callers apply
+// the same check without locally registering the worker.
 //
 // # Constraints enforced at generation time
 //
@@ -617,8 +617,6 @@ func BindTo(args ...string) {
 //     the tool Args (populated by the per-toolset Inject<Tool> both
 //     topologies call) and, when it differs, the method payload (populated
 //     by the registry provider's own bound-method dispatch).
-//   - A label-backed field cannot be declared on a bound (BindTo) tool (see
-//     the registry topology note above).
 //
 // Example:
 //

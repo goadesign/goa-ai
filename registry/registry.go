@@ -78,8 +78,9 @@ type (
 		//
 		// Defaults to "registry" if not provided.
 		Name string
-		// Logger receives health tracker logs (pings, transitions, failures).
-		// When nil, health tracking logs are suppressed.
+		// Logger receives failures while the registry settles interrupted tool
+		// calls. Health scheduling and readiness are recorded on OpenTelemetry
+		// spans instead.
 		Logger telemetry.Logger
 		// PingInterval is the interval between health check pings.
 		// Defaults to 10 seconds if not provided.
@@ -173,10 +174,6 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	if cfg.MissedPingThreshold > 0 {
 		healthOpts = append(healthOpts, WithMissedPingThreshold(cfg.MissedPingThreshold))
 	}
-	if cfg.Logger != nil {
-		healthOpts = append(healthOpts, WithHealthLogger(cfg.Logger))
-	}
-
 	clock := newRedisTimeSource(cfg.Redis)
 
 	// Create the one authoritative toolset catalog shared by the service and

@@ -11,7 +11,7 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 		{
 			Name:         "summarize",
 			Description:  stringPtr("Summarize a report"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"additionalProperties\":false}"),
+			InputSchema:  json.RawMessage("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"additionalProperties\":false}"),
 			OutputSchema: json.RawMessage("{\"type\":\"object\",\"additionalProperties\":false}"),
 		},
 		{

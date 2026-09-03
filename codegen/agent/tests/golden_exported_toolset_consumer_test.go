@@ -28,11 +28,15 @@ func TestGoldenExportedToolsetConsumer(t *testing.T) {
 func exportedToolsetConsumerDesign() func() {
 	return func() {
 		API("exported_toolset_consumer", func() {})
+		var FetchInput = Type("FetchInput", func() {
+			Attribute("key", String, "Data key")
+			Required("key")
+		})
 		Service("provider", func() {
 			Agent("source", "Provides shared tools.", func() {
 				Export("ada", func() {
 					Tool("fetch", "Fetch data.", func() {
-						Args(String)
+						Args(FetchInput)
 						Return(String)
 					})
 				})

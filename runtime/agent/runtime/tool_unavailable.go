@@ -34,9 +34,10 @@ var (
 		Name:        tools.ToolUnavailable,
 		Description: "Runtime-owned tool that represents unavailable tool calls.",
 		Payload: tools.TypeSpec{
-			Name:        "ToolUnavailablePayload",
-			Schema:      toolUnavailableSchema,
-			ExampleJSON: tools.RawJSON(`{"requested_tool":"svc_read_count_events","requested_payload":{"from":"2026-02-06T00:00:00Z"}}`),
+			Name:                     "ToolUnavailablePayload",
+			Schema:                   toolUnavailableSchema,
+			SchemaWithoutRootExample: toolUnavailableSchema,
+			ExampleJSON:              tools.RawJSON(`{"requested_tool":"svc_read_count_events","requested_payload":{"from":"2026-02-06T00:00:00Z"}}`),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: marshalToolUnavailablePayload,
 				FromJSON: func(data []byte) (any, error) {

@@ -29,8 +29,8 @@ func specCompleteDraft() completion.Spec[*CompleteDraftResult] {
 	return completion.Spec[*CompleteDraftResult]{
 		Name:                     CompleteDraft,
 		Description:              "Generates collision test output.",
-		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
-		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
+		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		ExampleJSON:              rawjson.Message("{\"text\":\"Generated text.\"}"),
 		Codec:                    newCompleteDraftResultCodec(),
 	}
@@ -47,8 +47,8 @@ func specDraft() completion.Spec[*DraftResult] {
 	return completion.Spec[*DraftResult]{
 		Name:                     Draft,
 		Description:              "Generates collision test output.",
-		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
-		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
+		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		ExampleJSON:              rawjson.Message("{\"text\":\"Generated text.\"}"),
 		Codec:                    newDraftResultCodec(),
 	}
@@ -65,8 +65,8 @@ func specDraftExample() completion.Spec[*DraftExampleResult] {
 	return completion.Spec[*DraftExampleResult]{
 		Name:                     DraftExample,
 		Description:              "Generates collision test output.",
-		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
-		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
+		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		ExampleJSON:              rawjson.Message("{\"text\":\"Generated text.\"}"),
 		Codec:                    newDraftExampleResultCodec(),
 	}
@@ -83,8 +83,8 @@ func specStreamCompleteDraft() completion.Spec[*StreamCompleteDraftResult] {
 	return completion.Spec[*StreamCompleteDraftResult]{
 		Name:                     StreamCompleteDraft,
 		Description:              "Generates collision test output.",
-		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
-		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
+		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		ExampleJSON:              rawjson.Message("{\"text\":\"Generated text.\"}"),
 		Codec:                    newStreamCompleteDraftResultCodec(),
 	}

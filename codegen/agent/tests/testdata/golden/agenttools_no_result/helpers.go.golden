@@ -103,6 +103,6 @@ func NewRegistration(
 // payload type for each tool.
 // NewPurgeCall builds a planner-authored request for the
 // maintenance.purge tool. The runtime assigns its execution ID.
-func NewPurgeCall(args PurgePayload) (planner.ToolRequest, error) {
+func NewPurgeCall(args *PurgePayload) (planner.ToolRequest, error) {
 	return planner.NewToolRequest(maintenancespecs.PurgeTool(), args)
 }

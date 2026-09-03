@@ -29,8 +29,10 @@ func TestInjectBoundToolUsesGeneratedContext(t *testing.T) {
 	require.Contains(t, inject, "func InjectGetData(p *GetDataPayload, meta runtime.ToolCallMeta, labels map[string]string) error {")
 	require.Contains(t, inject, "v := meta.SessionID")
 	require.Contains(t, inject, `v, ok := labels["household_id"]`)
+	require.Contains(t, inject, `goa.InvalidLengthError("household_id", v, utf8.RuneCountInString(v), 8, true)`)
 	require.Contains(t, inject, "p.SessionID = v",
 		"the runtime fills the required public tool input after model JSON is decoded")
+	require.Contains(t, inject, `goa.InvalidLengthError("session_id", v, utf8.RuneCountInString(v), 8, true)`)
 	require.Contains(t, inject, "func DecodeGetData(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*GetDataPayload, error) {",
 		"the composed decode helper must exist beside Inject<Tool> for custom executors")
 	require.Contains(t, inject, "p, err := GetDataPayloadCodec().FromJSON(payload)")

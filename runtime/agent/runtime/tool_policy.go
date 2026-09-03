@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"fmt"
 	"maps"
 
 	"goa.design/goa-ai/runtime/agent/api"
@@ -99,13 +100,23 @@ func TagPolicyAllows(clauses []TagPolicyClause, tags []string) bool {
 
 // advertisedToolDefinitions materializes model-facing tool definitions after
 // applying the compiled runtime policy to registered tool specs.
-func advertisedToolDefinitions(specs []tools.ToolSpec, policy compiledToolPolicy) []*model.ToolDefinition {
+func (r *Runtime) advertisedToolDefinitions(
+	specs []tools.ToolSpec,
+	policy compiledToolPolicy,
+) []*model.ToolDefinition {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	definitions := make([]*model.ToolDefinition, 0, len(specs))
 	for _, spec := range specs {
 		if !policy.allowsTool(spec.Name, toolPolicyFactsFromSpec(spec)) {
 			continue
 		}
-		definitions = append(definitions, toolDefinitionFromSpec(spec))
+		base := r.toolDefinitions[spec.Name]
+		if base == nil {
+			panic(fmt.Sprintf("runtime: tool %q has no compiled model definition", spec.Name))
+		}
+		definition := *base
+		definitions = append(definitions, &definition)
 	}
 	return definitions
 }
@@ -135,11 +146,4 @@ func tagClauseAllows(clause api.TagPolicyClause, tags []string) bool {
 		return false
 	}
 	return true
-}
-
-// toolDefinitionFromSpec converts one runtime tool spec into the model-facing
-// shape advertised to providers. Invalid generated schemas are invariant
-// violations and therefore panic.
-func toolDefinitionFromSpec(spec tools.ToolSpec) *model.ToolDefinition {
-	return model.ToolDefinitionFromSpec(spec)
 }

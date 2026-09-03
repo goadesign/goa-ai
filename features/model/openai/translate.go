@@ -311,7 +311,9 @@ func translateToolCall(
 	if err != nil {
 		return model.ToolCall{}, outputvalidation.New(
 			model.OutputValidationToolArguments,
-			fmt.Errorf("openai: tool call %q payload: %w", call.CallID, err),
+			model.NewMalformedToolArgumentsError(
+				fmt.Errorf("openai: tool call %q payload: %w", call.CallID, err),
+			),
 		)
 	}
 	payload, err = codec.canonicalPayload(call.Name, payload)

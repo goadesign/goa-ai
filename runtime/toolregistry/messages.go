@@ -35,8 +35,8 @@ type (
 		// ToolCallID.
 		ToolCallID       string `json:"tool_call_id"`
 		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
-		// Labels carries immutable run-scoped context supplied by the caller.
-		// Providers expose it to generated executors but never to model payloads.
+		// Labels carries run labels and runtime-supplied values fixed for this call.
+		// Providers expose them to generated executors but never to model payloads.
 		Labels map[string]string `json:"labels,omitempty"`
 	}
 

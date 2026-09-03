@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"goa.design/goa-ai/runtime/agent"
@@ -21,18 +22,20 @@ func TestValidateToolSpecRegistrationsRejectsConflictingContract(t *testing.T) {
 	runtime := New(newTestStore())
 	spec := newAnyJSONSpec("svc.lookup")
 	runtime.mu.Lock()
-	runtime.addToolSpecsLocked([]tools.ToolSpec{spec}, nil)
+	runtime.addToolSpecsLocked([]tools.ToolSpec{spec}, nil, mustToolDefinitions([]tools.ToolSpec{spec}))
 	runtime.mu.Unlock()
 
-	require.NoError(t, runtime.validateToolSpecRegistrations(toolSpecRegistration{
+	_, err := runtime.validateToolSpecRegistrations(toolSpecRegistration{
 		specs: []tools.ToolSpec{spec},
-	}))
+	})
+	require.NoError(t, err)
 
 	changed := spec
 	changed.Description = "different planner contract"
-	require.ErrorContains(t, runtime.validateToolSpecRegistrations(toolSpecRegistration{
+	_, err = runtime.validateToolSpecRegistrations(toolSpecRegistration{
 		specs: []tools.ToolSpec{changed},
-	}), `tool "svc.lookup" is already registered with a different contract`)
+	})
+	require.ErrorContains(t, err, `tool "svc.lookup" is already registered with a different contract`)
 }
 
 func TestValidateToolSpecRegistrationsRejectsIncompleteResultContract(t *testing.T) {
@@ -68,8 +71,10 @@ func TestValidateToolSpecRegistrationsRejectsIncompleteResultContract(t *testing
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			runtime := New(newTestStore())
-			err := runtime.validateToolSpecRegistrations(toolSpecRegistration{
-				specs: []tools.ToolSpec{{Name: "svc.tool", Result: test.result}},
+			spec := newAnyJSONSpec("svc.tool")
+			spec.Result = test.result
+			_, err := runtime.validateToolSpecRegistrations(toolSpecRegistration{
+				specs: []tools.ToolSpec{spec},
 			})
 			if test.want == "" {
 				require.NoError(t, err)
@@ -77,6 +82,64 @@ func TestValidateToolSpecRegistrationsRejectsIncompleteResultContract(t *testing
 			}
 			require.ErrorContains(t, err, test.want)
 			require.ErrorIs(t, err, ErrInvalidConfig)
+		})
+	}
+}
+
+func TestRegisterToolsetRejectsInvalidPayloadContract(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		payload tools.TypeSpec
+		want    string
+	}{
+		{
+			name: "malformed schema",
+			payload: tools.TypeSpec{
+				Schema: tools.RawJSON(`{"type":`),
+				Codec:  tools.AnyJSONCodec,
+			},
+			want: "invalid input schema",
+		},
+		{
+			name: "missing decoder",
+			payload: tools.TypeSpec{
+				Schema: tools.RawJSON(`{"type":"object"}`),
+			},
+			want: "payload decoder is required",
+		},
+		{
+			name: "example rejected by decoder",
+			payload: tools.TypeSpec{
+				Schema:                   tools.RawJSON(`{"type":"object"}`),
+				SchemaWithoutRootExample: tools.RawJSON(`{"type":"object"}`),
+				ExampleJSON:              tools.RawJSON(`{"query":"status"}`),
+				Codec: tools.JSONCodec[any]{
+					FromJSON: func([]byte) (any, error) {
+						return nil, errors.New("example is not decodable")
+					},
+				},
+			},
+			want: "example JSON does not satisfy its payload contract",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := New(newTestStore())
+			err := runtime.RegisterToolset(ToolsetRegistration{
+				Name: "svc",
+				Specs: []tools.ToolSpec{{
+					Name:    "svc.tool",
+					Payload: test.payload,
+				}},
+				Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
+					return nil, nil
+				},
+			})
+
+			require.ErrorIs(t, err, ErrInvalidConfig)
+			require.ErrorContains(t, err, test.want)
 		})
 	}
 }
@@ -270,8 +333,8 @@ func TestAddToolSpecsKeepsFirstCodecOwner(t *testing.T) {
 	}
 
 	runtime.mu.Lock()
-	runtime.addToolSpecsLocked([]tools.ToolSpec{first}, nil)
-	runtime.addToolSpecsLocked([]tools.ToolSpec{second}, nil)
+	runtime.addToolSpecsLocked([]tools.ToolSpec{first}, nil, mustToolDefinitions([]tools.ToolSpec{first}))
+	runtime.addToolSpecsLocked([]tools.ToolSpec{second}, nil, mustToolDefinitions([]tools.ToolSpec{second}))
 	runtime.mu.Unlock()
 
 	stored, ok := runtime.toolSpec(first.Name)

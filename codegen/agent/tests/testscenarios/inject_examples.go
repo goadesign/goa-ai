@@ -14,8 +14,12 @@ func InjectBoundMetaExample() func() {
 		Service("catalog", func() {
 			Method("get_data", func() {
 				Payload(func() {
-					Attribute("household_id", String, "Server-injected household identifier.")
-					Attribute("session_id", String, "Server-injected session identifier.")
+					Attribute("household_id", String, "Server-injected household identifier.", func() {
+						MinLength(8)
+					})
+					Attribute("session_id", String, "Server-injected session identifier.", func() {
+						MinLength(8)
+					})
 					Attribute("query", String, "Search query.")
 					Required("household_id", "session_id", "query")
 				})
@@ -29,6 +33,78 @@ func InjectBoundMetaExample() func() {
 					Tool("get_data", "Get data", func() {
 						BindTo("get_data")
 						Inject("household_id", "session_id")
+					})
+				})
+			})
+		})
+	}
+}
+
+// InjectLocatedStringExample defines a bound tool whose session ID uses a
+// String type generated in a shared package.
+func InjectLocatedStringExample() func() {
+	return func() {
+		API("catalog", func() {})
+		runtimeSessionID := Type("RuntimeSessionID", String, func() {
+			MinLength(8)
+			Meta("struct:pkg:path", "types")
+		})
+		lookupPayload := Type("LookupPayload", func() {
+			Attribute("sessionId", runtimeSessionID, "Server-injected session identifier.")
+			Required("sessionId")
+		})
+		Service("catalog", func() {
+			Method("lookup", func() {
+				Payload(lookupPayload)
+				Result(String)
+			})
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("lookup", "Lookup", func() {
+						BindTo("lookup")
+						Inject("sessionId")
+					})
+				})
+			})
+		})
+	}
+}
+
+// InjectImportCollisionExample defines injected String types whose package
+// names match packages used by the generated injection function.
+func InjectImportCollisionExample() func() {
+	return func() {
+		API("catalog", func() {})
+		runtimeSessionID := Type("RuntimeSessionID", String, func() {
+			MinLength(8)
+			Meta("struct:pkg:path", "utf8")
+		})
+		runID := Type("RunID", String, func() {
+			Pattern("^run-")
+			Meta("struct:pkg:path", "goa")
+		})
+		tenantID := Type("TenantID", String, func() {
+			Pattern("^tenant-")
+			Meta("struct:pkg:path", "fmt")
+		})
+		lookupPayload := Type("LookupPayload", func() {
+			Attribute("session_id", runtimeSessionID, "Server-injected session identifier.")
+			Attribute("run_id", runID, "Server-injected run identifier.")
+			Attribute("tenant_id", tenantID, "Server-injected tenant identifier.", func() {
+				Meta("struct:field:name", "OrganizationID")
+			})
+			Required("session_id", "run_id", "tenant_id")
+		})
+		Service("catalog", func() {
+			Method("lookup", func() {
+				Payload(lookupPayload)
+				Result(String)
+			})
+			Agent("scribe", "Doc helper", func() {
+				Use("helpers", func() {
+					Tool("lookup", "Lookup", func() {
+						BindTo("lookup")
+						Inject("session_id", "run_id", "tenant_id")
 					})
 				})
 			})

@@ -354,6 +354,9 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 	spec := tools.ToolSpec{
 		Name: callName,
 		Payload: tools.TypeSpec{
+			Schema: rawjson.Message(
+				`{"type":"object","properties":{"sources_ref":{"type":"string"}},"additionalProperties":false}`,
+			),
 			Codec: tools.JSONCodec[any]{
 				FromJSON: func(data []byte) (any, error) {
 					var raw map[string]json.RawMessage

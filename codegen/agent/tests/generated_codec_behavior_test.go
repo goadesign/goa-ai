@@ -89,6 +89,50 @@ func assertAddIntegerIssue(t *testing.T, err error) {
 	runGeneratedMathGoTest(t, root)
 }
 
+func TestGeneratedCodecOpenMapAnyBehavior(t *testing.T) {
+	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ArgsMapAny()))
+	writeGeneratedPackageTest(t, root, "alpha/toolsets/records/codecs_behavior_test.go", `package records
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestInspectSchemaClosesPayloadAndKeepsMetadataOpen(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal(SpecInspect().Payload.Schema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if schema["additionalProperties"] != false {
+		t.Fatalf("root object is not closed: %#v", schema)
+	}
+	properties := schema["properties"].(map[string]any)
+	metadata := properties["metadata"].(map[string]any)
+	if metadata["additionalProperties"] == false {
+		t.Fatalf("metadata map rejects caller-defined keys: %#v", metadata)
+	}
+}
+
+func TestUnmarshalInspectPayloadAcceptsArbitraryMapValues(t *testing.T) {
+	payload, err := UnmarshalInspectPayload([]byte("{\"metadata\":{\"nested\":{\"ready\":true},\"count\":2}}"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Metadata) != 2 {
+		t.Fatalf("unexpected metadata: %#v", payload.Metadata)
+	}
+}
+`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	runGeneratedGoTestCommand(
+		t,
+		root,
+		exec.CommandContext(ctx, "go", "test", "-mod=mod", "./alpha/toolsets/records"),
+	)
+}
+
 func TestGeneratedCodecUnknownFieldBehavior(t *testing.T) {
 	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.DeepNestedValidations()))
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/deep/http/validate_stub.go", `package http
@@ -104,11 +148,29 @@ func ValidateValidateResultTransport(v *ValidateResultTransport) error {
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/deep/codecs_behavior_test.go", `package deep
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+func TestValidateSchemaClosesObjectsAndKeepsMapsOpen(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal(SpecValidate().Payload.Schema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if schema["additionalProperties"] != false {
+		t.Fatalf("root object is not closed: %#v", schema)
+	}
+	properties := schema["properties"].(map[string]any)
+	for _, name := range []string{"counts", "groups", "labels", "objects"} {
+		field := properties[name].(map[string]any)
+		if field["additionalProperties"] == false {
+			t.Fatalf("map %q rejects caller-defined keys: %#v", name, field)
+		}
+	}
+}
 
 func TestUnmarshalValidatePayloadRejectsUnknownRootField(t *testing.T) {
 	_, err := UnmarshalValidatePayload([]byte(`+"`"+`{"root":"r","child":{"mid":"m","child":{"leaf":"l"}},"scope_context":"record_group_2"}`+"`"+`))
@@ -677,12 +739,89 @@ func TestGeneratedCodecUnionInvalidFieldTypeBehavior(t *testing.T) {
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/union/codecs_behavior_test.go", `package union
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 
+	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+func TestEchoSchemaMatchesClosedGeneratedDecoder(t *testing.T) {
+	var schema map[string]any
+	if err := json.Unmarshal(SpecEcho().Payload.Schema, &schema); err != nil {
+		t.Fatal(err)
+	}
+	if schema["additionalProperties"] != false {
+		t.Fatalf("root object is not closed: %#v", schema)
+	}
+	properties := schema["properties"].(map[string]any)
+	value := properties["value"].(map[string]any)
+	for _, raw := range value["oneOf"].([]any) {
+		branch := raw.(map[string]any)
+		if branch["additionalProperties"] != false {
+			t.Fatalf("union branch is not closed: %#v", branch)
+		}
+	}
+	definitions := schema["$defs"].(map[string]any)
+	structured := definitions["StructuredValue"].(map[string]any)
+	if structured["additionalProperties"] != false {
+		t.Fatalf("nested branch object is not closed: %#v", structured)
+	}
+}
+
+func TestInvalidUnionPayloadsReceiveReplacementGuidance(t *testing.T) {
+	tests := []struct {
+		name      string
+		payload   string
+		wantField string
+	}{
+		{name: "missing discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"value\":\"bad\"}}", wantField: "value.type"},
+		{name: "non-string discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"type\":7,\"value\":\"bad\"}}", wantField: "value.type"},
+		{name: "unknown discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"invented\",\"value\":\"bad\"}}", wantField: "value.type"},
+		{name: "missing value", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"structured\"}}", wantField: "value.value"},
+		{name: "wrong value type", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"number\",\"value\":\"bad\"}}", wantField: "value.value"},
+		{name: "unknown envelope field", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"number\",\"value\":7,\"extra\":true}}", wantField: "value.extra"},
+		{name: "unknown nested field", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"structured\",\"value\":{\"label\":\"ready\",\"extra\":true}}}", wantField: "value.value.extra"},
+		{name: "invalid branch content", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"structured\",\"value\":{}}}", wantField: "value.value.label"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			definition := model.ToolDefinitionFromSpec(SpecEcho())
+			contract, err := model.NewRequestContract(&model.Request{
+				Tools: []*model.ToolDefinition{definition},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			response := &model.Response{
+				Content: []model.Message{{
+					Role: model.ConversationRoleAssistant,
+					Parts: []model.Part{model.ToolUsePart{
+						ID: "call-1",
+						Name: string(Echo),
+						Input: rawjson.Message(test.payload),
+					}},
+				}},
+				StopReason: "tool_use",
+			}
+			_, err = contract.ValidateResponse(response)
+			var validation *model.OutputValidationError
+			if !errors.As(err, &validation) {
+				t.Fatalf("expected OutputValidationError, got %T: %v", err, err)
+			}
+			correction := validation.RecoveryCorrection()
+			if correction == "" || !strings.Contains(correction, "replacement tool call") {
+				t.Fatalf("expected replacement guidance, got %q", correction)
+			}
+			if strings.Contains(correction, test.wantField) || strings.Contains(correction, "ready") || strings.Contains(correction, "extra") {
+				t.Fatalf("correction exposed rejected arguments: %q", correction)
+			}
+		})
+	}
+}
 
 func TestUnmarshalEchoPayloadInvalidUnionEnvelopeType(t *testing.T) {
 	_, err := UnmarshalEchoPayload([]byte(`+"`"+`{"id":"req_1","value":"bad"}`+"`"+`))

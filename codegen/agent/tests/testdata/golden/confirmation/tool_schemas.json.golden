@@ -12,6 +12,7 @@
         "name": "DangerousWritePayload",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
           "properties": {
             "key": {
               "description": "Key to update.",
@@ -33,6 +34,7 @@
         "name": "DangerousWriteResult",
         "schema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
           "properties": {
             "key": {
               "description": "Key that was updated.",

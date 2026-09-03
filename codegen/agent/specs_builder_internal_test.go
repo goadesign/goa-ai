@@ -9,6 +9,8 @@ import (
 	codegen "goa.design/goa-ai/codegen/agent"
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
+	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	goadsl "goa.design/goa/v3/dsl"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
@@ -466,6 +468,26 @@ func TestBuildToolSpecsData_UnionSchemasIncludeEmptyObjectVariants(t *testing.T)
 	sourceValue := sourceProperties["source"].(map[string]any)
 	sourceOneOf := sourceValue["oneOf"].([]any)
 	require.Len(t, sourceOneOf, 2)
+
+	input, err := model.AdvertisedToolInputFromSchema(schemas["SavePayload"])
+	require.NoError(t, err)
+	contract, err := model.NewRequestContract(&model.Request{Tools: []*model.ToolDefinition{{
+		Name:  "save",
+		Input: input,
+	}}})
+	require.NoError(t, err)
+	_, err = contract.ValidateResponse(&model.Response{
+		Content: []model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ToolUsePart{
+				ID:    "call-1",
+				Name:  "save",
+				Input: rawjson.Message(`{"primary_config":{"value":{"type":"none","value":{}}},"fallback_config":{"value":{"type":"none","value":{}}}}`),
+			}},
+		}},
+		StopReason: "tool_use",
+	})
+	require.NoError(t, err)
 }
 
 // Extend fields in tool shapes must be materialized before type/spec generation.
@@ -492,12 +514,16 @@ func TestBuildToolSpecsData_ExtendFieldsMaterialized(t *testing.T) {
 			goadsl.Attribute("own", goadsl.String, "Extended field")
 			goadsl.Required("own")
 		})
+		var EmitInput = goadsl.Type("EmitInput", func() {
+			goadsl.Attribute("message", goadsl.String, "Message to emit")
+			goadsl.Required("message")
+		})
 
 		goadsl.Service("alpha", func() {
 			Agent("scribe", "Extend regression checker", func() {
 				Use("docs", func() {
 					Tool("emit", "Emit an extended type", func() {
-						Args(goadsl.String)
+						Args(EmitInput)
 						Return(Extended)
 					})
 				})

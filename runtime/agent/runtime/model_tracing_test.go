@@ -65,6 +65,48 @@ func testGenAIContext() telemetry.GenAIContext {
 	}
 }
 
+func TestModelSpanAttrsRecordExactToolCatalog(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		tools     []*model.ToolDefinition
+		wantNames []string
+	}{
+		{
+			name: "ordered tools",
+			tools: []*model.ToolDefinition{
+				{Name: "todos.update_todos"},
+				{Name: "atlas.read.get_time_series"},
+				{Name: "tasks.create_task"},
+			},
+			wantNames: []string{
+				"todos.update_todos",
+				"atlas.read.get_time_series",
+				"tasks.create_task",
+			},
+		},
+		{
+			name:      "empty tools",
+			wantNames: []string{},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			ctx := telemetry.WithGenAIContext(t.Context(), testGenAIContext())
+			attrs := attrsByKey(modelSpanAttrs(ctx, &model.Request{
+				ModelClass: model.ModelClassDefault,
+				Tools:      test.tools,
+			}))
+
+			assert.Equal(t, int64(len(test.wantNames)), attrs["goa_ai.request.tool_count"].AsInt64())
+			assert.Equal(t, test.wantNames, attrs["goa_ai.request.tool_names"].AsStringSlice())
+		})
+	}
+}
+
 func TestOutputValidationAttrsExposeOnlyExactClosedCategory(t *testing.T) {
 	contract, err := model.NewRequestContract(&model.Request{})
 	require.NoError(t, err)

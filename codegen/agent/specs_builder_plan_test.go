@@ -25,8 +25,9 @@ func TestPlanToolSpecsKeepsPublicAndHTTPUnionNamesIndependent(t *testing.T) {
 		Name: "analytics",
 		Tools: []*agentexpr.ToolExpr{
 			{
-				Name: "find",
-				Args: &goaexpr.AttributeExpr{Type: union},
+				Name:   "find",
+				Args:   &goaexpr.AttributeExpr{Type: &goaexpr.Object{}},
+				Return: &goaexpr.AttributeExpr{Type: union},
 			},
 		},
 	}
@@ -48,10 +49,10 @@ func TestPlanToolSpecsKeepsPublicAndHTTPUnionNamesIndependent(t *testing.T) {
 
 	packages, err := planned.packageFor("gen/alpha/toolsets/analytics")
 	require.NoError(t, err)
-	payload := packages.tools["find"].payloadType
-	public, err := packages.public.Union(payload.publicShape)
+	result := packages.tools["find"].resultType
+	public, err := packages.public.Union(result.publicShape)
 	require.NoError(t, err)
-	transport, err := packages.transport.Union(payload.transportShape)
+	transport, err := packages.transport.Union(result.transportShape)
 	require.NoError(t, err)
 	require.Equal(t, "TargetSeries", public.Declaration().Name())
 	require.Equal(t, "TargetSeries", transport.Declaration().Name())

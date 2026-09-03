@@ -492,7 +492,7 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 	visible := newAnyJSONSpec("svc.tools.visible")
 	visible.Description = "Visible tool"
 	visible.Payload.Schema = tools.RawJSON(`{"type":"object","properties":{"q":{"type":"string"}}}`)
-	visible.Payload.SchemaWithoutRootExample = tools.RawJSON(`{"type":"object"}`)
+	visible.Payload.SchemaWithoutRootExample = tools.RawJSON(`{"type":"object","properties":{"q":{"type":"string"}}}`)
 	visible.Payload.ExampleJSON = tools.RawJSON(`{"q":"status"}`)
 	visible.Tags = []string{"system", "profile"}
 	blocked := newAnyJSONSpec("svc.tools.blocked")
@@ -500,6 +500,7 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
 		"service.agent": {visible, blocked},
 	}
+	seedTestToolDefinitions(rt, visible, blocked)
 	ctx := newAgentContext(agentContextOptions{
 		runtime: rt,
 		agentID: "service.agent",
@@ -513,8 +514,13 @@ func TestAdvertisedToolDefinitionsHonorCompiledPolicy(t *testing.T) {
 	require.Equal(t, visible.Description, definitions[0].Description)
 	contract := definitions[0].Input.Contract()
 	require.JSONEq(t, `{"type":"object","properties":{"q":{"type":"string"}}}`, string(contract.Schema))
-	require.JSONEq(t, `{"type":"object"}`, string(contract.SchemaWithoutRootExample))
+	require.JSONEq(t, `{"type":"object","properties":{"q":{"type":"string"}}}`, string(contract.SchemaWithoutRootExample))
 	require.JSONEq(t, `{"q":"status"}`, string(contract.ExampleJSON))
+	definitions[0].Name = mutatedTestValue
+	definitions[0].Description = mutatedTestValue
+	again := ctx.AdvertisedToolDefinitions()
+	require.Equal(t, visible.Name.String(), again[0].Name)
+	require.Equal(t, visible.Description, again[0].Description)
 }
 
 func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {

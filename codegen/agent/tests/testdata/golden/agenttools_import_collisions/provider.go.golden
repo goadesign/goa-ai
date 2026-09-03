@@ -105,6 +105,6 @@ func NewRegistration(
 // payload type for each tool.
 // NewFetchCall builds a planner-authored request for the
 // runtime.fetch tool. The runtime assigns its execution ID.
-func NewFetchCall(args FetchPayload) (planner.ToolRequest, error) {
+func NewFetchCall(args *FetchPayload) (planner.ToolRequest, error) {
 	return planner.NewToolRequest(runtimespecs.FetchTool(), args)
 }

@@ -31,7 +31,8 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 		Specs: []tools.ToolSpec{{
 			Name: tools.Ident("svc.ts.tool"),
 			Payload: tools.TypeSpec{
-				Name: "P",
+				Name:   "P",
+				Schema: rawjson.Message(`{"type":"object"}`),
 				Codec: tools.JSONCodec[any]{
 					FromJSON: func(data []byte) (any, error) {
 						decoded = true
@@ -56,7 +57,7 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 		}},
 	}
 	rt.mu.Lock()
-	rt.addToolsetLocked(ts)
+	rt.addToolsetLocked(ts, mustToolDefinitions(ts.Specs))
 	rt.mu.Unlock()
 
 	// Call ExecuteToolActivity with a pre-encoded payload; it should flow through.

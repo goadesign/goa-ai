@@ -200,9 +200,11 @@ func (c *Client) GetData(ctx context.Context, p *GetDataPayload) (*GetDataResult
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	catalog "generated.local/gen/catalog"
+	"goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
 
@@ -235,7 +237,7 @@ func TestHandleToolCallInjectsContext(t *testing.T) {
 		Payload:   []byte("{\"query\":\"weather\"}"),
 		Meta: &toolregistry.ToolCallMeta{
 			RunID:      "run-1",
-			SessionID:  "sess-42",
+			SessionID:  "session-42",
 			TurnID:     "turn-1",
 			ToolCallID: "call-1",
 			Labels:     map[string]string{"household_id": "household-7"},
@@ -259,8 +261,8 @@ func TestHandleToolCallInjectsContext(t *testing.T) {
 	if svc.got == nil {
 		t.Fatal("bound service method was never called")
 	}
-	if svc.got.SessionID != "sess-42" {
-		t.Fatalf("method payload SessionID = %q, want %q (injected from msg.Meta.SessionID)", svc.got.SessionID, "sess-42")
+	if svc.got.SessionID != "session-42" {
+		t.Fatalf("method payload SessionID = %q, want %q (injected from msg.Meta.SessionID)", svc.got.SessionID, "session-42")
 	}
 	if svc.got.HouseholdID != "household-7" {
 		t.Fatalf("method payload HouseholdID = %q, want %q (injected from msg.Meta.Labels)", svc.got.HouseholdID, "household-7")
@@ -272,6 +274,52 @@ func TestHandleToolCallInjectsContext(t *testing.T) {
 		t.Fatalf("method context ToolUseID = %q, want %q", svc.gotToolUseID, "use-1")
 	}
 }
+
+// TestInjectGetDataValidatesEverySource passes invalid metadata and labels to
+// the generated function and verifies that both values are rejected.
+func TestInjectGetDataValidatesEverySource(t *testing.T) {
+	tests := []struct {
+		name      string
+		meta      runtime.ToolCallMeta
+		labels    map[string]string
+		wantField string
+	}{
+		{
+			name:      "call metadata",
+			meta:      runtime.ToolCallMeta{SessionID: "short"},
+			labels:    map[string]string{"household_id": "household-7"},
+			wantField: "session_id",
+		},
+		{
+			name:      "run label",
+			meta:      runtime.ToolCallMeta{SessionID: "session-42"},
+			labels:    map[string]string{"household_id": "short"},
+			wantField: "household_id",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := InjectGetData(&GetDataPayload{}, test.meta, test.labels)
+			if err == nil || !strings.Contains(err.Error(), test.wantField) {
+				t.Fatalf("InjectGetData error = %v, want %s validation error", err, test.wantField)
+			}
+		})
+	}
+
+	payload := &GetDataPayload{}
+	err := InjectGetData(
+		payload,
+		runtime.ToolCallMeta{SessionID: "session-42"},
+		map[string]string{"household_id": "household-7"},
+	)
+	if err != nil {
+		t.Fatalf("InjectGetData returned error for valid values: %v", err)
+	}
+	if payload.SessionID != "session-42" || payload.HouseholdID != "household-7" {
+		t.Fatalf("injected payload = %+v, want session-42 and household-7", payload)
+	}
+}
 `)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -279,6 +327,163 @@ func TestHandleToolCallInjectsContext(t *testing.T) {
 	// `go test` both compiles every listed package and runs the executing
 	// provider-path test written above (the executor package has no test
 	// files and is compile-checked only).
+	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1",
+		"./gen/catalog/toolsets/helpers", "./gen/catalog/agents/scribe/helpers"))
+}
+
+// TestGeneratedLocatedStringInjectCompiles verifies that generated injection
+// validates and assigns a named Goa String stored in another package.
+func TestGeneratedLocatedStringInjectCompiles(t *testing.T) {
+	files := buildWithPrepareAndPkg(t, testscenarios.InjectLocatedStringExample())
+	root := writeGeneratedModuleKeepingGen(t, files)
+
+	writeGeneratedPackageTest(t, root, "gen/types/runtime_session_id.go", `package types
+
+type RuntimeSessionID string
+`)
+	writeGeneratedPackageTest(t, root, "gen/catalog/service_stub.go", `package catalog
+
+import (
+	"context"
+
+	"generated.local/gen/types"
+)
+
+type LookupPayload struct {
+	SessionID types.RuntimeSessionID
+}
+
+type Service interface {
+	Lookup(context.Context, *LookupPayload) (string, error)
+}
+
+type Client struct{}
+
+func (c *Client) Lookup(context.Context, *LookupPayload) (string, error) {
+	return "ok", nil
+}
+`)
+	writeGeneratedPackageTest(t, root, "gen/catalog/toolsets/helpers/inject_exec_test.go", `package helpers
+
+import (
+	"strings"
+	"testing"
+
+	"goa.design/goa-ai/runtime/agent/runtime"
+)
+
+// TestInjectLookupValidatesSessionID passes invalid and valid call metadata to
+// the generated function and verifies validation happens before assignment.
+func TestInjectLookupValidatesSessionID(t *testing.T) {
+	payload := &LookupPayload{}
+	err := InjectLookup(payload, runtime.ToolCallMeta{SessionID: "short"}, nil)
+	if err == nil || !strings.Contains(err.Error(), "sessionId") {
+		t.Fatalf("InjectLookup error = %v, want sessionId validation error", err)
+	}
+
+	payload = &LookupPayload{}
+	err = InjectLookup(payload, runtime.ToolCallMeta{SessionID: "session-42"}, nil)
+	if err != nil {
+		t.Fatalf("InjectLookup returned error for valid session ID: %v", err)
+	}
+	if payload.SessionID != "session-42" {
+		t.Fatalf("SessionID = %q, want session-42", payload.SessionID)
+	}
+}
+`)
+
+	inject := fileContent(t, files, "gen/catalog/toolsets/helpers/inject.go")
+	require.Contains(t, inject, "p.SessionID = types.RuntimeSessionID(v)")
+	require.Contains(t, inject, `if utf8.RuneCountInString(v) < 8`)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1",
+		"./gen/catalog/toolsets/helpers", "./gen/catalog/agents/scribe/helpers"))
+}
+
+// TestGeneratedInjectImportCollisionsCompile verifies that field packages and
+// validation packages use the same final import names.
+func TestGeneratedInjectImportCollisionsCompile(t *testing.T) {
+	files := buildWithPrepareAndPkg(t, testscenarios.InjectImportCollisionExample())
+	root := writeGeneratedModuleKeepingGen(t, files)
+
+	writeGeneratedPackageTest(t, root, "gen/utf8/runtime_session_id.go", `package utf8
+
+type RuntimeSessionID string
+`)
+	writeGeneratedPackageTest(t, root, "gen/goa/run_id.go", `package goa
+
+type RunID string
+`)
+	writeGeneratedPackageTest(t, root, "gen/fmt/tenant_id.go", `package fmt
+
+type TenantID string
+`)
+	writeGeneratedPackageTest(t, root, "gen/catalog/service_stub.go", `package catalog
+
+import (
+	"context"
+
+	genfmt "generated.local/gen/fmt"
+	gengoa "generated.local/gen/goa"
+	genutf8 "generated.local/gen/utf8"
+)
+
+type LookupPayload struct {
+	SessionID      genutf8.RuntimeSessionID
+	RunID          gengoa.RunID
+	OrganizationID genfmt.TenantID
+}
+
+type Service interface {
+	Lookup(context.Context, *LookupPayload) (string, error)
+}
+
+type Client struct{}
+
+func (c *Client) Lookup(context.Context, *LookupPayload) (string, error) {
+	return "ok", nil
+}
+`)
+	writeGeneratedPackageTest(t, root, "gen/catalog/toolsets/helpers/inject_collision_test.go", `package helpers
+
+import (
+	"testing"
+
+	"goa.design/goa-ai/runtime/agent/runtime"
+)
+
+func TestInjectLookupUsesCollidingPackages(t *testing.T) {
+	payload := &LookupPayload{}
+	err := InjectLookup(
+		payload,
+		runtime.ToolCallMeta{SessionID: "session-42", RunID: "run-42"},
+		map[string]string{"tenant_id": "tenant-7"},
+	)
+	if err != nil {
+		t.Fatalf("InjectLookup returned error for valid values: %v", err)
+	}
+	if payload.SessionID != "session-42" || payload.RunID != "run-42" || payload.OrganizationID != "tenant-7" {
+		t.Fatalf("injected payload = %+v, want session-42, run-42, and tenant-7", payload)
+	}
+}
+`)
+	inject := fileContent(t, files, "gen/catalog/toolsets/helpers/inject.go")
+	for _, path := range []string{
+		`"fmt"`,
+		`"generated.local/gen/fmt"`,
+		`"generated.local/gen/goa"`,
+		`"generated.local/gen/utf8"`,
+		`"goa.design/goa/v3/pkg"`,
+		`"unicode/utf8"`,
+	} {
+		require.Contains(t, inject, path)
+	}
+	require.Contains(t, inject, "p.OrganizationID =")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1",
 		"./gen/catalog/toolsets/helpers", "./gen/catalog/agents/scribe/helpers"))
 }

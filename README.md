@@ -37,7 +37,7 @@ You describe the agent system in the same design-first style as Goa services. `g
 
 | If you care about... | Goa-AI gives you... |
 | --- | --- |
-| Strong tool contracts | Goa types, validations, examples, generated JSON Schema, and one generated-codec acceptance check even across raw model gateways |
+| Strong tool contracts | Goa types, validations, examples, generated JSON Schema, and schema-first input checks that stay intact across raw model gateways |
 | Durable agent execution | Plan/execute workflows with retries, budgets, cancellation, typed input checkpoints, and Temporal support |
 | Existing service logic | `BindTo` and generated transforms that connect tools to Goa service methods |
 | Structured final answers | Service-owned `Completion(...)` contracts with unary and streaming helpers |
@@ -109,9 +109,12 @@ absence came from a deployment or an outage. Exact
 retries cannot execute that identity while the run-scoped decision is retained,
 so executors may safely replan; only published calls with ambiguous execution
 become `outcome_unknown`.
-This decision contract is wire protocol version 8. Registry replicas and
+This decision contract is wire protocol version 9. Registry replicas and
 retained catalog records must use that exact protocol; do not overlap registry
-versions or infer how to translate unknown records.
+versions or infer how to translate unknown records. Upgrading from protocol 8
+requires the catalog-only, forward-only rebootstrap described in the
+[preview upgrade guide](docs/runtime.md#preview-upgrade-guide); retained call
+records and Pulse streams are not reset.
 `Serve` also exposes the canonical ToolUseID through context for durable method
 deduplication without changing tool payloads. Workers recheck the
 absolute deadline when dispatching local backlog and acknowledge expired calls
@@ -306,8 +309,9 @@ Mechanical response rejections return `*model.OutputValidationError`.
 `Kind()` reports one closed, privacy-safe category such as `tool_arguments` or
 `stream_protocol`; it never contains response text, provider text, tool names,
 arguments, or schema paths. The category is diagnostic only. Recovery still
-requires exact correction guidance produced by generated validation or planner
-policy, and remains bounded by the runtime's configured recovery-turn limit.
+requires exact correction guidance produced by typed input validation or
+planner policy, and remains bounded by the runtime's configured recovery-turn
+limit.
 
 Use `bedrock.NewAnthropic` for Claude deployments on Amazon Bedrock. It sends
 Anthropic Messages requests through Bedrock `InvokeModel`, so authored tool
@@ -394,12 +398,16 @@ var Docs = Toolset("docs", func() {
 
 **What you get:**
 - JSON Schema for LLM function calling (auto-generated)
-- Validation at boundaries: invalid calls get structured correction directives, including
-  generated JSON type mismatch guidance, not crashes or schema-string parsing.
+- Validation at boundaries: tool arguments are always JSON objects, and the
+  advertised schema is enforced before any attached input decoder. Only
+  schema rejections and typed tool-input validation errors get limited-size
+  correction guidance that omits rejected arguments; ordinary decoder and
+  internal errors stop the run. See the
+  [runtime tool-input contract](docs/runtime.md#model-visible-tool-arguments).
   Streaming tool argument fragments and completed calls remain withheld until
-  the complete provider response matches the stream; the originating generated
-  decoder can then schedule one replacement planning activity while retaining
-  final usage and without retaining or executing the rejected arguments.
+  the complete provider response matches the stream; the runtime can then
+  schedule one replacement planning activity while retaining final usage and
+  without retaining or executing the rejected arguments.
   Incomplete provider streams remain terminal.
 - Timeout and parent-budget failures are terminal for the current run and use
   `finish` recovery. Planners may repair invalid arguments, but elapsed
@@ -446,7 +454,7 @@ Agent("chat", "Document assistant", func() {
 })
 ```
 
-The generator emits typed transforms where shapes are compatible. `Inject` names that match a `runtime.ToolCallMeta` field (`run_id`, `session_id`, `turn_id`, `tool_call_id`, `parent_tool_call_id`) are meta-backed; any other name is label-backed, read from labels supplied via `runtime.WithLabels(...)` at run start. See [`docs/dsl.md`](docs/dsl.md) and [`docs/runtime.md`](docs/runtime.md) for the full contract.
+The generator emits typed transforms where shapes are compatible. `Inject` names that match a `runtime.ToolCallMeta` field (`run_id`, `session_id`, `turn_id`, `tool_call_id`, `parent_tool_call_id`) are meta-backed; any other name is label-backed, read from labels supplied via `runtime.WithLabels(...)` at run start. Both sources run the injected field's Goa `String` validation before assignment. Named Goa `String` types are supported, while custom `struct:field:type` replacements are rejected. See [`docs/dsl.md`](docs/dsl.md) and [`docs/runtime.md`](docs/runtime.md) for the full contract.
 
 ### Structured Direct Completions
 
@@ -1015,7 +1023,7 @@ contract; mixed shapes are unsupported.
 
 A model invocation rejected before a canonical response exists carries a
 separate `ModelInvocationRecovery` value instead of failed call IDs. It carries
-exactly one bounded fact: fixed malformed-JSON guidance, generated schema
+exactly one bounded fact: fixed malformed-JSON guidance, advertised-input
 correction text, or the untouched provider-returned name of a tool absent from
 that request's catalog. Malformed argument bytes stay private. The rejected
 response stays out of history, and the normal caller-authorized executable
@@ -1323,6 +1331,10 @@ These spans carry conversation ID, agent identity, model request/response
 fields, token usage, finish reasons, and streaming time-to-first-chunk where
 available. Prompt text, chat history, tool arguments, and tool results are not
 recorded by default.
+Planner call spans also carry the exact advertised tool count and names. The
+clustered registry emits elected per-toolset readiness spans. See the
+[runtime trace contract](docs/runtime.md#registry-and-model-request-traces) for
+the attribute meanings and failure behavior.
 
 ```go
 eng, err := temporal.NewWorker(temporal.Options{
@@ -1402,7 +1414,8 @@ Production checklist:
   chooses the final projection.
 - Keep model gateways raw: compose provider-side behavior around
   `model.Provider`, and construct the validated `model.Client` after the remote
-  transport so the request owner's generated decoder remains authoritative.
+  transport so the request owner's advertised schema and attached decoder
+  remain authoritative.
 - Register models, toolsets, agents, stores, streams, policy, and telemetry before the first run.
 - Call `rt.Seal(ctx)` for worker processes before serving traffic; Temporal workers start at the seal boundary.
 - Supply Temporal connection settings through `ClientOptions`; the engine always

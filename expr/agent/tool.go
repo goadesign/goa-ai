@@ -280,10 +280,9 @@ func (t *ToolExpr) Prepare() {
 	}
 }
 
-// Validate checks that any recorded binding can be resolved to an existing
-// service and method, and that any Inject()-ed fields resolve to a concrete,
-// required, String field on every attribute set the generated code resolves
-// them against (see injectTargets).
+// Validate checks that Args has the object shape required by model tool calls,
+// that any recorded binding resolves to an existing service method, and that
+// every Inject()-ed field is a concrete, required String field.
 func (t *ToolExpr) Validate() error {
 	if t.bindMethodName == "" {
 		verr := new(eval.ValidationErrors)
@@ -424,11 +423,47 @@ func validateInjectedFieldsAgainst(t *ToolExpr, target injectTarget, names []str
 			verr.Add(t, "Inject field %q must be required on the %s; injected fields are always server-populated and hidden from the model, so an optional injected field is a contradiction", name, target.desc)
 			continue
 		}
-		if field.Type != goaexpr.String {
+		if !isInjectedString(field.Type) {
 			verr.Add(t, "Inject field %q must be a String on the %s", name, target.desc)
 			continue
 		}
+		if custom := injectedCustomGoType(field); custom != "" {
+			verr.Add(t, "Inject field %q on the %s uses struct:field:type %q; injected fields support Goa String and named Goa String types only", name, target.desc, custom)
+		}
 	}
+}
+
+// isInjectedString reports whether dataType is String or a named String type.
+func isInjectedString(dataType goaexpr.DataType) bool {
+	for {
+		switch actual := dataType.(type) {
+		case goaexpr.Primitive:
+			return actual == goaexpr.String
+		case *goaexpr.ResultTypeExpr:
+			return false
+		case goaexpr.UserType:
+			dataType = actual.Attribute().Type
+		default:
+			return false
+		}
+	}
+}
+
+// injectedCustomGoType returns the first Go type override on a String field or
+// one of its named String types. Injection cannot construct these types from
+// the string supplied by call metadata or run labels.
+func injectedCustomGoType(field *goaexpr.AttributeExpr) string {
+	for field != nil {
+		if custom, _ := codegen.GetMetaType(field); custom != "" {
+			return custom
+		}
+		userType, ok := field.Type.(goaexpr.UserType)
+		if !ok {
+			return ""
+		}
+		field = userType.Attribute()
+	}
+	return ""
 }
 
 // otherTargets returns targets without the entry at index i.
@@ -469,7 +504,7 @@ func (t *ToolExpr) validateShapes() error {
 	check := func(where string, att *goaexpr.AttributeExpr) {
 		validateContractShape(t, where, att, verr)
 	}
-	check("Args", t.Args)
+	validateToolArgsShape(t, verr)
 	check("Return", t.Return)
 	validateServerDataShapes(t, verr, check)
 	validateBoundsShape(t, verr)
@@ -477,6 +512,22 @@ func (t *ToolExpr) validateShapes() error {
 		return nil
 	}
 	return verr
+}
+
+// validateToolArgsShape requires the JSON object that model providers use for
+// tool arguments. Return values and server data may use any supported shape.
+func validateToolArgsShape(tool *ToolExpr, verr *eval.ValidationErrors) {
+	args := tool.Args
+	if (args == nil || args.Type == nil || args.Type == goaexpr.Empty) && tool.Method != nil {
+		args = tool.Method.Payload
+	}
+	if args == nil || args.Type == nil || args.Type == goaexpr.Empty {
+		return
+	}
+	if goaexpr.AsObject(args.Type) != nil {
+		return
+	}
+	verr.Add(tool, "Args must define an object; primitive, array, map, and union arguments are not supported")
 }
 
 func validateContractShape(owner eval.Expression, where string, att *goaexpr.AttributeExpr, verr *eval.ValidationErrors) {

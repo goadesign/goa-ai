@@ -223,6 +223,15 @@ func TestToolInputContractRejectsDivergentAlternateSchema(t *testing.T) {
 	require.ErrorContains(t, err, "alternate schema changes fields other than root examples")
 }
 
+func TestToolInputContractRejectsExampleOutsideSchema(t *testing.T) {
+	_, err := ToolInputFromContract("reports.complete", ToolInputContract{
+		Schema:                   rawjson.Message(`{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`),
+		SchemaWithoutRootExample: rawjson.Message(`{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`),
+		ExampleJSON:              rawjson.Message(`{"title":"Done"}`),
+	})
+	require.ErrorContains(t, err, "example JSON does not satisfy its input schema")
+}
+
 func TestSchemaWithoutRootExampleUsesSemanticJSONEquality(t *testing.T) {
 	tests := []struct {
 		name      string

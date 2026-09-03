@@ -5,6 +5,7 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"strings"
 
 	"goa.design/goa/v3/codegen"
@@ -253,21 +254,12 @@ func schemaVariantsForAttribute(
 		}
 		if tname != "" {
 			if def, ok := schema.Defs[tname]; ok && def != nil {
-				// Build a new definitions map excluding the root to avoid
-				// self-referential cycles during JSON marshaling.
-				if len(schema.Defs) > 0 {
-					defs := make(map[string]*openapi.Schema, len(schema.Defs))
-					for k, v := range schema.Defs {
-						if k == tname {
-							continue
-						}
-						defs[k] = v
-					}
-					if len(defs) > 0 {
-						def.Defs = defs
-					}
-				}
-				return schemaVariantBytes(def, att, example)
+				// The root is a copy, so its definitions may keep the original
+				// type for fields that refer back to it without creating an object
+				// cycle while the schema is marshaled.
+				root := *def
+				root.Defs = maps.Clone(schema.Defs)
+				return schemaVariantBytes(&root, att, example)
 			}
 		}
 	}
@@ -282,7 +274,7 @@ func schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, exam
 		schema.Example = prevExample
 		return annotated, nil, err
 	}
-	annotated, err = specializeUnionSchemas(annotated, att)
+	annotated, err = alignSchemaWithGeneratedDecoder(annotated, att)
 	if err != nil {
 		schema.Example = prevExample
 		return annotated, nil, err
@@ -298,7 +290,7 @@ func schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, exam
 	if err != nil {
 		return annotated, plain, err
 	}
-	plain, err = specializeUnionSchemas(plain, att)
+	plain, err = alignSchemaWithGeneratedDecoder(plain, att)
 	if err != nil {
 		return annotated, plain, err
 	}
@@ -410,62 +402,32 @@ func removeSchemaExamples(node any) {
 	}
 }
 
-// specializeUnionSchemas changes each union schema to the {type,value} JSON
-// object accepted by generated decoders. It applies the same change to nested
-// unions.
-func specializeUnionSchemas(schemaBytes []byte, att *goaexpr.AttributeExpr) ([]byte, error) {
-	if len(schemaBytes) == 0 || att == nil || !containsUnion(att) {
+// alignSchemaWithGeneratedDecoder closes Goa objects to unknown fields and
+// changes each union to the {type,value} JSON object accepted by generated
+// decoders. Maps remain open because their keys are caller-defined.
+func alignSchemaWithGeneratedDecoder(schemaBytes []byte, att *goaexpr.AttributeExpr) ([]byte, error) {
+	if len(schemaBytes) == 0 || att == nil {
 		return schemaBytes, nil
 	}
 	var doc map[string]any
 	if err := json.Unmarshal(schemaBytes, &doc); err != nil {
-		return nil, fmt.Errorf("unmarshal schema for union specialization: %w", err)
+		return nil, fmt.Errorf("unmarshal schema for generated decoder: %w", err)
 	}
 	defs, _ := doc["$defs"].(map[string]any)
-	if err := specializeUnionSchemaNode(att, doc, defs, map[string]struct{}{}); err != nil {
+	if err := alignSchemaNodeWithGeneratedDecoder(att, doc, defs, map[string]struct{}{}); err != nil {
 		return nil, err
 	}
 	out, err := json.Marshal(doc)
 	if err != nil {
-		return nil, fmt.Errorf("marshal schema for union specialization: %w", err)
+		return nil, fmt.Errorf("marshal schema for generated decoder: %w", err)
 	}
 	return out, nil
 }
 
-func containsUnion(att *goaexpr.AttributeExpr) bool {
-	return containsUnionNode(att, make(map[*goaexpr.AttributeExpr]struct{}))
-}
-
-// containsUnionNode checks each reachable attribute once because named types
-// may refer back to themselves.
-func containsUnionNode(att *goaexpr.AttributeExpr, seen map[*goaexpr.AttributeExpr]struct{}) bool {
-	if att == nil || att.Type == nil {
-		return false
-	}
-	if _, ok := seen[att]; ok {
-		return false
-	}
-	seen[att] = struct{}{}
-	switch dt := att.Type.(type) {
-	case goaexpr.UserType:
-		return containsUnionNode(dt.Attribute(), seen)
-	case *goaexpr.Object:
-		for _, nat := range *dt {
-			if containsUnionNode(nat.Attribute, seen) {
-				return true
-			}
-		}
-	case *goaexpr.Array:
-		return containsUnionNode(dt.ElemType, seen)
-	case *goaexpr.Map:
-		return containsUnionNode(dt.ElemType, seen)
-	case *goaexpr.Union:
-		return true
-	}
-	return false
-}
-
-func specializeUnionSchemaNode(att *goaexpr.AttributeExpr, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
+// alignSchemaNodeWithGeneratedDecoder updates one schema node using its Goa type.
+// Named types are followed through $defs while seen prevents recursive types
+// from visiting the same definition forever.
+func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
 	if att == nil || att.Type == nil || len(schema) == 0 {
 		return nil
 	}
@@ -483,48 +445,44 @@ func specializeUnionSchemaNode(att *goaexpr.AttributeExpr, schema map[string]any
 		}
 		defSchema, ok := defs[refName].(map[string]any)
 		if !ok {
-			return fmt.Errorf("schema ref %q for union specialization is missing from $defs", refName)
+			return fmt.Errorf("schema ref %q for generated decoder is missing from $defs", refName)
 		}
 		seen[refName] = struct{}{}
 		defer delete(seen, refName)
-		return specializeUnionSchemaNode(att, defSchema, defs, seen)
+		return alignSchemaNodeWithGeneratedDecoder(att, defSchema, defs, seen)
 	}
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
-		return specializeUnionSchemaNode(dt.Attribute(), schema, defs, seen)
+		return alignSchemaNodeWithGeneratedDecoder(dt.Attribute(), schema, defs, seen)
 	case *goaexpr.Object:
+		schema["additionalProperties"] = false
 		properties, _ := schema["properties"].(map[string]any)
 		for _, nat := range *dt {
-			if !containsUnion(nat.Attribute) {
-				continue
-			}
 			name := nat.Name
-			childSchema, _ := properties[name].(map[string]any)
-			if len(childSchema) == 0 {
-				return fmt.Errorf("schema for union-bearing field %q is missing", name)
+			childSchema, ok := properties[name].(map[string]any)
+			if !ok {
+				return fmt.Errorf("schema for field %q is missing", name)
 			}
-			if err := specializeUnionSchemaNode(nat.Attribute, childSchema, defs, seen); err != nil {
+			if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, childSchema, defs, seen); err != nil {
 				return err
 			}
 		}
 	case *goaexpr.Array:
-		if !containsUnion(dt.ElemType) {
-			return nil
+		items, ok := schema["items"].(map[string]any)
+		if !ok {
+			return fmt.Errorf("array schema is missing items")
 		}
-		items, _ := schema["items"].(map[string]any)
-		if len(items) == 0 {
-			return fmt.Errorf("array schema for union-bearing elements is missing items")
-		}
-		return specializeUnionSchemaNode(dt.ElemType, items, defs, seen)
+		return alignSchemaNodeWithGeneratedDecoder(dt.ElemType, items, defs, seen)
 	case *goaexpr.Map:
-		if !containsUnion(dt.ElemType) {
-			return nil
+		values, ok := schema["additionalProperties"].(map[string]any)
+		if !ok {
+			primitive, primitiveOK := jsonValidatorPrimitiveType(dt.ElemType)
+			if primitiveOK && primitive.Kind() == goaexpr.AnyKind {
+				return nil
+			}
+			return fmt.Errorf("map schema is missing additionalProperties")
 		}
-		values, _ := schema["additionalProperties"].(map[string]any)
-		if len(values) == 0 {
-			return fmt.Errorf("map schema for union-bearing values is missing additionalProperties")
-		}
-		return specializeUnionSchemaNode(dt.ElemType, values, defs, seen)
+		return alignSchemaNodeWithGeneratedDecoder(dt.ElemType, values, defs, seen)
 	case *goaexpr.Union:
 		return rewriteUnionSchema(dt, schema, defs, seen)
 	}
@@ -563,7 +521,8 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[st
 		if nat.Attribute.Description != "" {
 			branch["description"] = nat.Attribute.Description
 		}
-		if err := specializeUnionSchemaNode(nat.Attribute, valueSchema, defs, seen); err != nil {
+		branch["additionalProperties"] = false
+		if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, valueSchema, defs, seen); err != nil {
 			return err
 		}
 	}

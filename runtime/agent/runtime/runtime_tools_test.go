@@ -60,9 +60,13 @@ func newProjectedResultSpec() tools.ToolSpec {
 		},
 	}
 	return tools.ToolSpec{
-		Name:    "tool",
-		Payload: tools.TypeSpec{Name: "tool_payload", Codec: payloadCodec},
-		Result:  tools.TypeSpec{Name: "tool_result", Codec: codec},
+		Name: "tool",
+		Payload: tools.TypeSpec{
+			Name:   "tool_payload",
+			Schema: rawjson.Message(`{"type":"object"}`),
+			Codec:  payloadCodec,
+		},
+		Result: tools.TypeSpec{Name: "tool_result", Codec: codec},
 		Bounds: &tools.BoundsSpec{
 			Paging: &tools.PagingSpec{
 				CursorField:     "cursor",

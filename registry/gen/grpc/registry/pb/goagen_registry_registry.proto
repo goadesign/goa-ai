@@ -327,6 +327,9 @@ message ToolCallMeta {
 	optional string tool_call_id = 4;
 	// Parent tool call identifier when the tool call is nested.
 	optional string parent_tool_call_id = 5;
+	// Run labels and runtime-supplied values fixed for this call. Providers use
+// them to fill fields declared with Inject; models never see them.
+	map<string, string> labels = 6;
 }
 
 message CallToolResponse {

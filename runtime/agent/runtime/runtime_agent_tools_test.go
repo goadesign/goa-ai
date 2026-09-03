@@ -64,7 +64,7 @@ func registerAgentToolTestConfig(rt *Runtime, cfg AgentToolConfig, toolset strin
 	registration := NewAgentToolsetRegistration(rt, cfg)
 	registration.Name = toolset
 	registration.Specs = []tools.ToolSpec{spec}
-	rt.addToolsetLocked(registration)
+	rt.addToolsetLocked(registration, mustToolDefinitions(registration.Specs))
 }
 
 func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {

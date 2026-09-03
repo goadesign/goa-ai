@@ -106,13 +106,16 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 		}
 		visible = append(visible, spec)
 	}
-	definitions := advertisedToolDefinitions(visible, c.policy)
+	definitions := c.rt.advertisedToolDefinitions(visible, c.policy)
 	for _, action := range c.continuationActions {
 		if slices.Contains(c.unavailableTools, action.spec.Name) ||
 			!c.policy.allowsTool(action.spec.Name, toolPolicyFactsFromSpec(action.spec)) {
 			continue
 		}
-		definition := toolDefinitionFromSpec(action.spec)
+		definition := c.rt.advertisedToolDefinitions(
+			[]tools.ToolSpec{action.spec},
+			compiledToolPolicy{},
+		)[0]
 		definition.Name = action.modelName.String()
 		definition.Description = action.description
 		definition.NoArguments = true

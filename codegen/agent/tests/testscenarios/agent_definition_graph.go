@@ -11,15 +11,19 @@ import (
 func AgentDefinitionGrandchild() func() {
 	return func() {
 		API("agent_definition_grandchild", func() {})
+		var WorkInput = Type("WorkInput", func() {
+			Attribute("request", String, "Requested work")
+			Required("request")
+		})
 		childTools := Toolset("child_work", func() {
 			Tool("delegate", "Delegate work to the child.", func() {
-				Args(String)
+				Args(WorkInput)
 				Return(String)
 			})
 		})
 		grandchildTools := Toolset("grandchild_work", func() {
 			Tool("finish", "Finish work in the grandchild.", func() {
-				Args(String)
+				Args(WorkInput)
 				Return(String)
 			})
 		})
@@ -48,15 +52,19 @@ func AgentDefinitionGrandchild() func() {
 func AgentDefinitionCycle() func() {
 	return func() {
 		API("agent_definition_cycle", func() {})
+		var WorkInput = Type("WorkInput", func() {
+			Attribute("request", String, "Requested work")
+			Required("request")
+		})
 		alphaTools := Toolset("alpha_work", func() {
 			Tool("alpha", "Run alpha work.", func() {
-				Args(String)
+				Args(WorkInput)
 				Return(String)
 			})
 		})
 		betaTools := Toolset("beta_work", func() {
 			Tool("beta", "Run beta work.", func() {
-				Args(String)
+				Args(WorkInput)
 				Return(String)
 			})
 		})

@@ -135,6 +135,12 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 	if err := p.declareTypeImports(owner, payload, usagePayload); err != nil {
 		return err
 	}
+	publicPayload := effectiveObject(payload)
+	for _, name := range tool.InjectedFields {
+		if err := p.fileImports.publicInject.AddTypeExpressions(publicPayload.Attribute(name)); err != nil {
+			return fmt.Errorf("plan injected field %q import for tool %q: %w", name, tool.Name, err)
+		}
+	}
 	result := tool.Return
 	if (result == nil || result.Type == nil || result.Type == goaexpr.Empty) && tool.Method != nil {
 		result = tool.Method.Result
@@ -183,18 +189,19 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 		if field == nil {
 			return fmt.Errorf("plan injected field %q for tool %q: field is missing", name, tool.Name)
 		}
-		layout, err := goacodegen.PlanGoType(field, goacodegen.GoTypePlanOptions{
-			Owner:     p.public.ImportPath(),
-			FieldName: name,
-			Policy: goacodegen.GoLayoutPolicy{
-				UseDefault: true,
-				SumType:    true,
-			},
+		layouts := names.payloadType.publicLayout.PlansForOccurrence(field)
+		if len(layouts) != 1 {
+			return fmt.Errorf("plan injected field %q for tool %q: found %d layouts", name, tool.Name, len(layouts))
+		}
+		layout := layouts[0]
+		validation, err := goacodegen.NewValidationPlan(field, layout, goacodegen.ValidationPlanOptions{
+			Required: true,
 		})
 		if err != nil {
-			return fmt.Errorf("plan injected field %q for tool %q: %w", name, tool.Name, err)
+			return fmt.Errorf("plan injected field %q validation for tool %q: %w", name, tool.Name, err)
 		}
 		names.injectedFieldLayouts[name] = layout
+		names.injectedFieldValidations[name] = validation
 	}
 	result := tool.Return
 	if (result == nil || result.Type == nil || result.Type == goaexpr.Empty) && tool.Method != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -118,7 +119,12 @@ func TestTranslateToolCallRejectsEmptyAndUnknownArguments(t *testing.T) {
 		Name:      "lookup",
 		Arguments: " \n ",
 	}, codec)
-	require.ErrorContains(t, err, "tool payload is empty")
+	require.ErrorContains(t, err, "tool arguments are not valid JSON")
+	contract, contractErr := model.NewRequestContract(&model.Request{})
+	require.NoError(t, contractErr)
+	rejected := contract.RejectProviderOutput(outputvalidation.RequiredKind(err), nil, err)
+	require.NotEmpty(t, rejected.RecoveryCorrection())
+	require.NotContains(t, rejected.RecoveryCorrection(), "call-1")
 
 	_, err = translateToolCall(responses.ResponseFunctionToolCall{
 		CallID:    "call-2",

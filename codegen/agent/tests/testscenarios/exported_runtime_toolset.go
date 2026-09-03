@@ -12,11 +12,15 @@ import (
 func ExportedRuntimeToolset() func() {
 	return func() {
 		API("exported_runtime_toolset", func() {})
+		var FetchInput = Type("FetchInput", func() {
+			Attribute("key", String, "Data key")
+			Required("key")
+		})
 		Service("provider", func() {
 			Agent("source", "Provides shared tools.", func() {
 				Export("runtime", func() {
 					Tool("fetch", "Fetch data.", func() {
-						Args(String)
+						Args(FetchInput)
 						Return(String)
 					})
 				})

@@ -11,17 +11,21 @@ import (
 func AggregateSpecsNameCollisions() func() {
 	return func() {
 		API("aggregate_specs_names", func() {})
+		var Document = Type("Document", func() {
+			Attribute("text", String, "Document text")
+			Required("text")
+		})
 		Service("alpha", func() {
 			Agent("scribe", "Writes documents", func() {
 				Use("policy", func() {
 					Tool("review", "Review a document", func() {
-						Args(String)
+						Args(Document)
 						Return(String)
 					})
 				})
 				Use("tools", func() {
 					Tool("write", "Write a document", func() {
-						Args(String)
+						Args(Document)
 						Return(String)
 					})
 				})

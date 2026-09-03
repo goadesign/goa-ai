@@ -69,3 +69,20 @@ func TestRequestContractRejectsEmptyAndUnrecognizedKinds(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestContractRejectsMalformedToolArgumentsWithWrongKind(t *testing.T) {
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	require.PanicsWithValue(
+		t,
+		"model: malformed tool arguments require the tool_arguments validation kind",
+		func() {
+			rejected := contract.RejectProviderOutput(
+				OutputValidationResponseShape,
+				nil,
+				NewMalformedToolArgumentsError(errors.New("private cause")),
+			)
+			require.NoError(t, rejected)
+		},
+	)
+}

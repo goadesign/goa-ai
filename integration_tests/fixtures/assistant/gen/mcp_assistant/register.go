@@ -29,9 +29,10 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Name:        "analyze_sentiment",
 		Description: "Analyze sentiment of text",
 		Payload: tools.TypeSpec{
-			Name:        "*assistant.AnalyzeSentimentPayload",
-			Schema:      []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"),
-			ExampleJSON: []byte("{\"text\":\"abc123\"}"),
+			Name:                     "*assistant.AnalyzeSentimentPayload",
+			Schema:                   []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"),
+			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"),
+			ExampleJSON:              []byte("{\"text\":\"abc123\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					value, ok := v.(*assistant.AnalyzeSentimentPayload)
@@ -66,9 +67,10 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Name:        "extract_keywords",
 		Description: "Extract keywords from text",
 		Payload: tools.TypeSpec{
-			Name:        "*assistant.ExtractKeywordsPayload",
-			Schema:      []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"),
-			ExampleJSON: []byte("{\"text\":\"abc123\"}"),
+			Name:                     "*assistant.ExtractKeywordsPayload",
+			Schema:                   []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"),
+			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"),
+			ExampleJSON:              []byte("{\"text\":\"abc123\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					value, ok := v.(*assistant.ExtractKeywordsPayload)
@@ -103,9 +105,10 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Name:        "summarize_text",
 		Description: "Summarize text",
 		Payload: tools.TypeSpec{
-			Name:        "*assistant.SummarizeTextPayload",
-			Schema:      []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"),
-			ExampleJSON: []byte("{\"text\":\"abc123\"}"),
+			Name:                     "*assistant.SummarizeTextPayload",
+			Schema:                   []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"),
+			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"),
+			ExampleJSON:              []byte("{\"text\":\"abc123\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					value, ok := v.(*assistant.SummarizeTextPayload)
@@ -140,9 +143,10 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Name:        "search",
 		Description: "Search knowledge base",
 		Payload: tools.TypeSpec{
-			Name:        "*assistant.SearchPayload",
-			Schema:      []byte("{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"),
-			ExampleJSON: []byte("{\"limit\":1,\"query\":\"abc123\"}"),
+			Name:                     "*assistant.SearchPayload",
+			Schema:                   []byte("{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"),
+			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"),
+			ExampleJSON:              []byte("{\"limit\":1,\"query\":\"abc123\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					value, ok := v.(*assistant.SearchPayload)
@@ -177,9 +181,10 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Name:        "execute_code",
 		Description: "Execute code",
 		Payload: tools.TypeSpec{
-			Name:        "*assistant.ExecuteCodePayload",
-			Schema:      []byte("{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"),
-			ExampleJSON: []byte("{\"code\":\"abc123\",\"language\":\"javascript\"}"),
+			Name:                     "*assistant.ExecuteCodePayload",
+			Schema:                   []byte("{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"),
+			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"),
+			ExampleJSON:              []byte("{\"code\":\"abc123\",\"language\":\"javascript\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					value, ok := v.(*assistant.ExecuteCodePayload)
@@ -214,9 +219,10 @@ var AssistantAssistantMcpToolsetToolSpecs = []tools.ToolSpec{
 		Name:        "process_batch",
 		Description: "Process a batch of items",
 		Payload: tools.TypeSpec{
-			Name:        "*assistant.ProcessBatchPayload",
-			Schema:      []byte("{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"),
-			ExampleJSON: []byte("{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}"),
+			Name:                     "*assistant.ProcessBatchPayload",
+			Schema:                   []byte("{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"),
+			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"),
+			ExampleJSON:              []byte("{\"blob\":\"abc123\",\"format\":\"text\",\"items\":[\"abc123\"],\"mimeType\":\"abc123\",\"uri\":\"abc123\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					value, ok := v.(*assistant.ProcessBatchPayload)

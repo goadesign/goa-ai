@@ -24,8 +24,8 @@ func TestGoldenAgentToolsWithoutResult(t *testing.T) {
 	content := fileContent(t, files, "gen/alpha/agents/scribe/agenttools/maintenance/helpers.go")
 	specs := fileContent(t, files, "gen/alpha/agents/scribe/exports/maintenance/specs.go")
 	require.NotContains(t, content, "PurgeResult")
-	require.Contains(t, content, "func NewPurgeCall(args PurgePayload)")
-	require.Contains(t, specs, "func PurgeTool() tools.TypedTool[PurgePayload, any]")
+	require.Contains(t, content, "func NewPurgeCall(args *PurgePayload)")
+	require.Contains(t, specs, "func PurgeTool() tools.TypedTool[*PurgePayload, any]")
 	assertGoldenGo(t, "agenttools_no_result", "helpers.go.golden", content)
 	runCompleteGeneratedPackageTest(t, files, "./gen/alpha/agents/scribe/agenttools/maintenance/...")
 }

@@ -524,6 +524,29 @@ func TestPrepareToolCallIdentityRejectsMalformedJSON(t *testing.T) {
 	assert.Equal(t, "validation_error", serviceErr.Name)
 }
 
+func TestPrepareToolCallIdentityIncludesRunLabels(t *testing.T) {
+	t.Parallel()
+
+	meta := &genregistry.ToolCallMeta{
+		RunID:      "run-1",
+		SessionID:  "session-1",
+		ToolCallID: "call-1",
+		Labels:     map[string]string{"facility": "allentown"},
+	}
+	prepared, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{}`), meta)
+	require.NoError(t, err)
+	require.Equal(t, meta.Labels, prepared.meta.Labels)
+
+	withoutLabels := *meta
+	withoutLabels.Labels = nil
+	plain, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{}`), &withoutLabels)
+	require.NoError(t, err)
+	assert.NotEqual(t, plain.admissionDigest, prepared.admissionDigest)
+
+	meta.Labels["facility"] = "changed"
+	assert.Equal(t, "allentown", prepared.meta.Labels["facility"])
+}
+
 func TestCallAdmissionParseResultPreservesRegistrationToken(t *testing.T) {
 	t.Parallel()
 

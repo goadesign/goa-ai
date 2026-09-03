@@ -4,6 +4,7 @@ package codegen
 
 import (
 	"fmt"
+	"strings"
 
 	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
@@ -55,7 +56,21 @@ func linkToolsetNames(planned *toolSpecsPackagePlan, toolset *ToolsetData) error
 			if layout == nil {
 				return fmt.Errorf("link tool %q injected field %q: planned field is missing", tool.QualifiedName, injected.Name)
 			}
-			injected.GoFieldName = layout.FieldName(true)
+			linked := layout.Link(planned.public.ImportPath(), planned.public.ImportName)
+			injected.GoFieldName = linked.Field(true)
+			targetType := linked.Name()
+			if targetType != goacodegen.GoNativeTypeName(goaexpr.String) {
+				injected.TargetType = targetType
+			}
+			validation := names.injectedFieldValidations[injected.Name]
+			if validation == nil {
+				return fmt.Errorf("link tool %q injected field %q: planned validation is missing", tool.QualifiedName, injected.Name)
+			}
+			linkedValidation, err := validation.Link(linked)
+			if err != nil {
+				return fmt.Errorf("link tool %q injected field %q validation: %w", tool.QualifiedName, injected.Name, err)
+			}
+			injected.ValidationCode = strings.TrimSpace(linkedValidation.Render("v", injected.Name))
 		}
 	}
 	return nil

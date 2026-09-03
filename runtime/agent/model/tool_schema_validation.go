@@ -37,6 +37,13 @@ type (
 		Type       json.RawMessage `json:"type"`
 		Properties json.RawMessage `json:"properties"`
 	}
+
+	// advertisedInputValidationError marks arguments rejected by the JSON
+	// Schema that was sent to the model. The rejected argument values remain in
+	// the private cause and are never used to build replacement guidance.
+	advertisedInputValidationError struct {
+		cause error
+	}
 )
 
 // Load lets jsonschema/v6 parse the untouched root bytes from an io.Reader.
@@ -60,7 +67,26 @@ func compileToolSchemaValidator(schemaBytes rawjson.Message) (func(rawjson.Messa
 	if err := json.Unmarshal(root.Type, &declared); err != nil || declared != jsonObjectType {
 		return nil, fmt.Errorf(`tool schema root must declare type "object"`)
 	}
-	return compileJSONSchemaValidator(schemaBytes)
+	validate, err := compileJSONSchemaValidator(schemaBytes)
+	if err != nil {
+		return nil, err
+	}
+	return func(payload rawjson.Message) error {
+		if err := validate(payload); err != nil {
+			return &advertisedInputValidationError{cause: err}
+		}
+		return nil
+	}, nil
+}
+
+// Error preserves the private schema validator message for direct callers.
+func (e *advertisedInputValidationError) Error() string {
+	return e.cause.Error()
+}
+
+// Unwrap preserves the underlying JSON Schema error for error inspection.
+func (e *advertisedInputValidationError) Unwrap() error {
+	return e.cause
 }
 
 // compileJSONSchemaValidator compiles one complete JSON Schema document and

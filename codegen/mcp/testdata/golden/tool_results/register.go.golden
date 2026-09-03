@@ -4,9 +4,10 @@ var ReportsCoreToolsetToolSpecs = []tools.ToolSpec{
 		Name:        "summarize",
 		Description: "Summarize a report",
 		Payload: tools.TypeSpec{
-			Name:        "*reports.SummarizePayload",
-			Schema:      []byte("{\"type\":\"object\",\"additionalProperties\":false}"),
-			ExampleJSON: []byte("{\"text\":\"report\"}"),
+			Name:                     "*reports.SummarizePayload",
+			Schema:                   []byte("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"additionalProperties\":false}"),
+			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"additionalProperties\":false}"),
+			ExampleJSON:              []byte("{\"text\":\"report\"}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					value, ok := v.(*reports.SummarizePayload)
@@ -41,9 +42,10 @@ var ReportsCoreToolsetToolSpecs = []tools.ToolSpec{
 		Name:        "title",
 		Description: "Return a title",
 		Payload: tools.TypeSpec{
-			Name:        "any",
-			Schema:      []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-			ExampleJSON: []byte("{}"),
+			Name:                     "any",
+			Schema:                   []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+			ExampleJSON:              []byte("{}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					if v != nil {
@@ -80,9 +82,10 @@ var ReportsCoreToolsetToolSpecs = []tools.ToolSpec{
 		Name:        "tags",
 		Description: "Return report tags",
 		Payload: tools.TypeSpec{
-			Name:        "any",
-			Schema:      []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-			ExampleJSON: []byte("{}"),
+			Name:                     "any",
+			Schema:                   []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+			ExampleJSON:              []byte("{}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					if v != nil {
@@ -119,9 +122,10 @@ var ReportsCoreToolsetToolSpecs = []tools.ToolSpec{
 		Name:        "notify",
 		Description: "Send a notification",
 		Payload: tools.TypeSpec{
-			Name:        "any",
-			Schema:      []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-			ExampleJSON: []byte("{}"),
+			Name:                     "any",
+			Schema:                   []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+			ExampleJSON:              []byte("{}"),
 			Codec: tools.JSONCodec[any]{
 				ToJSON: func(v any) ([]byte, error) {
 					if v != nil {

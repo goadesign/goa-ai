@@ -11,27 +11,28 @@
 // The model never supplies these fields.
 func {{ .InjectFunc }}(p *{{ .PayloadTypeName }}, meta runtime.ToolCallMeta, labels map[string]string) error {
 {{- range .Injected }}
+	{
 {{- if .IsMetaBacked }}
-	{
 		v := meta.{{ .MetaField }}
-		p.{{ .GoFieldName }} = v
-	}
 {{- else }}
-	{
 		v, ok := labels[{{ printf "%q" .LabelKey }}]
 		if !ok {
 			return fmt.Errorf("tool %q: required label %q is missing; call WithLabels(%q, ...) at run start", {{ printf "%q" $tool.QualifiedName }}, {{ printf "%q" .LabelKey }}, {{ printf "%q" .LabelKey }})
 		}
+		{{- end }}
 		{{- if .ValidationCode }}
 		var err error
 		{{ .ValidationCode }}
 		if err != nil {
-			return fmt.Errorf("tool %q: label %q failed validation: %w", {{ printf "%q" $tool.QualifiedName }}, {{ printf "%q" .LabelKey }}, err)
+			return fmt.Errorf("tool %q: injected field %q failed validation: %w", {{ printf "%q" $tool.QualifiedName }}, {{ printf "%q" .Name }}, err)
 		}
 		{{- end }}
+		{{- if .TargetType }}
+		p.{{ .GoFieldName }} = {{ .TargetType }}(v)
+		{{- else }}
 		p.{{ .GoFieldName }} = v
+		{{- end }}
 	}
-{{- end }}
 {{- end }}
 	return nil
 }

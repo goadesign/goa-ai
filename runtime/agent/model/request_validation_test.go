@@ -5,11 +5,11 @@ package model
 // they cannot replace the caller's logical model class.
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"math"
-	"slices"
 	"strings"
 	"testing"
 
@@ -105,7 +105,7 @@ func TestRequestContractRejectsMalformedProviderUsageModel(t *testing.T) {
 	require.Equal(t, ModelClassSmall, rejected.Usage().ModelClass)
 }
 
-func TestRequestContractMakesMalformedProviderToolJSONCorrectable(t *testing.T) {
+func TestRequestContractRequiresExplicitMalformedToolArgumentsMarker(t *testing.T) {
 	contract, err := NewRequestContract(&Request{ModelClass: ModelClassDefault})
 	require.NoError(t, err)
 	usage := TokenUsage{
@@ -116,10 +116,18 @@ func TestRequestContractMakesMalformedProviderToolJSONCorrectable(t *testing.T) 
 	}
 	privateCause := errors.New(`provider returned {"secret":`)
 
-	rejected := contract.RejectProviderOutput(
+	terminal := contract.RejectProviderOutput(
 		OutputValidationToolArguments,
 		&usage,
 		privateCause,
+	)
+	require.Empty(t, terminal.RecoveryCorrection())
+	require.ErrorIs(t, outputValidationCause(t, terminal), privateCause)
+
+	rejected := contract.RejectProviderOutput(
+		OutputValidationToolArguments,
+		&usage,
+		NewMalformedToolArgumentsError(privateCause),
 	)
 
 	require.Equal(t, OutputValidationToolArguments, rejected.Kind())
@@ -131,6 +139,70 @@ func TestRequestContractMakesMalformedProviderToolJSONCorrectable(t *testing.T) 
 	response, cloneErr := rejected.RejectedResponse()
 	require.NoError(t, cloneErr)
 	require.Nil(t, response)
+}
+
+func TestRecoveryCorrectionRequiresEveryErrorLeafToAgree(t *testing.T) {
+	malformed := NewMalformedToolArgumentsError(errors.New("private malformed payload"))
+	wrapped := fmt.Errorf("provider translation: %w", malformed)
+	require.Equal(t, malformedToolArgumentsCorrection, recoveryCorrectionFromError(wrapped))
+	require.Equal(t, malformedToolArgumentsCorrection, recoveryCorrectionFromError(errors.Join(
+		malformed,
+		NewMalformedToolArgumentsError(errors.New("second private malformed payload")),
+	)))
+	require.Empty(t, recoveryCorrectionFromError(errors.Join(
+		malformed,
+		errors.New("provider cleanup failed"),
+	)))
+	require.Empty(t, recoveryCorrectionFromError(errors.Join(
+		malformed,
+		&toolCallValidationError{correction: advertisedToolInputCorrection},
+	)))
+}
+
+func TestNewMalformedToolArgumentsErrorKeepsCausePrivate(t *testing.T) {
+	privateCause := errors.New(`provider returned {"secret":`)
+	err := NewMalformedToolArgumentsError(privateCause)
+
+	require.EqualError(t, err, "model tool arguments are not valid JSON")
+	require.NotContains(t, err.Error(), "secret")
+	require.ErrorIs(t, err, privateCause)
+	require.PanicsWithValue(t, "model: malformed tool arguments require a cause", func() {
+		require.NoError(t, NewMalformedToolArgumentsError(nil))
+	})
+}
+
+func TestRequestContractCorrectsMalformedCanonicalToolArguments(t *testing.T) {
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	response := toolResponse("lookup")
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "call-1",
+		Name:  "lookup",
+		Input: rawjson.Message(`{"query":`),
+	}
+
+	_, err = contract.ValidateResponse(response)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, OutputValidationToolArguments, validationErr.Kind())
+	require.Equal(t, malformedToolArgumentsCorrection, validationErr.RecoveryCorrection())
+}
+
+func TestRequestContractClassifiesUnadvertisedNonObjectArgumentsAsToolIdentity(t *testing.T) {
+	contract, err := NewRequestContract(&Request{})
+	require.NoError(t, err)
+	response := toolResponse("lookup")
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "call-1",
+		Name:  "lookup",
+		Input: rawjson.Message(`[]`),
+	}
+
+	_, err = contract.ValidateResponse(response)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, OutputValidationToolIdentity, validationErr.Kind())
+	require.Empty(t, validationErr.RecoveryCorrection())
 }
 
 func TestRequestContractDistinguishesResponseShapeFromOutputBounds(t *testing.T) {
@@ -355,173 +427,73 @@ func TestRequestContractNoArgumentToolUsesModelFacingContract(t *testing.T) {
 }
 
 func TestGeneratedToolValidationProducesSafeRecoveryCorrection(t *testing.T) {
-	tests := []struct {
-		name       string
-		issue      *tools.FieldIssue
-		want       string
-		notContain []string
-	}{
-		{
-			name: "wrong known field type",
-			issue: &tools.FieldIssue{
-				Field:            "query",
-				Constraint:       "invalid_field_type",
-				ExpectedJSONType: "string",
-				ActualJSONType:   "number",
-			},
-			want:       `Field "query" must contain a JSON string.`,
-			notContain: []string{"number", "secret-value"},
-		},
-		{
-			name: "missing required field",
-			issue: &tools.FieldIssue{
-				Field:      "query",
-				Constraint: "missing_field",
-			},
-			want: `Field "query" is required and must contain a JSON string.`,
-		},
-		{
-			name: "invalid enum with generated legal values",
-			issue: &tools.FieldIssue{
-				Field:      "type",
-				Constraint: "invalid_enum_value",
-				Allowed:    []string{"report", "lookup"},
-			},
-			want:       `Field "type" must be one of ["lookup" "report"].`,
-			notContain: []string{"secret-value"},
-		},
-		{
-			name: "invalid enum without generated legal values",
-			issue: &tools.FieldIssue{
-				Field:      "type",
-				Constraint: "invalid_enum_value",
-			},
-			want:       `Field "type" must use one of the enum values declared by the generated input schema.`,
-			notContain: []string{"one of []", "secret-value"},
-		},
-		{
-			name: "missing union discriminator",
-			issue: &tools.FieldIssue{
-				Field:      "type",
-				Constraint: "missing_field",
-				Allowed:    []string{"report", "lookup"},
-			},
-			want: `Field "type" is required and must be one of ["lookup" "report"].`,
-		},
-		{
-			name: "unknown field remains private",
-			issue: &tools.FieldIssue{
-				Field:      "privateSecret",
-				Constraint: "unknown_field",
-				Allowed:    []string{"query", "type"},
-			},
-			want:       unknownFieldCorrection,
-			notContain: []string{"privateSecret", "secret-value"},
-		},
+	definition := generatedRejectingTool(&tools.FieldIssue{
+		Field:      "privateSecret",
+		Constraint: "unknown_field",
+		Allowed:    []string{"query"},
+	})
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+	response := toolResponse("catalog.lookup")
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "call-1",
+		Name:  "catalog.lookup",
+		Input: rawjson.Message(`{"query":"secret-value"}`),
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			definition := generatedRejectingTool(test.issue)
-			contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
-			require.NoError(t, err)
-			response := toolResponse("catalog.lookup")
-			response.Content[0].Parts[0] = ToolUsePart{
-				ID:    "call-1",
-				Name:  "catalog.lookup",
-				Input: rawjson.Message(`{"query":"secret-value"}`),
-			}
 
-			owned, err := contract.ValidateResponse(response)
+	owned, err := contract.ValidateResponse(response)
 
-			require.Nil(t, owned)
-			var validationErr *OutputValidationError
-			require.ErrorAs(t, err, &validationErr)
-			correction := validationErr.RecoveryCorrection()
-			require.Contains(t, correction, test.want)
-			require.Contains(t, correction, replacementInstruction)
-			require.NotContains(t, err.Error(), "secret-value")
-			var codecErr *tools.ValidationError
-			require.NotErrorAs(t, err, &codecErr)
-			rejected, cloneErr := validationErr.RejectedResponse()
-			require.NoError(t, cloneErr)
-			require.Nil(t, rejected)
-			for _, value := range test.notContain {
-				require.NotContains(t, correction, value)
-			}
-		})
-	}
+	require.Nil(t, owned)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	correction := validationErr.RecoveryCorrection()
+	require.Equal(t, advertisedToolInputCorrection, correction)
+	require.NotContains(t, correction, "privateSecret")
+	require.NotContains(t, correction, "query")
+	require.NotContains(t, correction, "secret-value")
+	var codecErr *tools.ValidationError
+	require.NotErrorAs(t, err, &codecErr)
+	rejected, cloneErr := validationErr.RejectedResponse()
+	require.NoError(t, cloneErr)
+	require.Nil(t, rejected)
 }
 
-func TestGeneratedToolRecoveryCorrectionIsDeterministicAndBounded(t *testing.T) {
-	fieldTypes := map[string]string{"$payload": "object"}
-	issues := make([]*tools.FieldIssue, 0, 300)
-	for index := range 300 {
-		field := fmt.Sprintf("field_%03d", index)
-		fieldTypes[field] = "string"
-		issues = append(issues, &tools.FieldIssue{
-			Field:      field,
-			Constraint: "missing_field",
-		})
-	}
-	reversed := slices.Clone(issues)
-	slices.Reverse(reversed)
-
-	first := generatedToolCallCorrection(
-		"catalog.lookup",
-		fieldTypes,
-		tools.NewValidationError("rejected values", issues, nil),
+func TestToolInputContractRejectionRequiresEveryErrorLeaf(t *testing.T) {
+	validation := tools.NewValidationError(
+		"generated rejection",
+		[]*tools.FieldIssue{{Field: "query", Constraint: "missing_field"}},
+		nil,
 	)
-	second := generatedToolCallCorrection(
-		"catalog.lookup",
-		fieldTypes,
-		tools.NewValidationError("different rejected values", reversed, nil),
-	)
+	advertised := &advertisedInputValidationError{cause: errors.New("schema rejection")}
 
-	require.Equal(t, first, second)
-	require.LessOrEqual(t, len(first), correction.MaxBytes)
-	require.NotContains(t, first, "rejected values")
-	require.NotContains(t, first, "different rejected values")
+	require.True(t, isToolInputContractRejection(fmt.Errorf("decode payload: %w", validation)))
+	require.True(t, isToolInputContractRejection(errors.Join(validation, advertised)))
+	require.False(t, isToolInputContractRejection(errors.Join(
+		validation,
+		errors.New("codec implementation failed"),
+	)))
+	var nilValidation *tools.ValidationError
+	var nilAdvertised *advertisedInputValidationError
+	require.False(t, isToolInputContractRejection(nilValidation))
+	require.False(t, isToolInputContractRejection(nilAdvertised))
 }
 
-func TestGeneratedToolRecoveryCorrectionUsesSchemaOwnedFieldPaths(t *testing.T) {
-	tests := []struct {
-		name       string
-		fieldTypes map[string]string
-		issueField string
-		wantField  string
-		notContain string
-	}{
-		{
-			name:       "JSON Pointer",
-			fieldTypes: map[string]string{"query.value": "string"},
-			issueField: "/query/value",
-			wantField:  `Field "query.value"`,
-		},
-		{
-			name:       "dynamic map key",
-			fieldTypes: map[string]string{"labels.*": "string"},
-			issueField: "labels.submitted-secret",
-			wantField:  `Field "labels.*"`,
-			notContain: "submitted-secret",
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			correction := generatedToolCallCorrection(
-				"catalog.lookup",
-				test.fieldTypes,
-				tools.NewValidationError("rejected", []*tools.FieldIssue{{
-					Field:      test.issueField,
-					Constraint: "invalid_field_type",
-				}}, nil),
-			)
-
-			require.Contains(t, correction, test.wantField)
-			if test.notContain != "" {
-				require.NotContains(t, correction, test.notContain)
-			}
+func TestToolInputCorrectionDoesNotIncludeToolNames(t *testing.T) {
+	for _, name := range []string{"lookup", strings.Repeat("private-tool-", 10)} {
+		definition := generatedRejectingTool(&tools.FieldIssue{
+			Field:      "privateSecret",
+			Constraint: "invalid_field_type",
 		})
+		definition.Name = name
+		contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+		require.NoError(t, err)
+		_, err = contract.ValidateResponse(toolResponse(name))
+		var validationErr *OutputValidationError
+		require.ErrorAs(t, err, &validationErr)
+		require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
+		require.NotContains(t, validationErr.RecoveryCorrection(), name)
 	}
+	require.LessOrEqual(t, len(advertisedToolInputCorrection), correction.MaxBytes)
 }
 
 func TestGeneratedToolStreamValidationProducesSafeRecoveryCorrection(t *testing.T) {
@@ -549,19 +521,18 @@ func TestGeneratedToolStreamValidationProducesSafeRecoveryCorrection(t *testing.
 	require.Nil(t, chunk)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.Contains(t, validationErr.RecoveryCorrection(), `Field "query" must contain a JSON string.`)
+	require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
 	rejected, cloneErr := validationErr.RejectedResponse()
 	require.NoError(t, cloneErr)
 	require.Nil(t, rejected)
 }
 
-func TestGeneratedToolValidationWithoutStructuredIssuesRemainsTerminal(t *testing.T) {
+func TestToolCodecFailureWithoutInputRejectionRemainsTerminal(t *testing.T) {
 	definition := ToolDefinitionFromSpec(tools.ToolSpec{
 		Name: "catalog.lookup",
 		Payload: tools.TypeSpec{
-			Name:           "LookupPayload",
-			Schema:         rawjson.Message(`{"type":"object"}`),
-			FieldJSONTypes: map[string]string{"$payload": "object", "query": "string"},
+			Name:   "LookupPayload",
+			Schema: rawjson.Message(`{"type":"object"}`),
 			Codec: tools.JSONCodec[any]{
 				FromJSON: func([]byte) (any, error) {
 					return nil, errors.New("unstructured validation failure")
@@ -586,6 +557,98 @@ func TestGeneratedToolValidationWithoutStructuredIssuesRemainsTerminal(t *testin
 	)
 	require.NoError(t, restoreErr)
 	require.Empty(t, restored.RecoveryCorrection())
+}
+
+func TestToolDefinitionFromSpecEnforcesAdvertisedSchemaBeforeCodec(t *testing.T) {
+	type payload struct {
+		Query string `json:"q"`
+	}
+	codecCalls := 0
+	definition := ToolDefinitionFromSpec(tools.ToolSpec{
+		Name: "catalog.lookup",
+		Payload: tools.TypeSpec{
+			Name: "LookupPayload",
+			Schema: rawjson.Message(
+				`{"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}`,
+			),
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func(data []byte) (any, error) {
+					codecCalls++
+					var decoded payload
+					if err := json.Unmarshal(data, &decoded); err != nil {
+						return nil, err
+					}
+					if decoded.Query == "codec-error" {
+						return nil, errors.New("codec failed after schema validation")
+					}
+					return decoded, nil
+				},
+			},
+		},
+	})
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+
+	for _, input := range []rawjson.Message{
+		rawjson.Message(`{}`),
+		rawjson.Message(`{"q":"valid","extra":true}`),
+		rawjson.Message(`[]`),
+		rawjson.Message(`null`),
+		rawjson.Message(`"query"`),
+	} {
+		response := toolResponse("catalog.lookup")
+		response.Content[0].Parts[0] = ToolUsePart{
+			ID:    "call-1",
+			Name:  "catalog.lookup",
+			Input: input,
+		}
+		_, err := contract.ValidateResponse(response)
+		var validationErr *OutputValidationError
+		require.ErrorAs(t, err, &validationErr)
+		require.NotEmpty(t, validationErr.RecoveryCorrection())
+	}
+	require.Zero(t, codecCalls)
+
+	valid := toolResponse("catalog.lookup")
+	valid.Content[0].Parts[0] = ToolUsePart{
+		ID:    "call-2",
+		Name:  "catalog.lookup",
+		Input: rawjson.Message(`{"q":"valid"}`),
+	}
+	_, err = contract.ValidateResponse(valid)
+	require.NoError(t, err)
+	require.Equal(t, 1, codecCalls)
+
+	codecFailure := toolResponse("catalog.lookup")
+	codecFailure.Content[0].Parts[0] = ToolUsePart{
+		ID:    "call-3",
+		Name:  "catalog.lookup",
+		Input: rawjson.Message(`{"q":"codec-error"}`),
+	}
+	_, err = contract.ValidateResponse(codecFailure)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Empty(t, validationErr.RecoveryCorrection())
+	require.Equal(t, 2, codecCalls)
+}
+
+func TestNewToolDefinitionFromSpecRejectsExampleOutsideCodec(t *testing.T) {
+	_, err := NewToolDefinitionFromSpec(tools.ToolSpec{
+		Name: "catalog.lookup",
+		Payload: tools.TypeSpec{
+			Name:                     "LookupPayload",
+			Schema:                   rawjson.Message(`{"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}`),
+			SchemaWithoutRootExample: rawjson.Message(`{"type":"object","properties":{"q":{"type":"string"}},"required":["q"],"additionalProperties":false}`),
+			ExampleJSON:              rawjson.Message(`{"q":"rejected"}`),
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func([]byte) (any, error) {
+					return nil, errors.New("codec rejected example")
+				},
+			},
+		},
+	})
+	require.ErrorContains(t, err, "example JSON does not satisfy its payload contract")
+	require.ErrorContains(t, err, "codec rejected example")
 }
 
 func TestRequestContractEnforcesToolChoice(t *testing.T) {
@@ -893,8 +956,11 @@ func TestCallerAuthoredToolSchemaRejectsInvalidPayload(t *testing.T) {
 	validated, err := contract.ValidateResponse(response)
 
 	require.Nil(t, validated)
-	require.ErrorContains(t, outputValidationCause(t, err), `model tool "lookup" payload failed its request contract`)
-	require.ErrorContains(t, outputValidationCause(t, err), "validate JSON Schema")
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
+	require.NotContains(t, validationErr.RecoveryCorrection(), "unexpected")
+	require.NotContains(t, validationErr.RecoveryCorrection(), "validate JSON Schema")
 }
 
 func TestRequestContractValidatesTransportedToolPayload(t *testing.T) {
@@ -917,7 +983,10 @@ func TestRequestContractValidatesTransportedToolPayload(t *testing.T) {
 	}
 	validated, err := contract.ValidateResponse(response)
 	require.Nil(t, validated)
-	require.ErrorContains(t, outputValidationCause(t, err), `model tool "lookup" payload failed its request contract`)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
+	require.NotContains(t, validationErr.RecoveryCorrection(), "unexpected")
 }
 
 func TestNewRequestContractPreflightsToolCount(t *testing.T) {

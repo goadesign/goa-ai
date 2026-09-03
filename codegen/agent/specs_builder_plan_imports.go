@@ -112,23 +112,23 @@ func (p *toolSpecsPackagePlan) planToolFileImports(tools []*agent.ToolExpr) erro
 			goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/runtime"),
 		}
 		hasLabelInject := false
+		hasInjectValidation := false
 		for _, tool := range tools {
-			payload := effectiveObject(tool.Args)
 			for _, name := range tool.InjectedFields {
-				if _, metaBacked := injectedFieldSource(name); metaBacked {
-					continue
+				validation := p.tools[tool.Name].injectedFieldValidations[name]
+				preferences := validation.ImportPreferences()
+				if len(preferences) > 0 {
+					hasInjectValidation = true
 				}
-				hasLabelInject = true
-				field := payload.Attribute(name)
-				for _, preference := range goacodegen.ValidationRuntimeImports(
-					field,
-					goacodegen.GoLayoutPolicy{UseDefault: true, SumType: true},
-				) {
+				for _, preference := range preferences {
 					injectImports = append(injectImports, goacodegen.NewImport(preference.Name, preference.Path))
+				}
+				if _, metaBacked := injectedFieldSource(name); !metaBacked {
+					hasLabelInject = true
 				}
 			}
 		}
-		if hasLabelInject {
+		if hasLabelInject || hasInjectValidation {
 			injectImports = append(injectImports, goacodegen.SimpleImport("fmt"))
 		}
 		if err := p.fileImports.publicInject.Require(injectImports...); err != nil {

@@ -5,23 +5,6 @@ import (
 	. "goa.design/goa/v3/dsl"
 )
 
-// ArgsPrimitive returns a DSL with primitive args and result.
-func ArgsPrimitive() func() {
-	return func() {
-		API("alpha", func() {})
-		Service("alpha", func() {
-			Agent("scribe", "Doc helper", func() {
-				Use("ops", func() {
-					Tool("echo", "Echo", func() {
-						Args(String, "text to echo")
-						Return(String, "echoed text")
-					})
-				})
-			})
-		})
-	}
-}
-
 // ArgsInlineObject returns a DSL with inline object args and result.
 func ArgsInlineObject() func() {
 	return func() {

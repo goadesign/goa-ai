@@ -97,9 +97,13 @@ func TestRegistryClientResolvesGeneratedNameCollision(t *testing.T) {
 func TestSharedToolSpecsKeepExportIdentityOnReferences(t *testing.T) {
 	design := func() {
 		goadsl.API("tool_owner", func() {})
+		var PingInput = goadsl.Type("PingInput", func() {
+			goadsl.Attribute("message", goadsl.String, "Message to ping")
+			goadsl.Required("message")
+		})
 		shared := Toolset("shared", func() {
 			Tool("ping", "Ping", func() {
-				Args(goadsl.String)
+				Args(PingInput)
 				Return(goadsl.String)
 			})
 		})
