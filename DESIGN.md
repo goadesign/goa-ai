@@ -124,6 +124,12 @@ Providers that do not implement structured output fail explicitly with
 Generated schemas stay provider-neutral. Provider adapters may normalize that
 canonical schema to a provider-specific subset for constrained decoding, but
 they must fail explicitly instead of redefining the service contract.
+Gemini tool declarations retain the supported structure, required fields,
+types, and enums, translate `oneOf` choices to `anyOf`, and omit validation
+limits and annotations that Vertex rejects. The request-owned validator applies
+the complete original schema to the completed tool call before it becomes
+visible. An unknown structural keyword fails translation instead of being
+dropped.
 Before provider work, the validated client compiles the canonical schema into a
 request-owned validator. Raw schema bytes pass directly to the JSON Schema
 compiler's in-memory loader; the runtime does not publish or pass a generic map
