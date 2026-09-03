@@ -410,7 +410,9 @@ var Docs = Toolset("docs", func() {
   Streaming tool argument fragments and completed calls remain withheld until
   the complete provider response matches the stream; the runtime can then
   schedule one replacement planning activity while retaining final usage and
-  without retaining or executing the rejected arguments.
+  without retaining or executing the rejected arguments. Assistant prose
+  already streamed to a client is append-only and is never retracted by that
+  tool-validation decision.
   Incomplete provider streams remain terminal.
 - Timeout and parent-budget failures are terminal for the current run and use
   `finish` recovery. Planners may repair invalid arguments, but elapsed

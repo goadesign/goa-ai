@@ -770,7 +770,7 @@ func TestRejectedTerminalStreamUsageReplacesPriorDeltas(t *testing.T) {
 	require.Equal(t, usage, invocations.exportUsage())
 }
 
-func TestModelPresentationPublishesUsageForEveryInvocation(t *testing.T) {
+func TestModelInvocationJournalPublishesUsageForEveryInvocation(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
