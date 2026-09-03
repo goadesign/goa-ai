@@ -12,10 +12,12 @@ import (
 )
 
 // encodeTools declares the request's tools as one genai.Tool with a
-// FunctionDeclaration per definition. Schemas are passed through as raw
-// JSON schema (ParametersJsonSchema) after normalization. Definitions
-// without a description are rejected, matching the Bedrock provider's
-// convention rather than silently sending empty descriptions to Gemini.
+// FunctionDeclaration per definition. Each canonical schema is projected onto
+// Gemini's documented function-schema vocabulary; the validated model client
+// remains authoritative for every canonical constraint Gemini cannot express.
+// Definitions without a description are rejected, matching the Bedrock
+// provider's convention rather than silently sending empty descriptions to
+// Gemini.
 func encodeTools(defs []*model.ToolDefinition, canonToProv map[string]string) ([]*genai.Tool, error) {
 	if len(defs) == 0 {
 		return nil, nil
@@ -29,7 +31,7 @@ func encodeTools(defs []*model.ToolDefinition, canonToProv map[string]string) ([
 		if def.Description == "" {
 			return nil, fmt.Errorf("vertex: tool %q requires a description", def.Name)
 		}
-		schema, err := normalizeSchema(def.Input.Contract().Schema)
+		schema, err := normalizeToolSchema(def.Input.Contract().Schema)
 		if err != nil {
 			return nil, fmt.Errorf("vertex: tool %q schema: %w", def.Name, err)
 		}
@@ -40,6 +42,21 @@ func encodeTools(defs []*model.ToolDefinition, canonToProv map[string]string) ([
 		})
 	}
 	return []*genai.Tool{{FunctionDeclarations: decls}}, nil
+}
+
+// normalizeToolSchema projects a canonical JSON Schema onto the subset Gemini
+// accepts for function arguments. It removes only validation and annotation
+// keywords that the request-owned canonical validator enforces after Gemini
+// returns a call; an unknown keyword fails instead of being reinterpreted.
+func normalizeToolSchema(raw []byte) (any, error) {
+	schema, err := normalizeSchema(raw)
+	if err != nil {
+		return nil, err
+	}
+	if err := projectGeminiToolSchema(schema); err != nil {
+		return nil, err
+	}
+	return schema, nil
 }
 
 // encodeToolConfig maps the goa-ai tool choice through the request's bijective
@@ -87,4 +104,60 @@ func normalizeSchema(raw []byte) (any, error) {
 	delete(schema, "example")
 	delete(schema, "examples")
 	return schema, nil
+}
+
+// projectGeminiToolSchema mutates one parsed schema after normalizeSchema has
+// established that its root is an object. Properties and definitions contain
+// arbitrary names, so only their child values are interpreted as schemas.
+func projectGeminiToolSchema(schema any) error {
+	object, ok := schema.(map[string]any)
+	if !ok {
+		return errors.New("gemini tool schema must be an object")
+	}
+	for keyword, value := range object {
+		switch keyword {
+		case "$defs", "properties":
+			children, ok := value.(map[string]any)
+			if !ok {
+				return fmt.Errorf("gemini tool schema %q must be an object", keyword)
+			}
+			for _, child := range children {
+				if err := projectGeminiToolSchema(child); err != nil {
+					return err
+				}
+			}
+		case "items":
+			if err := projectGeminiToolSchema(value); err != nil {
+				return err
+			}
+		case "additionalProperties":
+			if _, ok := value.(bool); ok {
+				continue
+			}
+			if err := projectGeminiToolSchema(value); err != nil {
+				return err
+			}
+		case "anyOf":
+			choices, ok := value.([]any)
+			if !ok {
+				return errors.New("gemini tool schema \"anyOf\" must be an array")
+			}
+			for _, choice := range choices {
+				if err := projectGeminiToolSchema(choice); err != nil {
+					return err
+				}
+			}
+		case "$ref", "type", "nullable", "required", "format", "description", "enum", "propertyOrdering":
+			// Gemini accepts these keywords unchanged.
+		case "$schema", "$id", "title", "example", "examples",
+			"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
+			"minLength", "maxLength", "pattern",
+			"minItems", "maxItems", "uniqueItems",
+			"minProperties", "maxProperties":
+			delete(object, keyword)
+		default:
+			return fmt.Errorf("gemini tool schema keyword %q is unsupported", keyword)
+		}
+	}
+	return nil
 }

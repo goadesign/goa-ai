@@ -24,7 +24,27 @@ func toolDef(t *testing.T, name, schema string) *model.ToolDefinition {
 
 func TestEncodeTools(t *testing.T) {
 	defs := []*model.ToolDefinition{
-		toolDef(t, "feed/find_duplicates", `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"title":{"type":"string"}}}`),
+		toolDef(t, "feed/find_duplicates", `{
+			"$schema":"https://json-schema.org/draft/2020-12/schema",
+			"$defs":{
+				"Candidate":{
+					"title":"Candidate",
+					"type":"object",
+					"properties":{
+						"confidence":{"type":"number","minimum":0,"maximum":1,"example":0.9}
+					},
+					"required":["confidence"]
+				}
+			},
+			"type":"object",
+			"properties":{
+				"candidates":{
+					"type":"array",
+					"items":{"$ref":"#/$defs/Candidate"},
+					"maxItems":20
+				}
+			}
+		}`),
 	}
 	canonToProv, _, err := buildToolNameMaps(defs)
 	require.NoError(t, err)
@@ -41,7 +61,18 @@ func TestEncodeTools(t *testing.T) {
 	assert.Equal(t, "object", schema["type"])
 	props, ok := schema["properties"].(map[string]any)
 	require.True(t, ok, "properties must survive normalization")
-	assert.Contains(t, props, "title")
+	candidates := props["candidates"].(map[string]any)
+	assert.NotContains(t, candidates, "maxItems")
+	items := candidates["items"].(map[string]any)
+	assert.Equal(t, "#/$defs/Candidate", items["$ref"])
+	definitions := schema["$defs"].(map[string]any)
+	candidate := definitions["Candidate"].(map[string]any)
+	assert.NotContains(t, candidate, "title")
+	confidence := candidate["properties"].(map[string]any)["confidence"].(map[string]any)
+	assert.NotContains(t, confidence, "minimum")
+	assert.NotContains(t, confidence, "maximum")
+	assert.NotContains(t, confidence, "example")
+	assert.Equal(t, "number", confidence["type"])
 }
 
 func TestEncodeToolsMissingDescription(t *testing.T) {
@@ -80,6 +111,12 @@ func TestNormalizeSchemaPreservesLargeIntegers(t *testing.T) {
 	require.NoError(t, err)
 	object := schema.(map[string]any)
 	assert.Equal(t, json.Number("9007199254740993"), object["const"])
+}
+
+func TestNormalizeToolSchemaRejectsUnknownKeyword(t *testing.T) {
+	schema, err := normalizeToolSchema([]byte(`{"type":"object","properties":{"answer":{"type":"string","const":"yes"}}}`))
+	require.EqualError(t, err, `gemini tool schema keyword "const" is unsupported`)
+	assert.Nil(t, schema)
 }
 
 func TestEncodeToolConfig(t *testing.T) {
