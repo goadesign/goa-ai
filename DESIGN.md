@@ -1335,10 +1335,18 @@ errors, and token usage by default.
 
 Planner model-call spans also record `goa_ai.request.tool_count` and
 `goa_ai.request.tool_names`, which expose the exact names advertised to that
-request without recording arguments or labels. The clustered registry emits
-one elected `toolregistry.health` sample per registered toolset and ping
-interval, plus a `toolregistry.health.sweep` span for each scheduler attempt.
-The full readiness and error contract is documented in
+request without recording arguments or labels. Every registry replica emits a
+`toolregistry.catalog.entry` span for each active toolset returned by the
+shared catalog; retired records are not reported. The replicas then compete to
+send the provider ping, and the winner emits one `toolregistry.health` sample
+for that toolset and interval. Each replica also emits a
+`toolregistry.health.sweep` span for every scheduler attempt. An application
+may configure `Registry.Config.ExpectedToolsets`; after a successful catalog
+read, every replica emits `toolregistry.catalog.expectation` with an exact
+present or absent result for each required name. Failed reads emit no presence
+result. Applications that alert on these spans must keep the scheduler root
+trace in their sampling policy. The full catalog, readiness, and error contract is
+documented in
 [Registry and model-request traces](docs/runtime.md#registry-and-model-request-traces).
 
 ## Temporal Worker Activation Contract

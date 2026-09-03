@@ -38,6 +38,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/redis/go-redis/v9"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
@@ -100,6 +101,10 @@ type (
 		// provider instance without renewal. Provider Serve derives its renewal
 		// schedule from this duration; the default is two minutes.
 		ProviderLeaseDuration time.Duration
+		// ExpectedToolsets lists application-required toolset names. Each
+		// successful catalog scan records whether every name is present. The
+		// registry does not reject registration or calls based on this list.
+		ExpectedToolsets []string
 	}
 )
 
@@ -139,6 +144,9 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 			toolregistry.MaxProviderLeaseDuration,
 		)
 	}
+	if err := validateExpectedToolsets(cfg.ExpectedToolsets); err != nil {
+		return nil, err
+	}
 
 	// Apply defaults and derive Pulse resource names.
 	name := cfg.Name
@@ -173,6 +181,9 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 	}
 	if cfg.MissedPingThreshold > 0 {
 		healthOpts = append(healthOpts, WithMissedPingThreshold(cfg.MissedPingThreshold))
+	}
+	if len(cfg.ExpectedToolsets) > 0 {
+		healthOpts = append(healthOpts, withExpectedToolsets(cfg.ExpectedToolsets))
 	}
 	clock := newRedisTimeSource(cfg.Redis)
 
@@ -222,6 +233,25 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		streamManager:  streamManager,
 		redis:          cfg.Redis,
 	}, nil
+}
+
+// validateExpectedToolsets rejects names that cannot identify one exact
+// application requirement in catalog telemetry.
+func validateExpectedToolsets(toolsets []string) error {
+	seen := make(map[string]struct{}, len(toolsets))
+	for _, toolset := range toolsets {
+		if toolset == "" {
+			return fmt.Errorf("expected toolset name is required")
+		}
+		if utf8.RuneCountInString(toolset) > 256 {
+			return fmt.Errorf("expected toolset %q exceeds 256 characters", toolset)
+		}
+		if _, exists := seen[toolset]; exists {
+			return fmt.Errorf("expected toolset %q is listed more than once", toolset)
+		}
+		seen[toolset] = struct{}{}
+	}
+	return nil
 }
 
 // Service returns the registry service implementation.

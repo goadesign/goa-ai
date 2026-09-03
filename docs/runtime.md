@@ -4096,9 +4096,25 @@ type Tracer interface {
 
 ### Registry and model-request traces
 
-The registry emits `toolregistry.health` once per registered toolset and ping
-interval. Registry replicas compete for an expiring Redis lease, so only the
-replica that wins that interval records the toolset sample. Its attributes are:
+Every registry replica emits `toolregistry.catalog.entry` for each active
+toolset returned by the shared catalog. Retired records remain stored but do
+not produce this span. Its `toolregistry.registry` and
+`toolregistry.toolset` attributes identify the registry and toolset. This span
+records catalog membership only; it does not report whether a provider is
+ready.
+
+Applications may list required names in `Registry.Config.ExpectedToolsets`.
+After each successful catalog read, every replica emits
+`toolregistry.catalog.expectation` for every configured name.
+`toolregistry.present` is `1` when the active catalog contains the name and `0`
+when it does not. A failed catalog read emits no expectation result, so an
+application can alert on observed absence without treating missing telemetry
+as proof that a toolset is missing. This list observes application requirements
+only; it does not change registration, routing, or call admission.
+
+After recording the catalog entry, registry replicas compete for an expiring
+Redis lease. The replica that wins emits `toolregistry.health` for that toolset
+and ping interval. Its attributes are:
 
 - `toolregistry.registry` and `toolregistry.toolset` identify the registry and
   toolset.
@@ -4111,13 +4127,21 @@ replica that wins that interval records the toolset sample. Its attributes are:
   a pong. `toolregistry.last_pong_age_ms` is present only after one has been
   seen, and `toolregistry.staleness_threshold_ms` states when it becomes stale.
 
-A missing `toolregistry.health` span is not a zero reading. The catalog entry
-may have been removed during sampling, or the sweep may have failed before the
-toolset could be read. Each registry replica emits `toolregistry.health.sweep`
-for its scheduler attempt. Revision, catalog enumeration, and sampling-lease
-errors are recorded on that span with `toolregistry.step`; a toolset name is
-included when the failing step had already selected one. A health span records
-catalog-read and ping-publication errors on itself.
+A missing `toolregistry.catalog.entry` does not prove absence because the
+catalog read or trace delivery may have failed. Use an observed expectation
+span with `toolregistry.present=0` when the application configures required
+names. A missing `toolregistry.health` span does not mean the provider is unready because
+another replica may have won the lease. Each registry replica emits
+`toolregistry.health.sweep` for its scheduler attempt. Revision, catalog
+enumeration, and lease errors are recorded on that span with
+`toolregistry.step`; a toolset name is included when the failing step had
+already selected one. A health span records catalog-read and ping-publication
+errors on itself.
+
+These spans use the application's configured OpenTelemetry sampling policy.
+An application that alerts when scheduler or catalog spans are absent must
+always sample the `toolregistry.health.sweep` root. Its catalog-entry and
+health child spans then inherit the same recorded decision.
 
 Each planner model-call span records `goa_ai.request.tool_count` and
 `goa_ai.request.tool_names`. These fields show the exact catalog advertised to

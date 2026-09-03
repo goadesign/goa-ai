@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,11 @@ type (
 	authoritativeKeysFailureMap struct {
 		catalogMap
 		err error
+	}
+
+	cancelableKeysMap struct {
+		catalogMap
+		started chan struct{}
 	}
 )
 
@@ -143,6 +149,7 @@ func TestHealthTrackerRecordsFailuresBeforeToolsetSamples(t *testing.T) {
 			newTestTimeSource(time.Unix(1_700_000_000, 0)),
 		)
 		tracker := newDirectHealthTracker(context.Background(), catalog)
+		tracker.expectedToolsets = []string{"expected.toolset"}
 
 		ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(
 			context.Background(),
@@ -181,9 +188,106 @@ func TestHealthTrackerRecordsFailuresBeforeToolsetSamples(t *testing.T) {
 		tracker.pingRegisteredToolsets(ctx)
 		span.End()
 
-		require.Len(t, recorder.Ended(), 1)
-		assertHealthSweepFailure(t, recorder.Ended()[0], "acquire_lease", "test.toolset")
+		require.Len(t, recorder.Ended(), 2)
+		assertCatalogEntrySpan(t, recorder.Ended()[0], "test.toolset")
+		assertHealthSweepFailure(t, recorder.Ended()[1], "acquire_lease", "test.toolset")
 	})
+}
+
+func TestHealthTrackerDoesNotReportRetiredCatalogEntries(t *testing.T) {
+	recorder := newHealthSpanRecorder(t)
+	ctx := context.Background()
+	catalog := newToolsetCatalog(
+		newTestCatalogMap(),
+		newTestTimeSource(time.Unix(1_700_000_000, 0)),
+	)
+	admission, err := catalog.Register(
+		ctx,
+		testCatalogToolset("test.toolset", "test", nil),
+		testAdmissionRevisionA,
+		"provider-a",
+		uuid.NewString(),
+		time.Minute,
+	)
+	require.NoError(t, err)
+	require.NoError(t, catalog.Retire(ctx, "test.toolset", admission.RegistrationToken))
+
+	tracker := newDirectHealthTracker(ctx, catalog)
+	tracker.expectedToolsets = []string{"test.toolset"}
+	tracker.pingRegisteredToolsets(ctx)
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	assertCatalogExpectationSpan(t, spans[0], "test.toolset", 0)
+}
+
+func TestHealthTrackerReportsExpectedCatalogPresenceAfterSuccessfulRead(t *testing.T) {
+	recorder := newHealthSpanRecorder(t)
+	ctx := context.Background()
+	catalog := newToolsetCatalog(
+		newTestCatalogMap(),
+		newTestTimeSource(time.Unix(1_700_000_000, 0)),
+	)
+	_, err := catalog.Register(
+		ctx,
+		testCatalogToolset("present.toolset", "test", nil),
+		testAdmissionRevisionA,
+		"provider-a",
+		uuid.NewString(),
+		time.Minute,
+	)
+	require.NoError(t, err)
+	tracker := newDirectHealthTracker(ctx, catalog)
+	tracker.expectedToolsets = []string{"present.toolset", "missing.toolset"}
+	tracker.redis = newUnavailableRedisClient(t)
+
+	tracker.pingRegisteredToolsets(ctx)
+
+	spans := recorder.Ended()
+	require.Len(t, spans, 3)
+	assertCatalogExpectationSpan(t, spans[0], "present.toolset", 1)
+	assertCatalogExpectationSpan(t, spans[1], "missing.toolset", 0)
+	assertCatalogEntrySpan(t, spans[2], "present.toolset")
+}
+
+func TestHealthTrackerCloseCancelsCatalogRead(t *testing.T) {
+	recorder := newHealthSpanRecorder(t)
+	started := make(chan struct{})
+	catalog := newToolsetCatalog(
+		cancelableKeysMap{catalogMap: newTestCatalogMap(), started: started},
+		newTestTimeSource(time.Unix(1_700_000_000, 0)),
+	)
+	tracker := newDirectHealthTracker(context.Background(), catalog)
+	tracker.doneCh = make(chan struct{})
+	go func() {
+		defer close(tracker.doneCh)
+		ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(
+			tracker.schedulerCtx,
+			"toolregistry.health.sweep",
+		)
+		defer span.End()
+		tracker.pingRegisteredToolsets(ctx)
+	}()
+	<-started
+
+	require.NoError(t, tracker.Close())
+	spans := recorder.Ended()
+	require.Len(t, spans, 1)
+	assert.Equal(t, codes.Unset, spans[0].Status().Code)
+	assert.Empty(t, spans[0].Events())
+}
+
+func TestValidateExpectedToolsets(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, validateExpectedToolsets([]string{"one", "two"}))
+	require.EqualError(t, validateExpectedToolsets([]string{""}), "expected toolset name is required")
+	require.EqualError(
+		t,
+		validateExpectedToolsets([]string{"one", "one"}),
+		`expected toolset "one" is listed more than once`,
+	)
+	require.ErrorContains(t, validateExpectedToolsets([]string{strings.Repeat("x", 257)}), "exceeds 256")
 }
 
 func TestHealthTrackerPongIsMonotonicAndIncarnationFenced(t *testing.T) {
@@ -286,9 +390,10 @@ func TestHealthTrackerZeroLeaseReregistrationRejectsOldPong(t *testing.T) {
 	assert.True(t, health.Healthy)
 }
 
-func newDirectHealthTracker(_ context.Context, catalog *toolsetCatalog) *healthTracker {
+func newDirectHealthTracker(ctx context.Context, catalog *toolsetCatalog) *healthTracker {
 	closed := make(chan struct{})
 	close(closed)
+	schedulerCtx, cancelScheduler := context.WithCancel(ctx) //nolint:gosec // Tests cancel through Close when needed.
 	return &healthTracker{
 		catalog:            catalog,
 		catalogMap:         catalog.m,
@@ -296,9 +401,25 @@ func newDirectHealthTracker(_ context.Context, catalog *toolsetCatalog) *healthT
 		pingInterval:       time.Second,
 		stalenessThreshold: 2 * time.Second,
 		revFloors:          make(map[string]int64),
-		closeCh:            make(chan struct{}),
+		schedulerCtx:       schedulerCtx,
+		cancelScheduler:    cancelScheduler,
 		doneCh:             closed,
 	}
+}
+
+// assertCatalogExpectationSpan verifies one explicit result from a successful
+// application-required catalog-name check.
+func assertCatalogExpectationSpan(
+	t *testing.T,
+	span sdktrace.ReadOnlySpan,
+	toolset string,
+	present int64,
+) {
+	t.Helper()
+	attrs := healthSpanAttributes(span)
+	assert.Equal(t, "toolregistry.catalog.expectation", span.Name())
+	assert.Equal(t, toolset, attrs["toolregistry.toolset"].AsString())
+	assert.Equal(t, present, attrs["toolregistry.present"].AsInt64())
 }
 
 func newHealthSpanRecorder(t *testing.T) *tracetest.SpanRecorder {
@@ -362,6 +483,17 @@ func assertHealthSpanHasOnlyToolset(t *testing.T, span sdktrace.ReadOnlySpan) {
 	assert.NotContains(t, attrs, attribute.Key("toolregistry.provider_count"))
 }
 
+func assertCatalogEntrySpan(t *testing.T, span sdktrace.ReadOnlySpan, toolset string) {
+	t.Helper()
+	attrs := healthSpanAttributes(span)
+	assert.Equal(t, "toolregistry.catalog.entry", span.Name())
+	require.Len(t, attrs, 2)
+	assert.Equal(t, "test", attrs["toolregistry.registry"].AsString())
+	assert.Equal(t, toolset, attrs["toolregistry.toolset"].AsString())
+	assert.Equal(t, codes.Ok, span.Status().Code)
+	assert.Empty(t, span.Events())
+}
+
 func assertHealthSweepFailure(t *testing.T, span sdktrace.ReadOnlySpan, step, toolset string) {
 	t.Helper()
 	assert.Equal(t, "toolregistry.health.sweep", span.Name())
@@ -414,6 +546,14 @@ func (m *recordingHealthStreamManager) PublishAdmittedToolCall(
 
 func (m authoritativeKeysFailureMap) AuthoritativeKeys(context.Context) ([]string, error) {
 	return nil, m.err
+}
+
+// AuthoritativeKeys waits for tracker shutdown and proves the scheduler passes
+// a cancelable context into catalog reads.
+func (m cancelableKeysMap) AuthoritativeKeys(ctx context.Context) ([]string, error) {
+	close(m.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
 }
 
 func rejectRedisConnection(context.Context, string, string) (net.Conn, error) {
