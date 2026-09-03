@@ -122,9 +122,17 @@ func TestNormalizeSchemaPreservesLargeIntegers(t *testing.T) {
 	assert.Equal(t, json.Number("9007199254740993"), object["const"])
 }
 
+func TestNormalizeToolSchemaOmitsUnsupportedRulesAndLabels(t *testing.T) {
+	schema, err := normalizeToolSchema([]byte(`{"type":"object","properties":{"answer":{"type":"string","const":"yes","default":"yes"}}}`))
+	require.NoError(t, err)
+	answer := schema.(map[string]any)["properties"].(map[string]any)["answer"].(map[string]any)
+	assert.NotContains(t, answer, "const")
+	assert.NotContains(t, answer, "default")
+}
+
 func TestNormalizeToolSchemaRejectsUnknownKeyword(t *testing.T) {
-	schema, err := normalizeToolSchema([]byte(`{"type":"object","properties":{"answer":{"type":"string","const":"yes"}}}`))
-	require.EqualError(t, err, `gemini tool schema keyword "const" is unsupported`)
+	schema, err := normalizeToolSchema([]byte(`{"type":"object","properties":{"answer":{"type":"string","allOf":[]}}}`))
+	require.EqualError(t, err, `gemini tool schema keyword "allOf" is unsupported`)
 	assert.Nil(t, schema)
 }
 

@@ -156,7 +156,7 @@ func prepareGeminiToolSchema(schema any) error {
 			}
 		case "$ref", "type", "nullable", "required", "format", "description", "enum", "propertyOrdering":
 			// Gemini accepts these keywords unchanged.
-		case "$schema", "$id", "title", "example", "examples",
+		case "$schema", "$id", "title", "example", "examples", "default", "const",
 			"minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf",
 			"minLength", "maxLength", "pattern",
 			"minItems", "maxItems", "uniqueItems",
