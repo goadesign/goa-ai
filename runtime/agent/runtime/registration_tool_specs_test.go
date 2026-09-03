@@ -144,6 +144,37 @@ func TestRegisterToolsetRejectsInvalidPayloadContract(t *testing.T) {
 	}
 }
 
+func TestRegisterToolsetCompilesPayloadContractWithoutRuntimeLock(t *testing.T) {
+	t.Parallel()
+
+	runtime := New(newTestStore())
+	err := runtime.RegisterToolset(ToolsetRegistration{
+		Name: "svc",
+		Specs: []tools.ToolSpec{{
+			Name: "svc.tool",
+			Payload: tools.TypeSpec{
+				Schema:                   tools.RawJSON(`{"type":"object"}`),
+				SchemaWithoutRootExample: tools.RawJSON(`{"type":"object"}`),
+				ExampleJSON:              tools.RawJSON(`{}`),
+				Codec: tools.JSONCodec[any]{
+					FromJSON: func([]byte) (any, error) {
+						if !runtime.mu.TryLock() {
+							return nil, errors.New("runtime lock held while decoding example")
+						}
+						runtime.mu.Unlock()
+						return struct{}{}, nil
+					},
+				},
+			},
+		}},
+		Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
+			return nil, nil
+		},
+	})
+
+	require.NoError(t, err)
+}
+
 func TestRegisterToolsetRejectsDuplicateExecutableOwner(t *testing.T) {
 	t.Parallel()
 

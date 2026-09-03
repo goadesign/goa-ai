@@ -27,8 +27,6 @@ func (r *Runtime) validateToolSpecRegistrations(
 	registrations ...toolSpecRegistration,
 ) (map[tools.Ident]*model.ToolDefinition, error) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-
 	specs := make(map[tools.Ident]tools.ToolSpec, len(r.toolSpecs))
 	for name, spec := range r.toolSpecs {
 		specs[name] = spec
@@ -41,6 +39,8 @@ func (r *Runtime) validateToolSpecRegistrations(
 	for name, meta := range r.policyToolMetadata {
 		metadata[name] = meta
 	}
+	r.mu.RUnlock()
+
 	for _, registration := range registrations {
 		for _, spec := range registration.specs {
 			if err := validateToolResultSpec(spec); err != nil {
