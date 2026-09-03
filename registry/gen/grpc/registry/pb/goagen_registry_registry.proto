@@ -154,8 +154,12 @@ message ToolSchema {
 	optional string description = 2;
 	// Optional tags used for policy, routing, or UI filtering.
 	repeated string tags = 3;
-	// Canonical JSON schema for the tool payload.
+	// Canonical JSON schema for arguments accepted from the model.
 	optional bytes payload_schema = 4;
+	// Canonical JSON schema for the payload sent to the provider. It includes
+// fields supplied by continuation handling and excludes fields injected inside
+// the provider.
+	optional bytes execution_payload_schema = 7;
 	// Canonical JSON schema for the tool result.
 	optional bytes result_schema = 5;
 	// Canonical JSON schema for the tool sidecar (UI-only), when present.

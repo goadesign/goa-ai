@@ -107,7 +107,7 @@ type (
 		Description string
 		// Tags are optional metadata tags for discovery and filtering.
 		Tags []string
-		// PayloadSchema is the JSON Schema for tool input.
+		// PayloadSchema is the JSON Schema for arguments accepted from the model.
 		PayloadSchema []byte
 		// ResultSchema is the JSON Schema for tool output.
 		ResultSchema []byte

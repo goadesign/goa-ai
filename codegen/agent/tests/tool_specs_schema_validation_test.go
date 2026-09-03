@@ -48,16 +48,51 @@ func validateSpecsGolden(t *testing.T, path string) {
 	require.NoError(t, err)
 
 	specs := extractTypeSpecs(t, file)
-	if len(specs) == 0 {
-		return
-	}
-
 	for _, spec := range specs {
 		validateSchemaBytes(t, spec.schemaBytes, fmt.Sprintf("%s (%s)", path, spec.name))
 		if len(spec.exampleBytes) > 0 {
 			validateExampleAgainstSchema(t, spec.schemaBytes, spec.exampleBytes, fmt.Sprintf("%s (%s)", path, spec.name))
 		}
 	}
+	for i, schemaBytes := range extractExecutionPayloadSchemas(t, file) {
+		validateSchemaBytes(t, schemaBytes, fmt.Sprintf("%s (execution payload %d)", path, i+1))
+	}
+}
+
+func extractExecutionPayloadSchemas(t *testing.T, file *ast.File) [][]byte {
+	t.Helper()
+
+	var schemas [][]byte
+	ast.Inspect(file, func(n ast.Node) bool {
+		lit, ok := n.(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		sel, ok := lit.Type.(*ast.SelectorExpr)
+		if !ok || sel.Sel == nil || sel.Sel.Name != "ToolSpec" {
+			return true
+		}
+		if len(lit.Elts) == 0 {
+			return true
+		}
+		for _, elt := range lit.Elts {
+			kv, ok := elt.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			key, ok := kv.Key.(*ast.Ident)
+			if !ok || key.Name != "ExecutionPayloadSchema" {
+				continue
+			}
+			schema, ok := evalByteSliceLiteral(kv.Value)
+			require.True(t, ok, "expected literal ExecutionPayloadSchema in generated ToolSpec")
+			schemas = append(schemas, schema)
+			return true
+		}
+		require.Fail(t, "generated ToolSpec is missing ExecutionPayloadSchema")
+		return true
+	})
+	return schemas
 }
 
 type extractedTypeSpec struct {

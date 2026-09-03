@@ -133,9 +133,10 @@ func validRegisterPayloadForSchemaAdmission(name string) *genregistry.RegisterPa
 		AdmissionRevision:     testAdmissionRevisionA,
 		WireProtocolVersion:   toolregistry.WireProtocolVersion,
 		Tools: []*genregistry.ToolSchema{{
-			Name:          "lookup",
-			PayloadSchema: []byte(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
-			ResultSchema:  []byte(`{"type":"object","properties":{"value":{"type":"string"}},"required":["value"]}`),
+			Name:                   "lookup",
+			PayloadSchema:          []byte(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
+			ExecutionPayloadSchema: []byte(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`),
+			ResultSchema:           []byte(`{"type":"object","properties":{"value":{"type":"string"}},"required":["value"]}`),
 		}},
 	})
 }
@@ -407,11 +408,14 @@ func TestCallToolEnsuresAdmissionWithActiveRegistrationToken(t *testing.T) {
 	toolset := &genregistry.Toolset{
 		Name: "test.toolset",
 		Tools: []*genregistry.ToolSchema{{
-			Name:          "lookup",
-			PayloadSchema: []byte(`{"type":"object"}`),
-			ResultSchema:  []byte(`{"type":"object"}`),
+			Name:                   "lookup",
+			PayloadSchema:          []byte(`{"type":"object","additionalProperties":false}`),
+			ExecutionPayloadSchema: []byte(`{"type":"object","additionalProperties":false,"properties":{"query":{"type":"string"},"cursor":{"type":"string"}},"required":["query","cursor"]}`),
+			ResultSchema:           []byte(`{"type":"object"}`),
 		}},
 	}
+	runtimePayload := []byte(`{"query":"status","cursor":"next-page"}`)
+	require.Error(t, newSchemaValidator().ValidatePayload(toolset.Tools[0].PayloadSchema, runtimePayload))
 	registration, err := catalog.Register(
 		ctx,
 		toolset,
@@ -453,10 +457,27 @@ func TestCallToolEnsuresAdmissionWithActiveRegistrationToken(t *testing.T) {
 		providerLeaseDuration: DefaultProviderLeaseDuration,
 	}
 
-	result, err := svc.CallTool(ctx, &genregistry.CallToolPayload{
+	_, err = svc.CallTool(ctx, &genregistry.CallToolPayload{
 		Toolset:             toolset.Name,
 		Tool:                "lookup",
 		PayloadJSON:         []byte(`{"query":"status"}`),
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
+		Meta: &genregistry.ToolCallMeta{
+			RunID:      "run-1",
+			SessionID:  "session-1",
+			ToolCallID: "call-1",
+		},
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, "cursor")
+	assert.False(t, streamOpened)
+	assert.Zero(t, streams.publications)
+	assert.Zero(t, admissions.initializations)
+
+	result, err := svc.CallTool(ctx, &genregistry.CallToolPayload{
+		Toolset:             toolset.Name,
+		Tool:                "lookup",
+		PayloadJSON:         runtimePayload,
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:      "run-1",

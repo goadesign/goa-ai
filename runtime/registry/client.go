@@ -79,8 +79,9 @@ func toolsetInfoFromGenerated(toolset *genregistry.ToolsetInfo) *ToolsetInfo {
 	return info
 }
 
-// toolsetSchemaFromGenerated retains the complete payload, result, and sidecar
-// schemas returned by the Goa service for later cache reads.
+// toolsetSchemaFromGenerated retains the model payload, result, and sidecar
+// schemas used by registry-backed tool consumers. The execution payload schema
+// belongs to provider admission and is not exposed through this consumer view.
 func toolsetSchemaFromGenerated(toolset *genregistry.Toolset) *ToolsetSchema {
 	schema := &ToolsetSchema{
 		ID:           toolset.Name,

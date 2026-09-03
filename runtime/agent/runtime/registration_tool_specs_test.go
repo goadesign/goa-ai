@@ -314,6 +314,7 @@ func TestToolSpecAccessorsReturnDetachedSnapshots(t *testing.T) {
 	spec := newAnyJSONSpec("svc.lookup")
 	spec.Tags = []string{"lookup"}
 	spec.Meta = map[string][]string{"owner": {"service"}}
+	spec.ExecutionPayloadSchema = tools.RawJSON(`{"type":"object"}`)
 	spec.Payload.Schema = tools.RawJSON(`{"type":"object"}`)
 	spec.Payload.FieldDescriptions = map[string]string{"query": "Lookup query."}
 	spec.Bounds = &tools.BoundsSpec{
@@ -391,6 +392,7 @@ func assertToolSpecReaderDetached(t *testing.T, read func() tools.ToolSpec) {
 	returned := read()
 	returned.Tags[0] = mutated
 	returned.Meta["owner"][0] = mutated
+	returned.ExecutionPayloadSchema[0] = '['
 	returned.Payload.Schema[0] = '['
 	returned.Payload.FieldDescriptions["query"] = mutated
 	returned.Bounds.Paging.CursorField = mutated
@@ -401,6 +403,7 @@ func assertToolSpecReaderDetached(t *testing.T, read func() tools.ToolSpec) {
 	stored := read()
 	require.Equal(t, []string{"lookup"}, stored.Tags)
 	require.Equal(t, map[string][]string{"owner": {"service"}}, stored.Meta)
+	require.JSONEq(t, `{"type":"object"}`, string(stored.ExecutionPayloadSchema))
 	require.JSONEq(t, `{"type":"object"}`, string(stored.Payload.Schema))
 	require.Equal(t, map[string]string{"query": "Lookup query."}, stored.Payload.FieldDescriptions)
 	require.Equal(t, "cursor", stored.Bounds.Paging.CursorField)

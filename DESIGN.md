@@ -849,8 +849,9 @@ SHA-256 digest of the domain `goa-ai/tool-registry-admission/v2\0`, the uint32
 big-endian wire protocol version, the raw 32-byte canonical schema fingerprint,
 a uint32 big-endian admission-revision byte length, and the revision bytes. Tool
 order and toolset/tool tag order are
-normalized before schema fingerprinting; payload, result, and sidecar raw schema
-bytes are exact identity inputs, so generated schema JSON must remain canonical.
+normalized before schema fingerprinting. The model payload, registry execution
+payload, result, and sidecar schema bytes are exact identity inputs, so
+generated schema JSON must remain canonical.
 The same wire version, schema, and revision derive the same admission token
 across replicas. Changing any of those inputs derives a different token. Every
 Goa and Pulse boundary requires the canonical lowercase 64-hex spelling
@@ -961,11 +962,11 @@ run-scoped decision is retained, so the executor may safely replan. Generated
 decision record. Errors after request publication remain ambiguous and produce
 `outcome_unknown`, which forbids replacement execution because an effect may
 have occurred.
-The explicit decision record is wire protocol version 9. Registry replicas,
+The explicit decision record is wire protocol version 10. Registry replicas,
 providers, and consumers use that exact protocol. Records with another shape
 are rejected and never rewritten.
-Protocol 8 catalog entries must be removed while all protocol-8 participants
-are stopped before protocol 9 can start. Only the per-toolset fields in the
+Protocol 8 or 9 catalog entries must be removed before protocol 10 can start.
+Only the per-toolset fields in the
 registry's catalog hash are removed; drained call records and Pulse streams
 remain until their normal expiry so an old call cannot execute twice. The
 executable procedure is documented in the

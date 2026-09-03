@@ -102,10 +102,11 @@ func TestServerIntegration(t *testing.T) {
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
 			Tools: []*genregistry.ToolSchema{
 				{
-					Name:          "transform",
-					Description:   strPtr("Transform data"),
-					PayloadSchema: []byte(`{"type":"object","properties":{"input":{"type":"string"}}}`),
-					ResultSchema:  []byte(`{"type":"object"}`),
+					Name:                   "transform",
+					Description:            strPtr("Transform data"),
+					PayloadSchema:          []byte(`{"type":"object","properties":{"input":{"type":"string"}}}`),
+					ExecutionPayloadSchema: []byte(`{"type":"object","properties":{"input":{"type":"string"}}}`),
+					ResultSchema:           []byte(`{"type":"object"}`),
 				},
 			},
 		}))
@@ -230,9 +231,10 @@ func TestServerIntegration(t *testing.T) {
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
 			Tools: []*genregistry.ToolSchema{
 				{
-					Name:          "report",
-					PayloadSchema: []byte(`{"type":"object"}`),
-					ResultSchema:  []byte(`{"type":"object"}`),
+					Name:                   "report",
+					PayloadSchema:          []byte(`{"type":"object"}`),
+					ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+					ResultSchema:           []byte(`{"type":"object"}`),
 				},
 			},
 		}))
@@ -355,9 +357,10 @@ func TestServerMultiNodeSync(t *testing.T) {
 		WireProtocolVersion:   toolregistry.WireProtocolVersion,
 		Tools: []*genregistry.ToolSchema{
 			{
-				Name:          "shared-tool",
-				PayloadSchema: []byte(`{"type":"object"}`),
-				ResultSchema:  []byte(`{"type":"object"}`),
+				Name:                   "shared-tool",
+				PayloadSchema:          []byte(`{"type":"object"}`),
+				ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+				ResultSchema:           []byte(`{"type":"object"}`),
 			},
 		},
 	}))
@@ -422,9 +425,10 @@ func TestServerValidationErrors(t *testing.T) {
 			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{
 				{
-					Name:          "bad-tool",
-					PayloadSchema: []byte(`{not valid json`),
-					ResultSchema:  []byte(`{"type":"object"}`),
+					Name:                   "bad-tool",
+					PayloadSchema:          []byte(`{not valid json`),
+					ExecutionPayloadSchema: []byte(`{not valid json`),
+					ResultSchema:           []byte(`{"type":"object"}`),
 				},
 			},
 		})
@@ -450,9 +454,10 @@ func TestServerValidationErrors(t *testing.T) {
 			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{
 				{
-					Name:          "empty-tool",
-					PayloadSchema: []byte{},
-					ResultSchema:  []byte(`{"type":"object"}`),
+					Name:                   "empty-tool",
+					PayloadSchema:          []byte{},
+					ExecutionPayloadSchema: []byte{},
+					ResultSchema:           []byte(`{"type":"object"}`),
 				},
 			},
 		})
@@ -476,9 +481,10 @@ func TestServerValidationErrors(t *testing.T) {
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
 			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{{
-				Name:          "lookup",
-				PayloadSchema: []byte(`{"type":"object"}`),
-				ResultSchema:  []byte(`{"type":"object"}`),
+				Name:                   "lookup",
+				PayloadSchema:          []byte(`{"type":"object"}`),
+				ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+				ResultSchema:           []byte(`{"type":"object"}`),
 			}},
 		})
 		require.ErrorContains(t, err, "admission_revision")
@@ -493,9 +499,10 @@ func TestServerValidationErrors(t *testing.T) {
 			WireProtocolVersion:   toolregistry.WireProtocolVersion,
 			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{{
-				Name:          "lookup",
-				PayloadSchema: []byte(`{"type":"object"}`),
-				ResultSchema:  []byte(`{"type":"object"}`),
+				Name:                   "lookup",
+				PayloadSchema:          []byte(`{"type":"object"}`),
+				ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+				ResultSchema:           []byte(`{"type":"object"}`),
 			}},
 		})
 		require.ErrorContains(t, err, "admission_revision")
@@ -509,9 +516,10 @@ func TestServerValidationErrors(t *testing.T) {
 			AdmissionRevision:     testAdmissionRevisionA,
 			SchemaFingerprint:     testActiveRegistrationToken,
 			Tools: []*genregistry.ToolSchema{{
-				Name:          "lookup",
-				PayloadSchema: []byte(`{"type":"object"}`),
-				ResultSchema:  []byte(`{"type":"object"}`),
+				Name:                   "lookup",
+				PayloadSchema:          []byte(`{"type":"object"}`),
+				ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+				ResultSchema:           []byte(`{"type":"object"}`),
 			}},
 		})
 		require.ErrorContains(t, err, "wire_protocol_version")
@@ -735,18 +743,20 @@ func grpcRegisterRequest(
 		AdmissionRevision:     strPtr(revision),
 		WireProtocolVersion:   &wireProtocolVersion,
 		Tools: []*registrypb.ToolSchema{{
-			Name:          strPtr("status.lookup"),
-			PayloadSchema: []byte(`{"type":"object"}`),
-			ResultSchema:  []byte(`{"type":"object"}`),
+			Name:                   strPtr("status.lookup"),
+			PayloadSchema:          []byte(`{"type":"object"}`),
+			ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+			ResultSchema:           []byte(`{"type":"object"}`),
 		}},
 	}
 	request.SchemaFingerprint = strPtr(toolsetSchemaFingerprint(&genregistry.Toolset{
 		Name:        name,
 		Description: &description,
 		Tools: []*genregistry.ToolSchema{{
-			Name:          "status.lookup",
-			PayloadSchema: []byte(`{"type":"object"}`),
-			ResultSchema:  []byte(`{"type":"object"}`),
+			Name:                   "status.lookup",
+			PayloadSchema:          []byte(`{"type":"object"}`),
+			ExecutionPayloadSchema: []byte(`{"type":"object"}`),
+			ResultSchema:           []byte(`{"type":"object"}`),
 		}},
 	}))
 	return request

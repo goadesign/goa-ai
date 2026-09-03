@@ -234,6 +234,10 @@ type (
 		// empty, no schema is available or the type cannot be represented as
 		// a JSON schema.
 		SchemaJSON []byte
+		// ExecutionSchemaJSON holds the payload schema enforced by the tool
+		// registry. It includes runtime continuation fields but excludes fields
+		// injected by the provider. It is empty for result and server-data types.
+		ExecutionSchemaJSON []byte
 		// SchemaWithoutRootExampleJSON holds the OpenAPI JSON schema bytes without
 		// the root example annotation. Model providers that accept examples outside
 		// the schema consume this generated variant directly.

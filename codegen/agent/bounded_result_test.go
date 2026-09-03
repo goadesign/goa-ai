@@ -257,13 +257,15 @@ func TestBoundedResultGeneratesDedicatedContinuation(t *testing.T) {
 	require.NotEmpty(t, specs, "expected generated specs.go at %s", expectedPath)
 	require.Contains(t, specs, `ContinueTool: tools.Ident("tools.continue_search")`)
 	require.NotContains(t, specs, `Continuation reference for the next page.`)
+	require.Contains(t, specs, `ExecutionPayloadSchema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"cursor\":{\"type\":\"string\"}},\"required\":[\"cursor\"],\"type\":\"object\"}")`)
 	require.Contains(t, specs, `Schema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}")`)
 	require.NotContains(t, specs, `Call the same tool again with the same parameters`)
 }
 
 // TestBoundedResultGeneratesReplayContinuation verifies that a continuation
-// action can reuse the source tool payload while keeping every execution field
-// out of the model-facing schema.
+// action can reuse the source tool payload while keeping continuation and
+// Inject fields out of the model-facing schema. The execution schema includes
+// continuation fields but excludes fields supplied inside the provider.
 func TestBoundedResultGeneratesReplayContinuation(t *testing.T) {
 	eval.Reset()
 	goaexpr.Root = new(goaexpr.RootExpr)
@@ -277,7 +279,8 @@ func TestBoundedResultGeneratesReplayContinuation(t *testing.T) {
 	var queryArgs = goadsl.Type("QueryArgs", func() {
 		goadsl.Attribute("query", goadsl.String)
 		goadsl.Attribute("cursor", goadsl.String)
-		goadsl.Required("query")
+		goadsl.Attribute("session_id", goadsl.String)
+		goadsl.Required("query", "session_id")
 	})
 	design := func() {
 		goadsl.API("bounded_result_replay_continuation_test", func() {})
@@ -286,6 +289,7 @@ func TestBoundedResultGeneratesReplayContinuation(t *testing.T) {
 				Use("tools", func() {
 					Tool("search", "Search", func() {
 						Args(queryArgs)
+						Inject("session_id")
 						Return(func() {
 							goadsl.Attribute("results", goadsl.ArrayOf(goadsl.String))
 						})
@@ -296,6 +300,7 @@ func TestBoundedResultGeneratesReplayContinuation(t *testing.T) {
 					})
 					Tool("continue_search", "Continue search", func() {
 						Args(queryArgs)
+						Inject("session_id")
 						Return(func() {
 							goadsl.Attribute("results", goadsl.ArrayOf(goadsl.String))
 						})
@@ -329,6 +334,8 @@ func TestBoundedResultGeneratesReplayContinuation(t *testing.T) {
 	require.NotEmpty(t, specs, "expected generated specs.go at %s", expectedPath)
 	require.Contains(t, specs, `SourceTool: tools.Ident("tools.search")`)
 	require.Contains(t, specs, `ReplayPayload: true`)
+	require.Contains(t, specs, `ExecutionPayloadSchema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}")`)
+	require.Contains(t, specs, `ExecutionPayloadSchema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"cursor\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"query\",\"cursor\"],\"type\":\"object\"}")`)
 	require.Contains(t, specs, `Schema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}")`)
 }
 

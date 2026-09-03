@@ -445,8 +445,12 @@ type ToolSchema struct {
 	Description *string
 	// Optional tags used for policy, routing, or UI filtering.
 	Tags []string
-	// Canonical JSON schema for the tool payload.
+	// Canonical JSON schema for arguments accepted from the model.
 	PayloadSchema []byte
+	// Canonical JSON schema for the payload sent to the provider. It includes
+	// fields supplied by continuation handling and excludes fields injected inside
+	// the provider.
+	ExecutionPayloadSchema []byte
 	// Canonical JSON schema for the tool result.
 	ResultSchema []byte
 	// Canonical JSON schema for the tool sidecar (UI-only), when present.

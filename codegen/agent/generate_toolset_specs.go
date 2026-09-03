@@ -205,19 +205,21 @@ func generatedToolsetSchemaFingerprints(routes []string, entries []*toolEntry) [
 	tools := make([]internaladmission.ToolSchema, len(entries))
 	for i, entry := range entries {
 		description := entry.Description
-		var payloadSchema, resultSchema []byte
+		var payloadSchema, executionPayloadSchema, resultSchema []byte
 		if entry.Payload != nil {
 			payloadSchema = entry.Payload.SchemaJSON
+			executionPayloadSchema = entry.Payload.ExecutionSchemaJSON
 		}
 		if entry.Result != nil {
 			resultSchema = entry.Result.SchemaJSON
 		}
 		tools[i] = internaladmission.ToolSchema{
-			Name:          entry.Name,
-			Description:   &description,
-			Tags:          entry.Tags,
-			PayloadSchema: payloadSchema,
-			ResultSchema:  resultSchema,
+			Name:                   entry.Name,
+			Description:            &description,
+			Tags:                   entry.Tags,
+			PayloadSchema:          payloadSchema,
+			ExecutionPayloadSchema: executionPayloadSchema,
+			ResultSchema:           resultSchema,
 		}
 	}
 	fingerprints := make([]*toolsetSchemaFingerprintData, len(routes))

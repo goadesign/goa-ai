@@ -907,12 +907,13 @@ func toolsetSchemaFingerprint(toolset *genregistry.Toolset) string {
 	tools := make([]internaladmission.ToolSchema, len(toolset.Tools))
 	for i, tool := range toolset.Tools {
 		tools[i] = internaladmission.ToolSchema{
-			Name:          tool.Name,
-			Description:   tool.Description,
-			Tags:          tool.Tags,
-			PayloadSchema: tool.PayloadSchema,
-			ResultSchema:  tool.ResultSchema,
-			SidecarSchema: tool.SidecarSchema,
+			Name:                   tool.Name,
+			Description:            tool.Description,
+			Tags:                   tool.Tags,
+			PayloadSchema:          tool.PayloadSchema,
+			ExecutionPayloadSchema: tool.ExecutionPayloadSchema,
+			ResultSchema:           tool.ResultSchema,
+			SidecarSchema:          tool.SidecarSchema,
 		}
 	}
 	var version *string

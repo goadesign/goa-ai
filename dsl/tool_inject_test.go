@@ -306,6 +306,44 @@ func TestInjectRejectsEmptyName(t *testing.T) {
 	require.ErrorContains(t, err, "Inject requires non-empty field names")
 }
 
+// TestInjectRejectsPagingCursor prevents continuation handling and provider
+// injection from both supplying the same field.
+func TestInjectRejectsPagingCursor(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		API("test", func() {})
+		Service("calc", func() {
+			Agent("scribe", "Search helper", func() {
+				Use("helpers", func() {
+					Tool("search", "Search", func() {
+						Args(func() {
+							Attribute("query", String)
+							Required("query")
+						})
+						BoundedResult(func() {
+							ContinueWith("continue_search", "cursor")
+							NextCursor("next_cursor")
+						})
+					})
+					Tool("continue_search", "Continue search", func() {
+						Args(func() {
+							Attribute("cursor", String)
+							Required("cursor")
+						})
+						Inject("cursor")
+						BoundedResult(func() {
+							Cursor("cursor")
+							NextCursor("next_cursor")
+						})
+					})
+				})
+			})
+		})
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, `Inject field "cursor" cannot be the paging cursor`)
+}
+
 // TestInjectRejectsFieldMissingFromDivergentArgs reproduces the
 // generation-soundness gap: a BindTo tool with explicit Args that
 // structurally diverge from the bound method payload (the

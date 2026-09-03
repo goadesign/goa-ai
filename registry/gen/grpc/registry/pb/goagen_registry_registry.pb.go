@@ -169,8 +169,12 @@ type ToolSchema struct {
 	Description *string `protobuf:"bytes,2,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	// Optional tags used for policy, routing, or UI filtering.
 	Tags []string `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty"`
-	// Canonical JSON schema for the tool payload.
+	// Canonical JSON schema for arguments accepted from the model.
 	PayloadSchema []byte `protobuf:"bytes,4,opt,name=payload_schema,json=payloadSchema,proto3,oneof" json:"payload_schema,omitempty"`
+	// Canonical JSON schema for the payload sent to the provider. It includes
+	// fields supplied by continuation handling and excludes fields injected inside
+	// the provider.
+	ExecutionPayloadSchema []byte `protobuf:"bytes,7,opt,name=execution_payload_schema,json=executionPayloadSchema,proto3,oneof" json:"execution_payload_schema,omitempty"`
 	// Canonical JSON schema for the tool result.
 	ResultSchema []byte `protobuf:"bytes,5,opt,name=result_schema,json=resultSchema,proto3,oneof" json:"result_schema,omitempty"`
 	// Canonical JSON schema for the tool sidecar (UI-only), when present.
@@ -233,6 +237,13 @@ func (x *ToolSchema) GetTags() []string {
 func (x *ToolSchema) GetPayloadSchema() []byte {
 	if x != nil {
 		return x.PayloadSchema
+	}
+	return nil
+}
+
+func (x *ToolSchema) GetExecutionPayloadSchema() []byte {
+	if x != nil {
+		return x.ExecutionPayloadSchema
 	}
 	return nil
 }
@@ -2283,18 +2294,20 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\x13_admission_revisionB\x1a\n" +
 	"\x18_provider_incarnation_idB\x18\n" +
 	"\x16_wire_protocol_versionB\x15\n" +
-	"\x13_schema_fingerprint\"\xb3\x02\n" +
+	"\x13_schema_fingerprint\"\x8f\x03\n" +
 	"\n" +
 	"ToolSchema\x12\x17\n" +
 	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
 	"\vdescription\x18\x02 \x01(\tH\x01R\vdescription\x88\x01\x01\x12\x12\n" +
 	"\x04tags\x18\x03 \x03(\tR\x04tags\x12*\n" +
-	"\x0epayload_schema\x18\x04 \x01(\fH\x02R\rpayloadSchema\x88\x01\x01\x12(\n" +
-	"\rresult_schema\x18\x05 \x01(\fH\x03R\fresultSchema\x88\x01\x01\x12*\n" +
-	"\x0esidecar_schema\x18\x06 \x01(\fH\x04R\rsidecarSchema\x88\x01\x01B\a\n" +
+	"\x0epayload_schema\x18\x04 \x01(\fH\x02R\rpayloadSchema\x88\x01\x01\x12=\n" +
+	"\x18execution_payload_schema\x18\a \x01(\fH\x03R\x16executionPayloadSchema\x88\x01\x01\x12(\n" +
+	"\rresult_schema\x18\x05 \x01(\fH\x04R\fresultSchema\x88\x01\x01\x12*\n" +
+	"\x0esidecar_schema\x18\x06 \x01(\fH\x05R\rsidecarSchema\x88\x01\x01B\a\n" +
 	"\x05_nameB\x0e\n" +
 	"\f_descriptionB\x11\n" +
-	"\x0f_payload_schemaB\x10\n" +
+	"\x0f_payload_schemaB\x1b\n" +
+	"\x19_execution_payload_schemaB\x10\n" +
 	"\x0e_result_schemaB\x11\n" +
 	"\x0f_sidecar_schema\"\xe0\x01\n" +
 	"\x10RegisterResponse\x12(\n" +

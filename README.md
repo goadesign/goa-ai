@@ -109,10 +109,10 @@ absence came from a deployment or an outage. Exact
 retries cannot execute that identity while the run-scoped decision is retained,
 so executors may safely replan; only published calls with ambiguous execution
 become `outcome_unknown`.
-This decision contract is wire protocol version 9. Registry replicas and
+This decision contract is wire protocol version 10. Registry replicas and
 retained catalog records must use that exact protocol; do not overlap registry
 versions or infer how to translate unknown records. Upgrading from protocol 8
-requires the catalog-only, forward-only rebootstrap described in the
+or 9 requires the catalog-only, forward-only rebootstrap described in the
 [preview upgrade guide](docs/runtime.md#preview-upgrade-guide); retained call
 records and Pulse streams are not reset.
 `Serve` also exposes the canonical ToolUseID through context for durable method

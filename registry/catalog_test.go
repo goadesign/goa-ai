@@ -189,6 +189,33 @@ func TestAdmissionTokenBindsWireProtocolVersion(t *testing.T) {
 	assert.NotEqual(t, current, other)
 }
 
+func TestSchemaFingerprintBindsExecutionPayloadSchema(t *testing.T) {
+	t.Parallel()
+
+	modelSchema := []byte(`{"type":"object","additionalProperties":false}`)
+	resultSchema := []byte(`{"type":"object"}`)
+	first := &genregistry.Toolset{
+		Name: "test.toolset",
+		Tools: []*genregistry.ToolSchema{{
+			Name:                   "lookup",
+			PayloadSchema:          modelSchema,
+			ExecutionPayloadSchema: []byte(`{"type":"object","properties":{"cursor":{"type":"string"}}}`),
+			ResultSchema:           resultSchema,
+		}},
+	}
+	second := &genregistry.Toolset{
+		Name: "test.toolset",
+		Tools: []*genregistry.ToolSchema{{
+			Name:                   "lookup",
+			PayloadSchema:          modelSchema,
+			ExecutionPayloadSchema: []byte(`{"type":"object","properties":{"cursor":{"type":"integer"}}}`),
+			ResultSchema:           resultSchema,
+		}},
+	}
+
+	assert.NotEqual(t, toolsetSchemaFingerprint(first), toolsetSchemaFingerprint(second))
+}
+
 func TestCatalogRejectsPersistedMismatchedWireProtocol(t *testing.T) {
 	t.Parallel()
 
