@@ -1412,6 +1412,10 @@ Production checklist:
   schema, schema without the root example, and parsed example input should move
   as one provider-neutral `model.ToolInputContract` until the provider adapter
   chooses the final projection.
+- Gemini function declarations translate `oneOf` choices to `anyOf` and omit
+  only validation and annotation keywords that Vertex does not accept. The
+  validated client still applies the complete original schema to every returned
+  tool call; unknown structural keywords fail before a request is sent.
 - Keep model gateways raw: compose provider-side behavior around
   `model.Provider`, and construct the validated `model.Client` after the remote
   transport so the request owner's advertised schema and attached decoder
