@@ -45,16 +45,16 @@ func TestNewRecoverableModelAnswerErrorRetainsExactAnswer(t *testing.T) {
 	require.Equal(t, "Use fewer references.", err.Correction())
 }
 
-func TestNewRecoverableModelToolCallsErrorRetainsExactResponse(t *testing.T) {
+func TestNewRecoverableModelPlanningErrorRetainsExactResponse(t *testing.T) {
 	message := &model.Message{}
-	err := NewRecoverableModelToolCallsError(
+	err := NewRecoverableModelPlanningError(
 		errors.New("selected value is not allowed"),
 		message,
 		"Select an exact advertised value.",
 	)
 
 	require.Equal(t, OutputContractOriginModel, err.Origin())
-	require.Equal(t, ModelOutputRecoveryToolCalls, err.RecoveryKind())
+	require.Equal(t, ModelOutputRecoveryPlanning, err.RecoveryKind())
 	require.Same(t, message, err.ModelMessage())
 	require.Equal(t, "Select an exact advertised value.", err.Correction())
 }

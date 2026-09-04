@@ -661,12 +661,12 @@ func TestRunLoopRecoversRejectedModelAnswer(t *testing.T) {
 	assert.Len(t, out.ToolEvents, 1)
 }
 
-func TestRunLoopRecoversRejectedModelToolCallsWithExecutableCatalog(t *testing.T) {
+func TestRunLoopRecoversRejectedPlanningOutputWithExecutableCatalog(t *testing.T) {
 	search := newAnyJSONSpec("catalog.search")
 	resumes := 0
 	h := newRecoveryHarness(
 		t,
-		"model-tool-calls-output",
+		"model-planning-output",
 		[]tools.ToolSpec{search},
 		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 			return successfulToolResult(call), nil
@@ -679,7 +679,7 @@ func TestRunLoopRecoversRejectedModelToolCallsWithExecutableCatalog(t *testing.T
 				require.True(t, ok)
 				response, err := client.Complete(ctx, &model.Request{Model: "test"})
 				require.NoError(t, err)
-				return nil, planner.NewRecoverableModelToolCallsError(
+				return nil, planner.NewRecoverableModelPlanningError(
 					errors.New("query is not in the advertised vocabulary"),
 					&response.Content[len(response.Content)-1],
 					"Use an exact advertised query.",
@@ -689,7 +689,7 @@ func TestRunLoopRecoversRejectedModelToolCallsWithExecutableCatalog(t *testing.T
 				require.Equal(t, []tools.Ident{search.Name}, toolDefinitionNames(input.Agent.AdvertisedToolDefinitions()))
 				require.Len(t, input.Reminders, 1)
 				assert.Contains(t, input.Reminders[0].Text, "Use an exact advertised query.")
-				assert.Contains(t, input.Reminders[0].Text, "Produce replacement tool calls")
+				assert.Contains(t, input.Reminders[0].Text, "Produce replacement planning output")
 				return &planner.PlanResult{
 					ToolCalls: []planner.ToolRequest{{
 						Name:    search.Name,
