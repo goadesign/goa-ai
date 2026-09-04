@@ -1102,7 +1102,7 @@ The runtime emits typed hook and stream events for:
 - run start, phase changes, completion, cancellation, and failure
 - prompt rendering and prompt provenance
 - tool scheduled, updated, completed, failed, and authorized
-- assistant chunks, final messages, token usage, and diagnostic planner or provider thinking
+- assistant chunks, final messages, token usage, and planner or provider thinking
 - awaits for clarification, external tools, and confirmation
 - child run links for agent-as-tool composition
 
@@ -1237,10 +1237,10 @@ rt := runtime.New(
 ```
 
 Every runtime stream must name its purpose. `RuntimeHostProfile` sends the
-events a trusted application needs to save and replay a run, without separate
-provider thinking events. Its committed assistant messages still contain the
-complete provider response, so applications must translate these events into
-their own public contract before sending anything to a browser. Use
+events a trusted application needs to save, replay, and present a run,
+including live thinking. Its committed assistant messages still contain the
+complete provider response, so applications must select and translate fields
+into their own public contract before sending anything to a browser. Use
 `AgentDebugProfile` only for restricted diagnostics. `WithStream` requires both
 the sink and profile; it never selects a profile by default.
 
@@ -1248,9 +1248,9 @@ For model streaming inside planners, choose one style per planner call:
 
 - `PlannerContext.PlannerModelClient(id)` is recommended for the designated,
   single model call. It publishes validated assistant text and returns a
-  `planner.StreamSummary`. It also publishes thinking only when the runtime uses
-  a diagnostic profile. The runtime saves the complete response only after the
-  planner accepts it.
+  `planner.StreamSummary`. It also publishes thinking when the selected profile
+  enables it. The runtime saves the complete response only after the planner
+  accepts it.
 - `PlannerContext.ModelClient(id)` gives you direct access to a `model.Client`.
   Its `Stream` method returns a validated stream; pair that value with
   `planner.ConsumeStream` or drain it yourself when you need lower-level
@@ -1258,7 +1258,7 @@ For model streaming inside planners, choose one style per planner call:
 
 The runtime captures each model response before planner code sees it. A
 planner's designated client is the only model call that publishes live text or
-diagnostic thinking events. When a planner probes through the opaque client, goa-ai matches
+thinking events. When a planner probes through the opaque client, goa-ai matches
 returned model-facing tool calls to the exact response that produced them and
 replays only that transcript. Usage events still include all calls. Every
 stream exposes closed typed chunks, then makes its complete validated response

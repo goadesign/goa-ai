@@ -684,11 +684,12 @@ rt := runtime.New(
 
 `WithStream` requires a sink and a profile. The runtime never chooses one
 implicitly. Use `RuntimeHostProfile` inside a trusted application that saves,
-replays, or presents agent runs. Its `AssistantTurn` events contain exact
-provider messages and must be translated into an application-owned public
-contract before they are sent to a browser. Use `AgentDebugProfile` only for a
-restricted diagnostic stream. The selected profile does not change the
-complete provider response saved in the internal transcript.
+replays, or presents agent runs. It includes live thinking, and its
+`AssistantTurn` events contain exact provider messages. The host must select
+and translate fields into an application-owned public contract before sending
+them to a browser. Use `AgentDebugProfile` only for a restricted diagnostic
+stream. The selected profile does not change the complete provider response
+saved in the internal transcript.
 
 The runtime store has no default. When options are omitted, the runtime uses
 these defaults:
@@ -1359,9 +1360,9 @@ retained workflow created by the older binary has expired.
 `PlannerEvents` lets planner code publish semantic progress and usage that the
 planner produces itself. Model-client output bypasses this interface: the
 runtime sends validated text from the designated planner call directly to the
-session stream and sends thinking only to a restricted diagnostic profile.
-Partial tool arguments remain inside model validation until the complete call
-is available.
+session stream and sends thinking when the selected profile enables it. Partial
+tool arguments remain inside model validation until the complete call is
+available.
 
 ```go
 type PlannerEvents interface {
@@ -1429,8 +1430,8 @@ Choose one per planner call.
 
 `PlannerContext.PlannerModelClient(id)` returns a planner-scoped client that
 sends validated assistant text to the session stream while its `Stream(...)`
-method drains the provider response. It sends thinking only when the runtime
-uses a restricted diagnostic profile. It returns a
+method drains the provider response. It sends thinking when the selected
+profile enables it. It returns a
 `planner.StreamSummary` containing accumulated text and complete validated tool
 calls. Each text fragment is append-only once sent. For an accepted response,
 the workflow appends the complete provider transcript and emits
@@ -1497,8 +1498,8 @@ This helper drains the stream and returns a `StreamSummary` with accumulated
 text and complete tool calls. While it drains the designated
 `PlannerModelClient` call, the runtime sends each validated text fragment to the
 configured sink. It sends thinking fragments only when the sink uses
-`AgentDebugProfile`. The trusted host decides how to translate allowed events
-into its public progress contract.
+a profile with `Thoughts` enabled. The trusted host decides how to translate
+allowed events into its public progress contract.
 
 `ConsumeStream` accepts the `*model.ValidatedStream` returned by every public
 model client. Provider and transport adapters capture a `model.RequestContract`
@@ -1524,7 +1525,7 @@ without repeating an external effect. An explicit model-output recovery or
 workflow continuation is a new planner activity and therefore receives a new
 response ID.
 
-Allowed text and diagnostic thinking fragments are sent as soon as they arrive
+Allowed text and thinking fragments are sent as soon as they arrive
 because delaying or combining them would remove the real-time behavior. Tool
 argument fragments remain inside the model validation boundary: partial JSON is
 neither executable nor independently useful, so only the complete validated
@@ -2789,11 +2790,9 @@ For runtime streams:
   it.
 
 These stream changes do not alter event names, event payload shapes, the Pulse
-envelope, or stored records. The set of emitted events does change when a
-caller moves from the old all-events default or `UserChatProfile` to
-`RuntimeHostProfile`: separate `planner_thought` events are no longer emitted.
-The upgrade requires source changes but no wire-format or stored-data
-migration.
+envelope, stored records, or the all-events behavior of the old default and
+`UserChatProfile`. `RuntimeHostProfile` includes live `planner_thought` events.
+The upgrade requires source changes but no wire-format or stored-data migration.
 
 For MCP services:
 
@@ -3379,7 +3378,7 @@ type Sink interface {
 | `tool_update` | `ToolUpdatePayload` (expected_children_total) |
 | `tool_output_delta` | `ToolOutputDeltaPayload` (incremental remote-tool output) |
 | `assistant_reply` | `AssistantReplyPayload` (text) |
-| `planner_thought` | `PlannerThoughtPayload` (restricted diagnostic notes and provider thinking; never for end users) |
+| `planner_thought` | `PlannerThoughtPayload` (live planner notes and provider thinking for a trusted host to translate) |
 | `await_clarification` | `AwaitClarificationPayload` |
 | `await_external_tools` | `AwaitExternalToolsPayload` |
 | `usage` | `UsagePayload` (input_tokens, output_tokens) |
@@ -3391,7 +3390,7 @@ type Sink interface {
 Control which events a sink receives:
 
 ```go
-// Trusted host events without separate provider thinking
+// Trusted host events, including live thinking
 stream.RuntimeHostProfile()
 
 // Restricted diagnostics (all events; child runs linked)
@@ -3961,7 +3960,8 @@ runlog when needed.
 
 When `model.Request.Thinking.Enable` is true for a Bedrock adaptive Claude
 model, the Bedrock adapter requests summarized reasoning output explicitly so
-restricted diagnostics can receive text. This includes Claude Sonnet 5, whose
+trusted hosts can receive text when their profile enables thinking. This
+includes Claude Sonnet 5, whose
 always-on adaptive thinking otherwise defaults to a signature-only block, as
 well as Claude Opus 4.7 and later adaptive revisions.
 
@@ -4459,7 +4459,7 @@ events required for a specific purpose.
 
 | Profile | Purpose | Events Included |
 |---------|---------|-----------------|
-| `RuntimeHostProfile()` | Trusted host persistence, replay, and presentation | Assistant messages, exact committed turns, tool progress, user-input requests, usage, workflow status, prompt references, and child-run links; no separate provider thinking events |
+| `RuntimeHostProfile()` | Trusted host persistence, replay, and presentation | Assistant messages, live thinking, exact committed turns, tool progress, user-input requests, usage, workflow status, prompt references, and child-run links |
 | `AgentDebugProfile()` | Restricted diagnostic view | All event types, including provider thinking |
 | `MetricsProfile()` | Telemetry and monitoring | `usage`, `workflow` only |
 
@@ -4473,8 +4473,9 @@ rt := runtime.New(runtimeStore,
 ```
 
 `RuntimeHostProfile` is not safe to forward unchanged to a browser. In
-particular, its exact `AssistantTurn` messages retain provider-only data needed
-for persistence and replay. The host owns the smaller public event contract.
+particular, live thinking and exact `AssistantTurn` messages may retain
+provider-only data. The host owns the smaller public event contract and decides
+which fields users see.
 
 ---
 

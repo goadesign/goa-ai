@@ -12,14 +12,14 @@ Build intelligent agents, MCP servers, and registry-integrated toolsets from you
 - **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
 
 An agent runtime sends events only through the stream profile chosen with its
-sink. The trusted-host profile sends assistant text, tool progress, requests for
-user input, workflow status, and exact committed assistant messages, but it does
-not send separate provider thinking events. Those committed messages still
-contain the complete provider response and are not a public browser contract.
-The host translates them into its own public events. The debug profile sends
-every event and is restricted to diagnostics. An accepted response keeps the
-complete provider response in the internal transcript, including thinking
-needed for an exact later provider request. A rejected response or ordinary
+sink. The trusted-host profile sends assistant text, live thinking, tool
+progress, requests for user input, workflow status, and exact committed
+assistant messages. These are private runtime events, not a public browser
+contract. The host selects fields and translates them into its own public
+events. The debug profile also sends every event to make the diagnostic
+purpose explicit at its call sites. An accepted response keeps the complete
+provider response in the internal transcript, including thinking needed for an
+exact later provider request. A rejected response or ordinary
 failure reported before activity cancellation keeps only assistant text already
 delivered to the trusted host. Cancellation may prevent that text from reaching
 durable storage.
@@ -1149,7 +1149,7 @@ redeploys.
   distinct without comparing visible text or metadata. The runtime identifies
   tool turns from unchanged model-facing calls and terminal turns from the
   canonical provider message returned by its response helpers. Only the
-  designated planner client publishes live text and, when a diagnostic profile
+  designated planner client publishes live text and, when the selected profile
   permits it, thinking. Tool-argument deltas remain internal, while usage accounts for every invocation, including valid numeric
   counts from a rejected usage chunk. It commits the complete selected response
   once after atomic admission and before effects. Planners never manage
@@ -1227,9 +1227,9 @@ redeploys.
   Completion-aware suspensions use `goa-ai.run-suspension.v7`. The saved policy
   is required, and a checkpoint with another version fails at that typed
   boundary.
-- **Provider reasoning diagnostic contract**: when a caller enables thinking
+- **Provider reasoning stream contract**: when a caller enables thinking
   for a Bedrock adaptive Claude model, the adapter asks the provider to return
-  summarized reasoning text for exact replay and restricted diagnostics. This includes Claude
+  summarized reasoning text for exact replay and trusted-host presentation. This includes Claude
   Sonnet 5, whose always-on thinking otherwise returns only an opaque signature,
   and later adaptive model revisions with the same omitted-display default.
 

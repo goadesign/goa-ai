@@ -29,7 +29,8 @@ func Example_broadcast() {
 
 	rt := agentsruntime.New(storageinmem.New())
 
-	// Attach the trusted-host profile, which excludes separate diagnostic thoughts.
+	// Attach the trusted-host profile. The sink receives private runtime events
+	// and must convert selected fields before exposing them to an end user.
 	subscriber, err := stream.NewSubscriber(sink, stream.RuntimeHostProfile())
 	if err != nil {
 		panic(err)

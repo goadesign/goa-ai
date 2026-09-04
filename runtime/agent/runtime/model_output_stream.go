@@ -1,6 +1,6 @@
 package runtime
 
-// This file sends live model text and diagnostic thinking from the planner
+// This file sends live model text and thinking from the planner
 // activity to the configured trusted-host stream. These private updates never
 // enter the durable run log or hook bus, and they are not safe to forward
 // unchanged to an end-user client. Emitted assistant text is append-only. The

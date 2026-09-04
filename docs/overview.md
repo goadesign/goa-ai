@@ -822,7 +822,7 @@ type PlannerContext interface {
 
 Planner-authored semantic progress and usage during planning. The designated
 planner model call sends validated text to the configured trusted-host stream
-and sends thinking only to a restricted diagnostic profile. Partial tool
+and sends thinking when the selected profile enables it. Partial tool
 arguments stay inside model validation until the complete call is available.
 
 ```go
@@ -1196,10 +1196,10 @@ contract.
 type MySink struct{}
 
 func (s *MySink) Send(ctx context.Context, event stream.Event) error {
-    // Handle: assistant_reply, tool_start,
+    // Handle: assistant_reply, planner_thought, tool_start,
     //         tool_update, tool_end, await_clarification, 
     //         await_external_tools, usage, workflow, child_run_linked
-    // Diagnostic profiles also receive planner_thought.
+    // The selected profile decides which events reach this sink.
     return nil
 }
 
@@ -1240,7 +1240,7 @@ defer func() {
 Control which events a sink receives:
 
 ```go
-// Trusted host: private runtime input without separate provider thinking
+// Trusted host: private runtime input, including live thinking
 profile := stream.RuntimeHostProfile()
 
 // Restricted diagnostics: includes provider thinking
@@ -1254,9 +1254,9 @@ profile := stream.MetricsProfile()
 
 - Stream events are structured private inputs, not a browser wire format.
 - `RuntimeHostProfile` carries exact committed messages, including
-  provider-only fields, for persistence and replay. It is never safe to
-  forward unchanged to a browser. Select and convert the allowed data into an
-  application-owned public contract.
+  provider-only fields, and live thinking for presentation. It is never safe
+  to forward unchanged to a browser. Select and convert the allowed data into
+  an application-owned public contract.
 - Use `AgentDebugProfile` only for a restricted diagnostic stream.
 
 ---
