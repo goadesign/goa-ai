@@ -871,6 +871,49 @@ func TestRegisterAgentPlannerCatalogContainsOnlyExecutableTools(t *testing.T) {
 	require.Equal(t, firstExecutable.Name.String(), definitions[1].Name)
 }
 
+func TestRegisterAgentReplacesExecutableToolsWithEmptyList(t *testing.T) {
+	eng := &stubEngine{}
+	rt := New(newTestStore(), WithEngine(eng))
+	executable := newAnyJSONSpec("service.tools.lookup")
+	exported := newAnyJSONSpec("service.agent.answer")
+	registration := AgentRegistration{
+		Definition: NewAgentDefinition(
+			AgentRoute{
+				ID:               "service.agent",
+				WorkflowName:     "service.workflow",
+				DefaultTaskQueue: "service.queue",
+			},
+			[]tools.ToolSpec{executable, exported},
+			nil,
+			nil,
+			[]tools.Ident{executable.Name},
+			nil,
+		),
+		WorkflowHandler:     (engine.WorkflowDefinition{Handler: rt.ExecuteWorkflow}).Handler,
+		Planner:             &stubPlanner{},
+		PlanActivityName:    "service.plan",
+		ResumeActivityName:  "service.resume",
+		ExecuteToolActivity: "service.execute_tool",
+	}
+
+	require.NoError(t, rt.RegisterAgent(t.Context(), registration))
+	require.Len(t, rt.ToolSpecsForAgent("service.agent"), 1)
+	registration.Definition = NewAgentDefinition(
+		AgentRoute{
+			ID:               "service.agent",
+			WorkflowName:     "service.workflow",
+			DefaultTaskQueue: "service.queue",
+		},
+		[]tools.ToolSpec{executable, exported},
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, rt.RegisterAgent(t.Context(), registration))
+	require.Empty(t, rt.ToolSpecsForAgent("service.agent"))
+}
+
 func TestRegisterAgentRejectsNegativeRecoveryTurns(t *testing.T) {
 	rt := New(newTestStore())
 

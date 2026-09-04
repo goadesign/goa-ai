@@ -1056,15 +1056,13 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	r.mu.Lock()
 	r.agents[reg.Definition.route.ID] = reg
 	r.addToolSpecsLocked(reg.Definition.specs, reg.Definition.metadataFor, definitions)
-	if len(reg.Definition.executableTools) > 0 {
-		// Store only tools this agent may execute. Exported tools describe how
-		// other agents call this one and must not enter its planner catalog.
-		specs := make([]tools.ToolSpec, 0, len(reg.Definition.executableTools))
-		for _, name := range reg.Definition.executableTools {
-			specs = append(specs, reg.Definition.specByName[name])
-		}
-		r.agentToolSpecs[reg.Definition.route.ID] = specs
+	// Store only tools this agent may execute. Exported tools describe how
+	// other agents call this one and must not enter its planner catalog.
+	specs := make([]tools.ToolSpec, 0, len(reg.Definition.executableTools))
+	for _, name := range reg.Definition.executableTools {
+		specs = append(specs, reg.Definition.specByName[name])
 	}
+	r.agentToolSpecs[reg.Definition.route.ID] = specs
 	r.mu.Unlock()
 
 	return nil
