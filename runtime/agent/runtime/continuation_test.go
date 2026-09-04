@@ -218,7 +218,7 @@ func TestContinuationActionSupportsSourceWithoutModelFields(t *testing.T) {
 	t.Parallel()
 
 	rt, search, continuation := continuationTestRuntime()
-	search.Payload.FieldJSONTypes = nil
+	search.Payload.Fields = nil
 	rt.toolSpecs[search.Name] = search
 	rt.agentToolSpecs["svc.agent"][0] = search
 	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
@@ -651,9 +651,9 @@ func TestBindContinuationRejectsModelAuthoredCanonicalToolAndArguments(t *testin
 
 func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {
 	search := newAnyJSONSpec("tools.search")
-	search.Payload.FieldJSONTypes = map[string]string{
-		"limit": "integer",
-		"query": "string",
+	search.Payload.Fields = []tools.FieldMetadata{
+		{Path: []tools.FieldPathSegment{tools.FixedField("limit")}, JSONType: "integer"},
+		{Path: []tools.FieldPathSegment{tools.FixedField("query")}, JSONType: "string"},
 	}
 	search.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
 		ContinueTool:    "tools.continue_search",
@@ -662,7 +662,7 @@ func continuationTestSpecs() (tools.ToolSpec, tools.ToolSpec) {
 	}}
 	continuation := newAnyJSONSpec("tools.continue_search")
 	continuation.Payload.Schema = rawjson.Message(`{"type":"object"}`)
-	continuation.Payload.FieldJSONTypes = map[string]string{"$payload": "object"}
+	continuation.Payload.Fields = []tools.FieldMetadata{{JSONType: "object"}}
 	continuation.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{
 		ContinueTool:    continuation.Name,
 		SourceTool:      search.Name,

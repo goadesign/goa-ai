@@ -265,10 +265,8 @@ type (
 		UnmarshalFunc string
 		// Validation function name (e.g., "ValidateMyToolPayload").
 		ValidateFunc string
-		// FieldDescsVar names the map that stores field descriptions.
-		FieldDescsVar string
-		// FieldJSONTypesVar names the map that stores each field's JSON type.
-		FieldJSONTypesVar string
+		// FieldsVar names the slice that stores generated field metadata.
+		FieldsVar string
 		// JSONValidatorFunc names the private function that checks the raw JSON document.
 		JSONValidatorFunc string
 		// JSONValueValidatorFunc names the private function that checks the document's root value.
@@ -331,10 +329,8 @@ type (
 		Usage typeUsage
 		// Whether to generate codec functions.
 		GenerateCodec bool
-		// FieldDescs maps dotted field paths to descriptions (for payload types).
-		FieldDescs map[string]string
-		// FieldJSONTypes maps dotted field paths to their generated JSON type.
-		FieldJSONTypes map[string]string
+		// Fields contains the generated path, type, description, and union facts.
+		Fields []*fieldMetadataData
 		// AcceptEmpty indicates that empty JSON input should be accepted and
 		// treated as the zero value (only for payloads). This is true for
 		// payload types that are empty structs (no fields).

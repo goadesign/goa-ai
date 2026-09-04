@@ -45,22 +45,40 @@ var (
 		},
 	}
 )
-var draftTaskResultFieldDescs = map[string]string{
-	"assistant_text": "Short explanation of the generated draft",
-	"goal":           "Outcome-style goal",
-	"name":           "Task name",
-	"steps":          "Ordered draft steps",
-	"steps.*":        "Ordered draft steps",
-	"steps.*.title":  "Short step title",
-}
-var draftTaskResultFieldJSONTypes = map[string]string{
-	"$payload":       "object",
-	"assistant_text": "string",
-	"goal":           "string",
-	"name":           "string",
-	"steps":          "array",
-	"steps.*":        "object",
-	"steps.*.title":  "string",
+var draftTaskResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("assistant_text")},
+		JSONType:    "string",
+		Description: "Short explanation of the generated draft",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("name")},
+		JSONType:    "string",
+		Description: "Task name",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("goal")},
+		JSONType:    "string",
+		Description: "Outcome-style goal",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("steps")},
+		JSONType:    "array",
+		Description: "Ordered draft steps",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("steps"), tools.DynamicField{}},
+		JSONType:    "object",
+		Description: "Ordered draft steps",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("steps"), tools.DynamicField{}, tools.FixedField("title")},
+		JSONType:    "string",
+		Description: "Short step title",
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -105,8 +123,8 @@ func enrichDraftTaskResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(draftTaskResultFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(draftTaskResultFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -121,8 +139,8 @@ func invalidDraftTaskResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(draftTaskResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(draftTaskResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -135,7 +153,7 @@ func invalidDraftTaskResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

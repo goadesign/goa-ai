@@ -64,16 +64,14 @@ func newSpecDangerousWrite() tools.ToolSpec {
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"key\":{\"description\":\"Key to update.\",\"type\":\"string\"},\"value\":{\"description\":\"New value.\",\"type\":\"string\"}},\"required\":[\"key\",\"value\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"key\":{\"description\":\"Key to update.\",\"type\":\"string\"},\"value\":{\"description\":\"New value.\",\"type\":\"string\"}},\"required\":[\"key\",\"value\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        cloneStringMap(dangerousWritePayloadFieldDescs),
-			FieldJSONTypes:           cloneStringMap(dangerousWritePayloadFieldJSONTypes),
+			Fields:                   tools.CloneFieldMetadata(dangerousWritePayloadFields),
 			Codec:                    dangerousWritePayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "DangerousWriteResult",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"key\":{\"description\":\"Key that was updated.\",\"type\":\"string\"},\"summary\":{\"description\":\"Summary of the update.\",\"type\":\"string\"}},\"required\":[\"summary\",\"key\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"key\":{\"description\":\"Key that was updated.\",\"type\":\"string\"},\"summary\":{\"description\":\"Summary of the update.\",\"type\":\"string\"}},\"required\":[\"summary\",\"key\"],\"type\":\"object\"}"),
-			FieldDescriptions:        cloneStringMap(dangerousWriteResultFieldDescs),
-			FieldJSONTypes:           cloneStringMap(dangerousWriteResultFieldJSONTypes),
+			Fields:                   tools.CloneFieldMetadata(dangerousWriteResultFields),
 			Codec:                    dangerousWriteResultCodec,
 		},
 	}

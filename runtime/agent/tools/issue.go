@@ -148,27 +148,27 @@ func CloneFieldIssues(in []*FieldIssue) []*FieldIssue {
 	return out
 }
 
-// FieldDescriptionsForIssues selects descriptions for fields named by
-// validation issues. Description maps are consulted in order. Allowed values
+// FieldDescriptionsForIssues selects advertised descriptions for fields named
+// by validation issues. Metadata lists are consulted in order. Allowed values
 // identify sibling fields only for unknown_field issues; for enum failures they
 // are legal values, not field names. Nested sibling names are qualified with
 // the rejected field's parent path.
 func FieldDescriptionsForIssues(
 	issues []*FieldIssue,
-	descriptions ...map[string]string,
+	metadataSets ...[]FieldMetadata,
 ) map[string]string {
 	selected := make(map[string]string)
 	for _, issue := range issues {
-		fields := []string{issue.Field}
+		issueFields := []string{issue.Field}
 		if issue.Constraint == "unknown_field" {
 			for _, allowed := range issue.Allowed {
-				fields = append(fields, siblingFieldPath(issue.Field, allowed))
+				issueFields = append(issueFields, siblingFieldPath(issue.Field, allowed))
 			}
 		}
-		for _, field := range fields {
-			for _, source := range descriptions {
-				if description, ok := LookupFieldMetadata(source, field); ok && description != "" {
-					selected[field] = description
+		for _, field := range issueFields {
+			for _, source := range metadataSets {
+				if metadata, ok := LookupFieldMetadata(source, field); ok && metadata.Description != "" {
+					selected[field] = metadata.Description
 					break
 				}
 			}

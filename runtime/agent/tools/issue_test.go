@@ -111,10 +111,10 @@ func TestNewUnionDiscriminatorErrorDistinguishesMissingAndEmpty(t *testing.T) {
 }
 
 func TestFieldDescriptionsForIssuesDistinguishesFieldsFromEnumValues(t *testing.T) {
-	descriptions := map[string]string{
-		"mode":     "Execution mode",
-		"schedule": "Schedule payload",
-		"timeout":  "Timeout payload",
+	descriptions := []FieldMetadata{
+		{Path: []FieldPathSegment{FixedField("mode")}, Description: "Execution mode"},
+		{Path: []FieldPathSegment{FixedField("schedule")}, Description: "Schedule payload"},
+		{Path: []FieldPathSegment{FixedField("timeout")}, Description: "Timeout payload"},
 	}
 
 	enumDescriptions := FieldDescriptionsForIssues([]*FieldIssue{{
@@ -131,9 +131,9 @@ func TestFieldDescriptionsForIssuesDistinguishesFieldsFromEnumValues(t *testing.
 		Field:      "profile.extra",
 		Constraint: "unknown_field",
 		Allowed:    []string{"name", "timezone"},
-	}}, map[string]string{
-		"profile.name":     "Profile name",
-		"profile.timezone": "Profile timezone",
+	}}, []FieldMetadata{
+		{Path: []FieldPathSegment{FixedField("profile"), FixedField("name")}, Description: "Profile name"},
+		{Path: []FieldPathSegment{FixedField("profile"), FixedField("timezone")}, Description: "Profile timezone"},
 	})
 
 	assert.Equal(t, map[string]string{"mode": "Execution mode"}, enumDescriptions)
@@ -151,15 +151,15 @@ func TestFieldDescriptionsForIssuesMatchesIndexedCollections(t *testing.T) {
 	invalidDescriptions := FieldDescriptionsForIssues([]*FieldIssue{{
 		Field:      "/groups/0/a~1b",
 		Constraint: "invalid_field_type",
-	}}, map[string]string{
-		"groups.*.*": "Group count",
+	}}, []FieldMetadata{
+		{Path: []FieldPathSegment{FixedField("groups"), DynamicField{}, DynamicField{}}, Description: "Group count"},
 	})
 	unknownDescriptions := FieldDescriptionsForIssues([]*FieldIssue{{
 		Field:      "/groups/0/extra",
 		Constraint: "unknown_field",
 		Allowed:    []string{"name"},
-	}}, map[string]string{
-		"groups.*.name": "Group name",
+	}}, []FieldMetadata{
+		{Path: []FieldPathSegment{FixedField("groups"), DynamicField{}, FixedField("name")}, Description: "Group name"},
 	})
 
 	assert.Equal(t, map[string]string{

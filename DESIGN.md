@@ -334,9 +334,9 @@ output, it returns one of two explicit errors. `NewRecoverableModelAnswerError`
 spends one recovery turn on a replacement answer without ordinary tools.
 `NewRecoverableModelPlanningError` spends one recovery turn on replacement
 output with the current executable catalog. The rejected output may contain
-invalid tool calls or may have omitted a required call. Both paths are bound to the
-exact rejected response fingerprint, record usage, and keep the rejected body
-private. Infrastructure failures remain activity errors and follow the
+invalid tool calls or may have omitted a required call. Both paths are bound to
+the exact rejected response fingerprint, record usage, and keep the rejected
+body private. Infrastructure failures remain activity errors and follow the
 activity retry policy. Plan and Resume activities are the exception: their
 generated and registered policy permits exactly one attempt because they may
 have already emitted append-only text. Tool activities retain retries because
@@ -1435,7 +1435,14 @@ unrestricted. Generated objects and unions reject undeclared properties, maps
 accept dynamic keys, and the validated model client applies the advertised
 schema before any attached input decoder. Only schema rejections and typed
 tool-input validation errors qualify for limited-size correction guidance that
-omits rejected arguments. The complete contract lives in
+omits rejected arguments. Code generation records field types through nested
+objects, collections, and union branches. Callers that build `ToolSpec` values
+directly may supply the same field metadata. The model client uses that metadata
+to name one field and its required, type, or enum rule when the structured
+schema failure has one unique deepest cause. For unions, only the branch named
+by a valid string discriminator participates. Array indexes and map keys appear
+as `*`. Ambiguous failures and specifications without field metadata keep
+generic guidance. The complete contract lives in
 [Model-Visible Tool Arguments](docs/runtime.md#model-visible-tool-arguments).
 
 Fields marked with `Inject` are absent from the model-visible input and filled

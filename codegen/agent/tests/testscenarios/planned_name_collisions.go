@@ -14,7 +14,7 @@ func ToolSpecNameCollisions() func() {
 
 		var InspectInput = Type("InspectInput", func() {
 			Attribute("descriptions", String, "Description metadata input.", func() {
-				Meta("struct:field:type", "inspectPayloadFieldDescs.Value", "generated.local/custom/field_descriptions", "inspectPayloadFieldDescs")
+				Meta("struct:field:type", "inspectPayloadFields.Value", "generated.local/custom/field_descriptions", "inspectPayloadFields")
 			})
 			Attribute("json_types", String, "JSON type metadata input.", func() {
 				Meta("struct:field:type", "inspectPayloadFieldJSONTypes.Value", "generated.local/custom/field_json_types", "inspectPayloadFieldJSONTypes")

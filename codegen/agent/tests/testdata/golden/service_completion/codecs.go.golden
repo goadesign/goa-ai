@@ -42,13 +42,82 @@ var (
 		},
 	}
 )
-var draftFromTranscriptResultFieldDescs = map[string]string{
-	"assistant_text": "Assistant summary",
-}
-var draftFromTranscriptResultFieldJSONTypes = map[string]string{
-	"$payload":       "object",
-	"assistant_text": "string",
-	"draft":          "object",
+var draftFromTranscriptResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("assistant_text")},
+		JSONType:    "string",
+		Description: "Assistant summary",
+	},
+	{
+		Path:     []tools.FieldPathSegment{tools.FixedField("draft")},
+		JSONType: "object",
+	},
+	{
+		Path:     []tools.FieldPathSegment{tools.FixedField("draft"), tools.FixedField("type")},
+		JSONType: "string",
+		DiscriminatorValues: []string{
+			"new_task",
+			"existing_task_id",
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("draft"), tools.FixedField("value")},
+		JSONType:    "object",
+		Description: "Draft a new task",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("draft"), tools.FixedField("type")},
+				Value:         "new_task",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("draft"), tools.FixedField("value"), tools.FixedField("steps")},
+		JSONType:    "array",
+		Description: "Draft steps",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("draft"), tools.FixedField("type")},
+				Value:         "new_task",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("draft"), tools.FixedField("value"), tools.FixedField("steps"), tools.DynamicField{}},
+		JSONType:    "object",
+		Description: "Draft steps",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("draft"), tools.FixedField("type")},
+				Value:         "new_task",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("draft"), tools.FixedField("value"), tools.FixedField("steps"), tools.DynamicField{}, tools.FixedField("label")},
+		JSONType:    "string",
+		Description: "User-visible step label",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("draft"), tools.FixedField("type")},
+				Value:         "new_task",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("draft"), tools.FixedField("value")},
+		JSONType:    "string",
+		Description: "Reference an existing task",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("draft"), tools.FixedField("type")},
+				Value:         "existing_task_id",
+			},
+		},
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -93,8 +162,8 @@ func enrichDraftFromTranscriptResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(draftFromTranscriptResultFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(draftFromTranscriptResultFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -109,8 +178,8 @@ func invalidDraftFromTranscriptResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(draftFromTranscriptResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(draftFromTranscriptResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -123,7 +192,7 @@ func invalidDraftFromTranscriptResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

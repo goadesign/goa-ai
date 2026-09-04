@@ -65,19 +65,25 @@ var (
 		},
 	}
 )
-var answerPayloadFieldDescs = map[string]string{
-	"question": "User question to answer",
+var answerPayloadFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("question")},
+		JSONType:    "string",
+		Description: "User question to answer",
+	},
 }
-var answerResultFieldDescs = map[string]string{
-	"text": "Answer text",
-}
-var answerPayloadFieldJSONTypes = map[string]string{
-	"$payload": "object",
-	"question": "string",
-}
-var answerResultFieldJSONTypes = map[string]string{
-	"$payload": "object",
-	"text":     "string",
+var answerResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("text")},
+		JSONType:    "string",
+		Description: "Answer text",
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -122,8 +128,8 @@ func enrichAnswerPayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(answerPayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(answerPayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -139,8 +145,8 @@ func enrichAnswerResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(answerResultFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(answerResultFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -155,8 +161,8 @@ func invalidAnswerPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(answerPayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(answerPayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -169,7 +175,7 @@ func invalidAnswerPayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -186,8 +192,8 @@ func invalidAnswerResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(answerResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(answerResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -200,7 +206,7 @@ func invalidAnswerResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

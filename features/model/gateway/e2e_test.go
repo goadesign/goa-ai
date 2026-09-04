@@ -301,9 +301,12 @@ func generatedRejectingGatewayTool() *model.ToolDefinition {
 	return model.ToolDefinitionFromSpec(tools.ToolSpec{
 		Name: "emit_tool",
 		Payload: tools.TypeSpec{
-			Name:           "EmitPayload",
-			Schema:         rawjson.Message(`{"type":"object"}`),
-			FieldJSONTypes: map[string]string{"$payload": "object", "k": "number"},
+			Name:   "EmitPayload",
+			Schema: rawjson.Message(`{"type":"object"}`),
+			Fields: []tools.FieldMetadata{
+				{JSONType: "object"},
+				{Path: []tools.FieldPathSegment{tools.FixedField("k")}, JSONType: "number"},
+			},
 			Codec: tools.JSONCodec[any]{
 				FromJSON: func([]byte) (any, error) {
 					return nil, tools.NewValidationError(

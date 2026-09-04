@@ -31,7 +31,10 @@ func TestToolFailureReminderCarriesCorrectionContract(t *testing.T) {
 				ExampleJSON: rawjson.Message(`{"dataset":"alarms"}`),
 			},
 		},
-	}, map[string]string{"dataset": "Data source to query."})
+	}, []tools.FieldMetadata{{
+		Path:        []tools.FieldPathSegment{tools.FixedField("dataset")},
+		Description: "Data source to query.",
+	}})
 
 	assert.Contains(t, got, "failed tool remains available with correction guidance")
 	assert.Contains(t, got, `"field":"parameters"`)

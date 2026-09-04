@@ -67,17 +67,25 @@ var (
 		},
 	}
 )
-var storePayloadFieldDescs = map[string]string{
-	"values":   "Indexed values.",
-	"values.*": "Indexed values.",
+var storePayloadFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("values")},
+		JSONType:    "array",
+		Description: "Indexed values.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("values"), tools.DynamicField{}},
+		JSONType:    "string",
+		Description: "Indexed values.",
+	},
 }
-var storePayloadFieldJSONTypes = map[string]string{
-	"$payload": "object",
-	"values":   "array",
-	"values.*": "string",
-}
-var storeResultFieldJSONTypes = map[string]string{
-	"$payload": "string",
+var storeResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "string",
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -122,8 +130,8 @@ func enrichStorePayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(storePayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(storePayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -138,8 +146,8 @@ func invalidStorePayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(storePayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(storePayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -152,7 +160,7 @@ func invalidStorePayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -169,8 +177,8 @@ func invalidStoreResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(storeResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(storeResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -183,7 +191,7 @@ func invalidStoreResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

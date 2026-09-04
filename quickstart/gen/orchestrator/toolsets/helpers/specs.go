@@ -61,16 +61,14 @@ func newSpecAnswer() tools.ToolSpec {
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"question\":\"What is the capital of Japan?\"},\"properties\":{\"question\":{\"description\":\"User question to answer\",\"type\":\"string\"}},\"required\":[\"question\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"question\":{\"description\":\"User question to answer\",\"type\":\"string\"}},\"required\":[\"question\"],\"type\":\"object\"}"),
 			ExampleJSON:              tools.RawJSON("{\"question\":\"What is the capital of Japan?\"}"),
-			FieldDescriptions:        cloneStringMap(answerPayloadFieldDescs),
-			FieldJSONTypes:           cloneStringMap(answerPayloadFieldJSONTypes),
+			Fields:                   tools.CloneFieldMetadata(answerPayloadFields),
 			Codec:                    answerPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "AnswerResult",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Answer text\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Answer text\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
-			FieldDescriptions:        cloneStringMap(answerResultFieldDescs),
-			FieldJSONTypes:           cloneStringMap(answerResultFieldJSONTypes),
+			Fields:                   tools.CloneFieldMetadata(answerResultFields),
 			Codec:                    answerResultCodec,
 		},
 	}

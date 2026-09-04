@@ -101,7 +101,7 @@ func TestCollectionCodecRejectsNegativeUnsignedInteger(t *testing.T) {
 	assertCollectionIssue(t, err, "/unsigned_numbers/0", "integer", "number", "Unsigned integers.")
 }
 
-func TestCollectionCodecKeepsFieldDescriptionsSeparate(t *testing.T) {
+func TestCollectionCodecUsesTheElementDescription(t *testing.T) {
 	_, err := UnmarshalArchivePayload([]byte(`+"`"+`{"aliases":[7],"numbers":[1],"large_numbers":[2147483648]}`+"`"+`))
 	assertCollectionIssue(t, err, "/aliases/0", "string", "number", "Archived aliases.")
 }
@@ -125,13 +125,12 @@ func TestCollectionCodecKeepsArrayIndexesWhenMapsRequireJSONPointer(t *testing.T
 }
 
 func TestCollectionMetadataMatchesIndexedArrayMapValues(t *testing.T) {
-	description, ok := tools.LookupFieldMetadata(storePayloadFieldDescs, "/groups/0/a~1b")
-	if !ok || description != "Integer counts grouped by position." {
-		t.Fatalf("unexpected description: %q, %t from %#v", description, ok, storePayloadFieldDescs)
+	field, ok := tools.LookupFieldMetadata(storePayloadFields, "/groups/0/a~1b")
+	if !ok || field.Description != "Integer counts grouped by position." {
+		t.Fatalf("unexpected description: %#v, %t from %#v", field, ok, storePayloadFields)
 	}
-	jsonType, ok := tools.LookupFieldMetadata(storePayloadFieldJSONTypes, "/groups/0/a~1b")
-	if !ok || jsonType != "integer" {
-		t.Fatalf("unexpected JSON type: %q, %t from %#v", jsonType, ok, storePayloadFieldJSONTypes)
+	if field.JSONType != "integer" {
+		t.Fatalf("unexpected JSON type: %q from %#v", field.JSONType, storePayloadFields)
 	}
 }
 

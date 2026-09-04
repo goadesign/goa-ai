@@ -39,8 +39,10 @@ var (
 		},
 	}
 )
-var headlineResultFieldJSONTypes = map[string]string{
-	"$payload": "string",
+var headlineResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "string",
+	},
 }
 
 func invalidHeadlineResultFieldTypeError(err error) error {
@@ -52,8 +54,8 @@ func invalidHeadlineResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(headlineResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(headlineResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -66,7 +68,7 @@ func invalidHeadlineResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

@@ -61,16 +61,14 @@ func newSpecInspect() tools.ToolSpec {
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"descriptions\":{\"description\":\"Description metadata input.\",\"type\":\"string\"},\"field_type\":{\"description\":\"Invalid field type input.\",\"type\":\"string\"},\"json_types\":{\"description\":\"JSON type metadata input.\",\"type\":\"string\"},\"validation\":{\"description\":\"Validation description input.\",\"type\":\"string\"},\"validator\":{\"description\":\"JSON validator input.\",\"type\":\"string\"}},\"required\":[\"descriptions\",\"json_types\",\"validator\",\"validation\",\"field_type\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"descriptions\":{\"description\":\"Description metadata input.\",\"type\":\"string\"},\"field_type\":{\"description\":\"Invalid field type input.\",\"type\":\"string\"},\"json_types\":{\"description\":\"JSON type metadata input.\",\"type\":\"string\"},\"validation\":{\"description\":\"Validation description input.\",\"type\":\"string\"},\"validator\":{\"description\":\"JSON validator input.\",\"type\":\"string\"}},\"required\":[\"descriptions\",\"json_types\",\"validator\",\"validation\",\"field_type\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        cloneStringMap(inspectPayloadFieldDescs2),
-			FieldJSONTypes:           cloneStringMap(inspectPayloadFieldJSONTypes2),
+			Fields:                   tools.CloneFieldMetadata(inspectPayloadFields2),
 			Codec:                    inspectPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "InspectResult",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
-			FieldDescriptions:        nil,
-			FieldJSONTypes:           cloneStringMap(inspectResultFieldJSONTypes),
+			Fields:                   tools.CloneFieldMetadata(inspectResultFields),
 			Codec:                    inspectResultCodec,
 		},
 	}

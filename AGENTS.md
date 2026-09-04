@@ -80,10 +80,10 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
  through runtime and generated specs. Do not rehydrate them into
  `map[string]any` except inside provider adapters that must build provider SDK
  documents.
-- Generated `tools.TypeSpec` owns tool schema metadata such as field
- descriptions and JSON field types. UI, retry, and clarification code should
- consume `TypeSpec.FieldDescriptions` and `TypeSpec.FieldJSONTypes`; do not
- parse JSON Schema to rediscover labels or expected types.
+- Generated `tools.TypeSpec` owns structured `Fields` metadata containing field
+  paths, descriptions, JSON types, and union branch requirements. UI, retry,
+  and clarification code should consume `TypeSpec.Fields`; do not parse JSON
+  Schema to rediscover these facts.
 - The model boundary validates complete tool arguments against the exact JSON
   Schema advertised to the model, then calls the generated codec for typed
   decoding and Goa validation. Service code should call the generated codec;
