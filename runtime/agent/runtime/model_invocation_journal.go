@@ -2,15 +2,18 @@ package runtime
 
 // model_invocation_journal.go validates and correlates every model response
 // made during one planner activity. Text and thinking from the designated
-// planner call stream immediately; emitted text is append-only, while only the
-// complete response that exactly matches the planner result becomes durable
-// model transcript.
+// planner call stream immediately. Emitted text is append-only. A selected
+// response becomes durable as its complete provider transcript. Text emitted
+// by a rejected response or ordinary failure reported before activity
+// cancellation becomes durable as a plain assistant message before recovery or
+// failure continues.
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 
 	"goa.design/goa-ai/runtime/agent/internal/modelcall"
@@ -62,23 +65,29 @@ type (
 	// modelInvocationJournal keeps every model call made during one planner
 	// activity separate from user-visible event publication.
 	modelInvocationJournal struct {
-		runtime     *Runtime
-		runID       string
-		sessionID   string
-		responseID  string
-		mu          sync.Mutex
-		invocations map[modelInvocationID]*modelInvocationCandidate
-		order       []modelInvocationID
-		designated  modelInvocationID
-		selected    modelInvocationID
-		recovery    modelInvocationID
-		usage       model.TokenUsage
-		outputErr   error
-		sealed      bool
-		sealedErr   error
-		sealDone    chan struct{}
+		runtime       *Runtime
+		runID         string
+		sessionID     string
+		responseID    string
+		mu            sync.Mutex
+		publishMu     sync.Mutex
+		invocations   map[modelInvocationID]*modelInvocationCandidate
+		order         []modelInvocationID
+		designated    modelInvocationID
+		selected      modelInvocationID
+		recovery      modelInvocationID
+		usage         model.TokenUsage
+		outputErr     error
+		publishedText strings.Builder
+		sealed        bool
+		sealedErr     error
+		sealDone      chan struct{}
 	}
 )
+
+// maxPublishedAssistantTextBytes leaves room for worst-case JSON escaping and
+// rejection metadata inside the one-megabyte planner activity output contract.
+const maxPublishedAssistantTextBytes = maxPlanActivityOutputBytes / 8
 
 // beginModelInvocation creates a place to save one model response and the
 // runtime-owned controls that stop and join it when planning ends.
@@ -383,9 +392,28 @@ func (j *modelInvocationJournal) recordModelChunk(
 	}
 	j.mu.Unlock()
 
+	j.publishMu.Lock()
+	defer j.publishMu.Unlock()
 	for _, event := range events {
-		if err := j.publishLiveModelOutput(ctx, event); err != nil {
+		if reply, ok := event.(stream.AssistantReply); ok {
+			j.mu.Lock()
+			nextSize := j.publishedText.Len() + len(reply.Data.Text)
+			j.mu.Unlock()
+			if nextSize > maxPublishedAssistantTextBytes {
+				return outputcontract.NewWithOrigin(
+					fmt.Errorf("published assistant text exceeds %d bytes", maxPublishedAssistantTextBytes),
+					planner.OutputContractOriginModel,
+				)
+			}
+		}
+		published, err := j.publishLiveModelOutput(ctx, event)
+		if err != nil {
 			return err
+		}
+		if reply, ok := event.(stream.AssistantReply); published && ok {
+			j.mu.Lock()
+			j.publishedText.WriteString(reply.Data.Text)
+			j.mu.Unlock()
 		}
 	}
 	return nil
@@ -588,6 +616,12 @@ func (j *modelInvocationJournal) publishUsage(ctx context.Context, events planne
 	}
 }
 
+func (j *modelInvocationJournal) publishedAssistantText() string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.publishedText.String()
+}
+
 // attributeUsage applies the logical model class owned by the immutable
 // request. Missing provider model identity remains empty.
 func (c *modelInvocationCandidate) attributeUsage(usage model.TokenUsage) model.TokenUsage {
@@ -662,9 +696,9 @@ func (j *modelInvocationJournal) liveModelOutputEventsLocked(chunk model.Chunk) 
 // publishLiveModelOutput sends one text or thinking event directly to the
 // session stream. It deliberately bypasses PlannerEvents, the run log, and the
 // hook bus.
-func (j *modelInvocationJournal) publishLiveModelOutput(ctx context.Context, event stream.Event) error {
+func (j *modelInvocationJournal) publishLiveModelOutput(ctx context.Context, event stream.Event) (bool, error) {
 	if j.runtime == nil {
-		return nil
+		return false, nil
 	}
 	return j.runtime.publishModelOutput(ctx, j.sessionID, event)
 }

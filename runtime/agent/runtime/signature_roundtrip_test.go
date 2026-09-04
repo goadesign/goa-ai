@@ -87,7 +87,7 @@ func TestToolCallThoughtSignatureRoundTripsProviderChunkToTranscript(t *testing.
 	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, nil, bindings)
 	require.NoError(t, err)
 	require.NoError(t, rt.appendSelectedModelResponse(
-		context.Background(), agentID, base, "turn-1", &PlanResult{ToolCalls: calls}, selected,
+		context.Background(), agentID, base, "turn-1", testPublicationBatchID, &PlanResult{ToolCalls: calls}, selected,
 	))
 	require.Len(t, base.Messages, 1)
 

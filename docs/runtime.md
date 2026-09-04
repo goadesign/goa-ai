@@ -318,8 +318,8 @@ Anthropic, Bedrock, OpenAI, and Gemini/Vertex compare every returned tool name
 with the exact tools advertised for that model request. If a response names a
 different tool, the adapter rejects the complete response. Text, arguments,
 call identifiers, and earlier valid tool blocks from that response do not enter
-the accepted conversation and no tool from the response runs. Streaming
-previews already shown to an observer are discarded rather than committed.
+the accepted provider transcript and no tool from the response runs. Assistant
+text already delivered is committed separately as a plain assistant message.
 After detecting the name, a streaming adapter stops semantic output and drains
 to normal provider completion so later cumulative token usage is still counted.
 Cancellation, deadline, transport, or incomplete-stream failures remain those
@@ -380,15 +380,22 @@ observer is an observer failure. Recovery never searches a joined error for
 EOF.
 
 After the planner returns, the activity closes unfinished calls, waits for
-their frozen records, discards provisional presentation, and makes one
-decision. It commits recovery only when an exact staged validation belongs to
+their frozen records, and makes one decision. Live text already sent remains
+append-only. Before recovery or terminal failure continues, the workflow saves
+that exact text as a plain assistant message under the response ID used by its
+fragments. Rejected tool calls and other provider-only response parts do not
+enter the transcript. The activity commits recovery only when an exact staged validation belongs to
 the same model call and every operation that can change that validation
 decision is clean. If provider cleanup also fails after validation completed,
 the validation remains the operation result and stream tracing records the
 cleanup failure separately. An observer, finisher, usage-recording, staging,
-cancellation, deadline, ordinary provider-read, or premature-close failure
-keeps its own cause in the activity error instead of producing
-`ModelInvocationRecovery`. Planner code cannot broaden recovery by ignoring,
+ordinary provider-read, or premature-close failure keeps its own failure
+category instead of producing `ModelInvocationRecovery`. If text was already
+delivered, the activity returns that text with the standardized failure so the
+workflow can save the text before ending the run. If no text was delivered, the
+original activity error remains an activity error; Plan and Resume still make
+only one attempt. Cancellation and deadline errors remain activity errors and
+do not create a durable partial response. Planner code cannot broaden recovery by ignoring,
 joining, or replacing the validation error returned by `Recv`.
 
 Each retry consumes one existing `MaxRecoveryTurns` entry. Repeated misses end
@@ -1320,11 +1327,14 @@ Choose one per planner call.
 sends validated assistant text and thinking to the session stream while its
 `Stream(...)` method drains the provider response. It returns a
 `planner.StreamSummary` containing accumulated text and complete validated tool
-calls. The selected response becomes canonical only when the workflow appends
-its transcript and emits `assistant_turn`; rejected provisional output receives
-a discard event. Usage includes every attempted invocation. A planner client is
-single-use for the selected response; run probes through `ModelClient` before
-obtaining it:
+calls. Each text fragment is append-only once sent. For an accepted response,
+the workflow appends the complete provider transcript and emits
+`assistant_turn` with the same response ID and complete aggregate text. For a
+rejected response or ordinary failure reported before activity cancellation, it
+first appends the exact text already sent as a plain assistant message and emits
+the same committed event, then continues recovery or ends the run. Usage
+includes every attempted invocation. A planner client is single-use for the
+selected response; run probes through `ModelClient` before obtaining it:
 
 ```go
 func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error) {
@@ -1389,19 +1399,22 @@ planner code never wraps or revalidates streams.
 
 Each runtime-managed model call creates an isolated response candidate before
 planner code receives the response or stream chunk. Only the one call made
-through `PlannerModelClient` may produce provisional UI events. Those events
-carry one presentation ID for that activity execution and bypass the run log,
-hook bus, and memory. The activity sends the `started` lifecycle event before
-planner setup or model work, so a retry removes output left by the failed
-execution even when the retry never produces a visible fragment. Assistant,
-thinking, and lifecycle events still pass through the configured
-`StreamProfile`.
-The runtime sends a discarded marker when validation or planner selection
-rejects the response. The workflow's canonical assistant-turn event is the only
-acceptance marker. Each Temporal activity execution has a different
-presentation ID. A retry's started marker replaces fragments left by the
-previous execution, and clients ignore late fragments that still carry the old
-ID.
+through `PlannerModelClient` may produce live UI events. The planner activity
+allocates one response ID before planner or provider work starts. Every text and
+thinking fragment from the designated call carries that ID and bypasses the run
+log, hook bus, and memory. There is no response-started or response-discarded
+lifecycle. Once a client accepts text, no later validation, planner decision,
+or run event can remove or replace it. Assistant and thinking events still pass
+through the configured `StreamProfile`.
+
+Generated Plan and Resume activities use one Temporal attempt, and agent
+registration rejects retry policies that could execute either activity more
+than once. A retry after visible output could generate different text under the
+same activity result identity. Tool execution retains its separate retry policy
+because stable tool-call identity lets the tool owner replay a completed result
+without repeating an external effect. An explicit model-output recovery or
+workflow continuation is a new planner activity and therefore receives a new
+response ID.
 
 Text and thinking fragments are sent as soon as they arrive because delaying or
 combining them would remove the real-time behavior. Tool argument fragments
@@ -1436,22 +1449,26 @@ preserve that response's complete tool-call set; a terminal result cannot
 silently discard a provider-requested action.
 Provider adapters set `OutputLimited` on the complete `model.Response` and its
 terminal `StopChunk` when the provider reports that generated output reached a
-token or context limit. The runtime discards an output-limited final response
-and schedules a concise replacement through the existing bounded model-output
-recovery path. An output-limited tool batch is rejected before any tool runs.
-If replacement turns exhaust the configured recovery limit, the run fails
-instead of publishing partial text.
+token or context limit. The planner decides whether that exact complete final
+response is acceptable; the runtime does not replace a planner-accepted answer.
+An output-limited tool batch remains invalid because it cannot prove that the
+provider completed the requested calls, so no tool from that batch executes.
 Call order has no commit semantics: planners may probe with `ModelClient`, then
 make exactly one selected call through `PlannerModelClient`. Terminal helpers
 return the selected provider message without exposing transcript identity or
 matching mechanics. Later session turns therefore replay the provider's signed
-thinking while only the selected provider response becomes user-facing.
-Provisional presentation is never canonical output. A rejected response may be
-visible briefly in a live client, but its discarded marker removes the matching
-text and thoughts, and none of those fragments are persisted or published as
-hooks. Usage events still include every invocation. After atomic tool-batch
-admission, the workflow commits the complete selected response once before any
-effects. The workflow publishes each accepted ordered record batch through one
+thinking while only the selected provider response enters durable history.
+Live fragments are not history records themselves. If their response is
+rejected or fails after text was delivered, the aggregate delivered text is
+stored and restored after reload; malformed tool calls and incomplete provider
+metadata are not stored with it. A caller cancellation or deadline can still
+leave unfinished text only in the current client because canceled activity work
+cannot commit new records. Usage events still include every invocation. After atomic
+tool-batch admission, the workflow commits the complete selected response once
+before any effects. The committed `assistant_turn` carries the activity response
+ID and complete assistant display text. If live fragments exist, their ordered
+text is an exact prefix, so a downstream client can use the committed event as
+a cumulative checkpoint without replacing text. The workflow publishes each accepted ordered record batch through one
 `runtime.store` activity; stable event keys make a retried prefix idempotent without
 creating one Temporal activity per record. Keyed stream publications use the
 same identity, so a retry completes a failed delivery without appending a

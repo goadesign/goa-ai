@@ -67,6 +67,11 @@ type (
 		// tracking is disabled.
 		TurnID string
 
+		// ResponseID identifies the planner activity whose displayed assistant
+		// text this transcript record appends. It is empty for transcript records
+		// that contain only user or tool-result messages.
+		ResponseID string
+
 		// TimestampMS records when the runtime emitted this record.
 		TimestampMS int64
 

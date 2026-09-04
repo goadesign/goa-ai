@@ -303,17 +303,19 @@ type (
 		Structured any
 	}
 
-	// AssistantTurnCommittedEvent fires after the runtime appends a canonical
-	// assistant transcript message to the durable run log.
+	// AssistantTurnCommittedEvent fires after the runtime appends one displayed
+	// assistant response to the durable run log. The run may still fail after the
+	// text was displayed.
 	//
 	// Contract:
-	//   - Message is the exact assistant transcript artifact written to the run log.
-	//   - Downstream consumers must treat it as the canonical assistant turn, not
-	//     as a best-effort streaming chunk.
+	//   - ResponseID is the stable identity shared with its live text fragments.
+	//   - Text is the complete assistant display text committed for the response.
 	AssistantTurnCommittedEvent struct {
 		baseEvent
-		// Message is the canonical assistant transcript message that was just committed.
-		Message *model.Message
+		// ResponseID is the planner activity UUID that produced the response.
+		ResponseID string
+		// Text is the assistant text committed across the response's provider messages.
+		Text string
 	}
 
 	// MemoryAppendedEvent fires when new memory entries are successfully
@@ -582,7 +584,7 @@ func NewRunCompletedEvent(
 	switch status {
 	case "failed":
 		if err != nil {
-			failure = newRunFailure(err)
+			failure = RunFailureFromError(err)
 		}
 	case "canceled":
 		cancellation = newRunCancellation(cancellation)
@@ -651,9 +653,17 @@ func newRunCompletedEventFromPayload(
 	}
 }
 
-// newRunFailure turns the final error into the failure details saved on the
-// run.
-func newRunFailure(err error) *run.Failure {
+// RunFailureFromError turns an execution error into the canonical failure
+// details stored with a failed run.
+func RunFailureFromError(err error) *run.Failure {
+	var carrier interface{ RunFailure() *run.Failure }
+	if errors.As(err, &carrier) {
+		failure := carrier.RunFailure()
+		if failure != nil {
+			clone := *failure
+			return &clone
+		}
+	}
 	if temporalerrors.IsOutputContract(err) {
 		kind := ErrorKindOutputContract
 		switch temporalerrors.OutputContractOrigin(err) {
@@ -1097,15 +1107,16 @@ func NewAssistantMessageEvent(runID string, agentID agent.Ident, sessionID strin
 }
 
 // NewAssistantTurnCommittedEvent constructs an AssistantTurnCommittedEvent.
-func NewAssistantTurnCommittedEvent(runID string, agentID agent.Ident, sessionID string, message *model.Message) *AssistantTurnCommittedEvent {
-	if message == nil {
-		panic("hooks: assistant turn committed requires message")
+func NewAssistantTurnCommittedEvent(runID string, agentID agent.Ident, sessionID, responseID, text string) *AssistantTurnCommittedEvent {
+	if responseID == "" || text == "" {
+		panic("hooks: assistant turn committed requires response id and text")
 	}
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &AssistantTurnCommittedEvent{
-		baseEvent: be,
-		Message:   message,
+		baseEvent:  be,
+		ResponseID: responseID,
+		Text:       text,
 	}
 }
 

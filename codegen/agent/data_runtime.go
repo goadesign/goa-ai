@@ -76,20 +76,26 @@ func newActivity(agent *AgentData, kind ActivityKind, logicalSuffix string, queu
 	}
 	switch kind {
 	case ActivityKindPlan, ActivityKindResume:
-		artifact.RetryPolicy = defaultActivityRetryPolicy()
+		artifact.RetryPolicy = plannerActivityRetryPolicy()
 		artifact.StartToCloseTimeout = defaultPlannerActivityTimeout
 	case ActivityKindExecuteTool:
 		// ExecuteTool retries are safe because logical tool calls now carry stable
 		// identities and runtimes/providers are responsible for replaying durable
 		// results instead of re-running side effects on retried attempts.
-		artifact.RetryPolicy = defaultActivityRetryPolicy()
+		artifact.RetryPolicy = retriedActivityPolicy()
 	}
 	return artifact
 }
 
-// defaultActivityRetryPolicy returns the shared retry profile for generated
-// planner/runtime activities.
-func defaultActivityRetryPolicy() engine.RetryPolicy {
+// plannerActivityRetryPolicy prevents infrastructure retries from repeating a
+// model call after that attempt has streamed browser-visible text.
+func plannerActivityRetryPolicy() engine.RetryPolicy {
+	return engine.RetryPolicy{MaxAttempts: 1}
+}
+
+// retriedActivityPolicy returns the shared retry profile for generated
+// activities whose effects have stable replay identities.
+func retriedActivityPolicy() engine.RetryPolicy {
 	return engine.RetryPolicy{
 		MaxAttempts:        3,
 		InitialInterval:    time.Second,
