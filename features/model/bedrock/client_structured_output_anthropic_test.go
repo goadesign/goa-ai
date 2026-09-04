@@ -20,7 +20,8 @@ import (
 // exercise Client.Complete's response-decoding path without a live Bedrock
 // endpoint.
 type recordingConverseRuntime struct {
-	output *bedrockruntime.ConverseOutput
+	output        *bedrockruntime.ConverseOutput
+	converseCalls int
 }
 
 func (r *recordingConverseRuntime) Converse(
@@ -28,6 +29,7 @@ func (r *recordingConverseRuntime) Converse(
 	_ *bedrockruntime.ConverseInput,
 	_ ...func(*bedrockruntime.Options),
 ) (*bedrockruntime.ConverseOutput, error) {
+	r.converseCalls++
 	return r.output, nil
 }
 
@@ -58,8 +60,8 @@ func smithyDocumentFromJSON(t *testing.T, raw string) document.Interface {
 }
 
 // These tests prove that Bedrock uses one strict private tool when AWS can
-// enforce its schema, one validated non-strict tool when AWS exposes only
-// ordinary forced tools, and OutputConfig for older native models.
+// enforce its schema, rejects unsupported Claude models, and uses OutputConfig
+// for models with a native structured-output contract.
 
 func TestPrepareRequestAnthropicStructuredOutputUsesStrictTool(t *testing.T) {
 	client := &provider{defaultModel: "global.anthropic.claude-opus-4-6-v1"}
@@ -133,7 +135,7 @@ func TestPrepareRequestNovaStructuredOutputUsesNativeOutputConfig(t *testing.T) 
 	require.Nil(t, parts.toolConfig)
 }
 
-func TestPrepareRequestAnthropicStructuredOutputUsesValidatedToolFallback(t *testing.T) {
+func TestPrepareRequestRejectsUnsupportedAnthropicStructuredOutput(t *testing.T) {
 	client := &provider{defaultModel: "global.anthropic.claude-sonnet-5"}
 	req := &model.Request{
 		Messages: []*model.Message{{
@@ -149,17 +151,51 @@ func TestPrepareRequestAnthropicStructuredOutputUsesValidatedToolFallback(t *tes
 
 	parts, err := client.prepareRequest(req)
 
-	require.NoError(t, err)
-	require.Nil(t, parts.outputConfig)
-	require.NotNil(t, parts.toolConfig)
-	require.Len(t, parts.toolConfig.Tools, 1)
-	require.Equal(t, "complete_draft", parts.structuredOutputToolName)
-	choice, ok := parts.toolConfig.ToolChoice.(*brtypes.ToolChoiceMemberTool)
-	require.True(t, ok)
-	require.Equal(t, "complete_draft", parts.toolNameProvToCanonical[*choice.Value.Name])
-	spec, ok := parts.toolConfig.Tools[0].(*brtypes.ToolMemberToolSpec)
-	require.True(t, ok)
-	require.Nil(t, spec.Value.Strict, "AWS does not support strict structured-output tools for Sonnet 5")
+	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+	require.Nil(t, parts)
+}
+
+func TestPrepareRequestChecksTheSelectedAnthropicModel(t *testing.T) {
+	tests := []struct {
+		name       string
+		client     *provider
+		model      string
+		modelClass model.ModelClass
+		wantModel  string
+	}{
+		{
+			name:       "configured high reasoning model",
+			client:     &provider{defaultModel: "global.anthropic.claude-opus-4-6-v1", highModel: "us.anthropic.claude-opus-5"},
+			modelClass: model.ModelClassHighReasoning,
+			wantModel:  "us.anthropic.claude-opus-5",
+		},
+		{
+			name:      "explicit model",
+			client:    &provider{defaultModel: "global.anthropic.claude-opus-4-6-v1", highModel: "global.anthropic.claude-opus-4-6-v1"},
+			model:     "global.anthropic.claude-sonnet-5",
+			wantModel: "global.anthropic.claude-sonnet-5",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			parts, err := test.client.prepareRequest(&model.Request{
+				Model:      test.model,
+				ModelClass: test.modelClass,
+				Messages: []*model.Message{{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "draft the task"}},
+				}},
+				StructuredOutput: &model.StructuredOutput{
+					Name:   "complete_draft",
+					Schema: []byte(`{"type":"object"}`),
+				},
+			})
+
+			require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+			require.ErrorContains(t, err, test.wantModel)
+			require.Nil(t, parts)
+		})
+	}
 }
 
 func TestPrepareRequestClaude45StructuredOutputUsesNativeOutputConfig(t *testing.T) {
@@ -282,11 +318,9 @@ func TestCompleteAnthropicStructuredOutputReifiesToolCall(t *testing.T) {
 	require.Empty(t, resp.ToolCalls(), "the canonical response must not surface tool calls")
 }
 
-// TestCompleteAnthropicStructuredOutputFallbackRejectsInvalidCompletion proves
-// the non-strict provider tool does not weaken the caller-visible contract.
-// The adapter unwraps the private tool value, then model.Client rejects it
-// before the caller can observe a response.
-func TestCompleteAnthropicStructuredOutputFallbackRejectsInvalidCompletion(t *testing.T) {
+// TestCompleteRejectsUnsupportedAnthropicStructuredOutputBeforeInference proves
+// that local JSON validation never substitutes for provider enforcement.
+func TestCompleteRejectsUnsupportedAnthropicStructuredOutputBeforeInference(t *testing.T) {
 	runtime := &recordingConverseRuntime{
 		output: &bedrockruntime.ConverseOutput{
 			StopReason: brtypes.StopReasonToolUse,
@@ -318,27 +352,11 @@ func TestCompleteAnthropicStructuredOutputFallbackRejectsInvalidCompletion(t *te
 			Schema:      []byte(`{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}`),
 		},
 	}
-	decoded := false
-	require.NoError(t, model.SetCompletionValidator(
-		req,
-		func(response *model.Response, _ *model.Completion) error {
-			decoded = true
-			require.Len(t, response.Content, 1)
-			require.Len(t, response.Content[0].Parts, 1)
-			text, ok := response.Content[0].Parts[0].(model.TextPart)
-			require.True(t, ok)
-			require.JSONEq(t, `{"title":42}`, text.Text)
-			return errors.New("title must be a string")
-		},
-	))
-
 	response, err := client.Complete(t.Context(), req)
 
 	require.Nil(t, response)
-	var validationErr *model.OutputValidationError
-	require.ErrorAs(t, err, &validationErr)
-	require.ErrorContains(t, errors.Unwrap(validationErr), "does not match its schema")
-	require.False(t, decoded)
+	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+	require.Zero(t, runtime.converseCalls)
 }
 
 // TestChunkProcessorStructuredOutputToolEmitsCompletion proves the

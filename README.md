@@ -318,11 +318,12 @@ Anthropic Messages requests through Bedrock `InvokeModel`, so authored tool
 examples, forced tool choice, thinking, and prompt caching keep one
 representation on initial and resumed turns. User-message `ImagePart` values
 are sent as Anthropic base64 image blocks for PNG, JPEG, GIF, and WebP content.
-For models such as Sonnet 5 and Opus 5 that accept forced tools but reject
-`output_config.format`, structured output uses one private forced tool and is
-returned to callers as the same canonical completion. Its required exact
-counter receives that same effective request with the Bedrock inference-profile
-prefix removed for a compatible counting endpoint such as Bedrock Mantle.
+Claude models on Bedrock that cannot enforce the requested schema return
+`model.ErrStructuredOutputUnsupported` before inference. In particular,
+Sonnet 5 and Opus 5 do not receive an ordinary forced tool as a substitute for
+structured output. Callers that need those models should use an ordinary typed
+tool and the normal agent correction flow, or choose a Bedrock model with
+provider-enforced structured output.
 `bedrock.New` remains the Converse adapter for other Bedrock models and existing
 Converse integrations.
 
@@ -494,11 +495,13 @@ var _ = Service("tasks", func() {
 ```
 
 `goa gen` emits `gen/<service>/completions/` with schemas, authored examples,
-codecs, `Complete<Name>(...)`, and typed `StreamComplete<Name>(...)` helpers.
-The codec-bearing `completion.Spec` remains private to those wrappers. When a
-caller genuinely needs the authored example, `<Name>Example()` returns an
-isolated raw JSON copy. Completion names are part of the contract: 1-64 ASCII
-characters, letters/digits/`_`/`-`, starting with a letter or digit.
+codecs, public `Spec<Name>()` factories, `Complete<Name>(...)`, and typed
+`StreamComplete<Name>(...)` helpers. Each spec factory returns a fresh
+`completion.Spec[T]` with the generated schema and codec. Use the factory when
+passing the same contract to another typed runtime helper. When a caller only
+needs the authored example, `<Name>Example()` returns an isolated raw JSON
+copy. Completion names are part of the contract: 1-64 ASCII characters,
+letters/digits/`_`/`-`, starting with a letter or digit.
 
 Unary helpers install their generated decoder before provider work, request
 provider-enforced structured output, and decode with generated codecs. A
@@ -509,8 +512,9 @@ an invalid schema before provider work. Before copying or exposing a request,
 the validated client applies one 16 MiB and 100,000-value budget across
 messages, media, tool contracts, and structured-output schemas. The validated
 client then enforces one canonical completion envelope and validates its final
-JSON against the request schema. Provider-native enforcement remains an earlier
-optimization, not the authoritative acceptance check. Typed completion helpers
+JSON against the request schema. Provider enforcement and local validation are
+both required; local validation is never used as a substitute for a provider
+that cannot enforce the schema. Typed completion helpers
 additionally guarantee exact generated decoding. When the return type has an
 authored root `Example(...)`, adapters forward its canonical JSON through
 provider-native example fields where available. Each helper makes one provider
@@ -527,18 +531,29 @@ validator adds checks and cannot replace those framework checks. The typed
 helper then decodes and exposes the value. Providers that cannot preserve the
 structured-output contract fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
-The Bedrock Converse adapter uses one private strict tool for Claude 4.6 and a
-private non-strict tool for models that expose forced tools before native
-`OutputConfig`. `bedrock.NewAnthropic` applies the same provider-neutral
-contract before `InvokeModel`: Sonnet 5 and Opus 5 receive one forced private
-tool because Bedrock Messages rejects both `output_config.format` and `strict`.
-The adapter removes the private object wrapper and exposes one canonical
-completion; its exact counter receives the same tool definition and choice.
+The Bedrock Converse adapter uses one private strict tool for Claude 4.6.
+Claude 4.5 uses native `OutputConfig`. Other Claude model and transport
+combinations return `model.ErrStructuredOutputUnsupported` when Bedrock cannot
+enforce the requested schema. The adapter never replaces provider-enforced
+structured output with an ordinary tool that relies only on local validation.
 
-When updating generated completion callers, replace direct `Spec<Name>` access
-with `Complete<Name>(...)` or `StreamComplete<Name>(...)`. Use
-`<Name>Example()` only when the caller needs the authored example; generated
-codecs and schemas are owned by the wrappers.
+When an application deliberately wants model correction instead of a
+single provider-enforced completion, `runtime/agent/tooloutput.Run[T]` accepts
+a typed `completion.Spec[T]` containing the name, description, JSON schema,
+example, and codec for the returned value. It privately turns that output
+contract into one ordinary tool, creates one in-memory agent run, advertises
+only that tool, forces it by name, and returns the value accepted by the typed
+codec. Callers cannot attach tool policy, execution, or result behavior.
+Malformed JSON and generated schema/codec argument failures use the runtime's
+bounded correction turns. Provider failures and ignored forced-tool selection
+remain terminal. Requests that already contain tools, tool choice, structured
+output, or streaming are rejected before inference.
+
+Use `Complete<Name>(...)` or `StreamComplete<Name>(...)` for provider-enforced
+structured output. Use `tooloutput.Run(..., completions.Spec<Name>())` when the
+selected model must return the same generated type through an ordinary forced
+tool with bounded argument correction. The generated package remains the only
+owner of the schema and codec in both cases.
 
 ### Agent-as-Tool Composition
 
@@ -1492,7 +1507,7 @@ Production checklist:
 | `gen/<service>/agents/<agent>/` | Agent ID, route, typed client, workflow/activity names, registration helpers |
 | `gen/<service>/agents/<agent>/specs/` | Aggregated agent tool catalog and `tool_schemas.json` |
 | `gen/<service>/toolsets/<toolset>/` | Tool payload/result/server-data types, codecs, specs, transforms, provider adapters |
-| `gen/<service>/completions/` | Service-owned typed results, private structured-output specs/codecs, public unary/streaming wrappers, and immutable example accessors |
+| `gen/<service>/completions/` | Service-owned typed results, public fresh spec factories, unary/streaming wrappers, and immutable example accessors |
 | `gen/<service>/registry/<name>/` | Generated registry client and discovery helpers |
 | `gen/mcp_<service>/` | Generated MCP adapter code for services that declare `MCP(...)` |
 | `internal/agents/` | Application-owned scaffold from `goa example`: bootstrap, planner stubs, tool adapters |

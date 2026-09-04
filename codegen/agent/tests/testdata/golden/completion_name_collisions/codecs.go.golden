@@ -45,6 +45,14 @@ func newDraftExampleResultCodec() tools.JSONCodec[*DraftExampleResult] {
 	}
 }
 
+// newSpecDraftResultCodec returns a fresh codec for *SpecDraftResult.
+func newSpecDraftResultCodec() tools.JSONCodec[*SpecDraftResult] {
+	return tools.JSONCodec[*SpecDraftResult]{
+		ToJSON:   marshalSpecDraftResult,
+		FromJSON: unmarshalSpecDraftResult,
+	}
+}
+
 // newStreamCompleteDraftResultCodec returns a fresh codec for *StreamCompleteDraftResult.
 func newStreamCompleteDraftResultCodec() tools.JSONCodec[*StreamCompleteDraftResult] {
 	return tools.JSONCodec[*StreamCompleteDraftResult]{
@@ -93,6 +101,19 @@ var (
 			return unmarshalDraftExampleResult(data)
 		},
 	}
+	// specDraftResultCodec provides an untyped codec for *SpecDraftResult.
+	specDraftResultCodec = tools.JSONCodec[any]{
+		ToJSON: func(v any) ([]byte, error) {
+			// Prefer typed marshal when the value matches the expected type.
+			if typed, ok := v.(*SpecDraftResult); ok {
+				return marshalSpecDraftResult(typed)
+			}
+			return nil, fmt.Errorf("invalid value type for *SpecDraftResult: %T", v)
+		},
+		FromJSON: func(data []byte) (any, error) {
+			return unmarshalSpecDraftResult(data)
+		},
+	}
 	// streamCompleteDraftResultCodec provides an untyped codec for *StreamCompleteDraftResult.
 	streamCompleteDraftResultCodec = tools.JSONCodec[any]{
 		ToJSON: func(v any) ([]byte, error) {
@@ -116,6 +137,9 @@ var draftResultFieldDescs = map[string]string{
 var draftExampleResultFieldDescs = map[string]string{
 	"text": "Generated completion text.",
 }
+var specDraftResultFieldDescs = map[string]string{
+	"text": "Generated completion text.",
+}
 var streamCompleteDraftResultFieldDescs = map[string]string{
 	"text": "Generated completion text.",
 }
@@ -128,6 +152,10 @@ var draftResultFieldJSONTypes = map[string]string{
 	"text":     "string",
 }
 var draftExampleResultFieldJSONTypes = map[string]string{
+	"$payload": "object",
+	"text":     "string",
+}
+var specDraftResultFieldJSONTypes = map[string]string{
 	"$payload": "object",
 	"text":     "string",
 }
@@ -213,6 +241,23 @@ func enrichDraftExampleResultValidationError(err error) error {
 	m := make(map[string]string)
 	for _, is := range issues {
 		if d, ok := tools.LookupFieldMetadata(draftExampleResultFieldDescs, is.Field); ok && d != "" {
+			m[is.Field] = d
+		}
+	}
+	return tools.NewValidationError(ve.Error(), issues, m)
+}
+func enrichSpecDraftResultValidationError(err error) error {
+	var ve *tools.ValidationError
+	if !errors.As(err, &ve) {
+		return err
+	}
+	issues := ve.Issues()
+	if len(issues) == 0 {
+		return err
+	}
+	m := make(map[string]string)
+	for _, is := range issues {
+		if d, ok := tools.LookupFieldMetadata(specDraftResultFieldDescs, is.Field); ok && d != "" {
 			m[is.Field] = d
 		}
 	}
@@ -308,6 +353,37 @@ func invalidDraftExampleResultFieldTypeError(err error) error {
 		field = "$payload"
 	}
 	expected, ok := tools.LookupFieldMetadata(draftExampleResultFieldJSONTypes, field)
+	if !ok {
+		return err
+	}
+	actual := generatedUnmarshalJSONType(typeErr.Value)
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: expected,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
+func invalidSpecDraftResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "SpecDraftResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	expected, ok := tools.LookupFieldMetadata(specDraftResultFieldJSONTypes, field)
 	if !ok {
 		return err
 	}
@@ -475,6 +551,46 @@ func unmarshalDraftExampleResult(data []byte) (*DraftExampleResult, error) {
 	_ = in
 	var out *DraftExampleResult
 	out = &DraftExampleResult{
+		Text: *in.Text,
+	}
+	return out, nil
+}
+
+// marshalSpecDraftResult serializes *SpecDraftResult into JSON.
+func marshalSpecDraftResult(v *SpecDraftResult) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("specDraftResult is nil")
+	}
+	in := v
+	_ = in
+	var out *toolhttp.SpecDraftResultTransport
+	out = &toolhttp.SpecDraftResultTransport{
+		Text: &in.Text,
+	}
+	return json.Marshal(out)
+}
+
+// unmarshalSpecDraftResult deserializes JSON into *SpecDraftResult.
+func unmarshalSpecDraftResult(data []byte) (*SpecDraftResult, error) {
+	if len(data) == 0 {
+		return nil, fmt.Errorf("specDraftResult JSON is empty")
+	}
+	var tv toolhttp.SpecDraftResultTransport
+	if err := validateCompleteDraftResultJSON(data); err != nil {
+		return nil, invalidSpecDraftResultFieldTypeError(err)
+	}
+	if err := json.Unmarshal(data, &tv); err != nil {
+		return nil, invalidSpecDraftResultFieldTypeError(err)
+	}
+	if err := toolhttp.ValidateSpecDraftResultTransport(&tv); err != nil {
+		err = newValidationError(err)
+		err = enrichSpecDraftResultValidationError(err)
+		return nil, err
+	}
+	in := &tv
+	_ = in
+	var out *SpecDraftResult
+	out = &SpecDraftResult{
 		Text: *in.Text,
 	}
 	return out, nil

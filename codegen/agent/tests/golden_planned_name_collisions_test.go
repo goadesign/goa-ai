@@ -57,6 +57,11 @@ func TestGoldenCompletionNameCollisions(t *testing.T) {
 	main := renderedFileContent(t, exampleFiles, "cmd/tasks/main.go")
 
 	require.Contains(t, specs, "func DraftExample2() rawjson.Message")
+	require.Contains(t, specs, "func SpecCompleteDraft() completion.Spec")
+	require.Contains(t, specs, "func SpecDraft2() completion.Spec")
+	require.Contains(t, specs, "func SpecDraftExample() completion.Spec")
+	require.Contains(t, specs, "func SpecSpecDraft() completion.Spec")
+	require.Contains(t, specs, "func SpecStreamCompleteDraft() completion.Spec")
 	require.Contains(t, specs, "func CompleteDraft2(")
 	require.Contains(t, specs, "func StreamCompleteDraft2(")
 	require.Contains(t, main, "completions.DraftExample2()")

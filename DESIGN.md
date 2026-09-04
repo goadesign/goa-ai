@@ -113,7 +113,8 @@ start with a letter or digit.
 
 This generates a service-owned completions package with:
 
-- private completion specs containing the result schema and generated codec
+- public `Spec<Name>()` factories that return fresh typed contracts containing
+  the result schema and generated codec
 - narrow `<Name>Example()` accessors that return an immutable copy of the
   canonical authored root example, when the return type declares one
 - public `Complete<Name>` wrappers that own provider-enforced structured output
@@ -144,17 +145,17 @@ as the schema contract. It applies that validator to unary output. For
 streaming output, it retains the final completion until the provider ends,
 validates both final representations, and requires their JSON bytes to match
 before returning the completion. Generated validation adds checks without
-replacing these framework checks. Provider-native or strict enforcement is an
-earlier optimization rather than the authoritative acceptance check.
+replacing these framework checks. Provider enforcement and local validation
+are both required: local validation remains the final acceptance check, but it
+never substitutes for a provider that cannot enforce the requested schema.
 The Bedrock Converse adapter uses a private strict tool for Claude 4.6 so
 Runtime `CountTokens` and Converse receive the same schema. Claude 4.5 retains
 native `OutputConfig` because its manual thinking mode cannot use forced tools.
-The Claude-on-Bedrock Messages adapter chooses between native output formatting
-and the same private-tool contract before `InvokeModel`. Sonnet 5 and Opus 5
-use one forced non-strict tool because Bedrock Messages rejects both
-`output_config.format` and the `strict` tool property. The adapter converts the
-private tool result into the caller's canonical completion, and the validated
-client rejects malformed or schema-invalid JSON before exposing it. The same
+The Claude-on-Bedrock Messages adapter uses native output formatting only when
+Bedrock can enforce it. Sonnet 5 and Opus 5 reject both
+`output_config.format` and the `strict` tool property, so the adapter returns
+`model.ErrStructuredOutputUnsupported` before inference. It never weakens the
+request to an ordinary tool backed only by local validation. The same
 Anthropic adapter encodes user-message `ImagePart` bytes as base64 image blocks
 for PNG, JPEG, GIF, and WebP, so direct Anthropic, Claude-on-Vertex, and
 Claude-on-Bedrock clients share one multimodal message contract.
@@ -166,6 +167,21 @@ again. `completion.Response.ModelResponse` contains that exact model response
 and its token usage. Streaming helpers follow the same one-request rule. Provider
 adapters may suppress previews when their wire representation contains private
 framing that is absent from the completion contract.
+
+The separate `runtime/agent/tooloutput` package owns the case where an
+application deliberately permits the model to replace invalid ordinary-tool
+arguments. `Run[T]` accepts one typed `completion.Spec[T]`, normally returned
+by the generated `Spec<Name>()` factory. The spec exposes only the output name,
+description, schema, example, and codec. The helper privately
+uses those fields as both the argument and result contract of one ordinary
+tool, so callers cannot add tool policy or execution behavior. A private
+in-memory agent advertises and forces only that tool, allows one successful
+tool execution, and requires it to complete the run. The typed schema and codec
+remain the model boundary; malformed JSON and typed validation failures use the
+runtime's bounded correction flow. Provider failures and every non-argument
+failure remain terminal. The returned `T` is exactly the value decoded from
+the accepted arguments, so callers cannot insert domain execution or rewriting
+between accepted model output and the returned value.
 
 The design intentionally keeps completions separate from toolsets: toolsets model
 callable capabilities, while completions model final assistant answers. Both reuse
@@ -1148,12 +1164,10 @@ redeploys.
   structured output. Claude 4.6 instead uses the same strict private tool for
   Runtime counting and Converse.
   The Claude-on-Bedrock Messages adapter requires an exact Anthropic counter.
-  It first selects native output formatting or the private forced tool, then
-  passes that effective request to the counter after replacing a cross-region
-  inference-profile model ID with its foundation model ID. Sonnet 5 and Opus 5
-  therefore send the same private tool definition and forced choice to
-  `InvokeModel` and Mantle. The Messages adapter never counts a different
-  Converse representation.
+  It passes supported native structured output to the counter after replacing
+  a cross-region inference-profile model ID with its foundation model ID.
+  Unsupported model and transport combinations fail before inference or
+  counting, so the adapter never counts a weaker representation.
   When encoded tools carry authored `input_examples`, completion, streaming,
   and counting all attach the same Anthropic tool-examples beta header.
   Exact retention always keeps whole recent turns; it never truncates
@@ -1497,11 +1511,10 @@ examples because gateways may reject beta identifiers they do not recognize.
 Amazon Bedrock's native Messages endpoint has a narrower tool object. Live
 Sonnet 5 and Opus 5 requests reject both `input_examples` and the `strict`
 property, including `strict:false`, but accept the authored root `example`
-inside `input_schema` on fresh and resumed turns. `bedrock.NewAnthropic`
-therefore configures the Anthropic adapter to retain the annotated schema and
-omit `input_examples`; direct Anthropic behavior remains unchanged. This choice
-is fixed when the provider is constructed because it describes the endpoint,
-not a model decision or per-request mode.
+inside `input_schema` for ordinary tools on fresh and resumed turns.
+`bedrock.NewAnthropic` therefore retains the annotated schema and omits
+`input_examples` for ordinary tools. This does not make those tools a valid
+replacement for `StructuredOutput`; such requests fail before inference.
 
 The Converse adapter can carry the same examples through Anthropic's
 provider-native request fields in `additionalModelRequestFields` only on turns

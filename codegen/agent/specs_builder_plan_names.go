@@ -232,7 +232,7 @@ func (p *toolSpecsPackagePlan) declareCompletionNames(name string) error {
 		)
 	}
 	var err error
-	if names.spec, err = declare("spec", "", "spec"); err != nil {
+	if names.spec, err = declare("Spec", "", "spec"); err != nil {
 		return err
 	}
 	if names.example, err = declare("", "Example", "example"); err != nil {

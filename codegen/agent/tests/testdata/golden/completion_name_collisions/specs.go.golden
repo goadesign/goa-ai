@@ -21,11 +21,12 @@ const (
 	CompleteDraft       completion.Ident = "complete_draft"
 	Draft               completion.Ident = "draft"
 	DraftExample        completion.Ident = "draft_example"
+	SpecDraft           completion.Ident = "spec_draft"
 	StreamCompleteDraft completion.Ident = "stream_complete_draft"
 )
 
-// specCompleteDraft returns a fresh typed completion contract for complete_draft.
-func specCompleteDraft() completion.Spec[*CompleteDraftResult] {
+// SpecCompleteDraft returns a fresh typed completion contract for complete_draft.
+func SpecCompleteDraft() completion.Spec[*CompleteDraftResult] {
 	return completion.Spec[*CompleteDraftResult]{
 		Name:                     CompleteDraft,
 		Description:              "Generates collision test output.",
@@ -39,11 +40,11 @@ func specCompleteDraft() completion.Spec[*CompleteDraftResult] {
 // CompleteDraftExample returns an immutable copy of the generated example
 // used to demonstrate complete_draft output.
 func CompleteDraftExample() rawjson.Message {
-	return slices.Clone(specCompleteDraft().ExampleJSON)
+	return slices.Clone(SpecCompleteDraft().ExampleJSON)
 }
 
-// specDraft returns a fresh typed completion contract for draft.
-func specDraft() completion.Spec[*DraftResult] {
+// SpecDraft2 returns a fresh typed completion contract for draft.
+func SpecDraft2() completion.Spec[*DraftResult] {
 	return completion.Spec[*DraftResult]{
 		Name:                     Draft,
 		Description:              "Generates collision test output.",
@@ -57,11 +58,11 @@ func specDraft() completion.Spec[*DraftResult] {
 // DraftExample2 returns an immutable copy of the generated example
 // used to demonstrate draft output.
 func DraftExample2() rawjson.Message {
-	return slices.Clone(specDraft().ExampleJSON)
+	return slices.Clone(SpecDraft2().ExampleJSON)
 }
 
-// specDraftExample returns a fresh typed completion contract for draft_example.
-func specDraftExample() completion.Spec[*DraftExampleResult] {
+// SpecDraftExample returns a fresh typed completion contract for draft_example.
+func SpecDraftExample() completion.Spec[*DraftExampleResult] {
 	return completion.Spec[*DraftExampleResult]{
 		Name:                     DraftExample,
 		Description:              "Generates collision test output.",
@@ -75,11 +76,29 @@ func specDraftExample() completion.Spec[*DraftExampleResult] {
 // DraftExampleExample returns an immutable copy of the generated example
 // used to demonstrate draft_example output.
 func DraftExampleExample() rawjson.Message {
-	return slices.Clone(specDraftExample().ExampleJSON)
+	return slices.Clone(SpecDraftExample().ExampleJSON)
 }
 
-// specStreamCompleteDraft returns a fresh typed completion contract for stream_complete_draft.
-func specStreamCompleteDraft() completion.Spec[*StreamCompleteDraftResult] {
+// SpecSpecDraft returns a fresh typed completion contract for spec_draft.
+func SpecSpecDraft() completion.Spec[*SpecDraftResult] {
+	return completion.Spec[*SpecDraftResult]{
+		Name:                     SpecDraft,
+		Description:              "Generates collision test output.",
+		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
+		ExampleJSON:              rawjson.Message("{\"text\":\"Generated text.\"}"),
+		Codec:                    newSpecDraftResultCodec(),
+	}
+}
+
+// SpecDraftExample2 returns an immutable copy of the generated example
+// used to demonstrate spec_draft output.
+func SpecDraftExample2() rawjson.Message {
+	return slices.Clone(SpecSpecDraft().ExampleJSON)
+}
+
+// SpecStreamCompleteDraft returns a fresh typed completion contract for stream_complete_draft.
+func SpecStreamCompleteDraft() completion.Spec[*StreamCompleteDraftResult] {
 	return completion.Spec[*StreamCompleteDraftResult]{
 		Name:                     StreamCompleteDraft,
 		Description:              "Generates collision test output.",
@@ -93,45 +112,55 @@ func specStreamCompleteDraft() completion.Spec[*StreamCompleteDraftResult] {
 // StreamCompleteDraftExample2 returns an immutable copy of the generated example
 // used to demonstrate stream_complete_draft output.
 func StreamCompleteDraftExample2() rawjson.Message {
-	return slices.Clone(specStreamCompleteDraft().ExampleJSON)
+	return slices.Clone(SpecStreamCompleteDraft().ExampleJSON)
 }
 
 // CompleteCompleteDraft runs the unary typed completion for complete_draft.
 func CompleteCompleteDraft(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[*CompleteDraftResult], error) {
-	return completion.Complete(ctx, client, req, specCompleteDraft())
+	return completion.Complete(ctx, client, req, SpecCompleteDraft())
 }
 
 // StreamCompleteCompleteDraft starts the typed completion stream for complete_draft.
 func StreamCompleteCompleteDraft(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[*CompleteDraftResult], error) {
-	return completion.Stream(ctx, client, req, specCompleteDraft())
+	return completion.Stream(ctx, client, req, SpecCompleteDraft())
 }
 
 // CompleteDraft2 runs the unary typed completion for draft.
 func CompleteDraft2(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[*DraftResult], error) {
-	return completion.Complete(ctx, client, req, specDraft())
+	return completion.Complete(ctx, client, req, SpecDraft2())
 }
 
 // StreamCompleteDraft2 starts the typed completion stream for draft.
 func StreamCompleteDraft2(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[*DraftResult], error) {
-	return completion.Stream(ctx, client, req, specDraft())
+	return completion.Stream(ctx, client, req, SpecDraft2())
 }
 
 // CompleteDraftExample2 runs the unary typed completion for draft_example.
 func CompleteDraftExample2(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[*DraftExampleResult], error) {
-	return completion.Complete(ctx, client, req, specDraftExample())
+	return completion.Complete(ctx, client, req, SpecDraftExample())
 }
 
 // StreamCompleteDraftExample starts the typed completion stream for draft_example.
 func StreamCompleteDraftExample(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[*DraftExampleResult], error) {
-	return completion.Stream(ctx, client, req, specDraftExample())
+	return completion.Stream(ctx, client, req, SpecDraftExample())
+}
+
+// CompleteSpecDraft runs the unary typed completion for spec_draft.
+func CompleteSpecDraft(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[*SpecDraftResult], error) {
+	return completion.Complete(ctx, client, req, SpecSpecDraft())
+}
+
+// StreamCompleteSpecDraft starts the typed completion stream for spec_draft.
+func StreamCompleteSpecDraft(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[*SpecDraftResult], error) {
+	return completion.Stream(ctx, client, req, SpecSpecDraft())
 }
 
 // CompleteStreamCompleteDraft runs the unary typed completion for stream_complete_draft.
 func CompleteStreamCompleteDraft(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[*StreamCompleteDraftResult], error) {
-	return completion.Complete(ctx, client, req, specStreamCompleteDraft())
+	return completion.Complete(ctx, client, req, SpecStreamCompleteDraft())
 }
 
 // StreamCompleteStreamCompleteDraft starts the typed completion stream for stream_complete_draft.
 func StreamCompleteStreamCompleteDraft(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[*StreamCompleteDraftResult], error) {
-	return completion.Stream(ctx, client, req, specStreamCompleteDraft())
+	return completion.Stream(ctx, client, req, SpecStreamCompleteDraft())
 }

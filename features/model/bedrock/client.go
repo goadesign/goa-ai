@@ -371,18 +371,21 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 	if err != nil {
 		return nil, err
 	}
+	if req.StructuredOutput != nil &&
+		isAnthropicBedrockModel(modelID) &&
+		!claudecaps.BedrockNativeStructuredOutputSupported(modelID) {
+		return nil, fmt.Errorf(
+			"bedrock: model %q does not support provider-enforced structured output: %w",
+			modelID,
+			model.ErrStructuredOutputUnsupported,
+		)
+	}
 	// Claude 4.6 uses one private strict tool so Runtime CountTokens and
-	// Converse receive the same provider-enforced schema. Newer Bedrock Claude
-	// models may support forced tools before AWS exposes OutputConfig or strict
-	// tools for them; use the same private tool without strict mode so callers
-	// can retain those models. The validated model.Client rejects malformed JSON
-	// and applies the generated completion decoder attached by typed callers.
-	//
-	// Derive the tool choice before thinking so unsupported manual-thinking and
-	// forced-tool combinations fail before the provider call.
+	// Converse receive the same provider-enforced schema. Derive the tool choice
+	// before thinking so unsupported manual-thinking combinations fail before
+	// the provider call.
 	toolDefs, toolChoice := req.Tools, req.ToolChoice
 	useStructuredOutputTool := structuredOutputUsesTool(modelID, req.StructuredOutput)
-	strictStructuredOutputTool := structuredOutputUsesStrictTool(modelID, req.StructuredOutput)
 	if useStructuredOutputTool {
 		if len(req.Tools) > 0 || req.ToolChoice != nil {
 			return nil, errors.New("bedrock: structured output cannot be combined with request tool definitions")
@@ -432,7 +435,7 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 	if err != nil {
 		return nil, err
 	}
-	if strictStructuredOutputTool {
+	if useStructuredOutputTool {
 		if err := requireStrictStructuredOutputTool(toolConfig, additionalModelFields); err != nil {
 			return nil, err
 		}
@@ -607,22 +610,9 @@ func encodeOutputConfig(output *model.StructuredOutput) (*brtypes.OutputConfig, 
 }
 
 // structuredOutputUsesTool reports whether Bedrock must receive a typed
-// completion as one private forced tool. Claude 4.6 can enforce that tool with
-// strict mode. Models for which AWS has not exposed native structured output
-// use the same tool without strict mode; model.Client validates JSON and runs
-// any generated completion decoder before the caller can observe the response.
+// completion as one private strict tool. Claude 4.6 needs this representation
+// so adaptive thinking and provider-enforced output use one compatible request.
 func structuredOutputUsesTool(modelID string, output *model.StructuredOutput) bool {
-	return output != nil &&
-		isAnthropicBedrockModel(modelID) &&
-		(!claudecaps.BedrockNativeStructuredOutputSupported(modelID) ||
-			claudecaps.AdaptiveThinkingSupported(modelID))
-}
-
-// structuredOutputUsesStrictTool reports whether Bedrock can enforce and count
-// the same Claude structured-output request through one private strict tool.
-// Claude 4.5 keeps using OutputConfig because forced tools cannot be combined
-// with its manual thinking mode.
-func structuredOutputUsesStrictTool(modelID string, output *model.StructuredOutput) bool {
 	return output != nil &&
 		isAnthropicBedrockModel(modelID) &&
 		claudecaps.BedrockNativeStructuredOutputSupported(modelID) &&

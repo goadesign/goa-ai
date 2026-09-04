@@ -384,6 +384,69 @@ func main() {
 
 	{
 		client, err := newExampleCompletionClient(
+			string(completions.SpecDraft),
+			completions.SpecDraftExample2(),
+		)
+		if err != nil {
+			log.Fatalf("completion client setup failed: %v", err)
+		}
+		out, err := completions.CompleteSpecDraft(ctx, client, &model.Request{
+			Messages: []*model.Message{
+				{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "Draft a task for preparing a launch checklist."}},
+				},
+			},
+		})
+		if err != nil {
+			log.Fatalf("completion run failed: %v", err)
+		}
+		fmt.Printf("Completion %s: %+v\n", completions.SpecDraft, out.Value)
+	}
+
+	{
+		client, err := newExampleCompletionClient(
+			string(completions.SpecDraft),
+			completions.SpecDraftExample2(),
+		)
+		if err != nil {
+			log.Fatalf("completion stream client setup failed: %v", err)
+		}
+		stream, err := completions.StreamCompleteSpecDraft(ctx, client, &model.Request{
+			Messages: []*model.Message{
+				{
+					Role:  model.ConversationRoleUser,
+					Parts: []model.Part{model.TextPart{Text: "Draft a task for preparing a launch checklist."}},
+				},
+			},
+		})
+		if err != nil {
+			log.Fatalf("completion stream failed to start: %v", err)
+		}
+		for {
+			chunk, err := stream.Recv()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				log.Fatalf("completion stream failed: %v", err)
+			}
+			if delta, ok := chunk.(model.CompletionDeltaChunk); ok {
+				fmt.Printf("Completion delta %s: %s\n", completions.SpecDraft, delta.Delta.Delta)
+			}
+		}
+		value, ok := stream.Value()
+		if !ok {
+			log.Fatal("completion stream ended without a typed value")
+		}
+		fmt.Printf("Completion stream %s: %+v\n", completions.SpecDraft, value)
+		if err := stream.Close(); err != nil {
+			log.Fatalf("completion stream close failed: %v", err)
+		}
+	}
+
+	{
+		client, err := newExampleCompletionClient(
 			string(completions.StreamCompleteDraft),
 			completions.StreamCompleteDraftExample2(),
 		)

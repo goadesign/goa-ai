@@ -19,8 +19,8 @@ const (
 	Headline completion.Ident = "headline"
 )
 
-// specHeadline returns a fresh typed completion contract for headline.
-func specHeadline() completion.Spec[HeadlineResult] {
+// SpecHeadline returns a fresh typed completion contract for headline.
+func SpecHeadline() completion.Spec[HeadlineResult] {
 	return completion.Spec[HeadlineResult]{
 		Name:                     Headline,
 		Description:              "Write a short task headline",
@@ -34,15 +34,15 @@ func specHeadline() completion.Spec[HeadlineResult] {
 // HeadlineExample returns an immutable copy of the generated example
 // used to demonstrate headline output.
 func HeadlineExample() rawjson.Message {
-	return slices.Clone(specHeadline().ExampleJSON)
+	return slices.Clone(SpecHeadline().ExampleJSON)
 }
 
 // CompleteHeadline runs the unary typed completion for headline.
 func CompleteHeadline(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[HeadlineResult], error) {
-	return completion.Complete(ctx, client, req, specHeadline())
+	return completion.Complete(ctx, client, req, SpecHeadline())
 }
 
 // StreamCompleteHeadline starts the typed completion stream for headline.
 func StreamCompleteHeadline(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[HeadlineResult], error) {
-	return completion.Stream(ctx, client, req, specHeadline())
+	return completion.Stream(ctx, client, req, SpecHeadline())
 }

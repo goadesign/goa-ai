@@ -52,8 +52,8 @@ type bedrockStreamer struct {
 }
 
 // newBedrockStreamer adapts a Bedrock ConverseStream to model.Streamer.
-// structuredOutputToolName is non-empty only when
-// structuredOutputUsesStrictTool chose a forced private tool. The streamer
+// structuredOutputToolName is non-empty only when structuredOutputUsesTool
+// chose a forced private strict tool. The streamer
 // treats that tool_use block as the completion channel instead of emitting a
 // canonical ToolCallChunk.
 func newBedrockStreamer(

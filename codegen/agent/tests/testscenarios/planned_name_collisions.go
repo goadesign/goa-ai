@@ -60,6 +60,7 @@ func CompletionNameCollisions() func() {
 				"draft",
 				"draft_example",
 				"complete_draft",
+				"spec_draft",
 				"stream_complete_draft",
 			} {
 				Completion(name, "Generates collision test output.", func() {

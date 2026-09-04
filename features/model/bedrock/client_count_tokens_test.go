@@ -294,6 +294,32 @@ func TestCountTokensRejectsNativeStructuredOutput(t *testing.T) {
 	require.Nil(t, rt.input)
 }
 
+func TestCountTokensRejectsUnsupportedStructuredOutputBeforeMantle(t *testing.T) {
+	runtime := &countTokensRuntimeClient{}
+	counter := &recordingAnthropicCounter{}
+	client := &provider{
+		runtime:      runtime,
+		mantle:       counter,
+		defaultModel: "us.anthropic.claude-opus-5",
+	}
+
+	count, err := client.CountTokens(t.Context(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "return JSON"}},
+		}},
+		StructuredOutput: &model.StructuredOutput{
+			Name:   "answer",
+			Schema: rawjson.Message(`{"type":"object"}`),
+		},
+	})
+
+	require.Equal(t, model.TokenCount{}, count)
+	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+	require.Nil(t, runtime.input)
+	require.Nil(t, counter.request)
+}
+
 // TestCountTokens_SendsFoundationModelID verifies that a count configured with
 // a cross-region inference profile sends the backing foundation model ID on the
 // wire (Runtime CountTokens rejects the profile ID), while the returned
