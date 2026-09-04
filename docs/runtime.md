@@ -648,13 +648,15 @@ adapter discards any provider-authored argument text and always emits `{}`.
 
 ### Thinking on Gemini 3
 
-Gemini 3 uses thinking levels rather than numeric thinking-token budgets, and
-thinking cannot be disabled. The provider-neutral request can enable the
-model's default thinking behavior, but a numeric budget or explicit
-`Thinking.Enable=false` is rejected. API-valid configured and per-request
-temperatures are forwarded to Vertex unchanged. A client-level numeric
-`ThinkingBudget` applies only to older Gemini models that accept token budgets;
-Gemini 3 does not inherit it.
+Gemini 3 uses thinking levels rather than numeric thinking-token budgets. When
+every Gemini 3 model configured on a client accepts the same least-reasoning
+level, set `Options.DisabledThinkingLevel` to that exact provider level. An
+explicit `Thinking.Enable=false` request then uses it; without that
+configuration the request is rejected. Numeric thinking budgets remain
+unsupported for Gemini 3. API-valid configured and per-request temperatures
+are forwarded to Vertex unchanged. A client-level numeric `ThinkingBudget`
+applies only to older Gemini models that accept token budgets; Gemini 3 does
+not inherit it.
 
 ---
 

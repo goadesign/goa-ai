@@ -123,7 +123,7 @@ func TestGemini3RejectsUnsupportedThinking(t *testing.T) {
 			request: &model.Request{
 				Thinking: &model.ThinkingOptions{},
 			},
-			wantErr: "does not support disabling thinking",
+			wantErr: "disabled thinking level is not configured",
 		},
 	}
 	for _, tt := range tests {
@@ -144,6 +144,37 @@ func TestGemini3RejectsUnsupportedThinking(t *testing.T) {
 			assert.Empty(t, stub.lastModel)
 		})
 	}
+}
+
+func TestGemini3MapsDisabledThinkingToConfiguredLevel(t *testing.T) {
+	stub := &stubGenerativeClient{resp: textResp("ok")}
+	client, err := New(stub, Options{
+		DefaultModel:          "gemini-3.5-flash",
+		DisabledThinkingLevel: genai.ThinkingLevelMinimal,
+	})
+	require.NoError(t, err)
+
+	_, err = client.Complete(t.Context(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "hello"}},
+		}},
+		Thinking: &model.ThinkingOptions{},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, stub.lastConfig.ThinkingConfig)
+	assert.Equal(t, genai.ThinkingLevelMinimal, stub.lastConfig.ThinkingConfig.ThinkingLevel)
+	assert.Nil(t, stub.lastConfig.ThinkingConfig.ThinkingBudget)
+}
+
+func TestNewRejectsInvalidDisabledThinkingLevel(t *testing.T) {
+	_, err := New(&stubGenerativeClient{}, Options{
+		DefaultModel:          "gemini-3.5-flash",
+		DisabledThinkingLevel: genai.ThinkingLevel("none"),
+	})
+
+	require.EqualError(t, err, `vertex: unsupported disabled thinking level "none"`)
 }
 
 func TestGemini3ForwardsValidTemperature(t *testing.T) {

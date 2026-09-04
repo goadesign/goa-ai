@@ -74,6 +74,9 @@ func NewProvider(models GenerativeClient, opts Options) (model.Provider, error) 
 	if err := validateVertexTemperature(opts.Temperature); err != nil {
 		return nil, err
 	}
+	if err := validateThinkingLevel(opts.DisabledThinkingLevel); err != nil {
+		return nil, err
+	}
 	return &provider{models: models, opts: opts}, nil
 }
 
@@ -230,7 +233,11 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 		config.ThinkingConfig = tc
 	case req.Thinking != nil:
 		if isGemini3Model(modelID) {
-			return nil, errors.New("vertex: Gemini 3 does not support disabling thinking")
+			if c.opts.DisabledThinkingLevel == "" {
+				return nil, errors.New("vertex: Gemini 3 disabled thinking level is not configured")
+			}
+			config.ThinkingConfig = &genai.ThinkingConfig{ThinkingLevel: c.opts.DisabledThinkingLevel}
+			break
 		}
 		config.ThinkingConfig = &genai.ThinkingConfig{ThinkingBudget: genai.Ptr(int32(0))}
 	}
@@ -270,4 +277,15 @@ func validateVertexTemperature(temperature float32) error {
 		return errors.New("vertex: temperature must be between 0 and 2")
 	}
 	return nil
+}
+
+// validateThinkingLevel rejects values that the Google Gen AI SDK would pass
+// through to Vertex as an invalid enum.
+func validateThinkingLevel(level genai.ThinkingLevel) error {
+	switch level {
+	case "", genai.ThinkingLevelMinimal, genai.ThinkingLevelLow, genai.ThinkingLevelMedium, genai.ThinkingLevelHigh:
+		return nil
+	case genai.ThinkingLevelUnspecified:
+	}
+	return fmt.Errorf("vertex: unsupported disabled thinking level %q", level)
 }

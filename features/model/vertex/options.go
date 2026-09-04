@@ -3,6 +3,7 @@ package vertex
 import (
 	"goa.design/goa-ai/features/model/internal/modelid"
 	"goa.design/goa-ai/runtime/agent/model"
+	"google.golang.org/genai"
 )
 
 // Options configures the Gemini-on-Vertex model client.
@@ -27,6 +28,10 @@ type Options struct {
 	// numeric budgets. Gemini 3 uses thinking levels and does not read this
 	// option.
 	ThinkingBudget int
+	// DisabledThinkingLevel maps ThinkingOptions{Enable: false} to the least
+	// reasoning level accepted by every configured Gemini 3 model. Leave it
+	// empty when those models cannot represent disabled thinking.
+	DisabledThinkingLevel genai.ThinkingLevel
 }
 
 // geminiProviderName identifies the Gemini-on-Vertex adapter in provider errors.
