@@ -223,7 +223,7 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 		require.NotNil(t, input)
 		require.Equal(t, run.Context{RunID: "run-123"}, input.RunContext)
 		require.Len(t, input.Messages, 1)
-		require.Equal(t, "hello", agentMessageText(input.Messages[0]))
+		require.Equal(t, "hello", input.Messages[0].Text())
 		require.NotNil(t, input.Agent)
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	}}
@@ -571,6 +571,125 @@ func TestPlanStartActivityAcceptsPlannerSelectedOutputLimitedFinalResponse(t *te
 	require.NotNil(t, out.Result)
 	require.Nil(t, out.OutputContractFailure)
 	require.Equal(t, "partial", out.Result.FinalResponse.Message.Parts[0].(model.TextPart).Text)
+}
+
+func TestPlanStartActivityRejectsOutputLimitedToolBatch(t *testing.T) {
+	call := model.ToolCall{
+		ID:      "call-1",
+		Name:    "svc.lookup",
+		Payload: rawjson.Message(`{"query":"status"}`),
+	}
+	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		client, ok := input.Agent.PlannerModelClient("test")
+		require.True(t, ok)
+		require.Equal(t, []tools.Ident{"svc.lookup"}, toolDefinitionNames(input.Agent.AdvertisedToolDefinitions()))
+		request := testModelRequest("svc.lookup")
+		request.Model = "test"
+		summary, err := client.Stream(ctx, request)
+		require.NoError(t, err)
+		return &planner.PlanResult{ToolCalls: summary.ToolCalls}, nil
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	spec := newAnyJSONSpec("svc.lookup")
+	seedTestToolSpecs(rt, spec)
+	seedTestToolDefinitions(rt, spec)
+	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{"service.agent": {spec}}
+	rt.streamSubscriber = runtimeWithModelOutputSink(t, &recordingStreamSink{}).streamSubscriber
+	rt.models["test"] = mustTestModelClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			message := model.Message{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{
+					model.TextPart{Text: "working"},
+					model.ToolUsePart{ID: call.ID, Name: string(call.Name), Input: call.Payload},
+				},
+			}
+			return &chunkStreamer{
+				chunks: []model.Chunk{
+					model.TextChunk{Message: model.Message{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{model.TextPart{Text: "working"}},
+					}},
+					model.ToolCallChunk{ToolCall: call},
+					model.StopChunk{Reason: "max_tokens", OutputLimited: true},
+				},
+				response: &model.Response{
+					Content:       []model.Message{message},
+					StopReason:    "max_tokens",
+					OutputLimited: true,
+				},
+			}, nil
+		},
+	})
+
+	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123", SessionID: "session-123"},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Nil(t, out.Result)
+	require.Nil(t, out.Transcript)
+	require.Equal(t, "working", out.PublishedAssistantText)
+	require.NotNil(t, out.OutputContractFailure)
+	require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
+	require.Empty(t, out.OutputContractFailure.Correction)
+	require.True(t, out.OutputContractFailure.ModelResponsePresent)
+	require.NotEmpty(t, out.OutputContractFailure.ModelResponseSHA256)
+}
+
+func TestPlanStartActivityKeepsPlannerRejectionOfOutputLimitedFinalResponse(t *testing.T) {
+	const correction = "Finish the answer concisely from the evidence already collected."
+	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		client, ok := input.Agent.PlannerModelClient("test")
+		require.True(t, ok)
+		summary, err := client.Stream(ctx, &model.Request{Model: "test"})
+		require.NoError(t, err)
+		return nil, planner.NewRecoverableModelOutputError(
+			errors.New("answer stopped before completion"),
+			summary.FinalResponse(),
+			correction,
+		)
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	rt.streamSubscriber = runtimeWithModelOutputSink(t, &recordingStreamSink{}).streamSubscriber
+	rt.models["test"] = mustTestModelClient(stubModelClient{
+		stream: func(context.Context, *model.Request) (model.Streamer, error) {
+			message := model.Message{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "partial"}},
+			}
+			return &chunkStreamer{
+				chunks: []model.Chunk{
+					model.TextChunk{Message: message},
+					model.StopChunk{Reason: "max_tokens", OutputLimited: true},
+				},
+				response: &model.Response{
+					Content:       []model.Message{message},
+					StopReason:    "max_tokens",
+					OutputLimited: true,
+				},
+			}, nil
+		},
+	})
+
+	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123", SessionID: "session-123"},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	require.Nil(t, out.Result)
+	require.Equal(t, "partial", out.PublishedAssistantText)
+	require.NotNil(t, out.OutputContractFailure)
+	require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
+	require.Equal(t, correction, out.OutputContractFailure.Correction)
+	require.True(t, out.OutputContractFailure.ModelResponsePresent)
+	require.NotEmpty(t, out.OutputContractFailure.ModelResponseSHA256)
 }
 
 func TestPlanStartActivityRejectsAlteredRecoverableModelOutput(t *testing.T) {

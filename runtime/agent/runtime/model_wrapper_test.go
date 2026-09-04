@@ -1431,7 +1431,7 @@ func TestModelInvocationClientCapturesCanonicalResponseAtEOF(t *testing.T) {
 	transcript, err := invocations.exportModelInvocation(&planner.PlanResult{ToolCalls: summary.ToolCalls})
 
 	require.NoError(t, err)
-	require.Equal(t, "canonical", agentMessageText(transcript[0]))
+	require.Equal(t, "canonical", transcript[0].Text())
 	require.Equal(t, map[string]any{"provider_item": "item-1"}, transcript[0].Meta)
 }
 

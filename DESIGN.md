@@ -18,7 +18,8 @@ from the same planner activity. Plan and Resume activities are single-attempt,
 so one response ID can never name output from two model executions. A later
 explicit planner turn receives a new response ID. The workflow's committed
 assistant-turn event uses that same ID. An accepted response stores its complete
-provider transcript and aggregate text. A rejected response or ordinary failure
+provider transcript and sends those exact ordered messages to stream consumers.
+A rejected response or ordinary failure
 reported before activity cancellation stores the exact text already delivered
 as a plain assistant message before recovery or failure continues. Live
 fragments themselves do not enter the run log, hook
@@ -306,8 +307,11 @@ validation failures remain terminal.
 When a completed model reply or planner result breaks its required shape, the
 planner returns `OutputContractError`. The runtime validates the full result
 before accepting its selected tool calls or storing its selected response. The
-provider's output-limit status is part of the response given to the planner;
-the runtime does not override a planner that accepts that exact response.
+provider's output-limit status is part of the response given to the planner.
+For a final response without tool calls, the runtime does not override a planner
+that accepts that exact response. An output-limited response with tool calls is
+rejected before any call can execute because the provider may not have finished
+the complete call batch.
 Ordinary output contract errors are terminal and Temporal does not retry them.
 When the planner can give exact replacement guidance for one completed model answer, it may
 instead return `NewRecoverableModelOutputError`. This separate, response-

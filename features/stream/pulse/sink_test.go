@@ -11,10 +11,13 @@ import (
 
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/stream"
 	streamopts "goa.design/pulse/streaming/options"
 )
+
+const testEntryID = "1-0"
 
 func TestSendPublishesEnvelope(t *testing.T) {
 	cli := mockpulse.NewClient(t)
@@ -25,7 +28,6 @@ func TestSendPublishesEnvelope(t *testing.T) {
 		require.Equal(t, "session/session-123", name)
 		return str, nil
 	})
-	const lastID = "1-0"
 	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
 		require.Equal(t, string(stream.EventToolEnd), event)
 		var env Envelope
@@ -39,7 +41,7 @@ func TestSendPublishesEnvelope(t *testing.T) {
 		res, ok := body["result"].(map[string]any)
 		require.True(t, ok)
 		require.Equal(t, "ok", res["status"])
-		return lastID, nil
+		return testEntryID, nil
 	})
 
 	sink, err := NewSink(Options{Client: cli})
@@ -60,7 +62,6 @@ func TestSendPublishesEnvelope(t *testing.T) {
 func TestSendPublishesEnvelopeEventKey(t *testing.T) {
 	cli := mockpulse.NewClient(t)
 	str := mockpulse.NewStream(t)
-	const lastID = "1-0"
 
 	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
 		require.Equal(t, "session/session-123", name)
@@ -71,7 +72,7 @@ func TestSendPublishesEnvelopeEventKey(t *testing.T) {
 		var env Envelope
 		require.NoError(t, json.Unmarshal(payload, &env))
 		require.Equal(t, "evt-1", env.EventKey)
-		return lastID, nil
+		return testEntryID, nil
 	})
 
 	sink, err := NewSink(Options{Client: cli})
@@ -86,6 +87,62 @@ func TestSendPublishesEnvelopeEventKey(t *testing.T) {
 			time.Unix(1, 0).UTC(),
 		),
 		Data: stream.AssistantReplyPayload{Text: "ok"},
+	})
+	require.NoError(t, err)
+}
+
+func TestSendPublishesCommittedAssistantMessages(t *testing.T) {
+	cli := mockpulse.NewClient(t)
+	str := mockpulse.NewStream(t)
+
+	cli.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
+		require.Equal(t, "session/session-123", name)
+		return str, nil
+	})
+	str.AddAddOnce(func(ctx context.Context, idempotencyKey, event string, data []byte) (string, error) {
+		require.Equal(t, streamPublicationKey("run-123", "response-1"), idempotencyKey)
+		require.Equal(t, string(stream.EventAssistantTurn), event)
+		var envelope map[string]any
+		require.NoError(t, json.Unmarshal(data, &envelope))
+		payload, ok := envelope["payload"].(map[string]any)
+		require.True(t, ok)
+		require.Equal(t, "response-1", payload["response_id"])
+		require.NotContains(t, payload, "text")
+		require.Equal(t, []any{
+			map[string]any{
+				"role": "assistant",
+				"parts": []any{
+					map[string]any{"kind": "citations", "text": "answer", "citations": []any{}},
+				},
+				"meta": map[string]any{"source": "manual"},
+			},
+		}, payload["messages"])
+		return testEntryID, nil
+	})
+
+	payload := stream.AssistantTurnPayload{
+		ResponseID: "response-1",
+		Messages: []*model.Message{{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.CitationsPart{
+				Text:      "answer",
+				Citations: []model.Citation{},
+			}},
+			Meta: map[string]any{"source": "manual"},
+		}},
+	}
+	sink, err := NewSink(Options{Client: cli})
+	require.NoError(t, err)
+	err = sink.Send(context.Background(), stream.AssistantTurn{
+		Base: stream.NewBaseWithEventKey(
+			stream.EventAssistantTurn,
+			"run-123",
+			"session-123",
+			payload,
+			"response-1",
+			time.Unix(1, 0).UTC(),
+		),
+		Data: payload,
 	})
 	require.NoError(t, err)
 }
@@ -157,7 +214,7 @@ func TestOnPublishedErrorPropagates(t *testing.T) {
 		return str, nil
 	})
 	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
-		return "1-0", nil
+		return testEntryID, nil
 	})
 
 	sink, err := NewSink(Options{
@@ -186,7 +243,7 @@ func TestCustomStreamID(t *testing.T) {
 		return str, nil
 	})
 	str.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
-		return "1-0", nil
+		return testEntryID, nil
 	})
 	sink, err := NewSink(Options{
 		Client: cli,

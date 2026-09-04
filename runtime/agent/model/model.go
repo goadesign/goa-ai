@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"math/big"
+	"strings"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -605,9 +606,10 @@ type (
 	//
 	// Content carries the complete ordered provider response, including tool-use
 	// parts. Successful responses contain at least one assistant message and a
-	// non-empty provider stop reason. OutputLimited reports the one provider stop
-	// condition that runtimes must not accept as completed work. Usage mirrors
-	// provider metadata.
+	// non-empty provider stop reason. OutputLimited reports that the provider may
+	// have stopped before finishing. Planners may accept a final response without
+	// tool calls, but the runtime rejects an output-limited tool batch. Usage
+	// mirrors provider metadata.
 	Response struct {
 		// Content is the ordered list of assistant messages produced.
 		Content []Message
@@ -808,6 +810,22 @@ type (
 		Close() error
 	}
 )
+
+// Text returns the message content intended for display as plain text. It
+// preserves the order of text and citation parts and ignores structured parts
+// such as model thinking and tool calls.
+func (m *Message) Text() string {
+	var text strings.Builder
+	for _, part := range m.Parts {
+		switch value := part.(type) {
+		case TextPart:
+			text.WriteString(value.Text)
+		case CitationsPart:
+			text.WriteString(value.Text)
+		}
+	}
+	return text.String()
+}
 
 // CountTokens estimates req's input-token usage with Exact=false. It is intended
 // for explicit fallback paths such as rate limiting or non-native providers, not

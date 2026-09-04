@@ -76,7 +76,7 @@ func TestRestoredCorrectableOutputUsesBoundedRecoveryAndResetsAfterSuccess(t *te
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "replacement completed", agentMessageText(out.Final))
+	assert.Equal(t, "replacement completed", out.Final.Text())
 	assert.Equal(t, 3, providerCalls)
 	assert.Equal(t, 1, lookupCalls)
 	assert.Equal(t, 2, replacementTurns)
@@ -126,7 +126,7 @@ func TestRestoredCorrectableOutputStopsAtRecoveryCap(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "stopped after recovery cap", agentMessageText(out.Final))
+	assert.Equal(t, "stopped after recovery cap", out.Final.Text())
 	assert.Equal(t, 2, providerCalls)
 	assert.Equal(t, 1, replacementTurns)
 }

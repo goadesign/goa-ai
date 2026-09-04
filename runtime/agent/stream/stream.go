@@ -15,6 +15,7 @@ package stream
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
@@ -119,16 +120,17 @@ type (
 		Data AssistantReplyPayload
 	}
 
-	// AssistantTurn streams the complete display text for one assistant response
-	// after the runtime has durably appended that text. The run may still fail
-	// after the text was displayed.
+	// AssistantTurn streams the complete messages for one assistant response
+	// after the runtime has durably appended them. The run may still fail after
+	// their display text was shown.
 	//
 	// Contract:
 	//   - ResponseID matches every AssistantReply fragment in this response.
-	//   - Text is complete even when a unary or planner-authored response emitted
-	//     no AssistantReply fragments.
-	//   - When fragments exist, their ordered text is an exact prefix of Text, so
-	//     consumers can append only a missing suffix without replacing live text.
+	//   - Messages contain the exact ordered assistant transcript, including
+	//     metadata and structured parts.
+	//   - When fragments exist, their ordered text is an exact prefix of the text
+	//     in Messages, so consumers can append only a missing suffix without
+	//     replacing live text.
 	AssistantTurn struct {
 		Base
 		Data AssistantTurnPayload
@@ -272,10 +274,10 @@ type (
 		Text       string `json:"text"`
 	}
 
-	// AssistantTurnPayload carries one committed assistant display response.
+	// AssistantTurnPayload carries one committed assistant response.
 	AssistantTurnPayload struct {
-		ResponseID string `json:"response_id"`
-		Text       string `json:"text"`
+		ResponseID string           `json:"response_id"`
+		Messages   []*model.Message `json:"messages"`
 	}
 
 	// PlannerThoughtPayload is the typed wire payload for planner thought events.
@@ -629,9 +631,11 @@ type (
 	StreamProfile struct {
 		// Assistant controls assistant reply emission.
 		Assistant bool
-		// AssistantTurns controls canonical assistant transcript emission.
+		// AssistantTurns controls emission of exact committed assistant messages.
 		AssistantTurns bool
-		// Thoughts controls planner thought / thinking emission.
+		// Thoughts controls separate planner-thought and live model-thinking
+		// events. It does not remove thinking parts or provider metadata from
+		// exact messages emitted through AssistantTurn.
 		Thoughts bool
 		// PromptRendered controls emission of prompt_rendered events.
 		PromptRendered bool
@@ -824,3 +828,16 @@ func (e Base) OccurredAt() time.Time { return e.at }
 
 // Payload implements Event.Payload.
 func (e Base) Payload() any { return e.p }
+
+// Text returns the assistant text in the order stored in Messages. It omits
+// reasoning, tool calls, and other parts that are not displayed as an answer.
+func (p AssistantTurnPayload) Text() string {
+	var text strings.Builder
+	for _, message := range p.Messages {
+		if message.Role != model.ConversationRoleAssistant {
+			continue
+		}
+		text.WriteString(message.Text())
+	}
+	return text.String()
+}

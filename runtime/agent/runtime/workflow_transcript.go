@@ -52,7 +52,7 @@ func (r *Runtime) appendTranscriptMessages(
 // appendSelectedModelResponse persists one accepted planner turn. Captured
 // provider responses are appended unchanged; planner-authored turns are built
 // once from the result's domain values. responseID becomes the stable identity
-// of the aggregate assistant text emitted after the append succeeds.
+// of the exact assistant messages emitted after the append succeeds.
 func (r *Runtime) appendSelectedModelResponse(
 	ctx context.Context,
 	agentID agent.Ident,

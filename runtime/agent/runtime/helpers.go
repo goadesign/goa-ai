@@ -139,30 +139,6 @@ func generateDeterministicAwaitID(runID, turnID string, tool tools.Ident, toolCa
 	return strings.Join([]string{runID, tid, safeTool, "await", toolCallID}, "/")
 }
 
-// agentMessageText concatenates assistant-visible text parts from a model.Message.
-func agentMessageText(msg *model.Message) string {
-	if msg == nil || len(msg.Parts) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	for _, p := range msg.Parts {
-		switch v := p.(type) {
-		case model.ThinkingPart:
-			// Skip ThinkingPart to avoid leaking non-user-facing reasoning.
-			continue
-		case model.TextPart:
-			if v.Text != "" {
-				b.WriteString(v.Text)
-			}
-		case model.CitationsPart:
-			if v.Text != "" {
-				b.WriteString(v.Text)
-			}
-		}
-	}
-	return b.String()
-}
-
 // newTextAgentMessage builds a model.Message with a single TextPart.
 // Returns nil when text is empty to allow callers to skip no-op messages.
 func newTextAgentMessage(role model.ConversationRole, text string) *model.Message {
@@ -648,10 +624,10 @@ func (r *Runtime) publishTranscriptDeltaErr(
 	)
 }
 
-// publishAssistantTranscriptDelta persists one assistant response and emits its
-// aggregate text under responseID after the append succeeds. The messages are
-// either a complete accepted provider transcript or the exact text published
-// before that response was rejected or failed.
+// publishAssistantTranscriptDelta persists one assistant response and emits
+// its exact messages under responseID after the append succeeds. The messages
+// are either a complete accepted provider transcript or the exact text
+// published before that response was rejected or failed.
 func (r *Runtime) publishAssistantTranscriptDelta(
 	ctx context.Context,
 	runID string,
@@ -935,7 +911,7 @@ func ConvertRunOutputToToolResult(toolName tools.Ident, output *RunOutput) (plan
 	}
 	result := planner.ToolResult{
 		Name:   toolName,
-		Result: agentMessageText(output.Final),
+		Result: output.Final.Text(),
 	}
 	// Record child count for agent-as-tool detection in the runtime.
 	result.ChildrenCount = len(output.ToolEvents)

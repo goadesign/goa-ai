@@ -1342,7 +1342,9 @@ sends validated assistant text and thinking to the session stream while its
 `planner.StreamSummary` containing accumulated text and complete validated tool
 calls. Each text fragment is append-only once sent. For an accepted response,
 the workflow appends the complete provider transcript and emits
-`assistant_turn` with the same response ID and complete aggregate text. For a
+`assistant_turn` with the same response ID and exact ordered messages. Consumers
+derive display text from those messages and retain their structured parts and
+metadata. For a
 rejected response or ordinary failure reported before activity cancellation, it
 first appends the exact text already sent as a plain assistant message and emits
 the same committed event, then continues recovery or ends the run. Usage
@@ -1479,9 +1481,10 @@ leave unfinished text only in the current client because canceled activity work
 cannot commit new records. Usage events still include every invocation. After atomic
 tool-batch admission, the workflow commits the complete selected response once
 before any effects. The committed `assistant_turn` carries the activity response
-ID and complete assistant display text. If live fragments exist, their ordered
-text is an exact prefix, so a downstream client can use the committed event as
-a cumulative checkpoint without replacing text. The workflow publishes each accepted ordered record batch through one
+ID and the exact ordered assistant messages stored in the run log. If live
+fragments exist, their ordered text is an exact prefix of the text in those
+messages, so a downstream client can append only the missing suffix without
+replacing text. The workflow publishes each accepted ordered record batch through one
 `runtime.store` activity; stable event keys make a retried prefix idempotent without
 creating one Temporal activity per record. Keyed stream publications use the
 same identity, so a retry completes a failed delivery without appending a

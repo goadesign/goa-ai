@@ -210,7 +210,7 @@ func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
 	require.NoError(t, second.err)
 	require.NotNil(t, second.out)
 	require.Nil(t, second.out.Suspension)
-	require.Equal(t, "done", agentMessageText(second.out.Final))
+	require.Equal(t, "done", second.out.Final.Text())
 	require.Equal(t, "run-1", secondContext.lastPlannerCall.Input.ToolOutputs[0].CallRunID)
 	require.Equal(t, "run-2", secondContext.lastPlannerCall.Input.ToolOutputs[0].ResultRunID)
 }

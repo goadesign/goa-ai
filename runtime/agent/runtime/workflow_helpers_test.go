@@ -247,7 +247,7 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 		}},
 	})
 	require.NoError(t, err)
-	require.Equal(t, "done", agentMessageText(out.Final))
+	require.Equal(t, "done", out.Final.Text())
 
 	executionToolCallID := generateDeterministicToolCallID(runID, turnID, 1, tool.Name, 0)
 	require.NotEqual(t, providerToolCallID, executionToolCallID)
@@ -701,7 +701,7 @@ func TestWorkflowTreatsPlannerAuthoredCanonicalContinuationAsStandalone(t *testi
 
 	require.NoError(t, err)
 	require.NotNil(t, output)
-	require.Equal(t, "done", agentMessageText(output.Final))
+	require.Equal(t, "done", output.Final.Text())
 	require.Equal(t, 1, resumes)
 	require.Len(t, output.ToolEvents, 1)
 }

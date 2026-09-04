@@ -81,7 +81,7 @@ func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "combined", agentMessageText(out.Final))
+	assert.Equal(t, "combined", out.Final.Text())
 	assert.Equal(t, 2, resumes)
 }
 
@@ -150,7 +150,7 @@ func TestRunLoopCorrectionMayRetryFailedToolOrAnswer(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, out)
-			assert.Equal(t, tt.wantAnswer, agentMessageText(out.Final))
+			assert.Equal(t, tt.wantAnswer, out.Final.Text())
 			assert.Len(t, out.ToolEvents, tt.wantToolEvents)
 		})
 	}
@@ -260,7 +260,7 @@ func TestRunLoopInvalidCallReachesFailureFinalization(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "stopped after repeated failures", agentMessageText(out.Final))
+	assert.Equal(t, "stopped after repeated failures", out.Final.Text())
 	assert.Equal(t, 1, recoveryTurns)
 	assert.Len(t, out.ToolEvents, 2)
 }
@@ -452,7 +452,7 @@ func TestFinishFailureFinalizesWithExactCause(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "partial result", agentMessageText(out.Final))
+	assert.Equal(t, "partial result", out.Final.Text())
 	assert.Equal(t, 1, resumes)
 	assert.Equal(t, []string{"load-call"}, h.workflow.lastPlannerCall.Input.RecoveryToolCallIDs)
 }
@@ -603,7 +603,7 @@ func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "all pages collected", agentMessageText(out.Final))
+	assert.Equal(t, "all pages collected", out.Final.Text())
 	assert.Equal(t, 2, resumes)
 	assert.Len(t, out.ToolEvents, 3)
 }
@@ -656,7 +656,7 @@ func TestRunLoopRecoversRejectedModelAnswer(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "corrected answer", agentMessageText(out.Final))
+	assert.Equal(t, "corrected answer", out.Final.Text())
 	assert.Equal(t, 2, resumes)
 	assert.Len(t, out.ToolEvents, 1)
 }
@@ -716,7 +716,7 @@ func TestRunLoopSharesRecoveryBudgetBetweenToolAndModelRejections(t *testing.T) 
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "shared recovery budget exhausted", agentMessageText(out.Final))
+	assert.Equal(t, "shared recovery budget exhausted", out.Final.Text())
 	assert.Equal(t, 2, resumes)
 }
 
@@ -781,7 +781,7 @@ func TestWorkflowRecoversInitialRejectedModelAnswer(t *testing.T) {
 	out, err := rt.ExecuteWorkflow(wfCtx, runInput)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "corrected initial answer", agentMessageText(out.Final))
+	assert.Equal(t, "corrected initial answer", out.Final.Text())
 	assert.Equal(t, 1, resumes)
 	assert.Equal(t, 11, out.Usage.InputTokens)
 }
@@ -833,7 +833,7 @@ func TestRunLoopStopsAfterConfiguredModelOutputRecoveryTurns(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "stopped after recovery cap", agentMessageText(out.Final))
+	assert.Equal(t, "stopped after recovery cap", out.Final.Text())
 	assert.Equal(t, 3, recoveryAttempts)
 }
 
@@ -914,7 +914,7 @@ func TestExecuteWorkflowRecoversInitialGeneratedModelToolCall(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "initial replacement completed", agentMessageText(out.Final))
+	assert.Equal(t, "initial replacement completed", out.Final.Text())
 	assert.Equal(t, 2, providerCalls)
 	assert.Equal(t, 1, lookupCalls)
 	assert.Equal(t, 2, resumes)
@@ -983,7 +983,7 @@ func TestRunLoopRecoversGeneratedModelToolCallBeforeExecution(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "replacement completed", agentMessageText(out.Final))
+	assert.Equal(t, "replacement completed", out.Final.Text())
 	assert.Equal(t, 2, providerCalls)
 	assert.Equal(t, 1, lookupCalls)
 	assert.Equal(t, 3, resumes)
@@ -1037,7 +1037,7 @@ func TestRunLoopModelInvocationRecoveryUsesSharedTurnCap(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "stopped after invocation recovery cap", agentMessageText(out.Final))
+	assert.Equal(t, "stopped after invocation recovery cap", out.Final.Text())
 	assert.Equal(t, 3, recoveryAttempts)
 	assert.Equal(t, 3, providerCalls)
 	assert.Zero(t, lookupCalls)
@@ -1167,7 +1167,7 @@ func TestRunLoopConsumesRecordedModelInvocationRecoveryWithoutProviderCall(t *te
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "replayed replacement", agentMessageText(out.Final))
+	assert.Equal(t, "replayed replacement", out.Final.Text())
 	assert.Equal(t, 2, plannerCalls)
 	assert.Zero(t, providerCalls)
 }

@@ -164,7 +164,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 					assert.NotContains(t, input.Reminders[0].Text, "ignored")
 					require.Len(t, input.Messages, 2)
 					assert.Equal(t, model.ConversationRoleUser, input.Messages[0].Role)
-					assert.Equal(t, "published text", agentMessageText(input.Messages[1]))
+					assert.Equal(t, "published text", input.Messages[1].Text())
 					return &planner.PlanResult{
 						ToolCalls: []planner.ToolRequest{{
 							Name:    catalog.Name,
@@ -238,7 +238,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 	out, err := rt.ExecuteWorkflow(wfCtx, runInput)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "items listed", agentMessageText(out.Final))
+	assert.Equal(t, "items listed", out.Final.Text())
 	assert.Equal(t, 1, executions)
 	assert.Equal(t, 2, resumes)
 	require.NotNil(t, out.Usage)
@@ -248,7 +248,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 	snapshot, err := rt.GetRunSnapshot(t.Context(), runInput.RunID)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(snapshot.Transcript), 2)
-	assert.Equal(t, "published text", agentMessageText(snapshot.Transcript[1]))
+	assert.Equal(t, "published text", snapshot.Transcript[1].Text())
 }
 
 func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
@@ -324,7 +324,7 @@ func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
 	out, err := rt.ExecuteWorkflow(wfCtx, runInput)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "could not select an available tool", agentMessageText(out.Final))
+	assert.Equal(t, "could not select an available tool", out.Final.Text())
 	assert.Equal(t, 2, modelCalls)
 	require.NotNil(t, out.Usage)
 	assert.Equal(t, 14, out.Usage.TotalTokens)

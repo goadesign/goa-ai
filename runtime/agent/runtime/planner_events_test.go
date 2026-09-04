@@ -130,7 +130,7 @@ func TestRuntimePlannerEventsPreservesAcceptedOutputLimitedFinalResponse(t *test
 	require.Equal(t, "partial", transcript[0].Parts[0].(model.TextPart).Text)
 }
 
-func TestRuntimePlannerEventsPreservesAcceptedOutputLimitedToolBatch(t *testing.T) {
+func TestRuntimePlannerEventsRejectsOutputLimitedToolBatch(t *testing.T) {
 	e := &modelInvocationJournal{}
 	invocation := mustBeginModelInvocation(t, e)
 	response := testModelResponse(nil, model.ToolCall{
@@ -150,11 +150,11 @@ func TestRuntimePlannerEventsPreservesAcceptedOutputLimitedToolBatch(t *testing.
 		}},
 	})
 
-	require.NoError(t, err)
-	require.Len(t, transcript, 1)
-	part, ok := transcript[0].Parts[0].(model.ToolUsePart)
-	require.True(t, ok)
-	require.Equal(t, "call-1", part.ID)
+	require.Nil(t, transcript)
+	var outputErr *outputcontract.Error
+	require.ErrorAs(t, err, &outputErr)
+	require.Equal(t, planner.OutputContractOriginModel, outputErr.Origin())
+	require.ErrorContains(t, outputErr.Unwrap(), "before completing the tool-call batch")
 }
 
 func TestRuntimePlannerEventsRejectsFinalResponseThatDiscardsToolCalls(t *testing.T) {
@@ -459,7 +459,7 @@ func TestRuntimePlannerEventsCanonicalResponseReplacesStreamDeltas(t *testing.T)
 	})
 
 	require.NoError(t, err)
-	require.Equal(t, "canonical", agentMessageText(transcript[0]))
+	require.Equal(t, "canonical", transcript[0].Text())
 	require.Equal(t, map[string]any{"provider_item": "item-1"}, transcript[0].Meta)
 }
 
