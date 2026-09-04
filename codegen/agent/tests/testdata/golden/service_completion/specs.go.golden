@@ -19,8 +19,8 @@ const (
 	DraftFromTranscript completion.Ident = "draft_from_transcript"
 )
 
-// specDraftFromTranscript returns a fresh typed completion contract for draft_from_transcript.
-func specDraftFromTranscript() completion.Spec[*DraftFromTranscriptResult] {
+// SpecDraftFromTranscript returns a fresh typed completion contract for draft_from_transcript.
+func SpecDraftFromTranscript() completion.Spec[*DraftFromTranscriptResult] {
 	return completion.Spec[*DraftFromTranscriptResult]{
 		Name:                     DraftFromTranscript,
 		Description:              "Synthesize a task draft from a transcript",
@@ -34,15 +34,15 @@ func specDraftFromTranscript() completion.Spec[*DraftFromTranscriptResult] {
 // DraftFromTranscriptExample returns an immutable copy of the generated example
 // used to demonstrate draft_from_transcript output.
 func DraftFromTranscriptExample() rawjson.Message {
-	return slices.Clone(specDraftFromTranscript().ExampleJSON)
+	return slices.Clone(SpecDraftFromTranscript().ExampleJSON)
 }
 
 // CompleteDraftFromTranscript runs the unary typed completion for draft_from_transcript.
 func CompleteDraftFromTranscript(ctx context.Context, client model.Client, req *model.Request) (*completion.Response[*DraftFromTranscriptResult], error) {
-	return completion.Complete(ctx, client, req, specDraftFromTranscript())
+	return completion.Complete(ctx, client, req, SpecDraftFromTranscript())
 }
 
 // StreamCompleteDraftFromTranscript starts the typed completion stream for draft_from_transcript.
 func StreamCompleteDraftFromTranscript(ctx context.Context, client model.Client, req *model.Request) (*completion.Streamer[*DraftFromTranscriptResult], error) {
-	return completion.Stream(ctx, client, req, specDraftFromTranscript())
+	return completion.Stream(ctx, client, req, SpecDraftFromTranscript())
 }

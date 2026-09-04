@@ -171,7 +171,8 @@ DSL and regenerate.
 `goa gen` emits a service-owned package at `gen/<service>/completions` with:
 
 - typed result and union types
-- private specs containing each result schema and generated codec
+- public `Spec<Name>()` factories that return fresh typed contracts containing
+  each result schema and generated codec
 - a narrow `<Name>Example()` accessor that returns an immutable copy of
   canonical JSON when the result has an authored root `Example(...)`
 - public `Complete<Name>(ctx, client, req)` wrappers that own unary decoding
@@ -212,8 +213,9 @@ final `completion` chunk, drains the provider, validates the complete response,
 and requires the exact completion bytes to match before returning the retained
 chunk. A generated or caller-supplied completion validator adds checks but
 cannot replace schema validation or byte reconciliation. Provider enforcement
-remains an earlier optimization. Generated completion helpers derive the name
-and schema from the validated completion DSL.
+and local validation are both required; local validation never substitutes for
+a provider that cannot enforce the schema. Generated completion helpers derive
+the name and schema from the validated completion DSL.
 
 Unary completion makes exactly one model call. The response is decoded with the
 generated codec. If its JSON violates the completion contract, the helper
@@ -225,21 +227,61 @@ On success, `completion.Response.ModelResponse` contains the exact model
 response and its token usage. On failure, the response is nil, matching the
 `model.Client` contract.
 
-When upgrading existing completion callers:
+### Forced typed tool output
 
-- replace `completion.Complete(ctx, client, req, completions.Spec<Name>)` with
-  `completions.Complete<Name>(ctx, client, req)`;
-- replace `completion.Stream(ctx, client, req, completions.Spec<Name>)` with
-  `completions.StreamComplete<Name>(ctx, client, req)`;
-- keep reading the unary typed value from `Response.Value`, and replace
-  `Response.Attempts[0]` with `Response.ModelResponse`;
-- replace generated `Decode<Name>` and `Decode<Name>Chunk` calls with the
-  generated unary or streaming wrapper; and
-- use `<Name>Example()` only when application code needs the authored example.
+Use `runtime/agent/tooloutput.Run[T]` when the requested model must return one
+typed value through an ordinary tool and may replace invalid arguments. This is
+a different contract from a typed completion: the provider forces one named
+tool, while the agent runtime owns the bounded replacement turns.
 
-The generated codec and schema no longer have a public accessor. Invalid output
-returns a nil unary response because no accepted typed completion exists. The
-wire format is unchanged.
+`Run` accepts a typed `completion.Spec[T]`, generated from a completion DSL
+declaration or built dynamically when the output schema depends on the request.
+The spec contains only the output name, description, JSON schema, optional
+example, and codec paired with `T`. The helper privately constructs the
+ordinary `tools.ToolSpec` and uses the same typed contract for its arguments and
+result. Callers therefore cannot attach tags, metadata, execution fields,
+confirmation, agent delegation, or any other tool behavior to model output.
+The arguments accepted from the model decode to exactly the value returned to
+the caller.
+
+Each call creates one in-memory runtime and one sessionless run. The model sees
+only the supplied tool and an exact forced choice for that tool. One successful
+tool call completes the run, and `MaxToolCalls` is one. Malformed tool JSON and
+generated schema or typed validation failures receive the runtime's canonical
+bounded correction reminder. Provider failures, zero or multiple forced calls,
+and internal contract failures are terminal. `Run` rejects a request that
+already sets `Tools`, `ToolChoice`, `StructuredOutput`, or `Stream` before
+inference.
+
+Use a generated completion contract directly:
+
+```go
+draft, err := tooloutput.Run(
+    ctx,
+    modelClient,
+    request,
+    taskcompletion.SpecDraftFromTranscript(),
+)
+```
+
+The returned value has the generated completion result type. The same factory
+can be passed to `completion.Complete` or `completion.Stream` when application
+code needs the generic provider-enforced helpers instead of the generated
+wrappers.
+
+Choose one generated entry point for each model interaction:
+
+- `completions.Complete<Name>(...)` makes one provider-enforced unary request;
+- `completions.StreamComplete<Name>(...)` makes one provider-enforced streaming
+  request;
+- `tooloutput.Run(..., completions.Spec<Name>())` runs the same typed contract
+  as one ordinary forced tool with bounded argument correction; and
+- `<Name>Example()` returns only the authored example when no schema or codec is
+  needed.
+
+Invalid provider-enforced output returns a nil unary response because no
+accepted typed completion exists. Exposing a fresh spec factory changes only
+the generated Go API; it does not change the model wire format.
 
 Only root examples explicitly authored with Goa `Example(...)` are shown to
 models. Codegen emits the annotated schema, the schema without its root example,
@@ -579,19 +621,22 @@ The direct Anthropic Messages adapter uses native structured output on Claude
 Sonnet, Opus, and Haiku 4.5 or later. On Bedrock, Claude 4.6 uses one private
 forced tool with `strict: true`, so Converse and Runtime `CountTokens` receive
 the same provider-enforced schema. Claude 4.5 retains native `OutputConfig`
-because its manual thinking mode cannot use forced tools. Newer Claude models
-for which Bedrock exposes forced tools but not `OutputConfig` or `strict` tools
-use one private non-strict tool. This fallback keeps those models available for
-typed completions, but Bedrock does not enforce the schema: the adapter unwraps
-the private tool value, and the validated `model.Client` rejects malformed or
-schema-invalid JSON as `model.OutputValidationError` before the caller can
-observe a response. Generated typed-completion decoders then apply the exact Goa
-result contract at the same boundary.
-`bedrock.NewAnthropic` makes the same selection before Anthropic Messages
-encoding. Sonnet 5 and Opus 5 use the private non-strict tool because Bedrock
-Messages rejects `output_config.format` and every `strict` property. Unary and
-streaming responses are converted back into canonical completions, and Mantle
-counts the same tool definition and forced choice sent to `InvokeModel`.
+because its manual thinking mode cannot use forced tools. Other Claude model
+and transport combinations return `model.ErrStructuredOutputUnsupported`
+before inference when Bedrock cannot enforce the requested schema.
+`bedrock.NewAnthropic` likewise accepts only native structured output that its
+Bedrock Messages endpoint can enforce. Sonnet 5 and Opus 5 are rejected instead
+of being converted to ordinary non-strict tools. Counting applies to the same
+accepted request or returns the same unsupported error.
+
+Applications that previously used generated `Completion` helpers with Sonnet 5
+or Opus 5 on Bedrock must choose one of two explicit contracts. Use a Bedrock
+model that supports provider-enforced structured output when a single typed
+completion is required. If the model must remain Sonnet 5 or Opus 5, define an
+ordinary typed tool and run it through an agent so malformed arguments use the
+runtime's bounded correction flow. Do not catch the unsupported error and
+silently select another model; the caller's selected model is part of the
+request contract.
 
 Bedrock may omit tool-input delta events when a model selects a tool without
 supplying any arguments. The streaming adapter emits the canonical `{}` payload
@@ -3693,17 +3738,17 @@ trigger budget from the exact-retention budget:
   `bedrock.NewProvider` reject a configuration that assigns one of these
   models to the default, high-reasoning, or small class without that counter.
   Before delegating, the Bedrock adapter resolves the foundation model ID and
-  preserves the effective tools. Mantle counts the same private non-strict
-  tool that Converse receives for these models. Native `OutputConfig` remains
+  preserves the effective tools. Structured output on a model Bedrock cannot
+  enforce fails before Mantle counting. Native `OutputConfig` remains
   unsupported in Mantle. Claude 4.6 structured output uses the same strict
   tool in Runtime counting and Converse instead. Provider validation errors
   remain errors; the adapter never parses an error message into a fabricated
   count.
 - `bedrock.NewAnthropic` also resolves structured output before counting.
-  Sonnet 5 and Opus 5 send one private non-strict tool to both `InvokeModel`
-  and Mantle, then expose the tool payload as a canonical completion. Models
-  that keep native `output_config.format` require a counter endpoint that
-  accepts that same native field.
+  Sonnet 5 and Opus 5 structured-output requests fail before `InvokeModel` or
+  Mantle because neither endpoint can enforce that contract. Models that keep
+  native `output_config.format` require a counter endpoint that accepts that
+  same native field.
 
 ```go
 // DSL

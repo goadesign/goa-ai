@@ -394,6 +394,15 @@ loudly instead of silently running nothing.
 
 `eval/judge` builds a judge from any `model.Client`, the same model-client
 interface the rest of Goa-AI uses, so it works with any configured provider.
+Custom judges implement this same batch contract:
+
+```go
+Judge(ctx context.Context, output string, claims []eval.Claim) ([]eval.Judgment, error)
+```
+
+The output is supplied once for the whole ordered claim list. Reports and
+judgments retain claim IDs, but model-backed judges do not ask the model to copy
+those IDs.
 
 For each scenario the judge receives the answer and the scenario's claims, and
 returns exactly one label and a short rationale per claim:
@@ -413,10 +422,14 @@ before touching the application. Calibration runs under a two-minute deadline
 owned by the runner, so an unreachable or stalled model endpoint fails the
 suite with a clear error instead of blocking it forever.
 
-The judge is strict about its own protocol: missing or duplicate claim IDs,
-unknown labels, extra fields, and malformed responses are errors. It never
-retries or repairs a bad response, because a judge that edits its own output
-is no longer trustworthy evidence.
+The judge sends the answer once followed by the ordered claim texts. Claim IDs
+stay in the runner and are restored by position, so the model never has to copy
+an identifier merely to correlate its answer. A private `submit_judgments` tool
+requires exactly one ordered label and rationale per claim. Unknown labels,
+extra fields, missing judgments, and malformed arguments use the runtime's
+normal bounded tool-argument correction flow through
+`runtime/agent/tooloutput.Run`. Provider and transport failures are not retried
+by the judge.
 
 ## Read the report
 

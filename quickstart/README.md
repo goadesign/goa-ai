@@ -250,7 +250,7 @@ outcomes) and exits non-zero when anything fails:
 
 This suite is deterministic, so the runner takes a nil judge. When your hooks
 return semantic `eval.Claims` about model output, pass an `eval.Judge` instead
-— `eval/judge.New(modelClient)` wraps any `model.Client` in a strict,
+— `eval/judge.New(modelClient)` wraps any `model.Client` in a typed,
 calibration-checked LLM judge. See `docs/evals.md` in the goa-ai repository
 for the complete contract.
 

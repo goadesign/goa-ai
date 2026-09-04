@@ -17,6 +17,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 
 	anthropicprovider "goa.design/goa-ai/features/model/anthropic"
+	"goa.design/goa-ai/features/model/internal/claudecaps"
 	"goa.design/goa-ai/features/model/internal/modelid"
 	"goa.design/goa-ai/runtime/agent/model"
 )
@@ -104,46 +105,21 @@ func NewAnthropicProvider(
 
 // Complete sends one canonical request through Anthropic Messages on Bedrock.
 func (c *anthropicBedrockProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	effective, outputToolName, err := c.prepareRequest(req)
+	effective, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.inference.Complete(ctx, effective)
-	if err != nil {
-		return nil, err
-	}
-	if outputToolName == "" {
-		return resp, nil
-	}
-	contract, err := model.NewRequestContract(req)
-	if err != nil {
-		return nil, err
-	}
-	if err := reifyStructuredOutputTool(resp, outputToolName); err != nil {
-		return nil, contract.RejectResponse(model.OutputValidationStructuredOutput, resp, err)
-	}
-	return resp, nil
+	return c.inference.Complete(ctx, effective)
 }
 
 // Stream sends one canonical streaming request through Anthropic Messages on
 // Bedrock and returns the Anthropic adapter's validated provider stream.
 func (c *anthropicBedrockProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
-	effective, outputToolName, err := c.prepareRequest(req)
+	effective, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
 	}
-	stream, err := c.inference.Stream(ctx, effective)
-	if err != nil {
-		return nil, err
-	}
-	if outputToolName == "" {
-		return stream, nil
-	}
-	contract, err := model.NewRequestContract(req)
-	if err != nil {
-		return nil, errors.Join(err, stream.Close())
-	}
-	return newAnthropicStructuredOutputStreamer(stream, outputToolName, contract), nil
+	return c.inference.Stream(ctx, effective)
 }
 
 // CountTokens sends the same canonical request to the configured Anthropic
@@ -153,7 +129,7 @@ func (c *anthropicBedrockProvider) CountTokens(ctx context.Context, req *model.R
 	if _, err := model.NewRequestContract(req); err != nil {
 		return model.TokenCount{}, err
 	}
-	effective, _, err := c.prepareRequest(req)
+	effective, err := c.prepareRequest(req)
 	if err != nil {
 		return model.TokenCount{}, err
 	}
@@ -174,4 +150,31 @@ func (c *anthropicBedrockProvider) CountTokens(ctx context.Context, req *model.R
 	countReq := *effective
 	countReq.Model = foundation
 	return c.counter.CountTokens(ctx, &countReq)
+}
+
+// prepareRequest accepts only structured output that Anthropic Messages on
+// Bedrock can enforce directly. It never replaces the requested model or turns
+// a strict output contract into an ordinary tool call.
+func (c *anthropicBedrockProvider) prepareRequest(req *model.Request) (*model.Request, error) {
+	if req.StructuredOutput == nil {
+		return req, nil
+	}
+	resolved, err := modelid.Resolve(
+		bedrockProviderName,
+		req,
+		c.defaultModel,
+		c.highModel,
+		c.smallModel,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if !claudecaps.BedrockNativeStructuredOutputSupported(resolved) {
+		return nil, fmt.Errorf(
+			"bedrock: model %q does not support provider-enforced structured output through Anthropic Messages: %w",
+			resolved,
+			model.ErrStructuredOutputUnsupported,
+		)
+	}
+	return req, nil
 }

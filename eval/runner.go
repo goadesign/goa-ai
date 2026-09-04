@@ -83,35 +83,16 @@ func (r *Runner) RunTags(ctx context.Context, suite Suite, tags ...string) (Repo
 
 // calibrationCases returns one unambiguous example for every framework-owned
 // label so a judge that collapses distinct outcomes cannot pass calibration.
-func calibrationCases() ([]Assertion, []Claim, []Label) {
-	assertions := []Assertion{
-		{
-			ClaimID: "calibration_entailed",
-			Output:  "The pump is running.",
-			Claim:   "The pump is running.",
-		},
-		{
-			ClaimID: "calibration_contradicted",
-			Output:  "The pump is stopped.",
-			Claim:   "The pump is running.",
-		},
-		{
-			ClaimID: "calibration_not_addressed",
-			Output:  "The valve is open.",
-			Claim:   "The pump is running.",
-		},
-		{
-			ClaimID: "calibration_indeterminate",
-			Output:  "Two readings at the same time disagree about whether the pump is running.",
-			Claim:   "The pump is running.",
-		},
-	}
-	claims := make([]Claim, len(assertions))
-	for index, assertion := range assertions {
-		claims[index] = Claim{ID: assertion.ClaimID, Text: assertion.Claim}
+func calibrationCases() (string, []Claim, []Label) {
+	output := "The pump is running. Two readings at the same time disagree about whether the fan is running."
+	claims := []Claim{
+		{ID: "calibration_entailed", Text: "The pump is running."},
+		{ID: "calibration_contradicted", Text: "The pump is stopped."},
+		{ID: "calibration_not_addressed", Text: "The compressor is running."},
+		{ID: "calibration_indeterminate", Text: "The fan is running."},
 	}
 	expected := []Label{Entailed, Contradicted, NotAddressed, Indeterminate}
-	return assertions, claims, expected
+	return output, claims, expected
 }
 
 // selectScenarios validates exact IDs and returns matching scenarios in suite
@@ -259,8 +240,8 @@ func (r *Runner) calibrate(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithTimeout(ctx, calibrationTimeout)
 	defer cancel()
-	assertions, claims, expected := calibrationCases()
-	judgments, err := r.judge.Judge(ctx, assertions)
+	output, claims, expected := calibrationCases()
+	judgments, err := r.judge.Judge(ctx, output, claims)
 	if err != nil {
 		return fmt.Errorf("%w: %w", errCalibration, err)
 	}
@@ -272,7 +253,7 @@ func (r *Runner) calibrate(ctx context.Context) error {
 		byID[judgment.ClaimID] = judgment.Label
 	}
 	for index, want := range expected {
-		id := assertions[index].ClaimID
+		id := claims[index].ID
 		if got := byID[id]; got != want {
 			return fmt.Errorf("%w: %s: got %s, want %s", errCalibration, id, got, want)
 		}
@@ -352,11 +333,7 @@ func (r *Runner) judgeClaims(ctx context.Context, result Result) ([]Judgment, er
 		}
 		return judgments, nil
 	}
-	assertions := make([]Assertion, len(result.Claims))
-	for i, claim := range result.Claims {
-		assertions[i] = Assertion{ClaimID: claim.ID, Output: result.Output, Claim: claim.Text}
-	}
-	judgments, err := r.judge.Judge(ctx, assertions)
+	judgments, err := r.judge.Judge(ctx, result.Output, result.Claims)
 	if err != nil {
 		return nil, err
 	}

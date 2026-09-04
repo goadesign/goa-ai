@@ -90,20 +90,10 @@ type (
 		Rationale string `json:"rationale"`
 	}
 
-	// Assertion binds one output to one semantic claim for batched judging.
-	Assertion struct {
-		// ClaimID uniquely identifies the assertion within the request.
-		ClaimID string `json:"claim_id"`
-		// Output is the model-authored text being assessed.
-		Output string `json:"output"`
-		// Claim is the proposition to classify against Output.
-		Claim string `json:"claim"`
-	}
-
 	// Judge assigns exactly one semantic judgment to each supplied claim. A
 	// runner may call Judge concurrently for independent scenarios.
 	Judge interface {
-		Judge(context.Context, []Assertion) ([]Judgment, error)
+		Judge(context.Context, string, []Claim) ([]Judgment, error)
 	}
 
 	// Reporter observes scenario lifecycle events. Runner may call its methods
@@ -169,16 +159,10 @@ const (
 // ValidateJudgments enforces an exact one-to-one relationship between claims
 // and semantic judge output.
 func ValidateJudgments(claims []Claim, judgments []Judgment) error {
-	wanted := make(map[string]struct{}, len(claims))
-	for _, claim := range claims {
-		if claim.ID == "" || claim.Text == "" {
-			return errors.New("claim ID and text are required")
-		}
-		if _, exists := wanted[claim.ID]; exists {
-			return fmt.Errorf("duplicate claim %q", claim.ID)
-		}
-		wanted[claim.ID] = struct{}{}
+	if err := ValidateClaims(claims); err != nil {
+		return err
 	}
+	wanted := claimIDs(claims)
 	if len(judgments) != len(wanted) {
 		return fmt.Errorf("got %d judgments for %d claims", len(judgments), len(wanted))
 	}
@@ -197,6 +181,22 @@ func ValidateJudgments(claims []Claim, judgments []Judgment) error {
 			return fmt.Errorf("judgment for claim %q requires a rationale", judgment.ClaimID)
 		}
 		seen[judgment.ClaimID] = struct{}{}
+	}
+	return nil
+}
+
+// ValidateClaims requires each claim to have a unique non-empty ID and
+// non-empty text.
+func ValidateClaims(claims []Claim) error {
+	seen := make(map[string]struct{}, len(claims))
+	for _, claim := range claims {
+		if claim.ID == "" || claim.Text == "" {
+			return errors.New("claim ID and text are required")
+		}
+		if _, exists := seen[claim.ID]; exists {
+			return fmt.Errorf("duplicate claim %q", claim.ID)
+		}
+		seen[claim.ID] = struct{}{}
 	}
 	return nil
 }
@@ -222,15 +222,8 @@ func validateResult(result Result) error {
 			return fmt.Errorf("failed check %q requires a diagnostic", check.Name)
 		}
 	}
-	claims := make(map[string]struct{}, len(result.Claims))
-	for _, claim := range result.Claims {
-		if claim.ID == "" || claim.Text == "" {
-			return errors.New("claim ID and text are required")
-		}
-		if _, exists := claims[claim.ID]; exists {
-			return fmt.Errorf("duplicate claim %q", claim.ID)
-		}
-		claims[claim.ID] = struct{}{}
+	if err := ValidateClaims(result.Claims); err != nil {
+		return err
 	}
 	artifacts := make(map[string]struct{}, len(result.Artifacts))
 	for _, artifact := range result.Artifacts {
@@ -243,6 +236,14 @@ func validateResult(result Result) error {
 		artifacts[artifact.Name] = struct{}{}
 	}
 	return nil
+}
+
+func claimIDs(claims []Claim) map[string]struct{} {
+	ids := make(map[string]struct{}, len(claims))
+	for _, claim := range claims {
+		ids[claim.ID] = struct{}{}
+	}
+	return ids
 }
 
 // validLabel reports whether a label belongs to the closed judge vocabulary.

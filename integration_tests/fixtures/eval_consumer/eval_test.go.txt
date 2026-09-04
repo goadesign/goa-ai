@@ -18,31 +18,31 @@ type hooks struct{}
 
 type judge struct{}
 
-func (judge) Judge(_ context.Context, assertions []aieval.Assertion) ([]aieval.Judgment, error) {
-	judgments := make([]aieval.Judgment, len(assertions))
-	for index, assertion := range assertions {
+func (judge) Judge(_ context.Context, output string, claims []aieval.Claim) ([]aieval.Judgment, error) {
+	judgments := make([]aieval.Judgment, len(claims))
+	for index, claim := range claims {
 		var label aieval.Label
 		switch {
-		case assertion.Output == "The pump is running." &&
-			assertion.Claim == "The pump is running.":
+		case output == "The pump is running. Two readings at the same time disagree about whether the fan is running." &&
+			claim.Text == "The pump is running.":
 			label = aieval.Entailed
-		case assertion.Output == "The pump is stopped." &&
-			assertion.Claim == "The pump is running.":
+		case output == "The pump is running. Two readings at the same time disagree about whether the fan is running." &&
+			claim.Text == "The pump is stopped.":
 			label = aieval.Contradicted
-		case assertion.Output == "The valve is open." &&
-			assertion.Claim == "The pump is running.":
+		case output == "The pump is running. Two readings at the same time disagree about whether the fan is running." &&
+			claim.Text == "The compressor is running.":
 			label = aieval.NotAddressed
-		case assertion.Output == "Two readings at the same time disagree about whether the pump is running." &&
-			assertion.Claim == "The pump is running.":
+		case output == "The pump is running. Two readings at the same time disagree about whether the fan is running." &&
+			claim.Text == "The fan is running.":
 			label = aieval.Indeterminate
-		case assertion.Output == "Record summary complete." &&
-			assertion.Claim == "The response includes a record summary.":
+		case output == "Record summary complete." &&
+			claim.Text == "The response includes a record summary.":
 			label = aieval.Entailed
 		default:
-			return nil, fmt.Errorf("fixture judge received unknown semantic assertion %q", assertion.ClaimID)
+			return nil, fmt.Errorf("fixture judge received unknown semantic claim %q", claim.ID)
 		}
 		judgments[index] = aieval.Judgment{
-			ClaimID:   assertion.ClaimID,
+			ClaimID:   claim.ID,
 			Label:     label,
 			Rationale: "Deterministic fixture judgment.",
 		}

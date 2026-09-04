@@ -156,17 +156,19 @@ that contains:
 - completion result types and unions
 - canonical root examples explicitly authored with Goa `Example(...)`
 - generated JSON codecs and validation helpers
+- generated `Spec<Name>()` factories that return fresh typed contracts with the
+  schema, example, and codec
 - generated `Complete<Name>(ctx, client, req)` helpers that request provider-enforced
 structured output and decode the assistant response through the generated codec
 - generated typed `StreamComplete<Name>(ctx, client, req)` helpers
 - narrow `<Name>Example()` accessors that return an isolated copy when a caller
   needs the authored example
 
-Generated codec-bearing completion specs are private to the typed wrappers.
-Existing callers migrate from direct `Spec<Name>` access to
-`Complete<Name>(...)` or `StreamComplete<Name>(...)`; callers that only need an
-authored example use `<Name>Example()`. No public accessor exposes the generated
-codec or mutable schema.
+Use `Complete<Name>(...)` or `StreamComplete<Name>(...)` for provider-enforced
+structured output. Use the fresh `Spec<Name>()` result with generic completion
+helpers or `runtime/agent/tooloutput.Run` when the same generated contract must
+run through an ordinary forced tool. Callers that only need an authored example
+use `<Name>Example()`.
 
 Provider adapters send an authored root example through the provider's native
 structured-output example field when available. If the generated codec rejects

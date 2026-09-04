@@ -21,6 +21,9 @@ func TestGolden_ServiceCompletionPrimitive(t *testing.T) {
 	assertGoldenGo(t, "service_completion_primitive", "types.go.golden", types)
 	assertGoldenGo(t, "service_completion_primitive", "codecs.go.golden", codecs)
 	assertGoldenGo(t, "service_completion_primitive", "specs.go.golden", specs)
+
+	complete := buildCompleteGeneratedFiles(t, testscenarios.ServiceCompletionPrimitive())
+	runCompleteGeneratedPackageTest(t, complete, "./gen/tasks/completions/...")
 }
 
 // Direct collection completions should import externally located Goa types

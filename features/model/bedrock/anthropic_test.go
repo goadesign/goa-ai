@@ -87,7 +87,7 @@ func TestDirectAnthropicBedrockCountTokensValidatesStructuredOutputSchema(t *tes
 			counter := &recordingAnthropicCounter{}
 			provider := &anthropicBedrockProvider{
 				counter:      counter,
-				defaultModel: "us.anthropic.claude-opus-5",
+				defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
 			}
 			request := &model.Request{
 				Messages: []*model.Message{{
@@ -110,7 +110,7 @@ func TestDirectAnthropicBedrockCountTokensValidatesStructuredOutputSchema(t *tes
 	}
 }
 
-func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
+func TestAnthropicBedrockOpus5ForcedToolKeepsSchemaExampleWithoutStrict(t *testing.T) {
 	var requestBody []byte
 	handlerErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -131,7 +131,7 @@ func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 				"name":"workflow_progress_complete",
 				"input":{"detail_blocks":[{"type":"markdown","text":"Done"}]}
 			}],
-			"model":"global.anthropic.claude-sonnet-5",
+			"model":"us.anthropic.claude-opus-5",
 			"stop_reason":"tool_use",
 			"usage":{"input_tokens":10,"output_tokens":5}
 		}`)
@@ -187,7 +187,7 @@ func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 		cfg,
 		&recordingAnthropicCounter{},
 		AnthropicOptions{
-			DefaultModel: "global.anthropic.claude-sonnet-5",
+			DefaultModel: "us.anthropic.claude-opus-5",
 			MaxTokens:    128,
 		},
 		option.WithBaseURL(server.URL),
@@ -251,6 +251,7 @@ func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 	require.Len(t, tools, 1)
 	tool, ok := tools[0].(map[string]any)
 	require.True(t, ok)
+	assert.NotContains(t, tool, "strict")
 	assert.NotContains(t, tool, "input_examples")
 	inputSchema, ok := tool["input_schema"].(map[string]any)
 	require.True(t, ok)
@@ -295,7 +296,7 @@ func TestAnthropicBedrockResumeKeepsSchemaToolExampleAndChoice(t *testing.T) {
 	assert.False(t, hasToolConfig)
 }
 
-func TestAnthropicBedrockStructuredOutputUsesForcedTool(t *testing.T) {
+func TestAnthropicBedrockRejectsUnsupportedStructuredOutputBeforeInference(t *testing.T) {
 	var requestBody []byte
 	handlerErr := make(chan error, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -382,61 +383,39 @@ func TestAnthropicBedrockStructuredOutputUsesForcedTool(t *testing.T) {
 		},
 	))
 	response, err := client.Complete(t.Context(), request)
-	require.NoError(t, err)
-	require.NoError(t, <-handlerErr)
-	assert.True(t, decoded)
-	require.Len(t, response.Content, 1)
-	assert.Equal(t, []model.Part{
-		model.TextPart{Text: `{"passed":true}`},
-	}, response.Content[0].Parts)
-
-	var payload map[string]any
-	require.NoError(t, json.Unmarshal(requestBody, &payload))
-	assert.NotContains(t, payload, "output_config")
-	assert.Equal(t, map[string]any{
-		"type": "tool",
-		"name": "eval_judgments",
-	}, payload["tool_choice"])
-	tools, ok := payload["tools"].([]any)
-	require.True(t, ok)
-	require.Len(t, tools, 1)
-	tool, ok := tools[0].(map[string]any)
-	require.True(t, ok)
-	assert.NotContains(t, tool, "strict")
-	inputSchema, ok := tool["input_schema"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, map[string]any{
-		"value": map[string]any{"passed": true},
-	}, inputSchema["example"])
+	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+	assert.Nil(t, response)
+	assert.False(t, decoded)
+	assert.Empty(t, requestBody)
+	stream, err := client.Stream(t.Context(), request)
+	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+	assert.Nil(t, stream)
+	assert.Empty(t, requestBody)
 
 	count, err := client.CountTokens(t.Context(), request)
-	require.NoError(t, err)
-	assert.True(t, count.Exact)
-	require.NotNil(t, counter.request)
-	assert.Nil(t, counter.request.StructuredOutput)
-	assert.Equal(t, "anthropic.claude-opus-5", counter.request.Model)
-	require.Len(t, counter.request.Tools, 1)
-	assert.Equal(t, "eval_judgments", counter.request.Tools[0].Name)
-	assert.Equal(t, &model.ToolChoice{
-		Mode: model.ToolChoiceModeTool,
-		Name: "eval_judgments",
-	}, counter.request.ToolChoice)
+	require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+	assert.Zero(t, count)
+	assert.Nil(t, counter.request)
 }
 
 func TestAnthropicBedrockKeepsNativeStructuredOutputWhenBedrockSupportsIt(t *testing.T) {
-	client := &anthropicBedrockProvider{
-		defaultModel: "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
-	}
-	request := &model.Request{
-		StructuredOutput: &model.StructuredOutput{
-			Name:   "probe",
-			Schema: rawjson.Message(`{"type":"object"}`),
-		},
-	}
+	for _, modelID := range []string{
+		"us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"global.anthropic.claude-opus-4-6-v1",
+	} {
+		t.Run(modelID, func(t *testing.T) {
+			client := &anthropicBedrockProvider{defaultModel: modelID}
+			request := &model.Request{
+				StructuredOutput: &model.StructuredOutput{
+					Name:   "probe",
+					Schema: rawjson.Message(`{"type":"object"}`),
+				},
+			}
 
-	effective, toolName, err := client.prepareRequest(request)
+			effective, err := client.prepareRequest(request)
 
-	require.NoError(t, err)
-	assert.Same(t, request, effective)
-	assert.Empty(t, toolName)
+			require.NoError(t, err)
+			assert.Same(t, request, effective)
+		})
+	}
 }

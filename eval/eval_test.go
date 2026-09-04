@@ -16,17 +16,22 @@ type scriptedJudge struct {
 	mu        sync.Mutex
 	responses [][]Judgment
 	errors    []error
-	requests  [][]Assertion
+	requests  []judgeRequest
 	onJudge   func()
 }
 
-func (j *scriptedJudge) Judge(_ context.Context, assertions []Assertion) ([]Judgment, error) {
+type judgeRequest struct {
+	output string
+	claims []Claim
+}
+
+func (j *scriptedJudge) Judge(_ context.Context, output string, claims []Claim) ([]Judgment, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.onJudge != nil {
 		j.onJudge()
 	}
-	j.requests = append(j.requests, assertions)
+	j.requests = append(j.requests, judgeRequest{output: output, claims: claims})
 	index := len(j.requests) - 1
 	return j.responses[index], j.errors[index]
 }
@@ -55,7 +60,7 @@ type deadlineJudge struct {
 	sawDeadline bool
 }
 
-func (j *deadlineJudge) Judge(ctx context.Context, _ []Assertion) ([]Judgment, error) {
+func (j *deadlineJudge) Judge(ctx context.Context, _ string, _ []Claim) ([]Judgment, error) {
 	_, j.sawDeadline = ctx.Deadline()
 	return calibrationJudgments(), nil
 }
@@ -65,8 +70,8 @@ type concurrentJudge struct {
 	release chan struct{}
 }
 
-func (j *concurrentJudge) Judge(ctx context.Context, assertions []Assertion) ([]Judgment, error) {
-	if len(assertions) == 4 && assertions[0].ClaimID == "calibration_entailed" {
+func (j *concurrentJudge) Judge(ctx context.Context, _ string, claims []Claim) ([]Judgment, error) {
+	if len(claims) == 4 && claims[0].ID == "calibration_entailed" {
 		return calibrationJudgments(), nil
 	}
 	j.started <- struct{}{}
@@ -75,10 +80,10 @@ func (j *concurrentJudge) Judge(ctx context.Context, assertions []Assertion) ([]
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
-	judgments := make([]Judgment, len(assertions))
-	for index, assertion := range assertions {
+	judgments := make([]Judgment, len(claims))
+	for index, claim := range claims {
 		judgments[index] = Judgment{
-			ClaimID:   assertion.ClaimID,
+			ClaimID:   claim.ID,
 			Label:     Entailed,
 			Rationale: "The output states the claim.",
 		}
@@ -291,25 +296,16 @@ func TestRunnerCalibratesEveryLabelThenRuns(t *testing.T) {
 	assert.Equal(t, "first", report.Scenarios[0].ID)
 	assert.Equal(t, []string{"one"}, order)
 	require.Len(t, judge.requests, 2)
-	assert.Equal(t, []Assertion{
-		{ClaimID: "calibration_entailed", Output: "The pump is running.", Claim: "The pump is running."},
-		{
-			ClaimID: "calibration_contradicted",
-			Output:  "The pump is stopped.",
-			Claim:   "The pump is running.",
-		},
-		{
-			ClaimID: "calibration_not_addressed",
-			Output:  "The valve is open.",
-			Claim:   "The pump is running.",
-		},
-		{
-			ClaimID: "calibration_indeterminate",
-			Output:  "Two readings at the same time disagree about whether the pump is running.",
-			Claim:   "The pump is running.",
+	assert.Equal(t, judgeRequest{
+		output: "The pump is running. Two readings at the same time disagree about whether the fan is running.",
+		claims: []Claim{
+			{ID: "calibration_entailed", Text: "The pump is running."},
+			{ID: "calibration_contradicted", Text: "The pump is stopped."},
+			{ID: "calibration_not_addressed", Text: "The compressor is running."},
+			{ID: "calibration_indeterminate", Text: "The fan is running."},
 		},
 	}, judge.requests[0])
-	assert.Equal(t, "Correct.", judge.requests[1][0].Output)
+	assert.Equal(t, "Correct.", judge.requests[1].output)
 }
 
 func TestRunnerBoundsCalibrationWithDeadline(t *testing.T) {
