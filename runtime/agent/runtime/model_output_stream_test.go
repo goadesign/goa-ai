@@ -6,9 +6,11 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/stream"
@@ -92,6 +94,29 @@ func TestThousandsOfModelFragmentsStreamWithoutLifecycleEvents(t *testing.T) {
 	}
 }
 
+func TestModelOutputRejectsTextThatCannotCrossActivityBoundary(t *testing.T) {
+	sink := &recordingStreamSink{}
+	journal := &modelInvocationJournal{
+		runtime:    runtimeWithModelOutputSink(t, sink),
+		runID:      "run-1",
+		sessionID:  "session-1",
+		responseID: "response-1",
+	}
+	journal.publishedText.WriteString(string(make([]byte, maxPublishedAssistantTextBytes)))
+	invocation := mustBeginModelInvocation(t, journal)
+	require.NoError(t, journal.designateModelInvocation(invocation))
+
+	err := journal.recordModelChunk(context.Background(), invocation, model.TextChunk{
+		Message: model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "x"}},
+		},
+	})
+
+	require.Error(t, err)
+	require.Empty(t, sink.snapshot())
+}
+
 func TestCanceledPlannerExecutionCannotStreamModelOutput(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -150,6 +175,32 @@ func TestModelOutputDoesNotStreamProbeInvocations(t *testing.T) {
 	require.Equal(t, "visible planner text", reply.Data.Text)
 }
 
+func TestDisabledAssistantStreamDoesNotRecordTextAsPublished(t *testing.T) {
+	sink := &recordingStreamSink{}
+	profile := stream.DefaultProfile()
+	profile.Assistant = false
+	subscriber, err := stream.NewSubscriberWithProfile(sink, profile)
+	require.NoError(t, err)
+	journal := &modelInvocationJournal{
+		runtime:    &Runtime{streamSubscriber: subscriber},
+		runID:      "run-1",
+		sessionID:  "session-1",
+		responseID: "response-1",
+	}
+	invocation := mustBeginModelInvocation(t, journal)
+	require.NoError(t, journal.designateModelInvocation(invocation))
+
+	require.NoError(t, journal.recordModelChunk(t.Context(), invocation, model.TextChunk{
+		Message: model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "hidden text"}},
+		},
+	}))
+
+	require.Empty(t, journal.publishedAssistantText())
+	require.Empty(t, sink.snapshot())
+}
+
 func TestPlannerActivityExecutionOwnsResponseID(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("svc.agent", &stubPlanner{})
 	sink := &recordingStreamSink{}
@@ -171,6 +222,84 @@ func TestPlannerActivityExecutionOwnsResponseID(t *testing.T) {
 	require.Equal(t, second.publicationBatchID, second.invocations.responseID)
 	require.NotEqual(t, first.invocations.responseID, second.invocations.responseID)
 	require.Empty(t, sink.snapshot())
+}
+
+func TestAcceptedResponseMustExtendPublishedText(t *testing.T) {
+	ctx := context.Background()
+	journal := &modelInvocationJournal{
+		runtime:    runtimeWithModelOutputSink(t, &recordingStreamSink{}),
+		runID:      "run-1",
+		sessionID:  "session-1",
+		responseID: testPublicationBatchID,
+	}
+	invocation := mustBeginModelInvocation(t, journal)
+	require.NoError(t, journal.designateModelInvocation(invocation))
+	require.NoError(t, journal.recordModelChunk(ctx, invocation, model.TextChunk{
+		Message: model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "visible text"}},
+		},
+	}))
+	activity := &plannerActivityInvocation{
+		publicationBatchID: testPublicationBatchID,
+		invocations:        journal,
+		events:             newPlannerEvents("svc.agent", "run-1", "session-1"),
+	}
+
+	_, err := activity.acceptedOutput(ctx, nil, []*model.Message{{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.TextPart{Text: "different text"}},
+	}})
+
+	require.ErrorContains(t, errors.Unwrap(err), "does not extend its published assistant text")
+}
+
+func TestFailureAfterPublishedTextReturnsTextForDurableCommit(t *testing.T) {
+	ctx := context.Background()
+	journal := &modelInvocationJournal{
+		runtime:    runtimeWithModelOutputSink(t, &recordingStreamSink{}),
+		runID:      "run-1",
+		sessionID:  "session-1",
+		responseID: testPublicationBatchID,
+	}
+	invocation := mustBeginModelInvocation(t, journal)
+	require.NoError(t, journal.designateModelInvocation(invocation))
+	require.NoError(t, journal.recordModelChunk(ctx, invocation, model.TextChunk{
+		Message: model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "visible text"}},
+		},
+	}))
+	transportErr := model.NewProviderError(
+		"bedrock",
+		"converse_stream",
+		503,
+		model.ProviderErrorKindUnavailable,
+		"service_unavailable",
+		"connection lost",
+		"request-1",
+		true,
+		errors.New("connection lost"),
+	)
+	require.NoError(t, journal.finalizeModelInvocation(invocation, modelcall.Outcome{
+		ProviderCall: modelcall.Result{Called: true, Err: transportErr},
+	}))
+	activity := &plannerActivityInvocation{
+		publicationBatchID: testPublicationBatchID,
+		invocations:        journal,
+		events:             newPlannerEvents("svc.agent", "run-1", "session-1"),
+	}
+
+	output, err := activity.failureOutput(ctx, activity.planningError(transportErr))
+
+	require.NoError(t, err)
+	require.Equal(t, "visible text", output.PublishedAssistantText)
+	require.Nil(t, output.OutputContractFailure)
+	require.NotNil(t, output.PlanningFailure)
+	require.Equal(t, "bedrock", output.PlanningFailure.Provider)
+	require.Equal(t, string(model.ProviderErrorKindUnavailable), output.PlanningFailure.Kind)
+	require.True(t, output.PlanningFailure.Retryable)
+	require.Contains(t, output.PlanningFailure.DebugMessage, "reason_sha256=")
 }
 
 func runtimeWithModelOutputSink(t *testing.T, sink stream.Sink) *Runtime {

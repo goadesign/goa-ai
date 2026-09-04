@@ -983,6 +983,12 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err := validateRunPolicy(reg.Policy); err != nil {
 		return err
 	}
+	if err := requireSingleAttemptPlannerActivity("plan", &reg.PlanActivityOptions); err != nil {
+		return err
+	}
+	if err := requireSingleAttemptPlannerActivity("resume", &reg.ResumeActivityOptions); err != nil {
+		return err
+	}
 	if err := validateSpecs(reg.Definition.specs, reg.Definition.metadataFor); err != nil {
 		return err
 	}
@@ -1064,6 +1070,26 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	}
 	r.mu.Unlock()
 
+	return nil
+}
+
+func requireSingleAttemptPlannerActivity(name string, opts *engine.ActivityOptions) error {
+	retry := opts.RetryPolicy
+	if retry.UnlimitedAttempts || retry.MaxAttempts > 1 {
+		return fmt.Errorf(
+			"%w: %s activity cannot retry after streaming model output",
+			ErrInvalidConfig,
+			name,
+		)
+	}
+	if retry.InitialInterval != 0 || retry.BackoffCoefficient != 0 {
+		return fmt.Errorf(
+			"%w: %s activity single-attempt policy cannot configure retry backoff",
+			ErrInvalidConfig,
+			name,
+		)
+	}
+	opts.RetryPolicy = engine.RetryPolicy{MaxAttempts: 1}
 	return nil
 }
 

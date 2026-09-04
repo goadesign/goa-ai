@@ -418,6 +418,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		finalStatus = runStatusFailed
 		return nil, finalErr
 	}
+	planInput.Messages = appendPublishedAssistantText(planInput.Messages, firstOutput)
 	result := firstOutput.Result
 	if result == nil &&
 		firstOutput.OutputContractFailure == nil &&
@@ -435,12 +436,15 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	st.AggUsage = firstOutput.Usage
 	st.Result = firstOutput.Result
 	st.Transcript = firstOutput.Transcript
+	st.ResponseID = firstOutput.PublicationBatchID
 	if firstOutput.OutputContractFailure != nil {
+		st.ResponseID = ""
 		st.PendingRecovery = pendingModelOutputRecovery{
 			correction: firstOutput.OutputContractFailure.Correction,
 		}
 	}
 	if firstOutput.ModelInvocationRecovery != nil {
+		st.ResponseID = ""
 		st.PendingRecovery = pendingModelInvocationRecovery{
 			recovery: *firstOutput.ModelInvocationRecovery,
 		}
@@ -503,6 +507,9 @@ func (r *Runtime) runLoopWithState(
 	}
 	if st == nil {
 		return nil, errors.New("runLoop state is required")
+	}
+	if st.Result != nil && st.ResponseID == "" {
+		return nil, errors.New("runLoop selected planner response is missing its response id")
 	}
 	if st.Result == nil && st.PendingRecovery == nil {
 		return nil, fmt.Errorf("runLoop initial PlanResult is nil")

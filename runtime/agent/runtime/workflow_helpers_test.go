@@ -118,6 +118,7 @@ func TestCommitSelectedModelResponsePreservesCanonicalParts(t *testing.T) {
 		agentID,
 		base,
 		"turn-1",
+		testPublicationBatchID,
 		&PlanResult{},
 		transcript,
 	))
@@ -137,7 +138,9 @@ func TestCommitSelectedModelResponseBuildsPlannerAuthoredModelIdentity(t *testin
 		ToolCallID:   "tooluse_1",
 	}}}
 
-	require.NoError(t, rt.appendSelectedModelResponse(t.Context(), agentID, base, "turn-1", result, nil))
+	require.NoError(t, rt.appendSelectedModelResponse(
+		t.Context(), agentID, base, "turn-1", testPublicationBatchID, result, nil,
+	))
 
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, []model.Part{model.ToolUsePart{
@@ -729,6 +732,7 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 		agentID,
 		base,
 		"",
+		testPublicationBatchID,
 		&PlanResult{ToolCalls: []ToolCall{call}},
 		[]*model.Message{{
 			Role: model.ConversationRoleAssistant,

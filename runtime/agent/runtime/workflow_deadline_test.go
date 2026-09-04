@@ -566,13 +566,13 @@ func newResumeDeadlineTestLoop(
 		SessionID: "session-1",
 		TurnID:    "turn-1",
 	}
-	state := newRunLoopState(
-		&PlanResult{},
-		nil,
-		model.TokenUsage{},
-		initialCaps(RunPolicy{}),
-		2,
-	)
+	state := &runLoopState{
+		Caps:        initialCaps(RunPolicy{}),
+		NextAttempt: 2,
+		AggUsage:    model.TokenUsage{},
+		Result:      &PlanResult{},
+		ResponseID:  testInitialPublicationBatchID,
+	}
 	activityOptions := engine.ActivityOptions{
 		RetryPolicy: engine.RetryPolicy{
 			MaxAttempts:        3,

@@ -2,8 +2,9 @@ package runtime
 
 // This file sends live model text and thinking directly from the planner
 // activity to the configured session stream. These updates never enter the
-// durable run log or hook bus. Emitted assistant text is append-only; the
-// workflow later persists complete accepted transcript messages and tool calls.
+// durable run log or hook bus. Emitted assistant text is append-only. The
+// workflow later persists either the complete accepted transcript or, when the
+// response is rejected or fails, the exact text that already reached clients.
 
 import (
 	"context"
@@ -17,9 +18,9 @@ func (r *Runtime) publishModelOutput(
 	ctx context.Context,
 	sessionID string,
 	event stream.Event,
-) error {
+) (bool, error) {
 	if sessionID == "" || r.streamSubscriber == nil {
-		return nil
+		return false, nil
 	}
 	return r.streamSubscriber.HandleModelOutputEvent(ctx, event)
 }

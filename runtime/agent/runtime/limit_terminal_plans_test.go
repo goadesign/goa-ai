@@ -287,7 +287,7 @@ func TestToolFailureUsesPlannerWhenLimitPlansExist(t *testing.T) {
 					return nil, errors.New("tool failure finalization reason is required")
 				}
 				return &PlanActivityOutput{
-					PublicationBatchID: testPublicationBatchID,
+					PublicationBatchID: testInitialPublicationBatchID,
 					Result: &PlanResult{
 						FinalResponse: &planner.FinalResponse{
 							Message: &model.Message{
@@ -497,7 +497,7 @@ func executeWorkflowLimitTerminalPlan(
 				}
 				callID := fmt.Sprintf("work-call-%d", plannerCalls)
 				return &PlanActivityOutput{
-					PublicationBatchID: testPublicationBatchID,
+					PublicationBatchID: testInitialPublicationBatchID,
 					Result: &PlanResult{
 						ToolCalls: []ToolCall{{
 							ToolCallID:      callID,

@@ -266,11 +266,13 @@ func TestBoundedPlanActivityOutputFailureRetainsCorrection(t *testing.T) {
 
 	output := boundedPlanActivityOutputFailure(
 		"batch-1",
+		"already published",
 		model.TokenUsage{TotalTokens: 12},
 		failure,
 		errors.New("planner events exceed activity output budget"),
 	)
 
 	require.Equal(t, failure.Correction, output.OutputContractFailure.Correction)
+	require.Equal(t, "already published", output.PublishedAssistantText)
 	require.NoError(t, validateOutputContractFailure(output.OutputContractFailure))
 }

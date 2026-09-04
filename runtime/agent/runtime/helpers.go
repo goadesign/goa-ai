@@ -567,6 +567,7 @@ func (r *Runtime) publishTranscriptMessagesErr(
 	agentID agent.Ident,
 	sessionID string,
 	turnID string,
+	responseID string,
 	messages []*model.Message,
 ) error {
 	payload, err := transcript.EncodeRunLogDelta(messages)
@@ -582,13 +583,18 @@ func (r *Runtime) publishTranscriptMessagesErr(
 		)
 	}
 	meta := recordDispatchMetadataForContext(ctx)
+	eventKey := meta.EventKey
+	if responseID != "" {
+		eventKey = responseID
+	}
 	input := &runlog.ActivityInput{
 		Type:        recordType,
-		EventKey:    meta.EventKey,
+		EventKey:    eventKey,
 		RunID:       runID,
 		AgentID:     agentID,
 		SessionID:   sessionID,
 		TurnID:      turnID,
+		ResponseID:  responseID,
 		TimestampMS: meta.TimestampMS,
 		Payload:     payload,
 	}
@@ -614,6 +620,7 @@ func (r *Runtime) publishTranscriptSeedErr(
 		agentID,
 		sessionID,
 		turnID,
+		"",
 		messages,
 	)
 }
@@ -636,6 +643,32 @@ func (r *Runtime) publishTranscriptDeltaErr(
 		agentID,
 		sessionID,
 		turnID,
+		"",
+		messages,
+	)
+}
+
+// publishAssistantTranscriptDelta persists one assistant response and emits its
+// aggregate text under responseID after the append succeeds. The messages are
+// either a complete accepted provider transcript or the exact text published
+// before that response was rejected or failed.
+func (r *Runtime) publishAssistantTranscriptDelta(
+	ctx context.Context,
+	runID string,
+	agentID agent.Ident,
+	sessionID string,
+	turnID string,
+	responseID string,
+	messages []*model.Message,
+) error {
+	return r.publishTranscriptMessagesErr(
+		ctx,
+		transcript.RunLogMessagesAppended,
+		runID,
+		agentID,
+		sessionID,
+		turnID,
+		responseID,
 		messages,
 	)
 }

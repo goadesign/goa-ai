@@ -197,7 +197,8 @@ func TestRunLoopWithStateAcceptsInitialFinalToolResult(t *testing.T) {
 		},
 	}
 	st := &runLoopState{
-		Caps: initialCaps(RunPolicy{}),
+		Caps:       initialCaps(RunPolicy{}),
+		ResponseID: testInitialPublicationBatchID,
 		Result: &PlanResult{
 			FinalToolResult: &planner.FinalToolResult{
 				Result: rawjson.Message([]byte(`{"status":"ok"}`)),
@@ -304,7 +305,9 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 			},
 		}},
 	}
-	require.NoError(t, rt.appendSelectedModelResponse(ctx, input.AgentID, base, "turn-1", st.Result, st.Transcript))
+	require.NoError(t, rt.appendSelectedModelResponse(
+		ctx, input.AgentID, base, "turn-1", testPublicationBatchID, st.Result, st.Transcript,
+	))
 	st.ResponseCommitted = true
 
 	out, err := rt.finishCurrentPlanResult(ctx, input, base, st, "turn-1")
@@ -357,7 +360,9 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 			},
 		},
 	}
-	require.NoError(t, rt.appendSelectedModelResponse(ctx, input.AgentID, base, "turn-1", st.Result, st.Transcript))
+	require.NoError(t, rt.appendSelectedModelResponse(
+		ctx, input.AgentID, base, "turn-1", testPublicationBatchID, st.Result, st.Transcript,
+	))
 	st.ResponseCommitted = true
 
 	out, err := rt.finishCurrentPlanResult(ctx, input, base, st, "turn-1")
@@ -802,12 +807,14 @@ func TestRegisterAgentUsesDefinitionRouteAndAuthoredActivityQueues(t *testing.T)
 	require.Equal(t, time.Minute, planOpts.StartToCloseTimeout)
 	require.Zero(t, planOpts.ScheduleToStartTimeout)
 	require.Zero(t, planOpts.HeartbeatTimeout)
+	require.Equal(t, 1, planOpts.RetryPolicy.MaxAttempts)
 
 	resumeOpts := eng.registeredPlannerActivityOptions["service.agent.resume"]
 	require.Equal(t, "resume.queue", resumeOpts.Queue)
 	require.Equal(t, time.Minute, resumeOpts.StartToCloseTimeout)
 	require.Zero(t, resumeOpts.ScheduleToStartTimeout)
 	require.Zero(t, resumeOpts.HeartbeatTimeout)
+	require.Equal(t, 1, resumeOpts.RetryPolicy.MaxAttempts)
 
 	executeOpts := eng.registeredExecuteActivityOptions["service.agent.executetool"]
 	require.Equal(t, "tool.queue", executeOpts.Queue)
@@ -827,6 +834,37 @@ func TestRegisterAgentUsesDefinitionRouteAndAuthoredActivityQueues(t *testing.T)
 	require.Equal(t, 3, agentChildOpts.RetryPolicy.MaxAttempts)
 	require.Equal(t, time.Second, agentChildOpts.RetryPolicy.InitialInterval)
 	require.InDelta(t, 2.0, agentChildOpts.RetryPolicy.BackoffCoefficient, 0.000001)
+}
+
+func TestRegisterAgentRejectsRetryingPlannerActivities(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		retry engine.RetryPolicy
+	}{
+		{name: "multiple attempts", retry: engine.RetryPolicy{MaxAttempts: 2}},
+		{name: "unlimited attempts", retry: engine.RetryPolicy{UnlimitedAttempts: true}},
+		{name: "unused backoff", retry: engine.RetryPolicy{MaxAttempts: 1, InitialInterval: time.Second}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := New(newTestStore(), WithEngine(&stubEngine{}))
+			err := rt.RegisterAgent(context.Background(), AgentRegistration{
+				Definition: testRegistrationDefinition("service.agent", engine.WorkflowDefinition{
+					Name:      "service.workflow",
+					TaskQueue: "service.queue",
+					Handler:   rt.ExecuteWorkflow,
+				}, nil),
+				Planner:             &stubPlanner{},
+				WorkflowHandler:     rt.ExecuteWorkflow,
+				PlanActivityName:    "service.agent.plan",
+				PlanActivityOptions: engine.ActivityOptions{RetryPolicy: tc.retry},
+				ResumeActivityName:  "service.agent.resume",
+				ExecuteToolActivity: "service.agent.executetool",
+			})
+
+			require.ErrorIs(t, err, ErrInvalidConfig)
+			require.ErrorContains(t, err, "activity")
+		})
+	}
 }
 
 func TestRegisterAgentRejectsNegativeRecoveryTurns(t *testing.T) {

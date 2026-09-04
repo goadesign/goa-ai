@@ -38,9 +38,7 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 			Queue:               "orchestrator_chat_workflow",
 			StartToCloseTimeout: time.Duration(120000000000),
 			RetryPolicy: engine.RetryPolicy{
-				MaxAttempts:        3,
-				InitialInterval:    time.Duration(1000000000),
-				BackoffCoefficient: 2,
+				MaxAttempts: 1,
 			},
 		},
 		ResumeActivityName: "orchestrator.chat.resume",
@@ -48,9 +46,7 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 			Queue:               "orchestrator_chat_workflow",
 			StartToCloseTimeout: time.Duration(120000000000),
 			RetryPolicy: engine.RetryPolicy{
-				MaxAttempts:        3,
-				InitialInterval:    time.Duration(1000000000),
-				BackoffCoefficient: 2,
+				MaxAttempts: 1,
 			},
 		},
 		ExecuteToolActivity: "orchestrator.chat.executetool",
