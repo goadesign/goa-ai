@@ -26,7 +26,7 @@ type (
 	}
 
 	pendingModelOutputRecovery struct {
-		correction string
+		recovery ModelOutputRecovery
 	}
 
 	pendingModelInvocationRecovery struct {
@@ -70,17 +70,18 @@ func correctCallCatalog(outputs []*planner.ToolOutput) []tools.Ident {
 	return catalog
 }
 
-// modelOutputCorrection returns replacement guidance when the workflow is
-// waiting for a new final answer.
-func modelOutputCorrection(recovery pendingPlannerRecovery) string {
+// modelOutputRecovery returns the rejected response kind and replacement
+// guidance when the workflow is waiting for corrected model output.
+func modelOutputRecovery(recovery pendingPlannerRecovery) *ModelOutputRecovery {
 	if recovery == nil {
-		return ""
+		return nil
 	}
 	pending, ok := recovery.(pendingModelOutputRecovery)
 	if !ok {
-		return ""
+		return nil
 	}
-	return pending.correction
+	result := pending.recovery
+	return &result
 }
 
 // modelInvocationRecovery returns the one recorded fact when the workflow is
@@ -95,6 +96,25 @@ func modelInvocationRecovery(recovery pendingPlannerRecovery) *ModelInvocationRe
 		return nil
 	}
 	return &pending.recovery
+}
+
+// validateModelOutputRecovery checks the activity value before a workflow
+// records or reuses it.
+func validateModelOutputRecovery(recovery *ModelOutputRecovery) error {
+	if recovery == nil {
+		return errors.New("model-output recovery is required")
+	}
+	if recovery.Kind != planner.ModelOutputRecoveryAnswer &&
+		recovery.Kind != planner.ModelOutputRecoveryPlanning {
+		return errors.New("model-output correction requires a valid recovery kind")
+	}
+	if strings.TrimSpace(recovery.Correction) == "" {
+		return errors.New("model-output correction requires non-blank guidance")
+	}
+	if len(recovery.Correction) > outputcontract.MaxCorrectionBytes {
+		return errors.New("model-output correction exceeds workflow boundary limit")
+	}
+	return nil
 }
 
 // validateModelInvocationRecovery checks the activity value before a workflow

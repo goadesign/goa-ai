@@ -440,7 +440,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if firstOutput.OutputContractFailure != nil {
 		st.ResponseID = ""
 		st.PendingRecovery = pendingModelOutputRecovery{
-			correction: firstOutput.OutputContractFailure.Correction,
+			recovery: *firstOutput.OutputContractFailure.ModelOutputRecovery,
 		}
 	}
 	if firstOutput.ModelInvocationRecovery != nil {

@@ -313,11 +313,14 @@ that accepts that exact response. An output-limited response with tool calls is
 rejected before any call can execute because the provider may not have finished
 the complete call batch.
 Ordinary output contract errors are terminal and Temporal does not retry them.
-When the planner can give exact replacement guidance for one completed model answer, it may
-instead return `NewRecoverableModelOutputError`. This separate, response-
-fingerprint-bound path records the answer fingerprint and usage while keeping
-the rejected body private, then spends one recovery turn on a synthesis-only
-replacement. Infrastructure failures remain activity errors and follow the
+When the planner can give exact replacement guidance for completed model
+output, it returns one of two explicit errors. `NewRecoverableModelAnswerError`
+spends one recovery turn on a replacement answer without ordinary tools.
+`NewRecoverableModelPlanningError` spends one recovery turn on replacement
+output with the current executable catalog. The rejected output may contain
+invalid tool calls or may have omitted a required call. Both paths are bound to the
+exact rejected response fingerprint, record usage, and keep the rejected body
+private. Infrastructure failures remain activity errors and follow the
 activity retry policy. Plan and Resume activities are the exception: their
 generated and registered policy permits exactly one attempt because they may
 have already emitted append-only text. Tool activities retain retries because

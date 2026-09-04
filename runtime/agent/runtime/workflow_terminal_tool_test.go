@@ -742,13 +742,17 @@ func TestFinalizeWithPlannerRecoversRejectedModelOutput(t *testing.T) {
 						ModelResponseSHA256:             responseSHA,
 						ModelResponseFingerprintVersion: api.ModelResponseFingerprintVersionV2,
 						ModelResponseSize:               responseSize,
-						Correction:                      "Return the required terminal action.",
+						ModelOutputRecovery: &ModelOutputRecovery{
+							Kind:       planner.ModelOutputRecoveryPlanning,
+							Correction: "Return the required terminal action.",
+						},
 					},
 					Usage: model.TokenUsage{InputTokens: 8, OutputTokens: 3, TotalTokens: 11},
 				}
 			},
 			assertRetry: func(t *testing.T, input *PlanActivityInput) {
 				t.Helper()
+				require.Equal(t, planner.ModelOutputRecoveryPlanning, input.ModelOutputRecovery.Kind)
 				require.Equal(t, "Return the required terminal action.", input.ModelOutputRecovery.Correction)
 				require.Nil(t, input.ModelInvocationRecovery)
 			},

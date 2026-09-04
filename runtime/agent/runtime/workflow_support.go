@@ -103,7 +103,7 @@ func (r *Runtime) finalizeRun(
 		nextAttempt,
 		turnID,
 		recovery,
-		"",
+		nil,
 		nil,
 		reason,
 		hardDeadline,
@@ -124,7 +124,7 @@ func (r *Runtime) finalizeFromHistory(
 	nextAttempt int,
 	turnID string,
 	recovery []*planner.ToolOutput,
-	outputCorrection string,
+	outputRecovery *ModelOutputRecovery,
 	invocationRecovery *ModelInvocationRecovery,
 	reason planner.TerminationReason,
 	hardDeadline time.Time,
@@ -180,8 +180,9 @@ func (r *Runtime) finalizeFromHistory(
 		RecoveryToolCallIDs: recoveryToolCallIDs(recovery),
 		Finalize:            &planner.Termination{Reason: reason, Message: hint},
 	}
-	if outputCorrection != "" {
-		req.ModelOutputRecovery = &ModelOutputRecovery{Correction: outputCorrection}
+	if outputRecovery != nil {
+		recoveryCopy := *outputRecovery
+		req.ModelOutputRecovery = &recoveryCopy
 	}
 	if invocationRecovery != nil {
 		recoveryCopy := *invocationRecovery
@@ -226,7 +227,7 @@ func (r *Runtime) finalizeFromHistory(
 	}
 	if output.Result == nil {
 		switch {
-		case output.OutputContractFailure != nil && output.OutputContractFailure.Correction != "":
+		case output.OutputContractFailure != nil && output.OutputContractFailure.ModelOutputRecovery != nil:
 			if !consumeRecoveryTurn(&caps) {
 				return nil, fmt.Errorf(
 					"%s: finalization recovery turn cap exceeded: %w",
@@ -246,7 +247,7 @@ func (r *Runtime) finalizeFromHistory(
 				nextAttempt+1,
 				turnID,
 				recovery,
-				output.OutputContractFailure.Correction,
+				output.OutputContractFailure.ModelOutputRecovery,
 				nil,
 				reason,
 				hardDeadline,
@@ -273,7 +274,7 @@ func (r *Runtime) finalizeFromHistory(
 				nextAttempt+1,
 				turnID,
 				recovery,
-				"",
+				nil,
 				output.ModelInvocationRecovery,
 				reason,
 				hardDeadline,
@@ -525,7 +526,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 			nextAttempt+1,
 			turnID,
 			recovery,
-			"",
+			nil,
 			nil,
 			reason,
 			hardDeadline,
@@ -822,7 +823,7 @@ func (r *Runtime) runPlanActivity(
 		}
 	}
 	if out.OutputContractFailure != nil {
-		if out.OutputContractFailure.Correction != "" {
+		if out.OutputContractFailure.ModelOutputRecovery != nil {
 			return out, nil
 		}
 		return out, boundedOutputContractError(out.OutputContractFailure)
@@ -985,13 +986,16 @@ func validateOutputContractFailure(failure *OutputContractFailure) error {
 			validOutputValidationKind(failure.ModelOutputValidationKind))) ||
 		(failure.Origin == planner.OutputContractOriginPlanner &&
 			failure.ModelOutputValidationKind == "")
-	validCorrection := failure.Correction == "" ||
+	var recoveryErr error
+	if failure.ModelOutputRecovery != nil {
+		recoveryErr = validateModelOutputRecovery(failure.ModelOutputRecovery)
+	}
+	validRecovery := failure.ModelOutputRecovery == nil ||
 		(failure.Origin == planner.OutputContractOriginModel &&
 			failure.ModelResponsePresent &&
 			failure.ModelResponseSHA256 != "" &&
 			validModelResponseFingerprintVersion(failure.ModelResponseFingerprintVersion) &&
-			strings.TrimSpace(failure.Correction) != "" &&
-			len(failure.Correction) <= outputcontract.MaxCorrectionBytes)
+			recoveryErr == nil)
 	if !validReasonFingerprint(failure.ReasonSHA256, failure.ReasonSize) ||
 		!validFingerprint(failure.ModelResponseSHA256, failure.ModelResponseSize, true) ||
 		(!failure.ModelResponsePresent && failure.ModelResponseSHA256 != "") ||
@@ -999,7 +1003,7 @@ func validateOutputContractFailure(failure *OutputContractFailure) error {
 		!validVersion ||
 		!validValidationKind ||
 		!plannerHasNoModelEvidence ||
-		!validCorrection {
+		!validRecovery {
 		return errors.New("completed output was rejected with invalid failure metadata")
 	}
 	return nil
