@@ -59,16 +59,14 @@ func newSpecAdd() tools.ToolSpec {
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"left\":{\"description\":\"Left operand\",\"format\":\"int32\",\"type\":\"integer\"},\"right\":{\"description\":\"Right operand\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"left\",\"right\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"left\":{\"description\":\"Left operand\",\"format\":\"int32\",\"type\":\"integer\"},\"right\":{\"description\":\"Right operand\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"left\",\"right\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        cloneStringMap(addPayloadFieldDescs),
-			FieldJSONTypes:           cloneStringMap(addPayloadFieldJSONTypes),
+			Fields:                   tools.CloneFieldMetadata(addPayloadFields),
 			Codec:                    addPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "AddResult",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"sum\":{\"description\":\"Sum\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"sum\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"sum\":{\"description\":\"Sum\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"sum\"],\"type\":\"object\"}"),
-			FieldDescriptions:        cloneStringMap(addResultFieldDescs),
-			FieldJSONTypes:           cloneStringMap(addResultFieldJSONTypes),
+			Fields:                   tools.CloneFieldMetadata(addResultFields),
 			Codec:                    addResultCodec,
 		},
 	}

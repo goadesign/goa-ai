@@ -27,142 +27,180 @@ type (
 		JSON  []byte
 		Value any
 	}
+
+	// fieldPathSegmentData is one fixed property or dynamic collection segment
+	// written into generated field metadata.
+	fieldPathSegmentData struct {
+		Name    string
+		Dynamic bool
+	}
+
+	// unionBranchData identifies the branch that contains one generated field.
+	unionBranchData struct {
+		Discriminator []fieldPathSegmentData
+		Value         string
+	}
+
+	// fieldMetadataData contains all static schema facts emitted for one field.
+	fieldMetadataData struct {
+		Path                []fieldPathSegmentData
+		JSONType            string
+		Description         string
+		Branches            []unionBranchData
+		DiscriminatorValues []string
+	}
 )
 
-// buildFieldDescriptions collects dotted field-path descriptions from the provided
-// attribute. It follows objects, arrays, maps and user types, trimming any leading
-// root qualifiers at error construction time (newValidationError does this for "body.").
-func buildFieldDescriptions(att *goaexpr.AttributeExpr) map[string]string {
+// buildFieldMetadata records each generated field without flattening fixed
+// property names, array indexes, map keys, or union branches into strings.
+func buildFieldMetadata(att *goaexpr.AttributeExpr) []*fieldMetadataData {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return nil
 	}
-	out := make(map[string]string)
+	var out []*fieldMetadataData
+	byKey := make(map[string]*fieldMetadataData)
 	seen := make(map[string]struct{})
-	var walk func(prefix string, a *goaexpr.AttributeExpr)
-	walk = func(prefix string, a *goaexpr.AttributeExpr) {
+	add := func(field *fieldMetadataData) {
+		if len(field.Path) == 0 && field.JSONType == "" && field.Description == "" &&
+			len(field.Branches) == 0 && len(field.DiscriminatorValues) == 0 {
+			return
+		}
+		key := generatedFieldMetadataKey(field.Path, field.Branches)
+		if existing, ok := byKey[key]; ok {
+			if existing.JSONType == "" {
+				existing.JSONType = field.JSONType
+			}
+			if existing.Description == "" {
+				existing.Description = field.Description
+			}
+			if len(existing.DiscriminatorValues) == 0 {
+				existing.DiscriminatorValues = field.DiscriminatorValues
+			}
+			return
+		}
+		byKey[key] = field
+		out = append(out, field)
+	}
+	var walk func([]fieldPathSegmentData, *goaexpr.AttributeExpr, []unionBranchData, string)
+	walk = func(path []fieldPathSegmentData, a *goaexpr.AttributeExpr, branches []unionBranchData, inheritedDescription string) {
 		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
 			return
 		}
-		switch dt := a.Type.(type) {
-		case goaexpr.UserType:
-			// Avoid infinite recursion on recursive user types.
+		description := a.Description
+		if description == "" {
+			description = inheritedDescription
+		}
+		if dt, ok := a.Type.(goaexpr.UserType); ok {
+			add(&fieldMetadataData{
+				Path:        cloneFieldPath(path),
+				JSONType:    generatedJSONType(a.Type),
+				Description: description,
+				Branches:    cloneUnionBranches(branches),
+			})
 			id := dt.ID()
 			if _, ok := seen[id]; ok {
 				return
 			}
 			seen[id] = struct{}{}
 			defer delete(seen, id)
-			walk(prefix, dt.Attribute())
-		case *goaexpr.Object:
-			for _, nat := range *dt {
-				name := nat.Name
-				path := name
-				if prefix != "" {
-					path = prefix + "." + name
-				}
-				if nat.Attribute != nil && nat.Attribute.Description != "" {
-					out[path] = nat.Attribute.Description
-				}
-				walk(path, nat.Attribute)
-			}
-		case *goaexpr.Array:
-			elementPath := generatedElementPath(prefix)
-			switch {
-			case dt.ElemType.Description != "":
-				out[elementPath] = dt.ElemType.Description
-			case out[prefix] != "":
-				out[elementPath] = out[prefix]
-			}
-			walk(elementPath, dt.ElemType)
-		case *goaexpr.Map:
-			elementPath := generatedElementPath(prefix)
-			switch {
-			case dt.ElemType.Description != "":
-				out[elementPath] = dt.ElemType.Description
-			case out[prefix] != "":
-				out[elementPath] = out[prefix]
-			}
-			walk(elementPath, dt.ElemType)
-		case *goaexpr.Union:
-			// Union branch descriptions depend on the discriminator, so this generic
-			// field map records only the union field itself.
-		}
-	}
-	walk("", att)
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-// buildFieldJSONTypes collects the generated JSON type expected at each dotted field path.
-func buildFieldJSONTypes(att *goaexpr.AttributeExpr) map[string]string {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return nil
-	}
-	out := make(map[string]string)
-	seen := make(map[string]struct{})
-	var walk func(prefix string, a *goaexpr.AttributeExpr)
-	walk = func(prefix string, a *goaexpr.AttributeExpr) {
-		if a == nil || a.Type == nil || a.Type == goaexpr.Empty {
+			walk(path, dt.Attribute(), branches, description)
 			return
 		}
-		field := prefix
-		if field == "" {
-			field = "$payload"
-		}
-		if field != "" {
-			jsonType := generatedJSONType(a.Type)
-			if jsonType != "" {
-				if _, exists := out[field]; exists {
-					jsonType = ""
-				}
-			}
-			if jsonType != "" {
-				out[field] = jsonType
-			}
-		}
+		add(&fieldMetadataData{
+			Path:        cloneFieldPath(path),
+			JSONType:    generatedJSONType(a.Type),
+			Description: description,
+			Branches:    cloneUnionBranches(branches),
+		})
 		switch dt := a.Type.(type) {
-		case goaexpr.UserType:
-			id := dt.ID()
-			if _, ok := seen[id]; ok {
-				return
-			}
-			seen[id] = struct{}{}
-			defer delete(seen, id)
-			walk(prefix, dt.Attribute())
 		case *goaexpr.Object:
 			for _, nat := range *dt {
-				name := nat.Name
-				path := name
-				if prefix != "" {
-					path = prefix + "." + name
-				}
-				walk(path, nat.Attribute)
+				walk(appendFixedField(path, nat.Name), nat.Attribute, branches, "")
 			}
 		case *goaexpr.Array:
-			walk(generatedElementPath(prefix), dt.ElemType)
+			walk(appendDynamicField(path), dt.ElemType, branches, description)
 		case *goaexpr.Map:
-			walk(generatedElementPath(prefix), dt.ElemType)
+			walk(appendDynamicField(path), dt.ElemType, branches, description)
 		case *goaexpr.Union:
-			// Union branch payload types are discriminator-specific. The unqualified
-			// {type,value} envelope path is intentionally not used as contract
-			// metadata for branch values.
+			typeKey := dt.GetTypeKey()
+			if typeKey == "" {
+				typeKey = unionTypeKeyDefault
+			}
+			valueKey := dt.GetValueKey()
+			if valueKey == "" {
+				valueKey = unionValueKeyDefault
+			}
+			discriminator := appendFixedField(path, typeKey)
+			values := make([]string, len(dt.Values))
+			for index, nat := range dt.Values {
+				values[index] = nat.Name
+			}
+			add(&fieldMetadataData{
+				Path:                discriminator,
+				JSONType:            "string",
+				Branches:            cloneUnionBranches(branches),
+				DiscriminatorValues: values,
+			})
+			for _, nat := range dt.Values {
+				branch := unionBranchData{
+					Discriminator: cloneFieldPath(discriminator),
+					Value:         nat.Name,
+				}
+				walk(
+					appendFixedField(path, valueKey),
+					nat.Attribute,
+					append(cloneUnionBranches(branches), branch),
+					"",
+				)
+			}
 		}
 	}
-	walk("", att)
+	walk(nil, att, nil, "")
 	if len(out) == 0 {
 		return nil
 	}
 	return out
 }
 
-// generatedElementPath names one array item or caller-chosen map value.
-func generatedElementPath(prefix string) string {
-	if prefix == "" {
-		return "*"
+func appendFixedField(path []fieldPathSegmentData, name string) []fieldPathSegmentData {
+	return append(cloneFieldPath(path), fieldPathSegmentData{Name: name})
+}
+
+func appendDynamicField(path []fieldPathSegmentData) []fieldPathSegmentData {
+	return append(cloneFieldPath(path), fieldPathSegmentData{Dynamic: true})
+}
+
+func cloneFieldPath(path []fieldPathSegmentData) []fieldPathSegmentData {
+	return append([]fieldPathSegmentData(nil), path...)
+}
+
+func cloneUnionBranches(branches []unionBranchData) []unionBranchData {
+	cloned := make([]unionBranchData, len(branches))
+	for index, branch := range branches {
+		cloned[index] = branch
+		cloned[index].Discriminator = cloneFieldPath(branch.Discriminator)
 	}
-	return prefix + ".*"
+	return cloned
+}
+
+func generatedFieldMetadataKey(path []fieldPathSegmentData, branches []unionBranchData) string {
+	var key strings.Builder
+	writePath := func(value []fieldPathSegmentData) {
+		for _, segment := range value {
+			if segment.Dynamic {
+				key.WriteString("d;")
+				continue
+			}
+			fmt.Fprintf(&key, "f%d:%s;", len(segment.Name), segment.Name)
+		}
+	}
+	writePath(path)
+	for _, branch := range branches {
+		key.WriteByte('|')
+		writePath(branch.Discriminator)
+		fmt.Fprintf(&key, "=%d:%s", len(branch.Value), branch.Value)
+	}
+	return key.String()
 }
 
 // generatedJSONType maps Goa types to exact JSON categories. It returns an

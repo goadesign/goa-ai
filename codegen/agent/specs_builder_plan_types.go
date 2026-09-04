@@ -427,8 +427,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		marshal:              names.marshal,
 		unmarshal:            names.unmarshal,
 		transportValidator:   names.transportValidator,
-		fieldDescriptions:    names.fieldDescriptions,
-		fieldJSONTypes:       names.fieldJSONTypes,
+		fieldMetadata:        names.fieldMetadata,
 		enrichValidation:     names.enrichValidation,
 		invalidFieldType:     names.invalidFieldType,
 		jsonValidator:        jsonValidator,
@@ -595,18 +594,10 @@ func (p *toolSpecsPackagePlan) declareTypeNames(key, preferred string, completio
 	if err != nil {
 		return nil, err
 	}
-	names.fieldDescriptions, err = declarePrivate(
+	names.fieldMetadata, err = declarePrivate(
 		goacodegen.NameVariable,
-		lowerCamel(preferred)+"FieldDescs",
-		"field-descriptions",
-	)
-	if err != nil {
-		return nil, err
-	}
-	names.fieldJSONTypes, err = declarePrivate(
-		goacodegen.NameVariable,
-		lowerCamel(preferred)+"FieldJSONTypes",
-		"field-json-types",
+		lowerCamel(preferred)+"Fields",
+		"field-metadata",
 	)
 	if err != nil {
 		return nil, err

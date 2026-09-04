@@ -707,14 +707,14 @@ func (r *Runtime) missingFieldsQuestion(tool tools.Ident, fields []string) (stri
 	var question strings.Builder
 	question.WriteString("I need a little more information before I can continue:")
 	for _, field := range fields {
-		description, ok := tools.LookupFieldMetadata(spec.Payload.FieldDescriptions, field)
-		if !ok || description == "" {
+		metadata, ok := tools.LookupFieldMetadata(spec.Payload.Fields, field)
+		if !ok || metadata.Description == "" {
 			return "", fmt.Errorf("missing generated description for clarification field %q on tool %q", field, tool)
 		}
 		question.WriteString("\n\n- `")
 		question.WriteString(field)
 		question.WriteString("`: ")
-		question.WriteString(description)
+		question.WriteString(metadata.Description)
 	}
 	return question.String(), nil
 }

@@ -63,37 +63,71 @@ var (
 		},
 	}
 )
-var upsertPayloadFieldDescs = map[string]string{
-	"profile":                "Profile",
-	"profile.address":        "Address",
-	"profile.address.city":   "City",
-	"profile.address.street": "Street",
-	"profile.id":             "Identifier",
-	"profile.name":           "Name",
+var upsertPayloadFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("profile")},
+		JSONType:    "object",
+		Description: "Profile",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("profile"), tools.FixedField("id")},
+		JSONType:    "string",
+		Description: "Identifier",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("profile"), tools.FixedField("name")},
+		JSONType:    "string",
+		Description: "Name",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("profile"), tools.FixedField("address")},
+		JSONType:    "object",
+		Description: "Address",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("profile"), tools.FixedField("address"), tools.FixedField("street")},
+		JSONType:    "string",
+		Description: "Street",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("profile"), tools.FixedField("address"), tools.FixedField("city")},
+		JSONType:    "string",
+		Description: "City",
+	},
 }
-var upsertResultFieldDescs = map[string]string{
-	"address":        "Address",
-	"address.city":   "City",
-	"address.street": "Street",
-	"id":             "Identifier",
-	"name":           "Name",
-}
-var upsertPayloadFieldJSONTypes = map[string]string{
-	"$payload":               "object",
-	"profile":                "object",
-	"profile.address":        "object",
-	"profile.address.city":   "string",
-	"profile.address.street": "string",
-	"profile.id":             "string",
-	"profile.name":           "string",
-}
-var upsertResultFieldJSONTypes = map[string]string{
-	"$payload":       "object",
-	"address":        "object",
-	"address.city":   "string",
-	"address.street": "string",
-	"id":             "string",
-	"name":           "string",
+var upsertResultFields = []tools.FieldMetadata{
+	{
+		JSONType:    "object",
+		Description: "User profile",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("id")},
+		JSONType:    "string",
+		Description: "Identifier",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("name")},
+		JSONType:    "string",
+		Description: "Name",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("address")},
+		JSONType:    "object",
+		Description: "Address",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("address"), tools.FixedField("street")},
+		JSONType:    "string",
+		Description: "Street",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("address"), tools.FixedField("city")},
+		JSONType:    "string",
+		Description: "City",
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -138,8 +172,8 @@ func enrichUpsertPayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(upsertPayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(upsertPayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -155,8 +189,8 @@ func enrichUpsertResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(upsertResultFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(upsertResultFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -171,8 +205,8 @@ func invalidUpsertPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(upsertPayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(upsertPayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -185,7 +219,7 @@ func invalidUpsertPayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -202,8 +236,8 @@ func invalidUpsertResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(upsertResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(upsertResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -216,7 +250,7 @@ func invalidUpsertResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

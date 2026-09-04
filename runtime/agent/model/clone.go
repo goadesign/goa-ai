@@ -9,6 +9,8 @@ import (
 	"reflect"
 	"slices"
 	"unicode/utf8"
+
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type dynamicCloneContract uint8
@@ -167,8 +169,8 @@ func CloneMessages(messages []*Message) ([]*Message, error) {
 }
 
 // cloneRequest owns every mutable value that providers or observers can read
-// during one call. Function-backed validators and private generated field
-// metadata are immutable after construction and are copied by reference.
+// during one call. It copies advertised field metadata and keeps the fixed
+// validation functions attached to the cloned tool definitions.
 func cloneRequest(request *Request) (*Request, error) {
 	if err := preflightRequest(request); err != nil {
 		return nil, err
@@ -191,6 +193,7 @@ func cloneRequest(request *Request) (*Request, error) {
 			jsonSchema:               slices.Clone(definition.Input.jsonSchema),
 			schemaWithoutRootExample: slices.Clone(definition.Input.schemaWithoutRootExample),
 			exampleJSON:              slices.Clone(definition.Input.exampleJSON),
+			fields:                   tools.CloneFieldMetadata(definition.Input.fields),
 			validate:                 definition.Input.validate,
 			acceptsNoArguments:       definition.Input.acceptsNoArguments,
 		}

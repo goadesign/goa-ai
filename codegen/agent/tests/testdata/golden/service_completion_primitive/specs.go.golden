@@ -11,6 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/completion"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 	"slices"
 )
 
@@ -27,6 +28,7 @@ func SpecHeadline() completion.Spec[HeadlineResult] {
 		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
 		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
 		ExampleJSON:              nil,
+		Fields:                   tools.CloneFieldMetadata(headlineResultFields),
 		Codec:                    newHeadlineResultCodec(),
 	}
 }

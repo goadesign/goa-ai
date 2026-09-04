@@ -85,119 +85,272 @@ var (
 		},
 	}
 )
-var archivePayloadFieldDescs = map[string]string{
-	"aliases":            "Archived aliases.",
-	"aliases.*":          "Archived aliases.",
-	"counts":             "Archived counts by name.",
-	"counts.*":           "Archived counts by name.",
-	"dynamic":            "Archived unrestricted JSON value.",
-	"groups":             "Archived counts grouped by position.",
-	"groups.*":           "Archived counts grouped by position.",
-	"groups.*.*":         "Archived counts grouped by position.",
-	"large_numbers":      "Archived large integers.",
-	"large_numbers.*":    "Archived large integers.",
-	"node":               "Archived recursive node.",
-	"node.name":          "Node name.",
-	"node.next":          "Next node.",
-	"numbers":            "Archived integers.",
-	"numbers.*":          "Archived integers.",
-	"unsigned_numbers":   "Archived unsigned integers.",
-	"unsigned_numbers.*": "Archived unsigned integers.",
+var archivePayloadFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("aliases")},
+		JSONType:    "array",
+		Description: "Archived aliases.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("aliases"), tools.DynamicField{}},
+		JSONType:    "string",
+		Description: "Archived aliases.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("numbers")},
+		JSONType:    "array",
+		Description: "Archived integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("numbers"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Archived integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("unsigned_numbers")},
+		JSONType:    "array",
+		Description: "Archived unsigned integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("unsigned_numbers"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Archived unsigned integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("large_numbers")},
+		JSONType:    "array",
+		Description: "Archived large integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("large_numbers"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Archived large integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("counts")},
+		JSONType:    "object",
+		Description: "Archived counts by name.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("counts"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Archived counts by name.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups")},
+		JSONType:    "array",
+		Description: "Archived counts grouped by position.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups"), tools.DynamicField{}},
+		JSONType:    "object",
+		Description: "Archived counts grouped by position.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups"), tools.DynamicField{}, tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Archived counts grouped by position.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("node")},
+		JSONType:    "object",
+		Description: "Archived recursive node.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("node"), tools.FixedField("name")},
+		JSONType:    "string",
+		Description: "Node name.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("node"), tools.FixedField("next")},
+		JSONType:    "object",
+		Description: "Next node.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("dynamic")},
+		Description: "Archived unrestricted JSON value.",
+	},
 }
-var storePayloadFieldDescs = map[string]string{
-	"aliases":            "Required aliases.",
-	"aliases.*":          "Required aliases.",
-	"counts":             "Integer counts by name.",
-	"counts.*":           "Integer counts by name.",
-	"dynamic":            "Unrestricted JSON value.",
-	"groups":             "Integer counts grouped by position.",
-	"groups.*":           "Integer counts grouped by position.",
-	"groups.*.*":         "Integer counts grouped by position.",
-	"large_numbers":      "Required large integers.",
-	"large_numbers.*":    "Required large integers.",
-	"node":               "Recursive node.",
-	"node.name":          "Node name.",
-	"node.next":          "Next node.",
-	"numbers":            "Required integers.",
-	"numbers.*":          "Required integers.",
-	"unsigned_numbers":   "Unsigned integers.",
-	"unsigned_numbers.*": "Unsigned integers.",
+var storePayloadFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("aliases")},
+		JSONType:    "array",
+		Description: "Required aliases.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("aliases"), tools.DynamicField{}},
+		JSONType:    "string",
+		Description: "Required aliases.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("numbers")},
+		JSONType:    "array",
+		Description: "Required integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("numbers"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Required integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("unsigned_numbers")},
+		JSONType:    "array",
+		Description: "Unsigned integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("unsigned_numbers"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Unsigned integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("large_numbers")},
+		JSONType:    "array",
+		Description: "Required large integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("large_numbers"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Required large integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("counts")},
+		JSONType:    "object",
+		Description: "Integer counts by name.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("counts"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Integer counts by name.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups")},
+		JSONType:    "array",
+		Description: "Integer counts grouped by position.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups"), tools.DynamicField{}},
+		JSONType:    "object",
+		Description: "Integer counts grouped by position.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups"), tools.DynamicField{}, tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Integer counts grouped by position.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("node")},
+		JSONType:    "object",
+		Description: "Recursive node.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("node"), tools.FixedField("name")},
+		JSONType:    "string",
+		Description: "Node name.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("node"), tools.FixedField("next")},
+		JSONType:    "object",
+		Description: "Next node.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("dynamic")},
+		Description: "Unrestricted JSON value.",
+	},
 }
-var storeResultFieldDescs = map[string]string{
-	"aliases":            "Required aliases.",
-	"aliases.*":          "Required aliases.",
-	"counts":             "Integer counts by name.",
-	"counts.*":           "Integer counts by name.",
-	"dynamic":            "Unrestricted JSON value.",
-	"groups":             "Integer counts grouped by position.",
-	"groups.*":           "Integer counts grouped by position.",
-	"groups.*.*":         "Integer counts grouped by position.",
-	"large_numbers":      "Required large integers.",
-	"large_numbers.*":    "Required large integers.",
-	"node":               "Recursive node.",
-	"node.name":          "Node name.",
-	"node.next":          "Next node.",
-	"numbers":            "Required integers.",
-	"numbers.*":          "Required integers.",
-	"unsigned_numbers":   "Unsigned integers.",
-	"unsigned_numbers.*": "Unsigned integers.",
-}
-var archivePayloadFieldJSONTypes = map[string]string{
-	"$payload":           "object",
-	"aliases":            "array",
-	"aliases.*":          "string",
-	"counts":             "object",
-	"counts.*":           "integer",
-	"groups":             "array",
-	"groups.*":           "object",
-	"groups.*.*":         "integer",
-	"large_numbers":      "array",
-	"large_numbers.*":    "integer",
-	"node":               "object",
-	"node.name":          "string",
-	"node.next":          "object",
-	"numbers":            "array",
-	"numbers.*":          "integer",
-	"unsigned_numbers":   "array",
-	"unsigned_numbers.*": "integer",
-}
-var storePayloadFieldJSONTypes = map[string]string{
-	"$payload":           "object",
-	"aliases":            "array",
-	"aliases.*":          "string",
-	"counts":             "object",
-	"counts.*":           "integer",
-	"groups":             "array",
-	"groups.*":           "object",
-	"groups.*.*":         "integer",
-	"large_numbers":      "array",
-	"large_numbers.*":    "integer",
-	"node":               "object",
-	"node.name":          "string",
-	"node.next":          "object",
-	"numbers":            "array",
-	"numbers.*":          "integer",
-	"unsigned_numbers":   "array",
-	"unsigned_numbers.*": "integer",
-}
-var storeResultFieldJSONTypes = map[string]string{
-	"$payload":           "object",
-	"aliases":            "array",
-	"aliases.*":          "string",
-	"counts":             "object",
-	"counts.*":           "integer",
-	"groups":             "array",
-	"groups.*":           "object",
-	"groups.*.*":         "integer",
-	"large_numbers":      "array",
-	"large_numbers.*":    "integer",
-	"node":               "object",
-	"node.name":          "string",
-	"node.next":          "object",
-	"numbers":            "array",
-	"numbers.*":          "integer",
-	"unsigned_numbers":   "array",
-	"unsigned_numbers.*": "integer",
+var storeResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("aliases")},
+		JSONType:    "array",
+		Description: "Required aliases.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("aliases"), tools.DynamicField{}},
+		JSONType:    "string",
+		Description: "Required aliases.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("numbers")},
+		JSONType:    "array",
+		Description: "Required integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("numbers"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Required integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("unsigned_numbers")},
+		JSONType:    "array",
+		Description: "Unsigned integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("unsigned_numbers"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Unsigned integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("large_numbers")},
+		JSONType:    "array",
+		Description: "Required large integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("large_numbers"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Required large integers.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("counts")},
+		JSONType:    "object",
+		Description: "Integer counts by name.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("counts"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Integer counts by name.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups")},
+		JSONType:    "array",
+		Description: "Integer counts grouped by position.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups"), tools.DynamicField{}},
+		JSONType:    "object",
+		Description: "Integer counts grouped by position.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups"), tools.DynamicField{}, tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Integer counts grouped by position.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("node")},
+		JSONType:    "object",
+		Description: "Recursive node.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("node"), tools.FixedField("name")},
+		JSONType:    "string",
+		Description: "Node name.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("node"), tools.FixedField("next")},
+		JSONType:    "object",
+		Description: "Next node.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("dynamic")},
+		Description: "Unrestricted JSON value.",
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -242,8 +395,8 @@ func enrichArchivePayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(archivePayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(archivePayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -259,8 +412,8 @@ func enrichStorePayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(storePayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(storePayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -276,8 +429,8 @@ func enrichStoreResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(storeResultFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(storeResultFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -292,8 +445,8 @@ func invalidArchivePayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(archivePayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(archivePayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -306,7 +459,7 @@ func invalidArchivePayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -323,8 +476,8 @@ func invalidStorePayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(storePayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(storePayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -337,7 +490,7 @@ func invalidStorePayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -354,8 +507,8 @@ func invalidStoreResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(storeResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(storeResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -368,7 +521,7 @@ func invalidStoreResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

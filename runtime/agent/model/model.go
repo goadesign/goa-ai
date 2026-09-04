@@ -297,6 +297,7 @@ type (
 		jsonSchema               rawjson.Message
 		schemaWithoutRootExample rawjson.Message
 		exampleJSON              rawjson.Message
+		fields                   []tools.FieldMetadata
 		validate                 func(rawjson.Message) error
 		acceptsNoArguments       bool
 	}
@@ -1132,6 +1133,7 @@ func NewToolDefinitionFromSpec(spec tools.ToolSpec) (*ToolDefinition, error) {
 		}
 	}
 	input.acceptsNoArguments = typeSpecDeclaresNoArguments(spec.Payload)
+	input.fields = tools.CloneFieldMetadata(spec.Payload.Fields)
 	return &ToolDefinition{
 		Name:        spec.Name.String(),
 		Description: spec.Description,
@@ -1150,10 +1152,13 @@ func ToolDefinitionFromSpec(spec tools.ToolSpec) *ToolDefinition {
 	return definition
 }
 
-// typeSpecDeclaresNoArguments reads generated field metadata instead of
-// reparsing its schema. A model-facing empty object has only the root marker.
+// typeSpecDeclaresNoArguments reads attached field metadata instead of parsing
+// its schema again. A model-facing empty object has only the root marker.
 func typeSpecDeclaresNoArguments(spec tools.TypeSpec) bool {
-	return len(spec.FieldJSONTypes) == 1 && spec.FieldJSONTypes["$payload"] == jsonObjectType
+	if len(spec.Fields) != 1 || len(spec.Fields[0].Path) != 0 {
+		return false
+	}
+	return spec.Fields[0].JSONType == jsonObjectType
 }
 
 // AdvertisedToolInputFromSchema builds the model-facing contract for a
@@ -1187,6 +1192,7 @@ func advertisedToolInputFromSpec(spec tools.TypeSpec) ToolInput {
 	if err != nil {
 		panic(err)
 	}
+	input.fields = tools.CloneFieldMetadata(spec.Fields)
 	return input
 }
 

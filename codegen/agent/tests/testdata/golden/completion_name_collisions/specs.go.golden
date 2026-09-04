@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/completion"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // Completion IDs for this service.
@@ -33,6 +34,7 @@ func SpecCompleteDraft() completion.Spec[*CompleteDraftResult] {
 		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		ExampleJSON:              rawjson.Message("{\"text\":\"Generated text.\"}"),
+		Fields:                   tools.CloneFieldMetadata(completeDraftResultFields),
 		Codec:                    newCompleteDraftResultCodec(),
 	}
 }
@@ -51,6 +53,7 @@ func SpecDraft2() completion.Spec[*DraftResult] {
 		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		ExampleJSON:              rawjson.Message("{\"text\":\"Generated text.\"}"),
+		Fields:                   tools.CloneFieldMetadata(draftResultFields),
 		Codec:                    newDraftResultCodec(),
 	}
 }
@@ -69,6 +72,7 @@ func SpecDraftExample() completion.Spec[*DraftExampleResult] {
 		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		ExampleJSON:              rawjson.Message("{\"text\":\"Generated text.\"}"),
+		Fields:                   tools.CloneFieldMetadata(draftExampleResultFields),
 		Codec:                    newDraftExampleResultCodec(),
 	}
 }
@@ -87,6 +91,7 @@ func SpecSpecDraft() completion.Spec[*SpecDraftResult] {
 		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		ExampleJSON:              rawjson.Message("{\"text\":\"Generated text.\"}"),
+		Fields:                   tools.CloneFieldMetadata(specDraftResultFields),
 		Codec:                    newSpecDraftResultCodec(),
 	}
 }
@@ -105,6 +110,7 @@ func SpecStreamCompleteDraft() completion.Spec[*StreamCompleteDraftResult] {
 		Schema:                   rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"text\":\"Generated text.\"},\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		SchemaWithoutRootExample: rawjson.Message("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Generated completion text.\",\"type\":\"string\"}},\"required\":[\"text\"],\"type\":\"object\"}"),
 		ExampleJSON:              rawjson.Message("{\"text\":\"Generated text.\"}"),
+		Fields:                   tools.CloneFieldMetadata(streamCompleteDraftResultFields),
 		Codec:                    newStreamCompleteDraftResultCodec(),
 	}
 }

@@ -92,15 +92,13 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
                     Schema: {{- if gt (len .Type.SchemaJSON) 0 }}tools.RawJSON({{ printf "%q" .Type.SchemaJSON }}){{ else }}nil{{ end }},
                     SchemaWithoutRootExample: {{- if gt (len .Type.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Type.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
                     ExampleJSON: {{- if gt (len .Type.ExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Type.ExampleJSON }}){{ else }}nil{{ end }},
-                    FieldDescriptions: {{- if .Type.FieldDescs }}cloneStringMap({{ .Type.FieldDescsVar }}){{ else }}nil{{ end }},
-                    FieldJSONTypes: {{- if .Type.FieldJSONTypes }}cloneStringMap({{ .Type.FieldJSONTypesVar }}){{ else }}nil{{ end }},
+                    Fields: {{- if .Type.Fields }}tools.CloneFieldMetadata({{ .Type.FieldsVar }}){{ else }}nil{{ end }},
                     Codec: {{ .Type.GenericCodec }},
                     {{- else }}
                     Schema: nil,
                     SchemaWithoutRootExample: nil,
                     ExampleJSON: nil,
-                    FieldDescriptions: nil,
-                    FieldJSONTypes: nil,
+                    Fields: nil,
                     Codec: tools.JSONCodec[any]{},
                     {{- end }}
                 },
@@ -126,15 +124,13 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
             Schema: {{- if gt (len .Payload.SchemaJSON) 0 }}tools.RawJSON({{ printf "%q" .Payload.SchemaJSON }}){{ else }}nil{{ end }},
             SchemaWithoutRootExample: {{- if gt (len .Payload.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Payload.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
             ExampleJSON: {{- if gt (len .Payload.ExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Payload.ExampleJSON }}){{ else }}nil{{ end }},
-            FieldDescriptions: {{- if .Payload.FieldDescs }}cloneStringMap({{ .Payload.FieldDescsVar }}){{ else }}nil{{ end }},
-            FieldJSONTypes: {{- if .Payload.FieldJSONTypes }}cloneStringMap({{ .Payload.FieldJSONTypesVar }}){{ else }}nil{{ end }},
+            Fields: {{- if .Payload.Fields }}tools.CloneFieldMetadata({{ .Payload.FieldsVar }}){{ else }}nil{{ end }},
             Codec:  {{ .Payload.GenericCodec }},
             {{- else }}
             Schema: nil,
             SchemaWithoutRootExample: nil,
             ExampleJSON: nil,
-            FieldDescriptions: nil,
-            FieldJSONTypes: nil,
+            Fields: nil,
             Codec:  tools.JSONCodec[any]{},
             {{- end }}
         },
@@ -143,13 +139,11 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
             Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}tools.RawJSON({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
             {{- if .Result }}
             SchemaWithoutRootExample: {{- if gt (len .Result.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Result.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
-            FieldDescriptions: {{- if .Result.FieldDescs }}cloneStringMap({{ .Result.FieldDescsVar }}){{ else }}nil{{ end }},
-            FieldJSONTypes: {{- if .Result.FieldJSONTypes }}cloneStringMap({{ .Result.FieldJSONTypesVar }}){{ else }}nil{{ end }},
+            Fields: {{- if .Result.Fields }}tools.CloneFieldMetadata({{ .Result.FieldsVar }}){{ else }}nil{{ end }},
             Codec:  {{ .Result.GenericCodec }},
             {{- else }}
             SchemaWithoutRootExample: nil,
-            FieldDescriptions: nil,
-            FieldJSONTypes: nil,
+            Fields: nil,
             Codec:  tools.JSONCodec[any]{},
             {{- end }}
         },

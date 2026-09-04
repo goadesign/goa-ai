@@ -7,6 +7,32 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
+type (
+	// FieldPathSegmentForTest exposes one typed generated path segment to
+	// external generator tests.
+	FieldPathSegmentForTest struct {
+		Name    string
+		Dynamic bool
+	}
+
+	// UnionBranchForTest exposes one generated union branch requirement to
+	// external generator tests.
+	UnionBranchForTest struct {
+		Discriminator []FieldPathSegmentForTest
+		Value         string
+	}
+
+	// FieldMetadataForTest exposes the static field facts consumed by the
+	// generated source template.
+	FieldMetadataForTest struct {
+		Path                []FieldPathSegmentForTest
+		JSONType            string
+		Description         string
+		Branches            []UnionBranchForTest
+		DiscriminatorValues []string
+	}
+)
+
 // BuildDataForTest chooses service and agent names exactly as generation does,
 // then returns the agent data used to write files.
 func BuildDataForTest(genpkg string, roots []eval.Root) (*GeneratorData, error) {
@@ -119,21 +145,46 @@ func CollectTypeSchemasForTest(specs *toolSpecsData) map[string][]byte {
 	return out
 }
 
-// CollectTypeJSONTypesForTest returns generated field JSON type metadata by type.
-func CollectTypeJSONTypesForTest(specs *toolSpecsData) map[string]map[string]string {
-	out := make(map[string]map[string]string)
+// CollectFieldMetadataForTest returns generated field metadata by type.
+func CollectFieldMetadataForTest(specs *toolSpecsData) map[string][]FieldMetadataForTest {
+	out := make(map[string][]FieldMetadataForTest)
 	if specs == nil {
 		return out
 	}
 	for _, td := range specs.typesList() {
-		if len(td.FieldJSONTypes) == 0 {
+		if len(td.Fields) == 0 {
 			continue
 		}
-		copied := make(map[string]string, len(td.FieldJSONTypes))
-		for field, jsonType := range td.FieldJSONTypes {
-			copied[field] = jsonType
+		copied := make([]FieldMetadataForTest, len(td.Fields))
+		for index, field := range td.Fields {
+			copied[index] = FieldMetadataForTest{
+				Path:                fieldPathForTest(field.Path),
+				JSONType:            field.JSONType,
+				Description:         field.Description,
+				DiscriminatorValues: append([]string(nil), field.DiscriminatorValues...),
+			}
+			if len(field.Branches) > 0 {
+				copied[index].Branches = make([]UnionBranchForTest, len(field.Branches))
+				for branchIndex, branch := range field.Branches {
+					copied[index].Branches[branchIndex] = UnionBranchForTest{
+						Discriminator: fieldPathForTest(branch.Discriminator),
+						Value:         branch.Value,
+					}
+				}
+			}
 		}
 		out[td.TypeName] = copied
 	}
 	return out
+}
+
+func fieldPathForTest(path []fieldPathSegmentData) []FieldPathSegmentForTest {
+	if len(path) == 0 {
+		return nil
+	}
+	segments := make([]FieldPathSegmentForTest, len(path))
+	for index, segment := range path {
+		segments[index] = FieldPathSegmentForTest(segment)
+	}
+	return segments
 }

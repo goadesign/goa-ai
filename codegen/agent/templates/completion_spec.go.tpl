@@ -14,6 +14,7 @@ func {{ .SpecFunc }}() completion.Spec[{{ if .Result.Pointer }}*{{ end }}{{ .Res
         Schema: {{- if and .Result (gt (len .Result.SchemaJSON) 0) }}rawjson.Message({{ printf "%q" .Result.SchemaJSON }}){{ else }}nil{{ end }},
         SchemaWithoutRootExample: {{- if and .Result (gt (len .Result.SchemaWithoutRootExampleJSON) 0) }}rawjson.Message({{ printf "%q" .Result.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
         ExampleJSON: {{- if and .Result (gt (len .Result.ExampleJSON) 0) }}rawjson.Message({{ printf "%q" .Result.ExampleJSON }}){{ else }}nil{{ end }},
+		Fields: {{- if .Result.Fields }}tools.CloneFieldMetadata({{ .Result.FieldsVar }}){{ else }}nil{{ end }},
         Codec: {{ .Result.ExportedCodec }}(),
     }
 }

@@ -76,7 +76,7 @@ type (
 	}
 )
 
-func toolFailureReminder(tr *planner.ToolResult, descriptions map[string]string) string {
+func toolFailureReminder(tr *planner.ToolResult, fields []tools.FieldMetadata) string {
 	if tr == nil || tr.Failure == nil {
 		return ""
 	}
@@ -90,7 +90,7 @@ func toolFailureReminder(tr *planner.ToolResult, descriptions map[string]string)
 		IssuesJSON:  compactFieldIssuesJSON(failure.Recovery.Issues),
 		FieldDescriptionsJSON: correctionFieldDescriptionsJSON(
 			failure.Recovery.Issues,
-			descriptions,
+			fields,
 		),
 		ExampleJSON:    compactRawJSON(failure.Recovery.ExampleJSON),
 		PriorInputJSON: compactRawJSON(failure.Recovery.PriorInput),
@@ -133,15 +133,15 @@ func selectRecoveryOutputs(outputs []*planner.ToolOutput, callIDs []string) ([]*
 func (r *Runtime) recoveryReminders(outputs []*planner.ToolOutput) []reminder.Reminder {
 	reminders := make([]reminder.Reminder, 0, len(outputs))
 	for _, output := range outputs {
-		var descriptions map[string]string
+		var fields []tools.FieldMetadata
 		if spec, ok := r.toolSpec(output.Name); ok {
-			descriptions = spec.Payload.FieldDescriptions
+			fields = spec.Payload.Fields
 		}
 		text := toolFailureReminder(&planner.ToolResult{
 			Name:       output.Name,
 			ToolCallID: output.ToolCallID,
 			Failure:    output.Failure,
-		}, descriptions)
+		}, fields)
 		reminders = append(reminders, reminder.Reminder{
 			ID:       "tool_recovery." + output.ToolCallID,
 			Text:     text,
@@ -180,8 +180,8 @@ func compactFieldIssuesJSON(issues []*tools.FieldIssue) string {
 
 // correctionFieldDescriptionsJSON renders generated descriptions for rejected
 // and allowed fields named by the structured issues shown to the model.
-func correctionFieldDescriptionsJSON(issues []*tools.FieldIssue, descriptions map[string]string) string {
-	selected := tools.FieldDescriptionsForIssues(issues, descriptions)
+func correctionFieldDescriptionsJSON(issues []*tools.FieldIssue, fields []tools.FieldMetadata) string {
+	selected := tools.FieldDescriptionsForIssues(issues, fields)
 	if len(selected) == 0 {
 		return ""
 	}

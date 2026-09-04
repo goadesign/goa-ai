@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/completion"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // Completion IDs for this service.
@@ -29,6 +30,7 @@ func SpecDraftTask() completion.Spec[*DraftTaskResult] {
 		Schema:                   rawjson.Message("{\"$defs\":{\"DraftTaskStep\":{\"additionalProperties\":false,\"example\":{\"title\":\"Review the current launch checklist\"},\"properties\":{\"title\":{\"description\":\"Short step title\",\"type\":\"string\"}},\"required\":[\"title\"],\"title\":\"DraftTaskStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"assistant_text\":\"Created a launch-readiness task draft.\",\"goal\":\"Confirm the service is ready to launch.\",\"name\":\"Prepare launch checklist\",\"steps\":[{\"title\":\"Review release notes and rollout scope\"},{\"title\":\"Confirm dashboards and alerts are healthy\"},{\"title\":\"Share the launch checklist with stakeholders\"}]},\"properties\":{\"assistant_text\":{\"description\":\"Short explanation of the generated draft\",\"type\":\"string\"},\"goal\":{\"description\":\"Outcome-style goal\",\"type\":\"string\"},\"name\":{\"description\":\"Task name\",\"type\":\"string\"},\"steps\":{\"description\":\"Ordered draft steps\",\"items\":{\"$ref\":\"#/$defs/DraftTaskStep\"},\"type\":\"array\"}},\"required\":[\"assistant_text\",\"name\",\"goal\",\"steps\"],\"type\":\"object\"}"),
 		SchemaWithoutRootExample: rawjson.Message("{\"$defs\":{\"DraftTaskStep\":{\"additionalProperties\":false,\"example\":{\"title\":\"Review the current launch checklist\"},\"properties\":{\"title\":{\"description\":\"Short step title\",\"type\":\"string\"}},\"required\":[\"title\"],\"title\":\"DraftTaskStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"assistant_text\":{\"description\":\"Short explanation of the generated draft\",\"type\":\"string\"},\"goal\":{\"description\":\"Outcome-style goal\",\"type\":\"string\"},\"name\":{\"description\":\"Task name\",\"type\":\"string\"},\"steps\":{\"description\":\"Ordered draft steps\",\"items\":{\"$ref\":\"#/$defs/DraftTaskStep\"},\"type\":\"array\"}},\"required\":[\"assistant_text\",\"name\",\"goal\",\"steps\"],\"type\":\"object\"}"),
 		ExampleJSON:              rawjson.Message("{\"assistant_text\":\"Created a launch-readiness task draft.\",\"goal\":\"Confirm the service is ready to launch.\",\"name\":\"Prepare launch checklist\",\"steps\":[{\"title\":\"Review release notes and rollout scope\"},{\"title\":\"Confirm dashboards and alerts are healthy\"},{\"title\":\"Share the launch checklist with stakeholders\"}]}"),
+		Fields:                   tools.CloneFieldMetadata(draftTaskResultFields),
 		Codec:                    newDraftTaskResultCodec(),
 	}
 }

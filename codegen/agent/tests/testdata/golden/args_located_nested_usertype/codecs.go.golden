@@ -43,20 +43,89 @@ var (
 		},
 	}
 )
-var setStepStatusPayloadFieldDescs = map[string]string{
-	"event":         "Status event to record.",
-	"event.note":    "Optional note about progress.",
-	"event.state":   "Selected step state.",
-	"event.status":  "New step status.",
-	"event.step_id": "Step identifier.",
-}
-var setStepStatusPayloadFieldJSONTypes = map[string]string{
-	"$payload":      "object",
-	"event":         "object",
-	"event.note":    "string",
-	"event.state":   "object",
-	"event.status":  "string",
-	"event.step_id": "string",
+var setStepStatusPayloadFields = []tools.FieldMetadata{
+	{
+		JSONType:    "object",
+		Description: "Tool input containing one shared status event.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("event")},
+		JSONType:    "object",
+		Description: "Status event to record.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("step_id")},
+		JSONType:    "string",
+		Description: "Step identifier.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("status")},
+		JSONType:    "string",
+		Description: "New step status.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("note")},
+		JSONType:    "string",
+		Description: "Optional note about progress.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("state")},
+		JSONType:    "object",
+		Description: "Selected step state.",
+	},
+	{
+		Path:     []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("state"), tools.FixedField("type")},
+		JSONType: "string",
+		DiscriminatorValues: []string{
+			"active",
+			"inactive",
+			"since",
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("state"), tools.FixedField("value")},
+		JSONType:    "object",
+		Description: "The step is active.",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("state"), tools.FixedField("type")},
+				Value:         "active",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("state"), tools.FixedField("value"), tools.FixedField("status")},
+		JSONType:    "string",
+		Description: "Current lifecycle status.",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("state"), tools.FixedField("type")},
+				Value:         "active",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("state"), tools.FixedField("value")},
+		JSONType:    "object",
+		Description: "The step is inactive.",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("state"), tools.FixedField("type")},
+				Value:         "inactive",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("state"), tools.FixedField("value")},
+		JSONType:    "string",
+		Description: "Date when the current state began.",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("event"), tools.FixedField("state"), tools.FixedField("type")},
+				Value:         "since",
+			},
+		},
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -101,8 +170,8 @@ func enrichSetStepStatusPayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(setStepStatusPayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(setStepStatusPayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -117,8 +186,8 @@ func invalidSetStepStatusPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(setStepStatusPayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(setStepStatusPayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -131,7 +200,7 @@ func invalidSetStepStatusPayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

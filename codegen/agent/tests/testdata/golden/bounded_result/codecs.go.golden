@@ -148,59 +148,95 @@ var (
 		},
 	}
 )
-var searchPayloadFieldDescs = map[string]string{
-	"cursor": "Cursor",
-	"query":  "Query",
+var searchPayloadFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("query")},
+		JSONType:    "string",
+		Description: "Query",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("cursor")},
+		JSONType:    "string",
+		Description: "Cursor",
+	},
 }
-var searchResultFieldDescs = map[string]string{
-	"results":   "Results",
-	"results.*": "Results",
+var searchResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("results")},
+		JSONType:    "array",
+		Description: "Results",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("results"), tools.DynamicField{}},
+		JSONType:    "string",
+		Description: "Results",
+	},
 }
-var searchAllPayloadFieldDescs = map[string]string{
-	"cursor": "Cursor",
-	"query":  "Query",
+var searchAllPayloadFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("query")},
+		JSONType:    "string",
+		Description: "Query",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("cursor")},
+		JSONType:    "string",
+		Description: "Cursor",
+	},
 }
-var searchAllResultFieldDescs = map[string]string{
-	"results":   "Results",
-	"results.*": "Results",
+var searchAllResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("results")},
+		JSONType:    "array",
+		Description: "Results",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("results"), tools.DynamicField{}},
+		JSONType:    "string",
+		Description: "Results",
+	},
 }
-var searchCopyPayloadFieldDescs = map[string]string{
-	"cursor": "Cursor",
-	"query":  "Query",
+var searchCopyPayloadFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("query")},
+		JSONType:    "string",
+		Description: "Query",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("cursor")},
+		JSONType:    "string",
+		Description: "Cursor",
+	},
 }
-var searchCopyResultFieldDescs = map[string]string{
-	"results":   "Results",
-	"results.*": "Results",
-}
-var searchPayloadFieldJSONTypes = map[string]string{
-	"$payload": "object",
-	"cursor":   "string",
-	"query":    "string",
-}
-var searchResultFieldJSONTypes = map[string]string{
-	"$payload":  "object",
-	"results":   "array",
-	"results.*": "string",
-}
-var searchAllPayloadFieldJSONTypes = map[string]string{
-	"$payload": "object",
-	"cursor":   "string",
-	"query":    "string",
-}
-var searchAllResultFieldJSONTypes = map[string]string{
-	"$payload":  "object",
-	"results":   "array",
-	"results.*": "string",
-}
-var searchCopyPayloadFieldJSONTypes = map[string]string{
-	"$payload": "object",
-	"cursor":   "string",
-	"query":    "string",
-}
-var searchCopyResultFieldJSONTypes = map[string]string{
-	"$payload":  "object",
-	"results":   "array",
-	"results.*": "string",
+var searchCopyResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("results")},
+		JSONType:    "array",
+		Description: "Results",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("results"), tools.DynamicField{}},
+		JSONType:    "string",
+		Description: "Results",
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -245,8 +281,8 @@ func enrichSearchPayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(searchPayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(searchPayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -262,8 +298,8 @@ func enrichSearchResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(searchResultFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(searchResultFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -279,8 +315,8 @@ func enrichSearchAllPayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(searchAllPayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(searchAllPayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -296,8 +332,8 @@ func enrichSearchAllResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(searchAllResultFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(searchAllResultFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -313,8 +349,8 @@ func enrichSearchCopyPayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(searchCopyPayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(searchCopyPayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -330,8 +366,8 @@ func enrichSearchCopyResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(searchCopyResultFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(searchCopyResultFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -346,8 +382,8 @@ func invalidSearchPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(searchPayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(searchPayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -360,7 +396,7 @@ func invalidSearchPayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -377,8 +413,8 @@ func invalidSearchResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(searchResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(searchResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -391,7 +427,7 @@ func invalidSearchResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -408,8 +444,8 @@ func invalidSearchAllPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(searchAllPayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(searchAllPayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -422,7 +458,7 @@ func invalidSearchAllPayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -439,8 +475,8 @@ func invalidSearchAllResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(searchAllResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(searchAllResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -453,7 +489,7 @@ func invalidSearchAllResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -470,8 +506,8 @@ func invalidSearchCopyPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(searchCopyPayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(searchCopyPayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -484,7 +520,7 @@ func invalidSearchCopyPayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -501,8 +537,8 @@ func invalidSearchCopyResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(searchCopyResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(searchCopyResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -515,7 +551,7 @@ func invalidSearchCopyResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

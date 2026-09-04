@@ -230,8 +230,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		MarshalFunc:                  planned.marshal.Name(),
 		UnmarshalFunc:                planned.unmarshal.Name(),
 		ValidateFunc:                 transportValidator,
-		FieldDescsVar:                planned.fieldDescriptions.Name(),
-		FieldJSONTypesVar:            planned.fieldJSONTypes.Name(),
+		FieldsVar:                    planned.fieldMetadata.Name(),
 		JSONValidatorFunc:            jsonValidatorFunc,
 		JSONValueValidatorFunc:       jsonValueValidatorFunc,
 		EnrichValidationFunc:         planned.enrichValidation.Name(),
@@ -261,14 +260,8 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	if usage == usagePayload && isEmptyStruct(att) {
 		info.AcceptEmpty = true
 	}
-	// Keep field descriptions for validation error enrichment.
-	if fdesc := buildFieldDescriptions(schemaAttr); len(fdesc) > 0 {
-		deleteModelHiddenFields(fdesc, owner, usage)
-		info.FieldDescs = fdesc
-	}
-	if ftypes := buildFieldJSONTypes(schemaAttr); len(ftypes) > 0 {
-		deleteModelHiddenFields(ftypes, owner, usage)
-		info.FieldJSONTypes = ftypes
+	if fields := buildFieldMetadata(schemaAttr); len(fields) > 0 {
+		info.Fields = deleteModelHiddenFields(fields, owner, usage)
 	}
 	b.contractTypes[identity] = info
 	// Also index by Go name so the same type is not written twice.
@@ -393,24 +386,28 @@ func modelVisibleExampleJSON(example *exampleData, owner *contractTypeOwner, usa
 }
 
 // deleteModelHiddenFields removes runtime-supplied root fields from generated
-// field guidance maps.
-func deleteModelHiddenFields[V any](fields map[string]V, owner *contractTypeOwner, usage typeUsage) {
+// metadata before it is advertised to the model.
+func deleteModelHiddenFields(fields []*fieldMetadataData, owner *contractTypeOwner, usage typeUsage) []*fieldMetadataData {
 	if usage != usagePayload {
-		return
+		return fields
 	}
-	for path := range fields {
-		if isModelHiddenPath(path, owner.ModelHiddenPayloadFields) {
-			delete(fields, path)
+	kept := fields[:0]
+	for _, field := range fields {
+		if !isModelHiddenPath(field.Path, owner.ModelHiddenPayloadFields) {
+			kept = append(kept, field)
 		}
 	}
+	return kept
 }
 
 // isModelHiddenPath reports whether a metadata path names a runtime-supplied
 // root field or one of its descendants.
-func isModelHiddenPath(path string, hidden []string) bool {
+func isModelHiddenPath(path []fieldPathSegmentData, hidden []string) bool {
+	if len(path) == 0 || path[0].Dynamic {
+		return false
+	}
 	for _, field := range hidden {
-		root := modelJSONName(field)
-		if path == root || strings.HasPrefix(path, root+".") {
+		if path[0].Name == modelJSONName(field) {
 			return true
 		}
 	}

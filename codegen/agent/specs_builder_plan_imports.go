@@ -150,6 +150,7 @@ func (p *toolSpecsPackagePlan) planCompletionFileImports() error {
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/completion"),
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/model"),
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/rawjson"),
+		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
 	)
 }
 
@@ -172,10 +173,10 @@ func (p *toolSpecsPackagePlan) planSharedFileImports() error {
 	}
 	hasTransport := false
 	hasValidation := false
-	hasFieldJSONTypes := false
+	hasFieldMetadata := false
 	for key, planned := range p.types {
-		if len(buildFieldJSONTypes(planned.transportShape)) > 0 {
-			hasFieldJSONTypes = true
+		if len(buildFieldMetadata(planned.transportShape)) > 0 {
+			hasFieldMetadata = true
 		}
 		if key.OwnerKind != contractTypeOwnerTool && !planned.publicLayout.ReferenceIsPointer() {
 			continue
@@ -208,7 +209,7 @@ func (p *toolSpecsPackagePlan) planSharedFileImports() error {
 	if hasValidation {
 		codecImports = append(codecImports, goacodegen.GoaImport(""))
 	}
-	if hasValidation || hasFieldJSONTypes {
+	if hasValidation || hasFieldMetadata {
 		codecImports = append(codecImports, goacodegen.SimpleImport("errors"))
 	}
 	codecImports = append(codecImports, goacodegen.SimpleImport("strings"))

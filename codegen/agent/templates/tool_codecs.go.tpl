@@ -39,23 +39,47 @@ var (
 {{- end }}
 )
 
-{{- /* Emit field descriptions map per type if available */ -}}
+{{- /* Emit every static field fact in one structured representation. */ -}}
 {{- range .Types }}
-{{- if .FieldDescs }}
-var {{ .FieldDescsVar }} = map[string]string{
-    {{- range $k, $v := .FieldDescs }}
-    {{ printf "%q" $k }}: {{ printf "%q" $v }},
-    {{- end }}
-}
-{{- end }}
-{{- end }}
-
-{{- /* Emit generated JSON type metadata per type if available */ -}}
-{{- range .Types }}
-{{- if .FieldJSONTypes }}
-var {{ .FieldJSONTypesVar }} = map[string]string{
-    {{- range $k, $v := .FieldJSONTypes }}
-    {{ printf "%q" $k }}: {{ printf "%q" $v }},
+{{- if .Fields }}
+var {{ .FieldsVar }} = []tools.FieldMetadata{
+    {{- range .Fields }}
+    {
+        {{- if .Path }}
+        Path: []tools.FieldPathSegment{
+            {{- range .Path }}
+            {{- if .Dynamic }}tools.DynamicField{},{{ else }}tools.FixedField({{ printf "%q" .Name }}),{{ end }}
+            {{- end }}
+        },
+        {{- end }}
+        {{- if .JSONType }}
+        JSONType: {{ printf "%q" .JSONType }},
+        {{- end }}
+        {{- if .Description }}
+        Description: {{ printf "%q" .Description }},
+        {{- end }}
+        {{- if .Branches }}
+        Branches: []tools.UnionBranch{
+            {{- range .Branches }}
+            {
+                Discriminator: []tools.FieldPathSegment{
+                    {{- range .Discriminator }}
+                    {{- if .Dynamic }}tools.DynamicField{},{{ else }}tools.FixedField({{ printf "%q" .Name }}),{{ end }}
+                    {{- end }}
+                },
+                Value: {{ printf "%q" .Value }},
+            },
+            {{- end }}
+        },
+        {{- end }}
+        {{- if .DiscriminatorValues }}
+        DiscriminatorValues: []string{
+            {{- range .DiscriminatorValues }}
+            {{ printf "%q" . }},
+            {{- end }}
+        },
+        {{- end }}
+    },
     {{- end }}
 }
 {{- end }}
@@ -105,7 +129,7 @@ func newValidationError(err error) error {
 
 {{- /* Per-type enrichment attaching descriptions for any type with validation (payload or non-payload) */ -}}
 {{- range .Types }}
-{{- if and .FieldDescs .TransportValidationSrc (ne (index .TransportValidationSrc 0) "") }}
+{{- if and .Fields .TransportValidationSrc (ne (index .TransportValidationSrc 0) "") }}
 func {{ .EnrichValidationFunc }}(err error) error {
     var ve *tools.ValidationError
     if !errors.As(err, &ve) {
@@ -116,20 +140,18 @@ func {{ .EnrichValidationFunc }}(err error) error {
         return err
     }
     m := make(map[string]string)
-    {{- if .FieldDescs }}
     for _, is := range issues {
-        if d, ok := tools.LookupFieldMetadata({{ .FieldDescsVar }}, is.Field); ok && d != "" {
-            m[is.Field] = d
+        if field, ok := tools.LookupFieldMetadata({{ .FieldsVar }}, is.Field); ok && field.Description != "" {
+            m[is.Field] = field.Description
         }
     }
-    {{- end }}
     return tools.NewValidationError(ve.Error(), issues, m)
 }
 {{- end }}
 {{- end }}
 
 {{- range .Types }}
-{{- if .FieldJSONTypes }}
+{{- if .Fields }}
 func {{ .InvalidFieldTypeFunc }}(err error) error {
     var typeErr *json.UnmarshalTypeError
     if !errors.As(err, &typeErr) {
@@ -142,8 +164,8 @@ func {{ .InvalidFieldTypeFunc }}(err error) error {
     if field == "" {
         field = "$payload"
     }
-    expected, ok := tools.LookupFieldMetadata({{ .FieldJSONTypesVar }}, field)
-    if !ok {
+    metadata, ok := tools.LookupFieldMetadata({{ .FieldsVar }}, field)
+    if !ok || metadata.JSONType == "" {
         return err
     }
     actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -156,7 +178,7 @@ func {{ .InvalidFieldTypeFunc }}(err error) error {
             {
                 Field:            field,
                 Constraint:       "invalid_field_type",
-                ExpectedJSONType: expected,
+                ExpectedJSONType: metadata.JSONType,
                 ActualJSONType:   actual,
             },
         },
@@ -210,7 +232,7 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     {{- if .TransportTypeName }}
     var tv toolhttp.{{ .TransportTypeName }}
     if err := {{ .JSONValidatorFunc }}(data); err != nil {
-        {{- if .FieldJSONTypes }}
+        {{- if .Fields }}
         {{- if .Pointer }}
         return nil, {{ .InvalidFieldTypeFunc }}(err)
         {{- else }}
@@ -225,7 +247,7 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
         {{- end }}
     }
     if err := json.Unmarshal(data, &tv); err != nil {
-        {{- if .FieldJSONTypes }}
+        {{- if .Fields }}
         {{- if .Pointer }}
         return nil, {{ .InvalidFieldTypeFunc }}(err)
         {{- else }}
@@ -242,7 +264,7 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     {{- if .TransportValidationSrc }}
     if err := toolhttp.{{ .ValidateFunc }}({{ if .TransportPointer }}&{{ end }}tv); err != nil {
         err = newValidationError(err)
-        {{- if .FieldDescs }}
+        {{- if .Fields }}
         err = {{ .EnrichValidationFunc }}(err)
         {{- end }}
         {{- if .Pointer }}
@@ -260,7 +282,7 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     {{- else }}
     var v {{ .FullRef }}
     if err := {{ .JSONValidatorFunc }}(data); err != nil {
-        {{- if .FieldJSONTypes }}
+        {{- if .Fields }}
         err = {{ .InvalidFieldTypeFunc }}(err)
         {{- end }}
         {{- if .Pointer }}
@@ -270,7 +292,7 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
         {{- end }}
     }
     if err := json.Unmarshal(data, &v); err != nil {
-        {{- if .FieldJSONTypes }}
+        {{- if .Fields }}
         err = {{ .InvalidFieldTypeFunc }}(err)
         {{- end }}
         {{- if .Pointer }}

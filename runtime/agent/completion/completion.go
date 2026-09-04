@@ -34,6 +34,9 @@ type (
 		SchemaWithoutRootExample rawjson.Message
 		// ExampleJSON is the canonical authored result example.
 		ExampleJSON rawjson.Message
+		// Fields contains generated paths, types, descriptions, and union branch
+		// requirements for the result schema.
+		Fields []tools.FieldMetadata
 		// Codec is the generated typed codec for the completion result.
 		Codec tools.JSONCodec[T]
 	}

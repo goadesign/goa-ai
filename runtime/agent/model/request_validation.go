@@ -604,6 +604,7 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 			return nil, fmt.Errorf("model request contains duplicate tool definition %q", name)
 		}
 		validate := definition.Input.validate
+		fields := tools.CloneFieldMetadata(definition.Input.fields)
 		if validate == nil {
 			return nil, fmt.Errorf("model request tool %q has no payload validator", name)
 		}
@@ -626,7 +627,7 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 				}
 				return &toolCallValidationError{
 					toolName:   call.Name,
-					correction: advertisedToolInputCorrection,
+					correction: toolInputCorrection(err, call.Payload, fields),
 				}
 			}
 			return nil
@@ -666,7 +667,7 @@ func isToolInputContractRejection(err error) bool {
 	return false
 }
 
-// validateConfiguredToolCalls applies request-owned generated payload checks
+// validateConfiguredToolCalls applies request-owned advertised payload checks
 // after the provider-neutral response shape has passed validation.
 func validateConfiguredToolCalls(
 	validators map[tools.Ident]toolCallValidator,
