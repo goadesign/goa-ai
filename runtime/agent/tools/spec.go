@@ -208,14 +208,10 @@ type (
 		// in correction directives or await-clarification prompts to guide callers toward a
 		// schema-compliant shape.
 		ExampleJSON RawJSON
-		// FieldDescriptions maps dotted JSON field paths to their generated
-		// descriptions. It is the codegen-owned metadata projection for UI and
-		// retry guidance; consumers must not parse Schema to rediscover it.
-		FieldDescriptions map[string]string
-		// FieldJSONTypes maps dotted JSON field paths to the JSON type expected by
-		// generated codecs. It powers structured retry guidance without schema
-		// introspection.
-		FieldJSONTypes map[string]string
+		// Fields contains the field paths, types, descriptions, and union branch
+		// requirements advertised by the schema. Runtime code uses this data instead
+		// of parsing Schema.
+		Fields []FieldMetadata
 		// Codec serializes and deserializes values matching the type.
 		Codec JSONCodec[any]
 	}

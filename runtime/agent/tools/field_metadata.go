@@ -1,77 +1,174 @@
+// Package tools exposes field details attached to tool and completion schemas.
+// Fixed JSON property names stay distinct from array indexes and map keys, so
+// callers never need to parse dotted path strings.
 package tools
 
-// This file defines how generated field metadata paths match array indexes and
-// caller-chosen map keys. Every generated codec and runtime consumer uses the
-// same rule.
+import (
+	"strconv"
+	"strings"
+)
 
-import "strings"
+type (
+	// FieldPathSegment is one fixed or caller-chosen part of a JSON field path.
+	// Use FixedField for object properties and DynamicField for array indexes and
+	// map keys.
+	FieldPathSegment interface {
+		fieldPathSegment()
+	}
 
-// LookupFieldMetadata returns metadata for a generated dotted path or an RFC
-// 6901 JSON Pointer reported by a generated codec. "*" in generated metadata
-// matches exactly one array index or caller-chosen map key. Exact matches take
-// precedence; ambiguous matches return no value.
-func LookupFieldMetadata[T any](metadata map[string]T, path string) (T, bool) {
-	if value, ok := metadata[path]; ok {
-		return value, true
+	// FixedField is one JSON object property whose name is fixed by the schema.
+	FixedField string
+
+	// DynamicField is one array index or map key supplied in the JSON value.
+	DynamicField struct{}
+
+	// UnionBranch identifies the selected branch required for one field. The
+	// discriminator path may contain DynamicField segments when each item in an
+	// array or map owns a separate union value.
+	UnionBranch struct {
+		// Discriminator is the path to the union's branch-name property.
+		Discriminator []FieldPathSegment
+		// Value is the branch name that makes the field applicable.
+		Value string
 	}
-	var (
-		exactMatch        T
-		exactFound        bool
-		exactAmbiguous    bool
-		wildcardMatch     T
-		wildcardFound     bool
-		wildcardAmbiguous bool
-	)
-	actual, ok := fieldPathSegments(path)
-	if !ok {
-		var zero T
-		return zero, false
+
+	// FieldMetadata describes one field advertised in a JSON schema.
+	// Branches is empty for fields outside unions. Every branch requirement must
+	// match before the field applies to a submitted value.
+	FieldMetadata struct {
+		// Path locates the field without conflating fixed names with dynamic keys.
+		Path []FieldPathSegment
+		// JSONType is the single JSON type accepted for the field, when known.
+		JSONType string
+		// Description is the text already advertised in the JSON schema.
+		Description string
+		// Branches lists the selected union branches that contain this field.
+		Branches []UnionBranch
+		// DiscriminatorValues lists the valid branch names when this field is a
+		// union discriminator. It is empty for ordinary fields.
+		DiscriminatorValues []string
 	}
-	for pattern, value := range metadata {
-		parts := strings.Split(pattern, ".")
-		if len(parts) != len(actual) {
-			continue
-		}
-		match := true
-		wildcard := false
-		for index := range parts {
-			if parts[index] == "*" {
-				wildcard = true
-				continue
-			}
-			if parts[index] != actual[index] {
-				match = false
-				break
-			}
-		}
-		if !match {
-			continue
-		}
-		if !wildcard {
-			if exactFound {
-				exactAmbiguous = true
-				continue
-			}
-			exactMatch = value
-			exactFound = true
-			continue
-		}
-		if wildcardFound {
-			wildcardAmbiguous = true
-			continue
-		}
-		wildcardMatch = value
-		wildcardFound = true
+)
+
+// CloneFieldMetadata returns an independent copy of field details.
+func CloneFieldMetadata(fields []FieldMetadata) []FieldMetadata {
+	if len(fields) == 0 {
+		return nil
 	}
-	if exactFound {
-		return exactMatch, !exactAmbiguous
+	cloned := make([]FieldMetadata, len(fields))
+	for index, field := range fields {
+		cloned[index] = field
+		cloned[index].Path = append([]FieldPathSegment(nil), field.Path...)
+		cloned[index].DiscriminatorValues = append([]string(nil), field.DiscriminatorValues...)
+		cloned[index].Branches = make([]UnionBranch, len(field.Branches))
+		for branchIndex, branch := range field.Branches {
+			cloned[index].Branches[branchIndex] = branch
+			cloned[index].Branches[branchIndex].Discriminator = append(
+				[]FieldPathSegment(nil),
+				branch.Discriminator...,
+			)
+		}
 	}
-	return wildcardMatch, wildcardFound && !wildcardAmbiguous
+	return cloned
 }
 
-// fieldPathSegments converts a generated dotted path or JSON Pointer into
-// comparable object-key segments.
+// LookupFieldMetadata returns the one field that matches a dotted field path or
+// a slash-separated JSON Pointer. DynamicField matches exactly one array index
+// or map key. Several matching union records are accepted only when they
+// advertise the same type and description.
+func LookupFieldMetadata(fields []FieldMetadata, path string) (FieldMetadata, bool) {
+	actual, ok := fieldPathSegments(path)
+	if !ok {
+		return FieldMetadata{}, false
+	}
+	var matched FieldMetadata
+	found := false
+	dynamicSegments := 0
+	for _, field := range fields {
+		if !fieldPathMatches(field.Path, actual) {
+			continue
+		}
+		candidateDynamicSegments := countDynamicFields(field.Path)
+		if !found || candidateDynamicSegments < dynamicSegments {
+			matched = field
+			found = true
+			dynamicSegments = candidateDynamicSegments
+			continue
+		}
+		if candidateDynamicSegments > dynamicSegments {
+			continue
+		}
+		if matched.JSONType != field.JSONType || matched.Description != field.Description {
+			return FieldMetadata{}, false
+		}
+	}
+	return matched, found
+}
+
+// FieldPathString renders a field path for model and user guidance. Common
+// property names use dots. Names containing dots or stars use quoted brackets,
+// while dynamic array indexes and map keys use an unquoted star.
+func FieldPathString(path []FieldPathSegment) string {
+	if len(path) == 0 {
+		return "$payload"
+	}
+	var out strings.Builder
+	for _, segment := range path {
+		switch value := segment.(type) {
+		case FixedField:
+			name := string(value)
+			if simpleFieldName(name) {
+				if out.Len() > 0 {
+					out.WriteByte('.')
+				}
+				out.WriteString(name)
+				continue
+			}
+			out.WriteByte('[')
+			out.WriteString(strconv.Quote(name))
+			out.WriteByte(']')
+		case DynamicField:
+			if out.Len() > 0 {
+				out.WriteByte('.')
+			}
+			out.WriteByte('*')
+		}
+	}
+	return out.String()
+}
+
+func fieldPathMatches(pattern []FieldPathSegment, actual []string) bool {
+	if len(pattern) != len(actual) {
+		return false
+	}
+	for index, segment := range pattern {
+		switch value := segment.(type) {
+		case FixedField:
+			if string(value) != actual[index] {
+				return false
+			}
+		case DynamicField:
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func countDynamicFields(path []FieldPathSegment) int {
+	count := 0
+	for _, segment := range path {
+		if _, dynamic := segment.(DynamicField); dynamic {
+			count++
+		}
+	}
+	return count
+}
+
 func fieldPathSegments(path string) ([]string, bool) {
+	if path == "$payload" || path == "" {
+		return nil, true
+	}
 	if !strings.HasPrefix(path, "/") {
 		return strings.Split(path, "."), true
 	}
@@ -87,7 +184,6 @@ func fieldPathSegments(path string) ([]string, bool) {
 	return segments, true
 }
 
-// decodeJSONPointerToken restores one object key from RFC 6901 escaping.
 func decodeJSONPointerToken(token string) (string, bool) {
 	if !strings.Contains(token, "~") {
 		return token, true
@@ -114,3 +210,14 @@ func decodeJSONPointerToken(token string) (string, bool) {
 	}
 	return decoded.String(), true
 }
+
+func simpleFieldName(name string) bool {
+	if name == "" || name == "*" {
+		return false
+	}
+	return !strings.ContainsAny(name, ".[]\"\\")
+}
+
+func (FixedField) fieldPathSegment() {}
+
+func (DynamicField) fieldPathSegment() {}

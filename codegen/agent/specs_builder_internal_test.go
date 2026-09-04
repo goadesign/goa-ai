@@ -144,7 +144,7 @@ func TestBuildToolSpecsData_DeterministicRefs(t *testing.T) {
 	require.True(t, ok, "expected alias to service type or self-contained struct definition (or no local types in new design)")
 }
 
-func TestBuildToolSpecsData_FieldJSONTypes(t *testing.T) {
+func TestBuildToolSpecsDataFieldMetadata(t *testing.T) {
 	eval.Reset()
 	goaexpr.Root = new(goaexpr.RootExpr)
 	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
@@ -184,21 +184,45 @@ func TestBuildToolSpecsData_FieldJSONTypes(t *testing.T) {
 	require.NoError(t, err)
 	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
-	jsonTypes := codegen.CollectTypeJSONTypesForTest(specs)
-
-	require.Equal(t, "object", jsonTypes["CompletePayload"]["$payload"])
-	require.Equal(t, "array", jsonTypes["CompletePayload"]["sections"])
-	require.Equal(t, "object", jsonTypes["CompletePayload"]["sections.*"])
-	require.Equal(t, "string", jsonTypes["CompletePayload"]["sections.*.heading"])
-	require.Equal(t, "object", jsonTypes["CompletePayload"]["lead"])
-	require.Equal(t, "string", jsonTypes["CompletePayload"]["lead.heading"])
-	require.Equal(t, "object", jsonTypes["CompletePayload"]["backup"])
-	require.Equal(t, "string", jsonTypes["CompletePayload"]["backup.heading"])
-	require.Equal(t, "boolean", jsonTypes["CompletePayload"]["publish"])
-	require.Equal(t, "integer", jsonTypes["CompletePayload"]["retry_count"])
+	fields := codegen.CollectFieldMetadataForTest(specs)["CompletePayload"]
+	require.Contains(t, fields, codegen.FieldMetadataForTest{JSONType: "object"})
+	require.Contains(t, fields, codegen.FieldMetadataForTest{
+		Path:        []codegen.FieldPathSegmentForTest{{Name: "sections"}},
+		JSONType:    "array",
+		Description: "Report sections",
+	})
+	require.Contains(t, fields, codegen.FieldMetadataForTest{
+		Path: []codegen.FieldPathSegmentForTest{
+			{Name: "sections"},
+			{Dynamic: true},
+			{Name: "heading"},
+		},
+		JSONType:    "string",
+		Description: "Heading",
+	})
+	require.Contains(t, fields, codegen.FieldMetadataForTest{
+		Path:        []codegen.FieldPathSegmentForTest{{Name: "lead"}, {Name: "heading"}},
+		JSONType:    "string",
+		Description: "Heading",
+	})
+	require.Contains(t, fields, codegen.FieldMetadataForTest{
+		Path:        []codegen.FieldPathSegmentForTest{{Name: "backup"}, {Name: "heading"}},
+		JSONType:    "string",
+		Description: "Heading",
+	})
+	require.Contains(t, fields, codegen.FieldMetadataForTest{
+		Path:        []codegen.FieldPathSegmentForTest{{Name: "publish"}},
+		JSONType:    "boolean",
+		Description: "Whether to publish",
+	})
+	require.Contains(t, fields, codegen.FieldMetadataForTest{
+		Path:        []codegen.FieldPathSegmentForTest{{Name: "retry_count"}},
+		JSONType:    "integer",
+		Description: "Retry count",
+	})
 }
 
-func TestBuildToolSpecsData_FieldJSONTypes_DoNotFlattenUnionVariants(t *testing.T) {
+func TestBuildToolSpecsDataFieldMetadataKeepsUnionBranches(t *testing.T) {
 	eval.Reset()
 	goaexpr.Root = new(goaexpr.RootExpr)
 	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
@@ -210,11 +234,16 @@ func TestBuildToolSpecsData_FieldJSONTypes_DoNotFlattenUnionVariants(t *testing.
 
 	design := func() {
 		goadsl.API("alpha", func() {})
+		var ObjectValue = goadsl.Type("ObjectValue", func() {
+			goadsl.Attribute("label", goadsl.String, "Object label")
+			goadsl.Required("label")
+		})
 		var UnionPayload = goadsl.Type("UnionPayload", func() {
 			goadsl.Attribute("id", goadsl.String, "Request identifier")
 			goadsl.OneOf("value", func() {
 				goadsl.Attribute("number", goadsl.Int32, "Numeric value")
 				goadsl.Attribute("text", goadsl.String, "Text value")
+				goadsl.Attribute("object", ObjectValue, "Object value")
 			})
 			goadsl.Required("id", "value")
 		})
@@ -235,12 +264,35 @@ func TestBuildToolSpecsData_FieldJSONTypes_DoNotFlattenUnionVariants(t *testing.
 	require.NoError(t, err)
 	specs := codegen.ToolSpecsDataForTest(data.Services[0].Agents[0])
 
-	jsonTypes := codegen.CollectTypeJSONTypesForTest(specs)
-
-	require.Equal(t, "object", jsonTypes["EchoPayload"]["$payload"])
-	require.Equal(t, "string", jsonTypes["EchoPayload"]["id"])
-	require.Equal(t, "object", jsonTypes["EchoPayload"]["value"])
-	require.NotContains(t, jsonTypes["EchoPayload"], "value.value")
+	fields := codegen.CollectFieldMetadataForTest(specs)["EchoPayload"]
+	discriminator := codegen.FieldMetadataForTest{
+		Path:                []codegen.FieldPathSegmentForTest{{Name: "value"}, {Name: "type"}},
+		JSONType:            "string",
+		DiscriminatorValues: []string{"number", "text", "object"},
+	}
+	require.Contains(t, fields, discriminator)
+	require.Contains(t, fields, codegen.FieldMetadataForTest{
+		Path:        []codegen.FieldPathSegmentForTest{{Name: "value"}, {Name: "value"}},
+		JSONType:    "integer",
+		Description: "Numeric value",
+		Branches: []codegen.UnionBranchForTest{{
+			Discriminator: discriminator.Path,
+			Value:         "number",
+		}},
+	})
+	require.Contains(t, fields, codegen.FieldMetadataForTest{
+		Path: []codegen.FieldPathSegmentForTest{
+			{Name: "value"},
+			{Name: "value"},
+			{Name: "label"},
+		},
+		JSONType:    "string",
+		Description: "Object label",
+		Branches: []codegen.UnionBranchForTest{{
+			Discriminator: discriminator.Path,
+			Value:         "object",
+		}},
+	})
 }
 
 func TestBuildToolSpecsData_UnionSchemasUseCanonicalEnvelope(t *testing.T) {

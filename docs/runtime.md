@@ -975,9 +975,10 @@ Workflow step boundary:
   and executes the call through the existing terminal-tool path,
 - when a model returns malformed tool argument JSON, fails an advertised input
   schema, or receives a non-nil `*tools.ValidationError` from its input decoder,
-  the model boundary produces fixed replacement guidance; that guidance never
-  copies tool names, submitted values, schema details, raw provider output, or
-  provider diagnostics,
+  the model boundary produces fixed replacement guidance; that guidance may
+  repeat an advertised field path, JSON type, description, or enum value, but
+  never copies tool names, submitted values, dynamic keys or indexes,
+  undeclared field names, raw provider output, or provider diagnostics,
 - the workflow ties that guidance to the exact rejected invocation selected in
   invocation start order, records its token usage, keeps the malformed call out
   of transcript history, and schedules one normal resume activity with the
@@ -1385,12 +1386,26 @@ schema rejection is eligible for a replacement turn within the configured
 recovery limit. A decoder rejection is eligible only when it returns a non-nil
 `*tools.ValidationError`,
 the typed error generated decoders use for invalid model-authored fields.
-Correction text is fixed and never includes tool names, schema details, or
-rejected argument values. An ordinary decoder or internal error is terminal. If an error combines
-several causes, the call is correctable only when every cause is an
-advertised-schema rejection or a non-nil `*tools.ValidationError`; one internal
-cause makes the combined error terminal. The runtime still enforces its
-configured recovery-turn limit.
+For a tool specification with field metadata, a schema rejection may name one
+advertised field path and its required, JSON type, or enum rule. Generated tool
+and completion specifications include this metadata; callers that construct a
+`ToolSpec` directly may include it too. The runtime uses only the union branch
+named by a valid string discriminator. A missing, non-string, or unknown
+discriminator keeps the generic replacement instruction. The correction is
+specific only when the structured schema failure has one unique deepest cause
+that matches the selected field metadata. Unsupported failures at that depth
+also make the correction generic.
+
+Array indexes and caller-chosen map keys appear as `*`. An undeclared field is
+reported only against its advertised parent object; the submitted field name is
+omitted. Correction text may repeat descriptions and enum values from the
+advertised schema. It never includes submitted values, submitted map keys,
+array indexes, call IDs, undeclared field names, raw validator messages, or
+provider output. An ordinary decoder or internal error is terminal. If an error
+combines several causes, the call is correctable only when every cause is an
+advertised-schema rejection or a non-nil
+`*tools.ValidationError`; one internal cause makes the combined error terminal.
+The runtime still enforces its configured recovery-turn limit.
 
 ---
 

@@ -11,6 +11,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/completion"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 	"slices"
 )
 
@@ -27,6 +28,7 @@ func SpecDraftFromTranscript() completion.Spec[*DraftFromTranscriptResult] {
 		Schema:                   rawjson.Message("{\"$defs\":{\"CompletionDraft\":{\"additionalProperties\":false,\"properties\":{\"steps\":{\"description\":\"Draft steps\",\"items\":{\"$ref\":\"#/$defs/CompletionStep\"},\"type\":\"array\"}},\"required\":[\"steps\"],\"title\":\"CompletionDraft\",\"type\":\"object\"},\"CompletionStep\":{\"additionalProperties\":false,\"properties\":{\"label\":{\"description\":\"User-visible step label\",\"type\":\"string\"}},\"required\":[\"label\"],\"title\":\"CompletionStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"assistant_text\":{\"description\":\"Assistant summary\",\"type\":\"string\"},\"draft\":{\"oneOf\":[{\"additionalProperties\":false,\"description\":\"Draft a new task\",\"properties\":{\"type\":{\"enum\":[\"new_task\"],\"type\":\"string\"},\"value\":{\"$ref\":\"#/$defs/CompletionDraft\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"additionalProperties\":false,\"description\":\"Reference an existing task\",\"properties\":{\"type\":{\"enum\":[\"existing_task_id\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"}},\"required\":[\"assistant_text\",\"draft\"],\"type\":\"object\"}"),
 		SchemaWithoutRootExample: rawjson.Message("{\"$defs\":{\"CompletionDraft\":{\"additionalProperties\":false,\"properties\":{\"steps\":{\"description\":\"Draft steps\",\"items\":{\"$ref\":\"#/$defs/CompletionStep\"},\"type\":\"array\"}},\"required\":[\"steps\"],\"title\":\"CompletionDraft\",\"type\":\"object\"},\"CompletionStep\":{\"additionalProperties\":false,\"properties\":{\"label\":{\"description\":\"User-visible step label\",\"type\":\"string\"}},\"required\":[\"label\"],\"title\":\"CompletionStep\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"assistant_text\":{\"description\":\"Assistant summary\",\"type\":\"string\"},\"draft\":{\"oneOf\":[{\"additionalProperties\":false,\"description\":\"Draft a new task\",\"properties\":{\"type\":{\"enum\":[\"new_task\"],\"type\":\"string\"},\"value\":{\"$ref\":\"#/$defs/CompletionDraft\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"},{\"additionalProperties\":false,\"description\":\"Reference an existing task\",\"properties\":{\"type\":{\"enum\":[\"existing_task_id\"],\"type\":\"string\"},\"value\":{\"type\":\"string\"}},\"required\":[\"type\",\"value\"],\"type\":\"object\"}],\"type\":\"object\"}},\"required\":[\"assistant_text\",\"draft\"],\"type\":\"object\"}"),
 		ExampleJSON:              nil,
+		Fields:                   tools.CloneFieldMetadata(draftFromTranscriptResultFields),
 		Codec:                    newDraftFromTranscriptResultCodec(),
 	}
 }

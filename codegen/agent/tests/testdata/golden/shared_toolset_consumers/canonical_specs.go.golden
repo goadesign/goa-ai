@@ -61,16 +61,14 @@ func newSpecPing() tools.ToolSpec {
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"message\":{\"description\":\"Message to return.\",\"type\":\"string\"}},\"required\":[\"message\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"message\":{\"description\":\"Message to return.\",\"type\":\"string\"}},\"required\":[\"message\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        cloneStringMap(pingPayloadFieldDescs),
-			FieldJSONTypes:           cloneStringMap(pingPayloadFieldJSONTypes),
+			Fields:                   tools.CloneFieldMetadata(pingPayloadFields),
 			Codec:                    pingPayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "PingResult",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
-			FieldDescriptions:        nil,
-			FieldJSONTypes:           cloneStringMap(pingResultFieldJSONTypes),
+			Fields:                   tools.CloneFieldMetadata(pingResultFields),
 			Codec:                    pingResultCodec,
 		},
 	}

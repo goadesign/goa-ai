@@ -63,19 +63,25 @@ var (
 		},
 	}
 )
-var summarizeDocPayloadFieldDescs = map[string]string{
-	"doc_id": "Document identifier",
+var summarizeDocPayloadFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("doc_id")},
+		JSONType:    "string",
+		Description: "Document identifier",
+	},
 }
-var summarizeDocResultFieldDescs = map[string]string{
-	"title": "Title",
-}
-var summarizeDocPayloadFieldJSONTypes = map[string]string{
-	"$payload": "object",
-	"doc_id":   "string",
-}
-var summarizeDocResultFieldJSONTypes = map[string]string{
-	"$payload": "object",
-	"title":    "string",
+var summarizeDocResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("title")},
+		JSONType:    "string",
+		Description: "Title",
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -120,8 +126,8 @@ func enrichSummarizeDocPayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(summarizeDocPayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(summarizeDocPayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -137,8 +143,8 @@ func enrichSummarizeDocResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(summarizeDocResultFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(summarizeDocResultFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -153,8 +159,8 @@ func invalidSummarizeDocPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(summarizeDocPayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(summarizeDocPayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -167,7 +173,7 @@ func invalidSummarizeDocPayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -184,8 +190,8 @@ func invalidSummarizeDocResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(summarizeDocResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(summarizeDocResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -198,7 +204,7 @@ func invalidSummarizeDocResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

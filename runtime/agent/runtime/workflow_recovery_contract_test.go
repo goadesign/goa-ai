@@ -1028,7 +1028,11 @@ func TestRunLoopRecoversGeneratedModelToolCallBeforeExecution(t *testing.T) {
 			require.NoError(t, err)
 			require.Len(t, input.Reminders, 1)
 			assert.Equal(t, "model_invocation_recovery", input.Reminders[0].ID)
-			assert.Contains(t, input.Reminders[0].Text, "did not match its advertised input schema")
+			assert.Contains(
+				t,
+				input.Reminders[0].Text,
+				`Field "query" must contain a JSON string. Return a replacement tool call with valid arguments.`,
+			)
 			assert.NotContains(t, input.Reminders[0].Text, "privateSecret")
 			assert.NotContains(t, input.Reminders[0].Text, "submitted-secret")
 			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
@@ -1358,9 +1362,9 @@ func newStrictRecoverySpec() tools.ToolSpec {
 		Payload: tools.TypeSpec{
 			Name:   "LookupPayload",
 			Schema: rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`),
-			FieldJSONTypes: map[string]string{
-				"$payload": "object",
-				"query":    "string",
+			Fields: []tools.FieldMetadata{
+				{JSONType: "object"},
+				{Path: []tools.FieldPathSegment{tools.FixedField("query")}, JSONType: "string"},
 			},
 			Codec: tools.JSONCodec[any]{
 				FromJSON: func(data []byte) (any, error) {

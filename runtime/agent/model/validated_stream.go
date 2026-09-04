@@ -416,7 +416,7 @@ func (s *ValidatedStream) streamObservers() []*observedValidatedStreamer {
 }
 
 // rejectedStreamResponse returns a complete provider response only for terminal
-// failures that may retain one. A generated payload correction suppresses the
+// failures that may retain one. An advertised payload correction suppresses the
 // response at this validation layer and every nested layer so observers cannot
 // receive rejected tool arguments.
 func rejectedStreamResponse(streamer Streamer) (*Response, error) {

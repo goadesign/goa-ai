@@ -64,75 +64,167 @@ var (
 		},
 	}
 )
-var validatePayloadFieldDescs = map[string]string{
-	"child":            "Child L2",
-	"child.child":      "Child L3",
-	"child.child.leaf": "Leaf value",
-	"child.mid":        "Middle value",
-	"counts":           "Integer counts keyed by source",
-	"counts.*":         "Integer counts keyed by source",
-	"groups":           "Nested labels keyed by group and source",
-	"groups.*":         "Nested labels keyed by group and source",
-	"groups.*.*":       "Nested labels keyed by group and source",
-	"labels":           "Open labels keyed by source",
-	"labels.*":         "Open labels keyed by source",
-	"objects":          "Open objects keyed by source",
-	"objects.*":        "Open objects keyed by source",
-	"objects.*.leaf":   "Leaf value",
-	"root":             "Root value",
+var validatePayloadFields = []tools.FieldMetadata{
+	{
+		JSONType:    "object",
+		Description: "Level 1 root",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("root")},
+		JSONType:    "string",
+		Description: "Root value",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("child")},
+		JSONType:    "object",
+		Description: "Child L2",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("child"), tools.FixedField("mid")},
+		JSONType:    "string",
+		Description: "Middle value",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("child"), tools.FixedField("child")},
+		JSONType:    "object",
+		Description: "Child L3",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("child"), tools.FixedField("child"), tools.FixedField("leaf")},
+		JSONType:    "string",
+		Description: "Leaf value",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("labels")},
+		JSONType:    "object",
+		Description: "Open labels keyed by source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("labels"), tools.DynamicField{}},
+		JSONType:    "string",
+		Description: "Open labels keyed by source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("objects")},
+		JSONType:    "object",
+		Description: "Open objects keyed by source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("objects"), tools.DynamicField{}},
+		JSONType:    "object",
+		Description: "Open objects keyed by source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("objects"), tools.DynamicField{}, tools.FixedField("leaf")},
+		JSONType:    "string",
+		Description: "Leaf value",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups")},
+		JSONType:    "object",
+		Description: "Nested labels keyed by group and source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups"), tools.DynamicField{}},
+		JSONType:    "object",
+		Description: "Nested labels keyed by group and source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups"), tools.DynamicField{}, tools.DynamicField{}},
+		JSONType:    "string",
+		Description: "Nested labels keyed by group and source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("counts")},
+		JSONType:    "object",
+		Description: "Integer counts keyed by source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("counts"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Integer counts keyed by source",
+	},
 }
-var validateResultFieldDescs = map[string]string{
-	"child":            "Child L2",
-	"child.child":      "Child L3",
-	"child.child.leaf": "Leaf value",
-	"child.mid":        "Middle value",
-	"counts":           "Integer counts keyed by source",
-	"counts.*":         "Integer counts keyed by source",
-	"groups":           "Nested labels keyed by group and source",
-	"groups.*":         "Nested labels keyed by group and source",
-	"groups.*.*":       "Nested labels keyed by group and source",
-	"labels":           "Open labels keyed by source",
-	"labels.*":         "Open labels keyed by source",
-	"objects":          "Open objects keyed by source",
-	"objects.*":        "Open objects keyed by source",
-	"objects.*.leaf":   "Leaf value",
-	"root":             "Root value",
-}
-var validatePayloadFieldJSONTypes = map[string]string{
-	"$payload":         "object",
-	"child":            "object",
-	"child.child":      "object",
-	"child.child.leaf": "string",
-	"child.mid":        "string",
-	"counts":           "object",
-	"counts.*":         "integer",
-	"groups":           "object",
-	"groups.*":         "object",
-	"groups.*.*":       "string",
-	"labels":           "object",
-	"labels.*":         "string",
-	"objects":          "object",
-	"objects.*":        "object",
-	"objects.*.leaf":   "string",
-	"root":             "string",
-}
-var validateResultFieldJSONTypes = map[string]string{
-	"$payload":         "object",
-	"child":            "object",
-	"child.child":      "object",
-	"child.child.leaf": "string",
-	"child.mid":        "string",
-	"counts":           "object",
-	"counts.*":         "integer",
-	"groups":           "object",
-	"groups.*":         "object",
-	"groups.*.*":       "string",
-	"labels":           "object",
-	"labels.*":         "string",
-	"objects":          "object",
-	"objects.*":        "object",
-	"objects.*.leaf":   "string",
-	"root":             "string",
+var validateResultFields = []tools.FieldMetadata{
+	{
+		JSONType:    "object",
+		Description: "Level 1 root",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("root")},
+		JSONType:    "string",
+		Description: "Root value",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("child")},
+		JSONType:    "object",
+		Description: "Child L2",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("child"), tools.FixedField("mid")},
+		JSONType:    "string",
+		Description: "Middle value",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("child"), tools.FixedField("child")},
+		JSONType:    "object",
+		Description: "Child L3",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("child"), tools.FixedField("child"), tools.FixedField("leaf")},
+		JSONType:    "string",
+		Description: "Leaf value",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("labels")},
+		JSONType:    "object",
+		Description: "Open labels keyed by source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("labels"), tools.DynamicField{}},
+		JSONType:    "string",
+		Description: "Open labels keyed by source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("objects")},
+		JSONType:    "object",
+		Description: "Open objects keyed by source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("objects"), tools.DynamicField{}},
+		JSONType:    "object",
+		Description: "Open objects keyed by source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("objects"), tools.DynamicField{}, tools.FixedField("leaf")},
+		JSONType:    "string",
+		Description: "Leaf value",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups")},
+		JSONType:    "object",
+		Description: "Nested labels keyed by group and source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups"), tools.DynamicField{}},
+		JSONType:    "object",
+		Description: "Nested labels keyed by group and source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("groups"), tools.DynamicField{}, tools.DynamicField{}},
+		JSONType:    "string",
+		Description: "Nested labels keyed by group and source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("counts")},
+		JSONType:    "object",
+		Description: "Integer counts keyed by source",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("counts"), tools.DynamicField{}},
+		JSONType:    "integer",
+		Description: "Integer counts keyed by source",
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -177,8 +269,8 @@ func enrichValidatePayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(validatePayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(validatePayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -194,8 +286,8 @@ func enrichValidateResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(validateResultFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(validateResultFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -210,8 +302,8 @@ func invalidValidatePayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(validatePayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(validatePayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -224,7 +316,7 @@ func invalidValidatePayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -241,8 +333,8 @@ func invalidValidateResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(validateResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(validateResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -255,7 +347,7 @@ func invalidValidateResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

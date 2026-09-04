@@ -204,7 +204,6 @@ func cloneTypeSpec(spec tools.TypeSpec) tools.TypeSpec {
 	spec.Schema = append(tools.RawJSON(nil), spec.Schema...)
 	spec.SchemaWithoutRootExample = append(tools.RawJSON(nil), spec.SchemaWithoutRootExample...)
 	spec.ExampleJSON = append(tools.RawJSON(nil), spec.ExampleJSON...)
-	spec.FieldDescriptions = maps.Clone(spec.FieldDescriptions)
-	spec.FieldJSONTypes = maps.Clone(spec.FieldJSONTypes)
+	spec.Fields = tools.CloneFieldMetadata(spec.Fields)
 	return spec
 }

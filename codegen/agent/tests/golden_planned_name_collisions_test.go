@@ -19,13 +19,11 @@ func TestGoldenToolSpecNameCollisions(t *testing.T) {
 	codecs := renderedFileContent(t, files, "gen/alpha/toolsets/helpers/codecs.go")
 	specs := renderedFileContent(t, files, "gen/alpha/toolsets/helpers/specs.go")
 
-	require.Contains(t, codecs, "var inspectPayloadFieldDescs2 =")
-	require.Contains(t, codecs, "var inspectPayloadFieldJSONTypes2 =")
+	require.Contains(t, codecs, "var inspectPayloadFields2 =")
 	require.Contains(t, codecs, "func validateInspectPayloadJSON2(")
 	require.Contains(t, codecs, "func enrichInspectPayloadValidationError2(")
 	require.Contains(t, codecs, "func invalidInspectPayloadFieldTypeError2(")
-	require.Contains(t, specs, "cloneStringMap(inspectPayloadFieldDescs2)")
-	require.Contains(t, specs, "cloneStringMap(inspectPayloadFieldJSONTypes2)")
+	require.Contains(t, specs, "tools.CloneFieldMetadata(inspectPayloadFields2)")
 
 	assertGoldenGo(t, "tool_spec_name_collisions", "codecs.go.golden", codecs)
 	assertGoldenGo(t, "tool_spec_name_collisions", "specs.go.golden", specs)

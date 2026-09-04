@@ -209,6 +209,7 @@ func privateToolSpec[T any](spec completion.Spec[T]) tools.ToolSpec {
 		Schema:                   append(tools.RawJSON(nil), spec.Schema...),
 		SchemaWithoutRootExample: append(tools.RawJSON(nil), spec.SchemaWithoutRootExample...),
 		ExampleJSON:              append(tools.RawJSON(nil), spec.ExampleJSON...),
+		Fields:                   tools.CloneFieldMetadata(spec.Fields),
 		Codec:                    codec,
 	}
 	return tools.ToolSpec{

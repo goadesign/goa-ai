@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"slices"
 	"strings"
 	"testing"
 
@@ -408,9 +409,11 @@ func TestRequestContractNoArgumentToolUsesModelFacingContract(t *testing.T) {
 		Name:        "continue",
 		Description: "Continue the operation.",
 		Payload: tools.TypeSpec{
-			Name:           "ContinuePayload",
-			Schema:         rawjson.Message(`{"type":"object"}`),
-			FieldJSONTypes: map[string]string{"$payload": "object"},
+			Name:   "ContinuePayload",
+			Schema: rawjson.Message(`{"type":"object"}`),
+			Fields: []tools.FieldMetadata{{
+				JSONType: "object",
+			}},
 			Codec: tools.JSONCodec[any]{
 				FromJSON: func([]byte) (any, error) {
 					return nil, errors.New("injected cursor is required")
@@ -456,6 +459,423 @@ func TestGeneratedToolValidationProducesSafeRecoveryCorrection(t *testing.T) {
 	rejected, cloneErr := validationErr.RejectedResponse()
 	require.NoError(t, cloneErr)
 	require.Nil(t, rejected)
+}
+
+func TestGeneratedToolSchemaRejectionsProduceActionableCorrections(t *testing.T) {
+	tests := []struct {
+		name         string
+		schema       string
+		input        string
+		fieldTypes   map[string]string
+		descriptions map[string]string
+		want         string
+	}{
+		{
+			name:   "required nested field",
+			schema: `{"type":"object","properties":{"profile":{"type":"object","properties":{"name":{"type":"string"}},"required":["name"],"additionalProperties":false}},"required":["profile"],"additionalProperties":false}`,
+			input:  `{"profile":{}}`,
+			fieldTypes: map[string]string{
+				"$payload":     "object",
+				"profile":      "object",
+				"profile.name": "string",
+			},
+			descriptions: map[string]string{"profile.name": "Stable display name"},
+			want:         `Field "profile.name" is required. Field description: "Stable display name". Return a replacement tool call with valid arguments.`,
+		},
+		{
+			name:   "array item type",
+			schema: `{"type":"object","properties":{"steps":{"type":"array","items":{"type":"object","properties":{"amount":{"type":"number"}},"required":["amount"],"additionalProperties":false}}},"required":["steps"],"additionalProperties":false}`,
+			input:  `{"steps":[{"amount":"private-submitted-value"}]}`,
+			fieldTypes: map[string]string{
+				"$payload":       "object",
+				"steps":          "array",
+				"steps.*":        "object",
+				"steps.*.amount": "number",
+			},
+			descriptions: map[string]string{"steps.*.amount": "Amount for this step"},
+			want:         `Field "steps.*.amount" must contain a JSON number. Field description: "Amount for this step". Return a replacement tool call with valid arguments.`,
+		},
+		{
+			name:   "map value type",
+			schema: `{"type":"object","properties":{"scores":{"type":"object","additionalProperties":{"type":"object","properties":{"value":{"type":"integer"}},"required":["value"],"additionalProperties":false}}},"required":["scores"],"additionalProperties":false}`,
+			input:  `{"scores":{"private-map-key":{"value":"private-submitted-value"}}}`,
+			fieldTypes: map[string]string{
+				"$payload":       "object",
+				"scores":         "object",
+				"scores.*":       "object",
+				"scores.*.value": "integer",
+			},
+			want: `Field "scores.*.value" must contain a JSON integer. Return a replacement tool call with valid arguments.`,
+		},
+		{
+			name:   "enum",
+			schema: `{"type":"object","properties":{"mode":{"type":"string","enum":["daily","weekly"]}},"required":["mode"],"additionalProperties":false}`,
+			input:  `{"mode":"private-submitted-value"}`,
+			fieldTypes: map[string]string{
+				"$payload": "object",
+				"mode":     "string",
+			},
+			descriptions: map[string]string{"mode": "Report interval"},
+			want:         `Field "mode" must contain one of these JSON values: ["daily","weekly"]. Field description: "Report interval". Return a replacement tool call with valid arguments.`,
+		},
+		{
+			name:   "unknown field",
+			schema: `{"type":"object","properties":{"profile":{"type":"object","properties":{"name":{"type":"string"}},"additionalProperties":false}},"additionalProperties":false}`,
+			input:  `{"profile":{"private-undeclared-field":true}}`,
+			fieldTypes: map[string]string{
+				"$payload":     "object",
+				"profile":      "object",
+				"profile.name": "string",
+			},
+			descriptions: map[string]string{"profile": "Profile settings"},
+			want:         `Field "profile" contains an undeclared field. Field description: "Profile settings". Return a replacement tool call with valid arguments.`,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			definition := generatedSchemaTool(
+				test.schema,
+				test.fieldTypes,
+				test.descriptions,
+			)
+			contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+			require.NoError(t, err)
+			response := toolResponse(definition.Name)
+			response.Content[0].Parts[0] = ToolUsePart{
+				ID:    "private-call-id",
+				Name:  definition.Name,
+				Input: rawjson.Message(test.input),
+			}
+
+			validated, err := contract.ValidateResponse(response)
+
+			require.Nil(t, validated)
+			var validationErr *OutputValidationError
+			require.ErrorAs(t, err, &validationErr)
+			require.Equal(t, test.want, validationErr.RecoveryCorrection())
+			require.NotContains(t, validationErr.RecoveryCorrection(), "private-")
+			require.LessOrEqual(t, len(validationErr.RecoveryCorrection()), correction.MaxBytes)
+		})
+	}
+}
+
+func TestGeneratedToolSchemaCorrectionStaysGenericWhenCauseIsAmbiguous(t *testing.T) {
+	definition := generatedSchemaTool(
+		`{"type":"object","properties":{"left":{"type":"string"},"right":{"type":"string"}},"required":["left","right"],"additionalProperties":false}`,
+		map[string]string{
+			"$payload": "object",
+			"left":     "string",
+			"right":    "string",
+		},
+		nil,
+	)
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+	response := toolResponse(definition.Name)
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "private-call-id",
+		Name:  definition.Name,
+		Input: rawjson.Message(`{}`),
+	}
+
+	validated, err := contract.ValidateResponse(response)
+
+	require.Nil(t, validated)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
+	require.NotContains(t, validationErr.RecoveryCorrection(), "private-")
+}
+
+func TestToolSchemaCorrectionDistinguishesFixedAndDynamicPathSegments(t *testing.T) {
+	fields := []tools.FieldMetadata{
+		{JSONType: "object"},
+		{Path: []tools.FieldPathSegment{tools.FixedField("a.b")}, JSONType: "string", Description: "Literal dotted name"},
+		{Path: []tools.FieldPathSegment{tools.FixedField("a"), tools.FixedField("b")}, JSONType: "number", Description: "Nested name"},
+		{Path: []tools.FieldPathSegment{tools.FixedField("items")}, JSONType: "object"},
+		{Path: []tools.FieldPathSegment{tools.FixedField("items"), tools.FixedField("*")}, JSONType: "string", Description: "Literal star name"},
+		{Path: []tools.FieldPathSegment{tools.FixedField("items"), tools.DynamicField{}}, JSONType: "number", Description: "Dynamic item"},
+	}
+	definition := schemaToolWithFields(
+		`{"type":"object","properties":{"a.b":{"type":"string"},"a":{"type":"object","properties":{"b":{"type":"number"}},"required":["b"],"additionalProperties":false},"items":{"type":"object","properties":{"*":{"type":"string"}},"additionalProperties":{"type":"number"}}},"required":["a.b","a","items"],"additionalProperties":false}`,
+		fields,
+	)
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "literal dotted property", input: `{"a.b":7,"a":{"b":1},"items":{"*":"ok"}}`, want: `Field "[\"a.b\"]" must contain a JSON string. Field description: "Literal dotted name".`},
+		{name: "nested property", input: `{"a.b":"ok","a":{"b":"bad"},"items":{"*":"ok"}}`, want: `Field "a.b" must contain a JSON number. Field description: "Nested name".`},
+		{name: "literal star property", input: `{"a.b":"ok","a":{"b":1},"items":{"*":7}}`, want: `Field "items[\"*\"]" must contain a JSON string. Field description: "Literal star name".`},
+		{name: "dynamic map key", input: `{"a.b":"ok","a":{"b":1},"items":{"private-key":"bad","*":"ok"}}`, want: `Field "items.*" must contain a JSON number. Field description: "Dynamic item".`},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+			require.NoError(t, err)
+			response := toolResponse(definition.Name)
+			response.Content[0].Parts[0] = ToolUsePart{ID: "private-call", Name: definition.Name, Input: rawjson.Message(test.input)}
+
+			_, err = contract.ValidateResponse(response)
+			var validationErr *OutputValidationError
+			require.ErrorAs(t, err, &validationErr)
+			require.Contains(t, validationErr.RecoveryCorrection(), test.want)
+			require.NotContains(t, validationErr.RecoveryCorrection(), "private-")
+		})
+	}
+}
+
+func TestToolSchemaCorrectionUsesSelectedUnionBranchInsideArray(t *testing.T) {
+	fields := []tools.FieldMetadata{
+		{JSONType: "object"},
+		{Path: []tools.FieldPathSegment{tools.FixedField("items")}, JSONType: "array"},
+		{
+			Path: []tools.FieldPathSegment{
+				tools.FixedField("items"),
+				tools.DynamicField{},
+				tools.FixedField("type"),
+			},
+			JSONType:            "string",
+			DiscriminatorValues: []string{"email", "count"},
+		},
+		{
+			Path: []tools.FieldPathSegment{
+				tools.FixedField("items"),
+				tools.DynamicField{},
+				tools.FixedField("value"),
+				tools.FixedField("address"),
+			},
+			JSONType:    "string",
+			Description: "Email address",
+			Branches: []tools.UnionBranch{{
+				Discriminator: []tools.FieldPathSegment{
+					tools.FixedField("items"),
+					tools.DynamicField{},
+					tools.FixedField("type"),
+				},
+				Value: "email",
+			}},
+		},
+		{
+			Path: []tools.FieldPathSegment{
+				tools.FixedField("items"),
+				tools.DynamicField{},
+				tools.FixedField("value"),
+				tools.FixedField("amount"),
+			},
+			JSONType:    "integer",
+			Description: "Private count branch",
+			Branches: []tools.UnionBranch{{
+				Discriminator: []tools.FieldPathSegment{
+					tools.FixedField("items"),
+					tools.DynamicField{},
+					tools.FixedField("type"),
+				},
+				Value: "count",
+			}},
+		},
+	}
+	definition := schemaToolWithFields(
+		`{"type":"object","properties":{"items":{"type":"array","items":{"oneOf":[{"type":"object","properties":{"type":{"const":"email"},"value":{"type":"object","properties":{"address":{"type":"string"}},"required":["address"],"additionalProperties":false}},"required":["type","value"],"additionalProperties":false},{"type":"object","properties":{"type":{"const":"count"},"value":{"type":"object","properties":{"amount":{"type":"integer"}},"required":["amount"],"additionalProperties":false}},"required":["type","value"],"additionalProperties":false}]}}},"required":["items"],"additionalProperties":false}`,
+		fields,
+	)
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+	response := toolResponse(definition.Name)
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "private-call",
+		Name:  definition.Name,
+		Input: rawjson.Message(`{"items":[{"type":"email","value":{"address":7}}]}`),
+	}
+
+	_, err = contract.ValidateResponse(response)
+
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(
+		t,
+		`Field "items.*.value.address" must contain a JSON string. Field description: "Email address". Return a replacement tool call with valid arguments.`,
+		validationErr.RecoveryCorrection(),
+	)
+	require.NotContains(t, validationErr.RecoveryCorrection(), "0")
+	require.NotContains(t, validationErr.RecoveryCorrection(), "Private count branch")
+}
+
+func TestToolSchemaCorrectionNamesRequiredFieldWithoutFixedJSONType(t *testing.T) {
+	definition := schemaToolWithFields(
+		`{"type":"object","properties":{"context":{}},"required":["context"],"additionalProperties":false}`,
+		[]tools.FieldMetadata{
+			{JSONType: "object"},
+			{
+				Path:        []tools.FieldPathSegment{tools.FixedField("context")},
+				Description: "Required caller context",
+			},
+		},
+	)
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+	response := toolResponse(definition.Name)
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "private-call",
+		Name:  definition.Name,
+		Input: rawjson.Message(`{}`),
+	}
+
+	_, err = contract.ValidateResponse(response)
+
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(
+		t,
+		`Field "context" is required. Field description: "Required caller context". Return a replacement tool call with valid arguments.`,
+		validationErr.RecoveryCorrection(),
+	)
+}
+
+func TestToolSchemaCorrectionIncludesUnsupportedFailuresInAmbiguity(t *testing.T) {
+	definition := schemaToolWithFields(
+		`{"type":"object","properties":{"label":{"type":"string","minLength":3},"count":{"type":"integer"}},"required":["label","count"],"additionalProperties":false}`,
+		[]tools.FieldMetadata{
+			{JSONType: "object"},
+			{Path: []tools.FieldPathSegment{tools.FixedField("label")}, JSONType: "string", Description: "Label"},
+			{Path: []tools.FieldPathSegment{tools.FixedField("count")}, JSONType: "integer", Description: "Count"},
+		},
+	)
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+	response := toolResponse(definition.Name)
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "private-call",
+		Name:  definition.Name,
+		Input: rawjson.Message(`{"label":"x","count":"bad"}`),
+	}
+
+	_, err = contract.ValidateResponse(response)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
+}
+
+func TestToolSchemaCorrectionIncludesUnmappedFailuresInAmbiguity(t *testing.T) {
+	definition := schemaToolWithFields(
+		`{"type":"object","properties":{"known":{"type":"string"},"unmapped":{"type":"integer"}},"required":["known","unmapped"],"additionalProperties":false}`,
+		[]tools.FieldMetadata{
+			{JSONType: "object"},
+			{
+				Path:        []tools.FieldPathSegment{tools.FixedField("known")},
+				JSONType:    "string",
+				Description: "Known field",
+			},
+		},
+	)
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+	response := toolResponse(definition.Name)
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "private-call",
+		Name:  definition.Name,
+		Input: rawjson.Message(`{"known":7,"unmapped":"bad"}`),
+	}
+
+	_, err = contract.ValidateResponse(response)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
+}
+
+func TestGeneratedToolSchemaCorrectionSnapshotsGeneratedMetadata(t *testing.T) {
+	fieldTypes := map[string]string{
+		"$payload": "object",
+		"query":    "string",
+	}
+	descriptions := map[string]string{"query": "Original query"}
+	definition := generatedSchemaTool(
+		`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`,
+		fieldTypes,
+		descriptions,
+	)
+	fieldTypes["query"] = "number"
+	descriptions["query"] = "Changed source description"
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+	definition.Input.fields[1].JSONType = "boolean"
+	definition.Input.fields[1].Description = "Changed request description"
+	response := toolResponse(definition.Name)
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "private-call-id",
+		Name:  definition.Name,
+		Input: rawjson.Message(`{"query":42}`),
+	}
+
+	validated, err := contract.ValidateResponse(response)
+
+	require.Nil(t, validated)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(
+		t,
+		`Field "query" must contain a JSON string. Field description: "Original query". Return a replacement tool call with valid arguments.`,
+		validationErr.RecoveryCorrection(),
+	)
+}
+
+func TestGeneratedToolSchemaCorrectionKeepsSharedSizeLimit(t *testing.T) {
+	definition := generatedSchemaTool(
+		`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`,
+		map[string]string{"$payload": "object", "query": "string"},
+		map[string]string{"query": strings.Repeat("description", correction.MaxBytes)},
+	)
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+	response := toolResponse(definition.Name)
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "private-call-id",
+		Name:  definition.Name,
+		Input: rawjson.Message(`{"query":42}`),
+	}
+
+	validated, err := contract.ValidateResponse(response)
+
+	require.Nil(t, validated)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
+}
+
+func TestCallerAuthoredToolMetadataProducesActionableCorrection(t *testing.T) {
+	definition := ToolDefinitionFromSpec(tools.ToolSpec{
+		Name: "private.external_tool",
+		Payload: tools.TypeSpec{
+			Name:   "ExternalPayload",
+			Schema: rawjson.Message(`{"type":"object","properties":{"query":{"type":"string","description":"Search query"}},"required":["query"],"additionalProperties":false}`),
+			Fields: []tools.FieldMetadata{{
+				Path:        []tools.FieldPathSegment{tools.FixedField("query")},
+				JSONType:    "string",
+				Description: "Search query",
+			}},
+			Codec: tools.JSONCodec[any]{FromJSON: func([]byte) (any, error) {
+				panic("schema-invalid input reached the codec")
+			}},
+		},
+	})
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+	response := toolResponse(definition.Name)
+	response.Content[0].Parts[0] = ToolUsePart{
+		ID:    "private-call-id",
+		Name:  definition.Name,
+		Input: rawjson.Message(`{"query":42}`),
+	}
+
+	validated, err := contract.ValidateResponse(response)
+
+	require.Nil(t, validated)
+	var validationErr *OutputValidationError
+	require.ErrorAs(t, err, &validationErr)
+	require.Equal(t, `Field "query" must contain a JSON string. Field description: "Search query". Return a replacement tool call with valid arguments.`, validationErr.RecoveryCorrection())
+	require.NotContains(t, validationErr.RecoveryCorrection(), "private-")
 }
 
 func TestToolInputContractRejectionRequiresEveryErrorLeaf(t *testing.T) {
@@ -1022,10 +1442,10 @@ func generatedRejectingTool(issue *tools.FieldIssue) *ToolDefinition {
 		Payload: tools.TypeSpec{
 			Name:   "LookupPayload",
 			Schema: rawjson.Message(`{"type":"object"}`),
-			FieldJSONTypes: map[string]string{
-				"$payload": "object",
-				"query":    "string",
-				"type":     "string",
+			Fields: []tools.FieldMetadata{
+				{JSONType: "object"},
+				{Path: []tools.FieldPathSegment{tools.FixedField("query")}, JSONType: "string"},
+				{Path: []tools.FieldPathSegment{tools.FixedField("type")}, JSONType: "string"},
 			},
 			Codec: tools.JSONCodec[any]{
 				FromJSON: func([]byte) (any, error) {
@@ -1038,6 +1458,64 @@ func generatedRejectingTool(issue *tools.FieldIssue) *ToolDefinition {
 			},
 		},
 	})
+}
+
+func generatedSchemaTool(
+	schema string,
+	fieldTypes, descriptions map[string]string,
+) *ToolDefinition {
+	return ToolDefinitionFromSpec(tools.ToolSpec{
+		Name: "private.generated_tool",
+		Payload: tools.TypeSpec{
+			Name:   "GeneratedPayload",
+			Schema: rawjson.Message(schema),
+			Fields: testFieldMetadata(fieldTypes, descriptions),
+			Codec: tools.JSONCodec[any]{
+				FromJSON: func([]byte) (any, error) {
+					panic("schema-invalid input reached the generated codec")
+				},
+			},
+		},
+	})
+}
+
+func schemaToolWithFields(schema string, fields []tools.FieldMetadata) *ToolDefinition {
+	return ToolDefinitionFromSpec(tools.ToolSpec{
+		Name: "private.schema_tool",
+		Payload: tools.TypeSpec{
+			Name:   "SchemaPayload",
+			Schema: rawjson.Message(schema),
+			Fields: fields,
+			Codec: tools.JSONCodec[any]{FromJSON: func([]byte) (any, error) {
+				panic("schema-invalid input reached the codec")
+			}},
+		},
+	})
+}
+
+func testFieldMetadata(fieldTypes, descriptions map[string]string) []tools.FieldMetadata {
+	fields := make([]tools.FieldMetadata, 0, len(fieldTypes))
+	for path, jsonType := range fieldTypes {
+		var segments []tools.FieldPathSegment
+		if path != "$payload" {
+			for _, segment := range strings.Split(path, ".") {
+				if segment == "*" {
+					segments = append(segments, tools.DynamicField{})
+					continue
+				}
+				segments = append(segments, tools.FixedField(segment))
+			}
+		}
+		fields = append(fields, tools.FieldMetadata{
+			Path:        segments,
+			JSONType:    jsonType,
+			Description: descriptions[path],
+		})
+	}
+	slices.SortFunc(fields, func(a, b tools.FieldMetadata) int {
+		return strings.Compare(tools.FieldPathString(a.Path), tools.FieldPathString(b.Path))
+	})
+	return fields
 }
 
 func toolResponse(name string) *Response {

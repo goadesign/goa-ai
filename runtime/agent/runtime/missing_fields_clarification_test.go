@@ -46,9 +46,10 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 	seedTestToolSpecs(rt, tools.ToolSpec{
 		Name: tools.Ident("tool"),
 		Payload: tools.TypeSpec{
-			FieldDescriptions: map[string]string{
-				"field": "The facility detail needed to continue.",
-			},
+			Fields: []tools.FieldMetadata{{
+				Path:        []tools.FieldPathSegment{tools.FixedField("field")},
+				Description: "The facility detail needed to continue.",
+			}},
 		},
 	})
 
@@ -120,9 +121,10 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 
 func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 	completion := newAnyJSONSpec("reports.persist")
-	completion.Payload.FieldDescriptions = map[string]string{
-		"title": "The title to save.",
-	}
+	completion.Payload.Fields = []tools.FieldMetadata{{
+		Path:        []tools.FieldPathSegment{tools.FixedField("title")},
+		Description: "The title to save.",
+	}}
 	executions := 0
 	resumes := 0
 	h := newRecoveryHarness(

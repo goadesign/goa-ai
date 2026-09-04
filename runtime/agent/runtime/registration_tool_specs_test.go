@@ -227,7 +227,10 @@ func TestRegisterToolsetOwnsMutableContractData(t *testing.T) {
 	spec := newAnyJSONSpec("svc.lookup")
 	spec.Tags = []string{"lookup"}
 	spec.Payload.Schema = tools.RawJSON(`{"type":"object"}`)
-	spec.Payload.FieldDescriptions = map[string]string{"query": "Lookup query."}
+	spec.Payload.Fields = []tools.FieldMetadata{{
+		Path:        []tools.FieldPathSegment{tools.FixedField("query")},
+		Description: "Lookup query.",
+	}}
 	registration := ToolsetRegistration{
 		Name:  "svc",
 		Specs: []tools.ToolSpec{spec},
@@ -239,13 +242,13 @@ func TestRegisterToolsetOwnsMutableContractData(t *testing.T) {
 
 	registration.Specs[0].Tags[0] = mutated
 	registration.Specs[0].Payload.Schema[0] = '['
-	registration.Specs[0].Payload.FieldDescriptions["query"] = mutated
+	registration.Specs[0].Payload.Fields[0].Description = mutated
 
 	stored, ok := runtime.toolSpec(spec.Name)
 	require.True(t, ok)
 	require.Equal(t, []string{"lookup"}, stored.Tags)
 	require.JSONEq(t, `{"type":"object"}`, string(stored.Payload.Schema))
-	require.Equal(t, map[string]string{"query": "Lookup query."}, stored.Payload.FieldDescriptions)
+	require.Equal(t, "Lookup query.", stored.Payload.Fields[0].Description)
 }
 
 func TestToolsetRegistrationOwnsResultMaterializerRoute(t *testing.T) {
@@ -316,7 +319,10 @@ func TestToolSpecAccessorsReturnDetachedSnapshots(t *testing.T) {
 	spec.Meta = map[string][]string{"owner": {"service"}}
 	spec.ExecutionPayloadSchema = tools.RawJSON(`{"type":"object"}`)
 	spec.Payload.Schema = tools.RawJSON(`{"type":"object"}`)
-	spec.Payload.FieldDescriptions = map[string]string{"query": "Lookup query."}
+	spec.Payload.Fields = []tools.FieldMetadata{{
+		Path:        []tools.FieldPathSegment{tools.FixedField("query")},
+		Description: "Lookup query.",
+	}}
 	spec.Bounds = &tools.BoundsSpec{
 		Paging: &tools.PagingSpec{CursorField: "cursor"},
 	}
@@ -394,7 +400,7 @@ func assertToolSpecReaderDetached(t *testing.T, read func() tools.ToolSpec) {
 	returned.Meta["owner"][0] = mutated
 	returned.ExecutionPayloadSchema[0] = '['
 	returned.Payload.Schema[0] = '['
-	returned.Payload.FieldDescriptions["query"] = mutated
+	returned.Payload.Fields[0].Description = mutated
 	returned.Bounds.Paging.CursorField = mutated
 	returned.Confirmation.Title = mutated
 	returned.ServerData[0].Kind = mutated
@@ -405,7 +411,7 @@ func assertToolSpecReaderDetached(t *testing.T, read func() tools.ToolSpec) {
 	require.Equal(t, map[string][]string{"owner": {"service"}}, stored.Meta)
 	require.JSONEq(t, `{"type":"object"}`, string(stored.ExecutionPayloadSchema))
 	require.JSONEq(t, `{"type":"object"}`, string(stored.Payload.Schema))
-	require.Equal(t, map[string]string{"query": "Lookup query."}, stored.Payload.FieldDescriptions)
+	require.Equal(t, "Lookup query.", stored.Payload.Fields[0].Description)
 	require.Equal(t, "cursor", stored.Bounds.Paging.CursorField)
 	require.Equal(t, "Confirm lookup", stored.Confirmation.Title)
 	require.Equal(t, "evidence", stored.ServerData[0].Kind)

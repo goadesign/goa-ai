@@ -59,16 +59,14 @@ func newSpecStore() tools.ToolSpec {
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"id\",\"title\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"id\",\"title\"],\"type\":\"object\"}"),
 			ExampleJSON:              nil,
-			FieldDescriptions:        cloneStringMap(storePayloadFieldDescs),
-			FieldJSONTypes:           cloneStringMap(storePayloadFieldJSONTypes),
+			Fields:                   tools.CloneFieldMetadata(storePayloadFields),
 			Codec:                    storePayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:                     "StoreResult",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
 			SchemaWithoutRootExample: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
-			FieldDescriptions:        cloneStringMap(storeResultFieldDescs),
-			FieldJSONTypes:           cloneStringMap(storeResultFieldJSONTypes),
+			Fields:                   tools.CloneFieldMetadata(storeResultFields),
 			Codec:                    storeResultCodec,
 		},
 	}

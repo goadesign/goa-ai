@@ -100,8 +100,7 @@ type (
 		marshal              *goacodegen.NameDeclaration
 		unmarshal            *goacodegen.NameDeclaration
 		transportValidator   *goacodegen.NameDeclaration
-		fieldDescriptions    *goacodegen.NameDeclaration
-		fieldJSONTypes       *goacodegen.NameDeclaration
+		fieldMetadata        *goacodegen.NameDeclaration
 		enrichValidation     *goacodegen.NameDeclaration
 		invalidFieldType     *goacodegen.NameDeclaration
 		jsonValidator        *plannedJSONValidatorGraph

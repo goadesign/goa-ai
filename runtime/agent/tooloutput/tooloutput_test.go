@@ -118,6 +118,10 @@ func TestRunCorrectsMalformedAndSchemaInvalidToolArguments(t *testing.T) {
 			assert.Equal(t, testOutput{Value: "corrected"}, result)
 			require.Len(t, provider.requests, 2)
 			assertCorrectionRequest(t, provider.requests[1])
+			if test.name == "schema invalid" {
+				assert.Contains(t, systemText(provider.requests[1]), `Field "value" must contain a JSON string.`)
+				assert.Contains(t, systemText(provider.requests[1]), `Field description: "Generated result value".`)
+			}
 		})
 	}
 }
@@ -287,6 +291,14 @@ func outputSpec() completion.Spec[testOutput] {
 		Name:        "results.submit",
 		Description: "Submit the requested result.",
 		Schema:      rawjson.Message(outputSchema),
+		Fields: []tools.FieldMetadata{
+			{JSONType: "object"},
+			{
+				Path:        []tools.FieldPathSegment{tools.FixedField("value")},
+				JSONType:    "string",
+				Description: "Generated result value",
+			},
+		},
 		Codec: tools.JSONCodec[testOutput]{
 			ToJSON: func(value testOutput) ([]byte, error) {
 				return json.Marshal(value)

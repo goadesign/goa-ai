@@ -346,7 +346,7 @@ func continuationActionName(toolName tools.Ident, rootToolCallID string) tools.I
 // from a canonical source payload. Runtime-injected fields therefore never
 // enter dynamic tool descriptions.
 func modelVisibleContinuationQuery(spec tools.ToolSpec, payload rawjson.Message) (rawjson.Message, error) {
-	if spec.Payload.FieldJSONTypes == nil {
+	if len(spec.Payload.Fields) == 0 {
 		return rawjson.Message(`{}`), nil
 	}
 	var canonical map[string]json.RawMessage
@@ -354,9 +354,16 @@ func modelVisibleContinuationQuery(spec tools.ToolSpec, payload rawjson.Message)
 		return nil, fmt.Errorf("decode canonical payload: %w", err)
 	}
 	visible := make(map[string]json.RawMessage)
-	for name := range spec.Payload.FieldJSONTypes {
-		if value, ok := canonical[name]; ok {
-			visible[name] = value
+	for _, field := range spec.Payload.Fields {
+		if len(field.Path) != 1 {
+			continue
+		}
+		name, ok := field.Path[0].(tools.FixedField)
+		if !ok {
+			continue
+		}
+		if value, ok := canonical[string(name)]; ok {
+			visible[string(name)] = value
 		}
 	}
 	data, err := json.Marshal(visible)

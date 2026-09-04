@@ -614,8 +614,8 @@ func TestGeneratedSpecsReturnIsolatedContracts(t *testing.T) {
 	first[0].Description = "changed"
 	first[0].ExecutionPayloadSchema[0] = '['
 	first[0].Payload.Schema[0] = '['
-	for key := range first[0].Payload.FieldDescriptions {
-		first[0].Payload.FieldDescriptions[key] = "changed"
+	for index := range first[0].Payload.Fields {
+		first[0].Payload.Fields[index].Description = "changed"
 	}
 	if second[0].Description == "changed" {
 		t.Fatal("description mutation escaped returned spec")
@@ -626,8 +626,8 @@ func TestGeneratedSpecsReturnIsolatedContracts(t *testing.T) {
 	if second[0].Payload.Schema[0] == '[' {
 		t.Fatal("schema mutation escaped returned spec")
 	}
-	for _, value := range second[0].Payload.FieldDescriptions {
-		if value == "changed" {
+	for _, field := range second[0].Payload.Fields {
+		if field.Description == "changed" {
 			t.Fatal("field metadata mutation escaped returned spec")
 		}
 	}
@@ -710,8 +710,7 @@ func TestNoResultToolsHaveNoResultContract(t *testing.T) {
 			len(result.Schema) != 0 ||
 			len(result.SchemaWithoutRootExample) != 0 ||
 			len(result.ExampleJSON) != 0 ||
-			len(result.FieldDescriptions) != 0 ||
-			len(result.FieldJSONTypes) != 0 ||
+			len(result.Fields) != 0 ||
 			result.Codec.ToJSON != nil ||
 			result.Codec.FromJSON != nil {
 			t.Fatalf("%s generated a result contract: %#v", spec.name, result)
@@ -778,18 +777,19 @@ func TestEchoSchemaMatchesClosedGeneratedDecoder(t *testing.T) {
 
 func TestInvalidUnionPayloadsReceiveReplacementGuidance(t *testing.T) {
 	tests := []struct {
-		name      string
-		payload   string
-		wantField string
+		name           string
+		payload        string
+		wantCorrection string
 	}{
-		{name: "missing discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"value\":\"bad\"}}", wantField: "value.type"},
-		{name: "non-string discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"type\":7,\"value\":\"bad\"}}", wantField: "value.type"},
-		{name: "unknown discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"invented\",\"value\":\"bad\"}}", wantField: "value.type"},
-		{name: "missing value", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"structured\"}}", wantField: "value.value"},
-		{name: "wrong value type", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"number\",\"value\":\"bad\"}}", wantField: "value.value"},
-		{name: "unknown envelope field", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"number\",\"value\":7,\"extra\":true}}", wantField: "value.extra"},
-		{name: "unknown nested field", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"structured\",\"value\":{\"label\":\"ready\",\"extra\":true}}}", wantField: "value.value.extra"},
-		{name: "invalid branch content", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"structured\",\"value\":{}}}", wantField: "value.value.label"},
+		{name: "missing discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"value\":\"bad\"}}"},
+		{name: "non-string discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"type\":7,\"value\":\"bad\"}}"},
+		{name: "unknown discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"invented\",\"value\":\"bad\"}}"},
+		{name: "missing value", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"structured\"}}", wantCorrection: "Field \"value.value\" is required."},
+		{name: "wrong value type", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"number\",\"value\":\"bad\"}}", wantCorrection: "Field \"value.value\" must contain a JSON integer."},
+		{name: "wrong branch does not win", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"number\",\"value\":{}}}", wantCorrection: "Field \"value.value\" must contain a JSON integer."},
+		{name: "unknown envelope field", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"number\",\"value\":7,\"extra\":true}}", wantCorrection: "Field \"value\" contains an undeclared field."},
+		{name: "unknown nested field", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"structured\",\"value\":{\"label\":\"ready\",\"extra\":true}}}", wantCorrection: "Field \"value.value\" contains an undeclared field."},
+		{name: "invalid branch content", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"structured\",\"value\":{}}}", wantCorrection: "Field \"value.value.label\" is required."},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -820,7 +820,13 @@ func TestInvalidUnionPayloadsReceiveReplacementGuidance(t *testing.T) {
 			if correction == "" || !strings.Contains(correction, "replacement tool call") {
 				t.Fatalf("expected replacement guidance, got %q", correction)
 			}
-			if strings.Contains(correction, test.wantField) || strings.Contains(correction, "ready") || strings.Contains(correction, "extra") {
+			if test.wantCorrection == "" && correction != "The previous tool call did not match its advertised input schema. Return a replacement tool call with valid arguments." {
+				t.Fatalf("expected generic guidance, got %q", correction)
+			}
+			if test.wantCorrection != "" && !strings.Contains(correction, test.wantCorrection) {
+				t.Fatalf("expected correction to contain %q, got %q", test.wantCorrection, correction)
+			}
+			if strings.Contains(correction, "ready") || strings.Contains(correction, "extra") || strings.Contains(correction, "invented") {
 				t.Fatalf("correction exposed rejected arguments: %q", correction)
 			}
 		})

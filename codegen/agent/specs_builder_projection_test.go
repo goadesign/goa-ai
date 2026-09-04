@@ -7,19 +7,19 @@ import (
 )
 
 func TestDeleteModelHiddenFieldsRemovesNestedMetadata(t *testing.T) {
-	fields := map[string]string{
-		"$payload":    "object",
-		"actors":      "array",
-		"actors.id":   "string",
-		"actors.type": "string",
-		"query":       "string",
+	fields := []*fieldMetadataData{
+		{JSONType: "object"},
+		{Path: []fieldPathSegmentData{{Name: "actors"}}, JSONType: "array"},
+		{Path: []fieldPathSegmentData{{Name: "actors"}, {Name: "id"}}, JSONType: "string"},
+		{Path: []fieldPathSegmentData{{Name: "actors"}, {Name: "type"}}, JSONType: "string"},
+		{Path: []fieldPathSegmentData{{Name: "query"}}, JSONType: "string"},
 	}
 	owner := &contractTypeOwner{ModelHiddenPayloadFields: []string{"actors"}}
 
-	deleteModelHiddenFields(fields, owner, usagePayload)
+	fields = deleteModelHiddenFields(fields, owner, usagePayload)
 
-	assert.Equal(t, map[string]string{
-		"$payload": "object",
-		"query":    "string",
+	assert.Equal(t, []*fieldMetadataData{
+		{JSONType: "object"},
+		{Path: []fieldPathSegmentData{{Name: "query"}}, JSONType: "string"},
 	}, fields)
 }

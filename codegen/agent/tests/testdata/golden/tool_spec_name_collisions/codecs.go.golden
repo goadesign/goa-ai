@@ -65,23 +65,40 @@ var (
 		},
 	}
 )
-var inspectPayloadFieldDescs2 = map[string]string{
-	"descriptions": "Description metadata input.",
-	"field_type":   "Invalid field type input.",
-	"json_types":   "JSON type metadata input.",
-	"validation":   "Validation description input.",
-	"validator":    "JSON validator input.",
+var inspectPayloadFields2 = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("descriptions")},
+		JSONType:    "string",
+		Description: "Description metadata input.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("json_types")},
+		JSONType:    "string",
+		Description: "JSON type metadata input.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("validator")},
+		JSONType:    "string",
+		Description: "JSON validator input.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("validation")},
+		JSONType:    "string",
+		Description: "Validation description input.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("field_type")},
+		JSONType:    "string",
+		Description: "Invalid field type input.",
+	},
 }
-var inspectPayloadFieldJSONTypes2 = map[string]string{
-	"$payload":     "object",
-	"descriptions": "string",
-	"field_type":   "string",
-	"json_types":   "string",
-	"validation":   "string",
-	"validator":    "string",
-}
-var inspectResultFieldJSONTypes = map[string]string{
-	"$payload": "string",
+var inspectResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "string",
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -126,8 +143,8 @@ func enrichInspectPayloadValidationError2(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(inspectPayloadFieldDescs2, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(inspectPayloadFields2, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -142,8 +159,8 @@ func invalidInspectPayloadFieldTypeError2(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(inspectPayloadFieldJSONTypes2, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(inspectPayloadFields2, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -156,7 +173,7 @@ func invalidInspectPayloadFieldTypeError2(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -173,8 +190,8 @@ func invalidInspectResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(inspectResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(inspectResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -187,7 +204,7 @@ func invalidInspectResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},

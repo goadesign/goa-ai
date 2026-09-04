@@ -308,10 +308,14 @@ before inference.
 Mechanical response rejections return `*model.OutputValidationError`.
 `Kind()` reports one closed, privacy-safe category such as `tool_arguments` or
 `stream_protocol`; it never contains response text, provider text, tool names,
-arguments, or schema paths. The category is diagnostic only. Recovery still
-requires exact correction guidance produced by typed input validation or
-planner policy, and remains bounded by the runtime's configured recovery-turn
-limit.
+arguments, or schema paths. The category is diagnostic only. A tool
+specification with field metadata may separately return one correction that
+names an unambiguous advertised field path and its required, type, or enum rule.
+Array indexes and map keys appear as `*`. Corrections may repeat advertised
+descriptions and enum values, but never include submitted values, submitted map
+keys, array indexes, call IDs, or undeclared field names. Ambiguous failures and
+specifications without field metadata keep the generic replacement instruction.
+Recovery remains bounded by the runtime's configured recovery-turn limit.
 
 Use `bedrock.NewAnthropic` for Claude deployments on Amazon Bedrock. It sends
 Anthropic Messages requests through Bedrock `InvokeModel`, so authored tool
@@ -402,8 +406,10 @@ var Docs = Toolset("docs", func() {
 - Validation at boundaries: tool arguments are always JSON objects, and the
   advertised schema is enforced before any attached input decoder. Only
   schema rejections and typed tool-input validation errors get limited-size
-  correction guidance that omits rejected arguments; ordinary decoder and
-  internal errors stop the run. See the
+  correction guidance that omits rejected arguments. Schema rejections for
+  specifications with field metadata name one advertised field and its stable
+  rule when the validator identifies it without ambiguity; ordinary decoder
+  and internal errors stop the run. See the
   [runtime tool-input contract](docs/runtime.md#model-visible-tool-arguments).
   A provider output-limit status is returned to the planner with the complete
   response. For a final response without tool calls, the runtime preserves the
@@ -1040,8 +1046,7 @@ must be an answer without ordinary tools. It uses
 `NewRecoverableModelPlanningError` when rejected output from a tool-capable
 planning turn must be replaced with the current executable catalog still
 available. The rejected output may have omitted a required tool call.
-Bookkeeping calls
-do not consume or reset this budget. If a rejected
+Bookkeeping calls do not consume or reset this budget. If a rejected
 bookkeeping result schedules another planner activity, that replacement
 activity consumes one recovery turn. Finalization uses the same budget: a
 rejected finalizer response or a terminal tool failure marked `correct_call`
@@ -1066,7 +1071,7 @@ that request's catalog. Malformed argument bytes stay private. The rejected
 response stays out of history, and the normal caller-authorized executable
 catalog remains available for the replacement.
 Temporal histories containing model-output recovery from an older runtime do
-not carry the required answer-or-tool-calls kind and cannot resume on this
+not carry the required `answer` or `planning` kind and cannot resume on this
 version. New histories that contain this activity result require workers
 running the matching runtime; mixed older and newer workers, and rollback to an
 older worker, are unsupported for those histories. See

@@ -63,23 +63,207 @@ var (
 		},
 	}
 )
-var echoPayloadFieldDescs = map[string]string{
-	"id": "Request identifier",
+var echoPayloadFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("id")},
+		JSONType:    "string",
+		Description: "Request identifier",
+	},
+	{
+		Path:     []tools.FieldPathSegment{tools.FixedField("value")},
+		JSONType: "object",
+	},
+	{
+		Path:     []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
+		JSONType: "string",
+		DiscriminatorValues: []string{
+			"number",
+			"text",
+			"structured",
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("value")},
+		JSONType:    "integer",
+		Description: "Numeric value",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
+				Value:         "number",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("value")},
+		JSONType:    "string",
+		Description: "Text value",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
+				Value:         "text",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("value")},
+		JSONType:    "object",
+		Description: "Structured value",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
+				Value:         "structured",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("value"), tools.FixedField("label")},
+		JSONType:    "string",
+		Description: "Structured value label",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
+				Value:         "structured",
+			},
+		},
+	},
+	{
+		Path:     []tools.FieldPathSegment{tools.FixedField("optional_value")},
+		JSONType: "object",
+	},
+	{
+		Path:     []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("type")},
+		JSONType: "string",
+		DiscriminatorValues: []string{
+			"number",
+			"text",
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("value")},
+		JSONType:    "integer",
+		Description: "Optional numeric value",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("type")},
+				Value:         "number",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("value")},
+		JSONType:    "string",
+		Description: "Optional text value",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("type")},
+				Value:         "text",
+			},
+		},
+	},
 }
-var echoResultFieldDescs = map[string]string{
-	"id": "Request identifier",
-}
-var echoPayloadFieldJSONTypes = map[string]string{
-	"$payload":       "object",
-	"id":             "string",
-	"optional_value": "object",
-	"value":          "object",
-}
-var echoResultFieldJSONTypes = map[string]string{
-	"$payload":       "object",
-	"id":             "string",
-	"optional_value": "object",
-	"value":          "object",
+var echoResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("id")},
+		JSONType:    "string",
+		Description: "Request identifier",
+	},
+	{
+		Path:     []tools.FieldPathSegment{tools.FixedField("value")},
+		JSONType: "object",
+	},
+	{
+		Path:     []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
+		JSONType: "string",
+		DiscriminatorValues: []string{
+			"number",
+			"text",
+			"structured",
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("value")},
+		JSONType:    "integer",
+		Description: "Numeric value",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
+				Value:         "number",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("value")},
+		JSONType:    "string",
+		Description: "Text value",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
+				Value:         "text",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("value")},
+		JSONType:    "object",
+		Description: "Structured value",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
+				Value:         "structured",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("value"), tools.FixedField("label")},
+		JSONType:    "string",
+		Description: "Structured value label",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
+				Value:         "structured",
+			},
+		},
+	},
+	{
+		Path:     []tools.FieldPathSegment{tools.FixedField("optional_value")},
+		JSONType: "object",
+	},
+	{
+		Path:     []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("type")},
+		JSONType: "string",
+		DiscriminatorValues: []string{
+			"number",
+			"text",
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("value")},
+		JSONType:    "integer",
+		Description: "Optional numeric value",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("type")},
+				Value:         "number",
+			},
+		},
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("value")},
+		JSONType:    "string",
+		Description: "Optional text value",
+		Branches: []tools.UnionBranch{
+			{
+				Discriminator: []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("type")},
+				Value:         "text",
+			},
+		},
+	},
 }
 
 // newValidationError converts a goa.ServiceError (possibly merged) into a
@@ -124,8 +308,8 @@ func enrichEchoPayloadValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(echoPayloadFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(echoPayloadFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -141,8 +325,8 @@ func enrichEchoResultValidationError(err error) error {
 	}
 	m := make(map[string]string)
 	for _, is := range issues {
-		if d, ok := tools.LookupFieldMetadata(echoResultFieldDescs, is.Field); ok && d != "" {
-			m[is.Field] = d
+		if field, ok := tools.LookupFieldMetadata(echoResultFields, is.Field); ok && field.Description != "" {
+			m[is.Field] = field.Description
 		}
 	}
 	return tools.NewValidationError(ve.Error(), issues, m)
@@ -157,8 +341,8 @@ func invalidEchoPayloadFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(echoPayloadFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(echoPayloadFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -171,7 +355,7 @@ func invalidEchoPayloadFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
@@ -188,8 +372,8 @@ func invalidEchoResultFieldTypeError(err error) error {
 	if field == "" {
 		field = "$payload"
 	}
-	expected, ok := tools.LookupFieldMetadata(echoResultFieldJSONTypes, field)
-	if !ok {
+	metadata, ok := tools.LookupFieldMetadata(echoResultFields, field)
+	if !ok || metadata.JSONType == "" {
 		return err
 	}
 	actual := generatedUnmarshalJSONType(typeErr.Value)
@@ -202,7 +386,7 @@ func invalidEchoResultFieldTypeError(err error) error {
 			{
 				Field:            field,
 				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
+				ExpectedJSONType: metadata.JSONType,
 				ActualJSONType:   actual,
 			},
 		},
