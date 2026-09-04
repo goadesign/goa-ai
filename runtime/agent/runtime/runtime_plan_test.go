@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -527,7 +528,7 @@ func TestPlanStartActivityCorrelatesRecoverableModelOutput(t *testing.T) {
 	require.Equal(t, "Use at most eight references.", out.OutputContractFailure.Correction)
 }
 
-func TestPlanStartActivityRejectsOutputLimitedFinalResponse(t *testing.T) {
+func TestPlanStartActivityAcceptsPlannerSelectedOutputLimitedFinalResponse(t *testing.T) {
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		client, ok := input.Agent.PlannerModelClient("test")
 		require.True(t, ok)
@@ -567,11 +568,9 @@ func TestPlanStartActivityRejectsOutputLimitedFinalResponse(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.Nil(t, out.Result)
-	require.NotNil(t, out.OutputContractFailure)
-	require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
-	require.Equal(t, outputLimitCorrection, out.OutputContractFailure.Correction)
-	require.True(t, out.OutputContractFailure.ModelResponsePresent)
+	require.NotNil(t, out.Result)
+	require.Nil(t, out.OutputContractFailure)
+	require.Equal(t, "partial", out.Result.FinalResponse.Message.Parts[0].(model.TextPart).Text)
 }
 
 func TestPlanStartActivityRejectsAlteredRecoverableModelOutput(t *testing.T) {
@@ -691,67 +690,6 @@ func TestPlanStartActivityRejectsRecoverableOutputForForeignResponse(t *testing.
 	require.False(t, out.OutputContractFailure.ModelResponsePresent)
 	require.Equal(t, 11, out.Usage.InputTokens)
 	require.Equal(t, 1, modelCalls)
-}
-
-func TestPlanStartActivityRetriesFailedRejectedPresentationCleanup(t *testing.T) {
-	var modelRejection *planner.OutputContractError
-	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
-		client, ok := input.Agent.ModelClient("test")
-		require.True(t, ok)
-		response, err := client.Complete(ctx, &model.Request{Model: "test"})
-		require.NoError(t, err)
-		modelRejection = planner.NewRecoverableModelOutputError(
-			errors.New("too many references"),
-			&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
-			"Use at most eight references.",
-		)
-		return nil, modelRejection
-	}}
-	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	rt.models["test"] = newRecoveryTestModel(t)
-	cleanupErr := errors.New("stream unavailable")
-	sink := &failOnceDiscardSink{err: cleanupErr}
-	rt.streamSubscriber = runtimeWithPresentationSink(t, sink).streamSubscriber
-	_, err := createSessionForTest(t.Context(), rt.Store, "session-123")
-	require.NoError(t, err)
-
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
-		AgentID:    "service.agent",
-		RunID:      "run-123",
-		RunContext: run.Context{RunID: "run-123", SessionID: "session-123"},
-	})
-
-	require.Nil(t, out)
-	var typedRejection *planner.OutputContractError
-	require.ErrorAs(t, err, &typedRejection)
-	require.Same(t, modelRejection, typedRejection)
-	require.ErrorIs(t, err, cleanupErr)
-	require.ErrorContains(t, err, "discard rejected model presentation")
-	branches, ok := err.(interface{ Unwrap() []error })
-	require.True(t, ok)
-	require.Len(t, branches.Unwrap(), 2)
-	require.Same(t, modelRejection, branches.Unwrap()[0])
-	require.ErrorIs(t, branches.Unwrap()[1], cleanupErr)
-}
-
-func TestRejectedPresentationFailurePreservesSingleErrors(t *testing.T) {
-	primary := errors.New("model output rejected")
-	cleanup := errors.New("stream unavailable")
-	t.Run("primary only", func(t *testing.T) {
-		err := rejectedPresentationFailure(primary, nil)
-
-		require.Same(t, primary, err)
-		_, joined := err.(interface{ Unwrap() []error })
-		require.False(t, joined)
-	})
-	t.Run("cleanup only", func(t *testing.T) {
-		err := rejectedPresentationFailure(nil, cleanup)
-
-		require.ErrorIs(t, err, cleanup)
-		require.EqualError(t, err, "discard rejected model presentation: stream unavailable")
-		_, joined := err.(interface{ Unwrap() []error })
-		require.False(t, joined)
-	})
 }
 
 func TestValidatePlanResumeRecoveryInput(t *testing.T) {
@@ -1954,6 +1892,49 @@ func TestRunPlanActivityDoesNotPublishModelRejectionForPlannerFailure(t *testing
 	require.True(t, ok)
 	require.Equal(t, out.OutputContractFailure.ReasonSHA256, rejected.ReasonSHA256)
 	require.Equal(t, out.OutputContractFailure.ReasonSize, rejected.ReasonSize)
+}
+
+func TestRunPlanActivityCommitsPublishedTextBeforeReturningPlanningFailure(t *testing.T) {
+	batchID := uuid.NewString()
+	wfCtx := &testWorkflowContext{
+		ctx: context.Background(),
+		plannerOutput: &PlanActivityOutput{
+			PublicationBatchID:     batchID,
+			PublishedAssistantText: "Visible text.",
+			PlanningFailure: &run.Failure{
+				Message:      "The model provider is temporarily unavailable.",
+				DebugMessage: "planning failed (reason_sha256=abc reason_size=3)",
+				Provider:     "bedrock",
+				Kind:         string(model.ProviderErrorKindUnavailable),
+				Retryable:    true,
+			},
+		},
+	}
+	rt := &Runtime{}
+
+	out, err := rt.runPlanActivity(
+		wfCtx,
+		"plan",
+		engine.ActivityOptions{},
+		PlanActivityInput{
+			AgentID:    "service.agent",
+			RunID:      "run-123",
+			RunContext: run.Context{RunID: "run-123", SessionID: "session-1", TurnID: "turn-1"},
+		},
+		time.Time{},
+	)
+
+	require.Same(t, wfCtx.plannerOutput, out)
+	require.ErrorContains(t, err, "planning failed")
+	failure := hooks.RunFailureFromError(err)
+	require.Equal(t, "bedrock", failure.Provider)
+	require.Equal(t, string(model.ProviderErrorKindUnavailable), failure.Kind)
+	require.True(t, failure.Retryable)
+	require.NotNil(t, wfCtx.lastHookCall.Command.Append)
+	require.Len(t, wfCtx.lastHookCall.Command.Append.Records, 1)
+	record := wfCtx.lastHookCall.Command.Append.Records[0]
+	require.Equal(t, batchID, record.EventKey)
+	require.Equal(t, batchID, record.ResponseID)
 }
 
 func TestRunPlanActivityPublishesEmptyPlannerRejectionReason(t *testing.T) {

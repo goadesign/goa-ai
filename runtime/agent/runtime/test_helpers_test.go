@@ -322,7 +322,10 @@ func mustRuntimeToolInput(schema []byte) model.ToolInput {
 	return input
 }
 
-const testPublicationBatchID = "7b62faf2-1667-4f54-a807-46d151764717"
+const (
+	testPublicationBatchID        = "7b62faf2-1667-4f54-a807-46d151764717"
+	testInitialPublicationBatchID = "7b62faf2-1667-4f54-a807-46d151764718"
+)
 
 func testToolFailure(kind planner.FailureKind, action planner.RecoveryAction, message string) *planner.ToolFailure {
 	var priorInput rawjson.Message
@@ -367,7 +370,13 @@ func (r *Runtime) runLoop(
 	turnID string,
 	_ any,
 ) (*RunOutput, error) {
-	st := newRunLoopState(initialResult, nil, model.TokenUsage{}, caps, 2)
+	st := &runLoopState{
+		Caps:        caps,
+		NextAttempt: 2,
+		AggUsage:    model.TokenUsage{},
+		Result:      initialResult,
+		ResponseID:  testInitialPublicationBatchID,
+	}
 	return r.runLoopWithState(
 		wfCtx,
 		reg,
@@ -623,6 +632,7 @@ type testWorkflowContext struct {
 
 	planResult      *PlanResult
 	hasPlanResult   bool
+	plannerOutput   *PlanActivityOutput
 	recoveryCatalog *RecoveryCatalog
 	barrier         chan struct{}
 	hookRuntime     *Runtime // optional runtime for storage activity execution
@@ -877,6 +887,9 @@ func testStorageResult(command *api.StorageActivityCommand) *api.StorageActivity
 
 func (t *testWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {
 	t.lastPlannerCall = call
+	if t.plannerOutput != nil {
+		return t.plannerOutput, nil
+	}
 	switch call.Name {
 	case "plan", "nested.plan":
 		if t.runtime != nil {

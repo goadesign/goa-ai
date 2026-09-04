@@ -359,6 +359,9 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 	if checkpoint.PreviousRunID == "" {
 		return errors.New("run suspension checkpoint requires predecessor run id")
 	}
+	if !checkpoint.State.ResponseCommitted {
+		return errors.New("run suspension checkpoint requires a committed planner response")
+	}
 	if checkpoint.Batch.Result == nil {
 		return errors.New("run suspension checkpoint requires a planner result")
 	}

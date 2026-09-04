@@ -39,7 +39,7 @@ func TestPublishAwaitToolUsesQuestionsDoesNotDuplicateCommittedResponse(t *testi
 	}}
 
 	require.NoError(t, rt.appendSelectedModelResponse(
-		t.Context(), input.AgentID, base, "turn-1", &PlanResult{Await: result.Await}, transcript,
+		t.Context(), input.AgentID, base, "turn-1", testPublicationBatchID, &PlanResult{Await: result.Await}, transcript,
 	))
 	require.NoError(t, rt.publishAwaitToolUses(t.Context(), input, base, "turn-1", item, 0))
 

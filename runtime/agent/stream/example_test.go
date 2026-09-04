@@ -33,12 +33,18 @@ func Example_broadcast() {
 	sub, _ := streambridge.Register(rt.Bus, sink)
 	defer func() { _ = sub.Close() }()
 
-	// Publish a user-facing hook event; the subscriber forwards it.
-	_ = rt.Bus.Publish(ctx, hooks.NewAssistantMessageEvent("run-1", "svc.agent", "session-1", "hello", nil))
+	// Publish a completed assistant turn; the subscriber forwards it.
+	_ = rt.Bus.Publish(ctx, hooks.NewAssistantTurnCommittedEvent(
+		"run-1",
+		"svc.agent",
+		"session-1",
+		"00000000-0000-4000-8000-000000000001",
+		"hello",
+	))
 
 	// The sink received a typed stream event.
 	fmt.Println(sink.events[0].Type())
-	// Output: assistant_reply
+	// Output: assistant_turn
 }
 
 // Example demonstrating per-request streaming by registering a temporary

@@ -11,13 +11,19 @@ Build intelligent agents, MCP servers, and registry-integrated toolsets from you
 - **Registries**: Centralized tool catalogs with federation, caching, and semantic search
 - **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
 
-Agent streams send validated assistant text and thinking from the designated
-planner model call directly to clients as provisional output. One
-execution-scoped presentation ID associates its fragments with a discard marker
-and differs from every retry execution. The workflow's
-canonical assistant-turn event alone finalizes accepted output. Provisional
-fragments never enter the run log, hook bus, or memory. Tool argument fragments
-and completed calls stay inside model validation until the provider's terminal
+Agent streams assistant text and thinking from the designated planner model call
+directly to clients. Emitted assistant text is append-only: later tool or output
+validation cannot retract it. One execution-scoped response ID groups fragments
+from the same planner activity. Plan and Resume activities are single-attempt,
+so one response ID can never name output from two model executions. A later
+explicit planner turn receives a new response ID. The workflow's committed
+assistant-turn event uses that same ID. An accepted response stores its complete
+provider transcript and aggregate text. A rejected response or ordinary failure
+reported before activity cancellation stores the exact text already delivered
+as a plain assistant message before recovery or failure continues. Live
+fragments themselves do not enter the run log, hook
+bus, or memory. Tool
+argument fragments and completed calls stay inside model validation until the provider's terminal
 response reconciles with the stream and the originating advertised schema plus
 attached decoder accept every payload. A raw remote gateway transports provider
 output without replacing those request-owned checks. After planner selection,
@@ -299,14 +305,20 @@ validation failures remain terminal.
 
 When a completed model reply or planner result breaks its required shape, the
 planner returns `OutputContractError`. The runtime validates the full result
-before publishing any selected model text or tool call. Ordinary output
-contract errors are terminal and Temporal does not retry them. When the planner
-can give exact replacement guidance for one completed model answer, it may
+before accepting its selected tool calls or storing its selected response. The
+provider's output-limit status is part of the response given to the planner;
+the runtime does not override a planner that accepts that exact response.
+Ordinary output contract errors are terminal and Temporal does not retry them.
+When the planner can give exact replacement guidance for one completed model answer, it may
 instead return `NewRecoverableModelOutputError`. This separate, response-
 fingerprint-bound path records the answer fingerprint and usage while keeping
 the rejected body private, then spends one recovery turn on a synthesis-only
 replacement. Infrastructure failures remain activity errors and follow the
-activity retry policy.
+activity retry policy. Plan and Resume activities are the exception: their
+generated and registered policy permits exactly one attempt because they may
+have already emitted append-only text. Tool activities retain retries because
+their stable call identities let tool owners return stored results without
+repeating side effects.
 
 The runtime keeps execution policy and planner intent separate:
 
@@ -1086,7 +1098,7 @@ redeploys.
   incomplete or inconsistent streams remain terminal. The activity validates
   the selected planner request again before scheduling effects.
 - **Planner-transparent provenance**: Each model call produces an isolated
-  canonical response and ordered presentation before planner code observes
+  canonical response and ordered live output before planner code observes
   completion. One opaque validated-stream value owns validated chunks, the
   validated response, and event scoping. It is
   bound to the immutable output-validation contract copied when validation
@@ -1101,13 +1113,13 @@ redeploys.
   in-memory origin copied with it, so two messages with identical content remain
   distinct without comparing visible text or metadata. The runtime identifies
   tool turns from unchanged model-facing calls and terminal turns from the
-  canonical provider message returned by its response helpers. It publishes
-  only the selected response's text, thinking, and tool-argument deltas, while
-  usage accounts for every invocation, including valid numeric counts from a
-  rejected usage chunk. It commits the complete selected response once after
-  atomic admission and before effects. Planners never manage transcript handles
-  or provider replay metadata, and uncertain ownership fails instead of
-  selecting by call order or visible text.
+  canonical provider message returned by its response helpers. Only the
+  designated planner client publishes live text, thinking, and tool-argument
+  deltas, while usage accounts for every invocation, including valid numeric
+  counts from a rejected usage chunk. It commits the complete selected response
+  once after atomic admission and before effects. Planners never manage
+  transcript handles or provider replay metadata, and uncertain ownership fails
+  instead of selecting by call order or visible text.
 - **History compression**: Agent designs may declare compression defaults with
   `CompressAtTurns`, `CompressAtMaxInputTokens`, `KeepMaxTurns`, and
   `KeepMaxInputTokens`. The runtime evaluates token budgets with the configured

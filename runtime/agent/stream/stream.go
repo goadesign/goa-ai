@@ -4,9 +4,9 @@
 // provide comprehensive internal observability across the entire runtime lifecycle.
 //
 // Subscriber converts selected persisted hook events into stream events and
-// also applies the same audience profile to provisional model text, thinking,
-// and lifecycle events. Internal-only events such as policy decisions and
-// memory operations never reach the sink.
+// also applies the same audience profile to live model text and thinking.
+// Internal-only events such as policy decisions and memory operations never
+// reach the sink.
 //
 // All event types implement the Event interface and can be safely sent concurrently
 // through a Sink implementation. Implementations are responsible for marshaling
@@ -111,29 +111,24 @@ type (
 	}
 
 	// AssistantReply streams incremental assistant message content as the planner
-	// receives validated provider chunks. Clients display these provisional
-	// fragments immediately, remove them after a matching discard event, and
-	// finalize them only when the canonical AssistantTurn arrives.
+	// receives provider text chunks. Once emitted, text is append-only; later
+	// validation of tool calls cannot retract it.
 	AssistantReply struct {
 		Base
-		// Data contains one text fragment and the presentation it belongs to.
+		// Data contains one text fragment and the model response it belongs to.
 		Data AssistantReplyPayload
 	}
 
-	// ModelPresentation marks the lifecycle of one provisional model response.
-	// Clients use the presentation ID to reject late output from an earlier
-	// activity execution without disturbing canonical assistant turns.
-	ModelPresentation struct {
-		Base
-		Data ModelPresentationPayload
-	}
-
-	// AssistantTurn streams a canonical assistant transcript message after the
-	// runtime has durably appended it to the run log.
+	// AssistantTurn streams the complete display text for one assistant response
+	// after the runtime has durably appended that text. The run may still fail
+	// after the text was displayed.
 	//
 	// Contract:
-	//   - Each event represents one committed assistant transcript artifact.
-	//   - Unlike AssistantReply, this event is canonical and replay-safe.
+	//   - ResponseID matches every AssistantReply fragment in this response.
+	//   - Text is complete even when a unary or planner-authored response emitted
+	//     no AssistantReply fragments.
+	//   - When fragments exist, their ordered text is an exact prefix of Text, so
+	//     consumers can append only a missing suffix without replacing live text.
 	AssistantTurn struct {
 		Base
 		Data AssistantTurnPayload
@@ -270,23 +265,17 @@ type (
 	}
 
 	// AssistantReplyPayload is the typed wire payload for assistant reply events.
-	// PresentationID binds the fragment to the exact model invocation that
-	// produced it so retries and rejection can be handled without heuristics.
+	// ResponseID binds the fragment to the exact planner activity that produced
+	// it so clients can group separate responses without guessing from timing.
 	AssistantReplyPayload struct {
-		PresentationID string `json:"presentation_id"`
-		Text           string `json:"text"`
+		ResponseID string `json:"response_id"`
+		Text       string `json:"text"`
 	}
 
-	// ModelPresentationPayload identifies one provisional model response and
-	// reports whether clients should start or remove its visible output.
-	ModelPresentationPayload struct {
-		PresentationID string                 `json:"presentation_id"`
-		State          ModelPresentationState `json:"state"`
-	}
-
-	// AssistantTurnPayload carries the committed assistant transcript message.
+	// AssistantTurnPayload carries one committed assistant display response.
 	AssistantTurnPayload struct {
-		Message *model.Message `json:"message"`
+		ResponseID string `json:"response_id"`
+		Text       string `json:"text"`
 	}
 
 	// PlannerThoughtPayload is the typed wire payload for planner thought events.
@@ -294,13 +283,13 @@ type (
 	// Structured thinking blocks also populate Text/Signature or Redacted with
 	// ContentIndex and Final flags matching the provider content blocks.
 	PlannerThoughtPayload struct {
-		PresentationID string `json:"presentation_id,omitempty"`
-		Note           string `json:"note,omitempty"`
-		Text           string `json:"text,omitempty"`
-		Signature      string `json:"signature,omitempty"`
-		Redacted       []byte `json:"redacted,omitempty"`
-		ContentIndex   int    `json:"content_index,omitempty"`
-		Final          bool   `json:"final,omitempty"`
+		ResponseID   string `json:"response_id,omitempty"`
+		Note         string `json:"note,omitempty"`
+		Text         string `json:"text,omitempty"`
+		Signature    string `json:"signature,omitempty"`
+		Redacted     []byte `json:"redacted,omitempty"`
+		ContentIndex int    `json:"content_index,omitempty"`
+		Final        bool   `json:"final,omitempty"`
 	}
 
 	// PromptRenderedPayload describes one rendered prompt reference and scope.
@@ -636,7 +625,7 @@ type (
 
 	// StreamProfile describes which event kinds are emitted for a particular
 	// audience. Subscriber applies the profile to both mapped hook events and
-	// provisional model presentation events.
+	// live model output events.
 	StreamProfile struct {
 		// Assistant controls assistant reply emission.
 		Assistant bool
@@ -718,24 +707,10 @@ func MetricsProfile() StreamProfile {
 	}
 }
 
-type (
-	// EventType enumerates stream payload flavors.
-	EventType string
-
-	// ModelPresentationState identifies the client action for one provisional
-	// model response.
-	ModelPresentationState string
-)
+// EventType enumerates stream payload flavors.
+type EventType string
 
 const (
-	// ModelPresentationStarted tells clients that subsequent text and thought
-	// fragments belong to a new model invocation.
-	ModelPresentationStarted ModelPresentationState = "started"
-
-	// ModelPresentationDiscarded tells clients to remove provisional output
-	// from this model response because it failed or was not selected.
-	ModelPresentationDiscarded ModelPresentationState = "discarded"
-
 	// EventPlannerThought streams incremental planner reasoning and annotations during
 	// execution. These events allow clients to display "thinking..." indicators and show
 	// intermediate planner thoughts before tool calls complete. Emitted by StreamSubscriber
@@ -770,16 +745,13 @@ const (
 
 	// EventAssistantReply streams incremental assistant message content as the planner
 	// produces the final response. Clients receive text chunks that can be displayed
-	// progressively (streaming typewriter effect). Emitted by StreamSubscriber when
-	// AssistantMessageEvent hooks fire. Payload is AssistantReplyPayload.
+	// progressively. The runtime emits these events directly from live model output;
+	// completed assistant-message hooks do not recreate them.
+	// Payload is AssistantReplyPayload.
 	EventAssistantReply EventType = "assistant_reply"
 
-	// EventModelPresentation reports the lifecycle of one provisional model
-	// response so clients can replace retries and remove rejected output.
-	EventModelPresentation EventType = "model_presentation"
-
-	// EventAssistantTurn streams one canonical assistant transcript message after
-	// the runtime has durably appended it to the run log.
+	// EventAssistantTurn streams one complete assistant display response after
+	// the runtime has durably appended its provider transcript to the run log.
 	EventAssistantTurn EventType = "assistant_turn"
 
 	// EventAwaitClarification streams when a planner requests human clarification.

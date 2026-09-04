@@ -155,9 +155,9 @@ func TestTranscriptActivityRetriesStreamAfterDurableInsert(t *testing.T) {
 	}})
 	require.NoError(t, err)
 	record := &RecordActivityInput{
-		Type: transcript.RunLogMessagesAppended, EventKey: "messages", RunID: "run",
-		AgentID: "svc.agent", SessionID: "session", TurnID: "turn", TimestampMS: 1,
-		Payload: payload,
+		Type: transcript.RunLogMessagesAppended, EventKey: testPublicationBatchID, RunID: "run",
+		AgentID: "svc.agent", SessionID: "session", TurnID: "turn",
+		ResponseID: testPublicationBatchID, TimestampMS: 1, Payload: payload,
 	}
 	streamErr := errors.New("stream send failed")
 	sink := &retryingStreamSink{err: streamErr}
@@ -173,4 +173,53 @@ func TestTranscriptActivityRetriesStreamAfterDurableInsert(t *testing.T) {
 	page, err := store.ListRunRecords(ctx, "run", "", 10)
 	require.NoError(t, err)
 	require.Len(t, page.Events, 2)
+}
+
+func TestTranscriptActivityRejectsInvalidResponseIdentityBeforeStorage(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		eventKey   string
+		responseID string
+		wantError  string
+	}{
+		{
+			name:      "missing response id",
+			eventKey:  "messages",
+			wantError: "assistant transcript delta is missing response id",
+		},
+		{
+			name:       "mismatched response id",
+			eventKey:   "different-event",
+			responseID: testPublicationBatchID,
+			wantError:  "response id must equal its stable event key",
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ctx := context.Background()
+			store := newTestStore()
+			_, err := store.CreateSession(ctx, "session", time.Now().UTC())
+			require.NoError(t, err)
+			admitRunForTest(t, store, session.RunMeta{
+				AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+			})
+			payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "done"}},
+			}})
+			require.NoError(t, err)
+			record := &RecordActivityInput{
+				Type: transcript.RunLogMessagesAppended, EventKey: test.eventKey, RunID: "run",
+				AgentID: "svc.agent", SessionID: "session", TurnID: "turn",
+				ResponseID: test.responseID, TimestampMS: 1, Payload: payload,
+			}
+			runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
+
+			err = runtime.recordActivity(ctx, testRecordBatch(record))
+			require.ErrorContains(t, err, test.wantError)
+
+			page, listErr := store.ListRunRecords(ctx, "run", "", 10)
+			require.NoError(t, listErr)
+			require.Len(t, page.Events, 1)
+		})
+	}
 }

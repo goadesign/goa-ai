@@ -37,9 +37,7 @@ func RegisterBetaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg
 			Queue:               "beta_beta_worker_workflow",
 			StartToCloseTimeout: time.Duration(120000000000),
 			RetryPolicy: engine.RetryPolicy{
-				MaxAttempts:        3,
-				InitialInterval:    time.Duration(1000000000),
-				BackoffCoefficient: 2,
+				MaxAttempts: 1,
 			},
 		},
 		ResumeActivityName: "beta.beta_worker.resume",
@@ -47,9 +45,7 @@ func RegisterBetaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg
 			Queue:               "beta_beta_worker_workflow",
 			StartToCloseTimeout: time.Duration(120000000000),
 			RetryPolicy: engine.RetryPolicy{
-				MaxAttempts:        3,
-				InitialInterval:    time.Duration(1000000000),
-				BackoffCoefficient: 2,
+				MaxAttempts: 1,
 			},
 		},
 		ExecuteToolActivity: "beta.beta_worker.executetool",

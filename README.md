@@ -44,7 +44,7 @@ You describe the agent system in the same design-first style as Goa services. `g
 | Repeatable agent checks | Generated evaluation hooks, exact scenario selection, bounded concurrency, and calibrated semantic judging |
 | Multi-agent systems | First-class agent-as-tool composition with child runs and linked streams |
 | Human approval | Await/clarification flows plus design-time and runtime tool confirmation |
-| Real-time UI | Provisional assistant text and thinking sent as each validated fragment arrives, with explicit acceptance or removal and canonical transcript persistence only after planner selection |
+| Real-time UI | Append-only assistant text and thinking sent as each validated fragment arrives, with one stable response ID and a durable text checkpoint before accepted recovery or ordinary failure |
 | External tools | MCP callers, generated MCP servers, external MCP schemas, and token-fenced registry routing with incarnation leases plus catalog-owned health epochs |
 | Production operations | Host-owned runtime storage, Mongo-backed memory and prompt stores, Pulse streaming, model clients, telemetry hooks |
 
@@ -404,10 +404,20 @@ var Docs = Toolset("docs", func() {
   correction guidance that omits rejected arguments; ordinary decoder and
   internal errors stop the run. See the
   [runtime tool-input contract](docs/runtime.md#model-visible-tool-arguments).
+  A provider output-limit status is returned to the planner with the complete
+  response. The runtime preserves the planner's decision to accept or reject
+  that exact response instead of imposing a replacement policy.
   Streaming tool argument fragments and completed calls remain withheld until
   the complete provider response matches the stream; the runtime can then
   schedule one replacement planning activity while retaining final usage and
-  without retaining or executing the rejected arguments.
+  without retaining or executing the rejected arguments. Assistant prose
+  already streamed to a client is append-only and is never retracted by that
+  tool-validation decision. Every fragment from one model request carries the
+  planner activity's response ID. If the planner accepts the response, the
+  committed assistant-turn event carries that same ID and exact aggregate
+  text. Generated Plan and Resume activities permit one attempt, preventing
+  infrastructure retries from producing different visible text under the same
+  ID. Explicit recovery or continuation turns use new response IDs.
   Incomplete provider streams remain terminal.
 - Timeout and parent-budget failures are terminal for the current run and use
   `finish` recovery. Planners may repair invalid arguments, but elapsed
@@ -1195,21 +1205,25 @@ rt := runtime.New(
 
 For model streaming inside planners, choose one style per planner call:
 
-- `PlannerContext.PlannerModelClient(id)` is recommended for the selected, single model call. It records assistant and thinking output with that invocation and returns a `planner.StreamSummary`; the runtime publishes presentation after the planner selects the response.
+- `PlannerContext.PlannerModelClient(id)` is recommended for the designated,
+  single model call. It publishes validated assistant text and thinking as they
+  arrive and returns a `planner.StreamSummary`. The runtime saves the complete
+  response only after the planner accepts it.
 - `PlannerContext.ModelClient(id)` gives you direct access to a `model.Client`.
   Its `Stream` method returns a validated stream; pair that value with
   `planner.ConsumeStream` or drain it yourself when you need lower-level
   control.
 
-The runtime captures each model response before planner code sees it. When a
-planner probes through the opaque client, goa-ai matches returned model-facing tool
-calls to the exact response that produced them, publishes only that response's
-presentation, and replays only that transcript. Usage events still include all
-attempts. Every stream exposes closed typed chunks, then makes its canonical
-response available separately after clean EOF. Model gateways carry that
-response independently from planner-facing chunks, and terminal helpers return
-the selected provider message without exposing transcript identity. Future
-session turns retain provider-authored thinking without inferring ownership from
+The runtime captures each model response before planner code sees it. A
+planner's designated client is the only model call that publishes live text
+and thinking. When a planner probes through the opaque client, goa-ai matches
+returned model-facing tool calls to the exact response that produced them and
+replays only that transcript. Usage events still include all calls. Every
+stream exposes closed typed chunks, then makes its complete validated response
+available separately after clean EOF. Model gateways carry that response
+independently from planner-facing chunks, and terminal helpers return the
+selected provider message without exposing transcript identity. Future session
+turns retain provider-authored thinking without inferring ownership from
 visible text.
 Planners return a tool name and canonical payload. A request forwarded from a
 model call also carries the provider correlation ID; planner-authored requests

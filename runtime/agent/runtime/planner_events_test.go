@@ -107,7 +107,7 @@ func TestRuntimePlannerEventsMatchesCompleteFinalResponse(t *testing.T) {
 	require.Equal(t, model.ThinkingPart{Text: "reasoning", Signature: "sig", Final: true}, transcript[0].Parts[0])
 }
 
-func TestRuntimePlannerEventsRequestsReplacementForOutputLimitedFinalResponse(t *testing.T) {
+func TestRuntimePlannerEventsPreservesAcceptedOutputLimitedFinalResponse(t *testing.T) {
 	e := &modelInvocationJournal{}
 	invocation := mustBeginModelInvocation(t, e)
 	response := &model.Response{
@@ -125,15 +125,12 @@ func TestRuntimePlannerEventsRequestsReplacementForOutputLimitedFinalResponse(t 
 
 	transcript, err := e.exportModelInvocation(result)
 
-	require.Nil(t, transcript)
-	var outputErr *planner.OutputContractError
-	require.ErrorAs(t, err, &outputErr)
-	require.Equal(t, outputLimitCorrection, outputErr.Correction())
-	require.Same(t, result.FinalResponse.Message, outputErr.ModelMessage())
-	require.Equal(t, planner.OutputContractOriginModel, outputErr.Origin())
+	require.NoError(t, err)
+	require.Len(t, transcript, 1)
+	require.Equal(t, "partial", transcript[0].Parts[0].(model.TextPart).Text)
 }
 
-func TestRuntimePlannerEventsRejectsOutputLimitedToolBatch(t *testing.T) {
+func TestRuntimePlannerEventsPreservesAcceptedOutputLimitedToolBatch(t *testing.T) {
 	e := &modelInvocationJournal{}
 	invocation := mustBeginModelInvocation(t, e)
 	response := testModelResponse(nil, model.ToolCall{
@@ -153,11 +150,11 @@ func TestRuntimePlannerEventsRejectsOutputLimitedToolBatch(t *testing.T) {
 		}},
 	})
 
-	require.Nil(t, transcript)
-	var outputErr *planner.OutputContractError
-	require.ErrorAs(t, err, &outputErr)
-	require.Empty(t, outputErr.Correction())
-	require.Equal(t, planner.OutputContractOriginModel, outputErr.Origin())
+	require.NoError(t, err)
+	require.Len(t, transcript, 1)
+	part, ok := transcript[0].Parts[0].(model.ToolUsePart)
+	require.True(t, ok)
+	require.Equal(t, "call-1", part.ID)
 }
 
 func TestRuntimePlannerEventsRejectsFinalResponseThatDiscardsToolCalls(t *testing.T) {

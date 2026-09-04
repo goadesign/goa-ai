@@ -37,9 +37,7 @@ func RegisterAlphaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cf
 			Queue:               "alpha_alpha_worker_workflow",
 			StartToCloseTimeout: time.Duration(120000000000),
 			RetryPolicy: engine.RetryPolicy{
-				MaxAttempts:        3,
-				InitialInterval:    time.Duration(1000000000),
-				BackoffCoefficient: 2,
+				MaxAttempts: 1,
 			},
 		},
 		ResumeActivityName: "alpha.alpha_worker.resume",
@@ -47,9 +45,7 @@ func RegisterAlphaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cf
 			Queue:               "alpha_alpha_worker_workflow",
 			StartToCloseTimeout: time.Duration(120000000000),
 			RetryPolicy: engine.RetryPolicy{
-				MaxAttempts:        3,
-				InitialInterval:    time.Duration(1000000000),
-				BackoffCoefficient: 2,
+				MaxAttempts: 1,
 			},
 		},
 		ExecuteToolActivity: "alpha.alpha_worker.executetool",

@@ -12,7 +12,7 @@ import (
 )
 
 type (
-	// Subscriber receives persisted hook events and provisional model events,
+	// Subscriber receives persisted hook events and live model output events,
 	// applies one audience profile, and forwards allowed client events to a
 	// stream.Sink such as a WebSocket, SSE connection, or message bus.
 	//
@@ -21,7 +21,6 @@ type (
 	// the sink using its Send method.
 	//
 	// The following hook events are streamed to clients:
-	//   - AssistantMessage      → EventAssistantReply
 	//   - AssistantTurnCommitted → EventAssistantTurn
 	//   - PlannerNote           → EventPlannerThought
 	//   - PromptRendered        → EventPromptRendered
@@ -70,34 +69,31 @@ func NewSubscriberWithProfile(sink Sink, profile StreamProfile) (*Subscriber, er
 	}, nil
 }
 
-// HandleProvisionalEvent applies the configured audience profile to one
-// activity-owned model presentation event and sends it to the same sink used
-// for hook-derived events. Only assistant text, planner thinking, and their
-// shared lifecycle may enter this path.
-func (s *Subscriber) HandleProvisionalEvent(ctx context.Context, event Event) error {
+// HandleModelOutputEvent applies the configured audience profile to one live
+// model text or thinking event and sends it to the same sink used for
+// hook-derived events. The boolean reports whether the sink accepted the event.
+func (s *Subscriber) HandleModelOutputEvent(ctx context.Context, event Event) (bool, error) {
 	eventType := event.Type()
 	if eventType != EventAssistantReply &&
-		eventType != EventPlannerThought &&
-		eventType != EventModelPresentation {
-		return fmt.Errorf("unsupported provisional stream event %q", eventType)
+		eventType != EventPlannerThought {
+		return false, fmt.Errorf("unsupported live model output event %q", eventType)
 	}
 	if eventType == EventAssistantReply && !s.profile.Assistant {
-		return nil
+		return false, nil
 	}
 	if eventType == EventPlannerThought && !s.profile.Thoughts {
-		return nil
+		return false, nil
 	}
-	if eventType == EventModelPresentation && !s.profile.Assistant && !s.profile.Thoughts {
-		return nil
+	if err := s.sink.Send(ctx, event); err != nil {
+		return false, err
 	}
-	return s.sink.Send(ctx, event)
+	return true, nil
 }
 
 // HandleEvent implements the Subscriber interface by translating hook events
 // into stream events and forwarding them to the configured sink.
 //
 // Event translation:
-//   - AssistantMessage → EventAssistantReply
 //   - AssistantTurnCommitted → EventAssistantTurn
 //   - PlannerNote → EventPlannerThought
 //   - PromptRendered → EventPromptRendered
@@ -231,26 +227,14 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Base: newBaseFromHook(evt, EventToolStart, payload),
 			Data: payload,
 		})
-	case *hooks.AssistantMessageEvent:
-		if !s.profile.Assistant {
-			return nil
-		}
-		// Publish a typed payload object on the wire (no string-wrapping).
-		payload := AssistantReplyPayload{
-			Text: evt.Message,
-		}
-		return s.sink.Send(ctx, AssistantReply{
-			Base: newBaseFromHook(evt, EventAssistantReply, payload),
-			Data: payload,
-		})
 	case *hooks.AssistantTurnCommittedEvent:
 		if !s.profile.AssistantTurns {
 			return nil
 		}
-		if evt.Message == nil {
-			return fmt.Errorf("assistant_turn_committed missing message for run %s", evt.RunID())
+		if evt.ResponseID == "" || evt.Text == "" {
+			return fmt.Errorf("assistant_turn_committed missing response id or text for run %s", evt.RunID())
 		}
-		payload := AssistantTurnPayload{Message: evt.Message}
+		payload := AssistantTurnPayload{ResponseID: evt.ResponseID, Text: evt.Text}
 		return s.sink.Send(ctx, AssistantTurn{
 			Base: newBaseFromHook(evt, EventAssistantTurn, payload),
 			Data: payload,

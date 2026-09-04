@@ -52,7 +52,7 @@ func (s StreamSummary) FinalResponse() *FinalResponse {
 //   - Complete records assistant text, thinking blocks, and usage with the
 //     invocation selected by the planner result.
 //   - Stream drains the underlying model stream and returns the aggregated
-//     StreamSummary. The runtime publishes presentation after response selection.
+//     StreamSummary. Validated text and thinking are published as they arrive.
 //   - This interface intentionally does not expose model.Streamer so callers
 //     cannot accidentally combine automatic event emission with ConsumeStream.
 type PlannerModelClient interface {
@@ -62,8 +62,8 @@ type PlannerModelClient interface {
 
 // ConsumeStream drains one model-validated stream and returns its aggregate so
 // planners can produce a final response or schedule tool calls. The runtime
-// journal owns presentation and usage events. A terminal stream failure returns
-// an empty summary so preview text or calls cannot become a planner decision.
+// journal owns live model output and usage events. A terminal stream failure
+// returns an empty summary so incomplete calls cannot become a planner decision.
 //
 // Usage deltas emitted as chunks are the canonical streaming signal. When a
 // stream emits none, the terminal canonical response supplies final usage.

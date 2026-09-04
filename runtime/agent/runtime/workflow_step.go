@@ -892,6 +892,7 @@ func (l *workflowLoop) resumePlanner(
 	if resOutput == nil {
 		return nil, errors.New("plan activity returned nil output on resume")
 	}
+	l.base.Messages = appendPublishedAssistantText(l.base.Messages, resOutput)
 	l.st.AggUsage, err = addTokenUsage(l.st.AggUsage, resOutput.Usage)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate run usage: %w", err)
@@ -899,6 +900,7 @@ func (l *workflowLoop) resumePlanner(
 	if resOutput.OutputContractFailure != nil {
 		l.st.Result = nil
 		l.st.Transcript = nil
+		l.st.ResponseID = ""
 		l.st.ResponseCommitted = false
 		l.st.PendingRecovery = pendingModelOutputRecovery{
 			correction: resOutput.OutputContractFailure.Correction,
@@ -908,6 +910,7 @@ func (l *workflowLoop) resumePlanner(
 	if resOutput.ModelInvocationRecovery != nil {
 		l.st.Result = nil
 		l.st.Transcript = nil
+		l.st.ResponseID = ""
 		l.st.ResponseCommitted = false
 		l.st.PendingRecovery = pendingModelInvocationRecovery{
 			recovery: *resOutput.ModelInvocationRecovery,
@@ -919,6 +922,7 @@ func (l *workflowLoop) resumePlanner(
 	}
 	l.st.Result = resOutput.Result
 	l.st.Transcript = resOutput.Transcript
+	l.st.ResponseID = resOutput.PublicationBatchID
 	l.st.ResponseCommitted = false
 	l.st.PendingRecovery = nil
 	if len(pendingRecovery) > 0 {

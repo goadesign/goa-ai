@@ -30,6 +30,12 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
+type (
+	planningFailureError struct {
+		failure run.Failure
+	}
+)
+
 const (
 	// FinalizationReasonLabel records why Goa-AI is executing a terminal tool
 	// call during finalization. The runtime writes the exact planner termination
@@ -213,6 +219,7 @@ func (r *Runtime) finalizeFromHistory(
 	if output == nil {
 		return nil, errors.New(reasonText)
 	}
+	base.Messages = appendPublishedAssistantText(base.Messages, output)
 	aggUsage, err = addTokenUsage(aggUsage, output.Usage)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate finalization usage: %w", err)
@@ -294,6 +301,7 @@ func (r *Runtime) finalizeFromHistory(
 			base,
 			output.Result,
 			output.Transcript,
+			output.PublicationBatchID,
 			allToolResults,
 			allToolOutputs,
 			aggUsage,
@@ -313,6 +321,7 @@ func (r *Runtime) finalizeFromHistory(
 		input.AgentID,
 		base,
 		turnID,
+		output.PublicationBatchID,
 		output.Result,
 		output.Transcript,
 	); err != nil {
@@ -387,6 +396,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	base *planner.PlanInput,
 	result *PlanResult,
 	transcript []*model.Message,
+	responseID string,
 	allToolResults []*planner.ToolResult,
 	allToolOutputs []*planner.ToolOutput,
 	aggUsage model.TokenUsage,
@@ -417,7 +427,14 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	if toolOpts.StartToCloseTimeout == 0 {
 		toolOpts.StartToCloseTimeout = defaultExecuteToolActivityTimeout
 	}
-	st := newRunLoopState(result, transcript, aggUsage, caps, nextAttempt)
+	st := &runLoopState{
+		Caps:        caps,
+		NextAttempt: nextAttempt,
+		AggUsage:    aggUsage,
+		Result:      result,
+		Transcript:  transcript,
+		ResponseID:  responseID,
+	}
 	st.ToolEvents = cloneToolResults(allToolResults)
 	st.ToolOutputs = append([]*planner.ToolOutput(nil), allToolOutputs...)
 	loop := newWorkflowLoop(
@@ -453,7 +470,22 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		return nil, err
 	}
 	stampFinalizationReason(program.immediate, reason)
-	if err := loop.commitSelectedModelResponse(program.result); err != nil {
+	if responseID == "" {
+		messages, err := plannerAuthoredResponseMessages(program.result)
+		if err != nil {
+			return nil, err
+		}
+		if err := r.appendTranscriptMessages(
+			wfCtx.Context(),
+			input.AgentID,
+			&execBase,
+			turnID,
+			messages,
+		); err != nil {
+			return nil, err
+		}
+		st.ResponseCommitted = true
+	} else if err := loop.commitSelectedModelResponse(program.result); err != nil {
 		return nil, err
 	}
 	batch := stepBatch{program: program}
@@ -724,20 +756,36 @@ func (r *Runtime) runPlanActivity(
 	if out == nil {
 		return nil, fmt.Errorf("runPlanActivity received nil PlanActivityOutput")
 	}
+	if out.PublishedAssistantText != "" &&
+		out.OutputContractFailure == nil &&
+		out.ModelInvocationRecovery == nil &&
+		out.PlanningFailure == nil {
+		return nil, errors.New("runPlanActivity received published assistant text without a non-success outcome")
+	}
 	switch {
 	case out.OutputContractFailure != nil:
-		if out.Result != nil || out.ModelInvocationRecovery != nil {
+		if out.Result != nil || out.ModelInvocationRecovery != nil || out.PlanningFailure != nil {
 			return nil, errors.New("runPlanActivity received OutputContractFailure with another result variant")
 		}
 		if err := validateOutputContractFailure(out.OutputContractFailure); err != nil {
 			return out, planner.NewOutputContractError(err)
 		}
 	case out.ModelInvocationRecovery != nil:
-		if out.Result != nil {
+		if out.Result != nil || out.PlanningFailure != nil {
 			return nil, errors.New("runPlanActivity received both PlanResult and ModelInvocationRecovery")
 		}
 		if err := validateModelInvocationRecovery(out.ModelInvocationRecovery); err != nil {
 			return nil, fmt.Errorf("runPlanActivity received invalid model-invocation recovery: %w", err)
+		}
+	case out.PlanningFailure != nil:
+		if out.Result != nil {
+			return nil, errors.New("runPlanActivity received both PlanResult and PlanningFailure")
+		}
+		if out.PublishedAssistantText == "" {
+			return nil, errors.New("runPlanActivity received PlanningFailure without published assistant text")
+		}
+		if err := validatePlanningFailure(out.PlanningFailure); err != nil {
+			return nil, err
 		}
 	case out.Result == nil:
 		return nil, fmt.Errorf("runPlanActivity received nil PlanResult")
@@ -759,6 +807,20 @@ func (r *Runtime) runPlanActivity(
 	if err := publishPlannerPublicationBatch(wfCtx, batch); err != nil {
 		return nil, err
 	}
+	if out.PublishedAssistantText != "" {
+		message := newTextAgentMessage(model.ConversationRoleAssistant, out.PublishedAssistantText)
+		if err := r.publishAssistantTranscriptDelta(
+			wfCtx.Context(),
+			input.RunID,
+			input.AgentID,
+			input.RunContext.SessionID,
+			input.RunContext.TurnID,
+			out.PublicationBatchID,
+			[]*model.Message{message},
+		); err != nil {
+			return nil, fmt.Errorf("commit published assistant text: %w", err)
+		}
+	}
 	if out.OutputContractFailure != nil {
 		if out.OutputContractFailure.Correction != "" {
 			return out, nil
@@ -767,6 +829,9 @@ func (r *Runtime) runPlanActivity(
 	}
 	if out.ModelInvocationRecovery != nil {
 		return out, nil
+	}
+	if out.PlanningFailure != nil {
+		return out, &planningFailureError{failure: *out.PlanningFailure}
 	}
 	r.logger.Info(wfCtx.Context(),
 		"runPlanActivity received PlanResult",
@@ -780,6 +845,31 @@ func (r *Runtime) runPlanActivity(
 		out.Result.Await != nil,
 	)
 	return out, nil
+}
+
+// RunFailure returns the standardized failure that crossed the planner
+// activity boundary after text was published.
+func (e *planningFailureError) RunFailure() *run.Failure {
+	failure := e.failure
+	return &failure
+}
+
+func (e *planningFailureError) Error() string {
+	return e.failure.DebugMessage
+}
+
+func validatePlanningFailure(failure *run.Failure) error {
+	if failure == nil || failure.Message == "" || failure.DebugMessage == "" || failure.Kind == "" || failure.HTTPStatus < 0 {
+		return errors.New("runPlanActivity received invalid PlanningFailure")
+	}
+	return nil
+}
+
+func appendPublishedAssistantText(messages []*model.Message, output *PlanActivityOutput) []*model.Message {
+	if output.PublishedAssistantText == "" {
+		return messages
+	}
+	return append(messages, newTextAgentMessage(model.ConversationRoleAssistant, output.PublishedAssistantText))
 }
 
 // preparePlannerPublicationBatch freezes every record produced by one planner

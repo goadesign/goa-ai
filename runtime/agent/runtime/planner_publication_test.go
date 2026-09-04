@@ -2,7 +2,7 @@ package runtime
 
 // planner_publication_test.go fixes the workflow-history bound for durable
 // planner output. Any number of accepted ordered records must use one record
-// activity; model text and thinking take the separate provisional stream path.
+// activity; live model text and thinking use a separate append-only stream.
 
 import (
 	"context"

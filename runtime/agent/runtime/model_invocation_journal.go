@@ -2,14 +2,18 @@ package runtime
 
 // model_invocation_journal.go validates and correlates every model response
 // made during one planner activity. Text and thinking from the designated
-// planner call stream immediately as provisional UI updates; only the complete
-// response that exactly matches the planner result becomes durable transcript.
+// planner call stream immediately. Emitted text is append-only. A selected
+// response becomes durable as its complete provider transcript. Text emitted
+// by a rejected response or ordinary failure reported before activity
+// cancellation becomes durable as a plain assistant message before recovery or
+// failure continues.
 
 import (
 	"context"
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 
 	"goa.design/goa-ai/runtime/agent/internal/modelcall"
@@ -61,27 +65,29 @@ type (
 	// modelInvocationJournal keeps every model call made during one planner
 	// activity separate from user-visible event publication.
 	modelInvocationJournal struct {
-		runtime               *Runtime
-		runID                 string
-		sessionID             string
-		presentationID        string
-		mu                    sync.Mutex
-		invocations           map[modelInvocationID]*modelInvocationCandidate
-		order                 []modelInvocationID
-		designated            modelInvocationID
-		selected              modelInvocationID
-		recovery              modelInvocationID
-		usage                 model.TokenUsage
-		outputErr             error
-		presentationStarted   bool
-		presentationFinalized bool
-		sealed                bool
-		sealedErr             error
-		sealDone              chan struct{}
+		runtime       *Runtime
+		runID         string
+		sessionID     string
+		responseID    string
+		mu            sync.Mutex
+		publishMu     sync.Mutex
+		invocations   map[modelInvocationID]*modelInvocationCandidate
+		order         []modelInvocationID
+		designated    modelInvocationID
+		selected      modelInvocationID
+		recovery      modelInvocationID
+		usage         model.TokenUsage
+		outputErr     error
+		publishedText strings.Builder
+		sealed        bool
+		sealedErr     error
+		sealDone      chan struct{}
 	}
 )
 
-const outputLimitCorrection = "Replace the incomplete answer with a complete, concise answer using the existing evidence. Include the most important conclusions and omit repetitive detail."
+// maxPublishedAssistantTextBytes leaves room for worst-case JSON escaping and
+// rejection metadata inside the one-megabyte planner activity output contract.
+const maxPublishedAssistantTextBytes = maxPlanActivityOutputBytes / 8
 
 // beginModelInvocation creates a place to save one model response and the
 // runtime-owned controls that stop and join it when planning ends.
@@ -379,16 +385,35 @@ func (j *modelInvocationJournal) recordModelChunk(
 		j.mu.Unlock()
 		return nil
 	}
-	events := j.presentationEventsLocked(chunk)
+	events := j.liveModelOutputEventsLocked(chunk)
 	if len(events) == 0 {
 		j.mu.Unlock()
 		return nil
 	}
 	j.mu.Unlock()
 
+	j.publishMu.Lock()
+	defer j.publishMu.Unlock()
 	for _, event := range events {
-		if err := j.publishPresentation(ctx, event); err != nil {
+		if reply, ok := event.(stream.AssistantReply); ok {
+			j.mu.Lock()
+			nextSize := j.publishedText.Len() + len(reply.Data.Text)
+			j.mu.Unlock()
+			if nextSize > maxPublishedAssistantTextBytes {
+				return outputcontract.NewWithOrigin(
+					fmt.Errorf("published assistant text exceeds %d bytes", maxPublishedAssistantTextBytes),
+					planner.OutputContractOriginModel,
+				)
+			}
+		}
+		published, err := j.publishLiveModelOutput(ctx, event)
+		if err != nil {
 			return err
+		}
+		if reply, ok := event.(stream.AssistantReply); published && ok {
+			j.mu.Lock()
+			j.publishedText.WriteString(reply.Data.Text)
+			j.mu.Unlock()
 		}
 	}
 	return nil
@@ -526,17 +551,6 @@ func (j *modelInvocationJournal) exportModelInvocation(
 	if !j.designated.IsZero() && selectedID != j.designated {
 		return nil, errors.New("planner result selected a probe after using PlannerModelClient")
 	}
-	if selected.response.OutputLimited {
-		cause := errors.New("model response reached its generated-output limit")
-		if result != nil && result.FinalResponse != nil {
-			return nil, planner.NewRecoverableModelOutputError(
-				cause,
-				result.FinalResponse,
-				outputLimitCorrection,
-			)
-		}
-		return nil, outputcontract.NewWithOrigin(cause, planner.OutputContractOriginModel)
-	}
 	j.selected = selectedID
 	owner = selectedOwner
 	hasOwner = selectedHasOwner
@@ -583,52 +597,6 @@ func (j *modelInvocationJournal) selectedCompiledModelCalls(result *planner.Plan
 	return compiledModelCalls(j.invocations[j.selected], result)
 }
 
-// startPresentation replaces provisional output left by an earlier planner
-// activity execution before this execution can perform model work. The stream
-// publication must succeed before the journal records that the lifecycle began.
-func (j *modelInvocationJournal) startPresentation(ctx context.Context) error {
-	payload := stream.ModelPresentationPayload{
-		PresentationID: j.presentationID,
-		State:          stream.ModelPresentationStarted,
-	}
-	if err := j.publishPresentation(ctx, stream.ModelPresentation{
-		Base: stream.NewBase(stream.EventModelPresentation, j.runID, j.sessionID, payload),
-		Data: payload,
-	}); err != nil {
-		return err
-	}
-	j.mu.Lock()
-	j.presentationStarted = true
-	j.mu.Unlock()
-	return nil
-}
-
-// discardPresentations removes provisional output when the planner activity
-// cannot return a canonical response. Successful output is finalized later by
-// the workflow's durable assistant-turn event, never by this activity.
-func (j *modelInvocationJournal) discardPresentations(ctx context.Context) error {
-	j.mu.Lock()
-	discard := j.presentationStarted && !j.presentationFinalized
-	j.mu.Unlock()
-	if !discard {
-		return nil
-	}
-	payload := stream.ModelPresentationPayload{
-		PresentationID: j.presentationID,
-		State:          stream.ModelPresentationDiscarded,
-	}
-	if err := j.publishPresentation(ctx, stream.ModelPresentation{
-		Base: stream.NewBase(stream.EventModelPresentation, j.runID, j.sessionID, payload),
-		Data: payload,
-	}); err != nil {
-		return err
-	}
-	j.mu.Lock()
-	j.presentationFinalized = true
-	j.mu.Unlock()
-	return nil
-}
-
 // publishUsage copies every provider usage report into the supplied activity
 // event collector. Callers may build and discard an accepted output before
 // rebuilding a bounded rejection, so this method does not retain publication
@@ -648,6 +616,12 @@ func (j *modelInvocationJournal) publishUsage(ctx context.Context, events planne
 	}
 }
 
+func (j *modelInvocationJournal) publishedAssistantText() string {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.publishedText.String()
+}
+
 // attributeUsage applies the logical model class owned by the immutable
 // request. Missing provider model identity remains empty.
 func (c *modelInvocationCandidate) attributeUsage(usage model.TokenUsage) model.TokenUsage {
@@ -665,10 +639,10 @@ func hasTokenCounts(usage model.TokenUsage) bool {
 		usage.CacheWriteTokens != 0
 }
 
-// presentationEventsLocked converts one validated provider chunk into the
-// provisional client events that are independently useful. The caller holds
-// j.mu while it reads the activity execution's presentation identifier.
-func (j *modelInvocationJournal) presentationEventsLocked(chunk model.Chunk) []stream.Event {
+// liveModelOutputEventsLocked converts one provider chunk into the client
+// events that are independently useful. The caller holds j.mu while it reads
+// the planner activity's response identifier.
+func (j *modelInvocationJournal) liveModelOutputEventsLocked(chunk model.Chunk) []stream.Event {
 	switch actual := chunk.(type) {
 	case model.TextChunk:
 		var events []stream.Event
@@ -684,8 +658,8 @@ func (j *modelInvocationJournal) presentationEventsLocked(chunk model.Chunk) []s
 				continue
 			}
 			payload := stream.AssistantReplyPayload{
-				PresentationID: j.presentationID,
-				Text:           text,
+				ResponseID: j.responseID,
+				Text:       text,
 			}
 			events = append(events, stream.AssistantReply{
 				Base: stream.NewBase(stream.EventAssistantReply, j.runID, j.sessionID, payload),
@@ -701,8 +675,8 @@ func (j *modelInvocationJournal) presentationEventsLocked(chunk model.Chunk) []s
 				continue
 			}
 			payload := stream.PlannerThoughtPayload{
-				PresentationID: j.presentationID,
-				Note:           value.Text,
+				ResponseID: j.responseID,
+				Note:       value.Text,
 			}
 			events = append(events, stream.PlannerThought{
 				Base: stream.NewBase(stream.EventPlannerThought, j.runID, j.sessionID, payload),
@@ -719,13 +693,14 @@ func (j *modelInvocationJournal) presentationEventsLocked(chunk model.Chunk) []s
 	return nil
 }
 
-// publishPresentation sends one provisional event directly to the session
-// stream. It deliberately bypasses PlannerEvents, the run log, and the hook bus.
-func (j *modelInvocationJournal) publishPresentation(ctx context.Context, event stream.Event) error {
+// publishLiveModelOutput sends one text or thinking event directly to the
+// session stream. It deliberately bypasses PlannerEvents, the run log, and the
+// hook bus.
+func (j *modelInvocationJournal) publishLiveModelOutput(ctx context.Context, event stream.Event) (bool, error) {
 	if j.runtime == nil {
-		return nil
+		return false, nil
 	}
-	return j.runtime.publishModelPresentation(ctx, j.sessionID, event)
+	return j.runtime.publishModelOutput(ctx, j.sessionID, event)
 }
 
 // planResultModelToolCalls returns every provider-native tool call that the

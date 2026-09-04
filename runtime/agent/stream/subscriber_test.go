@@ -29,18 +29,14 @@ func (m *mockSink) Send(ctx context.Context, evt Event) error {
 
 func (m *mockSink) Close(ctx context.Context) error { return nil }
 
-func TestStreamSubscriber(t *testing.T) {
+func TestStreamSubscriber_DoesNotStreamCompletedAssistantMessageAsLiveOutput(t *testing.T) {
 	sink := &mockSink{}
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
 	evt := hooks.NewAssistantMessageEvent("r1", agent.Ident("agent1"), "session-1", "hello", nil)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
-	require.Len(t, sink.events, 1)
-	require.Equal(t, EventAssistantReply, sink.events[0].Type())
-	v, ok := sink.events[0].(AssistantReply)
-	require.True(t, ok)
-	require.Equal(t, "hello", v.Data.Text)
+	require.Empty(t, sink.events)
 }
 
 func TestStreamSubscriber_AssistantTurnCommitted(t *testing.T) {
@@ -48,18 +44,20 @@ func TestStreamSubscriber_AssistantTurnCommitted(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewAssistantTurnCommittedEvent("r1", agent.Ident("agent1"), "session-1", &model.Message{
-		Role:  model.ConversationRoleAssistant,
-		Parts: []model.Part{model.TextPart{Text: "hello"}},
-	})
+	evt := hooks.NewAssistantTurnCommittedEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		"00000000-0000-4000-8000-000000000001",
+		"hello",
+	)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	require.Equal(t, EventAssistantTurn, sink.events[0].Type())
 	v, ok := sink.events[0].(AssistantTurn)
 	require.True(t, ok)
-	require.NotNil(t, v.Data.Message)
-	require.Equal(t, model.ConversationRoleAssistant, v.Data.Message.Role)
-	require.Equal(t, []model.Part{model.TextPart{Text: "hello"}}, v.Data.Message.Parts)
+	require.Equal(t, "00000000-0000-4000-8000-000000000001", v.Data.ResponseID)
+	require.Equal(t, "hello", v.Data.Text)
 }
 
 func TestStreamSubscriber_PreservesHookEventKey(t *testing.T) {
@@ -246,7 +244,7 @@ func TestStreamSubscriber_PromptRenderedRespectsProfileToggle(t *testing.T) {
 	require.Empty(t, sink.events)
 }
 
-func TestStreamSubscriberProvisionalEventsRespectProfile(t *testing.T) {
+func TestStreamSubscriberModelOutputEventsRespectProfile(t *testing.T) {
 	profile := DefaultProfile()
 	profile.Assistant = false
 	profile.Thoughts = false
@@ -254,15 +252,7 @@ func TestStreamSubscriberProvisionalEventsRespectProfile(t *testing.T) {
 	subscriber, err := NewSubscriberWithProfile(sink, profile)
 	require.NoError(t, err)
 
-	startedPayload := ModelPresentationPayload{
-		PresentationID: "presentation-1",
-		State:          ModelPresentationStarted,
-	}
 	events := []Event{
-		ModelPresentation{
-			Base: NewBase(EventModelPresentation, "run-1", "session-1", startedPayload),
-			Data: startedPayload,
-		},
 		AssistantReply{
 			Base: NewBase(EventAssistantReply, "run-1", "session-1", AssistantReplyPayload{}),
 		},
@@ -271,7 +261,9 @@ func TestStreamSubscriberProvisionalEventsRespectProfile(t *testing.T) {
 		},
 	}
 	for _, event := range events {
-		require.NoError(t, subscriber.HandleProvisionalEvent(t.Context(), event))
+		published, err := subscriber.HandleModelOutputEvent(t.Context(), event)
+		require.NoError(t, err)
+		require.False(t, published)
 	}
 	require.Empty(t, sink.events)
 }
