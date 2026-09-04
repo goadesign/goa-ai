@@ -521,7 +521,7 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg Agen
 	}
 	if batch.resumePlannerAfterPending {
 		recovery, _ := toolRecovery(state.PendingRecovery)
-		out, err := loop.resumePlanner(recovery, false, "", nil)
+		out, err := loop.resumePlanner(recovery, false, nil, nil)
 		if err != nil || out != nil {
 			return out, err
 		}

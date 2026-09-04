@@ -625,7 +625,7 @@ func TestRunLoopRecoversRejectedModelAnswer(t *testing.T) {
 				require.True(t, ok)
 				response, err := client.Complete(ctx, &model.Request{Model: "test"})
 				require.NoError(t, err)
-				return nil, planner.NewRecoverableModelOutputError(
+				return nil, planner.NewRecoverableModelAnswerError(
 					errors.New("answer used too many references"),
 					&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
 					"Use at most eight evidence references.",
@@ -661,6 +661,74 @@ func TestRunLoopRecoversRejectedModelAnswer(t *testing.T) {
 	assert.Len(t, out.ToolEvents, 1)
 }
 
+func TestRunLoopRecoversRejectedModelToolCallsWithExecutableCatalog(t *testing.T) {
+	search := newAnyJSONSpec("catalog.search")
+	resumes := 0
+	h := newRecoveryHarness(
+		t,
+		"model-tool-calls-output",
+		[]tools.ToolSpec{search},
+		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			return successfulToolResult(call), nil
+		},
+		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			resumes++
+			switch resumes {
+			case 1:
+				client, ok := input.Agent.ModelClient("test")
+				require.True(t, ok)
+				response, err := client.Complete(ctx, &model.Request{Model: "test"})
+				require.NoError(t, err)
+				return nil, planner.NewRecoverableModelToolCallsError(
+					errors.New("query is not in the advertised vocabulary"),
+					&response.Content[len(response.Content)-1],
+					"Use an exact advertised query.",
+				)
+			case 2:
+				require.False(t, input.SynthesisOnly)
+				require.Equal(t, []tools.Ident{search.Name}, toolDefinitionNames(input.Agent.AdvertisedToolDefinitions()))
+				require.Len(t, input.Reminders, 1)
+				assert.Contains(t, input.Reminders[0].Text, "Use an exact advertised query.")
+				assert.Contains(t, input.Reminders[0].Text, "Produce replacement tool calls")
+				return &planner.PlanResult{
+					ToolCalls: []planner.ToolRequest{{
+						Name:    search.Name,
+						Payload: rawjson.Message(`{"query":"advertised"}`),
+					}},
+					SynthesizeAfterTools: true,
+				}, nil
+			case 3:
+				require.True(t, input.SynthesisOnly)
+				return finalPlannerResult("corrected tool work complete"), nil
+			default:
+				require.FailNow(t, "unexpected planner resume")
+				return nil, nil
+			}
+		},
+	)
+	h.runtime.models["test"] = newRecoveryTestModel(t)
+
+	out, err := h.run(&PlanResult{
+		ToolCalls: []ToolCall{{
+			ToolCallID: "search-call",
+			Name:       search.Name,
+			Payload:    rawjson.Message(`{"query":"initial"}`),
+		}},
+		SynthesizeAfterTools: true,
+	}, policy.CapsState{
+		MaxToolCalls:           3,
+		RemainingToolCalls:     3,
+		MaxRecoveryTurns:       2,
+		RemainingRecoveryTurns: 2,
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, out)
+	assert.Equal(t, "corrected tool work complete", out.Final.Text())
+	assert.Equal(t, 3, resumes)
+	assert.Len(t, out.ToolEvents, 2)
+}
+
 func TestRunLoopSharesRecoveryBudgetBetweenToolAndModelRejections(t *testing.T) {
 	search := newAnyJSONSpec("catalog.search")
 	resumes := 0
@@ -684,7 +752,7 @@ func TestRunLoopSharesRecoveryBudgetBetweenToolAndModelRejections(t *testing.T) 
 				require.True(t, ok)
 				response, err := client.Complete(ctx, &model.Request{Model: "test"})
 				require.NoError(t, err)
-				return nil, planner.NewRecoverableModelOutputError(
+				return nil, planner.NewRecoverableModelAnswerError(
 					errors.New("replacement answer is invalid"),
 					&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
 					"Replace the invalid final answer.",
@@ -737,7 +805,7 @@ func TestWorkflowRecoversInitialRejectedModelAnswer(t *testing.T) {
 				require.True(t, ok)
 				response, err := client.Complete(ctx, &model.Request{Model: "test"})
 				require.NoError(t, err)
-				return nil, planner.NewRecoverableModelOutputError(
+				return nil, planner.NewRecoverableModelAnswerError(
 					errors.New("answer used too many references"),
 					&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
 					"Use at most eight evidence references.",
@@ -808,7 +876,7 @@ func TestRunLoopStopsAfterConfiguredModelOutputRecoveryTurns(t *testing.T) {
 			require.True(t, ok)
 			response, err := client.Complete(ctx, &model.Request{Model: "test"})
 			require.NoError(t, err)
-			return nil, planner.NewRecoverableModelOutputError(
+			return nil, planner.NewRecoverableModelAnswerError(
 				errors.New("answer remains invalid"),
 				&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
 				"Replace the invalid final answer.",

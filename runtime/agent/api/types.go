@@ -416,9 +416,9 @@ type (
 		RecoveryToolCallIDs []string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// ModelOutputRecovery requests replacement of one rejected planner output.
-		// Outside finalization its presence makes this a synthesis-only turn. During
-		// finalization the existing final response or terminal-tool contract remains
-		// in force while the planner replaces the rejected output.
+		// Rejected answers become synthesis-only turns; rejected planned tool calls
+		// retain the normal executable catalog. During finalization, the existing
+		// final response or terminal-tool contract remains in force.
 		ModelOutputRecovery *ModelOutputRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// ModelInvocationRecovery requests replacement of one pre-canonical tool
@@ -438,11 +438,15 @@ type (
 	}
 
 	// ModelOutputRecovery contains bounded guidance for replacing one rejected
-	// planner output. PlanResume derives synthesis-only behavior from this value
-	// unless Finalize preserves a stricter finalization contract.
+	// planner output. Kind states whether PlanResume must advertise ordinary
+	// tools or require a replacement answer without them.
 	ModelOutputRecovery struct {
+		// Kind identifies whether the model must replace a final answer or planned
+		// tool calls.
+		Kind planner.ModelOutputRecoveryKind
+
 		// Correction tells the planner which output contract the replacement
-		// answer must satisfy.
+		// response must satisfy.
 		Correction string
 	}
 
@@ -646,9 +650,9 @@ type (
 		// ModelResponseSHA256.
 		ModelResponseSize int64
 
-		// Correction contains bounded guidance for replacing rejected model
-		// output. Empty means the rejection is terminal.
-		Correction string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+		// ModelOutputRecovery identifies the rejected response kind and contains
+		// bounded replacement guidance. Nil means the rejection is terminal.
+		ModelOutputRecovery *ModelOutputRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 	}
 
 	// RecordActivityInput is the canonical workflow-to-activity envelope for

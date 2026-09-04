@@ -18,9 +18,13 @@ type (
 	Error struct {
 		cause      error
 		origin     Origin
+		recovery   RecoveryKind
 		correction string
 		message    *model.Message
 	}
+
+	// RecoveryKind identifies the planner response the model must replace.
+	RecoveryKind string
 )
 
 const (
@@ -36,6 +40,13 @@ const (
 
 	// OriginTool identifies a rejected tool execution result.
 	OriginTool Origin = "tool"
+
+	// RecoveryAnswer replaces a rejected final answer without ordinary tools.
+	RecoveryAnswer RecoveryKind = "answer"
+
+	// RecoveryToolCalls replaces rejected planned tool calls with the current
+	// executable tool catalog.
+	RecoveryToolCalls RecoveryKind = "tool_calls"
 )
 
 // NewWithOrigin records why one known output boundary rejected a completed
@@ -50,9 +61,9 @@ func NewWithOrigin(cause error, origin Origin) *Error {
 	return &Error{cause: cause, origin: origin}
 }
 
-// NewRecoverableModelOutput records a completed model answer that the planner
+// NewRecoverableModelOutput records completed model output that the planner
 // rejected and the model can replace using the supplied guidance.
-func NewRecoverableModelOutput(cause error, message *model.Message, correction string) *Error {
+func NewRecoverableModelOutput(cause error, message *model.Message, correction string, recovery RecoveryKind) *Error {
 	if cause == nil {
 		panic("outputcontract: error requires a cause")
 	}
@@ -65,9 +76,13 @@ func NewRecoverableModelOutput(cause error, message *model.Message, correction s
 	if len(correction) > MaxCorrectionBytes {
 		panic("outputcontract: correction guidance exceeds workflow boundary limit")
 	}
+	if recovery != RecoveryAnswer && recovery != RecoveryToolCalls {
+		panic("outputcontract: recoverable model output requires a valid recovery kind")
+	}
 	return &Error{
 		cause:      cause,
 		origin:     OriginModel,
+		recovery:   recovery,
 		correction: correction,
 		message:    message,
 	}
@@ -89,7 +104,13 @@ func (e *Error) Origin() Origin {
 	return e.origin
 }
 
-// Correction returns bounded guidance for replacing a rejected model answer.
+// RecoveryKind identifies whether the model must replace a final answer or
+// planned tool calls. Empty means the rejection is terminal.
+func (e *Error) RecoveryKind() RecoveryKind {
+	return e.recovery
+}
+
+// Correction returns bounded guidance for replacing rejected model output.
 // Empty means the rejection is terminal.
 func (e *Error) Correction() string {
 	return e.correction

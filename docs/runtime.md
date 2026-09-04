@@ -840,11 +840,22 @@ recent tool results. Both return a `PlanResult` containing tool calls, a final
 response, or an await request.
 
 When the planner receives a reply but rejects it because the reply does not
-follow the required rules, return
-`planner.NewOutputContractError(violation)`. Temporal will not ask for the same
-reply again. Do not use `OutputContractError` for model-provider failures,
-timeouts, canceled work, or network errors; those keep their existing retry
-behavior.
+follow the required rules, it chooses one of three explicit outcomes:
+
+- `planner.NewOutputContractError(violation)` ends planning without another
+  model turn.
+- `planner.NewRecoverableModelAnswerError(violation, answer, correction)` uses
+  one recovery turn to replace the exact rejected final answer. Ordinary tools
+  are not advertised on that turn.
+- `planner.NewRecoverableModelToolCallsError(violation, response, correction)`
+  uses one recovery turn to replace tool calls from the exact rejected response.
+  The current executable tool catalog remains advertised.
+
+Both recoverable constructors require the exact message returned by the model
+client and bounded correction guidance. The workflow records its fingerprint
+and usage but does not put the rejected body in durable recovery state. Do not
+use these errors for model-provider failures, timeouts, canceled work, or
+network errors; those keep their existing retry behavior.
 
 ### PlanInput and PlanResumeInput
 
@@ -931,16 +942,24 @@ Workflow step boundary:
   worker that may process that history must run a runtime version that
   understands this result. Do not mix older and newer workers on those
   histories, and do not roll them back to an older worker,
-- a planner may return `NewRecoverableModelOutputError` when it rejects a
-  completed model answer and can state how the model should replace it; the
-  workflow records the rejection and token usage, then schedules the normal
+- a planner may return `NewRecoverableModelAnswerError` when it rejects a
+  completed final answer and can state how the model should replace it; the
+  workflow records the rejection and token usage, then schedules a
   synthesis-only resume activity with that guidance,
+- a planner may return `NewRecoverableModelToolCallsError` when it rejects
+  completed planned tool calls and can state how the model should replace
+  them; the workflow records the same evidence, then schedules a normal resume
+  with the current executable tool catalog,
+- model-output recovery histories now require the explicit `answer` or
+  `tool_calls` kind. Histories created by an older runtime while such a recovery
+  was pending cannot resume on this version. New histories require matching
+  workers and cannot be rolled back to an older runtime,
 - `MaxRecoveryTurns` counts replacement planner activities scheduled after
   rejected tool output, a rejected model invocation, or a rejected completed
-  answer; successful budgeted tool work resets this consecutive count; agents
-  that omit the setting receive three turns; the terminal finalization activity
-  that explains or records exhaustion is not a replacement attempt and does
-  not consume this budget,
+  model response; successful budgeted tool work does not reset this count;
+  agents that omit the setting receive three turns; the terminal finalization
+  activity that explains or records exhaustion is not a replacement attempt
+  and does not consume this budget,
 - when the run omitted `LimitTerminalPlans`, or a tool failure requires
   finalization, `PlanResumeInput.Finalize` is non-nil and the planner may close
   through terminal bookkeeping tools instead of prose; the runtime admits only

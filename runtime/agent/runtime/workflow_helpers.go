@@ -316,7 +316,7 @@ func (r *Runtime) buildNextResumeRequest(
 	toolOutputs []*planner.ToolOutput,
 	recovery []*planner.ToolOutput,
 	synthesisOnly bool,
-	outputCorrection string,
+	outputRecovery *ModelOutputRecovery,
 	invocationRecovery *ModelInvocationRecovery,
 	nextAttempt *int,
 ) (PlanActivityInput, error) {
@@ -344,8 +344,9 @@ func (r *Runtime) buildNextResumeRequest(
 		RecoveryToolCallIDs: recoveryToolCallIDs(recovery),
 		SynthesisOnly:       synthesisOnly,
 	}
-	if outputCorrection != "" {
-		out.ModelOutputRecovery = &ModelOutputRecovery{Correction: outputCorrection}
+	if outputRecovery != nil {
+		recoveryCopy := *outputRecovery
+		out.ModelOutputRecovery = &recoveryCopy
 	}
 	if invocationRecovery != nil {
 		recoveryCopy := *invocationRecovery

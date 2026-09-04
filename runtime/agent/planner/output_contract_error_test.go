@@ -31,15 +31,30 @@ func TestPrivateOutputContractConstructorUsesExplicitOrigin(t *testing.T) {
 	require.Equal(t, OutputContractOriginModel, err.Origin())
 }
 
-func TestNewRecoverableModelOutputErrorRetainsExactAnswer(t *testing.T) {
+func TestNewRecoverableModelAnswerErrorRetainsExactAnswer(t *testing.T) {
 	message := &model.Message{}
-	err := NewRecoverableModelOutputError(
+	err := NewRecoverableModelAnswerError(
 		errors.New("too many references"),
 		&FinalResponse{Message: message},
 		"Use fewer references.",
 	)
 
 	require.Equal(t, OutputContractOriginModel, err.Origin())
+	require.Equal(t, ModelOutputRecoveryAnswer, err.RecoveryKind())
 	require.Same(t, message, err.ModelMessage())
 	require.Equal(t, "Use fewer references.", err.Correction())
+}
+
+func TestNewRecoverableModelToolCallsErrorRetainsExactResponse(t *testing.T) {
+	message := &model.Message{}
+	err := NewRecoverableModelToolCallsError(
+		errors.New("selected value is not allowed"),
+		message,
+		"Select an exact advertised value.",
+	)
+
+	require.Equal(t, OutputContractOriginModel, err.Origin())
+	require.Equal(t, ModelOutputRecoveryToolCalls, err.RecoveryKind())
+	require.Same(t, message, err.ModelMessage())
+	require.Equal(t, "Select an exact advertised value.", err.Correction())
 }

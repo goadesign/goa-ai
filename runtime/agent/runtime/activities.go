@@ -122,10 +122,12 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err := validatePlanResumeRecoveryInput(input); err != nil {
 		return nil, err
 	}
-	// A rejected ordinary final answer is replaced without tools. A rejected
-	// finalization output instead keeps the finalizer's existing response or
-	// terminal-tool contract, which may require one exact bookkeeping tool.
-	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil && input.Finalize == nil
+	// A rejected ordinary final answer is replaced without tools. Rejected
+	// planned tool calls retain the normal catalog. A rejected finalization
+	// output retains the finalizer's response or terminal-tool contract.
+	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil &&
+		input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer &&
+		input.Finalize == nil
 	toolOutputs, err := r.loadPlannerToolOutputs(ctx, input.ToolOutputs)
 	if err != nil {
 		return nil, err
@@ -191,7 +193,10 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	}
 	act.reminders = append(recoveryReminders, act.reminders...)
 	if input.ModelOutputRecovery != nil {
-		replacement := "Produce a replacement final answer now."
+		replacement := "Produce replacement tool calls using the available tools now."
+		if input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer {
+			replacement = "Produce a replacement final answer now."
+		}
 		if input.Finalize != nil {
 			replacement = "Produce a replacement response that satisfies the current finalization contract now."
 		}
@@ -372,14 +377,11 @@ func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 		}
 		return nil
 	}
-	if strings.TrimSpace(input.ModelOutputRecovery.Correction) == "" {
-		return errors.New("model-output correction requires non-blank guidance")
-	}
-	if len(input.ModelOutputRecovery.Correction) > outputcontract.MaxCorrectionBytes {
-		return errors.New("model-output correction exceeds workflow boundary limit")
+	if err := validateModelOutputRecovery(input.ModelOutputRecovery); err != nil {
+		return err
 	}
 	if input.SynthesisOnly {
-		return errors.New("model-output recovery implies synthesis-only planning")
+		return errors.New("model-output recovery cannot combine with explicit synthesis-only planning")
 	}
 	if len(input.RecoveryToolCallIDs) > 0 && input.Finalize == nil {
 		return errors.New("model-output correction cannot combine with tool recovery")
@@ -803,7 +805,7 @@ func (a *plannerActivityInvocation) outputContractFailureMetadata(
 	if validationErr, ok := exactModelOutputValidation(outputErr.Unwrap()); ok {
 		validationKind = validationErr.Kind()
 	}
-	return &OutputContractFailure{
+	failure := &OutputContractFailure{
 		Origin:                          origin,
 		ModelOutputValidationKind:       validationKind,
 		ReasonSHA256:                    reasonSHA256,
@@ -812,8 +814,14 @@ func (a *plannerActivityInvocation) outputContractFailureMetadata(
 		ModelResponseFingerprintVersion: responseEvidence.Version,
 		ModelResponseSHA256:             responseEvidence.SHA256,
 		ModelResponseSize:               responseEvidence.Size,
-		Correction:                      outputErr.Correction(),
-	}, nil
+	}
+	if outputErr.Correction() != "" {
+		failure.ModelOutputRecovery = &ModelOutputRecovery{
+			Kind:       outputErr.RecoveryKind(),
+			Correction: outputErr.Correction(),
+		}
+	}
+	return failure, nil
 }
 
 // outputContractFailureReason selects the private validation cause only when
