@@ -15,7 +15,6 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
-	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -274,16 +273,7 @@ func seedParentRun(t *testing.T, store storage.Store, runID, sessionID string) {
 }
 
 func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
-	rt := &Runtime{
-		agents:    make(map[agent.Ident]AgentRegistration),
-		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
-		Engine:    engineinmem.New(),
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
-		Store:     newTestStore(),
-		Bus:       noopHooks{},
-	}
+	rt := New(newTestStore(), WithHooks(noopHooks{}))
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
 	// Register nested agent
@@ -324,16 +314,7 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 }
 
 func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
-	rt := &Runtime{
-		agents:    make(map[agent.Ident]AgentRegistration),
-		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
-		Engine:    engineinmem.New(),
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
-		Store:     newTestStore(),
-		Bus:       noopHooks{},
-	}
+	rt := New(newTestStore(), WithHooks(noopHooks{}))
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
 	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
@@ -418,16 +399,7 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 }
 
 func TestAgentTool_TextContent(t *testing.T) {
-	rt := &Runtime{
-		agents:    make(map[agent.Ident]AgentRegistration),
-		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
-		Engine:    engineinmem.New(),
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
-		Store:     newTestStore(),
-		Bus:       noopHooks{},
-	}
+	rt := New(newTestStore(), WithHooks(noopHooks{}))
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
 	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
@@ -471,16 +443,7 @@ func TestAgentTool_TextContent(t *testing.T) {
 }
 
 func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
-	rt := &Runtime{
-		agents:    make(map[agent.Ident]AgentRegistration),
-		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
-		Engine:    engineinmem.New(),
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
-		Store:     newTestStore(),
-		Bus:       noopHooks{},
-	}
+	rt := New(newTestStore(), WithHooks(noopHooks{}))
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
 	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
@@ -531,16 +494,7 @@ func TestWithPromptSpecSetsPromptID(t *testing.T) {
 }
 
 func TestAgentTool_SystemPromptPrepended(t *testing.T) {
-	rt := &Runtime{
-		agents:    make(map[agent.Ident]AgentRegistration),
-		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
-		Engine:    engineinmem.New(),
-		logger:    telemetry.NoopLogger{},
-		metrics:   telemetry.NoopMetrics{},
-		tracer:    telemetry.NoopTracer{},
-		Store:     newTestStore(),
-		Bus:       noopHooks{},
-	}
+	rt := New(newTestStore(), WithHooks(noopHooks{}))
 	const agentID = "svc.agent"
 	pl := &capturePlanner{}
 	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,

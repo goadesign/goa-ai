@@ -1203,15 +1203,7 @@ func TestSessionfulAndOneShotStartsEncodeMemoIdentically(t *testing.T) {
 func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 	t.Parallel()
 	eng := &stubEngine{}
-	rt := &Runtime{
-		Engine:   eng,
-		logger:   telemetry.NoopLogger{},
-		metrics:  telemetry.NoopMetrics{},
-		tracer:   telemetry.NoopTracer{},
-		Store:    newTestStore(),
-		agents:   make(map[agent.Ident]AgentRegistration),
-		toolsets: make(map[string]ToolsetRegistration),
-	}
+	rt := New(newTestStore(), WithEngine(eng))
 	// Register initial agent so we can start a run
 	err := rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition("service.agent",
 
