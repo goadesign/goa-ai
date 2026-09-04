@@ -321,7 +321,7 @@ func TestStreamSubscriberThoughtProfilePreservesCommittedMessages(t *testing.T) 
 	message := &model.Message{
 		Role: model.ConversationRoleAssistant,
 		Parts: []model.Part{
-			model.ThinkingPart{Text: "provider reasoning"},
+			model.ThinkingPart{Text: "provider reasoning", Final: true},
 			model.TextPart{Text: "answer"},
 		},
 		Meta: map[string]any{"provider_item": "item-1"},
