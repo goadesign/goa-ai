@@ -159,6 +159,13 @@ func (r *Runtime) appendUserToolRecordResults(
 			reminders = append(reminders, spec.ResultReminder)
 		}
 		if hasSpec {
+			if isDedicatedContinuationSpec(spec) &&
+				call.ModelToolCallID == "" &&
+				call.ContinuationRootToolCallID == "" {
+				// A direct planner call has no saved source query to continue.
+				// Keep its static result reminder, but do not expose its cursor.
+				continue
+			}
 			continueTool := ""
 			cursorField := ""
 			if spec.Bounds != nil && spec.Bounds.Paging != nil {
