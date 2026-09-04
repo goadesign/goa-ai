@@ -1014,8 +1014,12 @@ When one tool has both correction and replan failures in the same batch, the
 correctable failure keeps that tool available.
 
 `MaxRecoveryTurns` counts replacement planner activities scheduled after
-rejected tool output, a rejected model invocation, or a rejected completed
-answer. Bookkeeping calls do not consume or reset this budget. If a rejected
+rejected tool output, a rejected model invocation, or rejected completed model
+output. A planner uses `NewRecoverableModelAnswerError` when the replacement
+must be an answer without ordinary tools. It uses
+`NewRecoverableModelToolCallsError` when rejected planned tool calls must be
+replaced with the current executable catalog still available. Bookkeeping calls
+do not consume or reset this budget. If a rejected
 bookkeeping result schedules another planner activity, that replacement
 activity consumes one recovery turn. Finalization uses the same budget: a
 rejected finalizer response or a terminal tool failure marked `correct_call`
@@ -1039,11 +1043,12 @@ correction text, or the untouched provider-returned name of a tool absent from
 that request's catalog. Malformed argument bytes stay private. The rejected
 response stays out of history, and the normal caller-authorized executable
 catalog remains available for the replacement.
-Existing Temporal histories replay unchanged. Histories that contain this new
-activity result require workers running the matching runtime; mixed older and
-newer workers, and rollback to an older worker, are unsupported for those
-histories. See [`docs/runtime.md`](docs/runtime.md) for the full recovery
-contract.
+Temporal histories containing model-output recovery from an older runtime do
+not carry the required answer-or-tool-calls kind and cannot resume on this
+version. New histories that contain this activity result require workers
+running the matching runtime; mixed older and newer workers, and rollback to an
+older worker, are unsupported for those histories. See
+[`docs/runtime.md`](docs/runtime.md) for the full recovery contract.
 
 The flag is valid only on a tool-only result, keeping execution and answer
 synthesis as separate turns without relying on process-local state. The batch

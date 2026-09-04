@@ -504,7 +504,7 @@ func TestPlanStartActivityCorrelatesRecoverableModelOutput(t *testing.T) {
 		require.NoError(t, err)
 		response, err := client.Complete(ctx, &model.Request{Model: "test"})
 		require.NoError(t, err)
-		return nil, planner.NewRecoverableModelOutputError(
+		return nil, planner.NewRecoverableModelAnswerError(
 			errors.New("too many references"),
 			&planner.FinalResponse{Message: &response.Content[len(response.Content)-1]},
 			"Use at most eight references.",
@@ -525,7 +525,7 @@ func TestPlanStartActivityCorrelatesRecoverableModelOutput(t *testing.T) {
 	require.True(t, out.OutputContractFailure.ModelResponsePresent)
 	require.NotEmpty(t, out.OutputContractFailure.ModelResponseSHA256)
 	require.Empty(t, out.OutputContractFailure.ModelOutputValidationKind)
-	require.Equal(t, "Use at most eight references.", out.OutputContractFailure.Correction)
+	require.Equal(t, "Use at most eight references.", out.OutputContractFailure.ModelOutputRecovery.Correction)
 }
 
 func TestPlanStartActivityAcceptsPlannerSelectedOutputLimitedFinalResponse(t *testing.T) {
@@ -581,7 +581,7 @@ func TestPlanStartActivityRejectsAlteredRecoverableModelOutput(t *testing.T) {
 		require.NoError(t, err)
 		message := &response.Content[len(response.Content)-1]
 		message.Parts[0] = model.TextPart{Text: "altered answer"}
-		return nil, planner.NewRecoverableModelOutputError(
+		return nil, planner.NewRecoverableModelAnswerError(
 			errors.New("too many references"),
 			&planner.FinalResponse{Message: message},
 			"Use at most eight references.",
@@ -600,7 +600,7 @@ func TestPlanStartActivityRejectsAlteredRecoverableModelOutput(t *testing.T) {
 	require.NotNil(t, out)
 	require.NotNil(t, out.OutputContractFailure)
 	require.Equal(t, planner.OutputContractOriginPlanner, out.OutputContractFailure.Origin)
-	require.Empty(t, out.OutputContractFailure.Correction)
+	require.Nil(t, out.OutputContractFailure.ModelOutputRecovery)
 	require.False(t, out.OutputContractFailure.ModelResponsePresent)
 }
 
@@ -610,7 +610,7 @@ func TestPlanStartActivityCorrelatesRecoverableStreamedAnswer(t *testing.T) {
 		require.True(t, ok)
 		summary, err := client.Stream(ctx, &model.Request{Model: "test"})
 		require.NoError(t, err)
-		return nil, planner.NewRecoverableModelOutputError(
+		return nil, planner.NewRecoverableModelAnswerError(
 			errors.New("too many references"),
 			summary.FinalResponse(),
 			"Use at most eight references.",
@@ -645,7 +645,7 @@ func TestPlanStartActivityCorrelatesRecoverableStreamedAnswer(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out.OutputContractFailure)
 	require.True(t, out.OutputContractFailure.ModelResponsePresent)
-	require.Equal(t, "Use at most eight references.", out.OutputContractFailure.Correction)
+	require.Equal(t, "Use at most eight references.", out.OutputContractFailure.ModelOutputRecovery.Correction)
 }
 
 func TestPlanStartActivityRejectsRecoverableOutputForForeignResponse(t *testing.T) {
@@ -655,7 +655,7 @@ func TestPlanStartActivityRejectsRecoverableOutputForForeignResponse(t *testing.
 		require.True(t, ok)
 		_, err := client.Complete(ctx, &model.Request{Model: "test"})
 		require.NoError(t, err)
-		return nil, planner.NewRecoverableModelOutputError(
+		return nil, planner.NewRecoverableModelAnswerError(
 			errors.New("too many references"),
 			&planner.FinalResponse{Message: &model.Message{}},
 			"Use at most eight references.",
@@ -686,7 +686,7 @@ func TestPlanStartActivityRejectsRecoverableOutputForForeignResponse(t *testing.
 	require.NotNil(t, out)
 	require.NotNil(t, out.OutputContractFailure)
 	require.Equal(t, planner.OutputContractOriginPlanner, out.OutputContractFailure.Origin)
-	require.Empty(t, out.OutputContractFailure.Correction)
+	require.Nil(t, out.OutputContractFailure.ModelOutputRecovery)
 	require.False(t, out.OutputContractFailure.ModelResponsePresent)
 	require.Equal(t, 11, out.Usage.InputTokens)
 	require.Equal(t, 1, modelCalls)
@@ -707,8 +707,11 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 			input: &PlanActivityInput{RecoveryToolCallIDs: []string{"call-1"}, Finalize: termination},
 		},
 		{
-			name:  "model output recovery",
-			input: &PlanActivityInput{ModelOutputRecovery: &ModelOutputRecovery{Correction: "Use fewer references."}},
+			name: "model output recovery",
+			input: &PlanActivityInput{ModelOutputRecovery: &ModelOutputRecovery{
+				Kind:       planner.ModelOutputRecoveryAnswer,
+				Correction: "Use fewer references.",
+			}},
 		},
 		{
 			name: "model invocation recovery",
@@ -718,13 +721,17 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 		},
 		{name: "missing input", wantErr: "input is required"},
 		{
-			name:    "blank model guidance",
-			input:   &PlanActivityInput{ModelOutputRecovery: &ModelOutputRecovery{Correction: " "}},
+			name: "blank model guidance",
+			input: &PlanActivityInput{ModelOutputRecovery: &ModelOutputRecovery{
+				Kind:       planner.ModelOutputRecoveryAnswer,
+				Correction: " ",
+			}},
 			wantErr: "non-blank guidance",
 		},
 		{
 			name: "oversized model guidance",
 			input: &PlanActivityInput{ModelOutputRecovery: &ModelOutputRecovery{
+				Kind:       planner.ModelOutputRecoveryAnswer,
 				Correction: strings.Repeat("x", outputcontract.MaxCorrectionBytes+1),
 			}},
 			wantErr: "exceeds workflow boundary limit",
@@ -732,15 +739,21 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 		{
 			name: "model recovery with explicit synthesis",
 			input: &PlanActivityInput{
-				ModelOutputRecovery: &ModelOutputRecovery{Correction: "Replace the answer."},
-				SynthesisOnly:       true,
+				ModelOutputRecovery: &ModelOutputRecovery{
+					Kind:       planner.ModelOutputRecoveryAnswer,
+					Correction: "Replace the answer.",
+				},
+				SynthesisOnly: true,
 			},
-			wantErr: "implies synthesis-only",
+			wantErr: "cannot combine with explicit synthesis-only",
 		},
 		{
 			name: "model recovery with tool recovery",
 			input: &PlanActivityInput{
-				ModelOutputRecovery: &ModelOutputRecovery{Correction: "Replace the answer."},
+				ModelOutputRecovery: &ModelOutputRecovery{
+					Kind:       planner.ModelOutputRecoveryAnswer,
+					Correction: "Replace the answer.",
+				},
 				RecoveryToolCallIDs: []string{"call-1"},
 			},
 			wantErr: "cannot combine with tool recovery",
@@ -748,7 +761,10 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 		{
 			name: "model output recovery with finalization evidence",
 			input: &PlanActivityInput{
-				ModelOutputRecovery: &ModelOutputRecovery{Correction: "Replace the answer."},
+				ModelOutputRecovery: &ModelOutputRecovery{
+					Kind:       planner.ModelOutputRecoveryAnswer,
+					Correction: "Replace the answer.",
+				},
 				RecoveryToolCallIDs: []string{"call-1"},
 				Finalize:            termination,
 			},
@@ -764,10 +780,21 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 		{
 			name: "combined model recovery variants",
 			input: &PlanActivityInput{
-				ModelOutputRecovery:     &ModelOutputRecovery{Correction: "Replace the answer."},
+				ModelOutputRecovery: &ModelOutputRecovery{
+					Kind:       planner.ModelOutputRecoveryAnswer,
+					Correction: "Replace the answer.",
+				},
 				ModelInvocationRecovery: &ModelInvocationRecovery{Correction: "Replace the tool call."},
 			},
 			wantErr: "cannot be combined",
+		},
+		{
+			name: "invalid model output recovery kind",
+			input: &PlanActivityInput{ModelOutputRecovery: &ModelOutputRecovery{
+				Kind:       "invalid",
+				Correction: "Replace the answer.",
+			}},
+			wantErr: "valid recovery kind",
 		},
 		{
 			name: "model invocation recovery with synthesis",
@@ -3374,7 +3401,7 @@ func TestBuildNextResumeRequestCarriesTurnScopedRecoveryIdentity(t *testing.T) {
 		nil,
 		recovery,
 		false,
-		"",
+		nil,
 		nil,
 		&nextAttempt,
 	)
@@ -3405,7 +3432,7 @@ func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 		[]*planner.ToolOutput{nil},
 		nil,
 		false,
-		"",
+		nil,
 		nil,
 		&nextAttempt,
 	)
@@ -3438,7 +3465,7 @@ func TestBuildNextResumeRequestUsesProviderNeutralTranscriptValidation(t *testin
 		nil,
 		nil,
 		false,
-		"",
+		nil,
 		nil,
 		&nextAttempt,
 	)
