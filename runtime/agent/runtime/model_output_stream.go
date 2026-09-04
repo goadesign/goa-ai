@@ -1,10 +1,11 @@
 package runtime
 
-// This file sends live model text and thinking directly from the planner
-// activity to the configured session stream. These updates never enter the
-// durable run log or hook bus. Emitted assistant text is append-only. The
+// This file sends live model text and diagnostic thinking from the planner
+// activity to the configured trusted-host stream. These private updates never
+// enter the durable run log or hook bus, and they are not safe to forward
+// unchanged to an end-user client. Emitted assistant text is append-only. The
 // workflow later persists either the complete accepted transcript or, when the
-// response is rejected or fails, the exact text that already reached clients.
+// response is rejected or fails, the exact text that reached the trusted host.
 
 import (
 	"context"

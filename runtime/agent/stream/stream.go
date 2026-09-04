@@ -1,16 +1,21 @@
-// Package stream provides abstractions for delivering real-time agent execution
-// updates to clients. Stream events differ from hook events: stream events are
-// client-facing updates (tool progress, assistant replies) while hook events
-// provide comprehensive internal observability across the entire runtime lifecycle.
+// Package stream provides typed real-time agent execution updates as private
+// input to a trusted runtime host. Stream events differ from hook events:
+// stream events describe assistant output and run progress, while hook events
+// provide comprehensive internal observability across the runtime lifecycle.
+// Stream events are never safe to forward unchanged to a browser or another
+// end-user client. Some include exact provider messages and other private
+// runtime data. The host must select and convert the data it exposes through
+// its own smaller public contract.
 //
 // Subscriber converts selected persisted hook events into stream events and
-// also applies the same audience profile to live model text and thinking.
+// also applies the same purpose-specific profile to live model text and diagnostic
+// thinking events.
 // Internal-only events such as policy decisions and memory operations never
 // reach the sink.
 //
-// All event types implement the Event interface and can be safely sent concurrently
-// through a Sink implementation. Implementations are responsible for marshaling
-// events into their wire format (JSON, protobuf, etc.).
+// All event types implement Event and can be sent concurrently through a Sink.
+// A sink may encode events for a private transport between the runtime and its
+// trusted host. That encoding does not make the events safe for end users.
 package stream
 
 import (
@@ -28,7 +33,9 @@ import (
 )
 
 type (
-	// Sink delivers streaming updates to clients over a transport (SSE, WebSocket, Pulse).
+	// Sink delivers private runtime updates to a trusted host. The host owns any
+	// public event contract built from these updates and must not forward the
+	// runtime events unchanged to end users.
 	// Implementations must be thread-safe: the runtime may call Send concurrently from
 	// multiple goroutines when streaming tool results or planner thoughts in parallel.
 	//
@@ -37,9 +44,9 @@ type (
 	// them by invoking Sink.Send. Transports and tests implement Sink; typical
 	// application code does not call Send directly unless it is acting as a transport.
 	Sink interface {
-		// Send publishes an event to the sink's underlying transport. The implementation
-		// is responsible for marshaling the event into the wire format and handling
-		// transport-specific delivery semantics (retry, buffering, backpressure).
+		// Send publishes an event to the sink's private transport. The
+		// implementation encodes the event and handles delivery details such as
+		// retry, buffering, and backpressure.
 		// When EventKey is non-empty, exact retries carry the same event body and
 		// Send must return the original publication instead of creating a duplicate.
 		//
@@ -64,24 +71,21 @@ type (
 		Close(ctx context.Context) error
 	}
 
-	// Event describes a streaming event delivered to clients through a Sink. All concrete
-	// event types embed Base to provide standard metadata (type, run ID, payload). Sinks
-	// use the Event interface to marshal events generically; consumers can type-assert to
-	// concrete types when they need structured field access.
+	// Event describes private runtime data delivered to a trusted host through a
+	// Sink. All concrete event types embed Base to provide standard metadata such
+	// as type, run ID, and payload. Sinks use Event to encode values generically;
+	// trusted host code can type-assert to concrete types for structured access.
 	//
 	// Implementations are immutable after construction and safe to send concurrently.
 	Event interface {
 		// Type returns the event type constant (e.g., EventToolEnd, EventAssistantReply).
-		// Subscribers use this to filter events by category or route to type-specific
-		// handlers without performing type assertions. For example, a UI might subscribe
-		// only to EventAssistantReply and EventToolEnd to display final outputs while
-		// ignoring planner thoughts.
+		// Subscribers use this to filter events by category or route to
+		// type-specific handlers without performing type assertions.
 		Type() EventType
 
 		// RunID returns the unique workflow run identifier that produced this event. All
-		// events within a single run execution share the same run ID, enabling clients to
-		// filter or group events by run. This is critical for multi-account systems where
-		// a single Sink may multiplex events from multiple concurrent runs.
+		// events within a single run execution share the same run ID, enabling a
+		// trusted host to filter or group events when one Sink carries multiple runs.
 		RunID() string
 
 		// SessionID returns the logical session identifier associated with the run.
@@ -104,10 +108,9 @@ type (
 		// Pulse sink calls Payload() and marshals the result to JSON without knowing the
 		// concrete event type.
 		//
-		// Consumers that need structured access to event fields (e.g., SSE adapters mapping
-		// to Goa transport types) should use type assertions on the Event itself to access
-		// fields like ToolStart.Data or AssistantReply.Text directly. Use Payload() for
-		// generic serialization; use type assertions for type-safe field access.
+		// Trusted host code that needs structured fields should type-assert the Event
+		// and access values such as ToolStart.Data directly. Use Payload for private
+		// generic encoding and type assertions for type-safe field access.
 		Payload() any
 	}
 
@@ -122,12 +125,13 @@ type (
 
 	// AssistantTurn streams the complete messages for one assistant response
 	// after the runtime has durably appended them. The run may still fail after
-	// their display text was shown.
+	// its text fragments were published to the trusted host.
 	//
 	// Contract:
 	//   - ResponseID matches every AssistantReply fragment in this response.
 	//   - Messages contain the exact ordered assistant transcript, including
-	//     metadata and structured parts.
+	//     provider-only metadata and structured parts. They must not be sent to
+	//     an end-user client unchanged.
 	//   - When fragments exist, their ordered text is an exact prefix of the text
 	//     in Messages, so consumers can append only a missing suffix without
 	//     replacing live text.
@@ -136,14 +140,11 @@ type (
 		Data AssistantTurnPayload
 	}
 
-	// PlannerThought streams planner reasoning and intermediate annotations during
-	// execution. These events allow clients to display "thinking..." indicators and
-	// show the planner's internal reasoning process before tool calls complete.
+	// PlannerThought carries planner notes or provider thinking for restricted
+	// diagnostics. It must not be sent to end-user interfaces.
 	PlannerThought struct {
 		Base
-		// Data contains the planner thought payload (e.g., "Analyzing user query...",
-		// "Calling weather API to get forecast..."). This is human-readable text
-		// suitable for displaying in a UI thought bubble or debug panel.
+		// Data contains diagnostic planner notes or provider thinking.
 		Data PlannerThoughtPayload
 	}
 
@@ -154,13 +155,11 @@ type (
 		Data PromptRenderedPayload
 	}
 
-	// ToolStart streams when the runtime schedules a tool activity for execution. Clients
-	// receive this before the tool executes, allowing UIs to display pending tool calls,
-	// show progress indicators, and prepare to receive the corresponding ToolEnd event.
+	// ToolStart reports that the runtime scheduled a tool activity. A trusted host
+	// receives it before execution and may derive public progress from selected fields.
 	ToolStart struct {
 		Base
-		// Data contains the structured metadata for this tool invocation. Clients access
-		// this field directly for type-safe field access (e.g., event.Data.ToolCallID).
+		// Data contains the structured metadata for this tool invocation.
 		Data ToolStartPayload
 	}
 
@@ -174,26 +173,23 @@ type (
 	// is still running.
 	//
 	// Contract:
-	//   - This is a best-effort UX signal. Consumers may ignore it entirely.
+	//   - This is a best-effort progress event. Hosts may ignore it entirely.
 	//   - The canonical tool output is still emitted via ToolEnd.
 	ToolOutputDelta struct {
 		Base
 		Data ToolOutputDeltaPayload
 	}
 
-	// ToolEnd streams when a tool activity completes with either a result or error. Clients
-	// receive this to update tool status, close progress indicators, display results or errors,
-	// and track tool execution metrics. Every ToolStart event eventually produces a ToolEnd.
+	// ToolEnd reports that a tool activity completed with either a result or an
+	// error. Every ToolStart event eventually produces a ToolEnd.
 	ToolEnd struct {
 		Base
 		// ServerData carries server-only metadata emitted alongside the tool result.
 		// It is not part of ToolEndPayload and is never serialized into the event
-		// payload. Sinks that support server-only sidecars (for example Pulse)
-		// may forward it out-of-band for UIs and persistence layers.
+		// payload. Sinks that support server-only data (for example Pulse) may
+		// preserve it for host persistence or an application-owned public event.
 		ServerData rawjson.Message `json:"-"`
-		// Data contains the structured result metadata for this tool completion. Clients
-		// access this field directly for type-safe field access (e.g., event.Data.Duration,
-		// event.Data.ToolCallID).
+		// Data contains the structured result metadata for this tool completion.
 		Data ToolEndPayload
 	}
 
@@ -227,7 +223,7 @@ type (
 		Data SessionStreamStartedPayload
 	}
 
-	// SessionStreamStartedPayload is the typed wire payload for SessionStreamStarted.
+	// SessionStreamStartedPayload is the typed payload for SessionStreamStarted.
 	// It is intentionally empty: SessionID is carried on the envelope/Base.
 	SessionStreamStartedPayload struct{}
 
@@ -238,7 +234,7 @@ type (
 		Data SessionStreamEndPayload
 	}
 
-	// SessionStreamEndPayload is the typed wire payload for SessionStreamEnd.
+	// SessionStreamEndPayload is the typed payload for SessionStreamEnd.
 	// It is intentionally empty: SessionID is carried on the envelope/Base.
 	SessionStreamEndPayload struct{}
 
@@ -254,7 +250,7 @@ type (
 		Data RunStreamEndPayload
 	}
 
-	// RunStreamEndPayload is the typed wire payload for RunStreamEnd.
+	// RunStreamEndPayload is the typed payload for RunStreamEnd.
 	// It is intentionally empty: RunID and SessionID are carried on the envelope/Base.
 	RunStreamEndPayload struct{}
 
@@ -266,22 +262,23 @@ type (
 		model.TokenUsage
 	}
 
-	// AssistantReplyPayload is the typed wire payload for assistant reply events.
+	// AssistantReplyPayload is the typed payload for assistant reply events.
 	// ResponseID binds the fragment to the exact planner activity that produced
-	// it so clients can group separate responses without guessing from timing.
+	// it so a trusted host can group separate responses without guessing from timing.
 	AssistantReplyPayload struct {
 		ResponseID string `json:"response_id"`
 		Text       string `json:"text"`
 	}
 
-	// AssistantTurnPayload carries one committed assistant response.
+	// AssistantTurnPayload carries one exact committed assistant response for a
+	// trusted host. Messages may contain provider-only data.
 	AssistantTurnPayload struct {
 		ResponseID string           `json:"response_id"`
 		Messages   []*model.Message `json:"messages"`
 	}
 
-	// PlannerThoughtPayload is the typed wire payload for planner thought events.
-	// Note carries displayable planner notes and non-final thinking text.
+	// PlannerThoughtPayload is the typed payload for diagnostic thought events.
+	// Note carries planner notes and non-final provider thinking.
 	// Structured thinking blocks also populate Text/Signature or Redacted with
 	// ContentIndex and Final flags matching the provider content blocks.
 	PlannerThoughtPayload struct {
@@ -349,94 +346,82 @@ type (
 		ApprovedBy string `json:"approved_by"`
 	}
 
-	// ToolStartPayload carries the metadata for a scheduled tool invocation. This
-	// structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
+	// ToolStartPayload carries private metadata for a scheduled tool invocation.
 	ToolStartPayload struct {
-		// ToolCallID uniquely identifies this tool invocation. Clients use this to
-		// correlate subsequent ToolEnd events with the original ToolStart, enabling
-		// UIs to update progress indicators and display results for the correct tool call.
+		// ToolCallID uniquely identifies this tool invocation and correlates the
+		// matching ToolEnd event.
 		ToolCallID string `json:"tool_call_id"`
 		// ToolName is the fully qualified tool identifier (e.g., "weather.search.forecast").
-		// Format: <service>.<toolset>.<tool>. Clients can use this to display tool names
-		// or icons in progress indicators.
+		// Format: <service>.<toolset>.<tool>.
 		ToolName string `json:"tool_name"`
 		// Payload contains the structured tool arguments (JSON-serializable) for this call.
 		// It is the canonical tool payload JSON produced by the tool payload codec.
 		// It is never decoded into Go structs for streaming to avoid schema drift
 		// from untagged Go fields.
 		Payload rawjson.Message `json:"payload,omitempty"`
-		// DisplayHint is a human-facing one-line description of the in-flight tool work,
-		// rendered from DSL-authored templates when available. Suitable for progress lanes
-		// and tool ribbons (for example, "Listing devices of kind VAV").
+		// DisplayHint is a one-line description of the in-flight tool work,
+		// rendered from a DSL-authored template when available. A host may use it
+		// when building its public progress event.
 		DisplayHint string `json:"display_hint,omitempty"`
 		// Queue is the activity queue name where the tool execution is scheduled. Empty for
-		// in-process tools. Clients typically don't display this but may use it for routing
-		// or infrastructure-level monitoring.
+		// in-process tools. It is private scheduling data.
 		Queue string `json:"queue,omitempty"`
 		// ParentToolCallID identifies the parent tool that requested this tool, if any.
 		// Empty for top-level planner-requested tools. Non-empty when an agent-as-tool
-		// schedules child tools. Clients use this to render tool call hierarchies and
-		// track parent-child relationships.
+		// schedules child tools. It lets the host track parent-child relationships.
 		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 		// ExpectedChildrenTotal indicates how many child tools are expected from this
 		// tool's execution batch. Zero means no children are expected or the count is
-		// not yet known. Clients use this to display progress like "3 of 5 child tools complete".
+		// not yet known.
 		ExpectedChildrenTotal int `json:"expected_children_total,omitempty"`
-		// Extra carries optional extension data for clients that need to attach
-		// transport- or domain-specific fields without breaking the wire contract.
+		// Extra carries optional extension data that trusted hosts can attach
+		// without changing the core payload.
 		// The runtime ignores its contents; sinks may include it when present.
 		Extra map[string]any `json:"extra,omitempty"`
 	}
 
-	// ToolEndPayload carries the result metadata for a completed tool invocation.
-	// This structure is JSON-serialized when sent over the wire (SSE, WebSocket, Pulse).
+	// ToolEndPayload carries private result metadata for a completed tool invocation.
 	ToolEndPayload struct {
 		// CallRunID identifies the workflow run whose ToolStart event opened this
 		// tool invocation. It differs from the enclosing event's run ID when a
 		// continuation workflow supplies an externally produced result.
 		CallRunID string `json:"call_run_id"`
-		// ToolCallID uniquely identifies the tool invocation that completed. Clients use this
-		// to correlate with the original ToolStart event, enabling UIs to match completion
-		// events with their corresponding progress indicators and display results in the
-		// correct context.
+		// ToolCallID uniquely identifies the tool invocation that completed and
+		// correlates it with the original ToolStart event.
 		ToolCallID string `json:"tool_call_id"`
 		// ParentToolCallID identifies the parent tool that requested this tool, if any.
 		// Empty for top-level planner-requested tools. Matches the ParentToolCallID from
-		// the corresponding ToolStart event. Clients use this to maintain tool call hierarchies
-		// and track which parent-child relationships have completed.
+		// the corresponding ToolStart event.
 		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 		// ToolName is the fully qualified tool identifier that was executed (e.g.,
-		// "weather.search.forecast"). Matches the ToolName from ToolStart. Useful for
-		// displaying tool names in result summaries and correlating with tool metadata.
+		// "weather.search.forecast"). It matches ToolName from ToolStart.
 		ToolName string `json:"tool_name"`
 		// Result contains the tool's output payload. This is the structured data
 		// returned by the tool on success. It is the canonical JSON encoding
 		// produced by the tool result codec. Nil when the tool failed or when the
 		// tool does not define a result.
 		Result rawjson.Message `json:"result,omitempty"`
-		// ResultPreview is a concise, user-facing summary of the tool result rendered from
-		// DSL-authored templates when available. It is intended for UI ribbons and summaries
-		// (for example, "Device list ready" or "Found 3 critical alarms").
+		// ResultPreview is a concise summary of the tool result rendered from a
+		// DSL-authored template when available. A host may use it when building a
+		// public result summary.
 		ResultPreview string `json:"result_preview,omitempty"`
 		// Bounds, when non-nil, describes how the tool result has been bounded
 		// relative to the full underlying data set (for example, list/window/
 		// graph caps). It is supplied by tool implementations and surfaced for
 		// observability; the runtime does not modify it.
 		Bounds *agent.Bounds `json:"bounds,omitempty"`
-		// Duration is the wall-clock execution time for the tool activity, including any
-		// queuing delay, retries, and processing time. Clients can display this in
-		// performance dashboards or debug panels to identify slow tools.
+		// Duration is the wall-clock execution time for the tool activity, including
+		// queuing delay, retries, and processing time.
 		Duration time.Duration `json:"duration"`
 		// Telemetry holds structured observability metadata collected during tool execution:
 		// token counts, model identifiers, retry attempts, and provider-specific metrics.
-		// Nil if no telemetry was collected. Clients use this for cost tracking, performance
-		// monitoring, and compliance reporting.
+		// Nil if no telemetry was collected.
 		Telemetry *telemetry.ToolTelemetry `json:"telemetry,omitempty"`
 		// Failure contains the stable failure classification and recovery action.
 		// Nil on success.
 		Failure *planner.ToolFailure `json:"failure,omitempty"`
-		// Extra carries optional extension data for clients that need to attach
-		// transport- or domain-specific fields without breaking the wire contract.
+		// Extra carries optional extension data that trusted hosts can attach
+		// without changing the core payload.
 		// The runtime ignores its contents; sinks may include it when present.
 		Extra map[string]any `json:"extra,omitempty"`
 	}
@@ -471,7 +456,7 @@ type (
 	AwaitConfirmationPayload struct {
 		// ID correlates this await with a subsequent confirmation decision.
 		ID string `json:"id"`
-		// Title is an optional display title for the confirmation UI.
+		// Title is an optional title for a host-created confirmation prompt.
 		Title string `json:"title,omitempty"`
 		// Prompt is the operator-facing confirmation prompt.
 		Prompt string `json:"prompt"`
@@ -492,7 +477,7 @@ type (
 		ToolName string `json:"tool_name"`
 		// ToolCallID correlates the provided result with this requested call.
 		ToolCallID string `json:"tool_call_id"`
-		// Title is an optional display title for the questions UI.
+		// Title is an optional title for a host-created question prompt.
 		Title *string `json:"title,omitempty"`
 		// Questions are the structured questions to present to the user.
 		Questions []AwaitQuestionPayload `json:"questions"`
@@ -515,7 +500,7 @@ type (
 	// AwaitExternalToolsPayload describes external tool requests to be provided by callers.
 	AwaitExternalToolsPayload struct {
 		// ID correlates this await with a subsequent provide_tool_results
-		// call from the orchestrator or UI.
+		// call from the application that owns the external tool.
 		ID string `json:"id"`
 		// Items enumerates the external tool calls whose results let a successor
 		// run continue the work.
@@ -573,8 +558,8 @@ type (
 		// Set this when constructing concrete events to identify the payload category.
 		t EventType
 		// r is the workflow run identifier that produced this event. All events from
-		// a single run share the same R value, enabling clients to filter or correlate
-		// events by run.
+		// a single run share the same R value, enabling a host to filter or
+		// correlate events by run.
 		r string
 		// s is the logical session identifier for the run that produced this event.
 		// All events from a single run share the same S value, enabling subscribers
@@ -614,8 +599,7 @@ type (
 		// ToolName is the fully qualified identifier of the parent tool
 		// that launched the child agent run.
 		ToolName string `json:"tool_name"`
-		// ToolCallID identifies the parent tool call associated with the
-		// child run. UIs use this to attach child run links to tool cards.
+		// ToolCallID identifies the parent tool call associated with the child run.
 		ToolCallID string `json:"tool_call_id"`
 		// ChildRunID is the workflow execution identifier of the nested
 		// agent run.
@@ -625,15 +609,15 @@ type (
 		ChildAgentID agent.Ident `json:"child_agent_id"`
 	}
 
-	// StreamProfile describes which event kinds are emitted for a particular
-	// audience. Subscriber applies the profile to both mapped hook events and
-	// live model output events.
+	// StreamProfile describes which event kinds are emitted for one purpose.
+	// Subscriber applies it to mapped hook events and live model output. The
+	// tool executor applies ToolOutputDelta when it forwards remote-tool output.
 	StreamProfile struct {
 		// Assistant controls assistant reply emission.
 		Assistant bool
 		// AssistantTurns controls emission of exact committed assistant messages.
 		AssistantTurns bool
-		// Thoughts controls separate planner-thought and live model-thinking
+		// Thoughts controls diagnostic planner-thought and live model-thinking
 		// events. It does not remove thinking parts or provider metadata from
 		// exact messages emitted through AssistantTurn.
 		Thoughts bool
@@ -643,6 +627,8 @@ type (
 		ToolStart bool
 		// ToolUpdate controls emission of tool_update events.
 		ToolUpdate bool
+		// ToolOutputDelta controls emission of incremental tool output.
+		ToolOutputDelta bool
 		// ToolEnd controls emission of tool_end events.
 		ToolEnd bool
 		// AwaitClarification controls emission of await_clarification events.
@@ -664,10 +650,11 @@ type (
 	}
 )
 
-// DefaultProfile returns a StreamProfile that emits all event kinds and
-// links child runs via ChildRunLinked events without flattening them into
-// the parent stream.
-func DefaultProfile() StreamProfile {
+// AgentDebugProfile returns every event for restricted operational diagnostics.
+// It includes separate provider thinking events and must not feed an end-user
+// interface. Child runs remain on their own streams and are linked through
+// ChildRunLinked events.
+func AgentDebugProfile() StreamProfile {
 	return StreamProfile{
 		Assistant:          true,
 		AssistantTurns:     true,
@@ -675,6 +662,7 @@ func DefaultProfile() StreamProfile {
 		PromptRendered:     true,
 		ToolStart:          true,
 		ToolUpdate:         true,
+		ToolOutputDelta:    true,
 		ToolEnd:            true,
 		AwaitClarification: true,
 		AwaitConfirmation:  true,
@@ -687,19 +675,29 @@ func DefaultProfile() StreamProfile {
 	}
 }
 
-// UserChatProfile returns a profile suitable for end-user chat views. It emits
-// assistant replies, tool start/end/update, awaits, usage, workflow, and
-// child_run_linked links, and keeps child runs on their own streams so UIs
-// can attach on demand.
-func UserChatProfile() StreamProfile {
-	return DefaultProfile()
-}
-
-// AgentDebugProfile returns a verbose profile intended for operational and
-// debugging views. Child runs are linked via ChildRunLinked events and are not
-// flattened into the parent stream.
-func AgentDebugProfile() StreamProfile {
-	return DefaultProfile()
+// RuntimeHostProfile returns private input for a trusted runtime host to save,
+// replay, and process an agent run. It omits separate provider thinking events,
+// but exact committed AssistantTurn messages still contain all provider data.
+// This profile is never browser-safe. A host must select and convert the data
+// it exposes through its own smaller public contract.
+func RuntimeHostProfile() StreamProfile {
+	return StreamProfile{
+		Assistant:          true,
+		AssistantTurns:     true,
+		PromptRendered:     true,
+		ToolStart:          true,
+		ToolUpdate:         true,
+		ToolOutputDelta:    true,
+		ToolEnd:            true,
+		AwaitClarification: true,
+		AwaitConfirmation:  true,
+		AwaitQuestions:     true,
+		AwaitExternalTools: true,
+		ToolAuthorization:  true,
+		Usage:              true,
+		Workflow:           true,
+		ChildRuns:          true,
+	}
 }
 
 // MetricsProfile returns a profile that emits only usage and workflow events,
@@ -715,26 +713,21 @@ func MetricsProfile() StreamProfile {
 type EventType string
 
 const (
-	// EventPlannerThought streams incremental planner reasoning and annotations during
-	// execution. These events allow clients to display "thinking..." indicators and show
-	// intermediate planner thoughts before tool calls complete. Emitted by StreamSubscriber
-	// when PlannerNoteEvent hooks fire. The payload contains the planner's text annotation.
+	// EventPlannerThought carries planner notes or provider thinking for restricted
+	// diagnostics. It must not be sent to end-user interfaces.
 	EventPlannerThought EventType = "planner_thought"
 
 	// EventPromptRendered streams prompt render references and scopes used by runtime prompt resolution.
 	EventPromptRendered EventType = "prompt_rendered"
 
-	// EventToolStart streams when a tool activity is scheduled for execution. Clients
-	// receive this before the tool executes, allowing UIs to display pending tool calls,
-	// show progress indicators, and track parent-child tool relationships for agent-as-tool
-	// batches. Emitted by StreamSubscriber when ToolCallScheduledEvent hooks fire.
+	// EventToolStart reports that a tool activity was scheduled. It is emitted by
+	// Subscriber when a ToolCallScheduledEvent hook fires.
 	EventToolStart EventType = "tool_start"
 
 	// EventToolEnd streams when a tool activity completes with either a result or error.
 	// This event includes execution duration, telemetry (token counts, model info), and
-	// structured error details if the tool failed. UIs use this to update tool status,
-	// display results, and close progress indicators. Emitted by StreamSubscriber when
-	// ToolResultReceivedEvent hooks fire.
+	// structured error details if the tool failed. It is emitted by Subscriber
+	// when a ToolResultReceivedEvent hook fires.
 	EventToolEnd EventType = "tool_end"
 
 	// EventToolUpdate streams a non-terminal update to a tool call (e.g., when a parent
@@ -747,15 +740,14 @@ const (
 	// tool is running.
 	EventToolOutputDelta EventType = "tool_output_delta"
 
-	// EventAssistantReply streams incremental assistant message content as the planner
-	// produces the final response. Clients receive text chunks that can be displayed
-	// progressively. The runtime emits these events directly from live model output;
-	// completed assistant-message hooks do not recreate them.
+	// EventAssistantReply carries incremental assistant message content as the
+	// planner produces a response. The runtime emits these events directly from
+	// live model output; completed assistant-message hooks do not recreate them.
 	// Payload is AssistantReplyPayload.
 	EventAssistantReply EventType = "assistant_reply"
 
-	// EventAssistantTurn streams one complete assistant display response after
-	// the runtime has durably appended its provider transcript to the run log.
+	// EventAssistantTurn streams one exact committed assistant response after the
+	// runtime has durably appended its provider transcript to the run log.
 	EventAssistantTurn EventType = "assistant_turn"
 
 	// EventAwaitClarification streams when a planner requests human clarification.

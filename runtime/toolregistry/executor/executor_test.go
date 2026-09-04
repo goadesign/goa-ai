@@ -61,6 +61,33 @@ func TestNewRequiresToolsetRoute(t *testing.T) {
 	require.ErrorContains(t, err, "registry toolset name is required")
 }
 
+func TestWithStreamSinkRejectsInvalidConfiguration(t *testing.T) {
+	tests := []struct {
+		name    string
+		sink    aistream.Sink
+		profile aistream.StreamProfile
+		message string
+	}{
+		{
+			name:    "missing sink",
+			profile: aistream.RuntimeHostProfile(),
+			message: "tool registry executor: stream sink is required",
+		},
+		{
+			name:    "empty profile",
+			sink:    &captureSink{},
+			message: "tool registry executor: stream profile must enable at least one event",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.PanicsWithValue(t, test.message, func() {
+				WithStreamSink(test.sink, test.profile)
+			})
+		})
+	}
+}
+
 // newExecutor builds a valid executor so each behavior test can focus on the
 // call it exercises.
 func newExecutor(
@@ -940,7 +967,7 @@ func (s *captureSink) Close(ctx context.Context) error {
 	return nil
 }
 
-func TestExecutorForwardsOnlyExactAdmissionOutputDeltaForReusedToolUseID(t *testing.T) {
+func TestExecutorAppliesStreamProfileToExactAdmissionOutputDelta(t *testing.T) {
 	t.Parallel()
 
 	const (
@@ -975,73 +1002,89 @@ func TestExecutorForwardsOnlyExactAdmissionOutputDeltaForReusedToolUseID(t *test
 		"stdout",
 		"hi\n",
 	)
-	stream := &fakeStream{
-		t:             t,
-		requiredStart: "0",
-		events: []*streaming.Event{
-			{
-				ID:        "1-0",
-				EventName: toolregistry.OutputDeltaEventKey,
-				Payload:   mustJSON(t, malformedDelta),
-			},
-			{
-				ID:        "2-0",
-				EventName: toolregistry.OutputDeltaEventKey,
-				Payload:   mustJSON(t, staleDelta),
-			},
-			{
-				ID:        "3-0",
-				EventName: toolregistry.OutputDeltaEventKey,
-				Payload:   mustJSON(t, delta),
-			},
-			{
-				ID:        "4-0",
-				EventName: resultEventName,
-				Payload: mustJSON(t, toolregistry.ToolResultMessage{
-					RegistrationToken: testRegistrationTokenA,
-					ToolUseID:         toolUseID,
-					Result:            json.RawMessage(`{}`),
-				}),
-			},
+	tests := []struct {
+		name       string
+		profile    aistream.StreamProfile
+		wantDeltas int
+	}{
+		{
+			name:       "enabled",
+			profile:    aistream.RuntimeHostProfile(),
+			wantDeltas: 1,
+		},
+		{
+			name:    "disabled",
+			profile: aistream.MetricsProfile(),
 		},
 	}
-	pc := fakePulseClient{
-		streamID: resultStreamID,
-		stream:   stream,
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			resultStream := &fakeStream{
+				t:             t,
+				requiredStart: "0",
+				events: []*streaming.Event{
+					{
+						ID:        "1-0",
+						EventName: toolregistry.OutputDeltaEventKey,
+						Payload:   mustJSON(t, malformedDelta),
+					},
+					{
+						ID:        "2-0",
+						EventName: toolregistry.OutputDeltaEventKey,
+						Payload:   mustJSON(t, staleDelta),
+					},
+					{
+						ID:        "3-0",
+						EventName: toolregistry.OutputDeltaEventKey,
+						Payload:   mustJSON(t, delta),
+					},
+					{
+						ID:        "4-0",
+						EventName: resultEventName,
+						Payload: mustJSON(t, toolregistry.ToolResultMessage{
+							RegistrationToken: testRegistrationTokenA,
+							ToolUseID:         toolUseID,
+							Result:            json.RawMessage(`{}`),
+						}),
+					},
+				},
+			}
+			sink := &captureSink{}
+			exec := newExecutor(t,
+				fakeRegistryClient{toolUseID: toolUseID},
+				fakePulseClient{streamID: resultStreamID, stream: resultStream},
+				"todos.todos",
+				specs,
+				WithStreamSink(sink, test.profile),
+			)
+
+			res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+				RunID:      "run",
+				SessionID:  "sess",
+				ToolCallID: "toolcall-1",
+			}, &agentsruntime.ToolCall{
+				Name:    "queue.update_items",
+				Payload: []byte(`{}`),
+			})
+			require.NoError(t, err)
+			require.NotNil(t, res)
+			assert.Empty(t, resultStream.acked)
+			require.Len(t, sink.events, test.wantDeltas)
+			if test.wantDeltas == 0 {
+				return
+			}
+			ev, ok := sink.events[0].(aistream.ToolOutputDelta)
+			require.True(t, ok)
+			assert.Equal(t, aistream.EventToolOutputDelta, ev.Type())
+			assert.Equal(t, "run", ev.RunID())
+			assert.Equal(t, "sess", ev.SessionID())
+			assert.Equal(t, "toolcall-1", ev.Data.ToolCallID)
+			assert.Equal(t, "stdout", ev.Data.Stream)
+			assert.Equal(t, "hi\n", ev.Data.Delta)
+		})
 	}
-
-	sink := &captureSink{}
-	exec := newExecutor(t,
-		fakeRegistryClient{
-			toolUseID: toolUseID,
-		},
-		pc,
-		"todos.todos",
-		specs,
-		WithStreamSink(sink),
-	)
-
-	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
-		RunID:      "run",
-		SessionID:  "sess",
-		ToolCallID: "toolcall-1",
-	}, &agentsruntime.ToolCall{
-		Name:    "queue.update_items",
-		Payload: []byte(`{}`),
-	})
-	require.NoError(t, err)
-	require.NotNil(t, res)
-
-	require.Len(t, sink.events, 1)
-	assert.Empty(t, stream.acked)
-	ev, ok := sink.events[0].(aistream.ToolOutputDelta)
-	require.True(t, ok)
-	assert.Equal(t, aistream.EventToolOutputDelta, ev.Type())
-	assert.Equal(t, "run", ev.RunID())
-	assert.Equal(t, "sess", ev.SessionID())
-	assert.Equal(t, "toolcall-1", ev.Data.ToolCallID)
-	assert.Equal(t, "stdout", ev.Data.Stream)
-	assert.Equal(t, "hi\n", ev.Data.Delta)
 }
 
 func TestExecutorRestoresBoundsFromRegistryMessage(t *testing.T) {

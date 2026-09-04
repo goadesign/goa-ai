@@ -9,7 +9,7 @@ import (
 )
 
 // RuntimeStreams wires a caller-provided Pulse client into goa-ai's runtime.
-// It owns a publishing sink (used by runtime.Options.Stream) and can spawn
+// It owns a publishing sink passed to runtime.WithStream and can spawn
 // subscribers that reuse the same client so services do not need to manage
 // multiple Pulse connections.
 type RuntimeStreams struct {
@@ -28,9 +28,10 @@ type RuntimeStreamsOptions struct {
 }
 
 // NewRuntimeStreams constructs helpers for publishing runtime hook events to
-// Pulse and subscribing to the resulting streams. Callers pass the returned
-// sink to runtime.Options.Stream and keep the helper around to create
-// subscribers (e.g., SSE fan-out) later on.
+// Pulse and subscribing to the resulting streams. Callers pass Sink() and an
+// explicit purpose-specific profile to runtime.WithStream, then keep the helper
+// to create Pulse subscribers later. Applications must translate runtime events
+// into their own public contract before sending them to a browser.
 func NewRuntimeStreams(opts RuntimeStreamsOptions) (*RuntimeStreams, error) {
 	if opts.Client == nil {
 		return nil, errors.New("pulse client is required")
@@ -44,7 +45,8 @@ func NewRuntimeStreams(opts RuntimeStreamsOptions) (*RuntimeStreams, error) {
 	return &RuntimeStreams{sink: sink, client: opts.Client}, nil
 }
 
-// Sink exposes the publishing sink so callers can pass it to runtime.Options.
+// Sink returns the publishing sink passed to runtime.WithStream with an
+// explicit purpose-specific profile.
 func (r *RuntimeStreams) Sink() stream.Sink {
 	return r.sink
 }

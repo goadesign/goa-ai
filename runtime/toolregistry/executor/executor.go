@@ -64,8 +64,9 @@ type (
 		toolset string
 		specs   SpecLookup
 
-		outputDeltaKey string
-		streamSink     aistream.Sink
+		outputDeltaKey        string
+		streamSink            aistream.Sink
+		streamToolOutputDelta bool
 
 		logger telemetry.Logger
 		tracer telemetry.Tracer
@@ -94,13 +95,21 @@ type (
 
 const resultReaderBlockDuration = 100 * time.Millisecond
 
-// WithStreamSink configures the executor to forward best-effort tool output delta
-// frames into the provided stream sink while it waits for the canonical tool
-// result message. This does not affect tool execution semantics: the final tool
-// result remains authoritative.
-func WithStreamSink(sink aistream.Sink) Option {
+// WithStreamSink configures the executor to send tool output fragments to sink
+// when profile enables ToolOutputDelta. The final tool result remains
+// authoritative regardless of the selected profile. It panics when sink is
+// nil or profile enables no events because either value is invalid executor
+// configuration.
+func WithStreamSink(sink aistream.Sink, profile aistream.StreamProfile) Option {
+	if sink == nil {
+		panic("tool registry executor: stream sink is required")
+	}
+	if profile == (aistream.StreamProfile{}) {
+		panic("tool registry executor: stream profile must enable at least one event")
+	}
 	return func(e *Executor) {
 		e.streamSink = sink
+		e.streamToolOutputDelta = profile.ToolOutputDelta
 	}
 }
 
@@ -335,7 +344,7 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 					continue
 				}
 
-				if e.streamSink != nil {
+				if e.streamSink != nil && e.streamToolOutputDelta {
 					p := aistream.ToolOutputDeltaPayload{
 						ToolCallID:       meta.ToolCallID,
 						ParentToolCallID: meta.ParentToolCallID,

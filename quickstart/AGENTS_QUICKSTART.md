@@ -348,7 +348,7 @@ payload and result types:
 
 ```go
 collector := evidence.NewCollector()
-sub, err := streambridge.Register(rt.Bus, sink) // sink filters the scenario's session and calls collector.Consume
+sub, err := streambridge.Register(rt.Bus, sink, stream.RuntimeHostProfile()) // sink filters the scenario's session and calls collector.Consume
 // ... run the agent ...
 ev, err := collector.Finish()
 expect := evidence.Expect{
@@ -380,7 +380,7 @@ The command exits non-zero when any scenario fails, so it drops straight into CI
 ## 9. Ready for Prime Time: Advanced Features 🔭
 
 * **Sessions & Runs:** Sessions are explicit and owned by the host service. Create and end them through that service. Runs (`client.Run`/`client.Start`) require an active session.
-* **Session-Owned Streaming (for UIs):** In production, stream consumers should attach to the **session-owned stream** (`session/<session_id>`) and filter by `run_id`. Close SSE when you observe a `run_stream_end` event for the attached run ID. Nested agent runs emit `child_run_linked` links and their own `run_stream_end`; parent runs only emit `run_stream_end` after all child runs have ended.
+* **Session-Owned Streaming:** In production, trusted runtime hosts should attach to the **session-owned stream** (`session/<session_id>`) and filter by `run_id`. Close the connection when you observe a `run_stream_end` event for the attached run ID. Nested agent runs emit `child_run_linked` links and their own `run_stream_end`; parent runs only emit `run_stream_end` after all child runs have ended. Create a separate public event contract before forwarding data to a browser.
 * **Asynchronous Runs:** Use `client.Start()` to get a workflow handle. This is great for long-running tasks, cancellation, and non-interactive integrations.
 * **Human Input:** Clarifications, confirmations, and external results end the current workflow with a typed suspension. Call `PrepareContinuation` with the new workflow ID, call `MarshalBinary`, then store that ID from `RunID()` alongside the prepared bytes and accepted answer in one application database transaction. A later process can load those bytes, call `ParsePreparedRun`, and submit the result with `StartPrepared`.
 * **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
@@ -393,7 +393,7 @@ The command exits non-zero when any scenario fails, so it drops straight into CI
 rt := runtime.New(runtimeStore,
     // runtime.WithEngine(myTemporalEngine),
     // runtime.WithMemoryStore(myMongoMemoryStore),
-    // runtime.WithStream(myEventStreamSink),
+    // runtime.WithStream(myEventStreamSink, stream.RuntimeHostProfile()),
 )
 ```
 

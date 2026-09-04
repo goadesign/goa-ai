@@ -329,14 +329,14 @@ func (j *modelInvocationJournal) saveModelResponse(
 }
 
 // recordModelChunk accounts for one validated model chunk and immediately sends
-// user-visible text or thinking from the designated planner invocation.
+// assistant text or permitted diagnostic thinking from the designated planner
+// invocation.
 //
-// Text and thinking fragments cannot be aggregated here: each fragment is
-// useful by itself, and holding it until inference completes would remove the
-// real-time UI behavior. Tool argument fragments have the opposite contract.
-// A fragment is incomplete JSON and cannot execute or stand alone, so the
-// inference client aggregates it and only the complete validated tool call may
-// leave this boundary.
+// Allowed fragments cannot be aggregated here because holding them until
+// inference completes would remove real-time delivery. Tool argument fragments
+// have the opposite contract. A fragment is incomplete JSON and cannot execute
+// or stand alone, so the inference client aggregates it and only the complete
+// validated tool call may leave this boundary.
 func (j *modelInvocationJournal) recordModelChunk(
 	ctx context.Context,
 	invocationID modelInvocationID,

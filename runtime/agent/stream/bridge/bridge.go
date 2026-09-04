@@ -1,7 +1,4 @@
-// Package bridge provides a discoverable entrypoint to wire the runtime hook
-// bus to a stream.Sink without importing the hooks subscriber directly. It
-// avoids coupling the stream and hooks packages while giving users a simple
-// API.
+// Package bridge registers a stream subscriber on the runtime hook bus.
 package bridge
 
 import (
@@ -9,18 +6,10 @@ import (
 	"goa.design/goa-ai/runtime/agent/stream"
 )
 
-// NewSubscriber returns a hooks.Subscriber that forwards selected hook events
-// (assistant replies, planner thoughts, tool start/end) to the provided sink
-// as typed stream.Event values using the default stream profile.
-func NewSubscriber(sink stream.Sink) (hooks.Subscriber, error) {
-	return stream.NewSubscriber(sink)
-}
-
-// Register creates a stream subscriber for the given sink and registers it
-// on the provided bus. The returned subscription can be closed to detach the
-// subscriber.
-func Register(bus hooks.Bus, sink stream.Sink) (hooks.Subscription, error) {
-	sub, err := NewSubscriber(sink)
+// Register creates a subscriber for the selected events and registers it on
+// bus. The returned subscription can be closed to detach the subscriber.
+func Register(bus hooks.Bus, sink stream.Sink, profile stream.StreamProfile) (hooks.Subscription, error) {
+	sub, err := stream.NewSubscriber(sink, profile)
 	if err != nil {
 		return nil, err
 	}

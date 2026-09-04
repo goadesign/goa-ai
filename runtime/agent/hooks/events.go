@@ -277,7 +277,8 @@ type (
 
 	// ThinkingBlockEvent fires when the planner emits a structured reasoning block
 	// (either signed plaintext or redacted bytes). This preserves provider-accurate
-	// thinking suitable for exact replay and auditing.
+	// thinking for exact replay and restricted diagnostics. It must not be sent to
+	// end users.
 	ThinkingBlockEvent struct {
 		baseEvent
 		// Text is the plaintext reasoning content when provided by the model.

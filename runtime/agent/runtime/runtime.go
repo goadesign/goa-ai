@@ -101,7 +101,7 @@ type (
 	//  3. Start workflows via AgentClient (Run or Start)
 	//
 	// The Runtime automatically subscribes to hooks for memory persistence and
-	// stream publishing when MemoryStore or Stream are configured.
+	// stream publishing when MemoryStore or WithStream are configured.
 	Runtime struct {
 		// Engine is the workflow backend adapter (Temporal by default).
 		Engine engine.Engine
@@ -116,10 +116,9 @@ type (
 		Policy policy.Engine
 		// Bus is the bus used for streaming runtime events.
 		Bus hooks.Bus
-		// Stream publishes planner/tool/assistant events to the caller.
-		Stream stream.Sink
-		// streamSubscriber forwards hook events to Stream. It is invoked from
-		// hookActivity so stream emission can be made fatal while a session is active.
+		// streamSubscriber sends selected hook events to the sink configured with
+		// WithStream. It is invoked from hookActivity so stream emission can be
+		// made fatal while a session is active.
 		streamSubscriber *stream.Subscriber
 
 		logger  telemetry.Logger
@@ -209,8 +208,6 @@ type (
 		Policy policy.Engine
 		// Hooks is the Pulse-backed bus used for streaming runtime events.
 		Hooks hooks.Bus
-		// Stream publishes planner/tool/assistant events to the caller.
-		Stream stream.Sink
 		// Logger emits structured logs (usually backed by Clue).
 		Logger telemetry.Logger
 		// Metrics records counters/histograms for runtime operations.
@@ -236,6 +233,9 @@ type (
 		// HintOverrides optionally overrides DSL-authored call hints for specific tools
 		// when streaming tool_start events.
 		HintOverrides map[tools.Ident]HintOverrideFunc
+
+		streamSink    stream.Sink
+		streamProfile stream.StreamProfile
 	}
 
 	// RuntimeOption configures the runtime via functional options passed to NewWith.
@@ -729,7 +729,6 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 		Store:                  store,
 		Policy:                 opts.Policy,
 		Bus:                    bus,
-		Stream:                 opts.Stream,
 		storageActivityTimeout: opts.StorageActivityTimeout,
 		logger:                 logger,
 		metrics:                metrics,
@@ -814,13 +813,15 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 			rt.logger.Warn(context.Background(), "failed to register memory subscriber", "err", err)
 		}
 	}
-	if rt.Stream != nil {
-		streamSub, err := stream.NewSubscriber(newHintingSink(rt, rt.Stream))
+	if opts.streamSink != nil {
+		streamSub, err := stream.NewSubscriber(
+			newHintingSink(rt, opts.streamSink),
+			opts.streamProfile,
+		)
 		if err != nil {
-			rt.logger.Warn(context.Background(), "failed to create stream subscriber", "err", err)
-		} else {
-			rt.streamSubscriber = streamSub
+			panic(fmt.Errorf("runtime: create stream subscriber: %w", err))
 		}
+		rt.streamSubscriber = streamSub
 	}
 	return rt
 }
@@ -861,8 +862,21 @@ func WithPromptStore(s prompt.Store) RuntimeOption { return func(o *Options) { o
 // WithPolicy sets the policy engine.
 func WithPolicy(p policy.Engine) RuntimeOption { return func(o *Options) { o.Policy = p } }
 
-// WithStream sets the stream sink.
-func WithStream(s stream.Sink) RuntimeOption { return func(o *Options) { o.Stream = s } }
+// WithStream sets the stream sink and selects which runtime events it receives.
+// It panics when sink is nil or profile enables no events because either value
+// would leave the runtime unable to honor the configured stream contract.
+func WithStream(s stream.Sink, profile stream.StreamProfile) RuntimeOption {
+	if s == nil {
+		panic("runtime: stream sink is required")
+	}
+	if profile == (stream.StreamProfile{}) {
+		panic("runtime: stream profile must enable at least one event")
+	}
+	return func(o *Options) {
+		o.streamSink = s
+		o.streamProfile = profile
+	}
+}
 
 // WithHooks sets the event bus.
 func WithHooks(b hooks.Bus) RuntimeOption { return func(o *Options) { o.Hooks = b } }
