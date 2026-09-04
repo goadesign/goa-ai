@@ -743,7 +743,7 @@ func TestFinalizeWithPlannerRecoversRejectedModelOutput(t *testing.T) {
 						ModelResponseFingerprintVersion: api.ModelResponseFingerprintVersionV2,
 						ModelResponseSize:               responseSize,
 						ModelOutputRecovery: &ModelOutputRecovery{
-							Kind:       planner.ModelOutputRecoveryToolCalls,
+							Kind:       planner.ModelOutputRecoveryPlanning,
 							Correction: "Return the required terminal action.",
 						},
 					},
@@ -752,7 +752,7 @@ func TestFinalizeWithPlannerRecoversRejectedModelOutput(t *testing.T) {
 			},
 			assertRetry: func(t *testing.T, input *PlanActivityInput) {
 				t.Helper()
-				require.Equal(t, planner.ModelOutputRecoveryToolCalls, input.ModelOutputRecovery.Kind)
+				require.Equal(t, planner.ModelOutputRecoveryPlanning, input.ModelOutputRecovery.Kind)
 				require.Equal(t, "Return the required terminal action.", input.ModelOutputRecovery.Correction)
 				require.Nil(t, input.ModelInvocationRecovery)
 			},

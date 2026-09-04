@@ -44,9 +44,9 @@ const (
 	// RecoveryAnswer replaces a rejected final answer without ordinary tools.
 	RecoveryAnswer RecoveryKind = "answer"
 
-	// RecoveryToolCalls replaces rejected planned tool calls with the current
-	// executable tool catalog.
-	RecoveryToolCalls RecoveryKind = "tool_calls"
+	// RecoveryPlanning replaces rejected output from a tool-capable planning
+	// turn with the current executable tool catalog.
+	RecoveryPlanning RecoveryKind = "planning"
 )
 
 // NewWithOrigin records why one known output boundary rejected a completed
@@ -76,7 +76,7 @@ func NewRecoverableModelOutput(cause error, message *model.Message, correction s
 	if len(correction) > MaxCorrectionBytes {
 		panic("outputcontract: correction guidance exceeds workflow boundary limit")
 	}
-	if recovery != RecoveryAnswer && recovery != RecoveryToolCalls {
+	if recovery != RecoveryAnswer && recovery != RecoveryPlanning {
 		panic("outputcontract: recoverable model output requires a valid recovery kind")
 	}
 	return &Error{
@@ -105,7 +105,8 @@ func (e *Error) Origin() Origin {
 }
 
 // RecoveryKind identifies whether the model must replace a final answer or
-// planned tool calls. Empty means the rejection is terminal.
+// output from a tool-capable planning turn. Empty means the rejection is
+// terminal.
 func (e *Error) RecoveryKind() RecoveryKind {
 	return e.recovery
 }

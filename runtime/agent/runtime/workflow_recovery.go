@@ -105,7 +105,7 @@ func validateModelOutputRecovery(recovery *ModelOutputRecovery) error {
 		return errors.New("model-output recovery is required")
 	}
 	if recovery.Kind != planner.ModelOutputRecoveryAnswer &&
-		recovery.Kind != planner.ModelOutputRecoveryToolCalls {
+		recovery.Kind != planner.ModelOutputRecoveryPlanning {
 		return errors.New("model-output correction requires a valid recovery kind")
 	}
 	if strings.TrimSpace(recovery.Correction) == "" {

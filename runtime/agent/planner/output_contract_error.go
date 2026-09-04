@@ -35,9 +35,9 @@ const (
 	// ordinary tools.
 	ModelOutputRecoveryAnswer = outputcontract.RecoveryAnswer
 
-	// ModelOutputRecoveryToolCalls replaces rejected planned tool calls with
-	// the current executable tool catalog.
-	ModelOutputRecoveryToolCalls = outputcontract.RecoveryToolCalls
+	// ModelOutputRecoveryPlanning replaces rejected output from a tool-capable
+	// planning turn with the current executable tool catalog.
+	ModelOutputRecoveryPlanning = outputcontract.RecoveryPlanning
 )
 
 // NewOutputContractError records why a completed planner result was rejected.
@@ -65,11 +65,12 @@ func NewRecoverableModelAnswerError(
 	)
 }
 
-// NewRecoverableModelToolCallsError records why completed model-authored tool
-// calls were rejected. response must be the exact response returned by the
-// planner model client. The workflow schedules replacement tool calls using
-// correction as guidance and retains the current executable tool catalog.
-func NewRecoverableModelToolCallsError(
+// NewRecoverableModelPlanningError records why completed output from a
+// tool-capable planning turn was rejected. response must be the exact response
+// returned by the planner model client. The workflow schedules replacement
+// planning output using correction as guidance and retains the current
+// executable tool catalog.
+func NewRecoverableModelPlanningError(
 	cause error,
 	response *model.Message,
 	correction string,
@@ -78,7 +79,7 @@ func NewRecoverableModelToolCallsError(
 		cause,
 		response,
 		correction,
-		outputcontract.RecoveryToolCalls,
+		outputcontract.RecoveryPlanning,
 	)
 }
 

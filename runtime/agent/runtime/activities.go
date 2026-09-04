@@ -123,8 +123,9 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		return nil, err
 	}
 	// A rejected ordinary final answer is replaced without tools. Rejected
-	// planned tool calls retain the normal catalog. A rejected finalization
-	// output retains the finalizer's response or terminal-tool contract.
+	// output from a tool-capable planning turn retains the normal catalog. A
+	// rejected finalization output retains the finalizer's response or
+	// terminal-tool contract.
 	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil &&
 		input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer &&
 		input.Finalize == nil
@@ -193,7 +194,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	}
 	act.reminders = append(recoveryReminders, act.reminders...)
 	if input.ModelOutputRecovery != nil {
-		replacement := "Produce replacement tool calls using the available tools now."
+		replacement := "Produce replacement planning output using the available tools now."
 		if input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer {
 			replacement = "Produce a replacement final answer now."
 		}

@@ -847,9 +847,10 @@ follow the required rules, it chooses one of three explicit outcomes:
 - `planner.NewRecoverableModelAnswerError(violation, answer, correction)` uses
   one recovery turn to replace the exact rejected final answer. Ordinary tools
   are not advertised on that turn.
-- `planner.NewRecoverableModelToolCallsError(violation, response, correction)`
-  uses one recovery turn to replace tool calls from the exact rejected response.
-  The current executable tool catalog remains advertised.
+- `planner.NewRecoverableModelPlanningError(violation, response, correction)`
+  uses one recovery turn to replace output from the exact rejected tool-capable
+  planning response. The response may have omitted a required call. The current
+  executable tool catalog remains advertised.
 
 Both recoverable constructors require the exact message returned by the model
 client and bounded correction guidance. The workflow records its fingerprint
@@ -946,12 +947,12 @@ Workflow step boundary:
   completed final answer and can state how the model should replace it; the
   workflow records the rejection and token usage, then schedules a
   synthesis-only resume activity with that guidance,
-- a planner may return `NewRecoverableModelToolCallsError` when it rejects
-  completed planned tool calls and can state how the model should replace
-  them; the workflow records the same evidence, then schedules a normal resume
-  with the current executable tool catalog,
+- a planner may return `NewRecoverableModelPlanningError` when it rejects
+  completed output from a tool-capable planning turn and can state how the
+  model should replace it; the workflow records the same evidence, then
+  schedules a normal resume with the current executable tool catalog,
 - model-output recovery histories now require the explicit `answer` or
-  `tool_calls` kind. Histories created by an older runtime while such a recovery
+  `planning` kind. Histories created by an older runtime while such a recovery
   was pending cannot resume on this version. New histories require matching
   workers and cannot be rolled back to an older runtime,
 - `MaxRecoveryTurns` counts replacement planner activities scheduled after

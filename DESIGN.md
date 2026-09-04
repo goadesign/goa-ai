@@ -316,8 +316,9 @@ Ordinary output contract errors are terminal and Temporal does not retry them.
 When the planner can give exact replacement guidance for completed model
 output, it returns one of two explicit errors. `NewRecoverableModelAnswerError`
 spends one recovery turn on a replacement answer without ordinary tools.
-`NewRecoverableModelToolCallsError` spends one recovery turn on replacement
-tool calls with the current executable catalog. Both paths are bound to the
+`NewRecoverableModelPlanningError` spends one recovery turn on replacement
+output with the current executable catalog. The rejected output may contain
+invalid tool calls or may have omitted a required call. Both paths are bound to the
 exact rejected response fingerprint, record usage, and keep the rejected body
 private. Infrastructure failures remain activity errors and follow the
 activity retry policy. Plan and Resume activities are the exception: their
