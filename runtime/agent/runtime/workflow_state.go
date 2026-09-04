@@ -32,6 +32,11 @@ type (
 		// Transcript is the provider transcript for the current planner result.
 		Transcript []*model.Message
 
+		// ResponseID identifies the planner activity that produced Result and
+		// Transcript. It becomes the stable identity of any assistant text saved
+		// from that response.
+		ResponseID string
+
 		// ResponseCommitted reports whether Transcript or its planner-authored
 		// equivalent has been persisted for the current result.
 		ResponseCommitted bool
@@ -48,13 +53,3 @@ type (
 		PendingRecovery pendingPlannerRecovery
 	}
 )
-
-func newRunLoopState(result *PlanResult, transcriptMsgs []*model.Message, usage model.TokenUsage, caps policy.CapsState, nextAttempt int) *runLoopState {
-	return &runLoopState{
-		Caps:        caps,
-		NextAttempt: nextAttempt,
-		AggUsage:    usage,
-		Result:      result,
-		Transcript:  transcriptMsgs,
-	}
-}

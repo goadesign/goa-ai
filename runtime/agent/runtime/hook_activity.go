@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	agent "goa.design/goa-ai/runtime/agent"
@@ -735,11 +736,26 @@ func (r *Runtime) appendTranscriptRunLogMessages(ctx context.Context, input *Rec
 	if input == nil {
 		return storage.AppendResult{}, malformedStorageCommand(errors.New("runtime: transcript delta input is nil"))
 	}
+	if input.ResponseID != "" && input.EventKey != input.ResponseID {
+		return storage.AppendResult{}, malformedStorageCommand(
+			errors.New("runtime: assistant transcript response id must equal its stable event key"),
+		)
+	}
 	messages, err := transcript.DecodeRunLogDelta(input.Payload)
 	if err != nil {
 		return storage.AppendResult{}, malformedStorageCommand(
 			fmt.Errorf("runtime: decode transcript delta: %w", err),
 		)
+	}
+	streamCommittedAssistantTurns := input.Type == transcript.RunLogMessagesAppended
+	text := ""
+	if streamCommittedAssistantTurns {
+		text = assistantMessagesText(messages)
+		if text != "" && input.ResponseID == "" {
+			return storage.AppendResult{}, malformedStorageCommand(
+				errors.New("runtime: assistant transcript delta is missing response id"),
+			)
+		}
 	}
 	result, err := r.Store.AppendRunRecord(ctx, &runlog.Event{
 		EventKey:  input.EventKey,
@@ -757,29 +773,36 @@ func (r *Runtime) appendTranscriptRunLogMessages(ctx context.Context, input *Rec
 	if result.SessionStatus != session.StatusActive || r.streamSubscriber == nil {
 		return result, nil
 	}
-	streamCommittedAssistantTurns := input.Type == transcript.RunLogMessagesAppended
 	if !streamCommittedAssistantTurns {
 		return result, nil
 	}
-	for i, msg := range messages {
-		if msg == nil || msg.Role != model.ConversationRoleAssistant || agentMessageText(msg) == "" {
-			continue
-		}
-		evt := hooks.NewAssistantTurnCommittedEvent(input.RunID, input.AgentID, input.SessionID, msg)
-		evt.SetTurnID(input.TurnID)
-		evt.SetTimestampMS(input.TimestampMS)
-		evt.SetEventKey(committedAssistantTurnEventKey(input.EventKey, i))
-		if err := r.streamSubscriber.HandleEvent(ctx, evt); err != nil {
-			return storage.AppendResult{}, err
-		}
+	if text == "" {
+		return result, nil
+	}
+	evt := hooks.NewAssistantTurnCommittedEvent(
+		input.RunID,
+		input.AgentID,
+		input.SessionID,
+		input.ResponseID,
+		text,
+	)
+	evt.SetTurnID(input.TurnID)
+	evt.SetTimestampMS(input.TimestampMS)
+	evt.SetEventKey(input.ResponseID)
+	if err := r.streamSubscriber.HandleEvent(ctx, evt); err != nil {
+		return storage.AppendResult{}, err
 	}
 	return result, nil
 }
 
-// committedAssistantTurnEventKey derives a stable event key for one assistant
-// message extracted from a transcript delta record.
-func committedAssistantTurnEventKey(base string, index int) string {
-	return fmt.Sprintf("%s/assistant/%d", base, index)
+func assistantMessagesText(messages []*model.Message) string {
+	var text strings.Builder
+	for _, message := range messages {
+		if message != nil && message.Role == model.ConversationRoleAssistant {
+			text.WriteString(agentMessageText(message))
+		}
+	}
+	return text.String()
 }
 
 func (r *Runtime) enrichToolCallScheduledHint(ctx context.Context, evt *hooks.ToolCallScheduledEvent) (bool, error) {

@@ -1,6 +1,6 @@
 // This file exercises the complete durable recovery path for a model tool name
-// that was absent from the request. The rejected response never reaches tool
-// execution or the next transcript, while its usage is retained exactly once.
+// that was absent from the request. Published text remains in the transcript,
+// the rejected call never executes, and usage is retained exactly once.
 
 package runtime
 
@@ -111,6 +111,8 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 	originalCatalog := newAnyJSONSpec("catalog.items.list_original")
 	catalog := newAnyJSONSpec("catalog.items.list_items")
 	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	sink := &recordingStreamSink{}
+	rt.streamSubscriber = runtimeWithModelOutputSink(t, sink).streamSubscriber
 	seedTestToolDefinitions(rt, catalog)
 	sessionID := "session-unadvertised-tool"
 	_, err := createSessionForTest(t.Context(), rt.Store, sessionID)
@@ -160,8 +162,9 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 					)
 					assert.NotContains(t, input.Reminders[0].Text, "rejected-call")
 					assert.NotContains(t, input.Reminders[0].Text, "ignored")
-					require.Len(t, input.Messages, 1)
+					require.Len(t, input.Messages, 2)
 					assert.Equal(t, model.ConversationRoleUser, input.Messages[0].Role)
+					assert.Equal(t, "published text", agentMessageText(input.Messages[1]))
 					return &planner.PlanResult{
 						ToolCalls: []planner.ToolRequest{{
 							Name:    catalog.Name,
@@ -191,7 +194,7 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 				chunks: []model.Chunk{
 					model.TextChunk{Message: model.Message{
 						Role:  model.ConversationRoleAssistant,
-						Parts: []model.Part{model.TextPart{Text: "discarded text"}},
+						Parts: []model.Part{model.TextPart{Text: "published text"}},
 					}},
 					model.ToolCallChunk{ToolCall: model.ToolCall{
 						ID:      "rejected-valid-call",
@@ -242,6 +245,10 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 	assert.Equal(t, 7, out.Usage.TotalTokens)
 	require.Len(t, out.ToolEvents, 1)
 	assert.Equal(t, catalog.Name, out.ToolEvents[0].Name)
+	snapshot, err := rt.GetRunSnapshot(t.Context(), runInput.RunID)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(snapshot.Transcript), 2)
+	assert.Equal(t, "published text", agentMessageText(snapshot.Transcript[1]))
 }
 
 func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {

@@ -562,10 +562,10 @@ type (
 	//     batch is removed while numeric Usage, model origin, and bounded model
 	//     response evidence remain intact.
 	PlanActivityOutput struct {
-		// PublicationBatchID uniquely identifies this successful planner activity
-		// completion. The activity generates one UUID after planning and carries
-		// it with accepted or rejected output so the workflow can retry the exact
-		// publication batch without colliding with a later activity completion.
+		// PublicationBatchID uniquely identifies this planner activity. The
+		// activity generates it before planner or model work begins. It identifies
+		// live fragments and committed assistant text from the activity's model
+		// response, and it namespaces the activity's other durable events.
 		PublicationBatchID string
 
 		// Result contains the accepted planner decision after tool intents have
@@ -574,6 +574,12 @@ type (
 
 		// Transcript contains the provider-visible transcript produced by the planner.
 		Transcript []*model.Message
+
+		// PublishedAssistantText is the exact text already sent to session
+		// subscribers when this activity does not return an executable PlanResult.
+		// The workflow commits it before recovery or failure so published text is
+		// never discarded.
+		PublishedAssistantText string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// Usage is the token usage reported by the model provider when available.
 		Usage model.TokenUsage
@@ -590,6 +596,11 @@ type (
 		// rejected. The workflow publishes Usage and PlannerEvents from this
 		// successful activity result before recovering or terminating the run.
 		OutputContractFailure *OutputContractFailure `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+
+		// PlanningFailure is present when model or planner execution failed after
+		// assistant text reached session subscribers. The workflow commits the
+		// published text before terminating with these standardized failure details.
+		PlanningFailure *run.Failure `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// ModelInvocationRecovery is present instead of OutputContractFailure
 		// when generated input validation or provider response validation

@@ -49,18 +49,22 @@ func (r *Runtime) appendTranscriptMessages(
 	return nil
 }
 
-// appendSelectedModelResponse persists one selected planner turn. Captured
+// appendSelectedModelResponse persists one accepted planner turn. Captured
 // provider responses are appended unchanged; planner-authored turns are built
-// once from the result's domain values. The workflow loop owns the exactly-once
-// state transition around this persistence operation.
+// once from the result's domain values. responseID becomes the stable identity
+// of the aggregate assistant text emitted after the append succeeds.
 func (r *Runtime) appendSelectedModelResponse(
 	ctx context.Context,
 	agentID agent.Ident,
 	base *planner.PlanInput,
 	turnID string,
+	responseID string,
 	result *PlanResult,
 	transcript []*model.Message,
 ) error {
+	if responseID == "" {
+		return errors.New("selected planner response is missing its response id")
+	}
 	messages := transcript
 	if len(messages) == 0 {
 		var err error
@@ -69,11 +73,30 @@ func (r *Runtime) appendSelectedModelResponse(
 			return err
 		}
 	}
-	return r.appendTranscriptMessages(ctx, agentID, base, turnID, messages)
+	if len(messages) == 0 {
+		return nil
+	}
+	owned, err := model.CloneMessages(messages)
+	if err != nil {
+		return err
+	}
+	if err := r.publishAssistantTranscriptDelta(
+		ctx,
+		base.RunContext.RunID,
+		agentID,
+		base.RunContext.SessionID,
+		turnID,
+		responseID,
+		owned,
+	); err != nil {
+		return err
+	}
+	base.Messages = append(base.Messages, owned...)
+	return nil
 }
 
 // commitSelectedModelResponse performs the workflow's sole transition from an
-// uncommitted planner result to a durable provider transcript.
+// accepted planner result to a durable provider transcript.
 func (l *workflowLoop) commitSelectedModelResponse(result *PlanResult) error {
 	if l.st.ResponseCommitted {
 		return errors.New("workflow planner response was committed more than once")
@@ -83,6 +106,7 @@ func (l *workflowLoop) commitSelectedModelResponse(result *PlanResult) error {
 		l.input.AgentID,
 		l.base,
 		l.turnID,
+		l.st.ResponseID,
 		result,
 		l.st.Transcript,
 	); err != nil {

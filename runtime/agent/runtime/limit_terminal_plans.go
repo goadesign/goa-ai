@@ -131,6 +131,7 @@ func (r *Runtime) finishLimitTerminalCall(
 		base,
 		result,
 		nil,
+		"",
 		allToolResults,
 		allToolOutputs,
 		aggUsage,

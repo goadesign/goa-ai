@@ -44,18 +44,20 @@ func TestStreamSubscriber_AssistantTurnCommitted(t *testing.T) {
 	sub, err := NewSubscriber(sink)
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewAssistantTurnCommittedEvent("r1", agent.Ident("agent1"), "session-1", &model.Message{
-		Role:  model.ConversationRoleAssistant,
-		Parts: []model.Part{model.TextPart{Text: "hello"}},
-	})
+	evt := hooks.NewAssistantTurnCommittedEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		"00000000-0000-4000-8000-000000000001",
+		"hello",
+	)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	require.Equal(t, EventAssistantTurn, sink.events[0].Type())
 	v, ok := sink.events[0].(AssistantTurn)
 	require.True(t, ok)
-	require.NotNil(t, v.Data.Message)
-	require.Equal(t, model.ConversationRoleAssistant, v.Data.Message.Role)
-	require.Equal(t, []model.Part{model.TextPart{Text: "hello"}}, v.Data.Message.Parts)
+	require.Equal(t, "00000000-0000-4000-8000-000000000001", v.Data.ResponseID)
+	require.Equal(t, "hello", v.Data.Text)
 }
 
 func TestStreamSubscriber_PreservesHookEventKey(t *testing.T) {
@@ -259,7 +261,9 @@ func TestStreamSubscriberModelOutputEventsRespectProfile(t *testing.T) {
 		},
 	}
 	for _, event := range events {
-		require.NoError(t, subscriber.HandleModelOutputEvent(t.Context(), event))
+		published, err := subscriber.HandleModelOutputEvent(t.Context(), event)
+		require.NoError(t, err)
+		require.False(t, published)
 	}
 	require.Empty(t, sink.events)
 }

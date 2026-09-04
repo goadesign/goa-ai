@@ -14,9 +14,10 @@ import (
 )
 
 // This file wraps model clients used during one planner activity. Each response
-// is checked and saved before tracing or planner code can read it. The runtime
-// publishes only the response selected by an accepted planner result. The other
-// wrappers add request caching and tracing.
+// is checked and saved before tracing or planner code can read it. A planner's
+// designated client publishes validated text and thinking as they arrive; the
+// runtime saves the complete response only when the planner accepts it. The
+// other wrappers add request caching and tracing.
 //
 // Rules:
 //   - Complete tool calls go to the planner and are handled by the workflow.
@@ -40,8 +41,8 @@ type (
 	}
 )
 
-// newPlannerModelClient returns a planner-scoped client whose provider output is
-// published after the planner selects its response.
+// newPlannerModelClient returns a planner-scoped client whose validated text
+// and thinking are published as they arrive.
 func newPlannerModelClient(inner model.Client) planner.PlannerModelClient {
 	if inner == nil {
 		return nil
@@ -49,8 +50,8 @@ func newPlannerModelClient(inner model.Client) planner.PlannerModelClient {
 	return &plannerModelClient{inner: inner}
 }
 
-// Complete calls the model. The saved output is published only if the planner
-// result selects this response and passes every runtime check.
+// Complete calls the model. The runtime saves the complete output only if the
+// planner result selects this response and passes every runtime check.
 func (c *plannerModelClient) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
 	if err := c.begin(); err != nil {
 		return nil, err

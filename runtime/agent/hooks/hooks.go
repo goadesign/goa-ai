@@ -116,10 +116,11 @@ const (
 	// Payload contains the message content and any structured output.
 	AssistantMessage EventType = "assistant_message"
 
-	// AssistantTurnCommitted fires when the runtime appends a canonical
-	// assistant message to the durable transcript run log. Unlike
-	// AssistantMessage, this event represents the committed assistant turn
-	// artifact used for replay and downstream projection.
+	// AssistantTurnCommitted fires when the runtime appends one displayed
+	// assistant response to the durable transcript run log. This also covers text
+	// published before a later model or planning failure. Unlike AssistantMessage,
+	// it carries the response ID and complete display text used for replay and
+	// downstream projection.
 	AssistantTurnCommitted EventType = "assistant_turn_committed"
 
 	// MemoryAppended fires when new memory entries are successfully persisted

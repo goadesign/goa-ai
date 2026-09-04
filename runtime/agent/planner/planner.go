@@ -154,9 +154,8 @@ type AgentState interface {
 }
 
 // PlannerEvents lets planners publish durable annotations and model usage.
-// Runtime-managed model clients stream provisional text and thinking directly
-// from the validated inference boundary; planners never receive or republish
-// partial tool JSON.
+// Runtime-managed model clients publish validated text and thinking as each
+// chunk arrives; planners never receive or republish partial tool JSON.
 type PlannerEvents interface {
 	// PlannerThought emits a planner note with optional labels for debugging.
 	PlannerThought(ctx context.Context, note string, labels map[string]string)

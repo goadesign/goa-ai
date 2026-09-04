@@ -4,9 +4,9 @@
 // provide comprehensive internal observability across the entire runtime lifecycle.
 //
 // Subscriber converts selected persisted hook events into stream events and
-// also applies the same audience profile to provisional model text, thinking,
-// and lifecycle events. Internal-only events such as policy decisions and
-// memory operations never reach the sink.
+// also applies the same audience profile to live model text and thinking.
+// Internal-only events such as policy decisions and memory operations never
+// reach the sink.
 //
 // All event types implement the Event interface and can be safely sent concurrently
 // through a Sink implementation. Implementations are responsible for marshaling
@@ -119,12 +119,16 @@ type (
 		Data AssistantReplyPayload
 	}
 
-	// AssistantTurn streams a canonical assistant transcript message after the
-	// runtime has durably appended it to the run log.
+	// AssistantTurn streams the complete display text for one assistant response
+	// after the runtime has durably appended that text. The run may still fail
+	// after the text was displayed.
 	//
 	// Contract:
-	//   - Each event represents one committed assistant transcript artifact.
-	//   - Unlike AssistantReply, this event is canonical and replay-safe.
+	//   - ResponseID matches every AssistantReply fragment in this response.
+	//   - Text is complete even when a unary or planner-authored response emitted
+	//     no AssistantReply fragments.
+	//   - When fragments exist, their ordered text is an exact prefix of Text, so
+	//     consumers can append only a missing suffix without replacing live text.
 	AssistantTurn struct {
 		Base
 		Data AssistantTurnPayload
@@ -268,9 +272,10 @@ type (
 		Text       string `json:"text"`
 	}
 
-	// AssistantTurnPayload carries the committed assistant transcript message.
+	// AssistantTurnPayload carries one committed assistant display response.
 	AssistantTurnPayload struct {
-		Message *model.Message `json:"message"`
+		ResponseID string `json:"response_id"`
+		Text       string `json:"text"`
 	}
 
 	// PlannerThoughtPayload is the typed wire payload for planner thought events.
@@ -620,7 +625,7 @@ type (
 
 	// StreamProfile describes which event kinds are emitted for a particular
 	// audience. Subscriber applies the profile to both mapped hook events and
-	// provisional model presentation events.
+	// live model output events.
 	StreamProfile struct {
 		// Assistant controls assistant reply emission.
 		Assistant bool
@@ -745,8 +750,8 @@ const (
 	// Payload is AssistantReplyPayload.
 	EventAssistantReply EventType = "assistant_reply"
 
-	// EventAssistantTurn streams one canonical assistant transcript message after
-	// the runtime has durably appended it to the run log.
+	// EventAssistantTurn streams one complete assistant display response after
+	// the runtime has durably appended its provider transcript to the run log.
 	EventAssistantTurn EventType = "assistant_turn"
 
 	// EventAwaitClarification streams when a planner requests human clarification.

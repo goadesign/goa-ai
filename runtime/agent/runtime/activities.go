@@ -17,6 +17,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -83,20 +84,20 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	result, err := r.planStart(ctx, act.reg, planInput)
 	err = act.planningError(err)
 	if err != nil {
-		return act.outputContractFailure(ctx, err)
+		return act.failureOutput(ctx, err)
 	}
 	if err := validatePlannerActivityResult(r, result, input.RunContext.Tool, false); err != nil {
-		return act.outputContractFailure(ctx, err)
+		return act.failureOutput(ctx, err)
 	}
 	if err := validatePlannerToolCatalogs(result, act.agentCtx.AdvertisedToolDefinitions(), act.plannerAuthoredTools); err != nil {
-		return act.outputContractFailure(ctx, planner.NewOutputContractError(err))
+		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
 	if err := validatePlannerResultPayloadCodecs(ctx, r, result, continuationActions); err != nil {
-		return act.outputContractFailure(ctx, planner.NewOutputContractError(err))
+		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
 	output, err := act.output(ctx, r, result, false, continuationActions)
 	if err != nil {
-		return act.outputContractFailure(ctx, err)
+		return act.failureOutput(ctx, err)
 	}
 	r.logger.Info(ctx, "PlanStartActivity returning PlanResult", "tool_calls", len(result.ToolCalls), "final_response", result.FinalResponse != nil, "await", result.Await != nil)
 	return output, nil
@@ -235,27 +236,27 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	result, err := r.planResume(ctx, act.reg, planInput)
 	err = act.planningError(err)
 	if err != nil {
-		return act.outputContractFailure(ctx, err)
+		return act.failureOutput(ctx, err)
 	}
 	if err := validatePlannerActivityResult(r, result, input.RunContext.Tool, synthesisOnly); err != nil {
-		return act.outputContractFailure(ctx, err)
+		return act.failureOutput(ctx, err)
 	}
 	if err := validatePlannerToolCatalogs(result, act.agentCtx.AdvertisedToolDefinitions(), act.plannerAuthoredTools); err != nil {
-		return act.outputContractFailure(ctx, planner.NewOutputContractError(err))
+		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
 	if err := validatePlannerResultPayloadCodecs(ctx, r, result, continuationActions); err != nil {
-		return act.outputContractFailure(ctx, planner.NewOutputContractError(err))
+		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
 	output, err := act.output(ctx, r, result, synthesisOnly, continuationActions)
 	if err != nil {
-		return act.outputContractFailure(ctx, err)
+		return act.failureOutput(ctx, err)
 	}
 	if len(input.RecoveryToolCallIDs) > 0 {
 		definitions := act.agentCtx.AdvertisedToolDefinitions()
 		output.RecoveryCatalog = &RecoveryCatalog{Tools: toolDefinitionNames(definitions)}
 	}
 	if budgetErr := checkPlanActivityOutputBudget(output); budgetErr != nil {
-		return act.outputContractFailure(ctx, planner.NewOutputContractError(budgetErr))
+		return act.failureOutput(ctx, planner.NewOutputContractError(budgetErr))
 	}
 	return output, nil
 }
@@ -583,6 +584,12 @@ func (a *plannerActivityInvocation) acceptedOutput(
 	result *PlanResult,
 	transcript []*model.Message,
 ) (*PlanActivityOutput, error) {
+	publishedText := a.invocations.publishedAssistantText()
+	if publishedText != "" && !strings.HasPrefix(assistantMessagesText(transcript), publishedText) {
+		return nil, planner.NewOutputContractError(
+			errors.New("accepted model response does not extend its published assistant text"),
+		)
+	}
 	a.invocations.publishUsage(ctx, a.events)
 	output := &PlanActivityOutput{
 		PublicationBatchID: a.publicationBatchID,
@@ -605,6 +612,56 @@ func (a *plannerActivityInvocation) acceptedOutput(
 	output.PlannerEvents = events
 	if budgetErr := checkPlanActivityOutputBudget(output); budgetErr != nil {
 		return nil, planner.NewOutputContractError(budgetErr)
+	}
+	return output, nil
+}
+
+// failureOutput preserves the distinction between invalid output and an
+// execution failure. Once assistant text has been published, an ordinary
+// execution failure crosses as a successful activity value so the workflow can
+// commit that text before terminating with the original standardized failure.
+func (a *plannerActivityInvocation) failureOutput(ctx context.Context, err error) (*PlanActivityOutput, error) {
+	var outputErr *planner.OutputContractError
+	if errors.As(err, &outputErr) {
+		return a.outputContractFailure(ctx, err)
+	}
+	publishedText := a.invocations.publishedAssistantText()
+	if publishedText == "" {
+		return nil, err
+	}
+	if contextErr := ctx.Err(); contextErr != nil {
+		return nil, errors.Join(err, contextErr)
+	}
+	failure := hooks.RunFailureFromError(err)
+	reasonSHA256, reasonSize := errorevidence.Fingerprint(err)
+	failure.DebugMessage = fmt.Sprintf(
+		"planning failed after publishing assistant text (reason_sha256=%s reason_size=%d)",
+		reasonSHA256,
+		reasonSize,
+	)
+	failureEvents := newPlannerEvents(
+		a.events.agentID,
+		a.events.runID,
+		a.events.sessionID,
+	)
+	a.invocations.publishUsage(ctx, failureEvents)
+	output := &PlanActivityOutput{
+		PublicationBatchID:     a.publicationBatchID,
+		PublishedAssistantText: publishedText,
+		Usage:                  a.invocations.exportUsage(),
+		PlanningFailure:        failure,
+	}
+	budget := &planActivityOutputBudget{}
+	if budgetErr := budget.add(output); budgetErr != nil {
+		return nil, errors.Join(err, budgetErr)
+	}
+	events, recordErr := failureEvents.acceptedRecords(budget)
+	if recordErr != nil {
+		return nil, errors.Join(err, recordErr)
+	}
+	output.PlannerEvents = events
+	if budgetErr := checkPlanActivityOutputBudget(output); budgetErr != nil {
+		return nil, errors.Join(err, budgetErr)
 	}
 	return output, nil
 }
@@ -645,7 +702,13 @@ func (a *plannerActivityInvocation) outputContractFailure(
 	}
 	var originalBudgetErr *planActivityOutputBudgetError
 	if errors.As(err, &originalBudgetErr) {
-		return boundedPlanActivityOutputFailure(a.publicationBatchID, usage, failure, originalBudgetErr), nil
+		return boundedPlanActivityOutputFailure(
+			a.publicationBatchID,
+			a.invocations.publishedAssistantText(),
+			usage,
+			failure,
+			originalBudgetErr,
+		), nil
 	}
 	failureEvents := newPlannerEvents(
 		a.events.agentID,
@@ -654,8 +717,9 @@ func (a *plannerActivityInvocation) outputContractFailure(
 	)
 	a.invocations.publishUsage(ctx, failureEvents)
 	output := &PlanActivityOutput{
-		PublicationBatchID: a.publicationBatchID,
-		Usage:              usage,
+		PublicationBatchID:     a.publicationBatchID,
+		PublishedAssistantText: a.invocations.publishedAssistantText(),
+		Usage:                  usage,
 	}
 	if invocationRecovery != nil {
 		output.ModelInvocationRecovery = invocationRecovery
@@ -664,19 +728,37 @@ func (a *plannerActivityInvocation) outputContractFailure(
 	}
 	budget := &planActivityOutputBudget{}
 	if budgetErr := budget.add(output); budgetErr != nil {
-		return boundedPlanActivityOutputFailure(a.publicationBatchID, usage, failure, budgetErr), nil
+		return boundedPlanActivityOutputFailure(
+			a.publicationBatchID,
+			output.PublishedAssistantText,
+			usage,
+			failure,
+			budgetErr,
+		), nil
 	}
 	events, recordErr := failureEvents.acceptedRecords(budget)
 	if recordErr != nil {
 		var budgetErr *planActivityOutputBudgetError
 		if errors.As(recordErr, &budgetErr) {
-			return boundedPlanActivityOutputFailure(a.publicationBatchID, usage, failure, budgetErr), nil
+			return boundedPlanActivityOutputFailure(
+				a.publicationBatchID,
+				output.PublishedAssistantText,
+				usage,
+				failure,
+				budgetErr,
+			), nil
 		}
 		return nil, recordErr
 	}
 	output.PlannerEvents = events
 	if budgetErr := checkPlanActivityOutputBudget(output); budgetErr != nil {
-		return boundedPlanActivityOutputFailure(a.publicationBatchID, usage, failure, budgetErr), nil
+		return boundedPlanActivityOutputFailure(
+			a.publicationBatchID,
+			output.PublishedAssistantText,
+			usage,
+			failure,
+			budgetErr,
+		), nil
 	}
 	return output, nil
 }
@@ -749,6 +831,7 @@ func outputContractFailureReason(outputErr *planner.OutputContractError) error {
 // earlier model rejection, that rejection's origin and response fingerprint.
 func boundedPlanActivityOutputFailure(
 	publicationBatchID string,
+	publishedAssistantText string,
 	usage model.TokenUsage,
 	failure *OutputContractFailure,
 	budgetErr error,
@@ -761,9 +844,10 @@ func boundedPlanActivityOutputFailure(
 		[]byte("planner activity output rejected before Temporal encoding: " + budgetErr.Error()),
 	)
 	return &PlanActivityOutput{
-		PublicationBatchID:    publicationBatchID,
-		Usage:                 usage,
-		OutputContractFailure: &boundedFailure,
+		PublicationBatchID:     publicationBatchID,
+		PublishedAssistantText: publishedAssistantText,
+		Usage:                  usage,
+		OutputContractFailure:  &boundedFailure,
 	}
 }
 
@@ -771,16 +855,18 @@ func boundedPlanActivityOutputFailure(
 // even when planner code catches that error and returns another result.
 func (a *plannerActivityInvocation) planningError(err error) error {
 	if sealErr := a.invocations.seal(); sealErr != nil {
-		return sealErr
+		err = sealErr
 	}
 	if outputErr := a.invocations.outputContractError(); outputErr != nil {
-		return errors.Join(outputErr, err)
+		err = errors.Join(outputErr, err)
 	}
 	return err
 }
 
-// validatePlannerActivityResult rejects planner values that cannot be
-// executed before any selected model presentation is published.
+// validatePlannerActivityResult rejects planner values that the workflow
+// cannot execute or save. Live model text may already have reached clients,
+// but this check prevents invalid tool calls or transcript messages from
+// changing durable state.
 func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, parentTool tools.Ident, synthesisOnly bool) error {
 	if err := r.validatePlannerResultPayloads(result, parentTool); err != nil {
 		return planner.NewOutputContractError(err)

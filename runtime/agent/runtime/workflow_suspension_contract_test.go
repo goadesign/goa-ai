@@ -134,6 +134,24 @@ func TestValidateContinuationRejectsRemovedTool(t *testing.T) {
 	require.ErrorContains(t, runtime.ValidateContinuation(suspension), `requires tool "svc.lookup" removed from the current agent definition`)
 }
 
+func TestValidateContinuationRejectsUncommittedPlannerResponse(t *testing.T) {
+	t.Parallel()
+
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
+	seedTestToolSpecs(runtime, spec)
+	suspension := suspensionContractFixture(t, spec.Name)
+	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+		checkpoint.State.ResponseCommitted = false
+	})
+
+	require.ErrorContains(
+		t,
+		runtime.ValidateContinuation(suspension),
+		"run suspension checkpoint requires a committed planner response",
+	)
+}
+
 func TestValidateContinuationChecksSavedLimitTerminalPlans(t *testing.T) {
 	runtime := New(newTestStore())
 	lookup := newAnyJSONSpec("svc.lookup")
@@ -546,7 +564,8 @@ func suspensionContractFixtureWithContext(t *testing.T, tool tools.Ident, agentI
 			Metadata: cloneMetadata(metadata),
 		},
 		State: checkpointRunState{
-			NextAttempt: 2,
+			NextAttempt:       2,
+			ResponseCommitted: true,
 			Caps: policy.CapsState{
 				MaxRecoveryTurns:       policy.DefaultMaxRecoveryTurns,
 				RemainingRecoveryTurns: policy.DefaultMaxRecoveryTurns,

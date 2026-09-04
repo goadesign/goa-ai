@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -1891,6 +1892,49 @@ func TestRunPlanActivityDoesNotPublishModelRejectionForPlannerFailure(t *testing
 	require.True(t, ok)
 	require.Equal(t, out.OutputContractFailure.ReasonSHA256, rejected.ReasonSHA256)
 	require.Equal(t, out.OutputContractFailure.ReasonSize, rejected.ReasonSize)
+}
+
+func TestRunPlanActivityCommitsPublishedTextBeforeReturningPlanningFailure(t *testing.T) {
+	batchID := uuid.NewString()
+	wfCtx := &testWorkflowContext{
+		ctx: context.Background(),
+		plannerOutput: &PlanActivityOutput{
+			PublicationBatchID:     batchID,
+			PublishedAssistantText: "Visible text.",
+			PlanningFailure: &run.Failure{
+				Message:      "The model provider is temporarily unavailable.",
+				DebugMessage: "planning failed (reason_sha256=abc reason_size=3)",
+				Provider:     "bedrock",
+				Kind:         string(model.ProviderErrorKindUnavailable),
+				Retryable:    true,
+			},
+		},
+	}
+	rt := &Runtime{}
+
+	out, err := rt.runPlanActivity(
+		wfCtx,
+		"plan",
+		engine.ActivityOptions{},
+		PlanActivityInput{
+			AgentID:    "service.agent",
+			RunID:      "run-123",
+			RunContext: run.Context{RunID: "run-123", SessionID: "session-1", TurnID: "turn-1"},
+		},
+		time.Time{},
+	)
+
+	require.Same(t, wfCtx.plannerOutput, out)
+	require.ErrorContains(t, err, "planning failed")
+	failure := hooks.RunFailureFromError(err)
+	require.Equal(t, "bedrock", failure.Provider)
+	require.Equal(t, string(model.ProviderErrorKindUnavailable), failure.Kind)
+	require.True(t, failure.Retryable)
+	require.NotNil(t, wfCtx.lastHookCall.Command.Append)
+	require.Len(t, wfCtx.lastHookCall.Command.Append.Records, 1)
+	record := wfCtx.lastHookCall.Command.Append.Records[0]
+	require.Equal(t, batchID, record.EventKey)
+	require.Equal(t, batchID, record.ResponseID)
 }
 
 func TestRunPlanActivityPublishesEmptyPlannerRejectionReason(t *testing.T) {
