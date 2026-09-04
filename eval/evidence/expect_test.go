@@ -249,6 +249,16 @@ func TestExpectTerminalSemantics(t *testing.T) {
 	})
 }
 
+func TestExpectToolChecksDoNotInterpretProductCompletion(t *testing.T) {
+	t.Parallel()
+
+	checks := (Expect{}).ToolChecks(&Evidence{TerminalPhase: "canceled"})
+
+	require.Len(t, checks, 1)
+	assert.Equal(t, "trajectory", checks[0].Name)
+	assert.True(t, checks[0].Passed)
+}
+
 func TestTypedConstructorsBindDescriptorPairing(t *testing.T) {
 	descriptor := tools.TypedTool[*listPayload, *listResult]{
 		Name:    "svc.read.list",

@@ -150,11 +150,18 @@ func Decoded[T any](codec tools.JSONCodec[T], assert func(T) error) Assert {
 // scenario's deterministic checks. Every scenario receives a trajectory check
 // and a terminal check; forbidden tools add a third when declared.
 func (e Expect) Checks(evidence *Evidence) []eval.Check {
+	checks := e.ToolChecks(evidence)
+	return append(checks, check("terminal", e.evaluateTerminal(evidence)))
+}
+
+// ToolChecks checks the observed tool calls without interpreting how the
+// product that ran them records completion. Use Checks when the evidence run
+// itself is the product's completion boundary.
+func (e Expect) ToolChecks(evidence *Evidence) []eval.Check {
 	checks := []eval.Check{check("trajectory", e.evaluateTrajectory(evidence))}
 	if len(e.ForbidTools) > 0 {
 		checks = append(checks, check("forbidden_tools", e.evaluateForbiddenTools(evidence)))
 	}
-	checks = append(checks, check("terminal", e.evaluateTerminal(evidence)))
 	return checks
 }
 
