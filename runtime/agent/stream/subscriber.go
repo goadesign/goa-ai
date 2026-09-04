@@ -238,7 +238,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if !s.profile.Thoughts {
 			return nil
 		}
-		// Preserve the structured diagnostic payload instead of wrapping it in a string.
+		// Preserve the structured payload instead of wrapping it in a string.
 		payload := PlannerThoughtPayload{
 			Note: evt.Note,
 		}
@@ -263,8 +263,8 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if !s.profile.Thoughts {
 			return nil
 		}
-		// Keep the complete provider-issued block for diagnostic consumers and
-		// exact replay. Note is reserved for streaming deltas only.
+		// Keep the complete provider-issued block for trusted hosts and exact
+		// replay. Note is reserved for streaming deltas only.
 		payload := PlannerThoughtPayload{
 			Text:         evt.Text,
 			Signature:    evt.Signature,
@@ -272,7 +272,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ContentIndex: evt.ContentIndex,
 			Final:        evt.Final,
 		}
-		// Emit Note only for non-final deltas so diagnostic consumers do not
+		// Emit Note only for non-final deltas so stream consumers do not
 		// append the complete text again.
 		if !evt.Final && evt.Text != "" {
 			payload.Note = evt.Text

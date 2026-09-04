@@ -329,7 +329,7 @@ func (j *modelInvocationJournal) saveModelResponse(
 }
 
 // recordModelChunk accounts for one validated model chunk and immediately sends
-// assistant text or permitted diagnostic thinking from the designated planner
+// assistant text or permitted thinking from the designated planner
 // invocation.
 //
 // Allowed fragments cannot be aggregated here because holding them until

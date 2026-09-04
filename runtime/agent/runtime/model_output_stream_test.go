@@ -1,7 +1,7 @@
 package runtime
 
 // model_output_stream_test.go verifies how explicit stream profiles route live
-// model output. Text and allowed diagnostic thoughts reach the configured sink
+// model output. Text and allowed thoughts reach the configured sink
 // immediately, while partial tool JSON stays out of the run log.
 
 import (
@@ -92,8 +92,12 @@ func TestRuntimeUsesConfiguredStreamProfile(t *testing.T) {
 	}))
 
 	events := sink.snapshot()
-	require.Len(t, events, 1)
-	reply, ok := events[0].(stream.AssistantReply)
+	require.Len(t, events, 2)
+	thought, ok := events[0].(stream.PlannerThought)
+	require.True(t, ok)
+	require.Equal(t, "private provider reasoning", thought.Data.Note)
+	require.Equal(t, "response-1", thought.Data.ResponseID)
+	reply, ok := events[1].(stream.AssistantReply)
 	require.True(t, ok)
 	require.Equal(t, "The freezer is stable.", reply.Data.Text)
 }

@@ -3,6 +3,7 @@ package stream
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -364,7 +365,7 @@ func TestStreamSubscriberRuntimeHostProfile(t *testing.T) {
 		}),
 	})
 	require.NoError(t, err)
-	require.False(t, published)
+	require.True(t, published)
 	require.NoError(t, subscriber.HandleEvent(t.Context(), hooks.NewThinkingBlockEvent(
 		"r1",
 		agent.Ident("agent1"),
@@ -382,7 +383,10 @@ func TestStreamSubscriberRuntimeHostProfile(t *testing.T) {
 		"private planner note",
 		nil,
 	)))
-	require.Empty(t, sink.events)
+	require.Len(t, sink.events, 3)
+	require.IsType(t, PlannerThought{}, sink.events[0])
+	require.IsType(t, PlannerThought{}, sink.events[1])
+	require.IsType(t, PlannerThought{}, sink.events[2])
 	published, err = subscriber.HandleModelOutputEvent(t.Context(), AssistantReply{
 		Base: NewBase(EventAssistantReply, "r1", "session-1", AssistantReplyPayload{
 			ResponseID: "response-1",
@@ -410,13 +414,13 @@ func TestStreamSubscriberRuntimeHostProfile(t *testing.T) {
 		run.PhasePlanning,
 	)))
 
-	require.Len(t, sink.events, 4)
-	require.IsType(t, AssistantReply{}, sink.events[0])
-	turn, ok := sink.events[1].(AssistantTurn)
+	require.Len(t, sink.events, 7)
+	require.IsType(t, AssistantReply{}, sink.events[3])
+	turn, ok := sink.events[4].(AssistantTurn)
 	require.True(t, ok)
 	require.Equal(t, []*model.Message{message}, turn.Data.Messages)
-	require.IsType(t, ToolStart{}, sink.events[2])
-	require.IsType(t, Workflow{}, sink.events[3])
+	require.IsType(t, ToolStart{}, sink.events[5])
+	require.IsType(t, Workflow{}, sink.events[6])
 }
 
 func TestStreamSubscriberAgentDebugProfileIncludesThoughts(t *testing.T) {
@@ -447,16 +451,26 @@ func TestStreamSubscriberAgentDebugProfileIncludesThoughts(t *testing.T) {
 	require.IsType(t, PlannerThought{}, sink.events[1])
 }
 
-func TestRuntimeHostProfileExcludesOnlyThoughts(t *testing.T) {
-	host := RuntimeHostProfile()
-	debug := AgentDebugProfile()
-
-	require.False(t, host.Thoughts)
-	require.True(t, host.ToolOutputDelta)
-	require.True(t, debug.Thoughts)
-	require.True(t, debug.ToolOutputDelta)
-	host.Thoughts = true
-	require.Equal(t, debug, host)
+func TestRuntimeHostProfileIncludesEveryExposedStreamEvent(t *testing.T) {
+	host := reflect.ValueOf(RuntimeHostProfile())
+	hostType := host.Type()
+	for i := range host.NumField() {
+		field := host.Field(i)
+		require.Equal(
+			t,
+			reflect.Bool,
+			field.Kind(),
+			"StreamProfile.%s must be a boolean event switch",
+			hostType.Field(i).Name,
+		)
+		require.True(
+			t,
+			field.Bool(),
+			"RuntimeHostProfile must enable StreamProfile.%s",
+			hostType.Field(i).Name,
+		)
+	}
+	require.Equal(t, RuntimeHostProfile(), AgentDebugProfile())
 }
 
 func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {

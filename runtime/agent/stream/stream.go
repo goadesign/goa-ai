@@ -8,7 +8,7 @@
 // its own smaller public contract.
 //
 // Subscriber converts selected persisted hook events into stream events and
-// also applies the same purpose-specific profile to live model text and diagnostic
+// also applies the same purpose-specific profile to live model text and
 // thinking events.
 // Internal-only events such as policy decisions and memory operations never
 // reach the sink.
@@ -140,11 +140,12 @@ type (
 		Data AssistantTurnPayload
 	}
 
-	// PlannerThought carries planner notes or provider thinking for restricted
-	// diagnostics. It must not be sent to end-user interfaces.
+	// PlannerThought carries live planner notes or provider thinking to a trusted
+	// host. The host decides which fields belong in its public event contract;
+	// this private event must not be forwarded to an end-user client unchanged.
 	PlannerThought struct {
 		Base
-		// Data contains diagnostic planner notes or provider thinking.
+		// Data contains planner notes or provider thinking.
 		Data PlannerThoughtPayload
 	}
 
@@ -277,7 +278,7 @@ type (
 		Messages   []*model.Message `json:"messages"`
 	}
 
-	// PlannerThoughtPayload is the typed payload for diagnostic thought events.
+	// PlannerThoughtPayload is the typed payload for live thought events.
 	// Note carries planner notes and non-final provider thinking.
 	// Structured thinking blocks also populate Text/Signature or Redacted with
 	// ContentIndex and Final flags matching the provider content blocks.
@@ -617,7 +618,7 @@ type (
 		Assistant bool
 		// AssistantTurns controls emission of exact committed assistant messages.
 		AssistantTurns bool
-		// Thoughts controls diagnostic planner-thought and live model-thinking
+		// Thoughts controls planner-thought and live model-thinking
 		// events. It does not remove thinking parts or provider metadata from
 		// exact messages emitted through AssistantTurn.
 		Thoughts bool
@@ -650,11 +651,13 @@ type (
 	}
 )
 
-// AgentDebugProfile returns every event for restricted operational diagnostics.
-// It includes separate provider thinking events and must not feed an end-user
-// interface. Child runs remain on their own streams and are linked through
-// ChildRunLinked events.
-func AgentDebugProfile() StreamProfile {
+// RuntimeHostProfile returns private input for a trusted runtime host to save,
+// replay, present, and process an agent run. It includes live thinking so the
+// host can deliberately translate selected fields into its public contract.
+// Exact committed AssistantTurn messages still contain all provider data.
+// This profile is never browser-safe. A host must select and convert the data
+// it exposes through its own smaller public contract.
+func RuntimeHostProfile() StreamProfile {
 	return StreamProfile{
 		Assistant:          true,
 		AssistantTurns:     true,
@@ -675,29 +678,12 @@ func AgentDebugProfile() StreamProfile {
 	}
 }
 
-// RuntimeHostProfile returns private input for a trusted runtime host to save,
-// replay, and process an agent run. It omits separate provider thinking events,
-// but exact committed AssistantTurn messages still contain all provider data.
-// This profile is never browser-safe. A host must select and convert the data
-// it exposes through its own smaller public contract.
-func RuntimeHostProfile() StreamProfile {
-	return StreamProfile{
-		Assistant:          true,
-		AssistantTurns:     true,
-		PromptRendered:     true,
-		ToolStart:          true,
-		ToolUpdate:         true,
-		ToolOutputDelta:    true,
-		ToolEnd:            true,
-		AwaitClarification: true,
-		AwaitConfirmation:  true,
-		AwaitQuestions:     true,
-		AwaitExternalTools: true,
-		ToolAuthorization:  true,
-		Usage:              true,
-		Workflow:           true,
-		ChildRuns:          true,
-	}
+// AgentDebugProfile returns every private event for restricted operational
+// diagnostics. It names the diagnostic purpose at the call site while using
+// the same complete event set as a trusted runtime host. These events must not
+// be sent to an end-user client unchanged.
+func AgentDebugProfile() StreamProfile {
+	return RuntimeHostProfile()
 }
 
 // MetricsProfile returns a profile that emits only usage and workflow events,
@@ -713,8 +699,8 @@ func MetricsProfile() StreamProfile {
 type EventType string
 
 const (
-	// EventPlannerThought carries planner notes or provider thinking for restricted
-	// diagnostics. It must not be sent to end-user interfaces.
+	// EventPlannerThought carries planner notes or provider thinking to a trusted
+	// host. It must not be sent to an end-user client unchanged.
 	EventPlannerThought EventType = "planner_thought"
 
 	// EventPromptRendered streams prompt render references and scopes used by runtime prompt resolution.
