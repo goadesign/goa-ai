@@ -3146,6 +3146,7 @@ func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) 
 		},
 	})
 	require.NoError(t, err)
+	require.Nil(t, out.OutputContractFailure)
 	require.Len(t, out.Result.ToolCalls, 1)
 }
 

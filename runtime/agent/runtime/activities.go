@@ -493,7 +493,9 @@ func (r *Runtime) preparePlannerActivityWithSpecs(
 	}
 	plannerAuthoredSpecs := advertisedSpecs
 	if plannerAuthoredSpecs == nil {
-		plannerAuthoredSpecs = r.ToolSpecsForAgent(input.AgentID)
+		r.mu.RLock()
+		plannerAuthoredSpecs = append([]tools.ToolSpec(nil), r.agentToolSpecs[input.AgentID]...)
+		r.mu.RUnlock()
 	}
 	plannerAuthoredTools := make(map[tools.Ident]struct{}, len(plannerAuthoredSpecs))
 	for _, spec := range plannerAuthoredSpecs {
