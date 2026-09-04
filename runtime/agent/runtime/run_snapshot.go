@@ -247,7 +247,7 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			if msg == nil || msg.Role != model.ConversationRoleAssistant {
 				continue
 			}
-			if text := agentMessageText(msg); text != "" {
+			if text := msg.Text(); text != "" {
 				s.LastAssistantMessage = text
 				break
 			}

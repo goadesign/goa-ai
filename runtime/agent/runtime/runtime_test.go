@@ -312,7 +312,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 
 	out, err := rt.finishCurrentPlanResult(ctx, input, base, st, "turn-1")
 	require.NoError(t, err)
-	require.Equal(t, "done", agentMessageText(out.Final))
+	require.Equal(t, "done", out.Final.Text())
 	require.Equal(t, []model.Part{model.TextPart{Text: "done"}}, out.Final.Parts)
 
 	page, err := store.ListRunRecords(ctx, "run-1", "", 10)
@@ -323,7 +323,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 	msgs, err := transcript.DecodeRunLogDelta(page.Events[1].Payload)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
-	require.Equal(t, "done", agentMessageText(msgs[0]))
+	require.Equal(t, "done", msgs[0].Text())
 	require.IsType(t, model.ThinkingPart{}, msgs[0].Parts[0])
 }
 
@@ -367,7 +367,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 
 	out, err := rt.finishCurrentPlanResult(ctx, input, base, st, "turn-1")
 	require.NoError(t, err)
-	require.Equal(t, "cited answer", agentMessageText(out.Final))
+	require.Equal(t, "cited answer", out.Final.Text())
 
 	page, err := store.ListRunRecords(ctx, "run-1", "", 10)
 	require.NoError(t, err)
@@ -377,7 +377,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 	msgs, err := transcript.DecodeRunLogDelta(page.Events[1].Payload)
 	require.NoError(t, err)
 	require.Len(t, msgs, 1)
-	require.Equal(t, "cited answer", agentMessageText(msgs[0]))
+	require.Equal(t, "cited answer", msgs[0].Text())
 }
 
 func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testing.T) {
@@ -454,12 +454,12 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 	seeded, err := transcript.DecodeRunLogDelta(transcriptEvents[0].Payload)
 	require.NoError(t, err)
 	require.Len(t, seeded, 2)
-	require.Equal(t, "prior assistant", agentMessageText(seeded[1]))
+	require.Equal(t, "prior assistant", seeded[1].Text())
 
 	appended, err := transcript.DecodeRunLogDelta(transcriptEvents[1].Payload)
 	require.NoError(t, err)
 	require.Len(t, appended, 1)
-	require.Equal(t, "done", agentMessageText(appended[0]))
+	require.Equal(t, "done", appended[0].Text())
 }
 
 func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
@@ -552,7 +552,7 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 		},
 	})
 	require.NoError(t, err)
-	require.Equal(t, "done", agentMessageText(out.Final))
+	require.Equal(t, "done", out.Final.Text())
 
 	page, err := store.ListRunRecords(ctx, "run-2", "", 20)
 	require.NoError(t, err)

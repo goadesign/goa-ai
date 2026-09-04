@@ -341,6 +341,12 @@ func (j *modelInvocationJournal) outputContractErrorLocked() error {
 func (j *modelInvocationJournal) rejectedModelResponseEvidence() model.ResponseEvidence {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if !j.selected.IsZero() && j.outputErr != nil {
+		candidate := j.invocations[j.selected]
+		if candidate != nil && candidate.rejectedResponseEvidence != nil {
+			return *candidate.rejectedResponseEvidence
+		}
+	}
 	for _, id := range j.order {
 		candidate := j.invocations[id]
 		var outputErr *planner.OutputContractError

@@ -275,7 +275,7 @@ func TestCorrectCallRecoveryUsesOnlySavedTool(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "saved work completed", agentMessageText(out.Final))
+	assert.Equal(t, "saved work completed", out.Final.Text())
 	assert.Equal(t, 2, executions)
 	assert.Equal(t, 2, resumes)
 	require.Len(t, out.ToolEvents, 2)
@@ -353,7 +353,7 @@ func TestCorrectCallRecoveryUsesActiveTool(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "active work completed", agentMessageText(out.Final))
+	assert.Equal(t, "active work completed", out.Final.Text())
 	assert.Equal(t, 2, executions)
 	assert.Equal(t, 2, resumes)
 }
@@ -628,7 +628,7 @@ func TestCorrectCallRecoveryPreservesCurrentPolicyAndAuthorization(t *testing.T)
 		}}}, initialCaps(RunPolicy{MaxToolCalls: 2}))
 
 		require.NoError(t, err)
-		require.Equal(t, "downstream denied the correction", agentMessageText(out.Final))
+		require.Equal(t, "downstream denied the correction", out.Final.Text())
 		require.Equal(t, 2, executions)
 		require.Equal(t, 2, resumes)
 	})

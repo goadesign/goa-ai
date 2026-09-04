@@ -121,7 +121,7 @@ func TestRunLoopRecoversMalformedStreamedToolCallBeforeExecution(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "stream replacement completed", agentMessageText(out.Final))
+	assert.Equal(t, "stream replacement completed", out.Final.Text())
 	assert.Equal(t, 2, providerCalls)
 	assert.Equal(t, 1, lookupCalls)
 	assert.Equal(t, 3, resumes)
@@ -172,7 +172,7 @@ func TestRunLoopRecoversProviderMalformedToolJSONBeforeExecution(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "provider JSON replacement completed", agentMessageText(out.Final))
+	assert.Equal(t, "provider JSON replacement completed", out.Final.Text())
 	assert.Equal(t, 2, providerCalls)
 	assert.Equal(t, 1, lookupCalls)
 	require.NotNil(t, out.Usage)
@@ -216,7 +216,7 @@ func TestRunLoopRecoversMalformedStreamedToolCallWhenCloseFails(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "stream replacement completed", agentMessageText(out.Final))
+	assert.Equal(t, "stream replacement completed", out.Final.Text())
 	assert.Equal(t, 2, providerCalls)
 	assert.Equal(t, 1, lookupCalls)
 }
@@ -256,7 +256,7 @@ func TestRunLoopMalformedStreamedToolCallUsesSharedRecoveryCap(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	assert.Equal(t, "stopped after streamed invocation recovery cap", agentMessageText(out.Final))
+	assert.Equal(t, "stopped after streamed invocation recovery cap", out.Final.Text())
 	assert.Equal(t, 2, recoveryAttempts)
 	assert.Equal(t, 2, providerCalls)
 	assert.Zero(t, lookupCalls)

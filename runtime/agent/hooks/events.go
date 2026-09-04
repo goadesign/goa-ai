@@ -305,17 +305,17 @@ type (
 
 	// AssistantTurnCommittedEvent fires after the runtime appends one displayed
 	// assistant response to the durable run log. The run may still fail after the
-	// text was displayed.
+	// response was displayed.
 	//
 	// Contract:
 	//   - ResponseID is the stable identity shared with its live text fragments.
-	//   - Text is the complete assistant display text committed for the response.
+	//   - Messages are the exact ordered assistant messages stored for the response.
 	AssistantTurnCommittedEvent struct {
 		baseEvent
 		// ResponseID is the planner activity UUID that produced the response.
 		ResponseID string
-		// Text is the assistant text committed across the response's provider messages.
-		Text string
+		// Messages are the assistant messages committed for this response.
+		Messages []*model.Message
 	}
 
 	// MemoryAppendedEvent fires when new memory entries are successfully
@@ -1107,16 +1107,17 @@ func NewAssistantMessageEvent(runID string, agentID agent.Ident, sessionID strin
 }
 
 // NewAssistantTurnCommittedEvent constructs an AssistantTurnCommittedEvent.
-func NewAssistantTurnCommittedEvent(runID string, agentID agent.Ident, sessionID, responseID, text string) *AssistantTurnCommittedEvent {
-	if responseID == "" || text == "" {
-		panic("hooks: assistant turn committed requires response id and text")
+func NewAssistantTurnCommittedEvent(runID string, agentID agent.Ident, sessionID, responseID string, messages []*model.Message) *AssistantTurnCommittedEvent {
+	if responseID == "" || len(messages) == 0 {
+		panic("hooks: assistant turn committed requires response id and messages")
 	}
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
+	be.eventKey = responseID
 	return &AssistantTurnCommittedEvent{
 		baseEvent:  be,
 		ResponseID: responseID,
-		Text:       text,
+		Messages:   messages,
 	}
 }
 

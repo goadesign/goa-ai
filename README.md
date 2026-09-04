@@ -405,8 +405,11 @@ var Docs = Toolset("docs", func() {
   internal errors stop the run. See the
   [runtime tool-input contract](docs/runtime.md#model-visible-tool-arguments).
   A provider output-limit status is returned to the planner with the complete
-  response. The runtime preserves the planner's decision to accept or reject
-  that exact response instead of imposing a replacement policy.
+  response. For a final response without tool calls, the runtime preserves the
+  planner's decision to accept or reject that exact response instead of
+  imposing a replacement policy. An output-limited response with tool calls is
+  rejected before any call can execute because the provider may not have
+  finished the complete call batch.
   Streaming tool argument fragments and completed calls remain withheld until
   the complete provider response matches the stream; the runtime can then
   schedule one replacement planning activity while retaining final usage and
@@ -414,8 +417,10 @@ var Docs = Toolset("docs", func() {
   already streamed to a client is append-only and is never retracted by that
   tool-validation decision. Every fragment from one model request carries the
   planner activity's response ID. If the planner accepts the response, the
-  committed assistant-turn event carries that same ID and exact aggregate
-  text. Generated Plan and Resume activities permit one attempt, preventing
+  committed assistant-turn event carries that same ID and the exact ordered
+  messages stored in the run log. Consumers derive display text from those
+  messages and retain their structured parts and metadata. Generated Plan and
+  Resume activities permit one attempt, preventing
   infrastructure retries from producing different visible text under the same
   ID. Explicit recovery or continuation turns use new response IDs.
   Incomplete provider streams remain terminal.

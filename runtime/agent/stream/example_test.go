@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 	"goa.design/goa-ai/runtime/agent/stream"
@@ -39,7 +40,10 @@ func Example_broadcast() {
 		"svc.agent",
 		"session-1",
 		"00000000-0000-4000-8000-000000000001",
-		"hello",
+		[]*model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "hello"}},
+		}},
 	))
 
 	// The sink received a typed stream event.

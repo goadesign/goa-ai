@@ -25,9 +25,10 @@ type failingStreamSink struct {
 
 // retryingStreamSink fails its first delivery and accepts the exact retry.
 type retryingStreamSink struct {
-	mu    sync.Mutex
-	err   error
-	calls int
+	mu     sync.Mutex
+	err    error
+	calls  int
+	events []stream.Event
 }
 
 func (s failingStreamSink) Send(context.Context, stream.Event) error {
@@ -38,10 +39,11 @@ func (s failingStreamSink) Close(context.Context) error {
 	return nil
 }
 
-func (s *retryingStreamSink) Send(context.Context, stream.Event) error {
+func (s *retryingStreamSink) Send(_ context.Context, event stream.Event) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.calls++
+	s.events = append(s.events, event)
 	if s.calls == 1 {
 		return s.err
 	}
@@ -57,6 +59,13 @@ func (s *retryingStreamSink) callCount() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.calls
+}
+
+// sentEvents returns the events received by the sink in delivery order.
+func (s *retryingStreamSink) sentEvents() []stream.Event {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]stream.Event(nil), s.events...)
 }
 
 func TestHookActivityUsesCommittedSessionStateForStreaming(t *testing.T) {
@@ -149,10 +158,21 @@ func TestTranscriptActivityRetriesStreamAfterDurableInsert(t *testing.T) {
 	admitRunForTest(t, store, session.RunMeta{
 		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
-	payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
-		Role:  model.ConversationRoleAssistant,
-		Parts: []model.Part{model.TextPart{Text: "done"}},
-	}})
+	messages := []*model.Message{
+		{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "first "}},
+		},
+		{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.CitationsPart{
+				Text:      "answer",
+				Citations: []model.Citation{{Title: "manual"}},
+			}},
+			Meta: map[string]any{"source": "manual"},
+		},
+	}
+	payload, err := transcript.EncodeRunLogDelta(messages)
 	require.NoError(t, err)
 	record := &RecordActivityInput{
 		Type: transcript.RunLogMessagesAppended, EventKey: testPublicationBatchID, RunID: "run",
@@ -170,6 +190,15 @@ func TestTranscriptActivityRetriesStreamAfterDurableInsert(t *testing.T) {
 	require.NoError(t, runtime.recordActivity(ctx, testRecordBatch(record)))
 
 	require.Equal(t, 2, sink.callCount())
+	events := sink.sentEvents()
+	require.Len(t, events, 2)
+	first, ok := events[0].(stream.AssistantTurn)
+	require.True(t, ok)
+	require.Equal(t, testPublicationBatchID, first.EventKey())
+	require.Equal(t, testPublicationBatchID, first.Data.ResponseID)
+	require.Equal(t, messages, first.Data.Messages)
+	require.Equal(t, "first answer", first.Data.Text())
+	require.Equal(t, first, events[1])
 	page, err := store.ListRunRecords(ctx, "run", "", 10)
 	require.NoError(t, err)
 	require.Len(t, page.Events, 2)

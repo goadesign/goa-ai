@@ -231,10 +231,13 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if !s.profile.AssistantTurns {
 			return nil
 		}
-		if evt.ResponseID == "" || evt.Text == "" {
-			return fmt.Errorf("assistant_turn_committed missing response id or text for run %s", evt.RunID())
+		if evt.ResponseID == "" || len(evt.Messages) == 0 {
+			return fmt.Errorf("assistant_turn_committed missing response id or messages for run %s", evt.RunID())
 		}
-		payload := AssistantTurnPayload{ResponseID: evt.ResponseID, Text: evt.Text}
+		if evt.EventKey() != evt.ResponseID {
+			return fmt.Errorf("assistant_turn_committed response id does not match event key for run %s", evt.RunID())
+		}
+		payload := AssistantTurnPayload{ResponseID: evt.ResponseID, Messages: evt.Messages}
 		return s.sink.Send(ctx, AssistantTurn{
 			Base: newBaseFromHook(evt, EventAssistantTurn, payload),
 			Data: payload,

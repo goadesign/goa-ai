@@ -119,8 +119,8 @@ const (
 	// AssistantTurnCommitted fires when the runtime appends one displayed
 	// assistant response to the durable transcript run log. This also covers text
 	// published before a later model or planning failure. Unlike AssistantMessage,
-	// it carries the response ID and complete display text used for replay and
-	// downstream projection.
+	// it carries the response ID and exact stored messages used for replay and by
+	// downstream consumers.
 	AssistantTurnCommitted EventType = "assistant_turn_committed"
 
 	// MemoryAppended fires when new memory entries are successfully persisted

@@ -107,7 +107,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 		checkpoint,
 	)
 	require.NoError(t, err)
-	require.Equal(t, "done", agentMessageText(out.Final))
+	require.Equal(t, "done", out.Final.Text())
 	require.Equal(t, "resume", continuedCtx.lastPlannerCall.Name)
 	require.NoError(t, transcript.ValidatePlannerTranscript(continuedCtx.lastPlannerCall.Input.Messages))
 	require.Len(t, continuedCtx.lastPlannerCall.Input.Messages, 2)
@@ -218,7 +218,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 		checkpoint,
 	)
 	require.NoError(t, err)
-	require.Equal(t, "done", agentMessageText(out.Final))
+	require.Equal(t, "done", out.Final.Text())
 	require.Len(t, continuedCtx.lastPlannerCall.Input.ToolOutputs, 1)
 	require.Equal(t, runtimeToolCallID, continuedCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
 	require.NoError(t, transcript.ValidatePlannerTranscript(continuedCtx.lastPlannerCall.Input.Messages))
@@ -344,7 +344,7 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 		checkpoint,
 	)
 	require.NoError(t, err)
-	require.Equal(t, "done", agentMessageText(out.Final))
+	require.Equal(t, "done", out.Final.Text())
 	outputs := continuedCtx.lastPlannerCall.Input.ToolOutputs
 	require.Len(t, outputs, 2)
 	require.Equal(t, firstRuntimeID, outputs[0].ToolCallID)

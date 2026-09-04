@@ -564,8 +564,8 @@ type (
 	PlanActivityOutput struct {
 		// PublicationBatchID uniquely identifies this planner activity. The
 		// activity generates it before planner or model work begins. It identifies
-		// live fragments and committed assistant text from the activity's model
-		// response, and it namespaces the activity's other durable events.
+		// live fragments and committed assistant messages from the activity's
+		// model response, and it namespaces the activity's other durable events.
 		PublicationBatchID string
 
 		// Result contains the accepted planner decision after tool intents have

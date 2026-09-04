@@ -551,6 +551,17 @@ func (j *modelInvocationJournal) exportModelInvocation(
 	if !j.designated.IsZero() && selectedID != j.designated {
 		return nil, errors.New("planner result selected a probe after using PlannerModelClient")
 	}
+	if selected.response.OutputLimited && len(selected.response.ToolCalls()) > 0 {
+		err := outputcontract.NewWithOrigin(
+			errors.New("model response reached its generated-output limit before completing the tool-call batch"),
+			planner.OutputContractOriginModel,
+		)
+		j.selected = selectedID
+		evidence := selected.responseEvidence
+		selected.rejectedResponseEvidence = &evidence
+		j.outputErr = err
+		return nil, err
+	}
 	j.selected = selectedID
 	owner = selectedOwner
 	hasOwner = selectedHasOwner

@@ -199,7 +199,7 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)
-	require.Equal(t, "done", agentMessageText(out.Final))
+	require.Equal(t, "done", out.Final.Text())
 	require.Len(t, out.ToolEvents, 1)
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "bookkeeping-only final turns must not resume")
 }

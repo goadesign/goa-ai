@@ -8,18 +8,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
+	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/transcript"
 
@@ -750,7 +749,7 @@ func (r *Runtime) appendTranscriptRunLogMessages(ctx context.Context, input *Rec
 	streamCommittedAssistantTurns := input.Type == transcript.RunLogMessagesAppended
 	text := ""
 	if streamCommittedAssistantTurns {
-		text = assistantMessagesText(messages)
+		text = (stream.AssistantTurnPayload{Messages: messages}).Text()
 		if text != "" && input.ResponseID == "" {
 			return storage.AppendResult{}, malformedStorageCommand(
 				errors.New("runtime: assistant transcript delta is missing response id"),
@@ -784,25 +783,14 @@ func (r *Runtime) appendTranscriptRunLogMessages(ctx context.Context, input *Rec
 		input.AgentID,
 		input.SessionID,
 		input.ResponseID,
-		text,
+		messages,
 	)
 	evt.SetTurnID(input.TurnID)
 	evt.SetTimestampMS(input.TimestampMS)
-	evt.SetEventKey(input.ResponseID)
 	if err := r.streamSubscriber.HandleEvent(ctx, evt); err != nil {
 		return storage.AppendResult{}, err
 	}
 	return result, nil
-}
-
-func assistantMessagesText(messages []*model.Message) string {
-	var text strings.Builder
-	for _, message := range messages {
-		if message != nil && message.Role == model.ConversationRoleAssistant {
-			text.WriteString(agentMessageText(message))
-		}
-	}
-	return text.String()
 }
 
 func (r *Runtime) enrichToolCallScheduledHint(ctx context.Context, evt *hooks.ToolCallScheduledEvent) (bool, error) {

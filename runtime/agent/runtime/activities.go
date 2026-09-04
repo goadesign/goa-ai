@@ -25,6 +25,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -585,7 +586,7 @@ func (a *plannerActivityInvocation) acceptedOutput(
 	transcript []*model.Message,
 ) (*PlanActivityOutput, error) {
 	publishedText := a.invocations.publishedAssistantText()
-	if publishedText != "" && !strings.HasPrefix(assistantMessagesText(transcript), publishedText) {
+	if publishedText != "" && !strings.HasPrefix((stream.AssistantTurnPayload{Messages: transcript}).Text(), publishedText) {
 		return nil, planner.NewOutputContractError(
 			errors.New("accepted model response does not extend its published assistant text"),
 		)

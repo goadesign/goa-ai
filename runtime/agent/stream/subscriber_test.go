@@ -2,6 +2,7 @@ package stream
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -49,7 +50,20 @@ func TestStreamSubscriber_AssistantTurnCommitted(t *testing.T) {
 		agent.Ident("agent1"),
 		"session-1",
 		"00000000-0000-4000-8000-000000000001",
-		"hello",
+		[]*model.Message{
+			{
+				Role:  model.ConversationRoleAssistant,
+				Parts: []model.Part{model.TextPart{Text: "hello "}},
+			},
+			{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{model.CitationsPart{
+					Text:      "world",
+					Citations: []model.Citation{{Title: "manual"}},
+				}},
+				Meta: map[string]any{"source": "manual"},
+			},
+		},
 	)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
@@ -57,7 +71,37 @@ func TestStreamSubscriber_AssistantTurnCommitted(t *testing.T) {
 	v, ok := sink.events[0].(AssistantTurn)
 	require.True(t, ok)
 	require.Equal(t, "00000000-0000-4000-8000-000000000001", v.Data.ResponseID)
-	require.Equal(t, "hello", v.Data.Text)
+	require.Equal(t, v.Data.ResponseID, v.EventKey())
+	require.Equal(t, evt.Messages, v.Data.Messages)
+	require.Equal(t, "hello world", v.Data.Text())
+
+	encoded, err := json.Marshal(v.Data)
+	require.NoError(t, err)
+	var decoded AssistantTurnPayload
+	require.NoError(t, json.Unmarshal(encoded, &decoded))
+	require.Equal(t, v.Data, decoded)
+}
+
+func TestStreamSubscriberRejectsAssistantTurnWithMismatchedEventKey(t *testing.T) {
+	sink := &mockSink{}
+	sub, err := NewSubscriber(sink)
+	require.NoError(t, err)
+	evt := hooks.NewAssistantTurnCommittedEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		"response-1",
+		[]*model.Message{{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "answer"}},
+		}},
+	)
+	evt.SetEventKey("response-2")
+
+	err = sub.HandleEvent(t.Context(), evt)
+
+	require.ErrorContains(t, err, "response id does not match event key")
+	require.Empty(t, sink.events)
 }
 
 func TestStreamSubscriber_PreservesHookEventKey(t *testing.T) {
@@ -266,6 +310,35 @@ func TestStreamSubscriberModelOutputEventsRespectProfile(t *testing.T) {
 		require.False(t, published)
 	}
 	require.Empty(t, sink.events)
+}
+
+func TestStreamSubscriberThoughtProfilePreservesCommittedMessages(t *testing.T) {
+	profile := DefaultProfile()
+	profile.Thoughts = false
+	sink := &mockSink{}
+	subscriber, err := NewSubscriberWithProfile(sink, profile)
+	require.NoError(t, err)
+	message := &model.Message{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{
+			model.ThinkingPart{Text: "provider reasoning"},
+			model.TextPart{Text: "answer"},
+		},
+		Meta: map[string]any{"provider_item": "item-1"},
+	}
+	evt := hooks.NewAssistantTurnCommittedEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		"response-1",
+		[]*model.Message{message},
+	)
+
+	require.NoError(t, subscriber.HandleEvent(t.Context(), evt))
+	require.Len(t, sink.events, 1)
+	turn, ok := sink.events[0].(AssistantTurn)
+	require.True(t, ok)
+	require.Equal(t, []*model.Message{message}, turn.Data.Messages)
 }
 
 func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {

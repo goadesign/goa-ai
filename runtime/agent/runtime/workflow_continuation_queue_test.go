@@ -104,6 +104,6 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Nil(t, third.Suspension)
-	require.Equal(t, "done", agentMessageText(third.Final))
+	require.Equal(t, "done", third.Final.Text())
 	require.Len(t, thirdContext.lastPlannerCall.Input.Messages, 2)
 }
