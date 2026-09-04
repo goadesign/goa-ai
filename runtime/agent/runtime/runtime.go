@@ -1056,12 +1056,13 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	r.mu.Lock()
 	r.agents[reg.Definition.route.ID] = reg
 	r.addToolSpecsLocked(reg.Definition.specs, reg.Definition.metadataFor, definitions)
-	if len(reg.Definition.specs) > 0 {
-		// store a shallow copy to avoid external mutation
-		cp := make([]tools.ToolSpec, len(reg.Definition.specs))
-		copy(cp, reg.Definition.specs)
-		r.agentToolSpecs[reg.Definition.route.ID] = cp
+	// Store only tools this agent may execute. Exported tools describe how
+	// other agents call this one and must not enter its planner catalog.
+	specs := make([]tools.ToolSpec, 0, len(reg.Definition.executableTools))
+	for _, name := range reg.Definition.executableTools {
+		specs = append(specs, reg.Definition.specByName[name])
 	}
+	r.agentToolSpecs[reg.Definition.route.ID] = specs
 	r.mu.Unlock()
 
 	return nil
@@ -1937,8 +1938,9 @@ func (r *Runtime) ToolSpec(name tools.Ident) (tools.ToolSpec, bool) {
 	return cloneToolSpec(spec), true
 }
 
-// ToolSpecsForAgent returns detached snapshots of the ToolSpecs registered by
-// the given agent. Mutating the returned specs does not change runtime behavior.
+// ToolSpecsForAgent returns detached snapshots of the tools listed as
+// executable in the agent definition. Mutating the returned specs does not
+// change runtime behavior.
 func (r *Runtime) ToolSpecsForAgent(agentID agent.Ident) []tools.ToolSpec {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

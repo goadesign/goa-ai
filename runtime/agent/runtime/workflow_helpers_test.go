@@ -538,6 +538,171 @@ func TestAppendUserToolResults_UsesContinuationActionNameInBoundsReminder(t *tes
 	}
 }
 
+func TestAppendUserToolResults_OmitsBoundsReminderForStandalonePlannerContinuation(t *testing.T) {
+	_, continuation := continuationTestSpecs()
+	continuation.ResultReminder = "Review the returned records before finishing."
+	rt := New(newTestStore())
+	seedTestToolSpecs(rt, continuation)
+	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	cursor := "private-next-page"
+	call := ToolCall{
+		Name:       continuation.Name,
+		ToolCallID: "page-call",
+	}
+	result := &planner.ToolResult{
+		Name:       call.Name,
+		ToolCallID: call.ToolCallID,
+		Result:     map[string]any{"items": []any{"result"}},
+		Bounds: &agent.Bounds{
+			Returned:   1,
+			Truncated:  true,
+			NextCursor: &cursor,
+		},
+	}
+
+	appendUserToolResultsForTest(
+		t,
+		rt,
+		"agent-1",
+		base,
+		[]ToolCall{call},
+		[]*planner.ToolResult{result},
+	)
+
+	require.Len(t, base.Messages, 2)
+	reminder := base.Messages[1].Parts[0].(model.TextPart).Text
+	require.Contains(t, reminder, continuation.ResultReminder)
+	require.NotContains(t, reminder, "bounded/truncated")
+	require.NotContains(t, reminder, cursor)
+	require.NotContains(t, reminder, continuationToolNamePrefix)
+}
+
+func TestWorkflowTreatsPlannerAuthoredCanonicalContinuationAsStandalone(t *testing.T) {
+	const (
+		agentID   = agent.Ident("service.agent")
+		sessionID = "session-standalone-continuation"
+		runID     = "run-standalone-continuation"
+		turnID    = "turn-standalone-continuation"
+	)
+	search, continuation := continuationTestSpecs()
+	continuation.ResultReminder = "Review the returned records before finishing."
+	cursor := "private-next-page"
+	var resumes int
+	plannerImpl := &stubPlanner{
+		start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+			require.Empty(t, input.Agent.AdvertisedToolDefinitions())
+			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+				Name:    continuation.Name,
+				Payload: rawjson.Message(`{"cursor":"first"}`),
+			}}}, nil
+		},
+		resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+			resumes++
+			require.Empty(t, input.Agent.AdvertisedToolDefinitions())
+			require.Len(t, input.ToolOutputs, 1)
+			require.Empty(t, input.ToolOutputs[0].ModelToolCallID)
+			require.Empty(t, input.ToolOutputs[0].ContinuationRootToolCallID)
+			require.NotNil(t, input.ToolOutputs[0].Bounds)
+			require.NotNil(t, input.ToolOutputs[0].Bounds.NextCursor)
+			require.Equal(t, cursor, *input.ToolOutputs[0].Bounds.NextCursor)
+			var transcriptText strings.Builder
+			var visibleToolResults int
+			for _, message := range input.Messages {
+				for _, part := range message.Parts {
+					if text, ok := part.(model.TextPart); ok {
+						transcriptText.WriteString(text.Text)
+					}
+					if result, ok := part.(model.ToolResultPart); ok {
+						visibleToolResults++
+						content, err := json.Marshal(result.Content)
+						require.NoError(t, err)
+						require.NotContains(t, string(content), cursor)
+					}
+				}
+			}
+			require.Equal(t, 1, visibleToolResults)
+			require.Contains(t, transcriptText.String(), continuation.ResultReminder)
+			require.NotContains(t, transcriptText.String(), "bounded/truncated")
+			require.NotContains(t, transcriptText.String(), cursor)
+			require.NotContains(t, transcriptText.String(), continuationToolNamePrefix)
+			return finalPlannerResult("done"), nil
+		},
+	}
+	rt := New(newTestStore())
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
+		Name: "tools",
+		Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+			require.Equal(t, continuation.Name, call.Name)
+			require.Empty(t, call.ModelToolCallID)
+			require.Empty(t, call.ContinuationRootToolCallID)
+			return &planner.ToolResult{
+				Name:       call.Name,
+				ToolCallID: call.ToolCallID,
+				Result:     map[string]any{"items": []any{"result"}},
+				Bounds: &agent.Bounds{
+					Returned:   1,
+					Truncated:  true,
+					NextCursor: &cursor,
+				},
+			}, nil
+		}),
+		Specs: []tools.ToolSpec{search, continuation},
+	}))
+	definition := NewAgentDefinition(
+		AgentRoute{
+			ID:               agentID,
+			WorkflowName:     "service.agent.workflow",
+			DefaultTaskQueue: "test",
+		},
+		[]tools.ToolSpec{search, continuation},
+		nil,
+		nil,
+		[]tools.Ident{continuation.Name},
+		nil,
+	)
+	rt.agents[agentID] = AgentRegistration{
+		Definition:          definition,
+		Planner:             plannerImpl,
+		WorkflowHandler:     rt.ExecuteWorkflow,
+		PlanActivityName:    "plan",
+		ResumeActivityName:  "resume",
+		ExecuteToolActivity: "execute",
+		Policy:              RunPolicy{MaxToolCalls: 2},
+	}
+	rt.agentToolSpecs[agentID] = []tools.ToolSpec{continuation}
+	_, err := createSessionForTest(t.Context(), rt.Store, sessionID)
+	require.NoError(t, err)
+	wfCtx := &routeWorkflowContext{
+		ctx:         t.Context(),
+		runID:       runID,
+		hookRuntime: rt,
+		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+			"plan":   rt.PlanStartActivity,
+			"resume": rt.PlanResumeActivity,
+		},
+		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
+			"execute": rt.ExecuteToolActivity,
+		},
+	}
+
+	output, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+		AgentID:   agentID,
+		RunID:     runID,
+		SessionID: sessionID,
+		TurnID:    turnID,
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "Continue the prior alarm query."}},
+		}},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, output)
+	require.Equal(t, "done", agentMessageText(output.Final))
+	require.Equal(t, 1, resumes)
+	require.Len(t, output.ToolEvents, 1)
+}
+
 func TestAppendUserToolResults_UsesRefinementWithoutContinuationCursor(t *testing.T) {
 	search, continuation := continuationTestSpecs()
 	rt := New(newTestStore())

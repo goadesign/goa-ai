@@ -147,13 +147,31 @@ func (r *Runtime) compilePlannerToolCallsForRun(
 		}
 		action, ok := byName[call.Name]
 		if !ok {
-			if spec, registered := r.toolSpec(call.Name); registered && isDedicatedContinuationSpec(spec) {
+			if spec, registered := r.toolSpec(call.Name); registered &&
+				isDedicatedContinuationSpec(spec) && call.ModelToolCallID != "" {
 				return nil, planner.NewOutputContractError(
 					fmt.Errorf("runtime: canonical continuation tool %q is not model-callable", call.Name),
 				)
 			}
 			calls[i] = call
 			continue
+		}
+		if call.ModelToolCallID == "" {
+			return nil, planner.NewOutputContractError(
+				fmt.Errorf("runtime: generated continuation tool %q requires a model call ID", call.Name),
+			)
+		}
+		if call.ModelName != call.Name {
+			return nil, planner.NewOutputContractError(fmt.Errorf(
+				"runtime: generated continuation tool %q uses the model call for %q",
+				call.Name,
+				call.ModelName,
+			))
+		}
+		if !bytes.Equal(call.ModelPayload, call.Payload) {
+			return nil, planner.NewOutputContractError(
+				fmt.Errorf("runtime: generated continuation tool %q payload differs from its model call", call.Name),
+			)
 		}
 		if _, exists := bound[call.Name]; exists {
 			return nil, planner.NewOutputContractError(
@@ -166,8 +184,6 @@ func (r *Runtime) compilePlannerToolCallsForRun(
 				fmt.Errorf("runtime: continuation tool %q payload: %w", call.Name, err),
 			)
 		}
-		call.ModelName = call.Name
-		call.ModelPayload = append(rawjson.Message(nil), call.Payload...)
 		call.Name = action.spec.Name
 		call.Payload = append(rawjson.Message(nil), action.executablePayload...)
 		call.ContinuationRootToolCallID = action.state.rootToolCallID
@@ -237,6 +253,11 @@ func (r *Runtime) continuationStates(spec tools.ToolSpec, outputs []*planner.Too
 		} else {
 			rootToolCallID = output.ContinuationRootToolCallID
 			if rootToolCallID == "" {
+				if output.ModelToolCallID == "" {
+					// Planner code called this hidden tool directly. Its result does
+					// not belong to a saved source query, so it creates no follow-up.
+					continue
+				}
 				return nil, fmt.Errorf("runtime: continuation tool %q history has no source tool call id", spec.Name)
 			}
 			previous, exists := states[rootToolCallID]

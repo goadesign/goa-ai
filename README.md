@@ -974,13 +974,14 @@ failure resumes through its typed recovery transition: `correct_call` and
 `replan` may use tools, while `finish` resumes without tools so the planner can
 synthesize the terminal outcome.
 
-On a `correct_call` recovery turn, the runtime advertises the normal
-caller-authorized catalog and attaches correction guidance for every selected
-failed call. Historical tool calls remain in the provider transcript for
-replay but never restore executable definitions. A `replan` failure removes its
-failed tool for that turn unless another selected failure for the same tool is
-correctable. If the planner still requests an excluded tool, the runtime rejects
-the planner output before any sibling call executes. Planner-owned await barriers remain strict because they encode
+On a `correct_call` recovery turn, the runtime advertises only the saved tool
+contracts for the selected failed calls, after applying the run policy, and
+attaches correction guidance for each failure. Historical tool calls remain in
+the provider transcript for replay but never restore any other executable
+definition. A `replan` failure removes its failed tool for that turn unless
+another selected failure for the same tool is correctable. If the planner still
+requests an excluded tool, the runtime rejects the planner output before any
+sibling call executes. Planner-owned await barriers remain strict because they encode
 suspension rather than a direct model tool request. Caller `WithRestrictToTool`
 policy remains run-scoped.
 
@@ -992,8 +993,8 @@ that decision to the next activity as `PlanResumeInput.SynthesisOnly`; the
 runtime requires the planner to return a terminal result without additional
 tool calls. A failed tool follows its structured `ToolFailure.Recovery`
 directive first. `correct_call` supplies structured correction evidence while
-leaving the planner free to retry, combine work, select another advertised
-capability, await input, or answer. `replan` removes the failed tool from the
+letting the planner retry the saved failed tool contracts, await input, or
+answer. It cannot select an unrelated capability. `replan` removes the failed tool from the
 recovery turn while permitting another advertised action, input request, or
 answer. `finish` enters finalization and forbids further domain work. The
 planner may return a final response or registered terminal bookkeeping calls.
@@ -1219,6 +1220,21 @@ planners do not populate `ModelName` or `ModelPayload`. The workflow commits the
 selected response once after atomic admission and before effects. Usage includes
 all attempts. Provider tool-call IDs remain opaque and unchanged in durable
 transcripts.
+
+The runtime checks these two request sources separately. Model-derived requests
+must use the exact catalog shown to the model. Planner-authored requests leave
+`ModelToolCallID` empty and must use the agent definition's executable catalog.
+An exact call-correction turn instead uses only the saved tool contracts being
+repaired. This lets trusted planner code call a dedicated continuation
+without exposing its cursor-bearing tool to the model. The direct call remains
+standalone: it does not attach itself to a saved source query or create a
+generated model action. Payload codecs, registered executors, and run policy
+still apply.
+
+Generated definitions populate the executable catalog. Callers that construct
+an `AgentDefinition` directly must list every executable tool; an empty list
+means the agent has no executable tools. `ToolSpecsForAgent` returns only that
+list and excludes tools the agent merely exports for other agents to call.
 Provider adapters translate IDs only while encoding a request when the target
 wire protocol imposes narrower syntax, and apply the same request-local alias
 to each matching tool result.

@@ -555,7 +555,7 @@ func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
 				return nil, nil
 			}
 		},
-		func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			resumes++
 			switch resumes {
 			case 1:
@@ -563,10 +563,18 @@ func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
 				assertAdvertisedTools(t, input, continueAction)
 				require.Len(t, input.Reminders, 1)
 				assert.Contains(t, input.Reminders[0].Text, "load failed")
-				return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-					Name:    continueAction,
-					Payload: rawjson.Message(`{}`),
-				}}}, nil
+				client, ok := input.Agent.PlannerModelClient("test")
+				require.True(t, ok)
+				response, err := client.Complete(ctx, &model.Request{
+					Model: "test",
+					Tools: input.Agent.AdvertisedToolDefinitions(),
+				})
+				require.NoError(t, err)
+				calls := response.ToolCalls()
+				require.Len(t, calls, 1)
+				request, err := planner.ToolRequestFromModelCall(calls[0])
+				require.NoError(t, err)
+				return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
 			case 2:
 				require.False(t, input.SynthesisOnly)
 				assertAdvertisedTools(t, input, search.Name, load.Name)
@@ -578,6 +586,15 @@ func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
 			}
 		},
 	)
+	h.runtime.models["test"] = mustTestModelClient(stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			return testModelResponse(nil, model.ToolCall{
+				ID:      "continue-call",
+				Name:    continueAction,
+				Payload: rawjson.Message(`{}`),
+			}), nil
+		},
+	})
 
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{
 		{Name: search.Name, ToolCallID: "search-call", Payload: rawjson.Message(`{"query":"alarms"}`)},

@@ -1587,38 +1587,167 @@ func TestPlanStartActivityRequiresExactBytesForStreamReconciliation(t *testing.T
 	require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
 }
 
-func TestValidatePlannerAdvertisedToolsUsesExecutableName(t *testing.T) {
-	definitions := []*model.ToolDefinition{{Name: "visible"}}
+func TestValidatePlannerToolCatalogsUsesRequestProvenance(t *testing.T) {
+	definitions := []*model.ToolDefinition{{Name: "advertised"}}
+	executable := map[tools.Ident]struct{}{"executable": {}}
 	tests := []struct {
 		name    string
 		call    planner.ToolRequest
 		wantErr string
 	}{
 		{
-			name: "advertised tool",
+			name: "planner-authored executable tool",
 			call: planner.ToolRequest{
-				Name: "visible",
+				Name: "executable",
 			},
 		},
 		{
-			name: "unadvertised executable tool",
+			name: "planner-authored advertised-only tool",
 			call: planner.ToolRequest{
-				Name: "hidden",
+				Name: "advertised",
 			},
-			wantErr: `planner called tool "hidden" outside the advertised catalog`,
+			wantErr: `planner called tool "advertised" outside its allowed catalog for this turn`,
+		},
+		{
+			name: "model-derived advertised tool",
+			call: planner.ToolRequest{
+				Name:            "advertised",
+				ModelToolCallID: "provider-call",
+			},
+		},
+		{
+			name: "model-derived unadvertised executable tool",
+			call: planner.ToolRequest{
+				Name:            "executable",
+				ModelToolCallID: "provider-call",
+			},
+			wantErr: `planner called tool "executable" outside the advertised catalog`,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := validatePlannerAdvertisedTools(
+			err := validatePlannerToolCatalogs(
 				&planner.PlanResult{ToolCalls: []planner.ToolRequest{test.call}},
 				definitions,
+				executable,
 			)
 			if test.wantErr == "" {
 				require.NoError(t, err)
 				return
 			}
 			require.EqualError(t, err, test.wantErr)
+		})
+	}
+}
+
+func TestPlanStartActivityAcceptsPlannerAuthoredDedicatedContinuation(t *testing.T) {
+	search, continuation := continuationTestSpecs()
+	pl := &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+			Name:    continuation.Name,
+			Payload: rawjson.Message(`{"cursor":"next"}`),
+		}}}, nil
+	}}
+	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	seedTestToolSpecs(rt, search, continuation)
+	seedTestToolDefinitions(rt, search, continuation)
+	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
+		"service.agent": {continuation},
+	}
+
+	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-123",
+		RunContext: run.Context{RunID: "run-123"},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, out.Result.ToolCalls, 1)
+	require.Equal(t, continuation.Name, out.Result.ToolCalls[0].Name)
+	require.Empty(t, out.Result.ToolCalls[0].ModelToolCallID)
+}
+
+func TestGeneratedContinuationRejectsModelCallForDifferentToolBeforeExecution(t *testing.T) {
+	rt, search, _ := continuationTestRuntime()
+	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
+	})
+	require.NoError(t, err)
+	require.Len(t, actions, 1)
+	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:            actions[0].modelName,
+		Payload:         rawjson.Message(`{}`),
+		ModelToolCallID: "model-call-1",
+	}}}
+	require.NoError(t, validatePlannerToolCatalogs(
+		result,
+		[]*model.ToolDefinition{{Name: actions[0].modelName.String()}},
+		nil,
+	))
+
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, map[string]model.ToolCall{
+		"model-call-1": {
+			ID:      "model-call-1",
+			Name:    search.Name,
+			Payload: rawjson.Message(`{"query":"alarms"}`),
+		},
+	})
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, outputContractCause(t, err), "uses the model call for")
+	require.Empty(t, calls)
+}
+
+func TestPreparePlannerActivityFiltersPlannerExecutableCatalog(t *testing.T) {
+	first := newAnyJSONSpec("service.first")
+	second := newAnyJSONSpec("service.second")
+	saved := newAnyJSONSpec("service.saved")
+	tests := []struct {
+		name            string
+		policy          *PolicyOverrides
+		unavailable     []tools.Ident
+		advertisedSpecs []tools.ToolSpec
+		want            map[tools.Ident]struct{}
+	}{
+		{
+			name:   "run policy",
+			policy: &PolicyOverrides{RestrictToTool: first.Name},
+			want:   map[tools.Ident]struct{}{first.Name: {}},
+		},
+		{
+			name:        "unavailable tool",
+			unavailable: []tools.Ident{second.Name},
+			want:        map[tools.Ident]struct{}{first.Name: {}},
+		},
+		{
+			name:            "saved correction catalog",
+			advertisedSpecs: []tools.ToolSpec{saved},
+			want:            map[tools.Ident]struct{}{saved.Name: {}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{})
+			seedTestToolSpecs(rt, first, second, saved)
+			seedTestToolDefinitions(rt, first, second, saved)
+			rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
+				"service.agent": {first, second},
+			}
+
+			act, err := rt.preparePlannerActivityWithSpecs(
+				t.Context(),
+				&PlanActivityInput{
+					AgentID:    "service.agent",
+					RunID:      "run-123",
+					RunContext: run.Context{RunID: "run-123"},
+					Policy:     test.policy,
+				},
+				nil,
+				test.unavailable,
+				test.advertisedSpecs,
+			)
+			require.NoError(t, err)
+			require.Equal(t, test.want, act.plannerAuthoredTools)
 		})
 	}
 }
@@ -2314,24 +2443,39 @@ func TestPlanStartActivityFingerprintsStreamResponseBeforeCloneValidation(t *tes
 func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 	search, continuation := continuationTestSpecs()
 	actionName := continuationActionName(continuation.Name, "source-1")
-	pl := &stubPlanner{start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
-		definitions := input.Agent.AdvertisedToolDefinitions()
-		require.Len(t, definitions, 2)
-		require.Equal(t, actionName.String(), definitions[1].Name)
-		require.True(t, definitions[1].NoArguments)
-		require.Equal(
-			t,
-			`Continue the unfinished tools.search query with original input {"query":"alarms"}. The latest page returned 1 items.`,
-			definitions[1].Description,
-		)
-		_, err := model.NewRequestContract(&model.Request{Tools: definitions})
+	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+		client, ok := input.Agent.PlannerModelClient("test")
+		require.True(t, ok)
+		response, err := client.Complete(ctx, &model.Request{
+			Model: "test",
+			Tools: input.Agent.AdvertisedToolDefinitions(),
+		})
 		require.NoError(t, err)
-		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-			Name:    actionName,
-			Payload: rawjson.Message(`{}`),
-		}}}, nil
+		calls := response.ToolCalls()
+		require.Len(t, calls, 1)
+		request, err := planner.ToolRequestFromModelCall(calls[0])
+		require.NoError(t, err)
+		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	rt.models["test"] = mustTestModelClient(stubModelClient{
+		complete: func(_ context.Context, request *model.Request) (*model.Response, error) {
+			definitions := request.Tools
+			require.Len(t, definitions, 2)
+			require.Equal(t, actionName.String(), definitions[1].Name)
+			require.True(t, definitions[1].NoArguments)
+			require.Equal(
+				t,
+				`Continue the unfinished tools.search query with original input {"query":"alarms"}. The latest page returned 1 items.`,
+				definitions[1].Description,
+			)
+			return testModelResponse(nil, model.ToolCall{
+				ID:      "continuation-call",
+				Name:    actionName,
+				Payload: rawjson.Message(`{}`),
+			}), nil
+		},
+	})
 	seedTestToolSpecs(rt, search, continuation)
 	seedTestToolDefinitions(rt, search, continuation)
 	rt.agentToolSpecs = make(map[agent.Ident][]tools.ToolSpec)
@@ -3002,6 +3146,7 @@ func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) 
 		},
 	})
 	require.NoError(t, err)
+	require.Nil(t, out.OutputContractFailure)
 	require.Len(t, out.Result.ToolCalls, 1)
 }
 

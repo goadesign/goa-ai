@@ -31,15 +31,16 @@ import (
 // plannerActivityInvocation is the shared prepared state for one planner
 // activity execution.
 type plannerActivityInvocation struct {
-	runtime            *Runtime
-	reg                *AgentRegistration
-	agentCtx           planner.PlannerContext
-	events             *runtimePlannerEvents
-	invocations        *modelInvocationJournal
-	messages           []*model.Message
-	reminders          []reminder.Reminder
-	runContext         run.Context
-	publicationBatchID string
+	runtime              *Runtime
+	reg                  *AgentRegistration
+	agentCtx             planner.PlannerContext
+	plannerAuthoredTools map[tools.Ident]struct{}
+	events               *runtimePlannerEvents
+	invocations          *modelInvocationJournal
+	messages             []*model.Message
+	reminders            []reminder.Reminder
+	runContext           run.Context
+	publicationBatchID   string
 }
 
 // PlanStartActivity executes the planner's PlanStart method.
@@ -87,7 +88,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	if err := validatePlannerActivityResult(r, result, input.RunContext.Tool, false); err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
-	if err := validatePlannerAdvertisedTools(result, act.agentCtx.AdvertisedToolDefinitions()); err != nil {
+	if err := validatePlannerToolCatalogs(result, act.agentCtx.AdvertisedToolDefinitions(), act.plannerAuthoredTools); err != nil {
 		return act.outputContractFailure(ctx, planner.NewOutputContractError(err))
 	}
 	if err := validatePlannerResultPayloadCodecs(ctx, r, result, continuationActions); err != nil {
@@ -239,7 +240,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err := validatePlannerActivityResult(r, result, input.RunContext.Tool, synthesisOnly); err != nil {
 		return act.outputContractFailure(ctx, err)
 	}
-	if err := validatePlannerAdvertisedTools(result, act.agentCtx.AdvertisedToolDefinitions()); err != nil {
+	if err := validatePlannerToolCatalogs(result, act.agentCtx.AdvertisedToolDefinitions(), act.plannerAuthoredTools); err != nil {
 		return act.outputContractFailure(ctx, planner.NewOutputContractError(err))
 	}
 	if err := validatePlannerResultPayloadCodecs(ctx, r, result, continuationActions); err != nil {
@@ -402,24 +403,36 @@ func modelInvocationRecoveryReminder(recovery *ModelInvocationRecovery) string {
 		"\nReturn a replacement tool call now. Do not mention this reminder to the user."
 }
 
-// validatePlannerAdvertisedTools requires every model-selected tool name to
-// come from the exact catalog shown for this planner activity.
-func validatePlannerAdvertisedTools(result *planner.PlanResult, definitions []*model.ToolDefinition) error {
+// validatePlannerToolCatalogs checks model-facing and planner-authored tool
+// names against the separate lists allowed for this turn. Tool-bound awaits
+// must name a tool shown to the model because their correlation identifiers
+// come from a model response.
+func validatePlannerToolCatalogs(
+	result *planner.PlanResult,
+	definitions []*model.ToolDefinition,
+	plannerAuthored map[tools.Ident]struct{},
+) error {
 	if result == nil {
 		return errors.New("planner returned a nil result")
 	}
-	allowed := make(map[tools.Ident]struct{}, len(definitions))
+	advertised := make(map[tools.Ident]struct{}, len(definitions))
 	for _, definition := range definitions {
-		allowed[tools.Ident(definition.Name)] = struct{}{}
+		advertised[tools.Ident(definition.Name)] = struct{}{}
 	}
 	for _, call := range result.ToolCalls {
-		if _, ok := allowed[call.Name]; !ok {
-			return fmt.Errorf("planner called tool %q outside the advertised catalog", call.Name)
+		if call.ModelToolCallID != "" {
+			if _, ok := advertised[call.Name]; !ok {
+				return fmt.Errorf("planner called tool %q outside the advertised catalog", call.Name)
+			}
+			continue
+		}
+		if _, ok := plannerAuthored[call.Name]; !ok {
+			return fmt.Errorf("planner called tool %q outside its allowed catalog for this turn", call.Name)
 		}
 	}
 	if result.Await != nil {
 		for _, call := range awaitToolRequests(result.Await.Items) {
-			if _, ok := allowed[call.Name]; !ok {
+			if _, ok := advertised[call.Name]; !ok {
 				return fmt.Errorf("planner called tool %q outside the advertised catalog", call.Name)
 			}
 		}
@@ -464,9 +477,11 @@ func (r *Runtime) preparePlannerActivityWithSpecs(
 	if err := invocations.startPresentation(ctx); err != nil {
 		return nil, fmt.Errorf("start provisional model presentation: %w", err)
 	}
+	runPolicy := compileToolPolicy(input.Policy)
 	reg, agentCtx, err := r.plannerContext(
 		ctx,
 		input,
+		runPolicy,
 		events,
 		invocations,
 		continuationActions,
@@ -475,6 +490,20 @@ func (r *Runtime) preparePlannerActivityWithSpecs(
 	)
 	if err != nil {
 		return nil, err
+	}
+	plannerAuthoredSpecs := advertisedSpecs
+	if plannerAuthoredSpecs == nil {
+		r.mu.RLock()
+		plannerAuthoredSpecs = append([]tools.ToolSpec(nil), r.agentToolSpecs[input.AgentID]...)
+		r.mu.RUnlock()
+	}
+	plannerAuthoredTools := make(map[tools.Ident]struct{}, len(plannerAuthoredSpecs))
+	for _, spec := range plannerAuthoredSpecs {
+		if slices.Contains(unavailableTools, spec.Name) ||
+			!runPolicy.allowsTool(spec.Name, toolPolicyFactsFromSpec(spec)) {
+			continue
+		}
+		plannerAuthoredTools[spec.Name] = struct{}{}
 	}
 	var rems []reminder.Reminder
 	if r.reminders != nil {
@@ -485,15 +514,16 @@ func (r *Runtime) preparePlannerActivityWithSpecs(
 		return nil, err
 	}
 	return &plannerActivityInvocation{
-		runtime:            r,
-		reg:                reg,
-		agentCtx:           agentCtx,
-		events:             events,
-		invocations:        invocations,
-		messages:           messages,
-		reminders:          rems,
-		runContext:         input.RunContext,
-		publicationBatchID: publicationBatchID,
+		runtime:              r,
+		reg:                  reg,
+		agentCtx:             agentCtx,
+		plannerAuthoredTools: plannerAuthoredTools,
+		events:               events,
+		invocations:          invocations,
+		messages:             messages,
+		reminders:            rems,
+		runContext:           input.RunContext,
+		publicationBatchID:   publicationBatchID,
 	}, nil
 }
 
@@ -1363,6 +1393,7 @@ func (r *Runtime) planResume(ctx context.Context, reg *AgentRegistration, input 
 func (r *Runtime) plannerContext(
 	ctx context.Context,
 	input *PlanActivityInput,
+	runPolicy compiledToolPolicy,
 	events planner.PlannerEvents,
 	invocations modelInvocationSink,
 	continuationActions []continuationAction,
@@ -1380,7 +1411,6 @@ func (r *Runtime) plannerContext(
 	if err != nil {
 		return nil, nil, err
 	}
-	runPolicy := compileToolPolicy(input.Policy)
 	agentCtx := newAgentContext(agentContextOptions{
 		runtime:             r,
 		agentID:             input.AgentID,

@@ -113,7 +113,6 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 	agentTools.Specs[0].IsAgentTool = true
 	agentTools.Specs[0].AgentID = "child.agent"
 	require.NoError(t, rt.RegisterToolset(agentTools))
-	rt.agentToolSpecs["parent.agent"] = agentTools.Specs
 
 	parentPlanner := &stubPlanner{
 		start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
@@ -139,12 +138,19 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 			}, nil
 		},
 	}
-	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{Definition: testRegistrationDefinition("parent.agent",
-
-		engine.WorkflowDefinition{
-			Name:    "parent.workflow",
-			Handler: rt.ExecuteWorkflow,
-		}, nil),
+	parentDefinition := NewAgentDefinition(
+		AgentRoute{
+			ID:               "parent.agent",
+			WorkflowName:     "parent.workflow",
+			DefaultTaskQueue: "test",
+		},
+		agentTools.Specs,
+		nil,
+		nil,
+		[]tools.Ident{invokeToolID},
+		nil,
+	)
+	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{Definition: parentDefinition,
 
 		WorkflowHandler: (engine.WorkflowDefinition{
 			Name:    "parent.workflow",

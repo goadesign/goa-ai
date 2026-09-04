@@ -829,6 +829,91 @@ func TestRegisterAgentUsesDefinitionRouteAndAuthoredActivityQueues(t *testing.T)
 	require.InDelta(t, 2.0, agentChildOpts.RetryPolicy.BackoffCoefficient, 0.000001)
 }
 
+func TestRegisterAgentPlannerCatalogContainsOnlyExecutableTools(t *testing.T) {
+	eng := &stubEngine{}
+	rt := New(newTestStore(), WithEngine(eng))
+	firstExecutable := newAnyJSONSpec("service.tools.lookup")
+	secondExecutable := newAnyJSONSpec("service.tools.list")
+	exported := newAnyJSONSpec("service.agent.answer")
+	definition := NewAgentDefinition(
+		AgentRoute{
+			ID:               "service.agent",
+			WorkflowName:     "service.workflow",
+			DefaultTaskQueue: "service.queue",
+		},
+		[]tools.ToolSpec{firstExecutable, secondExecutable, exported},
+		nil,
+		nil,
+		[]tools.Ident{firstExecutable.Name, secondExecutable.Name},
+		nil,
+	)
+
+	err := rt.RegisterAgent(t.Context(), AgentRegistration{
+		Definition:          definition,
+		WorkflowHandler:     (engine.WorkflowDefinition{Handler: rt.ExecuteWorkflow}).Handler,
+		Planner:             &stubPlanner{},
+		PlanActivityName:    "service.plan",
+		ResumeActivityName:  "service.resume",
+		ExecuteToolActivity: "service.execute_tool",
+	})
+	require.NoError(t, err)
+
+	specs := rt.ToolSpecsForAgent("service.agent")
+	require.Len(t, specs, 2)
+	require.Equal(t, secondExecutable.Name, specs[0].Name)
+	require.Equal(t, firstExecutable.Name, specs[1].Name)
+	definitions := newAgentContext(agentContextOptions{
+		runtime: rt,
+		agentID: "service.agent",
+	}).AdvertisedToolDefinitions()
+	require.Len(t, definitions, 2)
+	require.Equal(t, secondExecutable.Name.String(), definitions[0].Name)
+	require.Equal(t, firstExecutable.Name.String(), definitions[1].Name)
+}
+
+func TestRegisterAgentReplacesExecutableToolsWithEmptyList(t *testing.T) {
+	eng := &stubEngine{}
+	rt := New(newTestStore(), WithEngine(eng))
+	executable := newAnyJSONSpec("service.tools.lookup")
+	exported := newAnyJSONSpec("service.agent.answer")
+	registration := AgentRegistration{
+		Definition: NewAgentDefinition(
+			AgentRoute{
+				ID:               "service.agent",
+				WorkflowName:     "service.workflow",
+				DefaultTaskQueue: "service.queue",
+			},
+			[]tools.ToolSpec{executable, exported},
+			nil,
+			nil,
+			[]tools.Ident{executable.Name},
+			nil,
+		),
+		WorkflowHandler:     (engine.WorkflowDefinition{Handler: rt.ExecuteWorkflow}).Handler,
+		Planner:             &stubPlanner{},
+		PlanActivityName:    "service.plan",
+		ResumeActivityName:  "service.resume",
+		ExecuteToolActivity: "service.execute_tool",
+	}
+
+	require.NoError(t, rt.RegisterAgent(t.Context(), registration))
+	require.Len(t, rt.ToolSpecsForAgent("service.agent"), 1)
+	registration.Definition = NewAgentDefinition(
+		AgentRoute{
+			ID:               "service.agent",
+			WorkflowName:     "service.workflow",
+			DefaultTaskQueue: "service.queue",
+		},
+		[]tools.ToolSpec{executable, exported},
+		nil,
+		nil,
+		nil,
+		nil,
+	)
+	require.NoError(t, rt.RegisterAgent(t.Context(), registration))
+	require.Empty(t, rt.ToolSpecsForAgent("service.agent"))
+}
+
 func TestRegisterAgentRejectsNegativeRecoveryTurns(t *testing.T) {
 	rt := New(newTestStore())
 
@@ -1118,15 +1203,7 @@ func TestSessionfulAndOneShotStartsEncodeMemoIdentically(t *testing.T) {
 func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 	t.Parallel()
 	eng := &stubEngine{}
-	rt := &Runtime{
-		Engine:   eng,
-		logger:   telemetry.NoopLogger{},
-		metrics:  telemetry.NoopMetrics{},
-		tracer:   telemetry.NoopTracer{},
-		Store:    newTestStore(),
-		agents:   make(map[agent.Ident]AgentRegistration),
-		toolsets: make(map[string]ToolsetRegistration),
-	}
+	rt := New(newTestStore(), WithEngine(eng))
 	// Register initial agent so we can start a run
 	err := rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition("service.agent",
 

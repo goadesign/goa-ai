@@ -1184,10 +1184,11 @@ resume, finish, terminal-tool completion, or forced finalization. A
 `FinalResponse` or `FinalToolResult` may only accompany hidden, non-terminal
 bookkeeping calls that complete successfully in the same step.
 
-For `correct_call` recovery, the runtime keeps the failed tool in the normal
-caller-authorized catalog and attaches generated validation issues, rejected
-input, and examples for each selected failure. The planner may retry, combine
-work, use another advertised tool, await input, or answer. `replan` removes its
+For `correct_call` recovery, the runtime advertises only the saved tool contracts
+for the selected failed calls, after applying the run policy, and attaches
+generated validation issues, rejected input, and examples for each failure. The
+planner may retry those failed tools, await input, or answer, but it cannot use
+an unrelated capability. `replan` removes its
 failed tool for the recovery activity unless another selected failure for that
 same tool is correctable. Caller-supplied `WithRestrictToTool` policy remains
 run-scoped.

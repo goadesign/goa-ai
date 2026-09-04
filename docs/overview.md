@@ -716,7 +716,7 @@ toolsets := rt.ListToolsets()
 // Get tool spec by name
 spec, ok := rt.ToolSpec(tools.Ident("toolset.tool"))
 
-// Get all tool specs for an agent
+// Get the tool specs listed as executable by an agent
 specs := rt.ToolSpecsForAgent(agent.Ident("service.agent"))
 
 // Get parsed tool schema
@@ -1001,10 +1001,10 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
 
-Recovery activities preserve the caller-authorized catalog for `correct_call`
-failures and remove tools selected only by `replan` failures. Caller
-`WithRestrictToTool` policy remains run-scoped and continues to define the
-maximum available catalog.
+Recovery activities advertise only the saved failed-tool contracts for
+`correct_call` failures, after applying the run policy. They remove tools
+selected only by `replan` failures. Caller `WithRestrictToTool` policy remains
+run-scoped and continues to define the maximum available catalog.
 
 `WithTiming(Timing)` sets semantic run/planner/tool budgets. It does not expose
 engine-level queue-wait or heartbeat tuning.

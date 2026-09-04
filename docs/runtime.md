@@ -1191,6 +1191,19 @@ runtime filters registered tool specs before the planner/model sees them and str
 from the model-facing `ToolDefinition` values. Provider adapters still encode
 historical tool-use and tool-result blocks from the transcript independently of
 the tools currently advertised.
+
+Requests copied from a model response keep their provider correlation ID and
+must name a tool in that advertised list. Requests constructed by planner code
+leave the correlation ID empty and must name a tool in the agent's generated
+executable list. Hand-built agent definitions must populate this list; an empty
+list means the agent has no executable tools. During exact call correction, the
+list contains only the saved tool contracts being repaired. Dedicated
+continuation tools remain absent from
+the advertised list; trusted planner code may call them with a typed cursor
+payload when the agent's generated definition includes them. A direct call
+remains standalone and does not create a model-facing continuation action or
+expose its next cursor in a reminder.
+
 `ToolDefinition.NoArguments` means choosing the tool is the complete model
 decision. The Bedrock streaming adapter still counts provider-emitted argument
 text against response bounds, but exposes the canonical payload `{}` rather

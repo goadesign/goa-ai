@@ -263,6 +263,19 @@ model response. When planner code compiles model output into different
 executable intent, the runtime retains the original model name and payload
 separately for the transcript.
 
+Model-derived calls have a nonempty `ModelToolCallID` and must name a tool in the
+exact catalog shown to the model. Planner-authored calls have an empty ID and
+must name a tool in the agent definition's executable catalog. During exact
+`correct_call` recovery, they must instead name a tool from the saved recovery
+catalog. Dedicated continuation tools stay hidden from models, but
+planner code may call one when it reconstructs the typed cursor payload itself.
+Such a direct call is standalone and does not create a model-facing continuation
+action. Generated codecs and run policy still validate every request.
+
+Generated agent definitions populate the executable catalog. Code that builds
+an `AgentDefinition` directly must list every tool the agent may execute; an
+empty list means the agent has no executable tools.
+
 The validated model client applies each tool's advertised schema before its
 attached input decoder and before a response becomes canonical. A schema
 rejection or non-nil `*tools.ValidationError` can produce limited-size

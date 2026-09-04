@@ -651,14 +651,18 @@ func correctionTestRegistration(
 	plannerImpl planner.Planner,
 	specs []tools.ToolSpec,
 ) AgentRegistration {
-	return AgentRegistration{Definition: testRegistrationDefinition("catalog.agent",
-
-		engine.WorkflowDefinition{
-			Name:    "catalog.agent.workflow",
-			Handler: rt.ExecuteWorkflow,
-		},
-
-		specs),
+	executable := make([]tools.Ident, len(specs))
+	for i, spec := range specs {
+		executable[i] = spec.Name
+	}
+	return AgentRegistration{Definition: NewAgentDefinition(
+		AgentRoute{ID: "catalog.agent", WorkflowName: "catalog.agent.workflow", DefaultTaskQueue: "test"},
+		specs,
+		nil,
+		nil,
+		executable,
+		nil,
+	),
 
 		WorkflowHandler: (engine.WorkflowDefinition{
 			Name:    "catalog.agent.workflow",

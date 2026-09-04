@@ -47,12 +47,16 @@ func testTemporalAgentDefinition(
 	workflowName, taskQueue string,
 	specs []tools.ToolSpec,
 ) agentruntime.AgentDefinition {
+	executable := make([]tools.Ident, len(specs))
+	for i, spec := range specs {
+		executable[i] = spec.Name
+	}
 	return agentruntime.NewAgentDefinition(
 		agentruntime.AgentRoute{ID: id, WorkflowName: workflowName, DefaultTaskQueue: taskQueue},
 		specs,
 		nil,
 		nil,
-		nil,
+		executable,
 		nil,
 	)
 }

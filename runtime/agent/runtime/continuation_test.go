@@ -40,10 +40,17 @@ func TestContinuationActionBindsExactChainWithoutExposingCursor(t *testing.T) {
 	assert.NotContains(t, actions[0].description, "opaque-next-page")
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    actions[0].modelName,
-		Payload: rawjson.Message(`{}`),
+		Name:            actions[0].modelName,
+		Payload:         rawjson.Message(`{}`),
+		ModelToolCallID: "model-call-1",
 	}}}
-	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, map[string]model.ToolCall{
+		"model-call-1": {
+			ID:      "model-call-1",
+			Name:    actions[0].modelName,
+			Payload: rawjson.Message(`{}`),
+		},
+	})
 	require.NoError(t, err)
 	call := calls[0]
 	assert.Equal(t, continuation.Name, call.Name)
@@ -157,10 +164,17 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 	assert.NotContains(t, actions[0].description, secondCursor)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    actions[0].modelName,
-		Payload: rawjson.Message(`{}`),
+		Name:            actions[0].modelName,
+		Payload:         rawjson.Message(`{}`),
+		ModelToolCallID: "model-call-1",
 	}}}
-	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, map[string]model.ToolCall{
+		"model-call-1": {
+			ID:      "model-call-1",
+			Name:    actions[0].modelName,
+			Payload: rawjson.Message(`{}`),
+		},
+	})
 	require.NoError(t, err)
 	require.Len(t, calls, 1)
 	assert.Equal(t, continuation.Name, calls[0].Name)
@@ -184,11 +198,18 @@ func TestContinuationActionRetainsCanonicalQueryPayload(t *testing.T) {
 	actions, err := rt.availableContinuationActions("svc.agent", outputs)
 	require.NoError(t, err)
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    actions[0].modelName,
-		Payload: rawjson.Message(`{}`),
+		Name:            actions[0].modelName,
+		Payload:         rawjson.Message(`{}`),
+		ModelToolCallID: "model-call-1",
 	}}}
 
-	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, map[string]model.ToolCall{
+		"model-call-1": {
+			ID:      "model-call-1",
+			Name:    actions[0].modelName,
+			Payload: rawjson.Message(`{}`),
+		},
+	})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"query":"alarms","limit":10,"cursor":"second-page"}`, string(calls[0].Payload))
 }
@@ -283,10 +304,17 @@ func TestContinuationActionNameStaysStableAsChainAdvances(t *testing.T) {
 	assert.Equal(t, first[0].modelName, second[0].modelName)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    second[0].modelName,
-		Payload: rawjson.Message(`{}`),
+		Name:            second[0].modelName,
+		Payload:         rawjson.Message(`{}`),
+		ModelToolCallID: "model-call-1",
 	}}}
-	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, second, nil)
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, second, map[string]model.ToolCall{
+		"model-call-1": {
+			ID:      "model-call-1",
+			Name:    second[0].modelName,
+			Payload: rawjson.Message(`{}`),
+		},
+	})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"cursor":"second"}`, string(calls[0].Payload))
 }
@@ -325,10 +353,13 @@ func TestContinuationActionsKeepParallelChainsIndependent(t *testing.T) {
 	assert.NotEqual(t, actions[0].modelName, actions[1].modelName)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
-		{Name: actions[1].modelName, Payload: rawjson.Message(`{}`)},
+		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`), ModelToolCallID: "model-call-1"},
+		{Name: actions[1].modelName, Payload: rawjson.Message(`{}`), ModelToolCallID: "model-call-2"},
 	}}
-	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, map[string]model.ToolCall{
+		"model-call-1": {ID: "model-call-1", Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+		"model-call-2": {ID: "model-call-2", Name: actions[1].modelName, Payload: rawjson.Message(`{}`)},
+	})
 	require.NoError(t, err)
 	assert.Equal(t, continuation.Name, calls[0].Name)
 	assert.Equal(t, "source-1", calls[0].ContinuationRootToolCallID)
@@ -362,14 +393,35 @@ func TestContinuationHistoryRejectsMissingCorrelation(t *testing.T) {
 
 	rt, _, continuation := continuationTestRuntime()
 	outputs := []*planner.ToolOutput{{
-		Name:       continuation.Name,
-		ToolCallID: "continue-1",
-		Payload:    rawjson.Message(`{"cursor":"first"}`),
-		Bounds:     &agent.Bounds{Truncated: false},
+		Name:            continuation.Name,
+		ToolCallID:      "continue-1",
+		ModelToolCallID: "model-call-1",
+		Payload:         rawjson.Message(`{"cursor":"first"}`),
+		Bounds:          &agent.Bounds{Truncated: false},
 	}}
 
 	_, err := rt.availableContinuationActions("svc.agent", outputs)
 	assert.ErrorContains(t, err, "history has no source tool call id")
+}
+
+func TestContinuationHistoryIgnoresStandalonePlannerContinuation(t *testing.T) {
+	t.Parallel()
+
+	rt, _, continuation := continuationTestRuntime()
+	outputs := []*planner.ToolOutput{{
+		Name:       continuation.Name,
+		ToolCallID: "continue-1",
+		Payload:    rawjson.Message(`{"cursor":"first"}`),
+		Bounds: &agent.Bounds{
+			Returned:   1,
+			Truncated:  true,
+			NextCursor: pointer("second"),
+		},
+	}}
+
+	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	require.NoError(t, err)
+	assert.Empty(t, actions)
 }
 
 func TestContinuationHistoryRejectsWrongCursor(t *testing.T) {
@@ -461,11 +513,14 @@ func TestBindContinuationRejectsDuplicateActionCalls(t *testing.T) {
 	})
 	require.NoError(t, err)
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
-		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
-		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`), ModelToolCallID: "model-call-1"},
+		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`), ModelToolCallID: "model-call-2"},
 	}}
 
-	_, err = rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
+	_, err = rt.compilePlannerToolCalls(result.ToolCalls, actions, map[string]model.ToolCall{
+		"model-call-1": {ID: "model-call-1", Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+		"model-call-2": {ID: "model-call-2", Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+	})
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
 	assert.ErrorContains(t, outputContractCause(t, err), "cannot be called more than once")
@@ -487,7 +542,7 @@ func TestContinuationActionsAreAdvertisedInsteadOfCanonicalTool(t *testing.T) {
 	assert.Equal(t, actions[0].modelName.String(), visible.AdvertisedToolDefinitions()[1].Name)
 }
 
-func TestBindContinuationRejectsCanonicalToolAndModelArguments(t *testing.T) {
+func TestBindContinuationAcceptsPlannerAuthoredCanonicalTool(t *testing.T) {
 	t.Parallel()
 
 	rt, search, continuation := continuationTestRuntime()
@@ -500,16 +555,96 @@ func TestBindContinuationRejectsCanonicalToolAndModelArguments(t *testing.T) {
 		Name:    continuation.Name,
 		Payload: rawjson.Message(`{}`),
 	}}}
-	_, err = rt.compilePlannerToolCalls(canonical.ToolCalls, actions, nil)
+	calls, err := rt.compilePlannerToolCalls(canonical.ToolCalls, actions, nil)
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+	assert.Equal(t, continuation.Name, calls[0].Name)
+	assert.Empty(t, calls[0].ModelToolCallID)
+}
+
+func TestBindContinuationRejectsPlannerAuthoredGeneratedAction(t *testing.T) {
+	t.Parallel()
+
+	rt, search, _ := continuationTestRuntime()
+	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
+	})
+	require.NoError(t, err)
+
+	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:    actions[0].modelName,
+		Payload: rawjson.Message(`{}`),
+	}}}
+	_, err = rt.compilePlannerToolCalls(result.ToolCalls, actions, nil)
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	assert.ErrorContains(t, outputContractCause(t, err), "requires a model call ID")
+}
+
+func TestBindContinuationRejectsPayloadDifferentFromModelCall(t *testing.T) {
+	t.Parallel()
+
+	rt, search, _ := continuationTestRuntime()
+	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
+	})
+	require.NoError(t, err)
+
+	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:            actions[0].modelName,
+		Payload:         rawjson.Message(`{ }`),
+		ModelToolCallID: "model-call-1",
+	}}}
+	calls, err := rt.compilePlannerToolCalls(result.ToolCalls, actions, map[string]model.ToolCall{
+		"model-call-1": {
+			ID:      "model-call-1",
+			Name:    actions[0].modelName,
+			Payload: rawjson.Message(`{}`),
+		},
+	})
+	var outputErr *planner.OutputContractError
+	require.ErrorAs(t, err, &outputErr)
+	require.ErrorContains(t, outputContractCause(t, err), "payload differs from its model call")
+	require.Empty(t, calls)
+}
+
+func TestBindContinuationRejectsModelAuthoredCanonicalToolAndArguments(t *testing.T) {
+	t.Parallel()
+
+	rt, search, continuation := continuationTestRuntime()
+	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
+	})
+	require.NoError(t, err)
+
+	canonical := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+		Name:            continuation.Name,
+		Payload:         rawjson.Message(`{}`),
+		ModelToolCallID: "provider-call",
+	}}}
+	_, err = rt.compilePlannerToolCalls(canonical.ToolCalls, actions, map[string]model.ToolCall{
+		"provider-call": {
+			ID:      "provider-call",
+			Name:    continuation.Name,
+			Payload: rawjson.Message(`{}`),
+		},
+	})
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
 	require.ErrorContains(t, outputContractCause(t, err), "is not model-callable")
 
 	withArguments := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-		Name:    actions[0].modelName,
-		Payload: rawjson.Message(`{"cursor":"model-authored"}`),
+		Name:            actions[0].modelName,
+		Payload:         rawjson.Message(`{"cursor":"model-authored"}`),
+		ModelToolCallID: "provider-call-with-arguments",
 	}}}
-	_, err = rt.compilePlannerToolCalls(withArguments.ToolCalls, actions, nil)
+	_, err = rt.compilePlannerToolCalls(withArguments.ToolCalls, actions, map[string]model.ToolCall{
+		"provider-call-with-arguments": {
+			ID:      "provider-call-with-arguments",
+			Name:    actions[0].modelName,
+			Payload: rawjson.Message(`{"cursor":"model-authored"}`),
+		},
+	})
 	require.ErrorAs(t, err, &outputErr)
 	assert.ErrorContains(t, outputContractCause(t, err), `unknown field "cursor"`)
 }
