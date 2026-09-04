@@ -48,7 +48,7 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 	rt := New(newTestStore(),
 		WithEngine(engineinmem.New()),
 		WithHooks(bus),
-		WithStream(sink),
+		WithStream(sink, stream.RuntimeHostProfile()),
 		WithLogger(telemetry.NoopLogger{}),
 		WithMetrics(telemetry.NoopMetrics{}),
 		WithTracer(telemetry.NoopTracer{}),

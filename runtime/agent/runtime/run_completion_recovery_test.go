@@ -99,7 +99,7 @@ func TestEnsureRunCompletionRetriesStreamWithoutRepeatingStore(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	sink := &retryingStreamSink{err: errors.New("stream send failed")}
-	subscriber, err := stream.NewSubscriber(sink)
+	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	runtime := &Runtime{
 		Store: store,
@@ -130,7 +130,7 @@ func TestEnsureRunCompletionExactRetryResumesStreamDelivery(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	sink := &retryingStreamSink{}
-	subscriber, err := stream.NewSubscriber(sink)
+	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	runtime := &Runtime{
 		Store: store,
@@ -274,7 +274,7 @@ func TestEnsureRunCompletionDoesNotPublishWhenWorkflowTerminalWins(t *testing.T)
 	}))
 	require.NoError(t, err)
 	sink := &completionEventSink{}
-	subscriber, err := stream.NewSubscriber(sink)
+	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	runtime := &Runtime{
 		Store: workflowTerminalWinsStore{Store: store, workflowTimestamp: workflowTimestamp},
@@ -320,7 +320,7 @@ func TestEnsureRunCompletionDoesNotPublishWhenWorkflowSuspensionWins(t *testing.
 	}))
 	require.NoError(t, err)
 	sink := &completionEventSink{}
-	subscriber, err := stream.NewSubscriber(sink)
+	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	runtime := &Runtime{
 		Store: workflowSuspensionWinsStore{Store: store, workflowTimestamp: workflowTimestamp},
@@ -349,7 +349,7 @@ func TestEnsureRunCompletionSuppressesConcurrentWinnerForEndedSession(t *testing
 		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	sink := &completionEventSink{}
-	subscriber, err := stream.NewSubscriber(sink)
+	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	runtime := &Runtime{
 		Store: workflowTerminalWinsStore{

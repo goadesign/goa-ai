@@ -227,7 +227,7 @@ func validateChunkMessage(message *Message, thinking bool) error {
 
 func validateThinkingPart(part ThinkingPart) error {
 	// Valid variants: signed or plaintext reasoning (text and/or signature —
-	// Opus 4.8-class thinking display "omitted" emits signature-only blocks
+	// Opus 4.8-class thinking output "omitted" emits signature-only blocks
 	// whose empty text must be preserved for verbatim replay), or redacted
 	// bytes. Redacted content is exclusive of both text and signature.
 	content := part.Text != "" || part.Signature != ""

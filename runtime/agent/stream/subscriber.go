@@ -12,56 +12,53 @@ import (
 )
 
 type (
-	// Subscriber receives persisted hook events and live model output events,
-	// applies one audience profile, and forwards allowed client events to a
-	// stream.Sink such as a WebSocket, SSE connection, or message bus.
+	// Subscriber receives persisted hook events and live model output events. It
+	// maps supported hook events to stream events and sends the event kinds
+	// selected by its profile to a trusted host through a Sink.
 	//
 	// Only the sink actually "sends" messages; the subscriber listens for
 	// incoming events, translates those of interest, and hands them off to
 	// the sink using its Send method.
 	//
-	// The following hook events are streamed to clients:
-	//   - AssistantTurnCommitted → EventAssistantTurn
-	//   - PlannerNote           → EventPlannerThought
-	//   - PromptRendered        → EventPromptRendered
-	//   - ToolCallScheduled     → EventToolStart
-	//   - ToolCallUpdated       → EventToolUpdate
-	//   - ToolResultReceived    → EventToolEnd
-	//
-	// All other internal events are ignored and not sent to clients.
+	// Supported events include assistant output, exact assistant turns, planner
+	// thoughts, prompts, tool activity, usage, requests that pause a run,
+	// authorization decisions, workflow state, and child-run links. Hook events
+	// with no stream representation are ignored.
 	Subscriber struct {
 		sink    Sink
 		profile StreamProfile
 	}
 )
 
-// NewSubscriber constructs a subscriber that forwards selected hook
-// events to the provided stream sink using the default stream profile.
-// The sink is typically backed by a message bus like Pulse or a direct
-// WebSocket/SSE connection.
+// NewSubscriber constructs a subscriber that forwards the events selected by
+// profile to sink. The sink delivers private runtime data to a trusted host;
+// these events are not safe to forward unchanged to an end-user client.
 //
-// NewSubscriber returns an error if sink is nil, as the subscriber
-// requires a valid sink to function.
+// NewSubscriber returns an error when sink is nil or profile does not enable
+// any events.
 //
 // Example:
 //
 //	sink := myStreamImplementation
-//	sub, err := hooks.NewSubscriber(sink)
+//	sub, err := NewSubscriber(sink, RuntimeHostProfile())
 //	if err != nil {
 //	    return err
 //	}
-//	subscription, _ := bus.Register(sub)
-//	defer subscription.Close()
-func NewSubscriber(sink Sink) (*Subscriber, error) {
-	return NewSubscriberWithProfile(sink, DefaultProfile())
-}
-
-// NewSubscriberWithProfile constructs a subscriber that forwards selected
-// hook events to the provided stream sink, applying the given StreamProfile
-// to determine which event kinds are emitted.
-func NewSubscriberWithProfile(sink Sink, profile StreamProfile) (*Subscriber, error) {
+//	subscription, err := bus.Register(sub)
+//	if err != nil {
+//	    return err
+//	}
+//	defer func() {
+//	    if err := subscription.Close(); err != nil {
+//	        panic(err)
+//	    }
+//	}()
+func NewSubscriber(sink Sink, profile StreamProfile) (*Subscriber, error) {
 	if sink == nil {
 		return nil, errors.New("stream sink is required")
+	}
+	if profile == (StreamProfile{}) {
+		return nil, errors.New("stream profile must enable at least one event")
 	}
 	return &Subscriber{
 		sink:    sink,
@@ -69,7 +66,7 @@ func NewSubscriberWithProfile(sink Sink, profile StreamProfile) (*Subscriber, er
 	}, nil
 }
 
-// HandleModelOutputEvent applies the configured audience profile to one live
+// HandleModelOutputEvent applies the configured profile to one live
 // model text or thinking event and sends it to the same sink used for
 // hook-derived events. The boolean reports whether the sink accepted the event.
 func (s *Subscriber) HandleModelOutputEvent(ctx context.Context, event Event) (bool, error) {
@@ -93,14 +90,9 @@ func (s *Subscriber) HandleModelOutputEvent(ctx context.Context, event Event) (b
 // HandleEvent implements the Subscriber interface by translating hook events
 // into stream events and forwarding them to the configured sink.
 //
-// Event translation:
-//   - AssistantTurnCommitted → EventAssistantTurn
-//   - PlannerNote → EventPlannerThought
-//   - PromptRendered → EventPromptRendered
-//   - ToolCallScheduled → EventToolStart
-//   - ToolCallUpdated → EventToolUpdate
-//   - ToolResultReceived → EventToolEnd
-//   - All other event types are ignored (return nil)
+// It translates supported assistant, planner, prompt, tool, usage, pause,
+// authorization, workflow, and child-run hook events. Unsupported hook event
+// types are ignored.
 //
 // If the sink returns an error, HandleEvent propagates it to the bus, which
 // stops event delivery to remaining subscribers. This fail-fast behavior
@@ -246,7 +238,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if !s.profile.Thoughts {
 			return nil
 		}
-		// Publish a typed payload object on the wire (no string-wrapping).
+		// Preserve the structured diagnostic payload instead of wrapping it in a string.
 		payload := PlannerThoughtPayload{
 			Note: evt.Note,
 		}
@@ -271,9 +263,8 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 		if !s.profile.Thoughts {
 			return nil
 		}
-		// Map structured thinking block to PlannerThought with enriched payload.
-		// Text/Signature/Redacted always carry the provider-issued block for
-		// ledger and replay. Note is reserved for streaming deltas only.
+		// Keep the complete provider-issued block for diagnostic consumers and
+		// exact replay. Note is reserved for streaming deltas only.
 		payload := PlannerThoughtPayload{
 			Text:         evt.Text,
 			Signature:    evt.Signature,
@@ -281,8 +272,8 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ContentIndex: evt.ContentIndex,
 			Final:        evt.Final,
 		}
-		// Emit Note only for non-final deltas so UIs can append incremental
-		// reasoning without duplicating the final aggregated block.
+		// Emit Note only for non-final deltas so diagnostic consumers do not
+		// append the complete text again.
 		if !evt.Final && evt.Text != "" {
 			payload.Note = evt.Text
 		}
@@ -430,8 +421,8 @@ func newBaseFromHook(evt hooks.Event, eventType EventType, payload any) Base {
 	)
 }
 
-// clampPreview normalizes whitespace and clamps result previews to a reasonable
-// length for UI display.
+// clampPreview normalizes whitespace and limits result previews to a concise
+// size for a host-created public summary.
 func clampPreview(in string) string {
 	if in == "" {
 		return ""

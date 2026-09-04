@@ -162,10 +162,11 @@ type (
 
 	// ThinkingPart represents provider-issued reasoning content.
 	//
-	// Providers may attach a signature or redacted payload; callers treat this
-	// as opaque metadata and surface it according to UI policy.
+	// Providers may attach a signature or redacted payload. Callers preserve this
+	// data for provider continuation and restricted diagnostics, never for
+	// end-user display.
 	ThinkingPart struct {
-		// Text is the provider-visible reasoning text when available.
+		// Text is provider-issued plaintext reasoning when available.
 		Text string `json:"text"`
 
 		// Signature is the provider-issued signature for Text when present.

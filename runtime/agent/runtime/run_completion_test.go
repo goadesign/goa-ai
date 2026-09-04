@@ -245,7 +245,7 @@ func (s *completionEventSink) Close(context.Context) error {
 // includes delivery to an active Session.
 func newCompletionSubscriber(t *testing.T) *stream.Subscriber {
 	t.Helper()
-	subscriber, err := stream.NewSubscriber(&completionEventSink{})
+	subscriber, err := stream.NewSubscriber(&completionEventSink{}, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	return subscriber
 }
@@ -311,7 +311,7 @@ func TestEnsureRunCompletionReplaysStoredTerminalExactly(t *testing.T) {
 	}))
 	require.NoError(t, err)
 	sink := &retryingStreamSink{}
-	subscriber, err := stream.NewSubscriber(sink)
+	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	runtime := &Runtime{
 		Store: store,
@@ -392,7 +392,7 @@ func TestEnsureRunCompletionNotifiesBusOnceBeforeMissingStream(t *testing.T) {
 	require.Equal(t, 1, busCalls)
 
 	sink := &retryingStreamSink{}
-	runtime.streamSubscriber, err = stream.NewSubscriber(sink)
+	runtime.streamSubscriber, err = stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), "run"))
 	require.Equal(t, 1, busCalls)
@@ -454,7 +454,7 @@ func TestEnsureRunCompletionReplaysStoredSuspensionExactly(t *testing.T) {
 
 	store := &completionReplayStore{Store: stored}
 	sink := &retryingStreamSink{}
-	subscriber, err := stream.NewSubscriber(sink)
+	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	runtime := &Runtime{
 		Store:            store,
@@ -645,7 +645,10 @@ func TestEnsureRunCompletionRedeliversStoredChildLinkBeforeCompletion(t *testing
 		agent.Ident("child.agent"),
 	), "turn")
 	require.NoError(t, err)
-	failedSubscriber, err := stream.NewSubscriber(failingStreamSink{err: errors.New("child link delivery failed")})
+	failedSubscriber, err := stream.NewSubscriber(
+		failingStreamSink{err: errors.New("child link delivery failed")},
+		stream.AgentDebugProfile(),
+	)
 	require.NoError(t, err)
 	startRuntime := &Runtime{
 		Store: stored, Bus: hooks.NewBus(), streamSubscriber: failedSubscriber,
@@ -686,7 +689,7 @@ func TestEnsureRunCompletionRedeliversStoredChildLinkBeforeCompletion(t *testing
 	}))
 	require.NoError(t, err)
 	sink := &completionEventSink{}
-	subscriber, err := stream.NewSubscriber(sink)
+	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	runtime := &Runtime{
 		Store:            stored,

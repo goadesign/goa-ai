@@ -27,7 +27,7 @@ The runtime operates on three layers:
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        Application Layer                            │
-│  Services call generated clients to start runs and stream events    │
+│  Services start runs; trusted hosts receive private stream events   │
 └────────────────────────────────┬────────────────────────────────────┘
                                  │
 ┌────────────────────────────────▼────────────────────────────────────┐
@@ -51,7 +51,7 @@ The runtime operates on three layers:
 | **Toolset** | Collection of tools with shared execution logic. Generated from DSL or registered manually. |
 | **Completion** | Service-owned typed direct assistant output. Generated under `gen/<service>/completions` with unary and streaming helpers backed by generated codecs. |
 | **Hooks** | Internal event bus. Publishes lifecycle events for memory, streaming, and telemetry. |
-| **Stream** | External event delivery. Transforms hook events into client-facing updates (SSE, WebSocket, Pulse). |
+| **Stream** | Host event delivery. Transforms selected hook events into typed updates for an application-owned sink. |
 
 ---
 
@@ -138,7 +138,7 @@ func main() {
         runtimeStore, // Host-owned durable runtime storage
         runtime.WithEngine(temporalEng),
         runtime.WithMemoryStore(memStore),
-        runtime.WithStream(pulseSink),
+        runtime.WithStream(pulseSink, stream.RuntimeHostProfile()),
         runtime.WithPolicy(basicpolicy.New()),
         runtime.WithLogger(telemetry.NewClueLogger()),
         runtime.WithMetrics(telemetry.NewClueMetrics()),
@@ -673,7 +673,7 @@ rt := runtime.New(
     runtime.WithEngine(engine),          // Workflow backend (required for production)
     runtime.WithMemoryStore(store),      // Transcript persistence
     runtime.WithPromptStore(promptStore),// Scoped prompt overrides
-    runtime.WithStream(sink),            // Real-time event streaming
+    runtime.WithStream(sink, stream.RuntimeHostProfile()), // Trusted host event processing
     runtime.WithPolicy(engine),          // Policy enforcement
     runtime.WithHooks(bus),              // Custom event bus (rare)
     runtime.WithLogger(logger),          // Structured logging
@@ -681,6 +681,14 @@ rt := runtime.New(
     runtime.WithTracer(tracer),          // Distributed tracing
 )
 ```
+
+`WithStream` requires a sink and a profile. The runtime never chooses one
+implicitly. Use `RuntimeHostProfile` inside a trusted application that saves,
+replays, or presents agent runs. Its `AssistantTurn` events contain exact
+provider messages and must be translated into an application-owned public
+contract before they are sent to a browser. Use `AgentDebugProfile` only for a
+restricted diagnostic stream. The selected profile does not change the
+complete provider response saved in the internal transcript.
 
 The runtime store has no default. When options are omitted, the runtime uses
 these defaults:
@@ -1349,10 +1357,11 @@ retained workflow created by the older binary has expired.
 ### PlannerEvents
 
 `PlannerEvents` lets planner code publish semantic progress and usage that the
-planner produces itself. Model-client text and thinking bypass this interface:
-the runtime sends each validated fragment from the designated planner call
-directly to the session stream. Partial tool arguments remain inside model
-validation until the complete call is available.
+planner produces itself. Model-client output bypasses this interface: the
+runtime sends validated text from the designated planner call directly to the
+session stream and sends thinking only to a restricted diagnostic profile.
+Partial tool arguments remain inside model validation until the complete call
+is available.
 
 ```go
 type PlannerEvents interface {
@@ -1419,8 +1428,9 @@ Choose one per planner call.
 ### Option 1: PlannerModelClient (Recommended)
 
 `PlannerContext.PlannerModelClient(id)` returns a planner-scoped client that
-sends validated assistant text and thinking to the session stream while its
-`Stream(...)` method drains the provider response. It returns a
+sends validated assistant text to the session stream while its `Stream(...)`
+method drains the provider response. It sends thinking only when the runtime
+uses a restricted diagnostic profile. It returns a
 `planner.StreamSummary` containing accumulated text and complete validated tool
 calls. Each text fragment is append-only once sent. For an accepted response,
 the workflow appends the complete provider transcript and emits
@@ -1485,9 +1495,10 @@ if err != nil {
 
 This helper drains the stream and returns a `StreamSummary` with accumulated
 text and complete tool calls. While it drains the designated
-`PlannerModelClient` call, the runtime sends each validated text and thinking
-fragment directly to the session stream so clients can display progress without
-waiting for inference to finish.
+`PlannerModelClient` call, the runtime sends each validated text fragment to the
+configured sink. It sends thinking fragments only when the sink uses
+`AgentDebugProfile`. The trusted host decides how to translate allowed events
+into its public progress contract.
 
 `ConsumeStream` accepts the `*model.ValidatedStream` returned by every public
 model client. Provider and transport adapters capture a `model.RequestContract`
@@ -1496,7 +1507,7 @@ planner code never wraps or revalidates streams.
 
 Each runtime-managed model call creates an isolated response candidate before
 planner code receives the response or stream chunk. Only the one call made
-through `PlannerModelClient` may produce live UI events. The planner activity
+through `PlannerModelClient` may produce live host stream events. The planner activity
 allocates one response ID before planner or provider work starts. Every text and
 thinking fragment from the designated call carries that ID and bypasses the run
 log, hook bus, and memory. There is no response-started or response-discarded
@@ -1513,11 +1524,11 @@ without repeating an external effect. An explicit model-output recovery or
 workflow continuation is a new planner activity and therefore receives a new
 response ID.
 
-Text and thinking fragments are sent as soon as they arrive because delaying or
-combining them would remove the real-time behavior. Tool argument fragments
-remain inside the model validation boundary: partial JSON is neither executable
-nor independently useful, so only the complete validated tool call reaches the
-planner and workflow.
+Allowed text and diagnostic thinking fragments are sent as soon as they arrive
+because delaying or combining them would remove the real-time behavior. Tool
+argument fragments remain inside the model validation boundary: partial JSON is
+neither executable nor independently useful, so only the complete validated
+tool call reaches the planner and workflow.
 
 Every successful stream ends its typed chunks with clean EOF and
 exposes exactly one canonical response through `ValidatedStream.Response()`. The
@@ -1559,18 +1570,19 @@ Live fragments are not history records themselves. If their response is
 rejected or fails after text was delivered, the aggregate delivered text is
 stored and restored after reload; malformed tool calls and incomplete provider
 metadata are not stored with it. A caller cancellation or deadline can still
-leave unfinished text only in the current client because canceled activity work
-cannot commit new records. Usage events still include every invocation. After atomic
+leave unfinished text visible only to the current trusted host because canceled
+activity work cannot commit new records. Usage events still include every
+invocation. After atomic
 tool-batch admission, the workflow commits the complete selected response once
 before any effects. The committed `assistant_turn` carries the activity response
 ID and the exact ordered assistant messages stored in the run log. If live
 fragments exist, their ordered text is an exact prefix of the text in those
-messages, so a downstream client can append only the missing suffix without
+messages, so the trusted host can append only the missing suffix without
 replacing text. The workflow publishes each accepted ordered record batch through one
 `runtime.store` activity; stable event keys make a retried prefix idempotent without
 creating one Temporal activity per record. Keyed stream publications use the
 same identity, so a retry completes a failed delivery without appending a
-duplicate client event.
+duplicate host event.
 
 Provider adapters own reasoning-block validity. Streaming Bedrock and Anthropic
 calls reject plaintext reasoning that closes without its provider signature;
@@ -2750,6 +2762,39 @@ This preview intentionally changes the generated MCP API and the runtime
 storage API. Upgrade all generated packages, runtime workers, and callers
 together. Mixed old and new processes are not supported.
 
+For runtime streams:
+
+- Replace `runtime.WithStream(sink)` with
+  `runtime.WithStream(sink, stream.RuntimeHostProfile())` for a trusted host,
+  or use `stream.AgentDebugProfile()` for restricted diagnostics. The runtime
+  no longer selects a profile implicitly.
+- Replace direct assignments to `Runtime.Stream` or `Options.Stream` with
+  `runtime.WithStream`; both fields are removed so the sink and profile cannot
+  be configured separately.
+- Replace `stream.NewSubscriber(sink)` and
+  `stream.NewSubscriberWithProfile(sink, profile)` with
+  `stream.NewSubscriber(sink, profile)`.
+- Replace `stream.DefaultProfile()` with `stream.AgentDebugProfile()` only when
+  the sink is restricted to diagnostics and truly needs every event.
+- Replace `stream.UserChatProfile()` with `stream.RuntimeHostProfile()`. The new
+  name makes its trust contract explicit: `AssistantTurn` contains exact
+  provider messages for persistence and replay. Translate those messages into
+  an application-owned public event before sending them to a browser.
+- Replace `bridge.NewSubscriber(sink)` with
+  `stream.NewSubscriber(sink, profile)`. The bridge package now keeps only the
+  bus registration helper.
+- Pass a profile to `bridge.Register` and `executor.WithStreamSink`. Custom
+  `StreamProfile` literals must enable `ToolOutputDelta` to receive incremental
+  remote-tool output. Both `RuntimeHostProfile` and `AgentDebugProfile` enable
+  it.
+
+These stream changes do not alter event names, event payload shapes, the Pulse
+envelope, or stored records. The set of emitted events does change when a
+caller moves from the old all-events default or `UserChatProfile` to
+`RuntimeHostProfile`: separate `planner_thought` events are no longer emitted.
+The upgrade requires source changes but no wire-format or stored-data
+migration.
+
 For MCP services:
 
 - Add a service-level `JSONRPC` block with one `POST` route. `MCP(...)` no
@@ -3052,10 +3097,11 @@ return &planner.PlanResult{
 }
 ```
 
-The runtime emits the same `AwaitClarification` event for the UI. The next
-workflow decodes the answer with the registered generated result codec and
-restores a provider-valid `tool_use` / `tool_result` pair. Do not replace this
-correlation with a reminder or a copied user message. The planner must supply
+The runtime emits the same private `AwaitClarification` event to the trusted
+host. The host selects the fields allowed by its public contract before asking
+the user. The next workflow decodes the answer with the registered generated
+result codec and restores a provider-valid `tool_use` / `tool_result` pair. Do
+not replace this correlation with a reminder or a copied user message. The planner must supply
 the provider's `ModelToolCallID` and leave `ToolCallID` empty. Before returning
 the suspension, the workflow assigns a deterministic runtime `ToolCallID`.
 Provider transcript parts retain `ModelToolCallID`; suspension responses and
@@ -3197,7 +3243,11 @@ The event is emitted immediately after the decision is received:
 - **Approved**: emitted before the tool executes.
 - **Denied**: emitted before the denied tool result is synthesized.
 
-Consumers (UIs, audit stores, session recorders) should rely on `tool_authorization` for “who/when/what” rather than inferring authorization from tool results.
+Trusted hosts, audit stores, and session recorders should rely on
+`tool_authorization` for who authorized which tool and when, rather than
+inferring authorization from tool results. A host must select safe fields and
+emit its own public authorization event before an end-user interface consumes
+the decision.
 
 **Runtime validation**
 
@@ -3297,13 +3347,20 @@ sub := hooks.SubscriberFunc(func(ctx context.Context, evt hooks.Event) error {
     return nil
 })
 
-subscription, _ := rt.Bus.Register(sub)
-defer subscription.Close()
+subscription, err := rt.Bus.Register(sub)
+if err != nil {
+    return err
+}
+defer func() {
+    if err := subscription.Close(); err != nil {
+        panic(err)
+    }
+}()
 ```
 
 ### Stream Sink
 
-The `stream.Sink` interface delivers client-facing events:
+The `stream.Sink` interface delivers typed runtime events to a trusted host:
 
 ```go
 type Sink interface {
@@ -3320,8 +3377,9 @@ type Sink interface {
 | `tool_start` | `ToolStartPayload` (tool_call_id, tool_name, payload) |
 | `tool_end` | `ToolEndPayload` (`call_run_id`, result, error, duration, telemetry) |
 | `tool_update` | `ToolUpdatePayload` (expected_children_total) |
+| `tool_output_delta` | `ToolOutputDeltaPayload` (incremental remote-tool output) |
 | `assistant_reply` | `AssistantReplyPayload` (text) |
-| `planner_thought` | `PlannerThoughtPayload` (note, thinking blocks) |
+| `planner_thought` | `PlannerThoughtPayload` (restricted diagnostic notes and provider thinking; never for end users) |
 | `await_clarification` | `AwaitClarificationPayload` |
 | `await_external_tools` | `AwaitExternalToolsPayload` |
 | `usage` | `UsagePayload` (input_tokens, output_tokens) |
@@ -3330,16 +3388,13 @@ type Sink interface {
 
 ### Stream Profiles
 
-Control which events reach each audience:
+Control which events a sink receives:
 
 ```go
-// All events, child runs linked
-stream.DefaultProfile()
+// Trusted host events without separate provider thinking
+stream.RuntimeHostProfile()
 
-// User chat view (default for most UIs)
-stream.UserChatProfile()
-
-// Debug view (all events; child runs linked)
+// Restricted diagnostics (all events; child runs linked)
 stream.AgentDebugProfile()
 
 // Metrics only (usage, workflow)
@@ -3905,10 +3960,10 @@ persists canonical transcript deltas so they can be replayed from the durable
 runlog when needed.
 
 When `model.Request.Thinking.Enable` is true for a Bedrock adaptive Claude
-model, the Bedrock adapter requests summarized reasoning display explicitly so
-streamed `thinking` chunks stay visible. This includes Claude Sonnet 5, whose
-always-on adaptive thinking otherwise defaults to a signature-only block with
-no display text, as well as Claude Opus 4.7 and later adaptive revisions.
+model, the Bedrock adapter requests summarized reasoning output explicitly so
+restricted diagnostics can receive text. This includes Claude Sonnet 5, whose
+always-on adaptive thinking otherwise defaults to a signature-only block, as
+well as Claude Opus 4.7 and later adaptive revisions.
 
 Gemini 3-class models attach an opaque thought signature to `functionCall`
 parts (not just to thought parts). The `features/model/vertex` adapter
@@ -4399,25 +4454,27 @@ caller, err := mcpservice.NewCaller(ctx, client, mcp.ClientInfo{
 
 ## Stream Profiles
 
-Stream profiles control which events reach different audiences. Use profiles to filter
-events for specific use cases.
+Stream profiles control which events reach a sink. Use profiles to select the
+events required for a specific purpose.
 
 | Profile | Purpose | Events Included |
 |---------|---------|-----------------|
-| `DefaultProfile()` | All events, child runs linked | All event types |
-| `UserChatProfile()` | End-user chat UIs | Same as default |
-| `AgentDebugProfile()` | Debug view | All event types |
+| `RuntimeHostProfile()` | Trusted host persistence, replay, and presentation | Assistant messages, exact committed turns, tool progress, user-input requests, usage, workflow status, prompt references, and child-run links; no separate provider thinking events |
+| `AgentDebugProfile()` | Restricted diagnostic view | All event types, including provider thinking |
 | `MetricsProfile()` | Telemetry and monitoring | `usage`, `workflow` only |
 
 ```go
 import "goa.design/goa-ai/runtime/agent/stream"
 
-// Get a profile
-profile := stream.AgentDebugProfile()
-
-// Profiles are used internally by stream subscribers
-// to filter events before delivery
+// A sink and its purpose-specific profile are one runtime option.
+rt := runtime.New(runtimeStore,
+    runtime.WithStream(sink, stream.RuntimeHostProfile()),
+)
 ```
+
+`RuntimeHostProfile` is not safe to forward unchanged to a browser. In
+particular, its exact `AssistantTurn` messages retain provider-only data needed
+for persistence and replay. The host owns the smaller public event contract.
 
 ---
 
@@ -4565,19 +4622,28 @@ defer cleanup()
 ```go
 import pulsestream "goa.design/goa-ai/features/stream/pulse"
 
-streams, _ := pulsestream.NewRuntimeStreams(pulsestream.RuntimeStreamsOptions{
+streams, err := pulsestream.NewRuntimeStreams(pulsestream.RuntimeStreamsOptions{
     Client: pulseClient,
 })
+if err != nil {
+    return err
+}
 
 rt := runtime.New(
     runtimeStore,
     runtime.WithEngine(eng),
-    runtime.WithStream(streams.Sink()),
+    runtime.WithStream(streams.Sink(), stream.RuntimeHostProfile()),
 )
 
-// Subscribe to session events
-sub, _ := streams.NewSubscriber(pulsestream.SubscriberOptions{SinkName: "ui"})
-events, errs, cancel, _ := sub.Subscribe(ctx, "session/session-123")
+// Subscribe inside the trusted host, then project events into its public contract.
+sub, err := streams.NewSubscriber(pulsestream.SubscriberOptions{SinkName: "host"})
+if err != nil {
+    return err
+}
+events, errs, cancel, err := sub.Subscribe(ctx, "session/session-123")
+if err != nil {
+    return err
+}
 defer cancel()
 
 // Consume until you observe `type=="run_stream_end"` for the active run ID.
@@ -4690,6 +4756,6 @@ cancellation remain outside `OutputValidationError`.
 | **Tool Spec** | Metadata and JSON codecs for a tool (name, schema, codec functions). |
 | **Bounds** | Metadata describing how a tool result was truncated or limited. |
 | **Hook** | Internal event emitted for observability (memory, streaming, telemetry). |
-| **Stream Event** | Client-facing event delivered via Sink (tool progress, assistant replies). |
+| **Stream Event** | Typed runtime event delivered to a trusted host through a Sink. |
 | **Finalizer** | Aggregates child results into parent tool result for agent-as-tool (does not propagate artifacts). |
 | **Reminder** | Structured backstage guidance injected into planner prompts. |

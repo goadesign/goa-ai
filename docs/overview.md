@@ -70,9 +70,10 @@ handling, retries, and tracing baked in.
 ### Full Observability (Streaming & Telemetry)
 
 Configure a runtime store and stream sink once. The runtime stores the canonical
-transcript records needed for replay, publishes real‑time events, and instruments
-everything with OTEL‑aware logging, metrics, and traces. Product transcripts remain
-owned by the application and may use a separate memory store.
+transcript records needed for replay, publishes private real‑time events to a
+trusted host, and instruments everything with OTEL‑aware logging, metrics, and
+traces. Product transcripts remain owned by the application and may use a
+separate memory store.
 
 ---
 
@@ -404,7 +405,7 @@ Then use `Start/Wait` for asynchronous runs with task queues, memos, and search 
 3. **Execute** — Tool calls run through generated codecs, validated and type‑safe
 4. **Resume** — `PlanResume` gets tool results; the loop continues until a final response or policy
    limits hit
-5. **Stream** — Events flow to UIs; transcripts persist if configured
+5. **Stream** — Private runtime events reach a trusted host; the host builds any public events
 
 ### Policies Keep Things Sane
 
@@ -437,7 +438,10 @@ than by parsing error text or retrying transport calls implicitly.
 The hook bus publishes events (`tool_start`, `tool_result`, `assistant_message`, `prompt_rendered`, ...) that:
 
 - **Memory stores** subscribe to for transcript persistence
-- **Stream sinks** (e.g., Pulse) carry to real‑time UIs
+- **Stream sinks** (e.g., Pulse) carry private typed events to a trusted host.
+  Some events contain exact provider messages and other provider-only fields.
+  The host selects and converts the data it exposes through its smaller public
+  contract.
 - **OTEL instrumentation** captures for logs, metrics, and traces
 
 ### Engine Abstraction
@@ -481,7 +485,8 @@ The hook bus (`runtime/agent/hooks`) is the internal pub/sub backbone for runtim
 - **Subscribers**: Memory stores, stream sinks, telemetry adapters receive events and react
 - **Decoupling**: Producers don't know about consumers; add observability without touching core logic
 
-Stream sinks bridge hook events to client‑facing formats via `stream.Subscriber`.
+`stream.Subscriber` selects hook events for a private trusted-host stream. It
+does not create a browser-safe or end-user event format.
 
 ### Canonical Transcripts
 
@@ -619,7 +624,7 @@ rt := runtime.New(
     runtime.WithEngine(temporalEngine),
     runtime.WithMemoryStore(memoryMongo),
     runtime.WithPolicy(basicPolicy),
-    runtime.WithStream(pulseSink),
+    runtime.WithStream(pulseSink, stream.RuntimeHostProfile()),
     runtime.WithHooks(hookBus),
     runtime.WithLogger(logger),
     runtime.WithMetrics(metrics),
@@ -816,9 +821,9 @@ type PlannerContext interface {
 ### PlannerEvents
 
 Planner-authored semantic progress and usage during planning. The designated
-planner model call sends validated text and thinking directly to the session
-stream; partial tool arguments stay inside model validation until the complete
-call is available.
+planner model call sends validated text to the configured trusted-host stream
+and sends thinking only to a restricted diagnostic profile. Partial tool
+arguments stay inside model validation until the complete call is available.
 
 ```go
 type PlannerEvents interface {
@@ -1178,9 +1183,12 @@ as child workflows, enabling linked streams and run links.
 
 ---
 
-## Streaming for UIs
+## Trusted Runtime Streams
 
-Push real‑time events to WebSocket/SSE or a message bus for live agent experiences.
+Deliver private real-time runtime data to trusted application code. Runtime
+events are inputs to that host, not a browser protocol. A host that serves an
+end-user interface must select and convert the data into its own smaller public
+contract.
 
 ### Implement a Stream Sink
 
@@ -1188,9 +1196,10 @@ Push real‑time events to WebSocket/SSE or a message bus for live agent experie
 type MySink struct{}
 
 func (s *MySink) Send(ctx context.Context, event stream.Event) error {
-    // Handle: assistant_reply, planner_thought, tool_start, 
+    // Handle: assistant_reply, tool_start,
     //         tool_update, tool_end, await_clarification, 
     //         await_external_tools, usage, workflow, child_run_linked
+    // Diagnostic profiles also receive planner_thought.
     return nil
 }
 
@@ -1199,34 +1208,42 @@ func (s *MySink) Close(ctx context.Context) error {
 }
 ```
 
-### Global Broadcast (All Runs)
+### Trusted Host Stream
 
 ```go
 sink := &MySink{}
-rt := runtime.New(runtimeStore, runtime.WithStream(sink))
+rt := runtime.New(runtimeStore,
+    runtime.WithStream(sink, stream.RuntimeHostProfile()),
+)
 ```
 
-### Manual Bridge (Direct Bus Access)
+### Manual Subscriber (Direct Bus Access)
 
 ```go
-import "goa.design/goa-ai/runtime/agent/stream/bridge"
-
-sub, _ := bridge.Register(rt.Bus, sink)
-defer sub.Close()
+subscriber, err := stream.NewSubscriber(sink, stream.RuntimeHostProfile())
+if err != nil {
+    return err
+}
+sub, err := rt.Bus.Register(subscriber)
+if err != nil {
+    return err
+}
+defer func() {
+    if err := sub.Close(); err != nil {
+        panic(err)
+    }
+}()
 ```
 
 ### Stream Profiles
 
-Control which events reach different audiences:
+Control which events a sink receives:
 
 ```go
-// Default profile emits all events, links child runs
-profile := stream.DefaultProfile()
+// Trusted host: private runtime input without separate provider thinking
+profile := stream.RuntimeHostProfile()
 
-// User chat: same as default
-profile := stream.UserChatProfile()
-
-// Debug: verbose (child runs are linked, not flattened)
+// Restricted diagnostics: includes provider thinking
 profile := stream.AgentDebugProfile()
 
 // Metrics: only usage and workflow events
@@ -1235,8 +1252,12 @@ profile := stream.MetricsProfile()
 
 **Tips**:
 
-- Stream events are structured, not pre‑encoded—JSON‑encode for transport
-- For cross‑process UIs, wire a message bus sink (e.g., Pulse) via `WithStream`
+- Stream events are structured private inputs, not a browser wire format.
+- `RuntimeHostProfile` carries exact committed messages, including
+  provider-only fields, for persistence and replay. It is never safe to
+  forward unchanged to a browser. Select and convert the allowed data into an
+  application-owned public contract.
+- Use `AgentDebugProfile` only for a restricted diagnostic stream.
 
 ---
 

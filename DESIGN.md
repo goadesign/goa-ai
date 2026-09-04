@@ -11,12 +11,24 @@ Build intelligent agents, MCP servers, and registry-integrated toolsets from you
 - **Registries**: Centralized tool catalogs with federation, caching, and semantic search
 - **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
 
-Agent streams assistant text and thinking from the designated planner model call
-directly to clients. Emitted assistant text is append-only: later tool or output
-validation cannot retract it. One execution-scoped response ID groups fragments
-from the same planner activity. Plan and Resume activities are single-attempt,
-so one response ID can never name output from two model executions. A later
-explicit planner turn receives a new response ID. The workflow's committed
+An agent runtime sends events only through the stream profile chosen with its
+sink. The trusted-host profile sends assistant text, tool progress, requests for
+user input, workflow status, and exact committed assistant messages, but it does
+not send separate provider thinking events. Those committed messages still
+contain the complete provider response and are not a public browser contract.
+The host translates them into its own public events. The debug profile sends
+every event and is restricted to diagnostics. An accepted response keeps the
+complete provider response in the internal transcript, including thinking
+needed for an exact later provider request. A rejected response or ordinary
+failure reported before activity cancellation keeps only assistant text already
+delivered to the trusted host. Cancellation may prevent that text from reaching
+durable storage.
+
+Assistant text from the designated planner model call is append-only: later
+tool or output validation cannot retract it. One execution-scoped response ID
+groups fragments from the same planner activity. Plan and Resume activities
+are single-attempt, so one response ID can never name output from two model
+executions. A later explicit planner turn receives a new response ID. The workflow's committed
 assistant-turn event uses that same ID. An accepted response stores its complete
 provider transcript and sends those exact ordered messages to stream consumers.
 A rejected response or ordinary failure
@@ -1137,8 +1149,8 @@ redeploys.
   distinct without comparing visible text or metadata. The runtime identifies
   tool turns from unchanged model-facing calls and terminal turns from the
   canonical provider message returned by its response helpers. Only the
-  designated planner client publishes live text, thinking, and tool-argument
-  deltas, while usage accounts for every invocation, including valid numeric
+  designated planner client publishes live text and, when a diagnostic profile
+  permits it, thinking. Tool-argument deltas remain internal, while usage accounts for every invocation, including valid numeric
   counts from a rejected usage chunk. It commits the complete selected response
   once after atomic admission and before effects. Planners never manage
   transcript handles or provider replay metadata, and uncertain ownership fails
@@ -1215,9 +1227,9 @@ redeploys.
   Completion-aware suspensions use `goa-ai.run-suspension.v7`. The saved policy
   is required, and a checkpoint with another version fails at that typed
   boundary.
-- **Visible reasoning contract**: when a caller enables thinking for a Bedrock
-  adaptive Claude model, the adapter asks for summarized reasoning display
-  explicitly so streamed `thinking` events contain text. This includes Claude
+- **Provider reasoning diagnostic contract**: when a caller enables thinking
+  for a Bedrock adaptive Claude model, the adapter asks the provider to return
+  summarized reasoning text for exact replay and restricted diagnostics. This includes Claude
   Sonnet 5, whose always-on thinking otherwise returns only an opaque signature,
   and later adaptive model revisions with the same omitted-display default.
 
@@ -1272,9 +1284,10 @@ complete list and the replacement for each supported use case.
 
 The runtime emits one terminal lifecycle event per workflow: `RunCompleted` for
 success, failure, or cancellation, and `RunSuspended` when external input is
-required. The stream subscriber translates both into a `workflow` stream event
-(`stream.WorkflowPayload`) followed by `run_stream_end`, so UIs and other stream
-consumers know exactly when to stop reading.
+required. The stream subscriber translates both into a private `workflow`
+event (`stream.WorkflowPayload`) followed by `run_stream_end`, so the trusted
+host knows exactly when to stop reading. The host selects safe fields and emits
+its own public completion event for an end-user interface.
 
 - **Terminal status**
   - `status="success"` → `phase="completed"`

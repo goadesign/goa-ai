@@ -90,7 +90,10 @@ func TestHookActivityUsesCommittedSessionStateForStreaming(t *testing.T) {
 				_, err = store.EndSession(ctx, "session", time.Now().UTC())
 				require.NoError(t, err)
 			}
-			subscriber, err := stream.NewSubscriber(failingStreamSink{err: streamErr})
+			subscriber, err := stream.NewSubscriber(
+				failingStreamSink{err: streamErr},
+				stream.AgentDebugProfile(),
+			)
 			require.NoError(t, err)
 			runtime := &Runtime{Store: store, Bus: hooks.NewBus(), streamSubscriber: subscriber}
 			record, err := hooks.EncodeToRecordInput(
@@ -130,7 +133,7 @@ func TestHookActivityRetriesStreamAfterDurableInsert(t *testing.T) {
 	require.NoError(t, err)
 	streamErr := errors.New("stream send failed")
 	sink := &retryingStreamSink{err: streamErr}
-	subscriber, err := stream.NewSubscriber(sink)
+	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	runtime := &Runtime{Store: store, Bus: bus, streamSubscriber: subscriber}
 	record, err := hooks.EncodeToRecordInput(
@@ -181,7 +184,7 @@ func TestTranscriptActivityRetriesStreamAfterDurableInsert(t *testing.T) {
 	}
 	streamErr := errors.New("stream send failed")
 	sink := &retryingStreamSink{err: streamErr}
-	subscriber, err := stream.NewSubscriber(sink)
+	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	runtime := &Runtime{Store: store, Bus: hooks.NewBus(), streamSubscriber: subscriber}
 

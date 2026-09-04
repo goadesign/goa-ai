@@ -874,8 +874,8 @@ func (a *plannerActivityInvocation) planningError(err error) error {
 }
 
 // validatePlannerActivityResult rejects planner values that the workflow
-// cannot execute or save. Live model text may already have reached clients,
-// but this check prevents invalid tool calls or transcript messages from
+// cannot execute or save. Live model text may already have reached the trusted
+// host, but this check prevents invalid tool calls or transcript messages from
 // changing durable state.
 func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, parentTool tools.Ident, synthesisOnly bool) error {
 	if err := r.validatePlannerResultPayloads(result, parentTool); err != nil {

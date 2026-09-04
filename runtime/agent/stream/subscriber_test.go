@@ -30,9 +30,35 @@ func (m *mockSink) Send(ctx context.Context, evt Event) error {
 
 func (m *mockSink) Close(ctx context.Context) error { return nil }
 
+func TestNewSubscriberRejectsInvalidConfiguration(t *testing.T) {
+	tests := []struct {
+		name    string
+		sink    Sink
+		profile StreamProfile
+		message string
+	}{
+		{
+			name:    "missing sink",
+			profile: RuntimeHostProfile(),
+			message: "stream sink is required",
+		},
+		{
+			name:    "empty profile",
+			sink:    &mockSink{},
+			message: "stream profile must enable at least one event",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := NewSubscriber(test.sink, test.profile)
+			require.EqualError(t, err, test.message)
+		})
+	}
+}
+
 func TestStreamSubscriber_DoesNotStreamCompletedAssistantMessageAsLiveOutput(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 	evt := hooks.NewAssistantMessageEvent("r1", agent.Ident("agent1"), "session-1", "hello", nil)
@@ -42,7 +68,7 @@ func TestStreamSubscriber_DoesNotStreamCompletedAssistantMessageAsLiveOutput(t *
 
 func TestStreamSubscriber_AssistantTurnCommitted(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 	evt := hooks.NewAssistantTurnCommittedEvent(
@@ -84,7 +110,7 @@ func TestStreamSubscriber_AssistantTurnCommitted(t *testing.T) {
 
 func TestStreamSubscriberRejectsAssistantTurnWithMismatchedEventKey(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	evt := hooks.NewAssistantTurnCommittedEvent(
 		"r1",
@@ -106,7 +132,7 @@ func TestStreamSubscriberRejectsAssistantTurnWithMismatchedEventKey(t *testing.T
 
 func TestStreamSubscriber_PreservesHookEventKey(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 
 	evt := hooks.NewPlannerNoteEvent("r1", agent.Ident("agent1"), "session-1", "note", nil)
@@ -117,7 +143,7 @@ func TestStreamSubscriber_PreservesHookEventKey(t *testing.T) {
 
 func TestStreamSubscriber_ToolStart(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 	evt := hooks.NewToolCallScheduledEvent("r1", agent.Ident("agent1"), "session-1", tools.Ident("svc.tool"), "call-1", rawjson.Message([]byte(`{"q":1}`)), "queue", "", 0)
@@ -132,7 +158,7 @@ func TestStreamSubscriber_ToolStart(t *testing.T) {
 
 func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -165,7 +191,7 @@ func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 
 func TestStreamSubscriber_ToolEnd_PreservesCompleteResult(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -196,7 +222,7 @@ func TestStreamSubscriber_ToolEnd_PreservesCompleteResult(t *testing.T) {
 
 func TestStreamSubscriber_ToolEnd_RejectsMissingCallRunID(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 
 	evt := hooks.NewToolResultReceivedEvent(
@@ -221,7 +247,7 @@ func TestStreamSubscriber_ToolEnd_RejectsMissingCallRunID(t *testing.T) {
 
 func TestStreamSubscriber_ToolUpdate(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 	evt := hooks.NewToolCallUpdatedEvent("r1", agent.Ident("agent1"), "session-1", "parent-1", 3)
@@ -236,7 +262,7 @@ func TestStreamSubscriber_ToolUpdate(t *testing.T) {
 
 func TestStreamSubscriber_PromptRendered(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -269,10 +295,10 @@ func TestStreamSubscriber_PromptRendered(t *testing.T) {
 
 func TestStreamSubscriber_PromptRenderedRespectsProfileToggle(t *testing.T) {
 	sink := &mockSink{}
-	profile := DefaultProfile()
+	profile := AgentDebugProfile()
 	profile.PromptRendered = false
 
-	sub, err := NewSubscriberWithProfile(sink, profile)
+	sub, err := NewSubscriber(sink, profile)
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -289,11 +315,11 @@ func TestStreamSubscriber_PromptRenderedRespectsProfileToggle(t *testing.T) {
 }
 
 func TestStreamSubscriberModelOutputEventsRespectProfile(t *testing.T) {
-	profile := DefaultProfile()
+	profile := AgentDebugProfile()
 	profile.Assistant = false
 	profile.Thoughts = false
 	sink := &mockSink{}
-	subscriber, err := NewSubscriberWithProfile(sink, profile)
+	subscriber, err := NewSubscriber(sink, profile)
 	require.NoError(t, err)
 
 	events := []Event{
@@ -312,11 +338,9 @@ func TestStreamSubscriberModelOutputEventsRespectProfile(t *testing.T) {
 	require.Empty(t, sink.events)
 }
 
-func TestStreamSubscriberThoughtProfilePreservesCommittedMessages(t *testing.T) {
-	profile := DefaultProfile()
-	profile.Thoughts = false
+func TestStreamSubscriberRuntimeHostProfile(t *testing.T) {
 	sink := &mockSink{}
-	subscriber, err := NewSubscriberWithProfile(sink, profile)
+	subscriber, err := NewSubscriber(sink, RuntimeHostProfile())
 	require.NoError(t, err)
 	message := &model.Message{
 		Role: model.ConversationRoleAssistant,
@@ -334,16 +358,110 @@ func TestStreamSubscriberThoughtProfilePreservesCommittedMessages(t *testing.T) 
 		[]*model.Message{message},
 	)
 
+	published, err := subscriber.HandleModelOutputEvent(t.Context(), PlannerThought{
+		Base: NewBase(EventPlannerThought, "r1", "session-1", PlannerThoughtPayload{
+			Note: "private provider reasoning",
+		}),
+	})
+	require.NoError(t, err)
+	require.False(t, published)
+	require.NoError(t, subscriber.HandleEvent(t.Context(), hooks.NewThinkingBlockEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		"private provider reasoning",
+		"signature",
+		nil,
+		0,
+		true,
+	)))
+	require.NoError(t, subscriber.HandleEvent(t.Context(), hooks.NewPlannerNoteEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		"private planner note",
+		nil,
+	)))
+	require.Empty(t, sink.events)
+	published, err = subscriber.HandleModelOutputEvent(t.Context(), AssistantReply{
+		Base: NewBase(EventAssistantReply, "r1", "session-1", AssistantReplyPayload{
+			ResponseID: "response-1",
+			Text:       "answer",
+		}),
+	})
+	require.NoError(t, err)
+	require.True(t, published)
 	require.NoError(t, subscriber.HandleEvent(t.Context(), evt))
-	require.Len(t, sink.events, 1)
-	turn, ok := sink.events[0].(AssistantTurn)
+	require.NoError(t, subscriber.HandleEvent(t.Context(), hooks.NewToolCallScheduledEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		tools.Ident("tools.lookup"),
+		"call-1",
+		rawjson.Message(`{"site":"north"}`),
+		"",
+		"",
+		0,
+	)))
+	require.NoError(t, subscriber.HandleEvent(t.Context(), hooks.NewRunPhaseChangedEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		run.PhasePlanning,
+	)))
+
+	require.Len(t, sink.events, 4)
+	require.IsType(t, AssistantReply{}, sink.events[0])
+	turn, ok := sink.events[1].(AssistantTurn)
 	require.True(t, ok)
 	require.Equal(t, []*model.Message{message}, turn.Data.Messages)
+	require.IsType(t, ToolStart{}, sink.events[2])
+	require.IsType(t, Workflow{}, sink.events[3])
+}
+
+func TestStreamSubscriberAgentDebugProfileIncludesThoughts(t *testing.T) {
+	sink := &mockSink{}
+	subscriber, err := NewSubscriber(sink, AgentDebugProfile())
+	require.NoError(t, err)
+
+	published, err := subscriber.HandleModelOutputEvent(t.Context(), PlannerThought{
+		Base: NewBase(EventPlannerThought, "r1", "session-1", PlannerThoughtPayload{
+			Note: "provider reasoning",
+		}),
+	})
+
+	require.NoError(t, err)
+	require.True(t, published)
+	require.NoError(t, subscriber.HandleEvent(t.Context(), hooks.NewThinkingBlockEvent(
+		"r1",
+		agent.Ident("agent1"),
+		"session-1",
+		"complete provider reasoning",
+		"signature",
+		nil,
+		0,
+		true,
+	)))
+	require.Len(t, sink.events, 2)
+	require.IsType(t, PlannerThought{}, sink.events[0])
+	require.IsType(t, PlannerThought{}, sink.events[1])
+}
+
+func TestRuntimeHostProfileExcludesOnlyThoughts(t *testing.T) {
+	host := RuntimeHostProfile()
+	debug := AgentDebugProfile()
+
+	require.False(t, host.Thoughts)
+	require.True(t, host.ToolOutputDelta)
+	require.True(t, debug.Thoughts)
+	require.True(t, debug.ToolOutputDelta)
+	host.Thoughts = true
+	require.Equal(t, debug, host)
 }
 
 func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "success", run.PhaseCompleted, nil, nil, nil)
@@ -371,7 +489,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {
 
 func TestStreamSubscriberWorkflowFromRunSuspended(t *testing.T) {
 	sink := &mockSink{}
-	subscriber, err := NewSubscriber(sink)
+	subscriber, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	event := hooks.NewRunSuspendedEvent(
 		"r1", agent.Ident("agent1"), "session-1", "suspension-1", "v1", 1, nil,
@@ -389,7 +507,7 @@ func TestStreamSubscriberWorkflowFromRunSuspended(t *testing.T) {
 
 func TestStreamSubscriber_WorkflowFromRunCompleted_FailedHasPublicAndDebugErrors(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -413,7 +531,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted_FailedHasPublicAndDebugErrors
 
 func TestStreamSubscriber_WorkflowFromRunCompleted_CanceledHasNoFailureMetadata(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -442,7 +560,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted_CanceledHasNoFailureMetadata(
 
 func TestStreamSubscriber_WorkflowFromRunPhaseChanged(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 	evt := hooks.NewRunPhaseChangedEvent("r1", agent.Ident("agent1"), "session-1", run.PhasePlanning)
@@ -457,7 +575,7 @@ func TestStreamSubscriber_WorkflowFromRunPhaseChanged(t *testing.T) {
 
 func TestStreamSubscriber_ThinkingBlock_StructuredFinalHasNoDelta(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -479,7 +597,7 @@ func TestStreamSubscriber_ThinkingBlock_StructuredFinalHasNoDelta(t *testing.T) 
 
 func TestStreamSubscriber_ThinkingBlock_StructuredNonFinalDelta(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -499,7 +617,7 @@ func TestStreamSubscriber_ThinkingBlock_StructuredNonFinalDelta(t *testing.T) {
 
 func TestStreamSubscriber_ChildRunLinked(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -527,7 +645,7 @@ func TestStreamSubscriber_ChildRunLinked(t *testing.T) {
 
 func TestStreamSubscriber_MultipleRunsPreserveRunID(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 
@@ -547,7 +665,7 @@ func TestStreamSubscriber_MultipleRunsPreserveRunID(t *testing.T) {
 
 func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 	sink := &mockSink{}
-	sub, err := NewSubscriber(sink)
+	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
 

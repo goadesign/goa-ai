@@ -44,7 +44,7 @@ You describe the agent system in the same design-first style as Goa services. `g
 | Repeatable agent checks | Generated evaluation hooks, exact scenario selection, bounded concurrency, and calibrated semantic judging |
 | Multi-agent systems | First-class agent-as-tool composition with child runs and linked streams |
 | Human approval | Await/clarification flows plus design-time and runtime tool confirmation |
-| Real-time UI | Append-only assistant text and thinking sent as each validated fragment arrives, with one stable response ID and a durable text checkpoint before accepted recovery or ordinary failure |
+| Real-time applications | Private runtime events for a trusted host to turn into a smaller public contract, with append-only assistant text, tool progress, workflow status, one stable response ID, and a durable text checkpoint before accepted recovery or ordinary failure |
 | External tools | MCP callers, generated MCP servers, external MCP schemas, and token-fenced registry routing with incarnation leases plus catalog-owned health epochs |
 | Production operations | Host-owned runtime storage, Mongo-backed memory and prompt stores, Pulse streaming, model clients, telemetry hooks |
 
@@ -421,12 +421,12 @@ var Docs = Toolset("docs", func() {
   the complete provider response matches the stream; the runtime can then
   schedule one replacement planning activity while retaining final usage and
   without retaining or executing the rejected arguments. Assistant prose
-  already streamed to a client is append-only and is never retracted by that
+  already sent to the trusted host is append-only and is never retracted by that
   tool-validation decision. Every fragment from one model request carries the
   planner activity's response ID. If the planner accepts the response, the
   committed assistant-turn event carries that same ID and the exact ordered
-  messages stored in the run log. Consumers derive display text from those
-  messages and retain their structured parts and metadata. Generated Plan and
+  messages stored in the run log. The trusted host derives display text from
+  those messages and retains their structured parts and metadata. Generated Plan and
   Resume activities permit one attempt, preventing
   infrastructure retries from producing different visible text under the same
   ID. Explicit recovery or continuation turns use new response IDs.
@@ -593,8 +593,9 @@ The child's first write atomically creates its session metadata and appends
 also appends the canceled `RunCompleted` record; the link and exact start
 identity remain visible, and no planner or tool work begins. The link stores only additional
 child labels beyond its dedicated parent, tool, session, child-run, and
-child-agent fields. Streams emit `child_run_linked` so UIs can render nested
-runs without losing identity, logs, or telemetry.
+child-agent fields. Streams emit `child_run_linked` so the trusted host can
+track nested runs without losing identity, logs, or telemetry. The host may
+include a safe subset of that relationship in its public events.
 If a child asks for external input, the parent workflow ends with the same
 visible request. Continuing the parent starts a new child workflow from the
 child checkpoint; the parent tool call stays open until that child finishes.
@@ -1101,7 +1102,7 @@ The runtime emits typed hook and stream events for:
 - run start, phase changes, completion, cancellation, and failure
 - prompt rendering and prompt provenance
 - tool scheduled, updated, completed, failed, and authorized
-- assistant chunks, final messages, planner thoughts, thinking blocks, and token usage
+- assistant chunks, final messages, token usage, and diagnostic planner or provider thinking
 - awaits for clarification, external tools, and confirmation
 - child run links for agent-as-tool composition
 
@@ -1222,12 +1223,12 @@ workflow still needs duplicate attachment. Then deploy every writer together.
 A queryable execution without the reserved recipe memo is a conflict; the
 runtime never infers its original request.
 
-Wire a stream sink for real-time UIs:
+Wire a stream sink for trusted host event processing:
 
 ```go
 rt := runtime.New(
 	runtimeStore,
-	runtime.WithStream(mySink),
+	runtime.WithStream(mySink, stream.RuntimeHostProfile()),
 	runtime.WithMemoryStore(memoryStore),
 	runtime.WithLogger(logger),
 	runtime.WithMetrics(metrics),
@@ -1235,20 +1236,29 @@ rt := runtime.New(
 )
 ```
 
+Every runtime stream must name its purpose. `RuntimeHostProfile` sends the
+events a trusted application needs to save and replay a run, without separate
+provider thinking events. Its committed assistant messages still contain the
+complete provider response, so applications must translate these events into
+their own public contract before sending anything to a browser. Use
+`AgentDebugProfile` only for restricted diagnostics. `WithStream` requires both
+the sink and profile; it never selects a profile by default.
+
 For model streaming inside planners, choose one style per planner call:
 
 - `PlannerContext.PlannerModelClient(id)` is recommended for the designated,
-  single model call. It publishes validated assistant text and thinking as they
-  arrive and returns a `planner.StreamSummary`. The runtime saves the complete
-  response only after the planner accepts it.
+  single model call. It publishes validated assistant text and returns a
+  `planner.StreamSummary`. It also publishes thinking only when the runtime uses
+  a diagnostic profile. The runtime saves the complete response only after the
+  planner accepts it.
 - `PlannerContext.ModelClient(id)` gives you direct access to a `model.Client`.
   Its `Stream` method returns a validated stream; pair that value with
   `planner.ConsumeStream` or drain it yourself when you need lower-level
   control.
 
 The runtime captures each model response before planner code sees it. A
-planner's designated client is the only model call that publishes live text
-and thinking. When a planner probes through the opaque client, goa-ai matches
+planner's designated client is the only model call that publishes live text or
+diagnostic thinking events. When a planner probes through the opaque client, goa-ai matches
 returned model-facing tool calls to the exact response that produced them and
 replays only that transcript. Usage events still include all calls. Every
 stream exposes closed typed chunks, then makes its complete validated response
@@ -1418,7 +1428,7 @@ rt := runtime.New(
 	runtime.WithEngine(eng),
 	runtime.WithMemoryStore(memoryStore),
 	runtime.WithPromptStore(promptStore),
-	runtime.WithStream(streamSink),
+	runtime.WithStream(streamSink, stream.RuntimeHostProfile()),
 	runtime.WithPolicy(policyEngine),
 	runtime.WithLogger(logger),
 	runtime.WithMetrics(metrics),
@@ -1499,7 +1509,8 @@ Production checklist:
 - Implement the complete `storage.Store` contract in one host-owned durable
   repository. Deploy its schema and every caller together; mixed storage
   contracts are unsupported.
-- Use stream events rather than polling for UI updates.
+- Send private runtime events to a trusted host rather than polling. The host
+  selects safe fields and emits its own public events for an end-user interface.
 - Put irreversible or operator-sensitive actions behind `Confirmation(...)`.
 - Use `BoundedResult()` and `ServerData(...)` for large data so models see bounded summaries while UIs retain full-fidelity data.
 
@@ -1565,7 +1576,13 @@ Planners receive `AdvertisedToolDefinitions()` and return `planner.ToolRequest` 
 
 ### How do I make a long-running UI?
 
-Configure a stream sink or Pulse runtime streams. Subscribe by session/run, render typed events, and treat `run_stream_end` or terminal `workflow` events as completion markers. Child agents are linked with `child_run_linked` events instead of flattening nested streams.
+Configure a stream sink with `RuntimeHostProfile` or use Pulse runtime streams.
+Subscribe by session and run inside the trusted host, translate the selected
+events into your application's public browser contract, and treat
+`run_stream_end` or terminal `workflow` events as completion markers. Do not
+forward exact `AssistantTurn` messages unchanged because they retain
+provider-only data for persistence and replay. Child agents are linked with
+`child_run_linked` events instead of flattening nested streams.
 
 ### How do I avoid huge tool results in prompts?
 

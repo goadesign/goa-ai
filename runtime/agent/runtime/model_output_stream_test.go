@@ -1,7 +1,7 @@
 package runtime
 
-// model_output_stream_test.go fixes the real-time boundary between model chunks
-// and durable runtime records. Text and thoughts reach the session stream
+// model_output_stream_test.go verifies how explicit stream profiles route live
+// model output. Text and allowed diagnostic thoughts reach the configured sink
 // immediately, while partial tool JSON stays out of the run log.
 
 import (
@@ -61,6 +61,68 @@ func TestModelOutputStreamsTextAndThoughtsImmediately(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "The freezer is stable.", reply.Data.Text)
 	require.Equal(t, "response-1", reply.Data.ResponseID)
+}
+
+func TestRuntimeUsesConfiguredStreamProfile(t *testing.T) {
+	sink := &recordingStreamSink{}
+	runtime := New(newTestStore(), WithStream(sink, stream.RuntimeHostProfile()))
+	journal := &modelInvocationJournal{
+		runtime:    runtime,
+		runID:      "run-1",
+		sessionID:  "session-1",
+		responseID: "response-1",
+	}
+	invocation := mustBeginModelInvocation(t, journal)
+	require.NoError(t, journal.designateModelInvocation(invocation))
+
+	require.NoError(t, journal.recordModelChunk(t.Context(), invocation, model.ThinkingChunk{
+		Message: model.Message{
+			Role: model.ConversationRoleAssistant,
+			Parts: []model.Part{model.ThinkingPart{
+				Text:  "private provider reasoning",
+				Final: true,
+			}},
+		},
+	}))
+	require.NoError(t, journal.recordModelChunk(t.Context(), invocation, model.TextChunk{
+		Message: model.Message{
+			Role:  model.ConversationRoleAssistant,
+			Parts: []model.Part{model.TextPart{Text: "The freezer is stable."}},
+		},
+	}))
+
+	events := sink.snapshot()
+	require.Len(t, events, 1)
+	reply, ok := events[0].(stream.AssistantReply)
+	require.True(t, ok)
+	require.Equal(t, "The freezer is stable.", reply.Data.Text)
+}
+
+func TestWithStreamRejectsInvalidConfiguration(t *testing.T) {
+	tests := []struct {
+		name    string
+		sink    stream.Sink
+		profile stream.StreamProfile
+		message string
+	}{
+		{
+			name:    "missing sink",
+			profile: stream.RuntimeHostProfile(),
+			message: "runtime: stream sink is required",
+		},
+		{
+			name:    "empty profile",
+			sink:    &recordingStreamSink{},
+			message: "runtime: stream profile must enable at least one event",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.PanicsWithValue(t, test.message, func() {
+				WithStream(test.sink, test.profile)
+			})
+		})
+	}
 }
 
 func TestThousandsOfModelFragmentsStreamWithoutLifecycleEvents(t *testing.T) {
@@ -177,9 +239,9 @@ func TestModelOutputDoesNotStreamProbeInvocations(t *testing.T) {
 
 func TestDisabledAssistantStreamDoesNotRecordTextAsPublished(t *testing.T) {
 	sink := &recordingStreamSink{}
-	profile := stream.DefaultProfile()
+	profile := stream.AgentDebugProfile()
 	profile.Assistant = false
-	subscriber, err := stream.NewSubscriberWithProfile(sink, profile)
+	subscriber, err := stream.NewSubscriber(sink, profile)
 	require.NoError(t, err)
 	journal := &modelInvocationJournal{
 		runtime:    &Runtime{streamSubscriber: subscriber},
@@ -304,7 +366,7 @@ func TestFailureAfterPublishedTextReturnsTextForDurableCommit(t *testing.T) {
 
 func runtimeWithModelOutputSink(t *testing.T, sink stream.Sink) *Runtime {
 	t.Helper()
-	subscriber, err := stream.NewSubscriber(sink)
+	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
 	return &Runtime{streamSubscriber: subscriber}
 }

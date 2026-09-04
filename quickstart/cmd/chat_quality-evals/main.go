@@ -140,7 +140,11 @@ func (h *hooks) GreetingReply(ctx context.Context, input *genevalchatquality.Ask
 		return eval.Result{}, fmt.Errorf("create session: %w", err)
 	}
 	collector := evidence.NewCollector()
-	sub, err := streambridge.Register(h.rt.Bus, &collectorSink{sessionID: sessionID, collector: collector})
+	sub, err := streambridge.Register(
+		h.rt.Bus,
+		&collectorSink{sessionID: sessionID, collector: collector},
+		stream.RuntimeHostProfile(),
+	)
 	if err != nil {
 		return eval.Result{}, fmt.Errorf("attach stream subscriber: %w", err)
 	}
