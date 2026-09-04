@@ -845,7 +845,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	existingRecovery, _ := toolRecovery(l.st.PendingRecovery)
 	pendingRecovery := slices.Concat(recovery, existingRecovery)
 	synthesisOnly := !failed && batch.program.result.SynthesizeAfterTools
-	if out, err := l.resumePlanner(pendingRecovery, synthesisOnly, "", nil); err != nil || out != nil {
+	if out, err := l.resumePlanner(pendingRecovery, synthesisOnly, nil, nil); err != nil || out != nil {
 		return out, err
 	}
 	return nil, nil
@@ -857,13 +857,13 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 func (l *workflowLoop) resumePlanner(
 	pendingRecovery []*planner.ToolOutput,
 	synthesisOnly bool,
-	outputCorrection string,
+	outputRecovery *ModelOutputRecovery,
 	invocationRecovery *ModelInvocationRecovery,
 ) (*RunOutput, error) {
 	if err := l.wfCtx.Context().Err(); err != nil {
 		return nil, err
 	}
-	if (len(pendingRecovery) > 0 || outputCorrection != "" || invocationRecovery != nil) &&
+	if (len(pendingRecovery) > 0 || outputRecovery != nil || invocationRecovery != nil) &&
 		!consumeRecoveryTurn(&l.st.Caps) {
 		return l.finalizeStep(planner.TerminationReasonRecoveryCap)
 	}
@@ -874,7 +874,7 @@ func (l *workflowLoop) resumePlanner(
 		l.st.ToolOutputs,
 		pendingRecovery,
 		synthesisOnly,
-		outputCorrection,
+		outputRecovery,
 		invocationRecovery,
 		&l.st.NextAttempt,
 	)
@@ -903,7 +903,7 @@ func (l *workflowLoop) resumePlanner(
 		l.st.ResponseID = ""
 		l.st.ResponseCommitted = false
 		l.st.PendingRecovery = pendingModelOutputRecovery{
-			correction: resOutput.OutputContractFailure.Correction,
+			recovery: *resOutput.OutputContractFailure.ModelOutputRecovery,
 		}
 		return nil, nil
 	}

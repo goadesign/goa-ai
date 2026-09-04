@@ -87,7 +87,10 @@ func TestValidateOutputContractFailureStateMatrix(t *testing.T) {
 				failure.ModelResponseFingerprintVersion = api.ModelResponseFingerprintVersionV1
 				failure.ModelResponseSHA256 = responseDigest
 				failure.ModelResponseSize = responseSize
-				failure.Correction = "Use at most eight references."
+				failure.ModelOutputRecovery = &ModelOutputRecovery{
+					Kind:       planner.ModelOutputRecoveryAnswer,
+					Correction: "Use at most eight references.",
+				}
 				return failure
 			},
 			valid: true,
@@ -97,7 +100,10 @@ func TestValidateOutputContractFailureStateMatrix(t *testing.T) {
 			failure: func() *OutputContractFailure {
 				failure := validModel()
 				failure.ModelResponsePresent = true
-				failure.Correction = "Use at most eight references."
+				failure.ModelOutputRecovery = &ModelOutputRecovery{
+					Kind:       planner.ModelOutputRecoveryAnswer,
+					Correction: "Use at most eight references.",
+				}
 				return failure
 			},
 		},
@@ -106,7 +112,10 @@ func TestValidateOutputContractFailureStateMatrix(t *testing.T) {
 			failure: func() *OutputContractFailure {
 				failure := validModel()
 				failure.Origin = planner.OutputContractOriginPlanner
-				failure.Correction = "Try again."
+				failure.ModelOutputRecovery = &ModelOutputRecovery{
+					Kind:       planner.ModelOutputRecoveryAnswer,
+					Correction: "Try again.",
+				}
 				return failure
 			},
 		},
@@ -114,7 +123,10 @@ func TestValidateOutputContractFailureStateMatrix(t *testing.T) {
 			name: "blank correction",
 			failure: func() *OutputContractFailure {
 				failure := validModel()
-				failure.Correction = " "
+				failure.ModelOutputRecovery = &ModelOutputRecovery{
+					Kind:       planner.ModelOutputRecoveryAnswer,
+					Correction: " ",
+				}
 				return failure
 			},
 		},
@@ -122,7 +134,35 @@ func TestValidateOutputContractFailureStateMatrix(t *testing.T) {
 			name: "oversized correction",
 			failure: func() *OutputContractFailure {
 				failure := validModel()
-				failure.Correction = strings.Repeat("x", outputcontract.MaxCorrectionBytes+1)
+				failure.ModelOutputRecovery = &ModelOutputRecovery{
+					Kind:       planner.ModelOutputRecoveryAnswer,
+					Correction: strings.Repeat("x", outputcontract.MaxCorrectionBytes+1),
+				}
+				return failure
+			},
+		},
+		{
+			name: "recovery kind without correction",
+			failure: func() *OutputContractFailure {
+				failure := validModel()
+				failure.ModelOutputRecovery = &ModelOutputRecovery{
+					Kind: planner.ModelOutputRecoveryAnswer,
+				}
+				return failure
+			},
+		},
+		{
+			name: "unsupported recovery kind",
+			failure: func() *OutputContractFailure {
+				failure := validModel()
+				failure.ModelResponsePresent = true
+				failure.ModelResponseFingerprintVersion = api.ModelResponseFingerprintVersionV1
+				failure.ModelResponseSHA256 = responseDigest
+				failure.ModelResponseSize = responseSize
+				failure.ModelOutputRecovery = &ModelOutputRecovery{
+					Kind:       "invalid",
+					Correction: "Try again.",
+				}
 				return failure
 			},
 		},
@@ -261,7 +301,10 @@ func TestBoundedPlanActivityOutputFailureRetainsCorrection(t *testing.T) {
 		ModelResponseFingerprintVersion: api.ModelResponseFingerprintVersionV1,
 		ModelResponseSHA256:             responseDigest,
 		ModelResponseSize:               responseSize,
-		Correction:                      "Use at most eight references.",
+		ModelOutputRecovery: &ModelOutputRecovery{
+			Kind:       planner.ModelOutputRecoveryAnswer,
+			Correction: "Use at most eight references.",
+		},
 	}
 
 	output := boundedPlanActivityOutputFailure(
@@ -272,7 +315,7 @@ func TestBoundedPlanActivityOutputFailureRetainsCorrection(t *testing.T) {
 		errors.New("planner events exceed activity output budget"),
 	)
 
-	require.Equal(t, failure.Correction, output.OutputContractFailure.Correction)
+	require.Equal(t, failure.ModelOutputRecovery, output.OutputContractFailure.ModelOutputRecovery)
 	require.Equal(t, "already published", output.PublishedAssistantText)
 	require.NoError(t, validateOutputContractFailure(output.OutputContractFailure))
 }
