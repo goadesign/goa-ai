@@ -1,6 +1,6 @@
 // Package hooks uses this file to validate the immutable identity shared by a
-// scheduled tool call and its durable result. Runtime reducers and storage
-// migrations call the same pure check without sharing orchestration state.
+// scheduled tool call and its durable result. Runtime replay and planner input
+// loading call the same check, so both reject mismatched stored events.
 package hooks
 
 import "fmt"

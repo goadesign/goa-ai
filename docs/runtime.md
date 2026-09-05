@@ -456,20 +456,6 @@ rolling that history back to an older worker is unsafe because the older worker
 does not understand the new field. This change requires no Goa regeneration,
 client regeneration, or public wire-client update.
 
-The v0.78.5 error-privacy and stream-finalization correction does not change an
-activity-result, checkpoint, schema, generated-type, or wire shape. Existing
-v0.78.4 records therefore remain readable by v0.78.5, and rollback to v0.78.4
-is structurally safe. The reason-fingerprint input does change: v0.78.5 hashes
-only the private validation-cause text, while v0.78.4 hashed the complete
-diagnostic error text. Mixed v0.78.4 and v0.78.5 workers can therefore emit
-different reason fingerprint values for the same failure, depending on which
-worker executes the activity. The value is opaque evidence, so either version
-can load and publish either fingerprint. Rolling back makes new failures use
-the v0.78.4 value again and also restores model-authored values in generic
-error text and the lost-recovery behavior when validation and provider cleanup
-fail together. The older-worker restriction in the preceding paragraph applies
-only to runtime versions from before `ModelInvocationRecovery` existed.
-
 ### Tool input validation across model gateways
 
 A raw model gateway transports provider chunks and the complete response; it
@@ -3004,7 +2990,7 @@ For runtime storage and workflow adapters:
 Install the Goa revision required by this module before regenerating:
 
 ```bash
-go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.3
+go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.5
 ```
 
 For a release that changes generated or persisted runtime shapes:

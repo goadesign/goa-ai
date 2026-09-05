@@ -5,14 +5,14 @@ Minimal, copy‑paste runnable example to go from zero → talking agent. Keep y
 ## Prerequisites
 
 - Go 1.25.5+
-- Goa v3 CLI (`go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.3`)
+- Goa v3 CLI (`go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.5`)
 
 ## 1) Scaffold a fresh project
 
 ```
 mkdir -p $GOPATH/src/example.com/quickstart && cd $_
 go mod init example.com/quickstart
-go get goa.design/goa/v3@v3.31.0-preview.3
+go get goa.design/goa/v3@v3.31.0-preview.5
 go get goa.design/goa-ai@latest
 ```
 
