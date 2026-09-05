@@ -135,11 +135,11 @@ This path gives you a generated, runnable agent and a typed direct-completion he
 ### 1. Create a Module
 
 ```bash
-go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.3
+go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.5
 
 mkdir quickstart && cd quickstart
 go mod init example.com/quickstart
-go get goa.design/goa/v3@v3.31.0-preview.3 goa.design/goa-ai@latest
+go get goa.design/goa/v3@v3.31.0-preview.5 goa.design/goa-ai@latest
 mkdir design
 ```
 
@@ -1615,7 +1615,7 @@ still owns service and transport generation.
 ## Requirements
 
 - Go 1.25.5+ for this repository
-- Goa v3 CLI: `go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.3`
+- Goa v3 CLI: `go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.5`
 - Optional for production: Temporal Server 1.31+, MongoDB, Redis/Pulse
 
 Temporal Server 1.31 or newer is required for planner time budgets because it
