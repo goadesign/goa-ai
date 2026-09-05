@@ -900,6 +900,33 @@ and usage but does not put the rejected body in durable recovery state. Do not
 use these errors for model-provider failures, timeouts, canceled work, or
 network errors; those keep their existing retry behavior.
 
+The runtime verifies the rejected message by its framework-owned identity, so
+the planner must pass the message it received rather than a copy or a rebuilt
+one. For a unary `Complete` call that message is the last entry in
+`response.Content`. For a streamed turn, `StreamSummary.Message()` returns it
+whether the turn ended in prose or in tool calls. `StreamSummary.FinalResponse()`
+stays nil for tool-call turns because those turns are never terminal answers;
+use `Message()` when a tool-call batch breaks a planner rule and the model
+should try again with guidance:
+
+```go
+mc, ok := input.Agent.PlannerModelClient("bedrock")
+if !ok {
+    return nil, errors.New("model not configured")
+}
+sum, err := mc.Stream(ctx, req)
+if err != nil {
+    return nil, err
+}
+if violation := checkBatchRules(sum.ToolCalls); violation != nil {
+    return nil, planner.NewRecoverableModelPlanningError(
+        violation,
+        sum.Message(),
+        "Call inventory.reserve on its own. Do not combine it with other tool calls.",
+    )
+}
+```
+
 ### PlanInput and PlanResumeInput
 
 ```go

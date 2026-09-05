@@ -385,6 +385,83 @@ func TestStreamSummaryWithToolCallsHasNoFinalResponse(t *testing.T) {
 	}).FinalResponse())
 }
 
+// TestStreamSummaryMessageExposesToolCallTurn checks that a tool-call turn,
+// which FinalResponse deliberately hides, is still reachable through Message
+// so a planner can reject that exact turn with correction guidance.
+func TestStreamSummaryMessageExposesToolCallTurn(t *testing.T) {
+	source := &model.Message{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{model.ToolUsePart{
+			ID:    "call-1",
+			Name:  "svc.lookup",
+			Input: []byte(`{}`),
+		}},
+	}
+	summary := StreamSummary{
+		source:    source,
+		ToolCalls: []ToolRequest{{Name: "svc.lookup", ModelToolCallID: "call-1"}},
+	}
+
+	require.Nil(t, summary.FinalResponse())
+	require.Same(t, source, summary.Message())
+}
+
+// TestStreamSummaryMessageMatchesFinalResponseForProse checks that a prose
+// turn exposes one and the same message through both accessors.
+func TestStreamSummaryMessageMatchesFinalResponseForProse(t *testing.T) {
+	source := &model.Message{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.TextPart{Text: "canonical"}},
+	}
+	summary := StreamSummary{Text: "canonical", source: source}
+
+	final := summary.FinalResponse()
+	require.NotNil(t, final)
+	require.Same(t, source, final.Message)
+	require.Same(t, source, summary.Message())
+}
+
+func TestStreamSummaryWithoutCanonicalResponseHasNoMessage(t *testing.T) {
+	require.Nil(t, (StreamSummary{Text: "presentation"}).Message())
+}
+
+// TestConsumeStreamMessageIsValidatedStreamMessage checks that the message
+// returned by Message is the exact last message of the validated stream's
+// owned response, so its framework origin survives into a planner rejection.
+func TestConsumeStreamMessageIsValidatedStreamMessage(t *testing.T) {
+	streamer := &testStreamer{
+		chunks: []model.Chunk{
+			model.ToolCallChunk{ToolCall: model.ToolCall{
+				Name:    "svc.lookup",
+				ID:      "call-1",
+				Payload: []byte(`{}`),
+			}},
+			model.StopChunk{Reason: "tool_use"},
+		},
+		response: &model.Response{
+			Content: []model.Message{{
+				Role: model.ConversationRoleAssistant,
+				Parts: []model.Part{model.ToolUsePart{
+					ID:    "call-1",
+					Name:  "svc.lookup",
+					Input: []byte(`{}`),
+				}},
+			}},
+			StopReason: "tool_use",
+		},
+	}
+	validated := mustValidatedStream(t, streamer, modelRequestWithTool("svc.lookup"))
+
+	summary, err := ConsumeStream(context.Background(), validated)
+
+	require.NoError(t, err)
+	require.Len(t, summary.ToolCalls, 1)
+	require.Nil(t, summary.FinalResponse())
+	owned := validated.Response()
+	require.NotNil(t, owned)
+	require.Same(t, &owned.Content[len(owned.Content)-1], summary.Message())
+}
+
 func modelRequestWithTool(name string) *model.Request {
 	return &model.Request{Tools: []*model.ToolDefinition{{
 		Name:  name,

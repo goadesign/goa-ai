@@ -43,6 +43,18 @@ func (s StreamSummary) FinalResponse() *FinalResponse {
 	return &FinalResponse{Message: s.source}
 }
 
+// Message returns the assistant message the model produced on this streaming
+// turn, whether the turn ended in prose or in tool calls. A planner that finds
+// the turn breaks one of its rules passes this message to
+// NewRecoverableModelPlanningError so the runtime schedules a corrected turn.
+// The caller receives the framework-owned original, not a copy, because the
+// runtime checks the rejected message against the one it recorded. FinalResponse
+// still returns nil for tool-call turns; use it only when the turn is a final
+// answer. Message is nil when the stream captured no message.
+func (s StreamSummary) Message() *model.Message {
+	return s.source
+}
+
 // PlannerModelClient is a planner-scoped model client that owns PlannerEvents
 // emission for the current turn.
 //
