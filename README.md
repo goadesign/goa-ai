@@ -1046,7 +1046,10 @@ output. A planner uses `NewRecoverableModelAnswerError` when the replacement
 must be an answer without ordinary tools. It uses
 `NewRecoverableModelPlanningError` when rejected output from a tool-capable
 planning turn must be replaced with the current executable catalog still
-available. The rejected output may have omitted a required tool call.
+available. The rejected output may have omitted a required tool call, or it may
+be a tool-call batch that breaks a planner rule. A streaming planner passes
+`StreamSummary.Message()`, which returns the exact provider message for prose
+and tool-call turns alike; `FinalResponse()` stays nil for tool-call turns.
 Bookkeeping calls do not consume or reset this budget. If a rejected
 bookkeeping result schedules another planner activity, that replacement
 activity consumes one recovery turn. Finalization uses the same budget: a
