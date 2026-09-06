@@ -365,7 +365,7 @@ func TestFailureAfterPublishedTextReturnsTextForDurableCommit(t *testing.T) {
 	require.Equal(t, "bedrock", output.PlanningFailure.Provider)
 	require.Equal(t, string(model.ProviderErrorKindUnavailable), output.PlanningFailure.Kind)
 	require.True(t, output.PlanningFailure.Retryable)
-	require.Contains(t, output.PlanningFailure.DebugMessage, "reason_sha256=")
+	require.Equal(t, transportErr.Error(), output.PlanningFailure.DebugMessage)
 }
 
 func runtimeWithModelOutputSink(t *testing.T, sink stream.Sink) *Runtime {

@@ -487,12 +487,19 @@ type (
 	// planner output could be executed or shown.
 	ModelOutputRejectedEvent struct {
 		baseEvent
+		// ReasonVersion distinguishes current exact-or-omitted diagnostic text
+		// from historical fingerprint-only records.
+		ReasonVersion string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
+		// Reason is the exact fingerprinted cause text when it is valid UTF-8
+		// within the 3072-byte allocation; other text is explicitly omitted.
+		Reason string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
+		// ReasonOmitted is size_limit or invalid_utf8; empty means exact text.
+		ReasonOmitted string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
 		// OutputValidationKind identifies the first mechanical response rule
 		// that rejected provider output. Planner-authored policy rejections and
 		// histories written before categories existed leave it empty.
 		OutputValidationKind model.OutputValidationKind `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
-		// ReasonSHA256 identifies the private validation-cause text without
-		// retaining that text in the run event.
+		// ReasonSHA256 identifies the original selected validation-cause text.
 		ReasonSHA256 string
 		// ReasonSize is the number of bytes covered by ReasonSHA256.
 		ReasonSize int64
@@ -516,8 +523,15 @@ type (
 	// refused to execute or show.
 	PlannerOutputRejectedEvent struct {
 		baseEvent
-		// ReasonSHA256 identifies the private planner-rejection cause text
-		// without retaining that text in the run event.
+		// ReasonVersion distinguishes current exact-or-omitted diagnostic text
+		// from historical fingerprint-only records.
+		ReasonVersion string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
+		// Reason is the exact fingerprinted cause text when it is valid UTF-8
+		// within the 3072-byte allocation; other text is explicitly omitted.
+		Reason string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
+		// ReasonOmitted is size_limit or invalid_utf8; empty means exact text.
+		ReasonOmitted string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
+		// ReasonSHA256 identifies the original selected planner-rejection text.
 		ReasonSHA256 string
 		// ReasonSize is the number of bytes covered by ReasonSHA256.
 		ReasonSize int64

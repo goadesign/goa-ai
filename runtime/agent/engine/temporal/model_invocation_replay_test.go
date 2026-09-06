@@ -338,8 +338,9 @@ func syntheticProductionReplayHistory(
 	}
 	if recovery {
 		nextID := int64(29)
-		if len(first.PlannerEvents) > 0 {
-			publicationInput := plannerPublicationInput(t, first.PlannerEvents)
+		publicationEvents := rejectionReplayPublication(t, first)
+		if len(publicationEvents) > 0 {
+			publicationInput := plannerPublicationInput(t, publicationEvents)
 			events = append(events,
 				activityTaskScheduledEvent(nextID, productionReplayRecord, publicationInput),
 				activityTaskStartedEvent(nextID+1, nextID),
@@ -358,7 +359,7 @@ func syntheticProductionReplayHistory(
 			workflowTaskStartedEvent(nextID+4),
 			workflowTaskCompletedEvent(nextID+5, nextID+3, nextID+4),
 		)
-		resumeInput, err := dataConverter.ToPayloads(&api.PlanActivityInput{
+		resumeRequest := &api.PlanActivityInput{
 			AgentID: productionReplayAgentID,
 			RunID:   productionReplayRunID,
 			RunContext: run.Context{
@@ -368,7 +369,11 @@ func syntheticProductionReplayHistory(
 				Attempt:   2,
 			},
 			ModelInvocationRecovery: first.ModelInvocationRecovery,
-		})
+		}
+		if first.OutputContractFailure != nil {
+			resumeRequest.ModelOutputRecovery = first.OutputContractFailure.ModelOutputRecovery
+		}
+		resumeInput, err := dataConverter.ToPayloads(resumeRequest)
 		require.NoError(t, err)
 		resumeResult, err := dataConverter.ToPayloads(&api.PlanActivityOutput{
 			PublicationBatchID: "00000000-0000-4000-8000-000000000002",

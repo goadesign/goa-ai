@@ -26,7 +26,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/stream"
-	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -43,6 +42,9 @@ type plannerActivityInvocation struct {
 	reminders            []reminder.Reminder
 	runContext           run.Context
 	publicationBatchID   string
+	// originalFailure remains available to the application tracer after a
+	// rejected planner result becomes a successful activity transport value.
+	originalFailure error
 }
 
 // PlanStartActivity executes the planner's PlanStart method.
@@ -56,7 +58,10 @@ type plannerActivityInvocation struct {
 // beginning of a run to produce the initial plan. The activity creates an
 // agent context with memory access and delegates to the planner's PlanStart
 // implementation.
-func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInput) (activityOutput *PlanActivityOutput, activityErr error) {
+	ctx, span := r.tracer.Start(ctx, "planner.plan_start")
+	var act *plannerActivityInvocation
+	defer func() { finishPlannerActivitySpan(ctx, span, act, activityErr) }()
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
@@ -82,7 +87,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 		Events:     act.events,
 		Reminders:  act.reminders,
 	}
-	result, err := r.planStart(ctx, act.reg, planInput)
+	result, err := act.reg.Planner.PlanStart(ctx, planInput)
 	err = act.planningError(err)
 	if err != nil {
 		return act.failureOutput(ctx, err)
@@ -115,7 +120,10 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 // execution to produce the next plan. The activity creates an agent context,
 // loads canonical tool outputs from the run log, and delegates to the planner's
 // PlanResume implementation.
-func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (activityOutput *PlanActivityOutput, activityErr error) {
+	ctx, span := r.tracer.Start(ctx, "planner.plan_resume")
+	var act *plannerActivityInvocation
+	defer func() { finishPlannerActivitySpan(ctx, span, act, activityErr) }()
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
@@ -161,7 +169,6 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			unavailableTools[index] = spec.Name
 		}
 	}
-	var act *plannerActivityInvocation
 	if exactCorrectCall {
 		act, err = r.preparePlannerActivityWithSpecs(
 			ctx,
@@ -240,7 +247,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		Finalize:      input.Finalize,
 		Reminders:     act.reminders,
 	}
-	result, err := r.planResume(ctx, act.reg, planInput)
+	result, err := act.reg.Planner.PlanResume(ctx, planInput)
 	err = act.planningError(err)
 	if err != nil {
 		return act.failureOutput(ctx, err)
@@ -625,6 +632,7 @@ func (a *plannerActivityInvocation) acceptedOutput(
 // execution failure crosses as a successful activity value so the workflow can
 // commit that text before terminating with the original standardized failure.
 func (a *plannerActivityInvocation) failureOutput(ctx context.Context, err error) (*PlanActivityOutput, error) {
+	a.originalFailure = err
 	var outputErr *planner.OutputContractError
 	if errors.As(err, &outputErr) {
 		return a.outputContractFailure(ctx, err)
@@ -637,12 +645,7 @@ func (a *plannerActivityInvocation) failureOutput(ctx context.Context, err error
 		return nil, errors.Join(err, contextErr)
 	}
 	failure := hooks.RunFailureFromError(err)
-	reasonSHA256, reasonSize := errorevidence.Fingerprint(err)
-	failure.DebugMessage = fmt.Sprintf(
-		"planning failed after publishing assistant text (reason_sha256=%s reason_size=%d)",
-		reasonSHA256,
-		reasonSize,
-	)
+	failure.DebugMessage = errorevidence.BoundedMessage(failure.DebugMessage)
 	failureEvents := newPlannerEvents(
 		a.events.agentID,
 		a.events.runID,
@@ -772,21 +775,27 @@ func (a *plannerActivityInvocation) outputContractFailure(
 // carries no model evidence or correction because the rejected message did not
 // belong to a completed model invocation in this activity.
 func terminalPlannerOutputContractFailure(err error) *OutputContractFailure {
-	reasonSHA256, reasonSize := errorevidence.Fingerprint(err)
+	reason := errorevidence.Text(err)
+	reasonSHA256, reasonSize := errorevidence.FingerprintText(reason)
+	retained, omitted := errorevidence.RetainedReason(reason)
 	return &OutputContractFailure{
-		Origin:       planner.OutputContractOriginPlanner,
-		ReasonSHA256: reasonSHA256,
-		ReasonSize:   int64(reasonSize),
+		ReasonVersion: errorevidence.ReasonVersion,
+		Reason:        retained,
+		ReasonOmitted: omitted,
+		Origin:        planner.OutputContractOriginPlanner,
+		ReasonSHA256:  reasonSHA256,
+		ReasonSize:    int64(reasonSize),
 	}
 }
 
-// outputContractFailureMetadata keeps only a private-cause fingerprint,
-// rejected-response evidence, and optional replacement guidance. It never
-// copies validation-cause text into the activity result.
+// outputContractFailureMetadata retains the selected cause text within the
+// diagnostic allocation, its unchanged fingerprint, rejected-response evidence,
+// and separate replacement guidance. Oversized cause text is explicitly omitted.
 func (a *plannerActivityInvocation) outputContractFailureMetadata(
 	outputErr *planner.OutputContractError,
 ) (*OutputContractFailure, error) {
-	reasonSHA256, reasonSize := errorevidence.Fingerprint(outputContractFailureReason(outputErr))
+	reason := errorevidence.Text(outputContractFailureReason(outputErr))
+	reasonSHA256, reasonSize := errorevidence.FingerprintText(reason)
 	responseEvidence := a.invocations.rejectedModelResponseEvidence()
 	if outputErr.Correction() != "" {
 		var err error
@@ -807,6 +816,7 @@ func (a *plannerActivityInvocation) outputContractFailureMetadata(
 		validationKind = validationErr.Kind()
 	}
 	failure := &OutputContractFailure{
+		ReasonVersion:                   errorevidence.ReasonVersion,
 		Origin:                          origin,
 		ModelOutputValidationKind:       validationKind,
 		ReasonSHA256:                    reasonSHA256,
@@ -816,6 +826,7 @@ func (a *plannerActivityInvocation) outputContractFailureMetadata(
 		ModelResponseSHA256:             responseEvidence.SHA256,
 		ModelResponseSize:               responseEvidence.Size,
 	}
+	failure.Reason, failure.ReasonOmitted = errorevidence.RetainedReason(reason)
 	if outputErr.Correction() != "" {
 		failure.ModelOutputRecovery = &ModelOutputRecovery{
 			Kind:       outputErr.RecoveryKind(),
@@ -850,8 +861,11 @@ func boundedPlanActivityOutputFailure(
 		failure = terminalPlannerOutputContractFailure(budgetErr)
 	}
 	boundedFailure := *failure
+	reason := "planner activity output rejected before Temporal encoding: " + budgetErr.Error()
+	boundedFailure.ReasonVersion = errorevidence.ReasonVersion
+	boundedFailure.Reason, boundedFailure.ReasonOmitted = errorevidence.RetainedReason(reason)
 	boundedFailure.ReasonSHA256, boundedFailure.ReasonSize = fingerprintBytes(
-		[]byte("planner activity output rejected before Temporal encoding: " + budgetErr.Error()),
+		[]byte(reason),
 	)
 	return &PlanActivityOutput{
 		PublicationBatchID:     publicationBatchID,
@@ -1429,40 +1443,6 @@ func buildToolFailureFromAgentToolRequestError(err error) *planner.ToolFailure {
 		return buildToolFailureFromPayloadError(payloadErr.cause)
 	}
 	return nil
-}
-
-// planStart invokes the planner's PlanStart method with tracing.
-func (r *Runtime) planStart(ctx context.Context, reg *AgentRegistration, input *planner.PlanInput) (*planner.PlanResult, error) {
-	if reg.Planner == nil {
-		return nil, errors.New("planner not configured")
-	}
-	if input == nil {
-		return nil, errors.New("plan input is required")
-	}
-	tracer := r.tracer
-	if tracer == nil {
-		tracer = telemetry.NoopTracer{}
-	}
-	ctx, span := tracer.Start(ctx, "planner.plan_start")
-	defer span.End()
-	return reg.Planner.PlanStart(ctx, input)
-}
-
-// planResume invokes the planner's PlanResume method with tracing.
-func (r *Runtime) planResume(ctx context.Context, reg *AgentRegistration, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
-	if reg.Planner == nil {
-		return nil, errors.New("planner not configured")
-	}
-	if input == nil {
-		return nil, errors.New("plan resume input is required")
-	}
-	tracer := r.tracer
-	if tracer == nil {
-		tracer = telemetry.NoopTracer{}
-	}
-	ctx, span := tracer.Start(ctx, "planner.plan_resume")
-	defer span.End()
-	return reg.Planner.PlanResume(ctx, input)
 }
 
 // plannerContext constructs the agent registration and context needed for planner execution.
