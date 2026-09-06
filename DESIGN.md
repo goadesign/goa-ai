@@ -1391,7 +1391,11 @@ operations:
   the form `execute_tool {tool_name}`. The runlog hook subscriber owns these
   spans so inline, activity, and registry-backed tools produce exactly one
   GenAI tool operation. Tool arguments and results are not recorded as span
-  attributes because they may contain user data.
+  attributes because they may contain user data. Failed tool spans record an
+  exception and error status using only the validated `ToolFailure.Kind`.
+  Failure messages and causes remain private conversation data; tracing does
+  not copy or change them. The model-visible failure and its recovery action
+  remain unchanged.
 - Agent-as-tool links emit caller-side `invoke_agent {agent_name}` spans. The
   child agent emits its own model and tool spans under its own agent identity.
 

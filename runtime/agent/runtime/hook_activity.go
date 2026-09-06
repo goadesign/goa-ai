@@ -698,8 +698,12 @@ func (r *Runtime) recordGenAIToolSpan(ctx context.Context, evt *hooks.ToolResult
 		trace.WithAttributes(telemetry.GenAIToolAttrs(ctx, string(evt.ToolName), evt.ToolCallID)...),
 	)
 	if evt.Failure != nil {
-		span.RecordError(evt.Failure.Error)
-		span.SetStatus(codes.Error, evt.Failure.Error.Error())
+		// Failure messages and causes may contain private conversation data.
+		// Record only the validated classification; leave the detailed failure
+		// unchanged for the transcript and the planner's recovery decision.
+		kind := string(evt.Failure.Kind)
+		span.RecordError(errors.New(kind))
+		span.SetStatus(codes.Error, kind)
 	} else {
 		span.SetStatus(codes.Ok, "ok")
 	}

@@ -4316,6 +4316,22 @@ type Tracer interface {
 }
 ```
 
+### Tool failure traces
+
+The runtime records each completed tool call as an `execute_tool` span. A
+failed call retains error status and an exception event, but both describe only
+its validated `ToolFailure.Kind`, such as `domain_rejection` or `timeout`.
+Detailed error messages and nested causes may contain private conversation
+data and are never copied into these tool spans. Tool identity, call
+correlation, and execution timing remain available for diagnosis.
+
+This tracing rule does not alter the saved failure, the message supplied to
+the model, or the required recovery action. Applications should inspect their
+authorized conversation records for detailed failures rather than match span
+exception messages against private text. No schema regeneration or stored-data
+migration is required; older workers must be upgraded to receive this tracing
+behavior. Previously exported spans are not changed.
+
 ### Registry and model-request traces
 
 Every registry replica emits `toolregistry.catalog.entry` for each active

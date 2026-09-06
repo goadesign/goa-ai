@@ -1406,6 +1406,10 @@ These spans carry conversation ID, agent identity, model request/response
 fields, token usage, finish reasons, and streaming time-to-first-chunk where
 available. Prompt text, chat history, tool arguments, and tool results are not
 recorded by default.
+Failed tool spans record only the failure classification, such as
+`domain_rejection`, in their exception message and error status. Detailed tool
+failure messages and causes remain available to the conversation and are not
+copied into these spans. See the [tool failure trace contract](docs/runtime.md#tool-failure-traces).
 Planner call spans also carry the exact advertised tool count and names. The
 clustered registry emits elected per-toolset readiness spans. See the
 [runtime trace contract](docs/runtime.md#registry-and-model-request-traces) for
