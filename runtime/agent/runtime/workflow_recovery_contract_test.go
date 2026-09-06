@@ -87,10 +87,10 @@ func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
 
 func TestRunLoopCorrectionMayRetryFailedToolOrAnswer(t *testing.T) {
 	tests := []struct {
-		name           string
-		choose         func(search tools.ToolSpec) *planner.PlanResult
-		wantToolEvents int
-		wantAnswer     string
+		name          string
+		choose        func(search tools.ToolSpec) *planner.PlanResult
+		wantToolCount int
+		wantAnswer    string
 	}{
 		{
 			name: "retry failed tool",
@@ -103,16 +103,16 @@ func TestRunLoopCorrectionMayRetryFailedToolOrAnswer(t *testing.T) {
 					SynthesizeAfterTools: true,
 				}
 			},
-			wantToolEvents: 2,
-			wantAnswer:     "corrected",
+			wantToolCount: 2,
+			wantAnswer:    "corrected",
 		},
 		{
 			name: "final answer",
 			choose: func(_ tools.ToolSpec) *planner.PlanResult {
 				return finalPlannerResult("provisional")
 			},
-			wantToolEvents: 1,
-			wantAnswer:     "provisional",
+			wantToolCount: 1,
+			wantAnswer:    "provisional",
 		},
 	}
 	for _, tt := range tests {
@@ -151,7 +151,7 @@ func TestRunLoopCorrectionMayRetryFailedToolOrAnswer(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, out)
 			assert.Equal(t, tt.wantAnswer, out.Final.Text())
-			assert.Len(t, out.ToolEvents, tt.wantToolEvents)
+			assert.Equal(t, tt.wantToolCount, out.ToolCount)
 		})
 	}
 }
@@ -262,7 +262,7 @@ func TestRunLoopInvalidCallReachesFailureFinalization(t *testing.T) {
 	require.NotNil(t, out)
 	assert.Equal(t, "stopped after repeated failures", out.Final.Text())
 	assert.Equal(t, 1, recoveryTurns)
-	assert.Len(t, out.ToolEvents, 2)
+	assert.Equal(t, 2, out.ToolCount)
 }
 
 func TestRunLoopRecoveryCatalogRejectsExcludedCallBeforeExecution(t *testing.T) {
@@ -510,7 +510,7 @@ func TestFinishFailureFinalizationRetainsOnlyTerminalTools(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	assert.Equal(t, 1, completeCalls)
-	assert.Len(t, out.ToolEvents, 2)
+	assert.Equal(t, 2, out.ToolCount)
 }
 
 func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
@@ -605,7 +605,7 @@ func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
 	require.NotNil(t, out)
 	assert.Equal(t, "all pages collected", out.Final.Text())
 	assert.Equal(t, 2, resumes)
-	assert.Len(t, out.ToolEvents, 3)
+	assert.Equal(t, 3, out.ToolCount)
 }
 
 func TestRunLoopRecoversRejectedModelAnswer(t *testing.T) {
@@ -658,7 +658,7 @@ func TestRunLoopRecoversRejectedModelAnswer(t *testing.T) {
 	require.NotNil(t, out)
 	assert.Equal(t, "corrected answer", out.Final.Text())
 	assert.Equal(t, 2, resumes)
-	assert.Len(t, out.ToolEvents, 1)
+	assert.Equal(t, 1, out.ToolCount)
 }
 
 func TestRunLoopRecoversRejectedPlanningOutputWithExecutableCatalog(t *testing.T) {
@@ -726,7 +726,7 @@ func TestRunLoopRecoversRejectedPlanningOutputWithExecutableCatalog(t *testing.T
 	require.NotNil(t, out)
 	assert.Equal(t, "corrected tool work complete", out.Final.Text())
 	assert.Equal(t, 3, resumes)
-	assert.Len(t, out.ToolEvents, 2)
+	assert.Equal(t, 2, out.ToolCount)
 }
 
 func TestRunLoopSharesRecoveryBudgetBetweenToolAndModelRejections(t *testing.T) {

@@ -573,6 +573,17 @@ other caller-facing read. Shared normalization fixes portable search values and
 the root request digest. Translating and submitting those values remains the
 backend adapter's responsibility.
 
+The runtime returns only the completed answer or terminal tool result and the
+invocation's count/telemetry; it does not return a second copy of tool history.
+Before recording success or suspension, it applies `contract.CopyRunOutput`
+to the exact result. This catches deterministic codec failures before terminal
+storage, but does not make Store and engine commits atomic. Full records remain
+in the existing paged Store, and suspension v7 state remains unchanged.
+New top-level results use `json/goa-ai-run-output-v2`; a centralized strict
+reader maps the frozen old `json/plain` result schema to the same count and
+telemetry contract. The temporary reader's removal and deployment conditions
+are defined in [Workflow results](docs/workflow-results.md).
+
 A storage-encoding failure returns `ErrPreparedRunRejected` without changing
 the in-memory prepared request; it remains startable, although a caller that
 requires durable admission must store it before starting. Malformed parsed

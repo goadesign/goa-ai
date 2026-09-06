@@ -14,8 +14,8 @@ import (
 	"fmt"
 	"time"
 
-	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/engine/contract"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -148,7 +148,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	finalization := &workflowFinalizationState{}
 	var (
 		finalErr             error
-		finalSuspension      *api.RunSuspension
 		recordTerminalResult bool
 	)
 	defer func() {
@@ -167,10 +166,16 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		if !recordTerminalResult {
 			return
 		}
+		// Validate the exact engine result before recording success or suspension.
+		// This prevents deterministic encoding failures after a successful Store
+		// update; it is not an atomic commit between the Store and the engine.
+		if workflowErr == nil {
+			output, workflowErr = contract.CopyRunOutput(output)
+		}
 		// Suspension and cancellation both end the run. Store exactly one after
 		// cancellation admission closes so neither outcome can overtake the other.
-		if finalSuspension != nil && workflowErr == nil {
-			if err := r.persistRunSuspension(wfCtx.Detached(), input, finalSuspension); err != nil {
+		if workflowErr == nil && output.Suspension != nil {
+			if err := r.persistRunSuspension(wfCtx.Detached(), input, output.Suspension); err != nil {
 				workflowErr = fmt.Errorf("persist run suspension: %w", err)
 				output = nil
 			} else {
@@ -281,7 +286,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			finalStatus = terminalRunStatusForError(err)
 			return nil, err
 		}
-		finalSuspension = out.Suspension
 		return out, nil
 	}
 
@@ -483,7 +487,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// Successful completion.
 	finalStatus = runStatusSuccess
 	finalErr = nil
-	finalSuspension = out.Suspension
 	return out, nil
 }
 

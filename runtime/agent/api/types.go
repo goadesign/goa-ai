@@ -188,8 +188,8 @@ type (
 	}
 
 	// RunOutput represents the terminal outcome returned by one workflow,
-	// including either a completed result or a suspension plus accumulated tool
-	// traces and planner notes for callers.
+	// including either a completed result or a suspension, tool statistics, and
+	// planner notes. Read complete tool history with Runtime.ListRunEvents.
 	RunOutput struct {
 		// AgentID echoes the agent that produced the result.
 		AgentID agent.Ident
@@ -207,21 +207,19 @@ type (
 		// child planner or runtime owns the outer tool contract directly.
 		//
 		// Contract:
-		// - This uses the same workflow-safe envelope as ToolEvents because it also
-		//   crosses a workflow boundary.
+		// - This uses a workflow-safe envelope because it crosses a workflow boundary.
 		// - Result bytes are canonical JSON for the parent tool's result schema.
-		// - Tool-completed runs also retain this event in ToolEvents so callers can
-		//   inspect the complete execution history in order.
+		// - The complete execution history remains in the runtime Store.
 		FinalToolResult *ToolEvent
 
-		// ToolEvents captures all tool results emitted before completion in execution order.
-		//
-		// Contract:
-		// - ToolEvents must be workflow-boundary safe. Do not embed planner.ToolResult here:
-		//   planner.ToolResult contains `any` fields (Result) which Temporal will
-		//   rehydrate as map[string]any in parent workflows, eliminating strong typing
-		//   at the boundary.
-		ToolEvents []*ToolEvent
+		// ToolCount counts results across the complete invocation, including failed
+		// attempts and history restored from a preceding suspension.
+		ToolCount int
+
+		// ToolTelemetry combines tool token and duration totals. Model is set only
+		// when all nonempty model names agree. Individual Extra metadata remains in
+		// the Store; typed parent results retain FinalToolResult.Telemetry instead.
+		ToolTelemetry *telemetry.ToolTelemetry
 
 		// Notes aggregates planner annotations produced during the final turn.
 		Notes []*planner.PlannerAnnotation

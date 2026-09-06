@@ -703,7 +703,7 @@ func TestWorkflowTreatsPlannerAuthoredCanonicalContinuationAsStandalone(t *testi
 	require.NotNil(t, output)
 	require.Equal(t, "done", output.Final.Text())
 	require.Equal(t, 1, resumes)
-	require.Len(t, output.ToolEvents, 1)
+	require.Equal(t, 1, output.ToolCount)
 }
 
 func TestAppendUserToolResults_UsesRefinementWithoutContinuationCursor(t *testing.T) {

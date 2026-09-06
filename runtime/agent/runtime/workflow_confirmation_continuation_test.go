@@ -93,7 +93,7 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 	require.NotNil(t, second)
 	require.Nil(t, second.Suspension)
 	require.Equal(t, 1, executions)
-	require.Len(t, second.ToolEvents, 1)
+	require.Equal(t, 1, second.ToolCount)
 }
 
 func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {

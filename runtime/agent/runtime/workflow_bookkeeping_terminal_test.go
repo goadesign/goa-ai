@@ -80,7 +80,8 @@ func TestRunLoopBookkeepingTerminalExecutesWithExhaustedBudget(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Nil(t, out.Final, "terminal tool completions must not synthesize an empty assistant message")
-	require.Len(t, out.ToolEvents, 1)
-	require.Equal(t, terminal.Name, out.ToolEvents[0].Name)
+	require.Equal(t, 1, out.ToolCount)
+	require.NotNil(t, out.FinalToolResult)
+	require.Equal(t, terminal.Name, out.FinalToolResult.Name)
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "no planner resume/finalization expected after terminal tool")
 }
