@@ -1379,6 +1379,11 @@ the integrating application rather than in the runtime.
 
 ## GenAI Observability Contract
 
+The Clue tracer converts span-event values with OpenTelemetry's native
+constructors for `string`, `bool`, `int`, `int64`, `float64`, and slices of those
+types. Lists retain order, duplicate entries, and empty values. This conversion
+does not enable capture or change application sampling and exporter settings.
+
 The runtime emits OpenTelemetry GenAI semantic-convention spans for agent
 operations:
 
