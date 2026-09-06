@@ -415,10 +415,9 @@ func (s *ValidatedStream) streamObservers() []*observedValidatedStreamer {
 	return append([]*observedValidatedStreamer(nil), s.observers.list...)
 }
 
-// rejectedStreamResponse returns a complete provider response only for terminal
-// failures that may retain one. An advertised payload correction suppresses the
-// response at this validation layer and every nested layer so observers cannot
-// receive rejected tool arguments.
+// rejectedStreamResponse gives observers an independent copy of a rejected
+// response that passed the checks required for bounded copying. Nested streams
+// preserve this diagnostic evidence without treating it as successful output.
 func rejectedStreamResponse(streamer Streamer) (*Response, error) {
 	var response *Response
 	switch actual := streamer.(type) {
@@ -430,9 +429,6 @@ func rejectedStreamResponse(streamer Streamer) (*Response, error) {
 		defer actual.core.mu.Unlock()
 		return rejectedStreamResponse(actual.core.inner)
 	case *validatedStreamer:
-		if recoveryCorrectionFromError(actual.terminalErr) != "" {
-			return nil, nil
-		}
 		if actual.rejected == nil {
 			return rejectedStreamResponse(actual.inner)
 		}
@@ -898,9 +894,6 @@ func (s *validatedStreamer) failValidation(kind OutputValidationKind, err error)
 		s.rejected,
 		firstTokenUsage(s.rejectedTotal, s.rejectedDelta),
 	)
-	if validationErr.RecoveryCorrection() != "" {
-		s.rejected = nil
-	}
 	s.terminalErr = validationErr
 	return s.terminalErr
 }

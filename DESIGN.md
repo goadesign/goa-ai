@@ -160,6 +160,21 @@ before returning the completion. Generated validation adds checks without
 replacing these framework checks. Provider enforcement and local validation
 are both required: local validation remains the final acceptance check, but it
 never substitutes for a provider that cannot enforce the requested schema.
+Tool-input rejection keeps the original validator error available through
+`errors.As` and `errors.Is`. A rejected response that passed the existing
+copying limits remains available through `OutputValidationError.RejectedResponse`,
+including when the error supplies correction guidance. These private diagnostic
+values do not become successful output or add rejected bodies to automatic
+telemetry or transport data;
+the calling application owns their use and retention. The
+[runtime tool-input contract](docs/runtime.md#model-visible-tool-arguments)
+separates diagnostic access from the correction sent to the model.
+Formatting the underlying validator or malformed-argument error includes its
+original diagnostic after the existing summary prefix. Direct callers of those
+errors receive more detail; `OutputValidationError.Error()` and correction text
+remain unchanged. This requires no regeneration or wire migration.
+Applications already recording the underlying error now receive the original
+diagnostic; no logging or message-capture switch is enabled by this change.
 The Bedrock Converse adapter uses a private strict tool for Claude 4.6 so
 Runtime `CountTokens` and Converse receive the same schema. Claude 4.5 retains
 native `OutputConfig` because its manual thinking mode cannot use forced tools.
@@ -323,8 +338,9 @@ completion order.
 When a provider cannot represent a completed tool call because its arguments
 are not valid JSON, the adapter reads only the stream's terminal usage and
 completion evidence. The same recovery path supplies fixed JSON replacement
-guidance without retaining the malformed bytes, provider diagnostics, or tool
-identity.
+guidance without adding malformed bytes, provider diagnostics, or tool identity
+to the replacement request. Local diagnostic access remains separate from that
+request.
 When a supported provider instead returns a valid tool name absent from the
 request's advertised catalog, the adapter rejects the complete response. The
 same invocation-recovery value carries only that untouched name, mutually
