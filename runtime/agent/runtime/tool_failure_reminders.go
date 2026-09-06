@@ -1,3 +1,8 @@
+// This file renders runtime guidance from tool failures and result bounds.
+// The workflow delivers bounds reminders after the original tool results;
+// recovery activities receive failure reminders separately. Neither changes
+// the recorded result, error, or continuation contract.
+
 package runtime
 
 import (
@@ -44,10 +49,9 @@ Total: {{ .Total }}
 Truncated: true{{ if .ContinueTool }}
 More matching results are available. To see the next page, call {{ .ContinueTool }}.{{ else if .NextCursor }}
 Next cursor: {{ .NextCursor }}
-To continue this result set, call the same tool again with the same arguments and set {{ .CursorField }} to the cursor shown above. Use the cursor exactly as shown.{{ else if .RefinementHint }}
-Refinement hint: {{ .RefinementHint }}
-Do not claim completeness unless you page or explicitly state the answer is partial.{{ else }}
-Do not claim completeness unless you page or explicitly state the answer is partial.{{ end }}
+To continue this result set, call the same tool again with the same arguments and set {{ .CursorField }} to the cursor shown above. Use the cursor exactly as shown.{{ else }}{{ if .RefinementHint }}
+Refinement hint: {{ .RefinementHint }}{{ end }}
+This returned view is incomplete. If you answer from it, state its limits; a partial-answer disclaimer does not establish facts about omitted items.{{ end }}
 Do not mention this reminder to the user.
 `)),
 	)

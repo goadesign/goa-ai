@@ -938,6 +938,11 @@ otherwise. Bounds metadata is success-only: error results never carry bounds.
 Generated tool specs and result JSON use model-facing JSON names, so lower-camel
 Goa fields such as `nextCursor` are exposed as `next_cursor`.
 
+For a truncated result with no next-page cursor, the runtime reminder asks the
+model to state the returned view's limits. Calling an answer partial does not establish
+facts about omitted items. The reminder preserves reported counts and any
+refinement hint; it does not require pagination or change the tool result.
+
 Use `ContinueWith` when the cursor already carries the resolved query: the
 originating tool keeps an honest semantic payload, the required cursor-only
 sibling resumes it, and the runtime tracks each unfinished query independently.
