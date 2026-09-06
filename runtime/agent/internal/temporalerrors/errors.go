@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"unicode/utf8"
 
 	"go.temporal.io/sdk/temporal"
 
@@ -25,13 +26,15 @@ const (
 
 	providerErrorDetailsVersion = "goa_ai.provider_error.v1"
 	genericErrorDetailsVersion  = "goa_ai.generic_error.v1"
+	providerDiagnosticVersion   = "goa_ai.provider_error.v2"
+	genericDiagnosticVersion    = "goa_ai.generic_error.v2"
 
 	maxProviderBytes             = 128
 	maxProviderOperationBytes    = 128
 	maxProviderCodeBytes         = 256
 	maxProviderMessageBytes      = 2048
 	maxProviderRequestIDBytes    = 256
-	maxTemporalErrorMessageBytes = 3072
+	maxTemporalErrorMessageBytes = errorevidence.MaxMessageBytes
 	maxTemporalDetailsJSONBytes  = 4096
 	maxEvidenceReplacementBytes  = 192
 	maxGenericErrorMessageBytes  = 512
@@ -84,7 +87,9 @@ type (
 	classification struct {
 		kind        errorKind
 		provider    *model.ProviderError
+		generic     genericErrorDetails
 		origin      planner.OutputContractOrigin
+		output      *planner.OutputContractError
 		application *temporal.ApplicationError
 		invalid     error
 	}
@@ -135,8 +140,20 @@ func Wrap(err error) error {
 		if classified.application != nil && classified.application == err {
 			return err
 		}
+		message := errorevidence.Text(err)
+		if classified.output != nil {
+			cause := classified.output.Unwrap()
+			// A direct model validation error owns a separate diagnostic cause;
+			// its Error method intentionally returns a model-facing summary.
+			// Do not search wrapped or joined errors to select another owner.
+			//nolint:errorlint // Only the exact immediate cause owns this diagnostic.
+			if validation, ok := cause.(*model.OutputValidationError); ok && validation != nil {
+				cause = validation.Unwrap()
+			}
+			message = errorevidence.Text(cause)
+		}
 		return temporal.NewNonRetryableApplicationError(
-			boundedErrorMessage("output contract error", errorevidence.Text(err)),
+			errorevidence.BoundedMessage(message),
 			outputContractErrorApplicationType,
 			nil,
 			outputContractErrorDetails{Origin: string(classified.origin)},
@@ -150,7 +167,7 @@ func Wrap(err error) error {
 		if validationErr := validateProviderDetails(details); validationErr != nil {
 			return wrapInvalidReserved(validationErr)
 		}
-		message := boundedErrorMessage("provider error", providerErrorMessage(details))
+		message := errorevidence.BoundedMessage(errorevidence.Text(err))
 		if classified.provider.Retryable() {
 			return temporal.NewApplicationError(
 				message,
@@ -171,7 +188,21 @@ func Wrap(err error) error {
 		}
 		return wrapInvalidReserved(classified.invalid)
 	case errorKindGeneric:
-		return classified.application
+		// Direct envelopes are idempotent; legacy nested envelopes keep their
+		// historical message. Only current envelopes retain new outer context.
+		//nolint:errorlint // Identity distinguishes an envelope from its wrapper.
+		if classified.application == err {
+			return err
+		}
+		details := classified.generic
+		if details.Version == genericErrorDetailsVersion {
+			return classified.application
+		}
+		return temporal.NewApplicationErrorWithOptions(errorevidence.BoundedMessage(errorevidence.Text(err)),
+			classified.application.Type(), temporal.ApplicationErrorOptions{
+				NonRetryable: classified.application.NonRetryable(),
+				Details:      []any{details},
+			})
 	case errorKindNone:
 		return wrapGeneric(err, "", true)
 	default:
@@ -343,6 +374,7 @@ func classifyCurrent(err error) classification {
 		return classification{
 			kind:   errorKindOutputContract,
 			origin: current.Origin(),
+			output: current,
 		}
 	case *temporal.ApplicationError:
 		switch current.Type() {
@@ -469,9 +501,14 @@ func classifyProviderApplication(appErr *temporal.ApplicationError) classificati
 	if err := validateProviderDetails(details); err != nil {
 		return invalidReserved("reserved provider error details: %v", err)
 	}
-	expectedMessage := boundedErrorMessage("provider error", providerErrorMessage(details))
-	if appErr.Message() != expectedMessage {
-		return invalidReserved("reserved provider error message does not match its details")
+	if details.Version == providerDiagnosticVersion && !utf8.ValidString(appErr.Message()) {
+		return invalidReserved("reserved provider diagnostic message is not valid UTF-8")
+	}
+	if details.Version == providerErrorDetailsVersion {
+		expectedMessage := boundedErrorMessage("provider error", providerErrorMessage(details))
+		if appErr.Message() != expectedMessage {
+			return invalidReserved("reserved provider error message does not match its details")
+		}
 	}
 	kind := model.ProviderErrorKind(details.Kind)
 	if appErr.NonRetryable() == details.Retryable {
@@ -480,6 +517,10 @@ func classifyProviderApplication(appErr *temporal.ApplicationError) classificati
 			details.Retryable,
 			appErr.NonRetryable(),
 		)
+	}
+	var diagnostic error
+	if details.Version == providerDiagnosticVersion {
+		diagnostic = fmt.Errorf("%s", appErr.Message())
 	}
 	return classification{
 		kind: errorKindProvider,
@@ -492,7 +533,7 @@ func classifyProviderApplication(appErr *temporal.ApplicationError) classificati
 			details.Message.Value,
 			details.RequestID.Value,
 			details.Retryable,
-			nil,
+			diagnostic,
 		),
 		application: appErr,
 	}
@@ -526,8 +567,8 @@ func classifyGenericApplication(appErr *temporal.ApplicationError) classificatio
 	if appErr.Unwrap() != nil {
 		return invalidReserved("reserved generic error has a cause")
 	}
-	if appErr.Message() != "operation failed" {
-		return invalidReserved("reserved generic error has invalid message")
+	if err := validateTemporalMessage(appErr.Message()); err != nil {
+		return invalidReserved("reserved generic error message: %v", err)
 	}
 	var details genericErrorDetails
 	if err := decodeApplicationDetails(appErr, &details); err != nil {
@@ -535,6 +576,12 @@ func classifyGenericApplication(appErr *temporal.ApplicationError) classificatio
 	}
 	if err := validateGenericDetails(details); err != nil {
 		return invalidReserved("reserved generic error details: %v", err)
+	}
+	if details.Version == genericDiagnosticVersion && !utf8.ValidString(appErr.Message()) {
+		return invalidReserved("reserved generic diagnostic message is not valid UTF-8")
+	}
+	if details.Version == genericErrorDetailsVersion && appErr.Message() != "operation failed" {
+		return invalidReserved("reserved generic error has invalid legacy message")
 	}
 	if appErr.NonRetryable() == details.Retryable {
 		return invalidReserved(
@@ -545,6 +592,7 @@ func classifyGenericApplication(appErr *temporal.ApplicationError) classificatio
 	}
 	return classification{
 		kind:        errorKindGeneric,
+		generic:     details,
 		application: appErr,
 	}
 }
@@ -562,13 +610,16 @@ func decodeApplicationDetails(appErr *temporal.ApplicationError, target any) (er
 
 // wrapGeneric converts an ordinary failure into a bounded framework envelope.
 func wrapGeneric(err error, originalType string, retryable bool) error {
-	message := errorevidence.Text(err)
-	//nolint:errorlint // Exact application errors expose their owned message separately from Error formatting.
+	diagnostic := errorevidence.Text(err)
+	message := diagnostic
+	// The detail field keeps its existing owned-message meaning; only the
+	// outer v2 diagnostic includes the application's rendered causal text.
+	//nolint:errorlint // Only a direct application error owns this message field.
 	if appErr, ok := err.(*temporal.ApplicationError); ok {
 		message = appErr.Message()
 	}
 	details := genericErrorDetails{
-		Version:      genericErrorDetailsVersion,
+		Version:      genericDiagnosticVersion,
 		OriginalType: saveBoundedText("application_type", originalType, maxGenericErrorTypeBytes),
 		Message:      saveBoundedText("message", message, maxGenericErrorMessageBytes),
 		Retryable:    retryable,
@@ -578,13 +629,13 @@ func wrapGeneric(err error, originalType string, retryable bool) error {
 	}
 	if retryable {
 		return temporal.NewApplicationError(
-			"operation failed",
+			errorevidence.BoundedMessage(diagnostic),
 			genericErrorApplicationType,
 			details,
 		)
 	}
 	return temporal.NewNonRetryableApplicationError(
-		"operation failed",
+		errorevidence.BoundedMessage(diagnostic),
 		genericErrorApplicationType,
 		nil,
 		details,
@@ -594,7 +645,7 @@ func wrapGeneric(err error, originalType string, retryable bool) error {
 // validateGenericDetails rejects forged generic envelopes and enforces their
 // serialized size independently of Temporal's outer failure encoding.
 func validateGenericDetails(details genericErrorDetails) error {
-	if details.Version != genericErrorDetailsVersion {
+	if details.Version != genericErrorDetailsVersion && details.Version != genericDiagnosticVersion {
 		return fmt.Errorf("unsupported version %q", details.Version)
 	}
 	if err := validateBoundedText("application_type", details.OriginalType, maxGenericErrorTypeBytes); err != nil {
@@ -620,7 +671,7 @@ func validateGenericDetails(details genericErrorDetails) error {
 // providerDetails projects one validated provider error into Temporal details.
 func providerDetails(providerErr *model.ProviderError) providerErrorDetails {
 	return providerErrorDetails{
-		Version:    providerErrorDetailsVersion,
+		Version:    providerDiagnosticVersion,
 		Provider:   saveBoundedText("provider", providerErr.Provider(), maxProviderBytes),
 		Operation:  saveBoundedText("operation", providerErr.Operation(), maxProviderOperationBytes),
 		HTTPStatus: providerErr.HTTPStatus(),
@@ -635,7 +686,7 @@ func providerDetails(providerErr *model.ProviderError) providerErrorDetails {
 // validateProviderDetails rejects any persisted shape that was not produced by
 // providerDetails, including forged or partial oversized-value evidence.
 func validateProviderDetails(details providerErrorDetails) error {
-	if details.Version != providerErrorDetailsVersion {
+	if details.Version != providerErrorDetailsVersion && details.Version != providerDiagnosticVersion {
 		return fmt.Errorf("unsupported version %q", details.Version)
 	}
 	if err := validateBoundedText("provider", details.Provider, maxProviderBytes); err != nil {

@@ -20,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -947,8 +948,8 @@ func preparePlannerPublicationBatch(
 	return records, nil
 }
 
-// boundedOutputContractError reconstructs one fixed-size terminal error from
-// the fingerprints returned by the planner activity.
+// boundedOutputContractError reconstructs a classified rejection from saved
+// diagnostic text. Historical records retain their exact hash-only behavior.
 func boundedOutputContractError(failure *OutputContractFailure) error {
 	if err := validateOutputContractFailure(failure); err != nil {
 		return err
@@ -958,11 +959,23 @@ func boundedOutputContractError(failure *OutputContractFailure) error {
 		failure.ReasonSHA256,
 		failure.ReasonSize,
 	)
+	if failure.ReasonVersion == errorevidence.ReasonVersion {
+		if failure.ReasonOmitted == "" {
+			cause = errors.New(failure.Reason)
+		} else {
+			cause = fmt.Errorf("rejection reason omitted (%s; reason_sha256=%s reason_size=%d)",
+				failure.ReasonOmitted, failure.ReasonSHA256, failure.ReasonSize)
+		}
+	}
 	origin := planner.OutputContractOriginModel
 	if failure.Origin == planner.OutputContractOriginPlanner {
 		origin = planner.OutputContractOriginPlanner
 	}
-	return outputcontract.NewWithOrigin(cause, origin)
+	classified := outputcontract.NewWithOrigin(cause, origin)
+	if failure.ReasonVersion == errorevidence.ReasonVersion {
+		return fmt.Errorf("%w: %s", classified, cause.Error())
+	}
+	return classified
 }
 
 // validateOutputContractFailure checks the complete activity-to-workflow
@@ -970,6 +983,9 @@ func boundedOutputContractError(failure *OutputContractFailure) error {
 func validateOutputContractFailure(failure *OutputContractFailure) error {
 	if failure == nil {
 		return errors.New("completed output was rejected without failure metadata")
+	}
+	if err := errorevidence.ValidateReason(failure.ReasonVersion, failure.Reason, failure.ReasonOmitted, failure.ReasonSHA256, failure.ReasonSize); err != nil {
+		return fmt.Errorf("completed output has invalid diagnostic reason: %w", err)
 	}
 	validOrigin := failure.Origin == planner.OutputContractOriginModel ||
 		failure.Origin == planner.OutputContractOriginPlanner
@@ -1052,7 +1068,7 @@ func plannerOutputRejectionEvent(
 	failure *OutputContractFailure,
 ) (hooks.Event, error) {
 	if failure.Origin == planner.OutputContractOriginModel {
-		return hooks.NewModelOutputRejectedEvent(
+		event, err := hooks.NewModelOutputRejectedEvent(
 			input.RunID,
 			input.AgentID,
 			input.RunContext.SessionID,
@@ -1064,14 +1080,24 @@ func plannerOutputRejectionEvent(
 			failure.ModelResponseSHA256,
 			failure.ModelResponseSize,
 		)
+		if err != nil {
+			return nil, err
+		}
+		event.ReasonVersion, event.Reason, event.ReasonOmitted = failure.ReasonVersion, failure.Reason, failure.ReasonOmitted
+		return event, nil
 	}
-	return hooks.NewPlannerOutputRejectedEvent(
+	event, err := hooks.NewPlannerOutputRejectedEvent(
 		input.RunID,
 		input.AgentID,
 		input.RunContext.SessionID,
 		failure.ReasonSHA256,
 		failure.ReasonSize,
 	)
+	if err != nil {
+		return nil, err
+	}
+	event.ReasonVersion, event.Reason, event.ReasonOmitted = failure.ReasonVersion, failure.Reason, failure.ReasonOmitted
+	return event, nil
 }
 
 // publishPlannerPublicationBatch sends the exact immutable planner publication

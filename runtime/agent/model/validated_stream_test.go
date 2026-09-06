@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/internal/modelcall"
@@ -384,7 +385,7 @@ func TestValidatedStreamRetainsImmutableToolCallEvidence(t *testing.T) {
 	require.JSONEq(t, `{"query":"original"}`, string(response.Content[0].Parts[0].(ToolUsePart).Input))
 }
 
-func TestNestedValidatedStreamGeneratedCorrectionRetainsUsageWithoutExposingResponse(t *testing.T) {
+func TestNestedValidatedStreamGeneratedCorrectionRetainsPrivateEvidence(t *testing.T) {
 	call := ToolCall{
 		Name:    "catalog.lookup",
 		Payload: []byte(`{"query":42,"private":"submitted-secret"}`),
@@ -445,15 +446,39 @@ func TestNestedValidatedStreamGeneratedCorrectionRetainsUsageWithoutExposingResp
 	require.Len(t, observer.observations, 1)
 	observation := observer.observations[0]
 	require.Nil(t, observation.Chunk)
-	require.Nil(t, observation.Response)
+	require.NotNil(t, observation.Response)
+	assert.Equal(t, raw.response.Content[0].Parts, observation.Response.Content[0].Parts)
 	require.True(t, observation.ResponseEvidence.Present)
 	require.NotEmpty(t, observation.ResponseEvidence.SHA256)
 	require.Nil(t, observation.RejectedUsageDelta)
 	require.Equal(t, &usage, observation.RejectedUsageTotal)
 	require.NotContains(t, observation.Err.Error(), "submitted-secret")
+	var observedErr *OutputValidationError
+	require.ErrorAs(t, observation.Err, &observedErr)
+	var codecErr *tools.ValidationError
+	require.ErrorAs(t, observation.Err, &codecErr)
+	require.ErrorContains(t, codecErr, "secret-value")
+	assert.Equal(t, EvidenceForResponse(raw.response), outputErr.Evidence())
+	rejected, cloneErr := observedErr.RejectedResponse()
+	require.NoError(t, cloneErr)
+	require.NotNil(t, rejected)
+	assert.Equal(t, raw.response.Content[0].Parts, rejected.Content[0].Parts)
+	// Neither provider mutation nor a diagnostic reader may change another
+	// reader's copy of the rejected response.
+	rejected.Content[0].Parts[0].(ToolUsePart).Input[0] = '['
+	observation.Response.Content[0].Parts[0].(ToolUsePart).Input[0] = '['
+	raw.response.Content[0].Parts[0].(ToolUsePart).Input[0] = '['
+	again, cloneErr := outputErr.RejectedResponse()
+	require.NoError(t, cloneErr)
+	assert.Equal(t, byte('{'), again.Content[0].Parts[0].(ToolUsePart).Input[0])
 	secondChunk, secondErr := stream.Recv()
 	require.Nil(t, secondChunk)
 	require.ErrorIs(t, secondErr, outputErr)
+	require.NoError(t, stream.Close())
+	require.NoError(t, stream.Close())
+	assert.Equal(t, 1, raw.closeCalls)
+	assert.Equal(t, 1, observer.closeCalls)
+	assert.Len(t, observer.observations, 1)
 }
 
 func TestValidatedStreamDiscardsCompletedToolCallAfterLaterProviderRejection(t *testing.T) {

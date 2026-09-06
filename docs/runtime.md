@@ -1432,6 +1432,32 @@ advertised-schema rejection or a non-nil
 `*tools.ValidationError`; one internal cause makes the combined error terminal.
 The runtime still enforces its configured recovery-turn limit.
 
+Local callers can inspect the original tool-input validator error through
+`errors.As` and `errors.Is`, including recognized errors inside wrappers or
+joined errors. `OutputValidationError.Error()` and `RecoveryCorrection()` keep
+their existing summaries and guidance; they do not render the private cause.
+Formatting the underlying validator or malformed-argument error includes the
+original diagnostic after its existing summary prefix. Applications can record
+that cause directly without walking its error tree. Direct callers that format
+these underlying errors now receive more detail; no public type, wire field,
+restoration rule, or numeric limit changes.
+`RejectedResponse()` returns an independent copy of the rejected response when
+the response passed the existing checks required for bounded copying. This
+includes errors with correction guidance. A response that could not be copied
+safely, or a provider translation failure with no complete response, still has
+no rejected response to return.
+
+This access does not accept rejected output: unary calls return no successful
+response, and streams still withhold invalid tool calls and return no successful
+final response. Stream observers can inspect an independent rejected response
+copy alongside the rejection error, as defined by `StreamObservation.Response`.
+The application decides whether and where to record private diagnostics and how
+long to retain them. The existing remote-error restoration contract, public
+summary, and built-in response capture remain unchanged. This change enables no
+logging or message-capture switch and adds no automatic rejected-body capture.
+Applications already recording the underlying error now receive the original
+diagnostic in that error's text.
+
 ---
 
 ## Streaming Planners
@@ -3455,6 +3481,87 @@ Failures are structured:
   - `retryable`: whether retrying may succeed without changing input
   - `error`: **user-safe** message suitable for direct display
   - `debug_error`: raw error string for logs/diagnostics (not for UI)
+
+### Diagnostic ownership and transport
+
+Applications decide what their instrumentation stores and exposes. The runtime
+passes the original error object to the application-supplied tracer; it does not
+replace that object with a failure category. Existing tool spans pass the
+`ToolError` owned by the completed hook event, including its nested `Cause`.
+Its normal `Error()` string and span status contain the top-level message. A
+custom tracer may inspect the causes without changing model-facing wording.
+
+The `planner.plan_start` and `planner.plan_resume` spans include runtime result
+validation and preparation for workflow transport. They record a rejected
+planner operation even when the activity returns a successful transport value
+containing failure metadata. The original error is retained locally until the
+span records it once, before the activity returns to its engine. Temporal
+activity wrappers also offer their original returned errors to the configured
+engine tracer on the existing activity span, before error conversion. Workflow
+replay does not emit these activity diagnostics. Cancellation keeps its existing
+non-failure treatment.
+
+New `OutputContractFailure`, `ModelOutputRejected`, and `PlannerOutputRejected`
+records carry `ReasonVersion="goa_ai.rejection_reason.v1"`. `Reason` contains
+the exact selected cause text identified by the existing `ReasonSHA256` and
+`ReasonSize` when that text is valid UTF-8 and at most **3,072 bytes**, inclusive.
+Otherwise `Reason` is empty and `ReasonOmitted` is `size_limit` for larger text,
+or `invalid_utf8` for invalid bytes within the allocation. Size takes precedence
+when both apply. Retained text has an empty omission value. An empty reason with
+size zero and the empty-text digest is valid retained text. Readers validate
+the version, closed omission values, size, and canonical fingerprint; the
+invalid-encoding classification is the writer's assertion because the omitted
+bytes cannot be reconstructed from their digest.
+The fingerprint still covers the original selected text, not a new rendering of
+an arbitrary error graph. Diagnostic text never becomes correction guidance or
+an accepted model response. Failure classification, retryability, publication
+order, token accounting, and recovery budgets are unchanged. After assistant
+text has been published, the failure's internal `DebugMessage` is retained
+within the same allocation instead of being unconditionally replaced by a hash.
+
+Temporal generic/provider v2 envelopes preserve the bounded original rendered
+error text in the outer message. A known output-contract error uses its owned
+cause; when that cause is directly a model validation error, it uses that
+validation error's diagnostic cause. The runtime does not search arbitrary
+wrapped or joined graphs to choose a different owner. Provider fields retain
+their previous meanings; a reconstructed provider cause contains diagnostic
+text, not the original SDK error object. Custom application details and native
+cause structure are available to the application tracer before conversion but
+are not serialized by this contract. Actual retention depends on the application's
+instrumentation, not on a framework guarantee of another full copy.
+
+Direct Temporal envelopes remain idempotent. Wrapping a current generic
+envelope with new context retains that rendered context while preserving its
+validated detail fields and retryability. Nested legacy generic envelopes keep
+their historical message. The new outer diagnostic and rejection reason never
+silently replace invalid bytes. Existing bounded structured detail fields keep
+their prior encoding behavior, including JSON replacement of invalid UTF-8;
+they are not promised as an exact arbitrary-byte copy of the original error.
+
+The existing **3,072-byte outer-message allocation**, **4,096-byte serialized
+detail allocation**, field bounds, and error-classification graph bounds remain
+unchanged. Oversized or invalid UTF-8 outer diagnostic text becomes an explicit
+omission notice naming the reason, original digest, and byte count. On the
+planner/activity paths described above, the original object has already been
+offered to the application tracer. Errors created in workflow code are converted
+without emitting replay-time telemetry; no original-object capture is promised
+for those errors. These are framework transport allocations, not claims
+about a deployment's configured Temporal maximum or a run-wide diagnostic
+limit. A run may contain many individually bounded failures. Whole activity
+payloads remain subject to the existing 1 MiB limit.
+
+**Worker upgrade restriction:** new workers accept legacy hash-only rejection
+records and private v1 Temporal envelopes. Legacy replay does not add reason
+text, change old rejection publication bytes, or invent discarded causes.
+Unknown versions and mixed reason/fingerprint combinations are rejected. Old
+workers use strict decoding and cannot consume the new planner fields. Do not
+deploy new writers onto a task queue with incompatible old readers. Use a
+verified worker-versioning or drain-and-replacement procedure before rollout;
+none is supplied by this code change. Rollback must retain workers capable of
+reading every format already written. Legacy decoders remain required while any
+retained run records or Temporal histories contain old forms. Remove them only
+after verified retirement or migration of all such records and histories, not
+merely after replacing workers.
 
 ## Policy Enforcement
 

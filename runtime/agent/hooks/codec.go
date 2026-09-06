@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -124,6 +125,26 @@ func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, 
 func EncodeRecordPayload(evt Event) (rawjson.Message, error) {
 	if evt == nil {
 		return nil, errors.New("encode hook payload: event is nil")
+	}
+	switch e := evt.(type) {
+	case *ModelOutputRejectedEvent:
+		if e.ReasonVersion == errorevidence.ReasonVersion {
+			if err := validateReasonFingerprint(e.ReasonSHA256, e.ReasonSize); err != nil {
+				return nil, fmt.Errorf("encode model rejection fingerprint: %w", err)
+			}
+		}
+		if err := errorevidence.ValidateReason(e.ReasonVersion, e.Reason, e.ReasonOmitted, e.ReasonSHA256, e.ReasonSize); err != nil {
+			return nil, fmt.Errorf("encode model rejection reason: %w", err)
+		}
+	case *PlannerOutputRejectedEvent:
+		if e.ReasonVersion == errorevidence.ReasonVersion {
+			if err := validateReasonFingerprint(e.ReasonSHA256, e.ReasonSize); err != nil {
+				return nil, fmt.Errorf("encode planner rejection fingerprint: %w", err)
+			}
+		}
+		if err := errorevidence.ValidateReason(e.ReasonVersion, e.Reason, e.ReasonOmitted, e.ReasonSHA256, e.ReasonSize); err != nil {
+			return nil, fmt.Errorf("encode planner rejection reason: %w", err)
+		}
 	}
 	var payload rawjson.Message
 	switch e := evt.(type) {
@@ -402,9 +423,12 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		evt = NewUsageEvent(input.RunID, input.AgentID, input.SessionID, p.TokenUsage)
 
 	case ModelOutputRejected:
-		var p ModelOutputRejectedEvent
-		if err := json.Unmarshal(input.Payload, &p); err != nil {
+		p, err := decodeRecordPayload[ModelOutputRejectedEvent](input.Payload)
+		if err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ModelOutputRejected, err)
+		}
+		if err := errorevidence.ValidateReason(p.ReasonVersion, p.Reason, p.ReasonOmitted, p.ReasonSHA256, p.ReasonSize); err != nil {
+			return nil, fmt.Errorf("decode model rejection reason: %w", err)
 		}
 		rejected, err := NewModelOutputRejectedEvent(
 			input.RunID,
@@ -421,12 +445,16 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ModelOutputRejected, err)
 		}
+		rejected.ReasonVersion, rejected.Reason, rejected.ReasonOmitted = p.ReasonVersion, p.Reason, p.ReasonOmitted
 		evt = rejected
 
 	case PlannerOutputRejected:
-		var p PlannerOutputRejectedEvent
-		if err := json.Unmarshal(input.Payload, &p); err != nil {
+		p, err := decodeRecordPayload[PlannerOutputRejectedEvent](input.Payload)
+		if err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", PlannerOutputRejected, err)
+		}
+		if err := errorevidence.ValidateReason(p.ReasonVersion, p.Reason, p.ReasonOmitted, p.ReasonSHA256, p.ReasonSize); err != nil {
+			return nil, fmt.Errorf("decode planner rejection reason: %w", err)
 		}
 		rejected, err := NewPlannerOutputRejectedEvent(
 			input.RunID,
@@ -438,6 +466,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", PlannerOutputRejected, err)
 		}
+		rejected.ReasonVersion, rejected.Reason, rejected.ReasonOmitted = p.ReasonVersion, p.Reason, p.ReasonOmitted
 		evt = rejected
 
 	default:

@@ -98,7 +98,12 @@ func TestRunLoopRecoversMalformedStreamedToolCallBeforeExecution(t *testing.T) {
 				require.NotContains(t, err.Error(), "submitted-secret")
 				rejected, cloneErr := validationErr.RejectedResponse()
 				require.NoError(t, cloneErr)
-				require.Nil(t, rejected)
+				require.NotNil(t, rejected)
+				rejectedCalls := rejected.ToolCalls()
+				require.Len(t, rejectedCalls, 1)
+				assert.Equal(t, "stream-call", rejectedCalls[0].ID)
+				assert.Equal(t, lookup.Name, rejectedCalls[0].Name)
+				assert.JSONEq(t, `{"query":42,"privateSecret":"submitted-secret"}`, string(rejectedCalls[0].Payload))
 				return nil, err
 			}
 			require.Len(t, summary.ToolCalls, 1)

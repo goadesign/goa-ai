@@ -17,10 +17,10 @@ func NewMalformedToolArgumentsError(cause error) error {
 	return &malformedToolArgumentsError{cause: cause}
 }
 
-// Error describes the contract failure without rendering provider argument
-// bytes or adapter diagnostics.
+// Error includes the original parsing diagnostic after the failure summary.
+// OutputValidationError still presents its separate public summary.
 func (e *malformedToolArgumentsError) Error() string {
-	return "model tool arguments are not valid JSON"
+	return "model tool arguments are not valid JSON: " + e.cause.Error()
 }
 
 // Unwrap preserves the provider adapter's private cause for in-process

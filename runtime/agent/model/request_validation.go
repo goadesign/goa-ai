@@ -33,8 +33,8 @@ type (
 
 	// OutputValidationError reports provider output that failed the immutable
 	// contract captured before inference began. Kind names the first rejecting
-	// check. The error retains only bounded response identity plus an optional
-	// framework-owned rejected response.
+	// check. Callers can inspect the original cause and, when bounded copying
+	// succeeded, an isolated copy of the rejected response.
 	OutputValidationError struct {
 		kind       OutputValidationKind
 		cause      error
@@ -62,12 +62,12 @@ type (
 		contract *RequestContract
 	}
 
-	// toolCallValidationError carries framework-authored correction guidance
-	// without retaining the generated codec message, which may quote rejected
-	// provider values.
+	// toolCallValidationError keeps the original validator error available to
+	// callers while presenting separate correction guidance to the model.
 	toolCallValidationError struct {
 		toolName   tools.Ident
 		correction string
+		cause      error
 	}
 )
 
@@ -238,8 +238,9 @@ func (e *OutputValidationError) Evidence() ResponseEvidence {
 	return e.evidence
 }
 
-// RejectedResponse returns an isolated copy of an optional terminal rejection.
-// Recoverable tool-call errors never retain their rejected response.
+// RejectedResponse returns an isolated copy of the rejected response when it
+// passed the checks required for bounded copying. Correction guidance does not
+// remove this private evidence or make the rejected response successful.
 func (e *OutputValidationError) RejectedResponse() (*Response, error) {
 	return cloneResponseForValidation(e.rejected)
 }
@@ -628,6 +629,7 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 				return &toolCallValidationError{
 					toolName:   call.Name,
 					correction: toolInputCorrection(err, call.Payload, fields),
+					cause:      err,
 				}
 			}
 			return nil
@@ -691,14 +693,19 @@ func validateConfiguredToolCalls(
 	return nil
 }
 
-// Error reports which advertised tool contract rejected the call without
-// retaining the validator message or provider arguments.
+// Error names the rejected tool contract and includes the original validator
+// message for callers inspecting the cause of OutputValidationError.
 func (e *toolCallValidationError) Error() string {
-	return fmt.Sprintf("model tool %q payload failed its request contract", e.toolName)
+	return fmt.Sprintf("model tool %q payload failed its request contract: %s", e.toolName, e.cause.Error())
 }
 
-// modelRecoveryCorrection gives OutputValidationError the bounded safe
-// guidance derived before the rejected payload leaves validation.
+// Unwrap lets callers inspect the exact validator error that rejected the call.
+func (e *toolCallValidationError) Unwrap() error {
+	return e.cause
+}
+
+// modelRecoveryCorrection gives OutputValidationError the bounded guidance
+// derived from the advertised input contract, separate from the private cause.
 func (e *toolCallValidationError) modelRecoveryCorrection() string {
 	return e.correction
 }
@@ -859,9 +866,6 @@ func newOutputValidationError(
 		panic("model: malformed tool arguments require the tool_arguments validation kind")
 	}
 	correction := recoveryCorrectionFromError(cause)
-	if correction != "" {
-		rejected = nil
-	}
 	return &OutputValidationError{
 		kind:       kind,
 		cause:      cause,
