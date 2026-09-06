@@ -1515,6 +1515,11 @@ to either source before assigning the value. The complete contract lives in
 
 ### Pagination Ownership
 
+For a truncated result without a next-page cursor, the bounds reminder distinguishes
+disclosing an incomplete view from supporting claims about omitted items: a partial-answer
+disclaimer supplies no missing evidence. This guidance leaves the original
+result, counts, refinement hint, and the model's next-action choice unchanged.
+
 Pagination metadata names both the result cursor and, when appropriate, a
 dedicated continuation tool. `ContinueWith` is the canonical contract when an
 opaque cursor already contains the resolved query: the originating tool has no
