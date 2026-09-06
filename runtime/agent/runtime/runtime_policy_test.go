@@ -87,9 +87,17 @@ func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 		ResumeActivityName:  "resume",
 	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 5}), time.Time{}, time.Time{}, "turn-1", nil)
 	require.NoError(t, err)
-	require.Len(t, out.ToolEvents, 2)
-	require.Equal(t, tools.Ident("allowed"), out.ToolEvents[0].Name)
-	require.Equal(t, tools.ToolUnavailable, out.ToolEvents[1].Name)
+	require.Equal(t, 2, out.ToolCount)
+	results := storedToolResults(t, rt, input.RunID)
+	require.Len(t, results, 2)
+	resultNames := make(map[string]tools.Ident, len(results))
+	for _, result := range results {
+		resultNames[result.ToolCallID] = result.ToolName
+	}
+	require.Equal(t, map[string]tools.Ident{
+		"allowed-call": "allowed",
+		"blocked-call": tools.ToolUnavailable,
+	}, resultNames)
 	var scheduled []tools.Ident
 	for _, evt := range recorder.events {
 		if e, ok := evt.(*hooks.ToolCallScheduledEvent); ok {
@@ -276,7 +284,7 @@ func TestRestrictedRunRecoveryCapFinalizes(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.Final)
-	require.Len(t, out.ToolEvents, 1)
+	require.Equal(t, 1, out.ToolCount)
 	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
 	require.Equal(t, planner.TerminationReasonRecoveryCap, wfCtx.lastPlannerCall.Input.Finalize.Reason)
 }

@@ -161,11 +161,17 @@ func (l *workflowLoop) suspendCheckpointRun(batch stepBatch, confirmations []con
 		Pending:       pending,
 		RequiredTools: requiredTools,
 	}
+	toolCount, toolTelemetry, err := completedToolStats(l.st.ToolEvents)
+	if err != nil {
+		return nil, err
+	}
 	return &RunOutput{
-		AgentID:    l.input.AgentID,
-		RunID:      l.input.RunID,
-		Suspension: suspension,
-		Usage:      &l.st.AggUsage,
+		AgentID:       l.input.AgentID,
+		RunID:         l.input.RunID,
+		Suspension:    suspension,
+		Usage:         &l.st.AggUsage,
+		ToolCount:     toolCount,
+		ToolTelemetry: toolTelemetry,
 	}, nil
 }
 

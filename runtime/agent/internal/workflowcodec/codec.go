@@ -81,6 +81,7 @@ func NewDataConverter() converter.DataConverter {
 	return &dataConverter{
 		inner: converter.NewCompositeDataConverter(
 			converter.NewNilPayloadConverter(),
+			&runOutputPayloadConverter{},
 			converter.NewByteSlicePayloadConverter(),
 			converter.NewProtoPayloadConverter(),
 			converter.NewProtoJSONPayloadConverter(),
@@ -127,6 +128,9 @@ func (c *dataConverter) FromPayload(payload *commonpb.Payload, valuePtr any) err
 	if raw, ok := valuePtr.(*converter.RawValue); ok {
 		*raw = converter.NewRawValue(copyPayload(payload))
 		return nil
+	}
+	if string(payload.Metadata[converter.MetadataEncoding]) == converter.MetadataEncodingJSON && isRunOutputType(reflect.TypeOf(valuePtr)) {
+		return decodeLegacyRunOutput(payload, valuePtr)
 	}
 	return c.inner.FromPayload(payload, valuePtr)
 }

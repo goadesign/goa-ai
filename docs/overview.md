@@ -1097,11 +1097,15 @@ of requiring callers to parse error text.
 
 `runLoop` returns `*runtime.RunOutput` containing:
 
-- `Final` (the assistant's `*model.Message`)
-- `ToolEvents` (all tool results in execution order)
+- `Final` (the assistant's `*model.Message`) or `FinalToolResult` (the successful terminal tool), or `Suspension` when external input is required
+- `ToolCount` and combined `ToolTelemetry` for the complete invocation
 - `Notes` and aggregated `Usage`
 
-The runtime sets final status and returns to the client.
+The runtime validates the exact workflow result before storing success or
+suspension. Full tool results and failures remain readable through the existing
+paged `Runtime.ListRunEvents` API, not a second copy in the workflow result.
+See [workflow completion and saved-result upgrades](workflow-results.md) for
+the caller and retained-history contract.
 
 ---
 

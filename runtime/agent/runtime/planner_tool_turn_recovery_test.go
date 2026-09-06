@@ -98,7 +98,7 @@ func TestRunLoopRecoversRejectedStreamedToolCallTurn(t *testing.T) {
 	assert.Equal(t, 2, providerCalls)
 	assert.Equal(t, 3, resumes)
 	assert.Equal(t, 1, loadCalls)
-	assert.Len(t, out.ToolEvents, 2)
+	assert.Equal(t, 2, out.ToolCount)
 	require.NotNil(t, out.Usage)
 	assert.Equal(t, 30, out.Usage.TotalTokens)
 }
@@ -161,7 +161,7 @@ func TestRunLoopFinalizesWhenRejectedToolCallTurnsExhaustRecoveryBudget(t *testi
 	assert.Equal(t, 2, providerCalls)
 	assert.Equal(t, 3, resumes)
 	assert.Zero(t, loadCalls)
-	assert.Len(t, out.ToolEvents, 1)
+	assert.Equal(t, 1, out.ToolCount)
 	require.NotNil(t, out.Usage)
 	assert.Equal(t, 30, out.Usage.TotalTokens)
 }

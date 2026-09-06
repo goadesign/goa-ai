@@ -42,9 +42,12 @@ func TestCompletionToolSuccessEndsRunWithoutPlannerResume(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	assert.Nil(t, out.Final)
-	assert.Len(t, out.ToolEvents, 1)
-	assert.Equal(t, completion.Name, out.ToolEvents[0].Name)
-	assert.Same(t, out.ToolEvents[0], out.FinalToolResult)
+	assert.Equal(t, 1, out.ToolCount)
+	require.NotNil(t, out.FinalToolResult)
+	assert.Equal(t, completion.Name, out.FinalToolResult.Name)
+	assert.Equal(t, "persist-success", out.FinalToolResult.ToolCallID)
+	assert.JSONEq(t, `{"ok":true}`, string(out.FinalToolResult.Result))
+	assert.Nil(t, out.FinalToolResult.Failure)
 	assert.Zero(t, resumes)
 }
 
@@ -77,8 +80,13 @@ func TestCompletionToolFailureCanBeCorrected(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	assert.Nil(t, out.Final)
-	assert.Len(t, out.ToolEvents, 2)
-	assert.Same(t, out.ToolEvents[1], out.FinalToolResult)
+	assert.Equal(t, 2, out.ToolCount)
+	require.NotNil(t, out.FinalToolResult)
+	results := storedToolResults(t, h.runtime, h.input.RunID)
+	require.Len(t, results, 2)
+	assert.Equal(t, results[1].ToolCallID, out.FinalToolResult.ToolCallID)
+	assert.Equal(t, results[1].ToolName, out.FinalToolResult.Name)
+	assert.Equal(t, results[1].ResultJSON, out.FinalToolResult.Result)
 	assert.Equal(t, 1, resumes)
 }
 

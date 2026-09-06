@@ -1429,12 +1429,15 @@ func TestOverridePolicyRejectsNegativeRecoveryTurns(t *testing.T) {
 
 func TestConvertRunOutputToToolResult(t *testing.T) {
 	t.Run("aggregates_telemetry_without_error", func(t *testing.T) {
+		count, combined, err := completedToolStats([]*planner.ToolResult{
+			{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 10, DurationMs: 100, Model: "m1"}},
+			{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 5, DurationMs: 50, Model: "m1"}},
+		})
+		require.NoError(t, err)
 		out := RunOutput{
-			Final: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
-			ToolEvents: []*api.ToolEvent{
-				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 10, DurationMs: 100, Model: "m1"}},
-				{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 5, DurationMs: 50, Model: "m1"}},
-			},
+			Final:         &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
+			ToolCount:     count,
+			ToolTelemetry: combined,
 		}
 		tr, err := ConvertRunOutputToToolResult("parent.tool", &out)
 		require.NoError(t, err)
@@ -1446,12 +1449,15 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 		require.Equal(t, "final", tr.Result)
 	})
 	t.Run("keeps_historical_failures_in_child_run", func(t *testing.T) {
+		count, combined, err := completedToolStats([]*planner.ToolResult{
+			{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "e1")},
+			{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "e2")},
+		})
+		require.NoError(t, err)
 		out := RunOutput{
-			Final: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
-			ToolEvents: []*api.ToolEvent{
-				{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "e1")},
-				{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "e2")},
-			},
+			Final:         &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
+			ToolCount:     count,
+			ToolTelemetry: combined,
 		}
 		tr, err := ConvertRunOutputToToolResult("parent.tool", &out)
 		require.NoError(t, err)

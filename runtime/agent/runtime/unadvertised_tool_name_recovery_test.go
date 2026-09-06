@@ -243,8 +243,10 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 	assert.Equal(t, 2, resumes)
 	require.NotNil(t, out.Usage)
 	assert.Equal(t, 7, out.Usage.TotalTokens)
-	require.Len(t, out.ToolEvents, 1)
-	assert.Equal(t, catalog.Name, out.ToolEvents[0].Name)
+	require.Equal(t, 1, out.ToolCount)
+	results := storedToolResults(t, rt, runInput.RunID)
+	require.Len(t, results, 1)
+	assert.Equal(t, catalog.Name, results[0].ToolName)
 	snapshot, err := rt.GetRunSnapshot(t.Context(), runInput.RunID)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, len(snapshot.Transcript), 2)
@@ -328,7 +330,7 @@ func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
 	assert.Equal(t, 2, modelCalls)
 	require.NotNil(t, out.Usage)
 	assert.Equal(t, 14, out.Usage.TotalTokens)
-	assert.Empty(t, out.ToolEvents)
+	assert.Zero(t, out.ToolCount)
 }
 
 // repeatedUnadvertisedToolCall asks the configured model to choose from the

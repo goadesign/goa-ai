@@ -28,7 +28,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
@@ -896,8 +895,8 @@ func filterToolCalls(calls []ToolCall, allowed []tools.Ident) []ToolCall {
 // planner.ToolResult suitable for returning from an agent-as-tool executor.
 //
 // The final assistant message content is extracted as the tool result payload (string).
-// Telemetry from all nested tool executions is aggregated into a single ToolTelemetry
-// summary, enabling proper cost/token tracking across agent-as-tool boundaries.
+// The runtime supplies the complete invocation's tool count and telemetry;
+// adapting this result does not load or duplicate the child's diagnostic history.
 //
 // Server data is intentionally NOT projected or merged into the parent tool result.
 // Server data must remain attached to the tool events that produced it so UIs and
@@ -913,48 +912,8 @@ func ConvertRunOutputToToolResult(toolName tools.Ident, output *RunOutput) (plan
 		Name:   toolName,
 		Result: output.Final.Text(),
 	}
-	// Record child count for agent-as-tool detection in the runtime.
-	result.ChildrenCount = len(output.ToolEvents)
-
-	// Aggregate telemetry from all nested tool executions. Historical tool
-	// failures remain in the child run log and do not redefine a successful
-	// final response.
-	if len(output.ToolEvents) > 0 {
-		var totalTokens int
-		var totalDurationMs int64
-		models := make(map[string]struct{})
-
-		for _, event := range output.ToolEvents {
-			if event.Telemetry != nil {
-				if event.Telemetry.TokensUsed < 0 ||
-					event.Telemetry.TokensUsed > int(^uint(0)>>1)-totalTokens {
-					return planner.ToolResult{}, fmt.Errorf("agent-tool %q token telemetry overflows int", toolName)
-				}
-				if event.Telemetry.DurationMs < 0 ||
-					event.Telemetry.DurationMs > int64(^uint64(0)>>1)-totalDurationMs {
-					return planner.ToolResult{}, fmt.Errorf("agent-tool %q duration telemetry overflows int64", toolName)
-				}
-				totalTokens += event.Telemetry.TokensUsed
-				totalDurationMs += event.Telemetry.DurationMs
-				if event.Telemetry.Model != "" {
-					models[event.Telemetry.Model] = struct{}{}
-				}
-			}
-		}
-
-		// Create aggregated telemetry if we collected any data
-		if totalTokens > 0 || totalDurationMs > 0 || len(models) > 0 {
-			result.Telemetry = &telemetry.ToolTelemetry{
-				TokensUsed: totalTokens,
-				DurationMs: totalDurationMs,
-			}
-			if len(models) == 1 {
-				for modelName := range models {
-					result.Telemetry.Model = modelName
-				}
-			}
-		}
-	}
+	result.ChildrenCount = output.ToolCount
+	result.Telemetry = output.ToolTelemetry
 
 	return result, nil
 }

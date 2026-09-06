@@ -278,8 +278,10 @@ func TestCorrectCallRecoveryUsesOnlySavedTool(t *testing.T) {
 	assert.Equal(t, "saved work completed", out.Final.Text())
 	assert.Equal(t, 2, executions)
 	assert.Equal(t, 2, resumes)
-	require.Len(t, out.ToolEvents, 2)
-	assert.NotEqual(t, out.ToolEvents[0].ToolCallID, out.ToolEvents[1].ToolCallID)
+	require.Equal(t, 2, out.ToolCount)
+	results := storedToolResults(t, h.runtime, h.input.RunID)
+	require.Len(t, results, 2)
+	assert.NotEqual(t, results[0].ToolCallID, results[1].ToolCallID)
 	assert.Equal(t, "resume", h.workflow.lastPlannerCall.Name)
 }
 

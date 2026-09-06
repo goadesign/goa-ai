@@ -581,15 +581,12 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 	}
 	out := &RunOutput{
 		FinalToolResult: &api.ToolEvent{
-			Name:   parent.Name,
-			Result: rawjson.Message([]byte(`{"events":["ok"]}`)),
+			Name:      parent.Name,
+			Result:    rawjson.Message([]byte(`{"events":["ok"]}`)),
+			Telemetry: &telemetry.ToolTelemetry{TokensUsed: 3, Model: "terminal"},
 		},
-		ToolEvents: []*api.ToolEvent{
-			{
-				Name:   tools.Ident("test.child"),
-				Result: rawjson.Message([]byte(`"bad"`)),
-			},
-		},
+		ToolCount:     1,
+		ToolTelemetry: &telemetry.ToolTelemetry{TokensUsed: 100, Model: "aggregate"},
 	}
 
 	tr, err := rt.adaptAgentChildOutput(cfg, call, run.Context{RunID: "child-run"}, out)
@@ -601,24 +598,23 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 	require.Equal(t, []string{"ok"}, typed.Events)
 	require.NotNil(t, tr.RunLink)
 	require.Equal(t, "child-run", tr.RunLink.RunID)
+	require.Equal(t, 1, tr.ChildrenCount)
+	require.Equal(t, out.FinalToolResult.Telemetry, tr.Telemetry)
 }
 
 func TestConvertRunOutputToToolResultKeepsTerminalChildFailureHistorical(t *testing.T) {
+	count, combined, err := completedToolStats([]*planner.ToolResult{
+		{Name: "child.correctable", Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "bad call")},
+		{Name: "child.internal", Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "broken")},
+	})
+	require.NoError(t, err)
 	output := &RunOutput{
 		Final: &model.Message{
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: "completed after recovery"}},
 		},
-		ToolEvents: []*api.ToolEvent{
-			{
-				Name:    "child.correctable",
-				Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "bad call"),
-			},
-			{
-				Name:    "child.internal",
-				Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "broken"),
-			},
-		},
+		ToolCount:     count,
+		ToolTelemetry: combined,
 	}
 
 	result, err := ConvertRunOutputToToolResult("parent.agent_tool", output)
@@ -629,17 +625,17 @@ func TestConvertRunOutputToToolResultKeepsTerminalChildFailureHistorical(t *test
 }
 
 func TestConvertRunOutputToToolResultKeepsNonTerminalChildFailuresHistorical(t *testing.T) {
+	count, combined, err := completedToolStats([]*planner.ToolResult{
+		{Name: "child.search", Failure: testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "offline")},
+	})
+	require.NoError(t, err)
 	output := &RunOutput{
 		Final: &model.Message{
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: "completed without the unavailable tool"}},
 		},
-		ToolEvents: []*api.ToolEvent{
-			{
-				Name:    "child.search",
-				Failure: testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "offline"),
-			},
-		},
+		ToolCount:     count,
+		ToolTelemetry: combined,
 	}
 
 	result, err := ConvertRunOutputToToolResult("parent.agent_tool", output)

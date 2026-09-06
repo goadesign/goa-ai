@@ -702,6 +702,18 @@ finalization, and exhausted caps or deadlines cannot substitute for the
 required tool success; those paths fail the run. Do not combine this option with
 `LimitTerminalPlans`, which assigns a different outcome to exhausted limits.
 
+### Workflow Results and Diagnostic History
+
+`RunOutput` returns `Final` or `FinalToolResult`, plus `ToolCount` and combined
+`ToolTelemetry`. Full tool history is read explicitly through the existing
+paged `Runtime.ListRunEvents` API. The runtime validates the exact engine output
+before storing success or suspension; a codec rejection records failure.
+
+This replaces the returned `ToolEvents` slice and introduces an explicitly
+versioned saved-result encoding. Existing suspension v7 checkpoints are
+unchanged. See [workflow completion and saved-result upgrades](docs/workflow-results.md)
+for source migration, strict retained-result reads, deployment, and rollback.
+
 ### External Input and Continuations
 
 Each accepted user input starts one top-level workflow for that turn. The

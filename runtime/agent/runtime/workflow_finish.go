@@ -15,9 +15,11 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/toolstats"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -98,7 +100,7 @@ func (r *Runtime) materializeTerminalPlannerResult(
 		notes[i] = &result.Notes[i]
 	}
 
-	toolEvents, err := r.encodeToolEvents(ctx, state.toolEvents)
+	toolCount, toolTelemetry, err := completedToolStats(state.toolEvents)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +111,8 @@ func (r *Runtime) materializeTerminalPlannerResult(
 		RunID:           base.RunContext.RunID,
 		Final:           finalMsg,
 		FinalToolResult: finalToolResult,
-		ToolEvents:      toolEvents,
+		ToolCount:       toolCount,
+		ToolTelemetry:   toolTelemetry,
 		Notes:           notes,
 		Usage:           &state.usage,
 	}, nil
@@ -131,22 +134,34 @@ func validateTerminalPlanResult(result *PlanResult) error {
 	return nil
 }
 
+// completedToolStats includes restored tool results as well as this workflow's
+// results, without encoding their payloads again or loading diagnostic history.
+func completedToolStats(events []*planner.ToolResult) (int, *telemetry.ToolTelemetry, error) {
+	var stats toolstats.Accumulator
+	for _, event := range events {
+		if err := stats.Add(event.Telemetry); err != nil {
+			return 0, nil, fmt.Errorf("completed tool statistics: %w", err)
+		}
+	}
+	count, combined := stats.Result()
+	return count, combined, nil
+}
+
 // finishAfterSuccessfulToolCompletion completes the run after either a terminal
 // tool batch or the run's required completion tool succeeds. It returns the
-// successful completion result both as FinalToolResult and in the ordered tool
-// history without publishing an assistant message or requesting another planner
-// turn.
+// successful completion result as FinalToolResult without copying earlier tool
+// results, publishing an assistant message, or requesting another planner turn.
 func (r *Runtime) finishAfterSuccessfulToolCompletion(
 	ctx context.Context,
 	input *RunInput,
 	base *planner.PlanInput,
 	st *runLoopState,
 ) (*RunOutput, error) {
-	toolEvents, err := r.encodeToolEvents(ctx, st.ToolEvents)
+	toolCount, toolTelemetry, err := completedToolStats(st.ToolEvents)
 	if err != nil {
 		return nil, err
 	}
-	finalToolResult, err := r.successfulCompletionToolEvent(input, toolEvents)
+	finalToolResult, err := r.successfulCompletionToolEvent(ctx, input, st.ToolEvents)
 	if err != nil {
 		return nil, err
 	}
@@ -154,21 +169,22 @@ func (r *Runtime) finishAfterSuccessfulToolCompletion(
 		AgentID:         input.AgentID,
 		RunID:           base.RunContext.RunID,
 		FinalToolResult: finalToolResult,
-		ToolEvents:      toolEvents,
+		ToolCount:       toolCount,
+		ToolTelemetry:   toolTelemetry,
 		Usage:           &st.AggUsage,
 	}, nil
 }
 
 // successfulCompletionToolEvent returns the one successful tool result that
 // ended the run. Earlier ordinary tools and failed completion attempts remain
-// only in ToolEvents; multiple successful completion results are ambiguous and
+// only in the Store; multiple successful completion results are ambiguous and
 // violate the singular RunOutput contract.
-func (r *Runtime) successfulCompletionToolEvent(input *RunInput, events []*api.ToolEvent) (*api.ToolEvent, error) {
+func (r *Runtime) successfulCompletionToolEvent(ctx context.Context, input *RunInput, events []*planner.ToolResult) (*api.ToolEvent, error) {
 	var completionTool tools.Ident
 	if input.Policy != nil {
 		completionTool = input.Policy.CompletionTool
 	}
-	var final *api.ToolEvent
+	var final *planner.ToolResult
 	for _, event := range events {
 		spec, ok := r.toolSpec(event.Name)
 		if !ok {
@@ -185,7 +201,11 @@ func (r *Runtime) successfulCompletionToolEvent(input *RunInput, events []*api.T
 	if final == nil {
 		return nil, errors.New("completed run is missing its successful terminal tool result")
 	}
-	return final, nil
+	encoded, err := r.encodeToolEvents(ctx, []*planner.ToolResult{final})
+	if err != nil {
+		return nil, err
+	}
+	return encoded[0], nil
 }
 
 // finalToolResultEvent converts the planner-owned final tool-result envelope

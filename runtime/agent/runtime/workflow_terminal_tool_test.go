@@ -85,9 +85,12 @@ func TestRunLoopStopsAfterTerminalTool(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Nil(t, out.Final)
-	require.Len(t, out.ToolEvents, 1)
-	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
-	require.Same(t, out.ToolEvents[0], out.FinalToolResult)
+	require.Equal(t, 1, out.ToolCount)
+	require.NotNil(t, out.FinalToolResult)
+	require.Equal(t, terminalTool.Name, out.FinalToolResult.Name)
+	require.Equal(t, "terminal-call", out.FinalToolResult.ToolCallID)
+	require.JSONEq(t, `{"ok":true}`, string(out.FinalToolResult.Result))
+	require.Nil(t, out.FinalToolResult.Failure)
 	require.NoError(t, validateWorkflowOutput(out, input.AgentID, input.RunID))
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")
 }
@@ -453,8 +456,9 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Nil(t, out.Final)
-	require.Len(t, out.ToolEvents, 1)
-	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
+	require.Equal(t, 1, out.ToolCount)
+	require.NotNil(t, out.FinalToolResult)
+	require.Equal(t, terminalTool.Name, out.FinalToolResult.Name)
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")
 }
 
@@ -529,7 +533,7 @@ func TestRunLoopTerminalResponseBookkeepingExecutesAtBudget(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, final, out.Final)
 	require.Equal(t, 1, executions)
-	require.Len(t, out.ToolEvents, 1)
+	require.Equal(t, 1, out.ToolCount)
 	require.Empty(t, wfCtx.lastPlannerCall.Name)
 }
 
@@ -611,9 +615,11 @@ func TestRunLoopMixedToolCallsUseOwnedDeadlinesAtBudget(t *testing.T) {
 	require.NotNil(t, out)
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
 	require.Equal(t, []tools.Ident{bookkeeping.Name}, executed)
-	require.Len(t, out.ToolEvents, 2)
-	require.Equal(t, planner.FailureTimeout, out.ToolEvents[0].Failure.Kind)
-	require.Nil(t, out.ToolEvents[1].Failure)
+	require.Equal(t, 2, out.ToolCount)
+	results := storedToolResults(t, rt, input.RunID)
+	require.Len(t, results, 2)
+	require.Equal(t, planner.FailureTimeout, results[0].Failure.Kind)
+	require.Nil(t, results[1].Failure)
 }
 
 func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
@@ -682,8 +688,9 @@ func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Nil(t, out.Final)
-	require.Len(t, out.ToolEvents, 1)
-	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
+	require.Equal(t, 1, out.ToolCount)
+	require.NotNil(t, out.FinalToolResult)
+	require.Equal(t, terminalTool.Name, out.FinalToolResult.Name)
 	require.Empty(t, wfCtx.lastPlannerCall.Name, "expected no planner resume/finalization after terminal tool")
 	require.NotNil(t, executed)
 	require.NotContains(t, executed.Labels, FinalizationReasonLabel)
@@ -695,9 +702,10 @@ func TestFinalizeWithPlannerExecutesTerminalToolCall(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.Nil(t, out.Final)
-	require.Len(t, out.ToolEvents, 1)
-	require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
-	require.Equal(t, "terminal-final-call", out.ToolEvents[0].ToolCallID)
+	require.Equal(t, 1, out.ToolCount)
+	require.NotNil(t, out.FinalToolResult)
+	require.Equal(t, terminalTool.Name, out.FinalToolResult.Name)
+	require.Equal(t, "terminal-final-call", out.FinalToolResult.ToolCallID)
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
 	require.NotNil(t, wfCtx.lastPlannerCall.Input.Finalize)
 	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
@@ -807,8 +815,9 @@ func TestFinalizeWithPlannerRecoversRejectedModelOutput(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, out)
 			require.Equal(t, 2, plannerCalls)
-			require.Len(t, out.ToolEvents, 1)
-			require.Equal(t, "terminal-replacement", out.ToolEvents[0].ToolCallID)
+			require.Equal(t, 1, out.ToolCount)
+			require.NotNil(t, out.FinalToolResult)
+			require.Equal(t, "terminal-replacement", out.FinalToolResult.ToolCallID)
 			require.Equal(t, test.totalTokens, out.Usage.TotalTokens)
 		})
 	}
@@ -882,8 +891,9 @@ func TestFinalizeWithPlannerRecoversCorrectableTerminalTool(t *testing.T) {
 	plannerCalls := 0
 	var plannerErr error
 	wfCtx := &routeWorkflowContext{
-		ctx:   context.Background(),
-		runID: "run-1",
+		ctx:         context.Background(),
+		runID:       "run-1",
+		hookRuntime: rt,
 		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
 			"resume": func(_ context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
 				plannerCalls++
@@ -902,7 +912,7 @@ func TestFinalizeWithPlannerRecoversCorrectableTerminalTool(t *testing.T) {
 				}
 				require.Equal(t, []string{"terminal-invalid-evidence"}, input.RecoveryToolCallIDs)
 				return &PlanActivityOutput{
-					PublicationBatchID: testPublicationBatchID,
+					PublicationBatchID: testInitialPublicationBatchID,
 					RecoveryCatalog:    &RecoveryCatalog{Tools: []tools.Ident{terminalTool.Name}},
 					Result: &PlanResult{ToolCalls: []ToolCall{{
 						ToolCallID: "terminal-corrected-evidence",
@@ -943,10 +953,14 @@ func TestFinalizeWithPlannerRecoversCorrectableTerminalTool(t *testing.T) {
 	require.NotNil(t, out)
 	require.Equal(t, 2, plannerCalls)
 	require.Equal(t, 2, executions)
-	require.Len(t, out.ToolEvents, 2)
-	require.NotNil(t, out.ToolEvents[0].Failure)
-	require.Equal(t, planner.RecoveryCorrectCall, out.ToolEvents[0].Failure.Recovery.Action)
-	require.Nil(t, out.ToolEvents[1].Failure)
+	require.Equal(t, 2, out.ToolCount)
+	results := storedToolResults(t, rt, input.RunID)
+	require.Len(t, results, 2)
+	require.NotNil(t, results[0].Failure)
+	require.Equal(t, planner.RecoveryCorrectCall, results[0].Failure.Recovery.Action)
+	require.NotNil(t, results[0].Failure.Error)
+	require.Equal(t, "replace the unknown evidence reference", results[0].Failure.Error.Message)
+	require.Nil(t, results[1].Failure)
 	require.Equal(t, "terminal-corrected-evidence", out.FinalToolResult.ToolCallID)
 }
 
@@ -1035,8 +1049,9 @@ func TestFinalizeWithPlannerTerminalToolUsesRuntimeReason(t *testing.T) {
 
 			require.NoError(t, err)
 			require.NotNil(t, out)
-			require.Len(t, out.ToolEvents, 1)
-			require.Equal(t, terminalTool.Name, out.ToolEvents[0].Name)
+			require.Equal(t, 1, out.ToolCount)
+			require.NotNil(t, out.FinalToolResult)
+			require.Equal(t, terminalTool.Name, out.FinalToolResult.Name)
 			require.NotNil(t, executedLabels)
 			require.Equal(
 				t,
