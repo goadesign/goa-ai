@@ -1421,6 +1421,9 @@ These spans carry conversation ID, agent identity, model request/response
 fields, token usage, finish reasons, and streaming time-to-first-chunk where
 available. Prompt text, chat history, tool arguments, and tool results are not
 recorded by default.
+The Clue tracer preserves span-event values supplied as `string`, `bool`, `int`,
+`int64`, `float64`, or slices of those types, including list order, duplicates,
+and empty lists. This does not enable additional event or message capture.
 Planner call spans also carry the exact advertised tool count and names. The
 clustered registry emits elected per-toolset readiness spans. See the
 [runtime trace contract](docs/runtime.md#registry-and-model-request-traces) for

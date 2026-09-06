@@ -1,3 +1,6 @@
+// Package telemetry connects runtime logging, metrics, and span events to Clue
+// and OpenTelemetry. Span-event values use OpenTelemetry's native constructors
+// so supported scalars and lists keep their values when callers record them.
 package telemetry
 
 import (
@@ -129,7 +132,8 @@ func (s *clueSpan) End(opts ...trace.SpanEndOption) {
 	s.span.End(opts...)
 }
 
-// AddEvent records a span event with the given name and attributes.
+// AddEvent records alternating string keys and attribute values. It preserves
+// string, bool, int, int64, and float64 values and slices of those types.
 func (s *clueSpan) AddEvent(name string, attrs ...any) {
 	s.span.AddEvent(name, trace.WithAttributes(kvSliceToAttrs(attrs)...))
 }
@@ -214,6 +218,16 @@ func kvSliceToAttrs(keyvals []any) []attribute.KeyValue {
 			attrs = append(attrs, attribute.Float64(keyStr, val))
 		case bool:
 			attrs = append(attrs, attribute.Bool(keyStr, val))
+		case []string:
+			attrs = append(attrs, attribute.StringSlice(keyStr, val))
+		case []bool:
+			attrs = append(attrs, attribute.BoolSlice(keyStr, val))
+		case []int:
+			attrs = append(attrs, attribute.IntSlice(keyStr, val))
+		case []int64:
+			attrs = append(attrs, attribute.Int64Slice(keyStr, val))
+		case []float64:
+			attrs = append(attrs, attribute.Float64Slice(keyStr, val))
 		default:
 			// Fallback: convert to string
 			attrs = append(attrs, attribute.String(keyStr, ""))
