@@ -9,7 +9,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -22,9 +21,12 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
+	goagrpc "goa.design/goa/v3/grpc"
 	goa "goa.design/goa/v3/pkg"
 	"goa.design/pulse/streaming"
 	streamopts "goa.design/pulse/streaming/options"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // successfulRegistration supplies a long-lived lease to provider tests whose
@@ -1182,18 +1184,22 @@ func TestJoinProviderStopErrorsClassifiesGeneratedClientCancellation(t *testing.
 	t.Parallel()
 
 	renewalFailure := errors.New("renewal failed")
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	renewalErr := goagrpc.ContextError(ctx, status.Error(codes.Canceled, "registry request canceled"))
+	require.Error(t, renewalErr)
 	t.Run("generated transport cancellation is clean", func(t *testing.T) {
-		renewalErr := fmt.Errorf("rpc error: code = Canceled: %w", context.Canceled)
 		err := joinProviderStopErrors(context.Canceled, renewalErr)
 		require.Equal(t, context.Canceled, err)
 	})
 	t.Run("concurrent renewal failure remains terminal", func(t *testing.T) {
 		err := joinProviderStopErrors(
 			context.Canceled,
-			errors.Join(context.Canceled, renewalFailure),
+			errors.Join(renewalErr, renewalFailure),
 		)
 		require.ErrorIs(t, err, context.Canceled)
 		require.ErrorIs(t, err, renewalFailure)
+		assert.ErrorContains(t, err, renewalErr.Error())
 	})
 }
 

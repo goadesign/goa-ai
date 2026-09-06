@@ -915,14 +915,14 @@ func joinProviderStopErrors(runErr, renewalErr error) error {
 }
 
 // containsOnlyCancellation reports whether every leaf in an error chain is a
-// context cancellation or deadline. Unknown leaf errors are real failures and
-// must remain visible.
+// context cancellation or deadline. It follows each error's own Unwrap method;
+// errors exposed through As are diagnostic views, not additional causes.
+// Unknown leaf errors are real failures and must remain visible.
 func containsOnlyCancellation(err error) bool {
 	if err == nil {
 		return false
 	}
-	var joined interface{ Unwrap() []error }
-	if errors.As(err, &joined) {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		children := joined.Unwrap()
 		if len(children) == 0 {
 			return false
