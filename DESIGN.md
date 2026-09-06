@@ -876,6 +876,9 @@ workers and registry-owned terminal publication, drains every queued
 acknowledgement, and releases each successfully settled exact lease. Failed
 settlement suppresses release and returns the cleanup error. A sink-setup
 failure has no consumption to settle and proceeds directly to bounded release.
+Shutdown classification follows the returned error's own `Unwrap` causes, not
+alternate diagnostic errors exposed through `errors.As`. Cancellation joined
+with a real cleanup failure remains a failure with its original error chain.
 Close, worker, result, or acknowledgement failure is explicit and suppresses
 release; lease expiry is the durable fallback. Before a worker dispatches
 locally queued work, `ClaimToolCall` authenticates its exact lease and request
