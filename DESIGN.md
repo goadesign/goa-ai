@@ -357,6 +357,19 @@ that accepts that exact response. An output-limited response with tool calls is
 rejected before any call can execute because the provider may not have finished
 the complete call batch.
 Ordinary output contract errors are terminal and Temporal does not retry them.
+Diagnostics are separate from that execution decision. Planner activities offer
+the original error to the application tracer and retain the exact selected
+reason in versioned rejection metadata when it is valid UTF-8 within the existing
+per-diagnostic transport allocation. Other text is explicitly omitted with a
+closed size-limit or invalid-encoding reason and its original fingerprint.
+Historical hash-only records remain unchanged during
+replay; new records do not make old explanations recoverable. Temporal's private
+v2 generic/provider envelopes allow readable bounded outer messages while
+preserving the existing typed classification and retry facts. Applications own
+capture, disclosure, and retention; arbitrary typed causes and custom Temporal
+details are available to the original-error tracer, not promised on the wire.
+See [diagnostic transport and upgrade restrictions](docs/runtime.md#diagnostic-ownership-and-transport).
+
 When the planner can give exact replacement guidance for completed model
 output, it returns one of two explicit errors. `NewRecoverableModelAnswerError`
 spends one recovery turn on a replacement answer without ordinary tools.
