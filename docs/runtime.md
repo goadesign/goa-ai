@@ -1432,6 +1432,32 @@ advertised-schema rejection or a non-nil
 `*tools.ValidationError`; one internal cause makes the combined error terminal.
 The runtime still enforces its configured recovery-turn limit.
 
+Local callers can inspect the original tool-input validator error through
+`errors.As` and `errors.Is`, including recognized errors inside wrappers or
+joined errors. `OutputValidationError.Error()` and `RecoveryCorrection()` keep
+their existing summaries and guidance; they do not render the private cause.
+Formatting the underlying validator or malformed-argument error includes the
+original diagnostic after its existing summary prefix. Applications can record
+that cause directly without walking its error tree. Direct callers that format
+these underlying errors now receive more detail; no public type, wire field,
+restoration rule, or numeric limit changes.
+`RejectedResponse()` returns an independent copy of the rejected response when
+the response passed the existing checks required for bounded copying. This
+includes errors with correction guidance. A response that could not be copied
+safely, or a provider translation failure with no complete response, still has
+no rejected response to return.
+
+This access does not accept rejected output: unary calls return no successful
+response, and streams still withhold invalid tool calls and return no successful
+final response. Stream observers can inspect an independent rejected response
+copy alongside the rejection error, as defined by `StreamObservation.Response`.
+The application decides whether and where to record private diagnostics and how
+long to retain them. The existing remote-error restoration contract, public
+summary, and built-in response capture remain unchanged. This change enables no
+logging or message-capture switch and adds no automatic rejected-body capture.
+Applications already recording the underlying error now receive the original
+diagnostic in that error's text.
+
 ---
 
 ## Streaming Planners

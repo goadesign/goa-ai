@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/internal/correction"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -156,16 +158,15 @@ func TestRecoveryCorrectionRequiresEveryErrorLeafToAgree(t *testing.T) {
 	)))
 	require.Empty(t, recoveryCorrectionFromError(errors.Join(
 		malformed,
-		&toolCallValidationError{correction: advertisedToolInputCorrection},
+		&toolCallValidationError{correction: advertisedToolInputCorrection, cause: errors.New("validator detail")},
 	)))
 }
 
-func TestNewMalformedToolArgumentsErrorKeepsCausePrivate(t *testing.T) {
+func TestNewMalformedToolArgumentsErrorRetainsParsingDiagnostic(t *testing.T) {
 	privateCause := errors.New(`provider returned {"secret":`)
 	err := NewMalformedToolArgumentsError(privateCause)
 
-	require.EqualError(t, err, "model tool arguments are not valid JSON")
-	require.NotContains(t, err.Error(), "secret")
+	require.EqualError(t, err, `model tool arguments are not valid JSON: provider returned {"secret":`)
 	require.ErrorIs(t, err, privateCause)
 	require.PanicsWithValue(t, "model: malformed tool arguments require a cause", func() {
 		require.NoError(t, NewMalformedToolArgumentsError(nil))
@@ -248,6 +249,14 @@ func TestRequestContractDistinguishesResponseShapeFromOutputBounds(t *testing.T)
 			_, err := contract.ValidateResponse(test.response)
 
 			requireOutputValidationKind(t, err, test.kind)
+			if test.kind == OutputValidationOutputBounds {
+				var outputErr *OutputValidationError
+				require.ErrorAs(t, err, &outputErr)
+				rejected, cloneErr := outputErr.RejectedResponse()
+				require.NoError(t, cloneErr)
+				assert.Nil(t, rejected)
+				assert.Empty(t, outputErr.Evidence().SHA256)
+			}
 		})
 	}
 }
@@ -455,10 +464,147 @@ func TestGeneratedToolValidationProducesSafeRecoveryCorrection(t *testing.T) {
 	require.NotContains(t, correction, "query")
 	require.NotContains(t, correction, "secret-value")
 	var codecErr *tools.ValidationError
-	require.NotErrorAs(t, err, &codecErr)
+	require.ErrorAs(t, err, &codecErr)
+	require.ErrorContains(t, codecErr, "secret-value")
 	rejected, cloneErr := validationErr.RejectedResponse()
 	require.NoError(t, cloneErr)
-	require.Nil(t, rejected)
+	require.NotNil(t, rejected)
+	assert.Equal(t, response.Content[0].Parts, rejected.Content[0].Parts)
+}
+
+func TestToolValidationRetainsExactCauseWithoutChangingRecovery(t *testing.T) {
+	validation := tools.NewValidationError("private validator detail", []*tools.FieldIssue{{
+		Field: "items[7].pressure", Constraint: "invalid_field_type",
+	}}, nil)
+	otherValidation := tools.NewValidationError("second validator detail", []*tools.FieldIssue{{
+		Field: "items[8].pressure", Constraint: "invalid_field_type",
+	}}, nil)
+	internal := errors.New("codec implementation failed")
+	tests := []struct {
+		name        string
+		cause       error
+		correctable bool
+		typed       bool
+	}{
+		{name: "direct", cause: validation, correctable: true, typed: true},
+		{name: "wrapped", cause: fmt.Errorf("decode: %w", validation), correctable: true, typed: true},
+		{name: "joined recognized", cause: errors.Join(validation, otherValidation), correctable: true, typed: true},
+		{name: "mixed internal", cause: errors.Join(validation, internal), typed: true},
+		{name: "plain codec", cause: internal},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			definition := ToolDefinitionFromSpec(tools.ToolSpec{
+				Name: "lookup",
+				Payload: tools.TypeSpec{
+					Schema: rawjson.Message(`{"type":"object"}`),
+					Codec: tools.JSONCodec[any]{FromJSON: func([]byte) (any, error) {
+						return nil, test.cause
+					}},
+				},
+			})
+			contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+			require.NoError(t, err)
+			response := toolResponse("lookup")
+			response.Usage = TokenUsage{InputTokens: 3, OutputTokens: 2, TotalTokens: 5}
+			wantEvidence := EvidenceForResponse(response)
+
+			accepted, err := contract.ValidateResponse(response)
+
+			assert.Nil(t, accepted)
+			var outputErr *OutputValidationError
+			require.ErrorAs(t, err, &outputErr)
+			require.ErrorIs(t, err, test.cause)
+			var typed *tools.ValidationError
+			if test.typed {
+				require.ErrorAs(t, err, &typed)
+				assert.Same(t, validation, typed)
+			}
+			if test.correctable {
+				assert.Equal(t, advertisedToolInputCorrection, outputErr.RecoveryCorrection())
+				require.EqualError(t, errors.Unwrap(outputErr), `model tool "lookup" payload failed its request contract: `+test.cause.Error())
+			} else {
+				assert.Empty(t, outputErr.RecoveryCorrection())
+			}
+			assert.Equal(t, OutputValidationToolArguments, outputErr.Kind())
+			require.EqualError(t, outputErr, "model output does not meet its request contract")
+			assert.Equal(t, wantEvidence, outputErr.Evidence())
+			assert.Equal(t, &response.Usage, outputErr.Usage())
+			rejected, cloneErr := outputErr.RejectedResponse()
+			require.NoError(t, cloneErr)
+			require.NotNil(t, rejected)
+			assert.Equal(t, response.Content[0].Parts, rejected.Content[0].Parts)
+			assert.Equal(t, response.StopReason, rejected.StopReason)
+			assert.Equal(t, response.Usage, rejected.Usage)
+		})
+	}
+}
+
+func TestAdvertisedSchemaDiagnosticRetainsIndexedPath(t *testing.T) {
+	definition := generatedSchemaTool(
+		`{"type":"object","properties":{"items":{"type":"array","items":{"type":"object","properties":{"pressure":{"type":"number"}},"required":["pressure"]}}},"required":["items"]}`,
+		map[string]string{"$payload": "object", "items": "array", "items.*": "object", "items.*.pressure": "number"},
+		nil,
+	)
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
+	require.NoError(t, err)
+	response := responseWithToolCall(ToolCall{
+		Name: tools.Ident(definition.Name), ID: "call-1",
+		Payload: rawjson.Message(`{"items":[{"pressure":1},{"pressure":"invalid"}]}`),
+	})
+
+	accepted, err := contract.ValidateResponse(response)
+
+	assert.Nil(t, accepted)
+	var outputErr *OutputValidationError
+	require.ErrorAs(t, err, &outputErr)
+	var schemaErr *jsonschema.ValidationError
+	require.ErrorAs(t, err, &schemaErr)
+	assert.Contains(t, schemaErr.Error(), "/items/1/pressure")
+	assert.Equal(t, `Field "items.*.pressure" must contain a JSON number. Return a replacement tool call with valid arguments.`, outputErr.RecoveryCorrection())
+	assert.NotContains(t, outputErr.Error(), "invalid")
+}
+
+func TestConcurrentToolRejectionsRetainIndependentEvidence(t *testing.T) {
+	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{generatedRejectingTool(
+		&tools.FieldIssue{Field: "query", Constraint: "invalid_field_type"},
+	)}})
+	require.NoError(t, err)
+	type result struct {
+		input    rawjson.Message
+		accepted *Response
+		err      error
+	}
+	results := make(chan result, 2)
+	for _, input := range []rawjson.Message{rawjson.Message(`{"query":"first"}`), rawjson.Message(`{"query":"second"}`)} {
+		go func() {
+			response := responseWithToolCall(ToolCall{Name: "catalog.lookup", ID: "call-1", Payload: input})
+			accepted, callErr := contract.ValidateResponse(response)
+			results <- result{input: input, accepted: accepted, err: callErr}
+		}()
+	}
+	var firstCause *tools.ValidationError
+	for range 2 {
+		result := <-results
+		assert.Nil(t, result.accepted)
+		var outputErr *OutputValidationError
+		require.ErrorAs(t, result.err, &outputErr)
+		var cause *tools.ValidationError
+		require.ErrorAs(t, result.err, &cause)
+		if firstCause == nil {
+			firstCause = cause
+		} else {
+			assert.NotSame(t, firstCause, cause)
+		}
+		rejected, cloneErr := outputErr.RejectedResponse()
+		require.NoError(t, cloneErr)
+		require.NotNil(t, rejected)
+		assert.Equal(t, result.input, rejected.Content[0].Parts[0].(ToolUsePart).Input)
+		rejected.Content[0].Parts[0].(ToolUsePart).Input[0] = '['
+		again, cloneErr := outputErr.RejectedResponse()
+		require.NoError(t, cloneErr)
+		assert.Equal(t, result.input, again.Content[0].Parts[0].(ToolUsePart).Input)
+	}
 }
 
 func TestGeneratedToolSchemaRejectionsProduceActionableCorrections(t *testing.T) {
@@ -944,7 +1090,8 @@ func TestGeneratedToolStreamValidationProducesSafeRecoveryCorrection(t *testing.
 	require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
 	rejected, cloneErr := validationErr.RejectedResponse()
 	require.NoError(t, cloneErr)
-	require.Nil(t, rejected)
+	require.NotNil(t, rejected)
+	assert.Equal(t, responseWithToolCall(call).Content[0].Parts, rejected.Content[0].Parts)
 }
 
 func TestToolCodecFailureWithoutInputRejectionRemainsTerminal(t *testing.T) {

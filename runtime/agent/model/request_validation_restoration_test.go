@@ -240,6 +240,7 @@ func TestRestoreOutputValidationErrorRejectsTerminalSentinels(t *testing.T) {
 			&toolCallValidationError{
 				toolName:   "catalog.lookup",
 				correction: correction,
+				cause:      errors.New("validator detail"),
 			},
 			ResponseEvidence{Present: true},
 			nil,

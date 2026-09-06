@@ -409,7 +409,13 @@ var Docs = Toolset("docs", func() {
   correction guidance that omits rejected arguments. Schema rejections for
   specifications with field metadata name one advertised field and its stable
   rule when the validator identifies it without ambiguity; ordinary decoder
-  and internal errors stop the run. See the
+  and internal errors stop the run. Local callers can inspect the original
+  validator error and an isolated copy of a rejected response that passed the
+  existing copying limits; correction guidance does not remove that evidence.
+  The underlying validator and malformed-argument errors include the original
+  diagnostic after their existing summary prefix; the public model-output error
+  summary remains unchanged.
+  Rejected responses remain errors, never successful tool calls. See the
   [runtime tool-input contract](docs/runtime.md#model-visible-tool-arguments).
   A provider output-limit status is returned to the planner with the complete
   response. For a final response without tool calls, the runtime preserves the
@@ -420,7 +426,8 @@ var Docs = Toolset("docs", func() {
   Streaming tool argument fragments and completed calls remain withheld until
   the complete provider response matches the stream; the runtime can then
   schedule one replacement planning activity while retaining final usage and
-  without retaining or executing the rejected arguments. Assistant prose
+  without recording the rejected arguments in the accepted conversation or
+  executing them. Assistant prose
   already sent to the trusted host is append-only and is never retracted by that
   tool-validation decision. Every fragment from one model request carries the
   planner activity's response ID. If the planner accepts the response, the

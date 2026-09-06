@@ -9,8 +9,11 @@ import (
 	"io"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/internal/modelcall"
+	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -198,6 +201,89 @@ func TestClientObserverCannotChangeProviderOrValidationRequest(t *testing.T) {
 	require.Equal(t, "lookup", provider.request.ToolChoice.Name)
 	require.Equal(t, "lookup", request.Tools[0].Name)
 	require.Equal(t, "lookup", request.ToolChoice.Name)
+}
+
+func TestClientObserversRetainIndependentCorrectableRejections(t *testing.T) {
+	for _, streamed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", streamed), func(t *testing.T) {
+			definition := generatedRejectingTool(&tools.FieldIssue{
+				Field: "query", Constraint: "invalid_field_type",
+			})
+			provider := &observerTestProvider{}
+			callObserver := &observerTestCall{}
+			client, err := newValidatedClient(provider, nil, []ProviderCallObserver{
+				&observerTestPreparer{events: &[]string{}, call: callObserver},
+			})
+			require.NoError(t, err)
+			rejections := make([]*OutputValidationError, 0, 2)
+			for _, input := range []string{`{"query":"first"}`, `{"query":"second"}`} {
+				call := ToolCall{Name: "catalog.lookup", ID: "call-1", Payload: rawjson.Message(input)}
+				response := responseWithToolCall(call)
+				response.Usage = TokenUsage{InputTokens: 3, OutputTokens: 2, TotalTokens: 5}
+				provider.completeResponse = response
+				request := &Request{Tools: []*ToolDefinition{definition}}
+				var observed error
+				if streamed {
+					raw := &validatedStreamFixture{
+						chunks: []Chunk{
+							ToolCallChunk{ToolCall: call},
+							UsageChunk{Usage: response.Usage},
+							StopChunk{Reason: "tool_use"},
+						},
+						response: response,
+					}
+					provider.stream = raw
+					streamObserver := &recordingStreamObserver{}
+					callObserver.streamObserver = streamObserver
+					stream, streamErr := client.Stream(t.Context(), request)
+					require.NoError(t, streamErr)
+					chunk, recvErr := stream.Recv()
+					assert.Nil(t, chunk)
+					require.Error(t, recvErr)
+					assert.Nil(t, stream.Response())
+					require.Len(t, streamObserver.observations, 1)
+					observation := streamObserver.observations[0]
+					require.NotNil(t, observation.Response)
+					assert.Equal(t, response.Content[0].Parts, observation.Response.Content[0].Parts)
+					assert.Nil(t, observation.Chunk)
+					assert.Equal(t, &response.Usage, observation.RejectedUsageTotal)
+					observed = observation.Err
+					require.NoError(t, stream.Close())
+					require.NoError(t, stream.Close())
+					assert.Equal(t, 1, raw.closeCalls)
+					assert.Equal(t, 1, streamObserver.closeCalls)
+				} else {
+					accepted, completeErr := client.Complete(t.Context(), request)
+					assert.Nil(t, accepted)
+					require.Error(t, completeErr)
+					assert.Nil(t, callObserver.completeResponse)
+					observed = callObserver.completeObserved
+				}
+				var outputErr *OutputValidationError
+				require.ErrorAs(t, observed, &outputErr)
+				assert.Equal(t, advertisedToolInputCorrection, outputErr.RecoveryCorrection())
+				assert.Equal(t, &response.Usage, outputErr.Usage())
+				assert.Equal(t, EvidenceForResponse(response), outputErr.Evidence())
+				require.EqualError(t, outputErr, "model output does not meet its request contract")
+				rejections = append(rejections, outputErr)
+				response.Content[0].Parts[0].(ToolUsePart).Input[0] = '['
+			}
+			first, err := rejections[0].RejectedResponse()
+			require.NoError(t, err)
+			require.NotNil(t, first)
+			assert.JSONEq(t, `{"query":"first"}`, string(first.Content[0].Parts[0].(ToolUsePart).Input))
+			first.Content[0].Parts[0].(ToolUsePart).Input[0] = '['
+			firstAgain, err := rejections[0].RejectedResponse()
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"query":"first"}`, string(firstAgain.Content[0].Parts[0].(ToolUsePart).Input))
+			second, err := rejections[1].RejectedResponse()
+			require.NoError(t, err)
+			assert.JSONEq(t, `{"query":"second"}`, string(second.Content[0].Parts[0].(ToolUsePart).Input))
+			assert.Equal(t, 2, callObserver.finishCalls)
+			assert.Zero(t, callObserver.abortCalls)
+			assert.Equal(t, 2, provider.calls)
+		})
+	}
 }
 
 func TestClientCompleteJoinsProviderObserverAndFinishErrors(t *testing.T) {
