@@ -12,6 +12,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"google.golang.org/protobuf/proto"
 
+	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -153,7 +154,7 @@ func TestWrapReclassifiesNestedOutputContractError(t *testing.T) {
 	}
 }
 
-func TestWrapKeepsModelOutputDetailsOutOfFailureText(t *testing.T) {
+func TestWrapPreservesOwnedModelOutputFailureText(t *testing.T) {
 	contract, err := model.NewRequestContract(&model.Request{})
 	require.NoError(t, err)
 	validationErr := contract.RejectProviderOutput(
@@ -165,8 +166,7 @@ func TestWrapKeepsModelOutputDetailsOutOfFailureText(t *testing.T) {
 
 	var appErr *temporal.ApplicationError
 	require.ErrorAs(t, wrapped, &appErr)
-	require.Equal(t, "completed output does not meet its contract", appErr.Message())
-	require.NotContains(t, appErr.Message(), "unlisted_tool")
+	require.Equal(t, validationErr.Unwrap().Error(), appErr.Message())
 	require.Equal(t, planner.OutputContractOriginModel, OutputContractOrigin(wrapped))
 }
 
@@ -260,7 +260,7 @@ func TestProviderTemporalEnvelopePreservesSmallFieldsWithoutCause(t *testing.T) 
 	require.Equal(t, "provider unavailable", got.Message())
 	require.Equal(t, "request-1", got.RequestID())
 	require.True(t, got.Retryable())
-	require.NoError(t, got.Unwrap())
+	require.EqualError(t, got.Unwrap(), appErr.Message())
 
 	failure := temporal.GetDefaultFailureConverter().ErrorToFailure(wrapped)
 	require.Nil(t, failure.Cause)
@@ -320,7 +320,7 @@ func TestProviderTemporalEnvelopeBoundsOversizedFieldsAndCause(t *testing.T) {
 			name:  "cause",
 			cause: errors.New(huge),
 			check: func(t *testing.T, got *model.ProviderError) {
-				require.NoError(t, got.Unwrap())
+				require.ErrorContains(t, got.Unwrap(), "provider unavailable")
 				require.Equal(t, "provider unavailable", got.Message())
 			},
 		},
@@ -338,7 +338,7 @@ func TestProviderTemporalEnvelopeBoundsOversizedFieldsAndCause(t *testing.T) {
 				requireBoundedEvidence(t, got.Code(), "code", huge)
 				requireBoundedEvidence(t, got.Message(), "message", huge)
 				requireBoundedEvidence(t, got.RequestID(), "request_id", huge)
-				require.NoError(t, got.Unwrap())
+				require.ErrorContains(t, got.Unwrap(), "diagnostic text omitted")
 			},
 		},
 	}
@@ -402,8 +402,7 @@ func TestOutputAndInvalidTemporalEnvelopesBoundMessagesWithoutCause(t *testing.T
 	require.ErrorAs(t, output, &outputApp)
 	require.NoError(t, outputApp.Unwrap())
 	require.LessOrEqual(t, len(outputApp.Message()), maxTemporalErrorMessageBytes)
-	require.Equal(t, "completed output does not meet its contract", outputApp.Message())
-	require.NotContains(t, outputApp.Message(), "sha256=")
+	require.Equal(t, errorevidence.BoundedMessage(huge), outputApp.Message())
 	require.NotContains(t, outputApp.Message(), "raw-output-secret-")
 	outputFailure := temporal.GetDefaultFailureConverter().ErrorToFailure(output)
 	require.Nil(t, outputFailure.Cause)
@@ -650,7 +649,7 @@ func TestWrapBoundsHugeGenericError(t *testing.T) {
 	require.ErrorAs(t, wrapped, &appErr)
 	require.Equal(t, genericErrorApplicationType, appErr.Type())
 	require.False(t, appErr.NonRetryable())
-	require.Equal(t, "operation failed", appErr.Message())
+	require.Equal(t, errorevidence.BoundedMessage(huge), appErr.Message())
 	require.NoError(t, appErr.Unwrap())
 	var details genericErrorDetails
 	require.NoError(t, appErr.Details(&details))

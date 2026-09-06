@@ -2192,7 +2192,7 @@ func TestRunPlanActivityPublishesTypedModelRejectionReason(t *testing.T) {
 	require.Equal(t, out.OutputContractFailure.ReasonSize, rejected.ReasonSize)
 }
 
-func TestOutputContractFailureMetadataFingerprintsPrivateValidationCause(t *testing.T) {
+func TestOutputContractFailureMetadataRetainsFingerprintedValidationCause(t *testing.T) {
 	contract, err := model.NewRequestContract(&model.Request{})
 	require.NoError(t, err)
 	causes := []error{
@@ -2218,7 +2218,8 @@ func TestOutputContractFailureMetadataFingerprintsPrivateValidationCause(t *test
 		require.Equal(t, int64(len(cause.Error())), failure.ReasonSize)
 		encoded, marshalErr := json.Marshal(failure)
 		require.NoError(t, marshalErr)
-		require.NotContains(t, string(encoded), cause.Error())
+		require.Contains(t, string(encoded), cause.Error())
+		require.Equal(t, cause.Error(), failure.Reason)
 		failures = append(failures, failure)
 	}
 	require.NotEqual(t, failures[0].ReasonSHA256, failures[1].ReasonSHA256)

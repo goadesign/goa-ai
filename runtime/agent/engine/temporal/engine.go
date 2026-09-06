@@ -329,6 +329,7 @@ func (e *Engine) RegisterStorageActivity(_ context.Context, name string, opts en
 	opts = e.applyActivityClassDefaults(activityKindRecord, opts)
 	wrapped := func(ctx context.Context, in *api.StorageActivityCommand) (*api.StorageActivityResult, error) {
 		out, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		e.recordActivityError(ctx, err)
 		if engine.IsActivityErrorNonRetryable(err) {
 			return out, temporal.NewNonRetryableApplicationError(
 				err.Error(),
@@ -362,6 +363,7 @@ func (e *Engine) RegisterPlannerActivity(_ context.Context, name string, opts en
 	// can start child workflows (agent-as-tool) with engine-owned context.
 	wrapped := func(ctx context.Context, in *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
 		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		e.recordActivityError(ctx, err)
 		return output, temporalerrors.Wrap(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
@@ -386,6 +388,7 @@ func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opt
 	// can start child workflows (agent-as-tool) with engine-owned context.
 	wrapped := func(ctx context.Context, in *api.ToolInput) (*api.ToolOutput, error) {
 		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		e.recordActivityError(ctx, err)
 		return output, temporalerrors.Wrap(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
@@ -400,6 +403,7 @@ func (e *Engine) RegisterAgentChildActivity(_ context.Context, name string, opts
 	opts = e.applyActivityClassDefaults(activityKindPlanner, opts)
 	wrapped := func(ctx context.Context, in *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error) {
 		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
+		e.recordActivityError(ctx, err)
 		if engine.IsActivityErrorNonRetryable(err) {
 			return output, temporal.NewNonRetryableApplicationError(
 				err.Error(),
