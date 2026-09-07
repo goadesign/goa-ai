@@ -5,6 +5,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -133,7 +134,52 @@ func TestJudgeStopsAfterRuntimeCorrectionLimit(t *testing.T) {
 	assert.Nil(t, judgments)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `completion tool "eval.submit_judgments" did not succeed: recovery_cap`)
+	assert.Contains(t, err.Error(), "judgments")
+	assert.Contains(t, err.Error(), "minItems")
+	var rejected *model.OutputValidationError
+	require.ErrorAs(t, err, &rejected)
 	assert.Len(t, client.requests, 4)
+}
+
+func TestRunnerRetainsRealJudgeDiagnostics(t *testing.T) {
+	client := &recordingClient{responses: []*model.Response{
+		toolResponse(`{"judgments":[{"label":"entailed","rationale":"Running."},{"label":"contradicted","rationale":"Not stopped."},{"label":"not_addressed","rationale":"Not discussed."},{"label":"indeterminate","rationale":"Conflicting readings."}]}`),
+		toolResponse(`{"judgments":[]}`),
+		toolResponse(`{"judgments":[]}`),
+		toolResponse(`{"judgments":[]}`),
+		toolResponse(`{"judgments":[]}`),
+	}}
+	runner, err := aieval.NewRunner(newTestJudge(t, client), aieval.RunnerConfig{MaxConcurrency: 1})
+	require.NoError(t, err)
+	report, err := runner.Run(t.Context(), aieval.Suite{
+		ID: "diagnostics",
+		Scenarios: []aieval.Scenario{{
+			ID: "answer", Timeout: 10 * time.Second,
+			Run: func(context.Context) (aieval.Result, error) {
+				return aieval.Result{Output: "The work is complete.", Claims: []aieval.Claim{{ID: "complete", Text: "The work is complete."}}}, nil
+			},
+		}},
+	})
+	require.NoError(t, err)
+	require.Len(t, report.Scenarios, 1)
+	assert.False(t, report.Passed)
+	assert.False(t, report.Scenarios[0].Passed)
+	assert.Empty(t, report.Scenarios[0].Judgments)
+	assert.Contains(t, report.Scenarios[0].Error, "recovery_cap")
+	assert.Contains(t, report.Scenarios[0].Error, "minItems")
+	assert.Contains(t, report.Scenarios[0].Error, "judgments")
+	assert.Len(t, client.requests, 5)
+}
+
+func TestJudgeReturnsValidContradictionWithoutError(t *testing.T) {
+	client := &recordingClient{responses: []*model.Response{
+		toolResponse(`{"judgments":[{"label":"contradicted","rationale":"The output says the opposite."}]}`),
+	}}
+	judgments, err := newTestJudge(t, client).Judge(t.Context(), "The pump is stopped.", []aieval.Claim{{ID: "running", Text: "The pump is running."}})
+	require.NoError(t, err)
+	require.Len(t, judgments, 1)
+	assert.Equal(t, aieval.Contradicted, judgments[0].Label)
+	assert.Len(t, client.requests, 1)
 }
 
 func TestJudgeRejectsInvalidClaimsBeforeInference(t *testing.T) {

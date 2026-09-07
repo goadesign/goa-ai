@@ -210,6 +210,16 @@ failure remain terminal. The returned `T` is exactly the value decoded from
 the accepted arguments, so callers cannot insert domain execution or rewriting
 between accepted model output and the returned value.
 
+The private runtime also owns a per-call diagnostic receiver through its existing
+tracer interface. On failure, `Run` returns the terminal error first, followed by
+original observed errors, with every nested cause rendered and available for
+`errors.Is` / `errors.As`. Observations do not determine execution policy and may
+record the same rejection at more than one operation. The returned snapshot is
+immutable even if caller cancellation lets an activity finish later. This adds no
+workflow state, exported API, model call, or global tracing configuration. The
+full [returned-error contract](docs/runtime.md#forced-typed-tool-output) describes
+which diagnostic facts are available.
+
 The design intentionally keeps completions separate from toolsets: toolsets model
 callable capabilities, while completions model final assistant answers. Both reuse
 the same Goa types, validations, and codegen pipeline so there is one contract

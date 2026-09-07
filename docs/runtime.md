@@ -253,6 +253,30 @@ and internal contract failures are terminal. `Run` rejects a request that
 already sets `Tools`, `ToolChoice`, `StructuredOutput`, or `Stream` before
 inference.
 
+On failure, `Run` returns its terminal error followed by the original errors
+observed by that private runtime. Its text includes full nested and joined cause
+messages, even when workflow records bound or omit those messages. The original
+objects remain accessible with `errors.Is` and `errors.As`; exact failure strings
+are not a stable contract. This preserves objects actually returned or delivered
+to the tracer: tool execution already converts encoder causes to a serializable
+`ToolError` chain, so their full messages survive but original encoder sentinel
+identity does not. An observed model rejection may appear again at its
+enclosing planner operation, so observations are not distinct model attempts.
+
+Typed model validation errors add their category, response fingerprint, reported
+token usage, and retained response stop reason/output-limit flag when available.
+Missing facts remain unknown. These facts do not imply that the original HTTP
+response is available, and tool arguments or response messages are not
+automatically rendered. Applications choose where to display or retain returned
+errors; `Run` neither configures global tracing nor enables body capture.
+
+The returned error is a frozen snapshot. Caller cancellation can return before a
+private activity finishes, so only observations already received are included;
+later activity work cannot mutate that returned error. This does not change
+cancellation or correction policy. A rejected attempt followed by valid output
+still returns the accepted value and nil error. Hosted runtimes continue to use
+their application-supplied tracers and run records independently of this helper.
+
 Use a generated completion contract directly:
 
 ```go

@@ -571,6 +571,13 @@ bounded correction turns. Provider failures and ignored forced-tool selection
 remain terminal. Requests that already contain tools, tool choice, structured
 output, or streaming are rejected before inference.
 
+Failed calls return the terminal error and original errors observed during the
+private run, including full cause messages and known validation/response facts.
+`errors.Is` and `errors.As` preserve typed inspection. Successful correction still
+returns a value and nil error; tracing exporters remain application-controlled.
+See [runtime diagnostics](docs/runtime.md#forced-typed-tool-output) for the
+retention and cancellation contract.
+
 Use `Complete<Name>(...)` or `StreamComplete<Name>(...)` for provider-enforced
 structured output. Use `tooloutput.Run(..., completions.Spec<Name>())` when the
 selected model must return the same generated type through an ordinary forced

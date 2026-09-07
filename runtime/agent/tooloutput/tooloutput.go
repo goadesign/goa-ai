@@ -2,6 +2,8 @@
 // calling one ordinary tool. The package builds a private in-memory agent for
 // each call, uses the agent runtime's bounded correction flow for invalid tool
 // arguments, and returns the payload accepted by the supplied generated codec.
+// Failed calls retain original observed errors and complete cause messages;
+// applications decide where to display or export them.
 package tooloutput
 
 import (
@@ -40,15 +42,25 @@ const (
 // schema, example, and typed codec; Run privately constructs the executable
 // tool contract. Invalid model-authored JSON or schema/codec output uses the
 // runtime's bounded correction turns. Provider failures and internal contract
-// failures are terminal.
-func Run[T any](ctx context.Context, client model.Client, request *model.Request, spec completion.Spec[T]) (T, error) {
+// failures are terminal. Errors retain the terminal failure and earlier observed
+// causes for errors.Is/As, with full diagnostic text and available response facts.
+// A successful correction returns the accepted value and nil error.
+func Run[T any](ctx context.Context, client model.Client, request *model.Request, spec completion.Spec[T]) (_ T, err error) {
+	diagnostics := &runDiagnostics{}
+	// Apply the same frozen diagnostic snapshot to every failed exit, including
+	// registration and decoding after the private workflow has returned.
+	defer func() {
+		if err != nil {
+			err = diagnostics.failure(err)
+		}
+	}()
 	var zero T
 	if err := validateRequest(request); err != nil {
 		return zero, err
 	}
 	privateSpec := privateToolSpec(spec)
 
-	rt := agentruntime.New(storageinmem.New())
+	rt := agentruntime.New(storageinmem.New(), agentruntime.WithTracer(diagnostics))
 	if err := rt.RegisterModel(modelID, client); err != nil {
 		return zero, fmt.Errorf("tool output: %w", err)
 	}
