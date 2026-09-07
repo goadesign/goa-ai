@@ -88,8 +88,10 @@ func run(ctx context.Context, opts options) error {
 	runner, err := eval.NewRunner(nil, eval.RunnerConfig{
 		MaxConcurrency: opts.maxConcurrency,
 		// TODO: replace nil above with an eval.Judge when hooks return semantic
-		// claims: construct judge.New (goa.design/goa-ai/eval/judge) with your
-		// real model.Client. Nil is valid only for deterministic-only suites.
+		// claims: call judge.New(client, maxOutputTokens) from
+		// goa.design/goa-ai/eval/judge with your model.Client and a positive
+		// per-response output-token limit; handle its returned error first.
+		// Nil is valid only for deterministic-only suites.
 		// TODO: supply an eval.Reporter for progressive application-specific output.
 	})
 	if err != nil {

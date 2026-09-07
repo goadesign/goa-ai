@@ -373,7 +373,7 @@ go run ./cmd/chat_quality-evals -scenario <id>     # run selected scenarios (rep
 go run ./cmd/chat_quality-evals -tag <tag>         # run by tag (repeatable)
 ```
 
-The command exits non-zero when any scenario fails, so it drops straight into CI. Deterministic-only suites can pass a `nil` judge; as soon as a hook returns claims, wire a real judge (see `goa.design/goa-ai/eval/judge`) backed by your model client.
+The command exits non-zero when any scenario fails, so it drops straight into CI. Deterministic-only suites can pass a `nil` judge; as soon as a hook returns claims, call `judge.New(modelClient, maxOutputTokens)` (see `goa.design/goa-ai/eval/judge`) and handle its returned error. Supply a positive output-token limit for one complete response, shared by all claims and applied unchanged to each permitted correction. The limit does not guarantee completion.
 
 ---
 
