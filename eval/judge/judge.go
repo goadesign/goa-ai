@@ -22,8 +22,9 @@ import (
 type (
 	// Judge classifies semantic claims with one forced private tool.
 	Judge struct {
-		client     model.Client
-		modelClass model.ModelClass
+		client          model.Client
+		modelClass      model.ModelClass
+		maxOutputTokens int
 	}
 
 	// Option customizes a Judge.
@@ -49,8 +50,6 @@ type (
 )
 
 const (
-	maxTokensPerJudgment = 256
-
 	submitJudgmentsID completion.Ident = "eval.submit_judgments"
 
 	judgePrompt = `Classify each claim independently using only the supplied output.
@@ -58,14 +57,23 @@ Return entailed when the output establishes the claim, contradicted when it esta
 Call submit_judgments exactly once. Return one judgment for each claim in the same order. Each judgment must contain a label and a concise rationale.`
 )
 
-// New creates a semantic judge backed by client. The judge uses the
-// high-reasoning model class unless WithModelClass selects another class.
-func New(client model.Client, opts ...Option) *Judge {
-	judge := &Judge{client: client, modelClass: model.ModelClassHighReasoning}
+// New creates a semantic judge backed by client. maxOutputTokens must be positive
+// and limits one complete model response, including all judgments. Every permitted
+// correction uses the same limit; the limit does not guarantee a complete response.
+// The judge uses the high-reasoning class unless WithModelClass selects another.
+func New(client model.Client, maxOutputTokens int, opts ...Option) (*Judge, error) {
+	if maxOutputTokens <= 0 {
+		return nil, errors.New("judge max output tokens must be positive")
+	}
+	judge := &Judge{
+		client:          client,
+		modelClass:      model.ModelClassHighReasoning,
+		maxOutputTokens: maxOutputTokens,
+	}
 	for _, opt := range opts {
 		opt(judge)
 	}
-	return judge
+	return judge, nil
 }
 
 // WithModelClass selects the model class used by the private judge agent.
@@ -124,7 +132,7 @@ func (j *Judge) run(ctx context.Context, payload []byte, claimCount int) (respon
 			},
 		},
 		Temperature: 0,
-		MaxTokens:   maxTokensPerJudgment * claimCount,
+		MaxTokens:   j.maxOutputTokens,
 	}, judgmentToolSpec(claimCount))
 }
 

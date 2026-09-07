@@ -80,8 +80,10 @@ func {{ .ExampleRun }}(ctx context.Context, opts {{ .ExampleOptions }}) error {
 	runner, err := eval.NewRunner(nil, eval.RunnerConfig{
 		MaxConcurrency: opts.maxConcurrency,
 		// TODO: replace nil above with an eval.Judge when a model must grade
-		// hook results. Create judge.New (goa.design/goa-ai/eval/judge) with
-		// your real model.Client. Nil is valid when code performs every check.
+		// hook results. Call judge.New(client, maxOutputTokens) from
+		// goa.design/goa-ai/eval/judge with your model.Client and a positive
+		// per-response output-token limit; handle its returned error first.
+		// Nil is valid when code performs every check.
 		// TODO: supply an eval.Reporter if results should be shown as tests finish.
 	})
 	if err != nil {

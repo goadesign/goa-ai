@@ -78,6 +78,8 @@ func TestGenerateTypedSuiteAndExample(t *testing.T) {
 	assert.Contains(t, example, `flag.Var(&opts.scenarios, "scenario"`)
 	assert.Contains(t, example, "runner.RunScenarios(ctx, suite, opts.scenarios...)")
 	assert.Contains(t, example, "runner.RunTags(ctx, suite, opts.tags...)")
+	assert.Contains(t, example, "judge.New(client, maxOutputTokens)")
+	assert.Contains(t, example, "per-response output-token limit; handle its returned error first.")
 	assert.Contains(t, example, "json.NewEncoder(os.Stdout)")
 }
 

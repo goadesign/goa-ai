@@ -250,8 +250,11 @@ outcomes) and exits non-zero when anything fails:
 
 This suite is deterministic, so the runner takes a nil judge. When your hooks
 return semantic `eval.Claims` about model output, pass an `eval.Judge` instead
-— `eval/judge.New(modelClient)` wraps any `model.Client` in a typed,
-calibration-checked LLM judge. See `docs/evals.md` in the goa-ai repository
+— `judge.New(modelClient, maxOutputTokens)` from `eval/judge` wraps any
+`model.Client` in a typed, calibration-checked LLM judge. Supply a positive
+output-token limit for each complete response and handle the returned error.
+The same limit applies to all claims together and each permitted correction;
+it does not guarantee completion. See `docs/evals.md` in the goa-ai repository
 for the complete contract.
 
 ## 6) (Optional) Connect to Temporal for production

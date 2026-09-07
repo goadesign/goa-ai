@@ -1022,6 +1022,12 @@ Agent("assistant", "Answers user questions.", func() {
 
 `goa gen` turns each scenario into a typed Go interface method, so a scenario added to the design breaks the build until the application implements it, and input values are validated against the design rules before anything runs. Suites declared inside an `Agent` can also look up the generated contract of every tool that agent can reach, to decode and check recorded tool calls exactly. `goa example` creates a runnable `cmd/<suite>-evals` command once; the application fills in real input values, calls the product, and returns exact pass/fail checks plus plain-English claims about the model's answer. A shared runner selects scenarios by name or tag, limits how many run at once, grades claims with a model-backed judge that must first prove it can tell correct from incorrect answers, and writes a JSON report in design order. See [`docs/evals.md`](docs/evals.md).
 
+Model-backed judging requires `judge.New(modelClient, maxOutputTokens)` and handling
+its returned error. The application chooses a positive output-token limit for one
+complete response, shared by all claims and reused unchanged for each permitted
+correction. There is no framework default or guarantee that a finite limit will
+complete a judgment. See the [constructor migration](docs/evals.md#how-judging-works).
+
 ### Bookkeeping and Terminal Tools
 
 Use `Bookkeeping()` for control-plane records such as status markers, transition

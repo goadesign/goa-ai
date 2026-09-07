@@ -1,3 +1,5 @@
+// These tests run the judge through model validation and the runtime's existing
+// corrections, preserving claim order, forced-tool requests, and failure causes.
 package judge
 
 import (
@@ -46,7 +48,9 @@ func newTestJudge(t *testing.T, provider model.Provider, opts ...Option) *Judge 
 	t.Helper()
 	client, err := model.NewClient(provider)
 	require.NoError(t, err)
-	return New(client, opts...)
+	judge, err := New(client, 1024, opts...)
+	require.NoError(t, err)
+	return judge
 }
 
 func TestJudgeUsesForcedToolAndRestoresClaimIDs(t *testing.T) {
@@ -78,6 +82,7 @@ func TestJudgeUsesForcedToolAndRestoresClaimIDs(t *testing.T) {
 	}, judgments)
 	require.Len(t, client.requests, 1)
 	request := client.requests[0]
+	assert.Equal(t, 1024, request.MaxTokens)
 	assert.Equal(t, model.ModelClassHighReasoning, request.ModelClass)
 	assert.Nil(t, request.StructuredOutput)
 	require.Len(t, request.Tools, 1)
@@ -112,6 +117,9 @@ func TestJudgeUsesRuntimeCorrectionForMalformedToolArguments(t *testing.T) {
 	require.Len(t, judgments, 1)
 	assert.Equal(t, "complete", judgments[0].ClaimID)
 	require.Len(t, client.requests, 2)
+	for _, request := range client.requests {
+		assert.Equal(t, 1024, request.MaxTokens)
+	}
 	assert.Nil(t, client.requests[1].StructuredOutput)
 	assert.Contains(t, systemText(client.requests[1]), "system-reminder")
 	assert.Contains(t, systemText(client.requests[1]), "judgments")
@@ -213,12 +221,13 @@ func TestWithModelClassOverridesRequestClass(t *testing.T) {
 	client := &recordingClient{errors: []error{errors.New("stop")}}
 	judge := newTestJudge(t, client, WithModelClass(model.ModelClassSmall))
 
-	_, _ = judge.Judge(
+	_, err := judge.Judge(
 		context.Background(),
 		"Output.",
 		[]aieval.Claim{{ID: "claim", Text: "Claim."}},
 	)
 
+	require.ErrorContains(t, err, "stop")
 	require.Len(t, client.requests, 1)
 	assert.Equal(t, model.ModelClassSmall, client.requests[0].ModelClass)
 }

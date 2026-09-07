@@ -288,6 +288,13 @@ scenario runs, the runner verifies all four meanings with framework-owned
 examples. Applications cannot weaken that check by supplying easier examples.
 Only `entailed` passes. Deterministic-only suites may omit the judge entirely.
 
+The application constructing `eval/judge` supplies a required positive output-token
+limit for each complete model response and handles a construction error for invalid
+configuration. That limit is independent of claim count and remains unchanged
+across the existing bounded corrections. The judge owns response shape; the
+application owns permitted response work; providers enforce their own ceilings.
+No finite limit guarantees a completed judgment.
+
 See [docs/evals.md](docs/evals.md) for the DSL, generated API, runner methods,
 and report behavior.
 

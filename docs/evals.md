@@ -340,7 +340,11 @@ if err != nil {
 	return err
 }
 
-runner, err := eval.NewRunner(judge.New(modelClient), eval.RunnerConfig{
+grader, err := judge.New(modelClient, maxOutputTokens)
+if err != nil {
+	return err
+}
+runner, err := eval.NewRunner(grader, eval.RunnerConfig{
 	MaxConcurrency: 5,
 	Reporter:       reporter,
 })
@@ -394,6 +398,22 @@ loudly instead of silently running nothing.
 
 `eval/judge` builds a judge from any `model.Client`, the same model-client
 interface the rest of Goa-AI uses, so it works with any configured provider.
+The application must supply a positive `maxOutputTokens` to `judge.New` and
+handle its construction error. This is the inclusive output-token limit for one
+complete model response, shared by every judgment and the tool JSON, not a
+per-claim or whole-suite allowance. Each permitted correction receives the same
+limit. The judge never multiplies it by claim count, clips it to a provider
+ceiling, or increases it after failure. Provider limits still apply, and any
+finite allowance can be exhausted without a usable judgment. Choose the value
+in application configuration alongside the model and acceptable resource use;
+there is no framework default or promise that a given limit will suffice.
+
+This replaces `judge.New(modelClient, opts...)`, which returned only a judge and
+assigned 256 output tokens per claim. On upgrade, pass your explicit response
+limit as the second argument, handle the returned error, and keep options such
+as `judge.WithModelClass(...)` after that argument. No generated schema, wire
+format, stored report, or custom `eval.Judge` implementation changes.
+
 Custom judges implement this same batch contract:
 
 ```go

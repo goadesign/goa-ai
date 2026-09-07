@@ -94,6 +94,8 @@ func TestQuickstart_DocumentsDeclaredEvalSuites(t *testing.T) {
 	require.Contains(t, content, "**`tool_contract`** (tags: `contract`): The add tool contract is reachable from the agent.")
 	require.Contains(t, content, "gen/evals/math_quality/")
 	require.Contains(t, content, "go run ./cmd/math_quality-evals")
+	require.Contains(t, content, "judge.New(modelClient, maxOutputTokens)")
+	require.Contains(t, content, "handle its returned error")
 	require.NotContains(t, content, "doesn't declare any evaluation suites yet")
 	// Sections after the inserted one keep sequential numbering.
 	require.Contains(t, content, "## 9. Ready for Prime Time")
