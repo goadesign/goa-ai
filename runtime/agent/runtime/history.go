@@ -34,9 +34,10 @@ type (
 	// Compression has two independent decisions:
 	//   - CompressAtTurns and CompressAtMaxInputTokens decide when older history
 	//     should be summarized. The triggers are ORed.
-	//   - KeepMaxTurns and KeepMaxInputTokens decide which newest complete turns
-	//     remain exact after summarization. The budgets are ANDed when both are
-	//     set.
+	//   - KeepMaxTurns and KeepMaxInputTokens bound which newest complete turns
+	//     are eligible to remain exact. The budgets are ANDed when both are set.
+	//     A positive total ceiling may require fewer older exact turns once the
+	//     actual summary is included.
 	//
 	// Token counts are computed at runtime with the configured history model.
 	// KeepMaxInputTokens never truncates a turn; it keeps newest whole turns until
@@ -49,7 +50,8 @@ type (
 		// CompressAtMaxInputTokens triggers summarization once the history
 		// model counts the transcript and advertised tools above this input-token
 		// count. The threshold applies to one history-policy invocation and is
-		// exclusive: a count equal to the threshold fits. Zero disables it.
+		// exclusive: a count equal to the threshold fits. A compressed result
+		// must also fit after adding the summary. Zero disables it.
 		CompressAtMaxInputTokens int
 
 		// KeepMaxTurns caps exact retention to this many newest logical turns.
@@ -154,6 +156,9 @@ CONVERSATION:
 // a %s placeholder where the complete quoted textual history and source-position
 // references will be inserted. Native images and documents follow in user
 // messages grouped by their original messages, within the same completion.
+// With a positive CompressAtMaxInputTokens, the supplied history includes every
+// turn older than newest, even if some remain exact. Without that ceiling, only
+// the prefix excluded from exact retention is supplied.
 func WithSummaryPrompt(prompt string) CompressOption {
 	return func(c *compressConfig) {
 		c.summaryPrompt = prompt
@@ -240,8 +245,12 @@ func KeepRecentTurns(n int) HistoryPolicy {
 
 // Compress returns a policy that summarizes older conversation history when cfg
 // says either the turn count or the provider-counted input-token budget has been
-// exceeded. After summarization it keeps a newest exact tail selected by whole
-// logical turns, bounded by KeepMaxTurns, KeepMaxInputTokens, or both.
+// exceeded. KeepMaxTurns and KeepMaxInputTokens bound eligible exact retention.
+// With a positive total token ceiling, one summary covers all turns older than
+// newest; the runtime counts that summary with successively shorter eligible
+// whole-turn tails and returns the longest one that fits. Some summarized turns
+// may also remain exact. Without that ceiling, only the excluded prefix is
+// summarized and the selected exact tail stays unchanged.
 //
 // The policy always preserves:
 //   - All System messages at the start of the conversation.
@@ -310,7 +319,11 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		}
 
 		toCompress := turns[:keepStart]
-		toKeep := turns[keepStart:]
+		if policyCfg.CompressAtMaxInputTokens > 0 {
+			// Any optional older turn may need removal after the summary is
+			// counted. Supply all of them before making the one summary call.
+			toCompress = turns[:len(turns)-1]
+		}
 
 		// Supply the selected older evidence once, keeping media native and
 		// historical tools quoted rather than executable in this summary call.
@@ -341,32 +354,33 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 			},
 		}
 
-		// Reconstruct: system messages + summary + kept turns
-		var keepMsgs []*model.Message
-		for _, t := range toKeep {
-			keepMsgs = append(keepMsgs, t.messages...)
-		}
-
-		result := make([]*model.Message, 0, systemEnd+1+len(keepMsgs))
-		result = append(result, msgs[:systemEnd]...)
-		result = append(result, summaryMsg)
-		result = append(result, keepMsgs...)
-
-		if policyCfg.CompressAtMaxInputTokens > 0 {
+		// Count each complete candidate with the actual summary, longest first.
+		// Removing an older turn is safe for input delivery because the summary
+		// model already received it. Newest remains complete in every candidate.
+		prefix := make([]*model.Message, 0, systemEnd+1)
+		prefix = append(prefix, msgs[:systemEnd]...)
+		prefix = append(prefix, summaryMsg)
+		for {
+			result := requestShape(prefix, turns[keepStart:])
+			if policyCfg.CompressAtMaxInputTokens == 0 {
+				return result, nil
+			}
 			count, err := countMessages(ctx, runtimeCfg, client, result, tools)
 			if err != nil {
 				return msgs, err
 			}
-			if count.InputTokens > policyCfg.CompressAtMaxInputTokens {
+			if count.InputTokens <= policyCfg.CompressAtMaxInputTokens {
+				return result, nil
+			}
+			if keepStart == len(turns)-1 {
 				return msgs, fmt.Errorf(
 					"runtime: compressed history exceeds CompressAtMaxInputTokens (%d > %d): the generated summary and newest exact turns do not fit",
 					count.InputTokens,
 					policyCfg.CompressAtMaxInputTokens,
 				)
 			}
+			keepStart++
 		}
-
-		return result, nil
 	}
 }
 
@@ -423,7 +437,8 @@ func shouldCompress(
 	return count.InputTokens > cfg.CompressAtMaxInputTokens, nil
 }
 
-// exactTailStart selects the oldest turn index retained exactly. The newest
+// exactTailStart selects the oldest turn eligible for exact retention before
+// the summary is added. The final count may require fewer older turns. The newest
 // turn is always retained: compression cannot drop it without breaking the
 // conversation contract, so KeepMaxInputTokens budgets the older turns that
 // join it. Every candidate is counted as a complete history-policy shape
@@ -486,8 +501,8 @@ func exactTailStart(
 	return keepStart, nil
 }
 
-// requestShape assembles the history-policy message shape used for token
-// counting: the preserved system prefix followed by the candidate tail turns.
+// requestShape assembles a complete candidate for counting or return: preserved
+// leading messages, any inserted summary, and the candidate's whole turns.
 func requestShape(system []*model.Message, turns []turn) []*model.Message {
 	msgs := make([]*model.Message, 0, len(system)+len(turns))
 	msgs = append(msgs, system...)

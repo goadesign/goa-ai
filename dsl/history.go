@@ -14,8 +14,11 @@ import (
 //
 // Compression separates the trigger budget from the exact-retention budget:
 // CompressAtMaxInputTokens and CompressAtTurns decide when summarization runs,
-// while KeepMaxInputTokens and KeepMaxTurns decide which newest complete turns
-// remain unsummarized afterward. Token budgets are evaluated at runtime using
+// while KeepMaxInputTokens and KeepMaxTurns bound eligible exact retention.
+// With a total token ceiling, the summary covers all turns older than newest;
+// some may also remain exact if the summary and complete retained history fit.
+// Without that ceiling, only the excluded prefix is summarized.
+// Token budgets are evaluated at runtime using
 // the configured history model, so design values are defaults that applications
 // may override for a specific deployment/model.
 //
@@ -179,6 +182,9 @@ func CompressAtTurns(n int) {
 // model counts the preserved system messages, conversation turns, and
 // advertised tools above n input tokens. A count equal to n fits. Thinking and
 // structured output chosen later by a planner are outside this history policy.
+// After one summary, the runtime counts it with eligible complete turns,
+// removing oldest optional turns until the combination fits. Summary plus
+// newest exceeding n remains an error; the newest turn is never split or lost.
 //
 // CompressAtMaxInputTokens must appear inside a History expression.
 func CompressAtMaxInputTokens(n int) {
@@ -218,10 +224,12 @@ func KeepMaxTurns(n int) {
 	h.KeepMaxTurns = n
 }
 
-// KeepMaxInputTokens keeps the newest whole logical turns whose exact transcript
-// fits under n input tokens after compression summarizes older history. The
-// runtime never truncates or edits a turn to fit this budget; if adding the next
-// older turn would exceed the budget, that whole turn is summarized instead.
+// KeepMaxInputTokens bounds the additional token cost of older whole turns
+// retained with the mandatory newest turn. The runtime counts complete requests
+// before adding the summary and compares each candidate with the newest-only
+// request, so fixed system and tool-catalog overhead cancels out. Equality fits.
+// The summary counts against CompressAtMaxInputTokens, not this older-turn
+// allowance, and may require retaining fewer older turns. No turn is split.
 //
 // KeepMaxInputTokens must appear inside a History expression with a compression
 // trigger.
