@@ -673,7 +673,13 @@ references, with native images and documents grouped by their original messages.
 It receives no executable tool catalog. Plain and cited summary sentences are
 preserved; provider replay metadata remains in the original history, not the
 summary request. Complete evidence can make that request larger, and existing
-model/provider limits still fail explicitly. See
+model/provider limits still fail explicitly. With a positive total token ceiling,
+one summary covers every turn older than newest. The runtime counts that actual
+summary with eligible complete turns, removing oldest optional turns until the
+combination fits; summary plus newest still being too large is an error. Without
+that ceiling, summary coverage and exact retention remain disjoint. Custom
+prompts with a positive ceiling must not assume that every summarized turn is
+discarded from exact history. See
 [history policies](docs/runtime.md#history-policies) for the evidence contract.
 
 Per-run options can further restrict execution:

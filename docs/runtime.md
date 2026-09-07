@@ -3932,8 +3932,8 @@ trigger budget from the exact-retention budget:
 
 - `CompressAtTurns` and `CompressAtMaxInputTokens` decide when summarization
   runs. The triggers are ORed.
-- `KeepMaxTurns` and `KeepMaxInputTokens` decide which newest complete turns
-  remain exact after summarization. When both are set, both limits apply.
+- `KeepMaxTurns` and `KeepMaxInputTokens` bound which newest complete turns
+  are eligible to remain exact. When both are set, both limits apply.
 - `KeepMaxInputTokens` never truncates a turn. The runtime walks backward from
   the newest turn and keeps only whole logical turns that fit the budget.
 - Token counts are computed at runtime through `HistoryModel`, because provider
@@ -3944,9 +3944,10 @@ trigger budget from the exact-retention budget:
   include thinking or structured output that a planner may choose later.
 - `CompressAtMaxInputTokens` is an exclusive trigger: a count equal to the
   threshold fits, while a larger count triggers compression. The runtime checks
-  the newest turn even when retention uses only `KeepMaxTurns`, and rejects a
-  generated summary that still leaves the history-policy request over the
-  threshold.
+  the newest turn even when retention uses only `KeepMaxTurns`. After generating
+  one summary, it counts the actual summary plus eligible complete turns and
+  removes oldest optional turns until the combination fits. Summary plus newest
+  still exceeding the threshold is an error.
 - Bedrock uses Runtime `CountTokens` when the resolved model supports it.
   Claude Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, and Mythos 5 require
   `bedrock.Options.MantleTokenCounter` instead. `bedrock.New` and
@@ -3964,6 +3965,54 @@ trigger budget from the exact-retention budget:
   Mantle because neither endpoint can enforce that contract. Models that keep
   native `output_config.format` require a counter endpoint that accepts that
   same native field.
+
+### Exact retention and summary coverage
+
+The runtime first selects eligible whole turns without a summary. The newest
+complete turn is mandatory. `KeepMaxInputTokens` limits the additional measured
+cost of older turns: each candidate's complete request count minus the count
+with only newest. System messages and the current tool catalog are included in
+both. Equality fits. The summary is not subtracted from this older-turn allowance;
+it counts against the separate `CompressAtMaxInputTokens` total ceiling.
+
+When that total ceiling is positive, the single summary receives every turn
+older than newest, including optional turns initially eligible for exact
+retention. The runtime then counts the preserved system messages, actual rendered
+summary, eligible exact turns, and unchanged tool catalog together. If too large,
+it removes only the oldest optional whole turn and counts the next complete
+candidate. It returns the longest fitting suffix permitted by the initial
+eligibility calculation. Counts are not assumed additive or monotonic.
+
+Every removed turn therefore entered the summary model before removal. Some
+older turns may appear both in summary prose and in exact history; this does not
+execute their tools again, but the answering model must still interpret repeated
+or conflicting observations correctly. Complete delivery and a passing count do
+not prove that interpretation. Newest is never summarized or split. If summary
+plus newest cannot fit, the original history accompanies the explicit error.
+Counting and summary errors stop immediately, without another candidate attempt,
+fallback, second summary, or automatic restart.
+
+For `K` eligible turns, final selection makes at most `K` exact count calls,
+stopping at the first fit or error. Eligibility makes at most `M` counts, where
+`M` is the input turn count capped by a positive `KeepMaxTurns`; the trigger adds
+at most one count and skips it when the turn trigger fires first. There is one
+summary completion. These are logical calls, not provider HTTP-attempt or billing
+guarantees. Larger summary input and additional final counts can cost more and
+take longer. Existing deadlines and request limits still apply.
+
+With no total ceiling, the summary receives only the excluded older prefix and
+the eligible exact suffix stays unchanged. No final counts or overlapping
+coverage are added, including when an older-turn token allowance is configured.
+Empty, system-only, non-triggered, and nothing-to-summarize returns remain
+unchanged. A later invocation recomputes counts from its messages and tools;
+leading system messages, including existing summaries, remain preserved.
+
+**Custom prompt upgrade:** for a positive total ceiling, `WithSummaryPrompt`
+now receives all turns older than newest, not only discarded history. Replace
+instructions that assume "only discarded history" with instructions about the
+supplied older history. Caller focus, `%s` interpolation, escaped percent signs,
+model class, and summary role remain unchanged. No stored-history migration or
+new configuration is required. Without a total ceiling, prefix scope is unchanged.
 
 ### Evidence supplied to the summary model
 
@@ -3991,8 +4040,8 @@ by copied provider limits. Adapters still own supported formats and roles, and a
 provider may interpret consecutive user messages together. This structure does
 not guarantee total-request, media, or context admission. Unsupported media and
 existing client/provider limits fail explicitly with their original errors;
-there is no text-only fallback, dropped attachment, retry with a subset, guessed
-capacity allowance, or additional summary/count call.
+there is no text-only fallback, dropped attachment, retry with a subset, or
+guessed capacity allowance. Media adds no separate summary or counting step.
 
 Arbitrary `Message.Meta`, thinking, cache checkpoints, and tool thought
 signatures are provider/application bookkeeping rather than semantic summary
@@ -4021,8 +4070,8 @@ a guessed file link. A later compression treats these textual records as
 ordinary evidence, not a document registry to reconstruct.
 
 This representation can be larger than the former placeholder prompt. It
-preserves the existing model class, one summary completion, counting behavior,
-selected prefix, exact suffix, and token thresholds. Delivery of complete
+preserves the existing model class, one summary completion, and token thresholds.
+The coverage and final selection rules are described above. Delivery of complete
 evidence does not guarantee that the model retains every important fact in its
 prose or that compression succeeds for every history size.
 

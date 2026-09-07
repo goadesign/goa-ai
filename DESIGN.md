@@ -1226,6 +1226,13 @@ redeploys.
   summary call. This improves evidence delivery, not guaranteed model relevance
   or provider admission; [the runtime contract](docs/runtime.md#history-policies)
   defines custom prompts, citation coordinates, and explicit failure behavior.
+  With a positive total ceiling, one summary receives every turn older than
+  newest before optional exact turns can be removed. The runtime counts the
+  actual summary and eligible exact suffixes, longest first, and returns the
+  first fitting combination. It never splits newest, guesses additive counts,
+  or generates another summary. Some older turns may appear both in summary
+  prose and exact history; this is not a guarantee of correct interpretation.
+  With no total ceiling, the existing disjoint prefix and suffix are preserved.
   The runtime evaluates token budgets with the configured
   model client's exact `model.TokenCounter`, so tokenization stays
   deployment/model-specific while the design records the agent's default policy.
