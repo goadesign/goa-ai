@@ -4475,7 +4475,16 @@ health child spans then inherit the same recorded decision.
 Each planner model-call span records `goa_ai.request.tool_count` and
 `goa_ai.request.tool_names`. These fields show the exact catalog advertised to
 that request. They contain names only; tool arguments and run labels are not
-recorded.
+recorded by these catalog attributes.
+
+The same model-call span records full validation causes on its existing error
+events regardless of `CaptureGenAIMessages`. Enabling that existing option also
+records the rejected response's ordered tool-call IDs, names, and exact retained
+argument text on the error event. It does not turn rejected output into accepted
+messages or change validation, recovery, usage, or cleanup. Missing retained
+responses are reported explicitly rather than replaced with empty output.
+Applications choose capture and telemetry retention; the complete attribute and
+lifecycle contract is in [GenAI observability](../DESIGN.md#genai-observability-contract).
 
 ---
 

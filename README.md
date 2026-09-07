@@ -317,6 +317,15 @@ keys, array indexes, call IDs, or undeclared field names. Ambiguous failures and
 specifications without field metadata keep the generic replacement instruction.
 Recovery remains bounded by the runtime's configured recovery-turn limit.
 
+Model-call tracing records the full underlying validation cause on the existing
+error event, independently of message capture. Applications can enable
+`runtime.WithCaptureGenAIMessages(true)` to also capture the rejected response's
+ordered tool calls, with each retained argument document stored as a string
+that preserves its exact bytes. Rejected output never becomes accepted output,
+conversation history, or executable tool input. See the
+[diagnostic capture contract](DESIGN.md#genai-observability-contract) for fields,
+missing-response handling, and application-owned export limits.
+
 Use `bedrock.NewAnthropic` for Claude deployments on Amazon Bedrock. It sends
 Anthropic Messages requests through Bedrock `InvokeModel`, so authored tool
 examples, forced tool choice, thinking, and prompt caching keep one

@@ -215,10 +215,12 @@ type (
 		// Tracer emits spans for planner/tool execution.
 		Tracer telemetry.Tracer
 
-		// CaptureGenAIMessages records full input and output chat message payloads
-		// on chat-turn model spans. Reasoning content is never captured. The
-		// attributes can contain user content, tool arguments, and PII; keep
-		// disabled unless explicitly troubleshooting.
+		// CaptureGenAIMessages records input and accepted output chat messages on
+		// model spans, plus retained tool arguments on model-rejection error
+		// events. Message capture excludes reasoning content and signatures.
+		// Capture is disabled by default; applications own the decision to record
+		// user content and tool arguments. Full errors, including validation
+		// causes, are recorded independently of this option without filtering.
 		CaptureGenAIMessages bool
 
 		// StorageActivityTimeout overrides the StartToClose timeout for
@@ -890,11 +892,12 @@ func WithMetrics(m telemetry.Metrics) RuntimeOption { return func(o *Options) { 
 // WithTracer sets the tracer.
 func WithTracer(t telemetry.Tracer) RuntimeOption { return func(o *Options) { o.Tracer = t } }
 
-// WithCaptureGenAIMessages enables recording of full input and output chat
-// message payloads on chat-turn model spans. Reasoning content is never
-// captured. The captured attributes can contain user content, tool arguments,
-// and PII, so callers must opt in explicitly and should never enable this by
-// default in production.
+// WithCaptureGenAIMessages enables input and accepted output chat-message
+// recording on model spans, and retained tool arguments on model-rejection
+// error events. Message capture excludes reasoning content and signatures.
+// Applications own capture, sampling, exporter limits, and retention policy for
+// these potentially sensitive values. Full errors, including validation causes,
+// are recorded independently of this option without filtering.
 func WithCaptureGenAIMessages(enabled bool) RuntimeOption {
 	return func(o *Options) { o.CaptureGenAIMessages = enabled }
 }

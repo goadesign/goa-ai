@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -21,6 +22,7 @@ import (
 
 type (
 	recordingTelemetryTracer struct {
+		mu    sync.Mutex
 		spans []*recordingTelemetrySpan
 	}
 
@@ -30,7 +32,9 @@ type (
 		statusCode codes.Code
 		statusDesc string
 		errs       []error
+		errorAttrs [][]attribute.KeyValue
 		ended      bool
+		endCount   int
 	}
 
 	stubModelClient struct {
@@ -107,26 +111,37 @@ func TestModelSpanAttrsRecordExactToolCatalog(t *testing.T) {
 	}
 }
 
-func TestOutputValidationAttrsExposeOnlyExactClosedCategory(t *testing.T) {
+func TestModelErrorRecordsExactValidationCauseWithoutCapture(t *testing.T) {
 	contract, err := model.NewRequestContract(&model.Request{})
 	require.NoError(t, err)
-	const privateCause = "private-provider-cause-sentinel"
+	const cause = "items[0].values must be an array; received null"
 	validationErr := contract.RejectProviderOutput(
 		model.OutputValidationToolArguments,
 		nil,
-		errors.New(privateCause),
+		errors.New(cause),
 	)
 
-	attrs := outputValidationAttrs(validationErr)
+	span := &recordingTelemetrySpan{}
+	recordModelError(span, validationErr, false)
 
 	require.Equal(t, []attribute.KeyValue{
 		attribute.String(
 			"gen_ai.response.validation.kind",
 			string(model.OutputValidationToolArguments),
 		),
-	}, attrs)
-	require.NotContains(t, fmt.Sprint(attrs), privateCause)
-	require.Empty(t, outputValidationAttrs(errors.Join(validationErr, errors.New("unrelated failure"))))
+	}, outputValidationAttrs(validationErr))
+	require.Equal(t, []attribute.KeyValue{
+		attribute.String("gen_ai.response.validation.cause", cause),
+	}, span.errorAttrs[0])
+	require.Same(t, validationErr, span.errs[0])
+
+	mixed := errors.Join(validationErr, errors.New("unrelated failure"))
+	span = &recordingTelemetrySpan{}
+	recordModelError(span, mixed, true)
+	require.Same(t, mixed, span.errs[0])
+	require.Empty(t, outputValidationAttrs(mixed))
+	require.Empty(t, span.attrs)
+	require.Empty(t, span.errorAttrs[0])
 }
 
 func TestTracedClientClosesStreamReturnedWithError(t *testing.T) {
@@ -224,6 +239,7 @@ func TestTracedClientRecordsConfiguredCompletionFailure(t *testing.T) {
 	require.Len(t, tracer.spans, 1)
 	require.Len(t, tracer.spans[0].errs, 1)
 	require.NotContains(t, tracer.spans[0].errs[0].Error(), "typed completion is invalid")
+	require.Equal(t, validationErr.Unwrap().Error(), attrsByKey(tracer.spans[0].errorAttrs[0])["gen_ai.response.validation.cause"].AsString())
 	require.Equal(t, codes.Error, tracer.spans[0].statusCode)
 	require.Len(t, logger.errors, 1)
 	require.NotContains(t, fmt.Sprint(logger.errors), "typed completion is invalid")
@@ -276,6 +292,7 @@ func TestTracedStreamRecordsConfiguredCompletionFailure(t *testing.T) {
 	require.Len(t, tracer.spans, 1)
 	require.Len(t, tracer.spans[0].errs, 2)
 	require.NotContains(t, tracer.spans[0].errs[0].Error(), "text instead of a completion")
+	require.Equal(t, validationErr.Unwrap().Error(), attrsByKey(tracer.spans[0].errorAttrs[0])["gen_ai.response.validation.cause"].AsString())
 	require.ErrorIs(t, tracer.spans[0].errs[1], closeErr)
 	require.Equal(t, codes.Error, tracer.spans[0].statusCode)
 }
@@ -689,6 +706,8 @@ func TestTracedStreamRecordsBufferedOutputMessagesWhenEnabled(t *testing.T) {
 }
 
 func (t *recordingTelemetryTracer) Start(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, telemetry.Span) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	cfg := trace.NewSpanStartConfig(opts...)
 	span := &recordingTelemetrySpan{
 		name:  name,
@@ -699,6 +718,8 @@ func (t *recordingTelemetryTracer) Start(ctx context.Context, name string, opts 
 }
 
 func (t *recordingTelemetryTracer) Span(context.Context) telemetry.Span {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	if len(t.spans) == 0 {
 		return &recordingTelemetrySpan{}
 	}
@@ -707,6 +728,7 @@ func (t *recordingTelemetryTracer) Span(context.Context) telemetry.Span {
 
 func (s *recordingTelemetrySpan) End(...trace.SpanEndOption) {
 	s.ended = true
+	s.endCount++
 }
 
 func (s *recordingTelemetrySpan) AddEvent(string, ...any) {}
@@ -720,9 +742,11 @@ func (s *recordingTelemetrySpan) SetStatus(code codes.Code, description string) 
 	s.statusDesc = description
 }
 
-func (s *recordingTelemetrySpan) RecordError(err error, _ ...trace.EventOption) {
+func (s *recordingTelemetrySpan) RecordError(err error, opts ...trace.EventOption) {
 	if err != nil {
 		s.errs = append(s.errs, err)
+		config := trace.NewEventConfig(opts...)
+		s.errorAttrs = append(s.errorAttrs, config.Attributes())
 	}
 }
 
