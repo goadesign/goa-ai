@@ -1217,7 +1217,16 @@ redeploys.
   instead of selecting by call order or visible text.
 - **History compression**: Agent designs may declare compression defaults with
   `CompressAtTurns`, `CompressAtMaxInputTokens`, `KeepMaxTurns`, and
-  `KeepMaxInputTokens`. The runtime evaluates token budgets with the configured
+  `KeepMaxInputTokens`. The runtime supplies the selected older history as
+  complete quoted semantic parts, preserving tool values, correlation IDs, and
+  errors. Native media keeps its original user-message groups and source
+  positions; historical tools are not advertised for execution. Cited summary
+  sentences retain their supplied attribution as quoted text. Provider replay
+  metadata and reasoning stay in exact history rather than entering a new
+  summary call. This improves evidence delivery, not guaranteed model relevance
+  or provider admission; [the runtime contract](docs/runtime.md#history-policies)
+  defines custom prompts, citation coordinates, and explicit failure behavior.
+  The runtime evaluates token budgets with the configured
   model client's exact `model.TokenCounter`, so tokenization stays
   deployment/model-specific while the design records the agent's default policy.
   Each history-policy count includes its preserved system messages, candidate

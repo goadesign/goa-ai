@@ -3965,6 +3965,67 @@ trigger budget from the exact-retention budget:
   native `output_config.format` require a counter endpoint that accepts that
   same native field.
 
+### Evidence supplied to the summary model
+
+For the selected older messages, `Compress` supplies complete text, tool
+arguments and results, call/result IDs, error status and full error text, and
+citation fields through the canonical `model.Message` JSON codec. Values are
+not selected, rounded, or replaced with tool-result placeholders. Repeated and
+conflicting observations remain separate occurrences with their original role,
+message position, and part position. The model decides which supplied facts
+matter for continuing the work; the runtime does not predict relevance.
+
+A runtime-owned system instruction treats the recorded conversation as evidence,
+not current instructions or actions. The summary request advertises no tools.
+`WithSummaryPrompt` still inserts the complete quoted textual transcript at its
+`%s` placeholder, preserving the caller's surrounding text and ordinary Go format
+string behavior. Source references in that transcript identify native images and
+documents supplied afterward, in the same completion. Each original user message
+with media creates one user attachment message; every unchanged attachment has a
+matching original message/part reference. No media bytes are duplicated as base64
+prose, historical assistant turns are not replayed, and document bodies are not
+extracted or fetched by the history policy.
+
+Attachment groups preserve the original message structure rather than batching
+by copied provider limits. Adapters still own supported formats and roles, and a
+provider may interpret consecutive user messages together. This structure does
+not guarantee total-request, media, or context admission. Unsupported media and
+existing client/provider limits fail explicitly with their original errors;
+there is no text-only fallback, dropped attachment, retry with a subset, guessed
+capacity allowance, or additional summary/count call.
+
+Arbitrary `Message.Meta`, thinking, cache checkpoints, and tool thought
+signatures are provider/application bookkeeping rather than semantic summary
+evidence. They are not copied into the new request. Original history, exact
+retained messages, stored diagnostics, and full tool errors remain unchanged.
+Applications that need a fact summarized must represent it in a canonical
+text, tool, citation, or media part, not an opaque metadata map.
+
+The returned summary keeps its configured `WithSummaryRole`, single text part,
+`[Conversation Summary]` prefix, and runtime summary metadata. Plain text retains
+its existing representation. Cited sentences are preserved in output order as
+quoted canonical citation records, including source, title, location, and
+excerpts; they are not replayed as native citations under another message role.
+Whitespace-only generated text still fails as an empty summary even when a
+citation record has attribution fields.
+
+Historical citation coordinates describe the original request that produced
+them, not this summary request's attachments. When a new summary contains
+citations and its request included native documents, its text also records that
+request's document layout: canonical attachment-message position, document
+occurrence within that message, original history position, and supplied name,
+format, and URI. It includes no document bodies and makes no claim that these
+positions map to a provider's `DocumentIndex`. Coordinates are never rewritten,
+titles are not assumed unique, and incomplete source identity is not turned into
+a guessed file link. A later compression treats these textual records as
+ordinary evidence, not a document registry to reconstruct.
+
+This representation can be larger than the former placeholder prompt. It
+preserves the existing model class, one summary completion, counting behavior,
+selected prefix, exact suffix, and token thresholds. Delivery of complete
+evidence does not guarantee that the model retains every important fact in its
+prose or that compression succeeds for every history size.
+
 ```go
 // DSL
 RunPolicy(func() {
