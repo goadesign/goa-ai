@@ -1152,10 +1152,12 @@ bookkeeping and terminal-run semantics therefore remain independent. See
 
 Application tracers receive original planner and activity errors before workflow
 transport, including typed causes and application-owned Temporal details.
-Planner rejection records retain exact small diagnostic reasons separately from
-model correction guidance; oversized or invalid UTF-8 text is explicitly omitted, not described
-as retained. Temporal failures preserve bounded readable explanations while
-keeping execution classification and retryability unchanged. See
+Planner rejection records retain exact valid UTF-8 diagnostic reasons separately
+from model correction guidance, without a per-message length cutoff. Current
+Temporal failures also preserve full diagnostic text and typed provider fields.
+Invalid UTF-8 is explicitly unavailable. Whole workflow values and external
+transports still enforce their own limits; unlimited delivery is not promised.
+Execution classification and retryability remain unchanged. See
 [diagnostic ownership and worker upgrade requirements](docs/runtime.md#diagnostic-ownership-and-transport).
 
 Every run follows the same lifecycle:

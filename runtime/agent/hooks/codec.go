@@ -128,7 +128,7 @@ func EncodeRecordPayload(evt Event) (rawjson.Message, error) {
 	}
 	switch e := evt.(type) {
 	case *ModelOutputRejectedEvent:
-		if e.ReasonVersion == errorevidence.ReasonVersion {
+		if e.ReasonVersion != "" {
 			if err := validateReasonFingerprint(e.ReasonSHA256, e.ReasonSize); err != nil {
 				return nil, fmt.Errorf("encode model rejection fingerprint: %w", err)
 			}
@@ -137,7 +137,7 @@ func EncodeRecordPayload(evt Event) (rawjson.Message, error) {
 			return nil, fmt.Errorf("encode model rejection reason: %w", err)
 		}
 	case *PlannerOutputRejectedEvent:
-		if e.ReasonVersion == errorevidence.ReasonVersion {
+		if e.ReasonVersion != "" {
 			if err := validateReasonFingerprint(e.ReasonSHA256, e.ReasonSize); err != nil {
 				return nil, fmt.Errorf("encode planner rejection fingerprint: %w", err)
 			}

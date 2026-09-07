@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/codes"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
@@ -25,7 +26,7 @@ import (
 func TestPlannerActivitiesOfferOriginalRejectionToTracer(t *testing.T) {
 	for _, resume := range []bool{false, true} {
 		t.Run(fmt.Sprintf("resume=%t", resume), func(t *testing.T) {
-			original := planner.NewOutputContractError(fmt.Errorf("validate result: %w", errors.New("field[7] is invalid")))
+			original := planner.NewOutputContractError(fmt.Errorf("validate result: %w", errors.New(strings.Repeat("field[7] is invalid\n", 400))))
 			pl := &stubPlanner{
 				start:  func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) { return nil, original },
 				resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) { return nil, original },
@@ -51,6 +52,32 @@ func TestPlannerActivitiesOfferOriginalRejectionToTracer(t *testing.T) {
 			assert.Equal(t, codes.Error, span.statusCode)
 			assert.True(t, span.ended)
 		})
+	}
+}
+
+func TestPlannerFullReasonRespectsCompleteResultBudget(t *testing.T) {
+	for _, size := range []int{64 * 1024, engine.MaxPayloadBytes + 1} {
+		original := planner.NewOutputContractError(errors.New(strings.Repeat("x", size)))
+		rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+			return nil, original
+		}})
+		tracer := &recordingTelemetryTracer{}
+		rt.tracer = tracer
+		out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{AgentID: "service.agent", RunID: "run", RunContext: run.Context{RunID: "run", TurnID: "turn"}})
+		require.NoError(t, err)
+		require.NotNil(t, out.OutputContractFailure)
+		assert.Empty(t, out.OutputContractFailure.ReasonOmitted)
+		if size < engine.MaxPayloadBytes {
+			assert.Equal(t, original.Unwrap().Error(), out.OutputContractFailure.Reason)
+		} else {
+			assert.Contains(t, out.OutputContractFailure.Reason, "planner activity output rejected before Temporal encoding")
+			assert.NotEqual(t, original.Unwrap().Error(), out.OutputContractFailure.Reason)
+		}
+		_, err = workflowcodec.NewDataConverter().ToPayload(out)
+		require.NoError(t, err)
+		require.Len(t, tracer.spans, 1)
+		require.Len(t, tracer.spans[0].errs, 1)
+		assert.Same(t, original, tracer.spans[0].errs[0])
 	}
 }
 

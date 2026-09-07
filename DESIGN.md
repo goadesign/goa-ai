@@ -376,13 +376,16 @@ the complete call batch.
 Ordinary output contract errors are terminal and Temporal does not retry them.
 Diagnostics are separate from that execution decision. Planner activities offer
 the original error to the application tracer and retain the exact selected
-reason in versioned rejection metadata when it is valid UTF-8 within the existing
-per-diagnostic transport allocation. Other text is explicitly omitted with a
-closed size-limit or invalid-encoding reason and its original fingerprint.
-Historical hash-only records remain unchanged during
+reason in v2 rejection metadata when it is valid UTF-8, without a per-reason
+length cutoff. Invalid text is explicitly unavailable with its original
+fingerprint. Whole workflow values remain subject to their aggregate limit.
+Historical hash-only and length-limited v1 records remain unchanged during
 replay; new records do not make old explanations recoverable. Temporal's private
-v2 generic/provider envelopes allow readable bounded outer messages while
-preserving the existing typed classification and retry facts. Applications own
+v3 application types retain full valid diagnostic text and plain exact provider
+fields, while historical types keep their original decoding and re-wrapping.
+Native failure objects are not workflow argument payloads; backend failure-size
+limits and application-supplied converters remain separate contracts.
+Classification and retry settings are unchanged. Applications own
 capture, disclosure, and retention; arbitrary typed causes and custom Temporal
 details are available to the original-error tracer, not promised on the wire.
 See [diagnostic transport and upgrade restrictions](docs/runtime.md#diagnostic-ownership-and-transport).
@@ -1386,7 +1389,7 @@ its own public completion event for an end-user interface.
     - `error_kind`: stable classifier for UX/decisioning (provider kinds like `rate_limited`, `unavailable`, or runtime kinds like `timeout`/`internal`)
     - `retryable`: whether retrying may succeed without changing input
     - `error`: **user-safe** message suitable for direct display
-    - `debug_error`: raw error string for logs/diagnostics (not for UI)
+    - `debug_error`: diagnostic error text; the application decides who may see it
   - Tool-execution events carry a `ToolFailure` with an independent failure kind
     and recovery action. `correct_call` keeps the failed tool available and
     supplies structured correction evidence without requiring a retry,

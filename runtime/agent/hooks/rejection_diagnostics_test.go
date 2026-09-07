@@ -29,6 +29,22 @@ func TestRejectionReasonCodecPreservesLegacyBytes(t *testing.T) {
 	assert.Empty(t, event.(*PlannerOutputRejectedEvent).Reason)
 }
 
+func TestHistoricalV1RejectionReasonKeepsFixedBytes(t *testing.T) {
+	for _, fixed := range []string{
+		`{"ReasonVersion":"goa_ai.rejection_reason.v1","Reason":"hello","ReasonSHA256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824","ReasonSize":5}`,
+		`{"ReasonVersion":"goa_ai.rejection_reason.v1","ReasonOmitted":"size_limit","ReasonSHA256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ReasonSize":3073}`,
+		`{"ReasonVersion":"goa_ai.rejection_reason.v1","ReasonOmitted":"invalid_utf8","ReasonSHA256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ReasonSize":1}`,
+	} {
+		record := &runlog.ActivityInput{Type: PlannerOutputRejected, RunID: "run", AgentID: "service.agent", Payload: rawjson.Message(fixed)}
+		event, err := DecodeFromRecordInput(record)
+		require.NoError(t, err)
+		encoded, err := EncodeRecordPayload(event)
+		require.NoError(t, err)
+		assert.Equal(t, fixed, string(encoded))
+		assert.Equal(t, errorevidence.LegacyReasonVersion, event.(*PlannerOutputRejectedEvent).ReasonVersion)
+	}
+}
+
 func TestRejectionReasonCodecRequiresExactVersionedText(t *testing.T) {
 	for _, reason := range []string{"", "field[7] is invalid", strings.Repeat("é", errorevidence.MaxMessageBytes/2), strings.Repeat("x", errorevidence.MaxMessageBytes+1), string([]byte{0xff})} {
 		digest, size := errorevidence.FingerprintText(reason)
@@ -68,8 +84,9 @@ func TestOmittedRejectionEncodeRequiresCanonicalFingerprint(t *testing.T) {
 		{digest, -1},
 	} {
 		for _, event := range []Event{
-			&PlannerOutputRejectedEvent{ReasonVersion: errorevidence.ReasonVersion, ReasonOmitted: "size_limit", ReasonSHA256: invalid.digest, ReasonSize: invalid.size},
-			&ModelOutputRejectedEvent{ReasonVersion: errorevidence.ReasonVersion, ReasonOmitted: "size_limit", ReasonSHA256: invalid.digest, ReasonSize: invalid.size},
+			&PlannerOutputRejectedEvent{ReasonVersion: errorevidence.ReasonVersion, ReasonOmitted: "invalid_utf8", ReasonSHA256: invalid.digest, ReasonSize: invalid.size},
+			&ModelOutputRejectedEvent{ReasonVersion: errorevidence.ReasonVersion, ReasonOmitted: "invalid_utf8", ReasonSHA256: invalid.digest, ReasonSize: invalid.size},
+			&PlannerOutputRejectedEvent{ReasonVersion: errorevidence.LegacyReasonVersion, ReasonOmitted: "size_limit", ReasonSHA256: invalid.digest, ReasonSize: invalid.size},
 		} {
 			_, err := EncodeRecordPayload(event)
 			require.Error(t, err)

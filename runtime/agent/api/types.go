@@ -617,12 +617,12 @@ type (
 		// ReasonVersion identifies exact-or-omitted diagnostic text. Empty is
 		// reserved for historical records that saved only a fingerprint.
 		ReasonVersion string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
-		// Reason contains the exact fingerprinted cause text when ReasonVersion
-		// is goa_ai.rejection_reason.v1, the text is valid UTF-8, and ReasonSize
-		// is at most 3072 bytes. Omitted bytes retain their original digest/size.
+		// Reason contains exact fingerprinted UTF-8 cause text. Current v2 has
+		// no per-reason length limit; historical v1 retained at most 3072 bytes.
+		// The complete enclosing workflow value still has its own byte limit.
 		Reason string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
-		// ReasonOmitted is size_limit or invalid_utf8 when Reason cannot cross
-		// text transport. Size takes precedence; empty means exact retained text.
+		// ReasonOmitted is invalid_utf8 when source bytes cannot cross text
+		// transport. Historical v1 may also use size_limit. Empty means exact text.
 		ReasonOmitted string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 		// Origin identifies whether model output or the planner result failed its
 		// contract.
@@ -635,7 +635,7 @@ type (
 		ModelOutputValidationKind model.OutputValidationKind `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// ReasonSHA256 identifies the original selected validation-cause text,
-		// including when the text is too large to retain in Reason.
+		// including historical or invalid-text records without retained Reason.
 		ReasonSHA256 string
 
 		// ReasonSize is the number of bytes covered by ReasonSHA256.

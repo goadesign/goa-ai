@@ -2,7 +2,7 @@ package errorevidence
 
 // Rejection records retain the exact text identified by their existing digest.
 // The version distinguishes historical digest-only records from current records
-// that include bounded UTF-8 reasons and explicitly classify omitted text.
+// that include UTF-8 reasons and explicitly identify invalid source text.
 
 import (
 	"fmt"
@@ -10,21 +10,22 @@ import (
 )
 
 const (
-	// MaxMessageBytes is the existing per-diagnostic workflow transport allocation.
-	// It does not limit the combined diagnostics of an entire run.
+	// MaxMessageBytes is the allocation enforced by historical v1 records only.
 	MaxMessageBytes = 3072
-	// ReasonVersion identifies exact-or-omitted reason text in rejection records.
-	ReasonVersion = "goa_ai.rejection_reason.v1"
+	// LegacyReasonVersion identifies the historical length-limited format.
+	LegacyReasonVersion = "goa_ai.rejection_reason.v1"
+	// ReasonVersion identifies exact valid UTF-8 text without a per-reason limit.
+	ReasonVersion = "goa_ai.rejection_reason.v2"
+
+	reasonSizeLimit   = "size_limit"
+	reasonInvalidUTF8 = "invalid_utf8"
 )
 
-// RetainedReason returns exact UTF-8 text within the transport allocation. A caller
+// RetainedReason returns exact UTF-8 text without a per-message allocation. A caller
 // records the original digest and size independently, including when omitted.
 func RetainedReason(text string) (reason, omitted string) {
-	if len(text) > MaxMessageBytes {
-		return "", "size_limit"
-	}
 	if !utf8.ValidString(text) {
-		return "", "invalid_utf8"
+		return "", reasonInvalidUTF8
 	}
 	return text, ""
 }
@@ -37,14 +38,14 @@ func ValidateReason(version, text, omitted, digest string, size int64) error {
 		if text != "" || omitted != "" {
 			return fmt.Errorf("legacy rejection contains reason text")
 		}
-	case ReasonVersion:
+	case LegacyReasonVersion:
 		switch omitted {
-		case "size_limit":
+		case reasonSizeLimit:
 			if text != "" || size <= MaxMessageBytes {
 				return fmt.Errorf("size-limited rejection requires omitted text exceeding the allocation")
 			}
 			return nil
-		case "invalid_utf8":
+		case reasonInvalidUTF8:
 			if text != "" || size <= 0 || size > MaxMessageBytes {
 				return fmt.Errorf("invalid UTF-8 rejection requires omitted nonempty bytes within the allocation")
 			}
@@ -58,12 +59,18 @@ func ValidateReason(version, text, omitted, digest string, size int64) error {
 		default:
 			return fmt.Errorf("unsupported rejection reason omission %q", omitted)
 		}
-		if !utf8.ValidString(text) {
-			return fmt.Errorf("rejection reason is not valid UTF-8")
-		}
-		actualDigest, actualSize := FingerprintText(text)
-		if actualDigest != digest || int64(actualSize) != size {
-			return fmt.Errorf("rejection reason does not match its fingerprint")
+		return validateExactReason(text, digest, size)
+	case ReasonVersion:
+		switch omitted {
+		case reasonInvalidUTF8:
+			if text != "" || size <= 0 {
+				return fmt.Errorf("invalid UTF-8 rejection requires omitted nonempty bytes")
+			}
+			return nil
+		case "":
+			return validateExactReason(text, digest, size)
+		default:
+			return fmt.Errorf("unsupported rejection reason omission %q", omitted)
 		}
 	default:
 		return fmt.Errorf("unsupported rejection reason version %q", version)
@@ -71,14 +78,38 @@ func ValidateReason(version, text, omitted, digest string, size int64) error {
 	return nil
 }
 
-// BoundedMessage retains small diagnostic text and explicitly marks omission
-// when it exceeds the allocation or is invalid UTF-8. The original is offered to the
-// application tracer separately; a digest is not a retrievable copy.
+// BoundedMessage preserves historical Temporal wrapping, including the old
+// length allocation. New failures use DiagnosticMessage instead.
 func BoundedMessage(text string) string {
 	retained, omitted := RetainedReason(text)
+	if len(text) > MaxMessageBytes {
+		retained, omitted = "", reasonSizeLimit
+	}
 	if omitted == "" {
 		return retained
 	}
 	digest, size := FingerprintText(text)
 	return fmt.Sprintf("diagnostic text omitted (%s; sha256=%s original_bytes=%d)", omitted, digest, size)
+}
+
+// DiagnosticMessage preserves exact valid text. Invalid UTF-8 is explicitly
+// unavailable because JSON and protobuf strings cannot preserve those bytes.
+func DiagnosticMessage(text string) string {
+	if utf8.ValidString(text) {
+		return text
+	}
+	digest, size := FingerprintText(text)
+	return fmt.Sprintf("diagnostic text omitted (invalid_utf8; sha256=%s original_bytes=%d)", digest, size)
+}
+
+// validateExactReason verifies saved text against the original fingerprint.
+func validateExactReason(text, digest string, size int64) error {
+	if !utf8.ValidString(text) {
+		return fmt.Errorf("rejection reason is not valid UTF-8")
+	}
+	actualDigest, actualSize := FingerprintText(text)
+	if actualDigest != digest || int64(actualSize) != size {
+		return fmt.Errorf("rejection reason does not match its fingerprint")
+	}
+	return nil
 }
