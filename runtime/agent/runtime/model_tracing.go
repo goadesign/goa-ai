@@ -11,6 +11,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"sync"
 	"time"
@@ -55,6 +56,18 @@ type (
 		sawUsageDelta      bool
 		captureMessages    bool
 		statusOnce         sync.Once
+	}
+
+	// rejectedToolCall records retained argument text without parsing or
+	// normalizing it. These records describe a rejected response, not executable
+	// tool calls or the provider's original wire representation.
+	rejectedToolCall struct {
+		// ID identifies this call in the retained response.
+		ID string `json:"id"`
+		// Name is the retained tool name.
+		Name string `json:"name"`
+		// ArgumentsJSON preserves the retained ToolCall.Payload bytes as text.
+		ArgumentsJSON string `json:"arguments_json"`
 	}
 )
 
@@ -121,7 +134,7 @@ func (c *tracedCall) ObserveClientComplete(resp *model.Response, err error) erro
 			c.span.SetStatus(codes.Unset, "")
 			return nil
 		}
-		c.span.RecordError(err)
+		recordModelError(c.span, err, c.provider.captureMessages)
 		c.span.SetStatus(codes.Error, "model complete failed")
 		c.provider.logger.Error(
 			c.ctx,
@@ -151,7 +164,7 @@ func (c *tracedCall) ObserveClientStream(err error) (model.StreamObserver, error
 			c.span.SetStatus(codes.Unset, "")
 			return nil, nil
 		}
-		c.span.RecordError(err)
+		recordModelError(c.span, err, c.provider.captureMessages)
 		c.span.SetStatus(codes.Error, "model stream failed")
 		c.provider.logger.Error(
 			c.ctx,
@@ -184,7 +197,7 @@ func (c *tracedCall) Abort(err error) error {
 		if !telemetry.ShouldRecordSpanError(c.ctx, err) {
 			c.span.SetStatus(codes.Unset, "")
 		} else {
-			c.span.RecordError(err)
+			recordModelError(c.span, err, c.provider.captureMessages)
 			c.span.SetStatus(codes.Error, "model observer setup failed")
 		}
 	}
@@ -214,7 +227,7 @@ func (s *tracedStream) ObserveStreamRecv(observation model.StreamObservation) er
 			return nil
 		}
 		s.span.SetAttributes(outputValidationAttrs(err)...)
-		s.span.RecordError(err)
+		recordModelError(s.span, err, s.captureMessages)
 		s.end(codes.Error, "stream recv failed")
 		return nil
 	}
@@ -251,7 +264,9 @@ func (s *tracedStream) ObserveStreamClose(err error) error {
 			s.end(codes.Unset, "")
 			return nil
 		}
-		s.span.RecordError(err)
+		// Close observes cleanup independently from the terminal receive. Keep
+		// its full error without emitting retained arguments a second time.
+		recordModelError(s.span, err, false)
 		s.end(codes.Error, "stream close failed")
 		return nil
 	}
@@ -313,9 +328,8 @@ func modelUsageAttrs(usage model.TokenUsage) []attribute.KeyValue {
 	return attrs
 }
 
-// outputValidationAttrs exposes only the closed response category. The error
-// summary, rejected output, provider cause, tool details, and schema paths are
-// deliberately absent.
+// outputValidationAttrs identifies exact validation rejections on the model
+// span. Detailed causes and opted-in arguments belong to its error event.
 func outputValidationAttrs(err error) []attribute.KeyValue {
 	outputErr, ok := exactModelOutputValidation(err)
 	if !ok {
@@ -324,6 +338,60 @@ func outputValidationAttrs(err error) []attribute.KeyValue {
 	return []attribute.KeyValue{
 		attribute.String("gen_ai.response.validation.kind", string(outputErr.Kind())),
 	}
+}
+
+// recordModelError enriches the existing error event without replacing the
+// original error. Validation causes are always recorded; only retained argument
+// bodies require the application's existing message-capture opt-in.
+func recordModelError(span telemetry.Span, err error, captureMessages bool) {
+	outputErr, ok := exactModelOutputValidation(err)
+	if !ok {
+		span.RecordError(err)
+		return
+	}
+	attrs := []attribute.KeyValue{
+		attribute.String("gen_ai.response.validation.cause", outputErr.Unwrap().Error()),
+	}
+	if captureMessages {
+		captured, captureErr := rejectedToolCallAttrs(outputErr)
+		if captureErr != nil {
+			span.AddEvent("gen_ai.messages_serialize_failed",
+				"gen_ai.message.direction", "rejected",
+				"exception.message", captureErr.Error())
+		} else {
+			attrs = append(attrs, captured...)
+		}
+	}
+	span.RecordError(err, trace.WithAttributes(attrs...))
+}
+
+// rejectedToolCallAttrs serializes all calls in the owned rejected response in
+// order. A missing response is distinct from a retained response with no calls.
+// Argument strings can contain malformed JSON; they are never decoded here.
+func rejectedToolCallAttrs(outputErr *model.OutputValidationError) ([]attribute.KeyValue, error) {
+	response, err := outputErr.RejectedResponse()
+	if err != nil {
+		return nil, err
+	}
+	attrs := make([]attribute.KeyValue, 1, 2)
+	attrs[0] = attribute.Bool("gen_ai.response.rejected.response_retained", response != nil)
+	if response == nil {
+		return attrs, nil
+	}
+	calls := response.ToolCalls()
+	records := make([]rejectedToolCall, len(calls))
+	for i, call := range calls {
+		records[i] = rejectedToolCall{
+			ID:            call.ID,
+			Name:          string(call.Name),
+			ArgumentsJSON: string(call.Payload),
+		}
+	}
+	body, err := json.Marshal(records)
+	if err != nil {
+		return nil, err
+	}
+	return append(attrs, attribute.String("gen_ai.response.rejected.tool_calls", string(body))), nil
 }
 
 func requestedModelName(req *model.Request) string {

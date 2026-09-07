@@ -1447,6 +1447,47 @@ Prompt content, chat history, tool arguments, and tool results remain opt-in
 application policy. The runtime records identifiers, names, counts, timings,
 errors, and token usage by default.
 
+For an exact `model.OutputValidationError`, model-call tracing retains the
+original error and adds its full underlying cause as
+`gen_ai.response.validation.cause` on that same error event. This is independent
+of message capture: error values are not filtered. The span also records the
+closed `gen_ai.response.validation.kind` category. Unrelated errors joined with
+a validation error remain ordinary complete errors; they are not reclassified
+as a pure validation rejection.
+
+`CaptureGenAIMessages` additionally records these attributes on the rejection's
+existing error event:
+
+- `gen_ai.response.rejected.response_retained` distinguishes unavailable
+  response evidence (`false`) from an owned rejected response (`true`).
+- `gen_ai.response.rejected.tool_calls` is a JSON array in retained response
+  order. Each object contains `id`, `name`, and `arguments_json`. The arguments
+  are JSON **strings**, not parsed values: decoding restores the exact retained
+  `ToolCall.Payload` bytes, including whitespace, numeric spelling, malformed
+  JSON, explicit null, and empty arrays. This is the provider-neutral retained
+  representation, not a claim to capture the original provider wire bytes.
+
+No tool-call attribute is emitted when the response is unavailable. A retained
+response with no calls emits `[]`. All retained calls are included, without
+guessing which call failed or implying every sibling call is invalid. The new
+projection includes no reasoning, signatures, or unrelated response content;
+full error values are still recorded without inspecting or filtering them.
+Rejected calls never enter `gen_ai.output.messages`, conversation history, or
+tool execution. Unary rejection, stream setup failure, and the first terminal
+stream rejection are recorded on their own call's span. Repeated receives and
+cleanup do not repeat retained argument capture; cleanup errors remain separate
+errors. Failure to copy or serialize evidence emits
+`gen_ai.messages_serialize_failed` with direction `rejected` and the complete
+capture error, without replacing the original validation error.
+
+Capture remains disabled by default and uses the existing response-retention
+bounds; it does not reconstruct missing output or truncate argument text.
+Applications own capture activation, sampling, exporter limits, and retention.
+JSON string escaping can expand the exported value beyond the retained argument
+size. The framework guarantees emission to the configured tracer, not retention
+by a particular exporter or backend. Disabling capture stops future body
+recording; it does not erase previously exported telemetry.
+
 Planner model-call spans also record `goa_ai.request.tool_count` and
 `goa_ai.request.tool_names`, which expose the exact names advertised to that
 request without recording arguments or labels. Every registry replica emits a
