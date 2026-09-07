@@ -668,6 +668,13 @@ History can also use model-assisted compression: declare
 or `KeepMaxTurns` exact-retention budgets inside `History`. Token budgets are
 counted at runtime by a history model that implements `model.TokenCounter` with
 exact counts and keep only whole recent turns, never truncated tool exchanges.
+The summary model receives complete quoted tool arguments, results, and source
+references, with native images and documents grouped by their original messages.
+It receives no executable tool catalog. Plain and cited summary sentences are
+preserved; provider replay metadata remains in the original history, not the
+summary request. Complete evidence can make that request larger, and existing
+model/provider limits still fail explicitly. See
+[history policies](docs/runtime.md#history-policies) for the evidence contract.
 
 Per-run options can further restrict execution:
 

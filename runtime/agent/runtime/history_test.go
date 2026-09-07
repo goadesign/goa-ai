@@ -218,15 +218,15 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 	// only (see TestCompress_KeepBudgetExcludesToolCatalog).
 	assertToolDefinitionsEqual(t, toolDefs, client.countedAll[0].Tools)
 	require.NotNil(t, client.summarized)
-	require.Len(t, client.summarized.Messages, 1)
-	assert.Contains(t, textPart(t, client.summarized.Messages[0]), "question 1")
-	assert.Contains(t, textPart(t, client.summarized.Messages[0]), "question 2")
+	require.Len(t, client.summarized.Messages, 2)
+	assert.Contains(t, textPart(t, client.summarized.Messages[1]), "question 1")
+	assert.Contains(t, textPart(t, client.summarized.Messages[1]), "question 2")
 	// Plan-step segmentation: the newest logical turn is the final assistant
 	// step alone. The 10-token keep budget cannot reunite it with the earlier
 	// tool step, so question 3's step is summarized (step atomicity holds:
 	// the tool_use and its result compress together) and only the final
 	// answer stays exact.
-	assert.Contains(t, textPart(t, client.summarized.Messages[0]), "question 3")
+	assert.Contains(t, textPart(t, client.summarized.Messages[1]), "question 3")
 	require.Len(t, out, 3)
 	assert.Equal(t, model.ConversationRoleSystem, out[0].Role)
 	assert.Equal(t, model.ConversationRoleSystem, out[1].Role)
@@ -370,7 +370,7 @@ func TestCompressTurnRetentionAlsoFitsTokenTrigger(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, out, 6)
 	require.NotNil(t, client.summarized)
-	assert.Contains(t, textPart(t, client.summarized.Messages[0]), "question 1")
+	assert.Contains(t, textPart(t, client.summarized.Messages[1]), "question 1")
 	assert.Equal(t, "question 2", textPart(t, out[2]))
 	assert.Equal(t, "answer 3", textPart(t, out[5]))
 	require.NotEmpty(t, client.countedAll)

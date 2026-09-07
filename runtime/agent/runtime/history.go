@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"goa.design/goa-ai/runtime/agent/model"
 )
@@ -152,7 +151,9 @@ CONVERSATION:
 %s`
 
 // WithSummaryPrompt sets a custom summarization prompt. The prompt should contain
-// a %s placeholder where the conversation text will be inserted.
+// a %s placeholder where the complete quoted textual history and source-position
+// references will be inserted. Native images and documents follow in user
+// messages grouped by their original messages, within the same completion.
 func WithSummaryPrompt(prompt string) CompressOption {
 	return func(c *compressConfig) {
 		c.summaryPrompt = prompt
@@ -311,38 +312,22 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		toCompress := turns[:keepStart]
 		toKeep := turns[keepStart:]
 
-		// Build conversation text for summarization
-		var sb strings.Builder
-		for _, t := range toCompress {
-			for _, m := range t.messages {
-				sb.WriteString(formatMessage(m))
-				sb.WriteString("\n")
-			}
-		}
-
-		// Call the model to summarize
-		summaryPrompt := fmt.Sprintf(runtimeCfg.summaryPrompt, sb.String())
-		req := &model.Request{
-			ModelClass: runtimeCfg.modelClass,
-			Messages: []*model.Message{
-				{
-					Role:  model.ConversationRoleUser,
-					Parts: []model.Part{model.TextPart{Text: summaryPrompt}},
-				},
-			},
+		// Supply the selected older evidence once, keeping media native and
+		// historical tools quoted rather than executable in this summary call.
+		req, documentSources, err := historySummaryRequest(flattenTurns(toCompress), systemEnd, runtimeCfg)
+		if err != nil {
+			return msgs, err
 		}
 
 		resp, err := client.Complete(ctx, req)
 		if err != nil {
-			// Surface the error so callers can decide whether to fall back to the
-			// original messages or terminate the run.
 			return msgs, err
 		}
 
-		// Extract summary text
-		summaryText := extractResponseText(resp)
-		if summaryText == "" {
-			return msgs, errors.New("runtime: history compression model returned empty summary")
+		// Preserve generated sentences and any supplied citation fields as text.
+		summaryText, err := renderHistorySummary(resp, documentSources)
+		if err != nil {
+			return msgs, err
 		}
 
 		// Build summary message
@@ -623,44 +608,4 @@ func isToolResultOnly(m *model.Message) bool {
 		}
 	}
 	return true
-}
-
-// formatMessage converts a message to a readable string for summarization.
-func formatMessage(m *model.Message) string {
-	var sb strings.Builder
-	sb.WriteString(string(m.Role))
-	sb.WriteString(": ")
-
-	for _, p := range m.Parts {
-		switch v := p.(type) {
-		case model.TextPart:
-			sb.WriteString(v.Text)
-		case model.ToolUsePart:
-			fmt.Fprintf(&sb, "[Tool Call: %s]", v.Name)
-		case model.ToolResultPart:
-			sb.WriteString("[Tool Result]")
-		case model.ThinkingPart:
-			// Skip thinking parts in summary
-		}
-	}
-
-	return sb.String()
-}
-
-// extractResponseText extracts text content from a model response.
-func extractResponseText(resp *model.Response) string {
-	if resp == nil {
-		return ""
-	}
-
-	var sb strings.Builder
-	for _, msg := range resp.Content {
-		for _, p := range msg.Parts {
-			if tp, ok := p.(model.TextPart); ok {
-				sb.WriteString(tp.Text)
-			}
-		}
-	}
-
-	return strings.TrimSpace(sb.String())
 }
