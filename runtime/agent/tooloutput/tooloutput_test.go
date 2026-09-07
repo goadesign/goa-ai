@@ -13,6 +13,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/completion"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -254,6 +255,9 @@ func TestRunRejectsMultipleForcedCallsWithoutCorrection(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "completed output does not meet its contract")
+	assert.Contains(t, err.Error(), `model returned 2 calls for forced tool "results.submit"`)
+	var contract *planner.OutputContractError
+	require.ErrorAs(t, err, &contract)
 	assert.Len(t, provider.requests, 1)
 }
 

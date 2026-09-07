@@ -431,6 +431,13 @@ normal bounded tool-argument correction flow through
 `runtime/agent/tooloutput.Run`. Provider and transport failures are not retried
 by the judge.
 
+When judging fails, the existing wrapped error retains the private run's original
+causes and full diagnostic messages. The runner includes that text in
+`ScenarioReport.Error`; it does not turn a failed judge call into semantic labels.
+See [typed-output diagnostics](runtime.md#forced-typed-tool-output) for available
+response facts and cancellation behavior. A valid `contradicted` judgment is
+still a successful judge call, although its scenario does not pass.
+
 ## Read the report
 
 The report and everything in it use stable JSON field names, so tooling can
