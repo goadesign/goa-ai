@@ -1,5 +1,8 @@
 package temporalerrors
 
+// These fixtures exercise the historical writer whose behavior is retained for
+// previously saved failures. current_test.go exercises the public current Wrap.
+
 import (
 	"context"
 	"crypto/sha256"
@@ -44,7 +47,7 @@ func TestWrapPreservesCancellation(t *testing.T) {
 		errors.Join(context.Canceled, fmt.Errorf("nested: %w", context.Canceled)),
 	}
 	for _, err := range tests {
-		require.True(t, temporal.IsCanceledError(Wrap(err)))
+		require.True(t, temporal.IsCanceledError(wrapHistorical(err)))
 	}
 }
 
@@ -84,7 +87,7 @@ func TestErrorGraphsRejectTypedNilExcessiveFanoutAndPanickingText(t *testing.T) 
 	var typedNil *typedNilError
 	require.False(t, CancellationOnly(typedNil))
 	require.NotPanics(t, func() {
-		wrapped := Wrap(typedNil)
+		wrapped := wrapHistorical(typedNil)
 		var appErr *temporal.ApplicationError
 		require.ErrorAs(t, wrapped, &appErr)
 		require.Equal(t, invalidReservedApplicationType, appErr.Type())
@@ -96,13 +99,13 @@ func TestErrorGraphsRejectTypedNilExcessiveFanoutAndPanickingText(t *testing.T) 
 	}
 	fanout := &manyChildrenError{children: children}
 	require.False(t, CancellationOnly(fanout))
-	wrapped := Wrap(fanout)
+	wrapped := wrapHistorical(fanout)
 	var appErr *temporal.ApplicationError
 	require.ErrorAs(t, wrapped, &appErr)
 	require.Equal(t, invalidReservedApplicationType, appErr.Type())
 
 	require.NotPanics(t, func() {
-		wrapped := Wrap(outputcontract.NewWithOrigin(&panickingError{}, outputcontract.OriginPlanner))
+		wrapped := wrapHistorical(outputcontract.NewWithOrigin(&panickingError{}, outputcontract.OriginPlanner))
 		require.True(t, IsOutputContract(wrapped))
 	})
 }
@@ -126,7 +129,7 @@ func TestWrapReclassifiesNestedOutputContractError(t *testing.T) {
 	}{
 		{
 			name:   "native cause remains available",
-			stored: Wrap(planner.NewOutputContractError(errors.New("invalid reply"))),
+			stored: wrapHistorical(planner.NewOutputContractError(errors.New("invalid reply"))),
 		},
 		{
 			name: "only Temporal type remains available",
@@ -143,7 +146,7 @@ func TestWrapReclassifiesNestedOutputContractError(t *testing.T) {
 			t.Parallel()
 
 			nested := fmt.Errorf("child workflow failed: %w", test.stored)
-			got := Wrap(nested)
+			got := wrapHistorical(nested)
 
 			require.NotSame(t, nested, got)
 			var appErr *temporal.ApplicationError
@@ -162,7 +165,7 @@ func TestWrapPreservesOwnedModelOutputFailureText(t *testing.T) {
 		nil,
 		model.NewUnadvertisedToolNameError("unlisted_tool"),
 	)
-	wrapped := Wrap(outputcontract.NewWithOrigin(validationErr, outputcontract.OriginModel))
+	wrapped := wrapHistorical(outputcontract.NewWithOrigin(validationErr, outputcontract.OriginModel))
 
 	var appErr *temporal.ApplicationError
 	require.ErrorAs(t, wrapped, &appErr)
@@ -171,7 +174,7 @@ func TestWrapPreservesOwnedModelOutputFailureText(t *testing.T) {
 }
 
 func TestWrapPreservesToolOutputContractOrigin(t *testing.T) {
-	wrapped := Wrap(outputcontract.NewWithOrigin(errors.New("tool result is too large"), outputcontract.OriginTool))
+	wrapped := wrapHistorical(outputcontract.NewWithOrigin(errors.New("tool result is too large"), outputcontract.OriginTool))
 
 	require.True(t, IsOutputContract(wrapped))
 	require.Equal(t, planner.OutputContractOriginTool, OutputContractOrigin(wrapped))
@@ -180,7 +183,7 @@ func TestWrapPreservesToolOutputContractOrigin(t *testing.T) {
 func TestOutputContractApplicationTypeIsNeutralWithoutLegacyDecoding(t *testing.T) {
 	t.Parallel()
 
-	wrapped := Wrap(planner.NewOutputContractError(errors.New("invalid reply")))
+	wrapped := wrapHistorical(planner.NewOutputContractError(errors.New("invalid reply")))
 	var appErr *temporal.ApplicationError
 	require.ErrorAs(t, wrapped, &appErr)
 	require.Equal(t, "goa_ai.output_contract_error", appErr.Type())
@@ -191,7 +194,7 @@ func TestOutputContractApplicationTypeIsNeutralWithoutLegacyDecoding(t *testing.
 		nil,
 		outputContractErrorDetails{Origin: string(planner.OutputContractOriginPlanner)},
 	)
-	reclassified := Wrap(legacy)
+	reclassified := wrapHistorical(legacy)
 	require.ErrorAs(t, reclassified, &appErr)
 	require.Equal(t, genericErrorApplicationType, appErr.Type())
 	require.True(t, appErr.NonRetryable())
@@ -216,10 +219,10 @@ func TestWrapReclassifiesNestedProviderError(t *testing.T) {
 				retryable,
 				nil,
 			)
-			stored := Wrap(providerErr)
+			stored := wrapHistorical(providerErr)
 			nested := fmt.Errorf("activity failed: %w", stored)
 
-			got := Wrap(nested)
+			got := wrapHistorical(nested)
 
 			require.NotSame(t, nested, got)
 			var appErr *temporal.ApplicationError
@@ -244,7 +247,7 @@ func TestProviderTemporalEnvelopePreservesSmallFieldsWithoutCause(t *testing.T) 
 		cause,
 	)
 
-	wrapped := Wrap(providerErr)
+	wrapped := wrapHistorical(providerErr)
 
 	var appErr *temporal.ApplicationError
 	require.ErrorAs(t, wrapped, &appErr)
@@ -364,7 +367,7 @@ func TestProviderTemporalEnvelopeBoundsOversizedFieldsAndCause(t *testing.T) {
 			if requestID == "" {
 				requestID = "request-1"
 			}
-			wrapped := Wrap(model.NewProviderError(
+			wrapped := wrapHistorical(model.NewProviderError(
 				provider,
 				operation,
 				503,
@@ -397,7 +400,7 @@ func TestProviderTemporalEnvelopeBoundsOversizedFieldsAndCause(t *testing.T) {
 
 func TestOutputAndInvalidTemporalEnvelopesBoundMessagesWithoutCause(t *testing.T) {
 	huge := strings.Repeat("raw-output-secret-", 1<<16)
-	output := Wrap(planner.NewOutputContractError(errors.New(huge)))
+	output := wrapHistorical(planner.NewOutputContractError(errors.New(huge)))
 	var outputApp *temporal.ApplicationError
 	require.ErrorAs(t, output, &outputApp)
 	require.NoError(t, outputApp.Unwrap())
@@ -414,7 +417,7 @@ func TestOutputAndInvalidTemporalEnvelopesBoundMessagesWithoutCause(t *testing.T
 		errors.New(huge),
 		"not provider details",
 	)
-	invalid := Wrap(malformed)
+	invalid := wrapHistorical(malformed)
 	var invalidApp *temporal.ApplicationError
 	require.ErrorAs(t, invalid, &invalidApp)
 	require.Equal(t, invalidReservedApplicationType, invalidApp.Type())
@@ -437,7 +440,7 @@ func TestWrapFindsOutputContractAfterAnotherJoinedApplicationError(t *testing.T)
 		outputContractErrorDetails{Origin: string(planner.OutputContractOriginPlanner)},
 	)
 
-	got := Wrap(errors.Join(ordinary, outputContract))
+	got := wrapHistorical(errors.Join(ordinary, outputContract))
 
 	var appErr *temporal.ApplicationError
 	require.ErrorAs(t, got, &appErr)
@@ -449,7 +452,7 @@ func TestProviderFindsFailureAfterAnotherJoinedApplicationError(t *testing.T) {
 	t.Parallel()
 
 	ordinary := temporal.NewApplicationError("first failure", "ordinary")
-	provider := Wrap(model.NewProviderError(
+	provider := wrapHistorical(model.NewProviderError(
 		"anthropic",
 		"complete",
 		503,
@@ -487,7 +490,7 @@ func TestWrapClassifiesOuterProviderBeforeWrappedOutput(t *testing.T) {
 		outputErr,
 	)
 
-	got := Wrap(providerErr)
+	got := wrapHistorical(providerErr)
 
 	var appErr *temporal.ApplicationError
 	require.ErrorAs(t, got, &appErr)
@@ -626,7 +629,7 @@ func TestWrapRejectsMalformedReservedEnvelopes(t *testing.T) {
 
 			var got error
 			require.NotPanics(t, func() {
-				got = Wrap(test.err)
+				got = wrapHistorical(test.err)
 			})
 
 			var appErr *temporal.ApplicationError
@@ -643,7 +646,7 @@ func TestWrapRejectsMalformedReservedEnvelopes(t *testing.T) {
 func TestWrapBoundsHugeGenericError(t *testing.T) {
 	huge := strings.Repeat("generic-secret-", 1<<16)
 
-	wrapped := Wrap(errors.New(huge))
+	wrapped := wrapHistorical(errors.New(huge))
 
 	var appErr *temporal.ApplicationError
 	require.ErrorAs(t, wrapped, &appErr)
@@ -690,7 +693,7 @@ func TestWrapBoundsCustomApplicationErrorAndPreservesRetryability(t *testing.T) 
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			wrapped := Wrap(test.err)
+			wrapped := wrapHistorical(test.err)
 			var appErr *temporal.ApplicationError
 			require.ErrorAs(t, wrapped, &appErr)
 			require.Equal(t, genericErrorApplicationType, appErr.Type())
@@ -725,7 +728,7 @@ func TestWrapRejectsCyclicErrorGraphs(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var wrapped error
 			require.NotPanics(t, func() {
-				wrapped = Wrap(test.err)
+				wrapped = wrapHistorical(test.err)
 			})
 			var appErr *temporal.ApplicationError
 			require.ErrorAs(t, wrapped, &appErr)

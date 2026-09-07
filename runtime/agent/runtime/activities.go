@@ -645,7 +645,7 @@ func (a *plannerActivityInvocation) failureOutput(ctx context.Context, err error
 		return nil, errors.Join(err, contextErr)
 	}
 	failure := hooks.RunFailureFromError(err)
-	failure.DebugMessage = errorevidence.BoundedMessage(failure.DebugMessage)
+	failure.DebugMessage = errorevidence.DiagnosticMessage(failure.DebugMessage)
 	failureEvents := newPlannerEvents(
 		a.events.agentID,
 		a.events.runID,
@@ -788,9 +788,9 @@ func terminalPlannerOutputContractFailure(err error) *OutputContractFailure {
 	}
 }
 
-// outputContractFailureMetadata retains the selected cause text within the
-// diagnostic allocation, its unchanged fingerprint, rejected-response evidence,
-// and separate replacement guidance. Oversized cause text is explicitly omitted.
+// outputContractFailureMetadata retains the selected valid UTF-8 cause text,
+// its unchanged fingerprint, rejected-response evidence, and separate replacement
+// guidance. The caller checks the complete activity result's transport budget.
 func (a *plannerActivityInvocation) outputContractFailureMetadata(
 	outputErr *planner.OutputContractError,
 ) (*OutputContractFailure, error) {

@@ -3504,7 +3504,7 @@ Failures are structured:
   - `error_kind`: stable classifier (provider kinds like `rate_limited`, `unavailable`, or runtime kinds like `timeout`/`internal`)
   - `retryable`: whether retrying may succeed without changing input
   - `error`: **user-safe** message suitable for direct display
-  - `debug_error`: raw error string for logs/diagnostics (not for UI)
+  - `debug_error`: diagnostic error text; the application decides who may see it
 
 ### Diagnostic ownership and transport
 
@@ -3526,12 +3526,12 @@ replay does not emit these activity diagnostics. Cancellation keeps its existing
 non-failure treatment.
 
 New `OutputContractFailure`, `ModelOutputRejected`, and `PlannerOutputRejected`
-records carry `ReasonVersion="goa_ai.rejection_reason.v1"`. `Reason` contains
+records carry `ReasonVersion="goa_ai.rejection_reason.v2"`. `Reason` contains
 the exact selected cause text identified by the existing `ReasonSHA256` and
-`ReasonSize` when that text is valid UTF-8 and at most **3,072 bytes**, inclusive.
-Otherwise `Reason` is empty and `ReasonOmitted` is `size_limit` for larger text,
-or `invalid_utf8` for invalid bytes within the allocation. Size takes precedence
-when both apply. Retained text has an empty omission value. An empty reason with
+`ReasonSize` when that text is valid UTF-8, without a per-reason length cutoff.
+Otherwise `Reason` is empty and `ReasonOmitted` is `invalid_utf8`. New records
+never omit a reason solely because it exceeds the former 3,072-byte allocation.
+Retained text has an empty omission value. An empty reason with
 size zero and the empty-text digest is valid retained text. Readers validate
 the version, closed omission values, size, and canonical fingerprint; the
 invalid-encoding classification is the writer's assertion because the omitted
@@ -3540,12 +3540,20 @@ The fingerprint still covers the original selected text, not a new rendering of
 an arbitrary error graph. Diagnostic text never becomes correction guidance or
 an accepted model response. Failure classification, retryability, publication
 order, token accounting, and recovery budgets are unchanged. After assistant
-text has been published, the failure's internal `DebugMessage` is retained
-within the same allocation instead of being unconditionally replaced by a hash.
+text has been published, the failure's internal `DebugMessage` also retains
+complete valid text. Customer-facing `Message` summaries do not change.
 
-Temporal generic/provider v2 envelopes preserve the bounded original rendered
-error text in the outer message. A known output-contract error uses its owned
-cause; when that cause is directly a model validation error, it uses that
+New Temporal failures use the application types `goa_ai.provider_error.v3`,
+`goa_ai.generic_error.v3`, `goa_ai.output_contract_error.v3`, and
+`goa_ai.invalid_reserved_error.v3`. This uniform type version selects the
+concrete saved details before decoding; no redundant details version is needed.
+Provider and generic details use exact plain string fields rather than
+length-limited text/hash replacements. Their former per-field and independent
+4,096-byte details allocations do not apply to these current types.
+
+The outer message preserves complete valid rendered error text. A known
+output-contract error uses its owned cause; when that cause is directly a model
+validation error, it uses that
 validation error's diagnostic cause. The runtime does not search arbitrary
 wrapped or joined graphs to choose a different owner. Provider fields retain
 their previous meanings; a reconstructed provider cause contains diagnostic
@@ -3554,32 +3562,56 @@ cause structure are available to the application tracer before conversion but
 are not serialized by this contract. Actual retention depends on the application's
 instrumentation, not on a framework guarantee of another full copy.
 
-Direct Temporal envelopes remain idempotent. Wrapping a current generic
-envelope with new context retains that rendered context while preserving its
-validated detail fields and retryability. Nested legacy generic envelopes keep
-their historical message. The new outer diagnostic and rejection reason never
-silently replace invalid bytes. Existing bounded structured detail fields keep
-their prior encoding behavior, including JSON replacement of invalid UTF-8;
-they are not promised as an exact arbitrary-byte copy of the original error.
+Direct validated Temporal errors remain idempotent. Wrapping a current generic
+error with new context retains that rendered context while preserving its
+owned message, type and retryability. Historical types keep their previous
+re-wrapping rules, including the distinction between generic v1 and v2 details.
+Fresh errors never use historical writers. Invalid UTF-8 in a new diagnostic or
+string field becomes an explicit unavailable-text notice with its original hash
+and byte count; it is not silently replaced with Unicode replacement characters.
+The promise is exact valid text, not arbitrary byte storage. SDK decoding still
+uses its configured concrete-details converter, not the workflow argument codec.
 
-The existing **3,072-byte outer-message allocation**, **4,096-byte serialized
-detail allocation**, field bounds, and error-classification graph bounds remain
-unchanged. Oversized or invalid UTF-8 outer diagnostic text becomes an explicit
-omission notice naming the reason, original digest, and byte count. On the
-planner/activity paths described above, the original object has already been
-offered to the application tracer. Errors created in workflow code are converted
-without emitting replay-time telemetry; no original-object capture is promised
-for those errors. These are framework transport allocations, not claims
-about a deployment's configured Temporal maximum or a run-wide diagnostic
-limit. A run may contain many individually bounded failures. Whole activity
-payloads remain subject to the existing 1 MiB limit.
+Whole workflow argument/result payloads remain subject to the existing 1 MiB
+aggregate value limit, including all accompanying fields and encoding overhead.
+If a planner result cannot fit, the existing explicit transport-budget failure
+is returned; this does not claim to persist the oversized original reason.
+Error-graph traversal bounds remain unchanged and are not message allocations.
+On the planner/activity paths described above, the original error object has
+already been offered to the application tracer. Errors created in workflow code
+are converted without replay-time telemetry; no original-object capture is
+promised for those errors.
 
-**Worker upgrade restriction:** new workers accept legacy hash-only rejection
-records and private v1 Temporal envelopes. Legacy replay does not add reason
+Native Temporal failure objects use a separate SDK failure converter. Its default
+converter does not apply the workflow argument/result 1 MiB allocation to the
+outer message or details. This change adds no native failure-size cap, resizing,
+or replacement retry policy. A configured application `FailureConverter` stays
+application-owned; its encoding errors, including SDK panic behavior for rejected
+details, are not intercepted by the error wrapper. Local SDK round trips prove
+submitted text, not Temporal server acceptance.
+
+Temporal's deployment-specific request/history limits can reject large native
+failures, and pending activity retry state may retain a server-shortened failure.
+That retained retry-state limit is distinct from terminal failure history.
+The application tracer and its exporter/backend also have their own sampling,
+batching and size limits. Full framework text does not guarantee unlimited
+storage, delivery, or recoverability of previously omitted text.
+
+**Worker upgrade restriction:** new workers accept legacy hash-only and v1
+rejection records and the existing unversioned private Temporal types with their
+v1/v2 detail formats. The v1 rejection allocation and size-before-encoding
+omission rules remain exact historical contracts. Legacy replay does not add reason
 text, change old rejection publication bytes, or invent discarded causes.
-Unknown versions and mixed reason/fingerprint combinations are rejected. Old
-workers use strict decoding and cannot consume the new planner fields. Do not
-deploy new writers onto a task queue with incompatible old readers. Use a
+Already stored terminal failures retain their original bytes. A workflow that
+reads historical rejection metadata but closes for the first time after the
+upgrade writes the current terminal failure type. Replay acceptance does not
+mean old and new terminal failure commands have identical encoded details.
+Unknown reason/detail versions and mixed reason/fingerprint combinations are
+rejected. Application type names outside the explicitly owned types retain their
+existing custom-application behavior; no prefix-based type policy is introduced.
+Old workers cannot consume the new reason versions or classify the new private
+Temporal types correctly. Do not deploy new writers onto a task queue with
+incompatible old readers. Use a
 verified worker-versioning or drain-and-replacement procedure before rollout;
 none is supplied by this code change. Rollback must retain workers capable of
 reading every format already written. Legacy decoders remain required while any

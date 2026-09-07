@@ -959,7 +959,7 @@ func boundedOutputContractError(failure *OutputContractFailure) error {
 		failure.ReasonSHA256,
 		failure.ReasonSize,
 	)
-	if failure.ReasonVersion == errorevidence.ReasonVersion {
+	if failure.ReasonVersion != "" {
 		if failure.ReasonOmitted == "" {
 			cause = errors.New(failure.Reason)
 		} else {
@@ -972,7 +972,7 @@ func boundedOutputContractError(failure *OutputContractFailure) error {
 		origin = planner.OutputContractOriginPlanner
 	}
 	classified := outputcontract.NewWithOrigin(cause, origin)
-	if failure.ReasonVersion == errorevidence.ReasonVersion {
+	if failure.ReasonVersion != "" {
 		return fmt.Errorf("%w: %s", classified, cause.Error())
 	}
 	return classified

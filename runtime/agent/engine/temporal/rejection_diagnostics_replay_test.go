@@ -5,11 +5,14 @@ package temporal
 // without changing recovery, activity ordering, or attributed token usage.
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	commonpb "go.temporal.io/api/common/v1"
+	enumspb "go.temporal.io/api/enums/v1"
+	failurepb "go.temporal.io/api/failure/v1"
 	historypb "go.temporal.io/api/history/v1"
 
 	"goa.design/goa-ai/runtime/agent/api"
@@ -20,11 +23,18 @@ import (
 )
 
 func TestProductionWorkflowReplaysRejectionDiagnosticVersions(t *testing.T) {
-	for _, current := range []bool{false, true} {
+	for _, format := range []struct{ version, omitted string }{
+		{},
+		{version: errorevidence.LegacyReasonVersion},
+		{version: errorevidence.LegacyReasonVersion, omitted: "size_limit"},
+		{version: errorevidence.LegacyReasonVersion, omitted: "invalid_utf8"},
+		{version: errorevidence.ReasonVersion},
+	} {
+		version := format.version
 		for _, recovery := range []bool{false, true} {
 			name := "legacy"
-			if current {
-				name = "current"
+			if version != "" {
+				name = version + "/" + format.omitted
 			}
 			if recovery {
 				name += "/recovery"
@@ -34,10 +44,22 @@ func TestProductionWorkflowReplaysRejectionDiagnosticVersions(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				plannerStub, handler := productionReplayWorkflow(t)
 				reason := "field[7]: invalid value"
+				if version == errorevidence.ReasonVersion {
+					reason = strings.Repeat(reason+"\n", 400)
+				}
+				switch format.omitted {
+				case "size_limit":
+					reason = strings.Repeat("x", 3073)
+				case "invalid_utf8":
+					reason = string([]byte{0xff})
+				}
 				digest, size := errorevidence.FingerprintText(reason)
 				failure := &api.OutputContractFailure{Origin: planner.OutputContractOriginPlanner, ReasonSHA256: digest, ReasonSize: int64(size)}
-				if current {
-					failure.ReasonVersion, failure.Reason = errorevidence.ReasonVersion, reason
+				if version != "" {
+					failure.ReasonVersion, failure.Reason = version, reason
+				}
+				if format.omitted != "" {
+					failure.Reason, failure.ReasonOmitted = "", format.omitted
 				}
 				if recovery {
 					failure.Origin = planner.OutputContractOriginModel
@@ -62,6 +84,31 @@ func TestProductionWorkflowReplaysRejectionDiagnosticVersions(t *testing.T) {
 					history = syntheticProductionReplayHistory(t, first, true)
 				} else {
 					history = terminalRejectionReplayHistory(t, first)
+					if version != errorevidence.ReasonVersion {
+						// The SDK matches a failed-workflow event by kind, not by
+						// its saved failure bytes. This proves replay compatibility;
+						// temporalerrors separately pins stored failure bytes.
+						completedID := int64(len(history.Events))
+						history.Events = append(history.Events, &historypb.HistoryEvent{
+							EventId:   completedID + 1,
+							EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_FAILED,
+							Attributes: &historypb.HistoryEvent_WorkflowExecutionFailedEventAttributes{
+								WorkflowExecutionFailedEventAttributes: &historypb.WorkflowExecutionFailedEventAttributes{
+									WorkflowTaskCompletedEventId: completedID,
+									Failure: &failurepb.Failure{
+										Message: "historical terminal diagnostic",
+										FailureInfo: &failurepb.Failure_ApplicationFailureInfo{ApplicationFailureInfo: &failurepb.ApplicationFailureInfo{
+											Type: "goa_ai.output_contract_error", NonRetryable: true,
+											Details: &commonpb.Payloads{Payloads: []*commonpb.Payload{{
+												Metadata: map[string][]byte{"encoding": []byte("json/plain")},
+												Data:     []byte(`{"Origin":"planner"}`),
+											}}},
+										}},
+									},
+								},
+							},
+						})
+					}
 				}
 				history = deserializeReplayHistory(t, history)
 				output := replayProductionWorkflow(t, handler, history)

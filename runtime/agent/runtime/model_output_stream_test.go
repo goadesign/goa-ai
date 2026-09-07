@@ -7,6 +7,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -342,7 +343,7 @@ func TestFailureAfterPublishedTextReturnsTextForDurableCommit(t *testing.T) {
 		503,
 		model.ProviderErrorKindUnavailable,
 		"service_unavailable",
-		"connection lost",
+		strings.Repeat("connection lost\n", 400),
 		"request-1",
 		true,
 		errors.New("connection lost"),

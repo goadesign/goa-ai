@@ -85,13 +85,14 @@ type (
 	}
 
 	classification struct {
-		kind        errorKind
-		provider    *model.ProviderError
-		generic     genericErrorDetails
-		origin      planner.OutputContractOrigin
-		output      *planner.OutputContractError
-		application *temporal.ApplicationError
-		invalid     error
+		kind           errorKind
+		provider       *model.ProviderError
+		generic        genericErrorDetails
+		currentGeneric currentGenericDetails
+		origin         planner.OutputContractOrigin
+		output         *planner.OutputContractError
+		application    *temporal.ApplicationError
+		invalid        error
 	}
 
 	errorIdentity struct {
@@ -108,11 +109,9 @@ const (
 	errorKindGeneric
 )
 
-// Wrap tells Temporal whether it may run the failed operation again.
-// Cancellation remains cancellation, direct output contract errors must not be
-// retried, and model-service failures keep the retry setting reported by that
-// service.
-func Wrap(err error) error {
+// wrapHistorical preserves the exact conversion of previously stored formats.
+// New native errors use Wrap and never enter this historical writer.
+func wrapHistorical(err error) error {
 	if err == nil {
 		return nil
 	}
@@ -378,6 +377,14 @@ func classifyCurrent(err error) classification {
 		}
 	case *temporal.ApplicationError:
 		switch current.Type() {
+		case currentOutputApplicationType:
+			return classifyCurrentOutput(current)
+		case currentProviderApplicationType:
+			return classifyCurrentProvider(current)
+		case currentInvalidApplicationType:
+			return classifyCurrentInvalid(current)
+		case currentGenericApplicationType:
+			return classifyCurrentGeneric(current)
 		case outputContractErrorApplicationType:
 			return classifyOutputApplication(current)
 		case providerErrorApplicationType:
@@ -873,6 +880,16 @@ func validProviderKind(kind model.ProviderErrorKind) bool {
 
 // reservedApplicationType reports whether typ belongs to this package.
 func reservedApplicationType(typ string) bool {
+	return historicalApplicationType(typ) ||
+		typ == currentProviderApplicationType ||
+		typ == currentOutputApplicationType ||
+		typ == currentInvalidApplicationType ||
+		typ == currentGenericApplicationType
+}
+
+// historicalApplicationType selects the unchanged decoder and wrapping rules
+// for error types written before the full-text format.
+func historicalApplicationType(typ string) bool {
 	return typ == providerErrorApplicationType ||
 		typ == outputContractErrorApplicationType ||
 		typ == invalidReservedApplicationType ||

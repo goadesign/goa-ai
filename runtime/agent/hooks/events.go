@@ -490,10 +490,11 @@ type (
 		// ReasonVersion distinguishes current exact-or-omitted diagnostic text
 		// from historical fingerprint-only records.
 		ReasonVersion string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
-		// Reason is the exact fingerprinted cause text when it is valid UTF-8
-		// within the 3072-byte allocation; other text is explicitly omitted.
+		// Reason is exact fingerprinted UTF-8 cause text. Current v2 has no
+		// per-reason cap; historical v1 retained at most 3072 bytes.
 		Reason string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
-		// ReasonOmitted is size_limit or invalid_utf8; empty means exact text.
+		// ReasonOmitted is invalid_utf8; historical v1 may also use size_limit.
+		// Empty means exact text.
 		ReasonOmitted string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
 		// OutputValidationKind identifies the first mechanical response rule
 		// that rejected provider output. Planner-authored policy rejections and
@@ -526,10 +527,11 @@ type (
 		// ReasonVersion distinguishes current exact-or-omitted diagnostic text
 		// from historical fingerprint-only records.
 		ReasonVersion string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
-		// Reason is the exact fingerprinted cause text when it is valid UTF-8
-		// within the 3072-byte allocation; other text is explicitly omitted.
+		// Reason is exact fingerprinted UTF-8 cause text. Current v2 has no
+		// per-reason cap; historical v1 retained at most 3072 bytes.
 		Reason string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
-		// ReasonOmitted is size_limit or invalid_utf8; empty means exact text.
+		// ReasonOmitted is invalid_utf8; historical v1 may also use size_limit.
+		// Empty means exact text.
 		ReasonOmitted string `json:",omitempty"` //nolint:tagliatelle // Durable event JSON retains Go field names.
 		// ReasonSHA256 identifies the original selected planner-rejection text.
 		ReasonSHA256 string

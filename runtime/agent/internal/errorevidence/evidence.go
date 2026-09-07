@@ -1,4 +1,4 @@
-// Package errorevidence extracts bounded evidence from untrusted errors.
+// Package errorevidence extracts text and fingerprints from untrusted errors.
 //
 // Application errors cross activity and workflow boundaries. Their Error
 // methods may panic or return very large strings, so callers use this package

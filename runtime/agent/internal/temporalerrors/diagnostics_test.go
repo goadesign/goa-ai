@@ -1,7 +1,8 @@
 package temporalerrors
 
-// Diagnostic text and execution classification have separate transport
-// contracts. These tests verify both through Temporal's actual failure codec.
+// Historical diagnostic text and classification keep their original transport
+// contracts. These tests pin that writer through Temporal's actual failure codec;
+// current_test.go separately verifies the current public Wrap entry point.
 
 import (
 	"context"
@@ -31,7 +32,7 @@ func TestTemporalDiagnosticTextRoundTrip(t *testing.T) {
 		errors.New(strings.Repeat("é", maxTemporalErrorMessageBytes/2)),
 		errors.New(strings.Repeat("é", maxTemporalErrorMessageBytes/2) + "x"),
 	} {
-		wrapped := Wrap(original)
+		wrapped := wrapHistorical(original)
 		var app *temporal.ApplicationError
 		require.ErrorAs(t, wrapped, &app)
 		assert.Equal(t, errorevidence.BoundedMessage(original.Error()), app.Message())
@@ -41,7 +42,7 @@ func TestTemporalDiagnosticTextRoundTrip(t *testing.T) {
 		encoded := converter.ErrorToFailure(wrapped)
 		assert.Less(t, proto.Size(encoded), maxEncodedTemporalFailureBytes)
 		restored := converter.FailureToError(encoded)
-		assert.Same(t, restored, Wrap(restored))
+		assert.Same(t, restored, wrapHistorical(restored))
 		var decoded *temporal.ApplicationError
 		require.ErrorAs(t, restored, &decoded)
 		assert.Equal(t, app.Message(), decoded.Message())
@@ -60,7 +61,7 @@ func TestTemporalProviderDiagnosticPreservesOuterContext(t *testing.T) {
 		provider := model.NewProviderError("provider", "complete", 503, model.ProviderErrorKindUnavailable,
 			"unavailable", "try later", "request-1", retryable, errors.New("typed SDK detail"))
 		original := fmt.Errorf("planner dependency: %w", provider)
-		wrapped := Wrap(original)
+		wrapped := wrapHistorical(original)
 		converter := temporal.GetDefaultFailureConverter()
 		restored := converter.FailureToError(converter.ErrorToFailure(wrapped))
 		got, ok := Provider(restored)
@@ -75,7 +76,7 @@ func TestTemporalProviderDiagnosticPreservesOuterContext(t *testing.T) {
 		assert.Equal(t, retryable, got.Retryable())
 		require.EqualError(t, got.Unwrap(), original.Error())
 		assert.NotSame(t, provider.Unwrap(), got.Unwrap())
-		assert.Same(t, restored, Wrap(restored))
+		assert.Same(t, restored, wrapHistorical(restored))
 	}
 }
 
@@ -86,34 +87,34 @@ func TestTemporalDiagnosticVersionsKeepLegacyInvariants(t *testing.T) {
 		Retryable: true,
 	}
 	legacy := temporal.NewApplicationError("operation failed", genericErrorApplicationType, legacyGeneric)
-	assert.Same(t, legacy, Wrap(legacy))
+	assert.Same(t, legacy, wrapHistorical(legacy))
 	var legacyApp *temporal.ApplicationError
 	require.ErrorAs(t, legacy, &legacyApp)
 	assert.Equal(t, "operation failed", legacyApp.Message())
 	forged := temporal.NewApplicationError("new diagnostic with old version", genericErrorApplicationType, legacyGeneric)
 	var rejected *temporal.ApplicationError
-	require.ErrorAs(t, Wrap(forged), &rejected)
+	require.ErrorAs(t, wrapHistorical(forged), &rejected)
 	assert.Equal(t, invalidReservedApplicationType, rejected.Type())
 
 	legacyProvider := validProviderDetails()
 	legacyProvider.Version = providerErrorDetailsVersion
 	legacyProvider.Retryable = true
 	oldProvider := temporal.NewApplicationError(providerErrorMessage(legacyProvider), providerErrorApplicationType, legacyProvider)
-	assert.Same(t, oldProvider, Wrap(oldProvider))
+	assert.Same(t, oldProvider, wrapHistorical(oldProvider))
 	provider, ok := Provider(oldProvider)
 	require.True(t, ok)
 	require.NoError(t, provider.Unwrap())
 	forgedProvider := temporal.NewApplicationError("new diagnostic with old version", providerErrorApplicationType, legacyProvider)
-	require.ErrorAs(t, Wrap(forgedProvider), &rejected)
+	require.ErrorAs(t, wrapHistorical(forgedProvider), &rejected)
 	assert.Equal(t, invalidReservedApplicationType, rejected.Type())
 	legacyGeneric.Version = "goa_ai.generic_error.unknown"
-	require.ErrorAs(t, Wrap(temporal.NewApplicationError("unknown", genericErrorApplicationType, legacyGeneric)), &rejected)
+	require.ErrorAs(t, wrapHistorical(temporal.NewApplicationError("unknown", genericErrorApplicationType, legacyGeneric)), &rejected)
 	assert.Equal(t, invalidReservedApplicationType, rejected.Type())
 }
 
 func TestInvalidUTF8TemporalDiagnosticOmission(t *testing.T) {
 	original := errors.New(string([]byte{0xff}))
-	failure := temporal.GetDefaultFailureConverter().ErrorToFailure(Wrap(original))
+	failure := temporal.GetDefaultFailureConverter().ErrorToFailure(wrapHistorical(original))
 	encoded, err := proto.Marshal(failure)
 	require.NoError(t, err)
 	require.NoError(t, proto.Unmarshal(encoded, failure))
@@ -122,7 +123,7 @@ func TestInvalidUTF8TemporalDiagnosticOmission(t *testing.T) {
 	digest, _ := errorevidence.FingerprintText(original.Error())
 	assert.Contains(t, failure.Message, digest)
 	restored := temporal.GetDefaultFailureConverter().FailureToError(failure)
-	assert.Same(t, restored, Wrap(restored))
+	assert.Same(t, restored, wrapHistorical(restored))
 	// Existing structured detail text is not an exact-byte transport contract.
 	// This assertion deliberately concerns only the new outer diagnostic.
 }
@@ -130,10 +131,10 @@ func TestInvalidUTF8TemporalDiagnosticOmission(t *testing.T) {
 func TestTemporalGenericDiagnosticPreservesNewOuterContext(t *testing.T) {
 	for _, retryable := range []bool{false, true} {
 		inner := wrapGeneric(errors.New("detail"), "custom.type", retryable)
-		assert.Same(t, inner, Wrap(inner))
+		assert.Same(t, inner, wrapHistorical(inner))
 		outer := fmt.Errorf("child context: %w", inner)
 		var app *temporal.ApplicationError
-		require.ErrorAs(t, Wrap(outer), &app)
+		require.ErrorAs(t, wrapHistorical(outer), &app)
 		assert.Equal(t, outer.Error(), app.Message())
 		assert.Equal(t, !retryable, app.NonRetryable())
 		var details genericErrorDetails
@@ -143,7 +144,7 @@ func TestTemporalGenericDiagnosticPreservesNewOuterContext(t *testing.T) {
 		assert.Equal(t, retryable, details.Retryable)
 		legacy := temporal.NewApplicationError("operation failed", genericErrorApplicationType,
 			genericErrorDetails{Version: genericErrorDetailsVersion, Message: boundedText{Value: "old detail"}, Retryable: true})
-		assert.Same(t, legacy, Wrap(fmt.Errorf("historical context: %w", legacy)))
+		assert.Same(t, legacy, wrapHistorical(fmt.Errorf("historical context: %w", legacy)))
 	}
 }
 
@@ -160,10 +161,10 @@ func TestTemporalCurrentDiagnosticRejectsForgedInvalidUTF8(t *testing.T) {
 		{genericErrorApplicationType, generic},
 	} {
 		valid := temporal.NewApplicationError("diagnostic", test.typeName, test.details)
-		assert.Same(t, valid, Wrap(valid))
+		assert.Same(t, valid, wrapHistorical(valid))
 		forged := temporal.NewApplicationError(string([]byte{0xff}), test.typeName, test.details)
 		var rejected *temporal.ApplicationError
-		require.ErrorAs(t, Wrap(forged), &rejected)
+		require.ErrorAs(t, wrapHistorical(forged), &rejected)
 		assert.Equal(t, invalidReservedApplicationType, rejected.Type())
 		assert.True(t, rejected.NonRetryable())
 		assert.True(t, utf8.ValidString(rejected.Message()))
