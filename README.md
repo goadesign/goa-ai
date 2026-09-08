@@ -1563,6 +1563,8 @@ See [Bedrock Responses and the SDK v3 migration](docs/runtime.md#openai-response
 for constructor options, replay behavior and the required import update for
 custom `Options.Client` implementations. Existing API-key convenience
 constructors retain their signatures.
+Both Responses constructors explicitly request encrypted reasoning content for
+stateless replay, independently of the caller's thinking settings.
 
 Production checklist:
 

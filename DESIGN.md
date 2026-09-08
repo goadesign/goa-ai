@@ -1145,6 +1145,12 @@ fallback, selects the tool-schema contract: direct OpenAI projects to
 preserves returned arguments. The validated model client remains responsible
 for checking the original schema and generated decoder in both cases.
 
+Both constructors send `store:false` and explicitly include
+`reasoning.encrypted_content` on every request. Requesting replay data belongs
+to stateless transcript ownership, not to the optional reasoning-effort setting:
+provider-default reasoning can also return items that the next request must
+preserve. This does not enable reasoning or change the selected effort.
+
 The official OpenAI Go SDK v3 owns Bedrock authentication and endpoint
 resolution. The adapter accepts only the configuration it consumes: region,
 refreshable credentials, model options and SDK request options. Bedrock requests

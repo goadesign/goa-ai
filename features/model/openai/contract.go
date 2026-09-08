@@ -9,6 +9,9 @@
 //   - Requests are stateless at the adapter boundary: callers must provide the
 //     full provider-ready transcript in-order, and missing history fails fast at
 //     the owned runtime boundary instead of being heuristically rehydrated.
+//     Every request explicitly asks for encrypted reasoning content alongside
+//     store:false, even when reasoning is left to the provider default. Returned
+//     reasoning metadata is preserved for the caller's next transcript.
 //   - Transcript encoding round-trips assistant tool_use and user tool_result
 //     messages when the assistant turn is representable by OpenAI's
 //     single-message shape; unrepresentable assistant interleaving fails fast,

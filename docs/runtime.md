@@ -602,9 +602,11 @@ constructors retain their existing `strict:true` projection.
 Both constructors share full ordered transcript encoding, text and tool-call
 streaming, provider-issued tool IDs, reversible tool names, encrypted reasoning
 replay and the existing logical model classes. Enabling thinking uses the
-configured `low`, `medium` or `high` effort, requests a reasoning summary and
-encrypted replay content, and rejects budgeted or interleaved thinking. The
-model ID remains caller-owned; for example, use
+configured `low`, `medium` or `high` effort, requests a reasoning summary,
+and rejects budgeted or interleaved thinking. Every stateless request explicitly
+includes `reasoning.encrypted_content`, even with absent or disabled thinking;
+returned encrypted content is preserved for replay without selecting an effort.
+The model ID remains caller-owned; for example, use
 `global.openai.gpt-5.6-terra` where that Bedrock inference profile is available.
 
 Bedrock requests explicitly set `store:false`, `background:false`, disabled
