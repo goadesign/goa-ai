@@ -1632,8 +1632,8 @@ tool-input validation errors qualify for limited-size correction guidance that
 omits rejected arguments. Code generation records field types through nested
 objects, collections, and union branches. Callers that build `ToolSpec` values
 directly may supply the same field metadata. The model client uses that metadata
-to name one field and its required, type, or enum rule when the structured
-schema failure has one unique deepest cause. For unions, only the branch named
+to name one field and its required, type, enum, or array-length rule when the
+structured schema failure has one unique deepest cause. For unions, only the branch named
 by a valid string discriminator participates. Array indexes and map keys appear
 as `*`. Ambiguous failures and specifications without field metadata keep
 generic guidance. The complete contract lives in

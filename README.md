@@ -323,8 +323,8 @@ Mechanical response rejections return `*model.OutputValidationError`.
 `stream_protocol`; it never contains response text, provider text, tool names,
 arguments, or schema paths. The category is diagnostic only. A tool
 specification with field metadata may separately return one correction that
-names an unambiguous advertised field path and its required, type, or enum rule.
-Array indexes and map keys appear as `*`. Corrections may repeat advertised
+names an unambiguous advertised field path and its required, type, enum, or
+array-length rule. Array indexes and map keys appear as `*`. Corrections may repeat advertised
 descriptions and enum values, but never include submitted values, submitted map
 keys, array indexes, call IDs, or undeclared field names. Ambiguous failures and
 specifications without field metadata keep the generic replacement instruction.
