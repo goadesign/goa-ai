@@ -108,7 +108,7 @@ func (r *Runtime) finishLimitTerminalCall(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	allToolResults []*planner.ToolResult,
 	allToolOutputs []*planner.ToolOutput,
 	aggUsage model.TokenUsage,

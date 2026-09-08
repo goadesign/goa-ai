@@ -1020,7 +1020,7 @@ if violation := checkBatchRules(sum.ToolCalls); violation != nil {
 
 ```go
 type PlanInput struct {
-    Messages   []*model.Message      // Conversation history
+    PrepareMessages func() ([]*model.Message, error) // Policy-prepared history
     RunContext run.Context           // Run-level identifiers and labels
     Agent      PlannerContext        // Runtime services (memory, models, reminders)
     Events     PlannerEvents         // Streaming event emitter
@@ -1028,7 +1028,7 @@ type PlanInput struct {
 }
 
 type PlanResumeInput struct {
-    Messages    []*model.Message
+    PrepareMessages func() ([]*model.Message, error)
     RunContext  run.Context
     Agent       PlannerContext
     Events      PlannerEvents
@@ -1574,6 +1574,10 @@ selected response; run probes through `ModelClient` before obtaining it:
 
 ```go
 func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error) {
+    messages, err := input.PrepareMessages()
+    if err != nil {
+        return nil, err
+    }
     mc, ok := input.Agent.PlannerModelClient("bedrock")
     if !ok {
         return nil, errors.New("model not configured")
@@ -1581,7 +1585,7 @@ func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*Pl
 
     req := &model.Request{
         ModelClass: model.ModelClassHighReasoning,
-        Messages:   input.Messages,
+        Messages:   messages,
         Stream:     true,
     }
 
@@ -4007,7 +4011,51 @@ const (
 
 ## History Policies
 
-Control how conversation history is managed before each planner turn:
+History policies prepare conversation messages when a planner first requests
+them, preserving system messages and whole turns.
+
+### Preparing conversation messages
+
+`PlanInput.PrepareMessages` and `PlanResumeInput.PrepareMessages` are mandatory,
+runtime-supplied functions. Call the function before inspecting, copying, or
+transforming conversation messages, including decisions made without a model.
+The first call applies the registered history policy to the original activity
+messages and advertised tool definitions. A decision based only on `RunContext`,
+`ToolOutputs`, or `Finalize` can return without calling it. Such a decision
+performs no history token counting or summarization, even for long transcripts.
+Runtime-owned automatic continuations likewise do not prepare unused history.
+
+Preparation uses the activity's context, deadline, and cancellation. Repeated
+or concurrent calls in one planner invocation run the policy once and return the
+same slice, message pointers, and error. No cloning is introduced: callers that
+need a changed copy must make that copy, and concurrent mutations remain their
+responsibility. All calls must finish before the planner returns; do not retain
+the function for later use. The runtime supplies it even for empty history or
+when no history policy is configured. There is no raw-history alternative.
+
+Return a preparation error immediately. If a planner ignores it, the runtime
+still rejects the planner result and returns the original preparation error
+directly. Its full message, wrapping, and error classification are preserved;
+subsequent planner or model errors cannot turn it into model-output recovery.
+Preparation is not retried within an activity. An engine retry gets a fresh
+activity and preparation function. Replaying a completed activity uses its
+recorded result without new preparation.
+
+**Custom planner migration:** `PlanInput.Messages` and
+`PlanResumeInput.Messages` have been removed. Replace reads with a call to
+`PrepareMessages`, handle its error, and use the returned slice for all existing
+history inspection and prompt construction. Direct planner tests must supply
+the function too. Forward it unchanged when converting between planner inputs.
+Do not add it to serialized records: `api.PlanActivityInput.Messages`, model
+requests, stored transcripts, and suspension payloads are unchanged. This is a
+Go source-compatibility change, not a wire or data migration. Upgrade callers
+with their goa-ai dependency; existing binaries using an older version keep
+their existing behavior and can coexist without a network-protocol change.
+
+Deferring preparation does not reuse summaries across activities or change
+compression thresholds, exact token counting, whole-turn retention, final-fit
+rejection, tool/result pairing, provider reasoning signatures, or streaming.
+Each history-consuming activity continues to apply its registered policy.
 
 ### KeepRecentTurns
 
@@ -4326,6 +4374,11 @@ runtime captures and reattaches them without exposing the field to planners.
 When planners render prompts through `RenderPrompt`, copy prompt provenance into model requests:
 
 ```go
+messages, err := input.PrepareMessages()
+if err != nil {
+    return nil, err
+}
+
 content, err := input.Agent.RenderPrompt(ctx, "assistant.system", map[string]any{
     "AssistantName": "Ops Assistant",
 })
@@ -4334,7 +4387,7 @@ if err != nil {
 }
 
 resp, err := modelClient.Complete(ctx, &model.Request{
-    Messages:   input.Messages,
+    Messages:   messages,
     PromptRefs: []prompt.PromptRef{content.Ref},
 })
 ```

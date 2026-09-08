@@ -268,13 +268,17 @@ Tool executors decide how work is performed.
 
 ```go
 func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+	messages, err := in.PrepareMessages()
+	if err != nil {
+		return nil, err
+	}
 	mc, ok := in.Agent.PlannerModelClient("default")
 	if !ok {
 		return nil, errors.New("model client default is not registered")
 	}
 
 	summary, err := mc.Stream(ctx, &model.Request{
-		Messages: in.Messages,
+		Messages: messages,
 		Tools:    in.Agent.AdvertisedToolDefinitions(),
 		Stream:   true,
 	})
@@ -289,6 +293,15 @@ func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planne
 	}, nil
 }
 ```
+
+Call `PrepareMessages` before inspecting or transforming conversation history.
+The runtime applies the registered history policy on first access and returns
+the same messages and error on later accesses in that planner invocation.
+Decisions using only typed run state or tool results need not prepare history.
+The former `PlanInput.Messages` and `PlanResumeInput.Messages` fields are removed;
+custom planners must migrate when upgrading. See [preparation and migration](docs/runtime.md#preparing-conversation-messages)
+for error, lifetime, and compatibility rules. Stored history and wire formats do
+not change.
 
 Register model clients during bootstrap with `rt.RegisterModel(...)` or runtime
 factories such as `rt.NewOpenAIModelClient(...)`, `rt.NewBedrockModelClient(...)`,

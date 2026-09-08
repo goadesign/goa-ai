@@ -1267,8 +1267,11 @@ RunPolicy(func() {
 
 ### History Policies
 
-History policies transform message history before each planner invocation while preserving
-system prompts and logical turn boundaries.
+History policies transform message history when a planner first calls
+`PrepareMessages`, preserving system prompts and logical turn boundaries.
+Decisions using only typed run state or tool results need not prepare history.
+See [the runtime preparation contract](runtime.md#preparing-conversation-messages)
+for lifetime, error handling, and custom planner migration.
 
 **Sliding Window** — Keep the last N turns:
 

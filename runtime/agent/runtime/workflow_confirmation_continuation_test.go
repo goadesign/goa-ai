@@ -55,7 +55,7 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 		firstContext,
 		AgentRegistration{ExecuteToolActivity: "execute"},
 		firstInput,
-		&planner.PlanInput{RunContext: run.Context{
+		&workflowConversation{RunContext: run.Context{
 			RunID: firstInput.RunID, SessionID: firstInput.SessionID, TurnID: firstInput.TurnID, Attempt: 1,
 		}},
 		&PlanResult{ToolCalls: []ToolCall{{
@@ -139,7 +139,7 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 		&testWorkflowContext{ctx: t.Context(), runtime: runtime},
 		registration,
 		firstInput,
-		&planner.PlanInput{RunContext: run.Context{
+		&workflowConversation{RunContext: run.Context{
 			RunID: firstInput.RunID, SessionID: firstInput.SessionID, TurnID: firstInput.TurnID, Attempt: 1,
 		}},
 		&PlanResult{ToolCalls: []ToolCall{{

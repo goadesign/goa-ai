@@ -72,7 +72,7 @@ func TestConfirmationDecisionRejectsMissingToolCallID(t *testing.T) {
 				&testWorkflowContext{ctx: context.Background()},
 				AgentRegistration{},
 				&RunInput{},
-				&planner.PlanInput{},
+				&workflowConversation{},
 				engine.ActivityOptions{},
 				ToolCall{Name: "tool.confirm"},
 				"confirmation-1",
@@ -141,7 +141,7 @@ func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 		now:     func() time.Time { return current },
 		runtime: rt,
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     input.RunID,
 			SessionID: input.SessionID,
@@ -209,7 +209,7 @@ func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{
@@ -310,7 +310,7 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 		}},
 		hasPlanResult: true,
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     input.RunID,
 			SessionID: input.SessionID,
@@ -376,7 +376,7 @@ func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{ToolCalls: []ToolCall{
@@ -430,7 +430,7 @@ func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{ToolCalls: []ToolCall{
@@ -491,7 +491,7 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 	}))
 
 	ctx := context.Background()
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",

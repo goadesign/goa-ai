@@ -542,7 +542,7 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 	seedTestToolset(rt, "svc.export", childSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "child-call",
 		Name:       tools.Ident("child"),
@@ -568,7 +568,7 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 	seedTestToolset(rt, "svc.ts", toolSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
 	// Planner supplies an explicit ToolCallID from the model
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		Name:       tools.Ident("tool"),
@@ -727,7 +727,7 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 		"example.materialized",
 		tools.AudienceTimeline,
 	))
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "session-1",
@@ -1098,9 +1098,8 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 		hasPlanResult: true,
 	}
 	input := &RunInput{AgentID: "parent.agent", RunID: "run-inline", SessionID: "sess-1", TurnID: "turn-1"}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID},
-		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		Name:       tools.Ident("child.get_time_series"),

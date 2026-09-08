@@ -30,7 +30,7 @@ type recoveryHarness struct {
 	registration AgentRegistration
 	workflow     *routeWorkflowContext
 	input        *RunInput
-	base         *planner.PlanInput
+	base         *workflowConversation
 }
 
 func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
@@ -1298,7 +1298,7 @@ func newRecoveryHarness(
 		registration: registration,
 		workflow:     wfCtx,
 		input:        input,
-		base: &planner.PlanInput{RunContext: run.Context{
+		base: &workflowConversation{RunContext: run.Context{
 			RunID: runID, SessionID: sessionID, TurnID: turnID, Attempt: 1,
 		}},
 	}

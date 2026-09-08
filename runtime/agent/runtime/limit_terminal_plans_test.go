@@ -300,7 +300,7 @@ func TestToolFailureUsesPlannerWhenLimitPlansExist(t *testing.T) {
 			},
 		},
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Run the tool."}},

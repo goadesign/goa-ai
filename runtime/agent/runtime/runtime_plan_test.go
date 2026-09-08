@@ -222,8 +222,10 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 		called = true
 		require.NotNil(t, input)
 		require.Equal(t, run.Context{RunID: "run-123"}, input.RunContext)
-		require.Len(t, input.Messages, 1)
-		require.Equal(t, "hello", input.Messages[0].Text())
+		messages, err := input.PrepareMessages()
+		require.NoError(t, err)
+		require.Len(t, messages, 1)
+		require.Equal(t, "hello", messages[0].Text())
 		require.NotNil(t, input.Agent)
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	}}
@@ -3136,6 +3138,18 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 		return nil, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
+	historyProvider := &historyCountingClient{}
+	compress := Compress(historyTestClient(t, historyProvider), HistoryCompressionConfig{
+		CompressAtMaxInputTokens: 30,
+		KeepMaxTurns:             1,
+	})
+	historyCalls := 0
+	reg := rt.agents["service.agent"]
+	reg.Policy.History = func(ctx context.Context, messages []*model.Message, definitions []*model.ToolDefinition) ([]*model.Message, error) {
+		historyCalls++
+		return compress(ctx, messages, definitions)
+	}
+	rt.agents["service.agent"] = reg
 	search, continuation := continuationTestSpecs()
 	seedTestToolSpecs(rt, search, continuation)
 	seedTestToolDefinitions(rt, search, continuation)
@@ -3184,6 +3198,14 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
+		// The counting provider charges 10 tokens per message, so this history
+		// exceeds the 30-token threshold if preparation is mistakenly requested.
+		Messages: []*model.Message{
+			userMsg("Find prior results."),
+			assistantTextMsg("Prior results."),
+			userMsg("Search the next period."),
+			assistantTextMsg("Checking the next page."),
+		},
 		ToolOutputs: []*api.ToolOutputRef{{
 			CallRunID:   "run-123",
 			ResultRunID: "run-123",
@@ -3192,6 +3214,9 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 	})
 	require.NoError(t, err)
 	require.False(t, plannerCalled)
+	require.Zero(t, historyCalls)
+	require.Empty(t, historyProvider.countedAll)
+	require.Nil(t, historyProvider.summarized)
 	require.Len(t, out.Result.ToolCalls, 1)
 	require.Equal(t, continuation.Name, out.Result.ToolCalls[0].Name)
 	require.Equal(t, "source-1", out.Result.ToolCalls[0].ContinuationRootToolCallID)
@@ -3502,7 +3527,7 @@ func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 func TestBuildNextResumeRequestCarriesTurnScopedRecoveryIdentity(t *testing.T) {
 	t.Parallel()
 
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-123"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-123"}}
 	nextAttempt := 1
 	recovery := []*planner.ToolOutput{{
 		Name:       "svc.tools.rejected",
@@ -3537,7 +3562,7 @@ func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 	t.Parallel()
 
 	rt := &Runtime{}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-123",
 			SessionID: "sess-1",
@@ -3564,7 +3589,7 @@ func TestBuildNextResumeRequestUsesProviderNeutralTranscriptValidation(t *testin
 	t.Parallel()
 
 	rt := &Runtime{}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		Messages: []*model.Message{{
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{

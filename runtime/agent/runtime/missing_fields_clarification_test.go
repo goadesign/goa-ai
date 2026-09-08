@@ -67,13 +67,12 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1"}
 	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     input.RunID,
 			SessionID: input.SessionID,
 			TurnID:    "turn-1",
 		},
-		Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
 	results := []*planner.ToolResult{{
 		Name:       tools.Ident("tool"),

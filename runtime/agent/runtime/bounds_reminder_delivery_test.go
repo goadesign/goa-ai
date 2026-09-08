@@ -101,7 +101,7 @@ func TestAppendUserToolRecordResultsBoundsGuidance(t *testing.T) {
 			beforeBounds := agent.CloneBounds(result.Bounds)
 			beforeContent, err := rt.toolResultContent(&call, result)
 			require.NoError(t, err)
-			base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+			base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 			require.NoError(t, rt.appendUserToolRecordResults(t.Context(), "agent-1", base,
 				[]stepToolRecord{{call: call, result: result}}, ""))
 
