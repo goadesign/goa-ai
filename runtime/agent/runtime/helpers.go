@@ -98,6 +98,8 @@ func NestedRunIDForToolCall(parentRunID string, toolName tools.Ident, toolCallID
 // generated IDs remain unique within the run. Every identity component is
 // length-delimited before hashing, so separators inside strings and distinct
 // dotted tool names cannot produce the same preimage.
+// The full digest uses exactly 64 hexadecimal characters without a decorative
+// prefix, so runtime-authored transcript calls fit a 64-character provider limit.
 func generateDeterministicToolCallID(runID, turnID string, attempt int, toolName tools.Ident, index int) string {
 	identity := []byte(generatedToolCallIDHashDomain)
 	identity = appendLengthDelimited(identity, runID)
@@ -106,7 +108,7 @@ func generateDeterministicToolCallID(runID, turnID string, attempt int, toolName
 	identity = binary.AppendVarint(identity, int64(index))
 	identity = appendLengthDelimited(identity, string(toolName))
 	sum := sha256.Sum256(identity)
-	return "call-" + hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:])
 }
 
 // appendLengthDelimited appends one string without allowing neighboring

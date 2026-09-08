@@ -130,12 +130,13 @@ func TestCommitSelectedModelResponseBuildsPlannerAuthoredModelIdentity(t *testin
 	rt := New(newTestStore())
 	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
+	callID := generateDeterministicToolCallID("run-1", "turn-1", 1, "catalog.lookup.find_records", 0)
 	result := &PlanResult{ToolCalls: []ToolCall{{
 		Name:         "catalog.lookup.find_records",
 		Payload:      rawjson.Message(`{"category":"recent"}`),
 		ModelName:    "summarize_recent_records",
 		ModelPayload: rawjson.Message(`{"period":"today"}`),
-		ToolCallID:   "tooluse_1",
+		ToolCallID:   callID,
 	}}}
 
 	require.NoError(t, rt.appendSelectedModelResponse(
@@ -144,10 +145,23 @@ func TestCommitSelectedModelResponseBuildsPlannerAuthoredModelIdentity(t *testin
 
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, []model.Part{model.ToolUsePart{
-		ID:    "tooluse_1",
+		ID:    callID,
 		Name:  "summarize_recent_records",
 		Input: rawjson.Message(`{"period":"today"}`),
 	}}, base.Messages[0].Parts)
+	require.Len(t, callID, 64)
+	call := result.ToolCalls[0]
+	seedTestToolSpecs(rt, newAnyJSONSpec(call.Name))
+	appendUserToolResultsForTest(t, rt, agentID, base, []ToolCall{call}, []*planner.ToolResult{{
+		Name:       call.Name,
+		ToolCallID: callID,
+		Result:     map[string]any{"items": []string{}},
+	}})
+	require.NoError(t, transcript.ValidatePlannerTranscript(base.Messages))
+	require.Len(t, base.Messages, 2)
+	toolResult, ok := base.Messages[1].Parts[0].(model.ToolResultPart)
+	require.True(t, ok)
+	require.Equal(t, callID, toolResult.ToolUseID)
 }
 
 func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *testing.T) {
