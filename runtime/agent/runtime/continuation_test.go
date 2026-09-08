@@ -70,12 +70,16 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 		sessionID = "session-1"
 		agentID   = "svc.agent"
 	)
+	sourceID := generateDeterministicToolCallID("run-1", "turn-1", 1, search.Name, 0)
+	continueID := generateDeterministicToolCallID("run-1", "turn-1", 2, continuation.Name, 0)
+	require.Len(t, sourceID, 64)
+	require.Len(t, continueID, 64)
 	sourceCall := hooks.NewToolCallScheduledEvent(
 		"run-1",
 		agentID,
 		sessionID,
 		search.Name,
-		"source-1",
+		sourceID,
 		rawjson.Message(`{"query":"alarms"}`),
 		"",
 		"",
@@ -89,7 +93,7 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 		sessionID,
 		"run-1",
 		search.Name,
-		"source-1",
+		sourceID,
 		"",
 		rawjson.Message(`{"items":["page-1"]}`),
 		nil,
@@ -105,13 +109,13 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 		agentID,
 		sessionID,
 		continuation.Name,
-		"continue-1",
+		continueID,
 		rawjson.Message(`{"cursor":"first"}`),
 		"",
 		"",
 		0,
 	)
-	continueCall.ContinuationRootToolCallID = "source-1"
+	continueCall.ContinuationRootToolCallID = sourceID
 	appendHistoricalHookEvent(t, store, continueCall, "continue-call", 3)
 	secondCursor := "second"
 	appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
@@ -120,7 +124,7 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 		sessionID,
 		"run-1",
 		continuation.Name,
-		"continue-1",
+		continueID,
 		"",
 		rawjson.Message(`{"items":["page-2"]}`),
 		nil,
@@ -137,13 +141,13 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{
 				model.ToolUsePart{
-					ID:    "source-1",
+					ID:    sourceID,
 					Name:  search.Name.String(),
 					Input: rawjson.Message(`{"query":"alarms"}`),
 				},
 				model.ToolUsePart{
-					ID:    "continue-1",
-					Name:  continuationActionName(continuation.Name, "source-1").String(),
+					ID:    continueID,
+					Name:  continuationActionName(continuation.Name, sourceID).String(),
 					Input: rawjson.Message(`{}`),
 				},
 			},
@@ -159,7 +163,7 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 	actions, err := rt.availableContinuationActions(agentID, outputs)
 	require.NoError(t, err)
 	require.Len(t, actions, 1)
-	assert.Equal(t, continuationActionName(continuation.Name, "source-1"), actions[0].modelName)
+	assert.Equal(t, continuationActionName(continuation.Name, sourceID), actions[0].modelName)
 	assert.NotContains(t, actions[0].description, firstCursor)
 	assert.NotContains(t, actions[0].description, secondCursor)
 
@@ -178,7 +182,7 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, calls, 1)
 	assert.Equal(t, continuation.Name, calls[0].Name)
-	assert.Equal(t, "source-1", calls[0].ContinuationRootToolCallID)
+	assert.Equal(t, sourceID, calls[0].ContinuationRootToolCallID)
 	assert.JSONEq(t, `{"cursor":"second"}`, string(calls[0].Payload))
 }
 

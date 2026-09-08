@@ -11,7 +11,10 @@ import (
 func TestGenerateDeterministicToolCallIDUsesBoundedOpaqueEncoding(t *testing.T) {
 	got := generateDeterministicToolCallID("run-1", "turn-1", 3, "svc.read.get_time_series", 7)
 
-	assert.Regexp(t, `^call-[0-9a-f]{64}$`, got)
+	assert.Regexp(t, `^[0-9a-f]{64}$`, got)
+	assert.Len(t, got, 64)
+	// Keep every digest byte and the existing identity preimage unchanged.
+	assert.Equal(t, "0a1336094d85795896aa1cdc306a74fcf3159ebdf294fcac582212734dc66e6c", got)
 	assert.LessOrEqual(t, len(got), toolregistry.MaxToolCallMetaIDLength)
 }
 
@@ -56,7 +59,8 @@ func TestGenerateDeterministicToolCallIDBoundsNestedIDs(t *testing.T) {
 	nextIndex := generateDeterministicToolCallID(runID, runID, 3, "catalog.lookup.list_workspace_change_events", 8)
 
 	assert.LessOrEqual(t, len(id), toolregistry.MaxToolCallMetaIDLength)
-	assert.Regexp(t, `^call-[0-9a-f]{64}$`, id)
+	assert.Regexp(t, `^[0-9a-f]{64}$`, id)
+	assert.Len(t, id, 64)
 	assert.Equal(t, id, replayed)
 	assert.NotEqual(t, id, nextAttempt)
 	assert.NotEqual(t, id, nextIndex)

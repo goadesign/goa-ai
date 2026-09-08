@@ -329,6 +329,8 @@ batch position. It rejects a provider ID that does not belong to the selected
 model response. When planner code compiles model output into different
 executable intent, the runtime retains the original model name and payload
 separately for the transcript.
+The [tool-call ID upgrade requirements](docs/runtime.md#tool-call-id-upgrade)
+describe worker replacement when the execution-ID encoding changes.
 
 Model-derived calls have a nonempty `ModelToolCallID` and must name a tool in the
 exact catalog shown to the model. Planner-authored calls have an empty ID and
