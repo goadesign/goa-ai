@@ -76,7 +76,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 			return nil, err
 		}
 	}
-	act, err := r.preparePlannerActivity(ctx, input, continuationActions, nil)
+	act, err := r.preparePlannerActivity(ctx, input, continuationActions, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -158,19 +158,34 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return nil, err
 	}
-	exactCorrectCall := len(correctCallSpecs) > 0
+	// Ordinary corrections preserve the agent's other executable choices. A
+	// finalizer still repairs only its failed terminal tool, never domain work.
+	var advertisedSpecs []tools.ToolSpec
+	if len(correctCallSpecs) > 0 {
+		advertisedSpecs = correctCallSpecs
+		if input.Finalize == nil {
+			advertisedSpecs = r.ToolSpecsForAgent(input.AgentID)
+			for _, correction := range correctCallSpecs {
+				index := slices.IndexFunc(advertisedSpecs, func(spec tools.ToolSpec) bool {
+					return spec.Name == correction.Name
+				})
+				if index < 0 {
+					advertisedSpecs = append(advertisedSpecs, correction)
+				} else if !equivalentToolSpec(advertisedSpecs[index], correction) {
+					return nil, fmt.Errorf("correct-call tool %q has conflicting agent and executable contracts", correction.Name)
+				}
+			}
+		}
+	}
 	recoveryReminders := r.recoveryReminders(recoveryOutputs)
 	var continuationActions []continuationAction
-	if !exactCorrectCall && input.Finalize == nil && !synthesisOnly {
+	if input.Finalize == nil && !synthesisOnly {
 		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs)
 		if err != nil {
 			return nil, err
 		}
 	}
-	var unavailableTools []tools.Ident
-	if !exactCorrectCall {
-		unavailableTools = r.recoveryUnavailableTools(input.AgentID, recoveryOutputs, input.Finalize != nil)
-	}
+	unavailableTools := r.recoveryUnavailableTools(input.AgentID, recoveryOutputs, input.Finalize != nil)
 	if synthesisOnly {
 		specs := r.ToolSpecsForAgent(input.AgentID)
 		unavailableTools = make([]tools.Ident, len(specs))
@@ -178,32 +193,16 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			unavailableTools[index] = spec.Name
 		}
 	}
-	if exactCorrectCall {
-		act, err = r.preparePlannerActivityWithSpecs(
-			ctx,
-			input,
-			continuationActions,
-			unavailableTools,
-			correctCallSpecs,
-		)
-	} else {
-		act, err = r.preparePlannerActivity(
-			ctx,
-			input,
-			continuationActions,
-			unavailableTools,
-		)
-	}
+	act, err = r.preparePlannerActivity(ctx, input, continuationActions, unavailableTools, advertisedSpecs)
 	if err != nil {
 		return nil, err
 	}
-	if exactCorrectCall {
-		definitions := act.agentCtx.AdvertisedToolDefinitions()
-		expected := correctCallCatalog(recoveryOutputs)
-		if advertised := toolDefinitionNames(definitions); !slices.Equal(advertised, expected) {
+	advertised := toolDefinitionNames(act.agentCtx.AdvertisedToolDefinitions())
+	for _, correction := range correctCallSpecs {
+		if !slices.Contains(advertised, correction.Name) {
 			return nil, fmt.Errorf(
-				"correct-call catalog %v resolved to advertised tools %v",
-				expected,
+				"correct-call tool %q is excluded from advertised tools %v",
+				correction.Name,
 				advertised,
 			)
 		}
@@ -295,7 +294,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 // path. It runs before planner setup, so removing that complete registration
 // revokes recovery without starting a model invocation.
 func (r *Runtime) correctCallSpecs(outputs []*planner.ToolOutput) ([]tools.ToolSpec, error) {
-	names := correctCallCatalog(outputs)
+	names := correctCallToolNames(outputs)
 	if len(names) == 0 {
 		return nil, nil
 	}
@@ -467,26 +466,10 @@ func validatePlannerToolCatalogs(
 	return nil
 }
 
-// preparePlannerActivity constructs all shared planner activity state before
-// the specific PlanStart or PlanResume payload is built.
+// preparePlannerActivity constructs the shared activity state. Ordinary turns
+// use the agent's executable specs; correction turns supply their combined
+// specs. Both paths apply the same run policy and unavailable-tool exclusions.
 func (r *Runtime) preparePlannerActivity(
-	ctx context.Context,
-	input *PlanActivityInput,
-	continuationActions []continuationAction,
-	unavailableTools []tools.Ident,
-) (*plannerActivityInvocation, error) {
-	return r.preparePlannerActivityWithSpecs(
-		ctx,
-		input,
-		continuationActions,
-		unavailableTools,
-		nil,
-	)
-}
-
-// preparePlannerActivityWithSpecs constructs planner activity state with an
-// explicit tool catalog for one correction turn.
-func (r *Runtime) preparePlannerActivityWithSpecs(
 	ctx context.Context,
 	input *PlanActivityInput,
 	continuationActions []continuationAction,

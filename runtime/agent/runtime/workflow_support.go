@@ -284,7 +284,7 @@ func (r *Runtime) finalizeFromHistory(
 			return nil, errors.New(reasonText)
 		}
 	}
-	if len(correctCallCatalog(recovery)) > 0 {
+	if len(correctCallToolNames(recovery)) > 0 {
 		if err := r.rewriteRecoveryCatalogToolCalls(output.RecoveryCatalog, output.Result); err != nil {
 			return nil, fmt.Errorf("%s: %w", reasonText, err)
 		}

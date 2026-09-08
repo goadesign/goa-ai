@@ -1,5 +1,5 @@
-// This file verifies that the existing resume activity derives the exact tools
-// needed to correct saved failures without widening ordinary agent catalogs.
+// These tests exercise correction through the resume activity: current agent
+// choices remain available, and failed tools require executable registration.
 package runtime
 
 import (
@@ -23,7 +23,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestCorrectCallCatalogDerivesOrderedUniqueNames(t *testing.T) {
+func TestCorrectCallToolNamesDerivesOrderedUniqueNames(t *testing.T) {
 	first := tools.Ident("catalog.first")
 	second := tools.Ident("catalog.second")
 	outputs := []*planner.ToolOutput{
@@ -33,7 +33,7 @@ func TestCorrectCallCatalogDerivesOrderedUniqueNames(t *testing.T) {
 		recoveryOutput(second, "call-4", planner.RecoveryCorrectCall),
 	}
 
-	require.Equal(t, []tools.Ident{first, second}, correctCallCatalog(outputs))
+	require.Equal(t, []tools.Ident{first, second}, correctCallToolNames(outputs))
 }
 
 func TestRegisterAgentKeepsExistingPlannerActivities(t *testing.T) {
@@ -225,15 +225,15 @@ func suspendedRetiredToolFixture(
 	)
 	require.NoError(t, err)
 	require.NotNil(t, output.Suspension)
-	require.NotContains(t, string(output.Suspension.Checkpoint), "PendingRecoveryCatalog")
+	require.Contains(t, string(output.Suspension.Checkpoint), "PendingRecoveryCatalog")
 	var checkpoint workflowCheckpoint
 	require.NoError(t, json.Unmarshal(output.Suspension.Checkpoint, &checkpoint))
 	require.Len(t, checkpoint.State.PendingRecovery, 1)
-	require.Nil(t, checkpoint.State.PendingRecoveryCatalog)
+	require.Equal(t, &RecoveryCatalog{Tools: []tools.Ident{retired.Name}}, checkpoint.State.PendingRecoveryCatalog)
 	return store, retired, current
 }
 
-func TestCorrectCallRecoveryUsesOnlySavedTool(t *testing.T) {
+func TestCorrectCallRecoveryRetainsCurrentAndSavedTool(t *testing.T) {
 	retired := newAnyJSONSpec("catalog.lookup_retired")
 	unrelated := newAnyJSONSpec("catalog.list_retired")
 	current := newAnyJSONSpec("catalog.lookup_current")
@@ -255,7 +255,7 @@ func TestCorrectCallRecoveryUsesOnlySavedTool(t *testing.T) {
 			resumes++
 			switch resumes {
 			case 1:
-				assertAdvertisedTools(t, input, retired.Name)
+				assertAdvertisedTools(t, input, current.Name, retired.Name)
 				return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 					Name:    retired.Name,
 					Payload: rawjson.Message(`{"query":"corrected"}`),
@@ -560,7 +560,7 @@ func TestCorrectCallRecoveryPreservesCurrentPolicyAndAuthorization(t *testing.T)
 			Payload:    rawjson.Message(`{"query":"invalid"}`),
 		}}}, initialCaps(RunPolicy{MaxToolCalls: 2}))
 
-		require.ErrorContains(t, err, "resolved to advertised tools []")
+		require.ErrorContains(t, err, "is excluded from advertised tools")
 		require.Zero(t, plannerCalls)
 	})
 

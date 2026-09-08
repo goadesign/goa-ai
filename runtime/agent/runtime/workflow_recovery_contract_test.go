@@ -52,7 +52,7 @@ func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
 			resumes++
 			switch resumes {
 			case 1:
-				assertAdvertisedTools(t, input, search.Name)
+				assertAdvertisedTools(t, input, search.Name, list.Name)
 				require.Len(t, input.Reminders, 4)
 				return &planner.PlanResult{
 					ToolCalls: []planner.ToolRequest{
@@ -85,7 +85,7 @@ func TestRunLoopCombinesFailedCallsIntoFewerCorrections(t *testing.T) {
 	assert.Equal(t, 2, resumes)
 }
 
-func TestRunLoopCorrectionMayRetryFailedToolOrAnswer(t *testing.T) {
+func TestRunLoopCorrectionMayRetryChooseAlternativeOrAnswer(t *testing.T) {
 	tests := []struct {
 		name          string
 		choose        func(search tools.ToolSpec) *planner.PlanResult
@@ -105,6 +105,17 @@ func TestRunLoopCorrectionMayRetryFailedToolOrAnswer(t *testing.T) {
 			},
 			wantToolCount: 2,
 			wantAnswer:    "corrected",
+		},
+		{
+			name: "alternate authorized retrieval",
+			choose: func(_ tools.ToolSpec) *planner.PlanResult {
+				return &planner.PlanResult{
+					ToolCalls:            []planner.ToolRequest{{Name: "catalog.list", Payload: rawjson.Message(`{"query":"alternative"}`)}},
+					SynthesizeAfterTools: true,
+				}
+			},
+			wantToolCount: 2,
+			wantAnswer:    "retrieved using another tool",
 		},
 		{
 			name: "final answer",
@@ -133,11 +144,12 @@ func TestRunLoopCorrectionMayRetryFailedToolOrAnswer(t *testing.T) {
 				func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 					resumes++
 					if resumes == 1 {
-						assertAdvertisedTools(t, input, search.Name)
+						assertAdvertisedTools(t, input, search.Name, list.Name)
 						require.Len(t, input.Reminders, 1)
 						return tt.choose(search), nil
 					}
 					require.True(t, input.SynthesisOnly)
+					assertAdvertisedTools(t, input)
 					return finalPlannerResult(tt.wantAnswer), nil
 				},
 			)
@@ -174,7 +186,7 @@ func TestRunLoopPreservesCorrectionEvidenceAcrossClarification(t *testing.T) {
 			resumes++
 			switch resumes {
 			case 1:
-				assertAdvertisedTools(t, input, search.Name)
+				assertAdvertisedTools(t, input, search.Name, list.Name)
 				require.Len(t, input.Reminders, 1)
 				return &planner.PlanResult{Await: planner.NewAwait(
 					planner.AwaitClarificationItem(&planner.AwaitClarification{
@@ -184,7 +196,7 @@ func TestRunLoopPreservesCorrectionEvidenceAcrossClarification(t *testing.T) {
 					}),
 				)}, nil
 			case 2:
-				assertAdvertisedTools(t, input, search.Name)
+				assertAdvertisedTools(t, input, search.Name, list.Name)
 				require.Len(t, input.Reminders, 1)
 				return &planner.PlanResult{
 					ToolCalls: []planner.ToolRequest{{

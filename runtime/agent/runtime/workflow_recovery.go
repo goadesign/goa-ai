@@ -51,10 +51,10 @@ func toolRecovery(recovery pendingPlannerRecovery) ([]*planner.ToolOutput, *Reco
 	return pending.outputs, pending.catalog
 }
 
-// correctCallCatalog returns the exact tool names required to repair the
-// pending failed calls. Names follow first-failure order and repeated failures
-// for the same tool contribute one catalog entry.
-func correctCallCatalog(outputs []*planner.ToolOutput) []tools.Ident {
+// correctCallToolNames identifies the failed tools whose correction contracts
+// must remain available. This is not the turn's complete advertised catalog.
+// Names follow first-failure order with duplicates removed.
+func correctCallToolNames(outputs []*planner.ToolOutput) []tools.Ident {
 	seen := make(map[tools.Ident]struct{})
 	var catalog []tools.Ident
 	for _, output := range outputs {

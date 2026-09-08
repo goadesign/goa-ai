@@ -23,7 +23,7 @@ type (
 	runOutputPayloadConverter struct{}
 
 	// legacyRunOutput freezes the unversioned top-level result. Its nested
-	// contracts, including suspension v7, are unchanged by this migration.
+	// contracts, including saved suspensions, are unchanged by this encoding.
 	legacyRunOutput struct {
 		AgentID         agent.Ident
 		RunID           string

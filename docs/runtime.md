@@ -1186,9 +1186,10 @@ directly:
   `codegen.CapsData.MaxRecoveryTurns`.
 
 These names and their serialized field names are intentionally breaking.
-Suspensions written by this runtime use `goa-ai.run-suspension.v7`. Earlier
-versions cannot resume. Version seven derives the exact ordered correction
-catalog from saved typed failures instead of storing a duplicate catalog. It
+Suspensions written by this runtime use `goa-ai.run-suspension.v8`. Earlier
+versions cannot resume. Version eight stores the advertised catalog for every
+accepted recovery plan that waits for input. Failed tool names cannot derive
+the other authorized choices shown during that turn. It
 also requires complete successful tool results: a result-bearing tool stores
 JSON accepted by its generated codec, while a successful tool without a result
 type and a failed tool store no result JSON. Each model-authored await item
@@ -1312,13 +1313,19 @@ agent-tool registrations before upgrading.
 Every accepted `correct_call` recovery reloads each failed output by its saved
 call ID, reads the typed recovery action, and derives tool names in
 first-failure order while removing later copies of the same name. It requires
-each name in the current executable toolset registration and advertises only
-that registration's exact definitions for the correction turn. An unknown
+each name in the current executable toolset registration. Ordinary correction
+combines those exact definitions with the current agent's executable catalog,
+deduplicating matching names; conflicting contracts fail. An unknown
 tool, a specification without its executable toolset, or a tool the current
 registration no longer contains fails before a model call.
 
-Run tag restrictions still filter the correction catalog before the planner
-runs. Runtime policy and authorization implemented by the tool's downstream
+Caller restrictions, run tag restrictions and recovery exclusions filter the
+combined catalog before the planner runs. A denied correction tool fails before
+model invocation rather than being silently dropped or restored after filtering.
+Unfinished queries retain their runtime-generated continuation actions; failed
+requests do not create continuations. Finalization still offers only the exact
+failed terminal tool, and synthesis-only turns remain tool-free.
+Runtime policy and authorization implemented by the tool's downstream
 executor still evaluate the corrected call. Removing the current registration
 revokes recovery immediately.
 
@@ -1327,11 +1334,12 @@ change workflow command ordering. A turn with no `correct_call` failure
 continues to advertise only the agent's current `Specs`, and the first normal
 turn after correction returns to those current tools.
 
-Suspensions omit `PendingRecoveryCatalog` only when typed pending failures
-contain `correct_call`. The current reader derives the exact
-catalog from those failures and rejects a serialized duplicate. Other recovery
-actions still require their serialized catalog because the failed outputs do
-not determine every tool that the planner may use.
+Every accepted recovery plan that waits for input stores its advertised names
+in the existing `PendingRecoveryCatalog`. The failed outputs cannot reconstruct
+the other choices offered at that turn. Resume preserves that plan's catalog,
+while current agent-definition and execution-policy checks still apply. The
+earlier phase that waits before asking the planner to recover has no accepted
+recovery catalog and continues to omit it.
 
 Applications should update workers for every workflow and activity queue
 together before accepting new work. This coordinated update keeps one runtime
@@ -1395,8 +1403,9 @@ Requests copied from a model response keep their provider correlation ID and
 must name a tool in that advertised list. Requests constructed by planner code
 leave the correlation ID empty and must name a tool in the agent's generated
 executable list. Hand-built agent definitions must populate this list; an empty
-list means the agent has no executable tools. During exact call correction, the
-list contains only the saved tool contracts being repaired. Dedicated
+list means the agent has no executable tools. Ordinary call correction also
+retains exact executable contracts for selected failed tools under the same
+policy; it never borrows unrelated global registrations. Dedicated
 continuation tools remain absent from
 the advertised list; trusted planner code may call them with a typed cursor
 payload when the agent's generated definition includes them. A direct call
@@ -3146,7 +3155,7 @@ For runtime storage and workflow adapters:
 - Stop setting `policy.CapsState.ExpiresAt`. The workflow owns its budget and
   hard deadlines directly.
 - Treat saved suspensions from versions before
-  `goa-ai.run-suspension.v7` as incompatible. They cannot be resumed by this
+  `goa-ai.run-suspension.v8` as incompatible. They cannot be resumed by this
   runtime.
 
 Install the Goa revision required by this module before regenerating:
@@ -3168,7 +3177,7 @@ For a release that changes generated or persisted runtime shapes:
    new work.
 
 Completed run history keeps the same meaning. Saved suspensions must use the
-current `goa-ai.run-suspension.v7` contract. A host may still need to convert
+current `goa-ai.run-suspension.v8` contract. A host may still need to convert
 its physical records or collections so the new store can read them. That
 conversion must preserve every recorded outcome and event.
 
@@ -3182,7 +3191,12 @@ workflow still requires attachment by exact ID. Deploy every workflow starter
 together before admission resumes. A queryable execution without the reserved
 recipe memo is a conflict; the runtime never infers its original start request.
 
-`goa-ai.run-suspension.v7` is the only accepted suspension schema. Every
+`goa-ai.run-suspension.v8` is the only accepted suspension schema. Version seven
+and earlier are rejected without an omission fallback. Before coordinated
+worker upgrade, finish old-format saved work under its owning runtime; if any
+must remain unfinished, obtain a separate host-owned preservation decision.
+This change supplies no migration command and never deletes, cancels, or
+rewrites saved work. Every
 model-authored await item preserves
 its runtime `ToolCallID` separately from the provider `ModelToolCallID`: runtime
 records and continuation responses use the former, while provider transcript
