@@ -1013,8 +1013,10 @@ The `sessionID` argument is required and must be a non-empty, non-whitespace str
 | `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
 | `WithTiming(Timing)`                    | Set multiple timing overrides |
 
-Recovery activities advertise only the saved failed-tool contracts for
-`correct_call` failures, after applying the run policy. They remove tools
+Ordinary `correct_call` recovery activities retain current agent tools and exact
+executable contracts for failed calls, after applying the same run policy to
+both. Finalization correction remains limited to its failed terminal tool.
+Recovery activities remove tools
 selected only by `replan` failures. Caller `WithRestrictToTool` policy remains
 run-scoped and continues to define the maximum available catalog.
 

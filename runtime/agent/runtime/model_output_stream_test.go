@@ -280,9 +280,9 @@ func TestPlannerActivityExecutionOwnsResponseID(t *testing.T) {
 		},
 	}
 
-	first, err := rt.preparePlannerActivity(context.Background(), input, nil, nil)
+	first, err := rt.preparePlannerActivity(context.Background(), input, nil, nil, nil)
 	require.NoError(t, err)
-	second, err := rt.preparePlannerActivity(context.Background(), input, nil, nil)
+	second, err := rt.preparePlannerActivity(context.Background(), input, nil, nil, nil)
 	require.NoError(t, err)
 
 	require.Equal(t, first.publicationBatchID, first.invocations.responseID)

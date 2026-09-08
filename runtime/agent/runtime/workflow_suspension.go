@@ -297,11 +297,6 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 	}
 	baseContext := retargetRunContext(l.base.RunContext, l.input)
 	pendingRecovery, pendingRecoveryCatalog := toolRecovery(l.st.PendingRecovery)
-	if len(correctCallCatalog(pendingRecovery)) > 0 {
-		// The checkpoint already contains the failed outputs needed to rebuild
-		// these correction tools, so it does not store the same tool list again.
-		pendingRecoveryCatalog = nil
-	}
 	checkpoint := &workflowCheckpoint{
 		Version:        api.RunSuspensionVersion,
 		AgentID:        string(l.input.AgentID),
@@ -646,14 +641,9 @@ func (r *Runtime) restoreCheckpointState(
 		ToolOutputs:       checkpoint.ToolOutputs,
 	}
 	if len(checkpoint.PendingRecovery) > 0 {
-		recoveryCatalog := checkpoint.PendingRecoveryCatalog
-		exactTools := correctCallCatalog(checkpoint.PendingRecovery)
-		if len(exactTools) > 0 {
-			recoveryCatalog = &RecoveryCatalog{Tools: exactTools}
-		}
 		state.PendingRecovery = pendingToolRecovery{
 			outputs: checkpoint.PendingRecovery,
-			catalog: recoveryCatalog,
+			catalog: checkpoint.PendingRecoveryCatalog,
 		}
 	}
 	return state, nil

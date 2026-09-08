@@ -1820,7 +1820,7 @@ func TestPreparePlannerActivityFiltersPlannerExecutableCatalog(t *testing.T) {
 				"service.agent": {first, second},
 			}
 
-			act, err := rt.preparePlannerActivityWithSpecs(
+			act, err := rt.preparePlannerActivity(
 				t.Context(),
 				&PlanActivityInput{
 					AgentID:    "service.agent",

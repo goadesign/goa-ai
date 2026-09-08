@@ -752,8 +752,8 @@ paged `Runtime.ListRunEvents` API. The runtime validates the exact engine output
 before storing success or suspension; a codec rejection records failure.
 
 This replaces the returned `ToolEvents` slice and introduces an explicitly
-versioned saved-result encoding. Existing suspension v7 checkpoints are
-unchanged. See [workflow completion and saved-result upgrades](docs/workflow-results.md)
+versioned saved-result encoding. That encoding does not alter the current
+suspension checkpoint contract. See [workflow completion and saved-result upgrades](docs/workflow-results.md)
 for source migration, strict retained-result reads, deployment, and rollback.
 
 ### External Input and Continuations
@@ -914,7 +914,13 @@ migrations, and administrative API.
 
 Generated agents, completion packages, runtime workers, and their callers form
 one release unit and use one generated contract. New saved runs use
-`goa-ai.run-suspension.v7`. Every successful tool with a result type stores the
+`goa-ai.run-suspension.v8`. Recovery plans that wait for input retain their
+advertised tool names; failed names alone do not determine the permitted
+alternatives. Version 7 and earlier suspensions are rejected, not inferred or
+rewritten. Before upgrading, finish old-format saved work using its owning
+runtime or obtain an explicit preservation decision from the host. Deploy all
+workflow and activity workers together. No new DSL or generated tool field is
+introduced. Every successful tool with a result type stores the
 complete JSON accepted by its generated result codec. Successful tools without
 a result type and failed tools store no result JSON. Planner activities carry
 run-record identifiers and load those exact bytes from the runtime store, so
@@ -1083,11 +1089,13 @@ failure resumes through its typed recovery transition: `correct_call` and
 `replan` may use tools, while `finish` resumes without tools so the planner can
 synthesize the terminal outcome.
 
-On a `correct_call` recovery turn, the runtime advertises only the saved tool
-contracts for the selected failed calls, after applying the run policy, and
-attaches correction guidance for each failure. Historical tool calls remain in
-the provider transcript for replay but never restore any other executable
-definition. A `replan` failure removes its failed tool for that turn unless
+On an ordinary `correct_call` recovery turn, the runtime retains the current
+agent's executable tools and the exact registered contracts needed to correct
+selected failures. The same caller and tag restrictions filter both sets before
+advertising. A missing or revoked failed-tool registration fails before a model
+call; historical transcript entries never restore unrelated tools. Correction
+guidance preserves each failure's full error and generated input evidence.
+A `replan` failure removes its failed tool for that turn unless
 another selected failure for the same tool is correctable. If the planner still
 requests an excluded tool, the runtime rejects the planner output before any
 sibling call executes. Planner-owned await barriers remain strict because they encode
@@ -1102,8 +1110,8 @@ that decision to the next activity as `PlanResumeInput.SynthesisOnly`; the
 runtime requires the planner to return a terminal result without additional
 tool calls. A failed tool follows its structured `ToolFailure.Recovery`
 directive first. `correct_call` supplies structured correction evidence while
-letting the planner retry the saved failed tool contracts, await input, or
-answer. It cannot select an unrelated capability. `replan` removes the failed tool from the
+letting the planner retry, combine work, choose another currently authorized
+action, continue an unfinished query, await input, or answer. `replan` removes the failed tool from the
 recovery turn while permitting another advertised action, input request, or
 answer. `finish` enters finalization and forbids further domain work. The
 planner may return a final response or registered terminal bookkeeping calls.
@@ -1365,8 +1373,9 @@ transcripts.
 The runtime checks these two request sources separately. Model-derived requests
 must use the exact catalog shown to the model. Planner-authored requests leave
 `ModelToolCallID` empty and must use the agent definition's executable catalog.
-An exact call-correction turn instead uses only the saved tool contracts being
-repaired. This lets trusted planner code call a dedicated continuation
+Ordinary call correction additionally retains the exact registered contracts
+needed to repair saved failures, under the same policy. Finalization correction
+retains only its failed terminal tool. This lets trusted planner code call a dedicated continuation
 without exposing its cursor-bearing tool to the model. The direct call remains
 standalone: it does not attach itself to a saved source query or create a
 generated model action. Payload codecs, registered executors, and run policy

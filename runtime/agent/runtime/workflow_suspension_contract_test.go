@@ -474,8 +474,8 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		return suspension
 	}
 
-	t.Run("valid current version absent catalog", func(t *testing.T) {
-		suspension := newCorrectCallSuspension(t, api.RunSuspensionVersion, nil)
+	t.Run("valid current version retains catalog", func(t *testing.T) {
+		suspension := newCorrectCallSuspension(t, api.RunSuspensionVersion, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}})
 		require.NoError(t, runtime.ValidateContinuation(suspension))
 		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
 		require.NoError(t, err)
@@ -485,17 +485,22 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		require.Equal(t, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}, catalog)
 	})
 
-	t.Run("invalid current version contradictory catalog", func(t *testing.T) {
+	t.Run("invalid current version absent catalog", func(t *testing.T) {
 		suspension := newCorrectCallSuspension(
 			t,
 			api.RunSuspensionVersion,
-			&RecoveryCatalog{Tools: []tools.Ident{spec.Name}},
+			nil,
 		)
 		require.ErrorContains(
 			t,
 			runtime.ValidateContinuation(suspension),
-			"correct-call recovery cannot carry a recovery catalog",
+			"pending recovery failures requires a recovery catalog",
 		)
+	})
+
+	t.Run("version seven is not reinterpreted", func(t *testing.T) {
+		suspension := newCorrectCallSuspension(t, "goa-ai.run-suspension.v7", nil)
+		require.ErrorContains(t, runtime.ValidateContinuation(suspension), `unsupported run suspension version "goa-ai.run-suspension.v7"`)
 	})
 
 	t.Run("valid current version replan serialized catalog", func(t *testing.T) {

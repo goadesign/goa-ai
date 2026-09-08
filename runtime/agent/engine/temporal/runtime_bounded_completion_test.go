@@ -128,7 +128,7 @@ func TestRuntimeRejectsFinalOutputBeforeRecordingSuccess(t *testing.T) {
 func TestRuntimeRejectsOutputBeforeRecordingSuspension(t *testing.T) {
 	for _, backend := range []string{"inmem", "temporal"} {
 		t.Run(backend, func(t *testing.T) {
-			// Suspension v7 still contains full continuation state. Its size can
+			// Suspensions still contain full continuation state. Their size can
 			// exceed the output limit even when each prior tool call was valid.
 			_, store, execute := boundedCompletionRuntime(t, backend, 4, "test-model", true)
 			out, err := execute()

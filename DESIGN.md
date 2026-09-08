@@ -332,9 +332,10 @@ separately for the transcript.
 
 Model-derived calls have a nonempty `ModelToolCallID` and must name a tool in the
 exact catalog shown to the model. Planner-authored calls have an empty ID and
-must name a tool in the agent definition's executable catalog. During exact
-`correct_call` recovery, they must instead name a tool from the saved recovery
-catalog. Dedicated continuation tools stay hidden from models, but
+must name a tool in the agent definition's executable catalog. Ordinary
+`correct_call` recovery retains those choices plus exact executable contracts
+for failed tools, after the same run policy filters both sets. Finalization
+correction retains only its failed terminal tool. Dedicated continuation tools stay hidden from models, but
 planner code may call one when it reconstructs the typed cursor payload itself.
 Such a direct call is standalone and does not create a model-facing continuation
 action. Generated codecs and run policy still validate every request.
@@ -598,7 +599,7 @@ invocation's count/telemetry; it does not return a second copy of tool history.
 Before recording success or suspension, it applies `contract.CopyRunOutput`
 to the exact result. This catches deterministic codec failures before terminal
 storage, but does not make Store and engine commits atomic. Full records remain
-in the existing paged Store, and suspension v7 state remains unchanged.
+in the existing paged Store; suspension tool-history contents remain unchanged.
 New top-level results use `json/goa-ai-run-output-v2`; a centralized strict
 reader maps the frozen old `json/plain` result schema to the same count and
 telemetry contract. The temporary reader's removal and deployment conditions
@@ -802,9 +803,12 @@ writers must not overlap. How the host reaches that state depends on its
 database and deployment environment.
 
 Continuation preparation accepts only the current suspension schema,
-`goa-ai.run-suspension.v7`. Earlier versions are rejected because they cannot
-preserve the exact identities and complete successful tool results required by
-the current continuation contract. Every model-authored
+`goa-ai.run-suspension.v8`. Every accepted recovery plan that waits for input
+retains its actual advertised catalog, including authorized alternatives to a
+failed tool. Earlier versions are rejected; their omitted correction catalogs
+are not reconstructed from today's registrations. Hosts must finish old-format
+saved work before upgrading, or separately decide how to preserve it. No saved
+work is automatically deleted, canceled, or rewritten. Every model-authored
 await item preserves the runtime `ToolCallID` separately from the provider
 `ModelToolCallID`, so execution records and provider transcript reconstruction
 never substitute one identity for the other. Any other checkpoint shape fails
@@ -1345,7 +1349,7 @@ for details and the SDK source-compatibility change.
   error instead of fabricating success after the required side effect did not
   occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
   because they assign different outcomes to the same exhausted limits.
-  Completion-aware suspensions use `goa-ai.run-suspension.v7`. The saved policy
+  Completion-aware suspensions use `goa-ai.run-suspension.v8`. The saved policy
   is required, and a checkpoint with another version fails at that typed
   boundary.
 - **Provider reasoning stream contract**: when a caller enables thinking

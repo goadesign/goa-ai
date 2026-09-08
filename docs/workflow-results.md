@@ -49,8 +49,11 @@ Callers that previously inspected `RunOutput.ToolEvents` must change source:
   records; use the recorded predecessor relationships when inspecting a chain.
 
 No new history store, history API, automatic full-history read, or model-visible
-field is introduced. Suspension checkpoints keep `goa-ai.run-suspension.v7`
-and their existing tool history. This change does not solve a potential
+field is introduced by the result encoding. Suspension checkpoints use the
+current `goa-ai.run-suspension.v8` contract and retain their existing tool history.
+The separate recovery-catalog change requires the version upgrade described in
+[runtime.md](runtime.md#coordinated-generated-system-releases).
+The result encoding does not solve a potential
 cumulative suspension-checkpoint size problem.
 
 ## Strict saved formats
@@ -107,6 +110,7 @@ and migration-only tests/documentation after all supported deployments prove:
 - Supported offline replay/exported histories and application-owned result
   copies have been migrated or have ended their supported retention.
 
-These are saved-result conditions, not a reason to remove suspension v7 or
-canonical run-log records: those formats have not changed. Public consumers
+These are saved-result conditions, not authority to remove saved suspensions or
+canonical run-log records. The independent suspension-version release gate
+still applies. Public consumers
 must establish their own saved-copy and supported-retention obligations.

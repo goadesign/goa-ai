@@ -408,9 +408,10 @@ type (
 
 		// RecoveryToolCallIDs selects the failed outputs whose recovery directives
 		// shape this planner turn. The activity uses these stable identities to
-		// derive its executable catalog and ephemeral recovery guidance from
-		// canonical run-log outputs. PlanStart and ordinary PlanResume omit the
-		// empty field because they have no failed output to recover.
+		// derive failed-tool contracts and recovery guidance from canonical
+		// run-log outputs, alongside current authorized agent choices.
+		// PlanStart and ordinary PlanResume omit this empty field because they
+		// have no failed output to recover.
 		RecoveryToolCallIDs []string `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// ModelOutputRecovery requests replacement of one rejected planner output.
@@ -1038,9 +1039,10 @@ const (
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
 	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
-	// Version 7 stores complete successful tool results and omits metadata that
-	// can be calculated from those bytes.
-	RunSuspensionVersion = "goa-ai.run-suspension.v7"
+	// Version 8 retains the advertised catalog for every accepted recovery plan
+	// that waits for input. Failed tool names cannot reconstruct other choices
+	// advertised during that plan. Earlier versions are rejected.
+	RunSuspensionVersion = "goa-ai.run-suspension.v8"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

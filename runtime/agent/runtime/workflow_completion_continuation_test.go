@@ -1,7 +1,7 @@
 package runtime
 
-// Completion statistics include results restored from the unchanged suspension
-// v7 checkpoint, not just tools executed by the continuation workflow.
+// Completion statistics include results restored from the current suspension
+// checkpoint, not just tools executed by the continuation workflow.
 
 import (
 	"context"
@@ -18,7 +18,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestCompletionStatisticsIncludeV7ContinuationHistory(t *testing.T) {
+func TestCompletionStatisticsIncludeContinuationHistory(t *testing.T) {
 	page, final := newAnyJSONSpec("records.page"), newAnyJSONSpec("records.finish")
 	final.TerminalRun, final.Bookkeeping = true, true
 	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}), WithToolConfirmation(&ToolConfirmationConfig{
@@ -56,7 +56,7 @@ func TestCompletionStatisticsIncludeV7ContinuationHistory(t *testing.T) {
 	first, err := firstHandle.Wait(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, first.Suspension)
-	assert.Equal(t, "goa-ai.run-suspension.v7", first.Suspension.Version)
+	assert.Equal(t, "goa-ai.run-suspension.v8", first.Suspension.Version)
 	assert.Contains(t, string(first.Suspension.Checkpoint), `"ToolEvents":[`)
 	assert.NotContains(t, string(first.Suspension.Checkpoint), `"ToolCount"`)
 	assert.Equal(t, 1, first.ToolCount)

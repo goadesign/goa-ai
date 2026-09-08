@@ -405,13 +405,9 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 			return errors.New("run suspension planner-resume phase cannot carry a recovery catalog")
 		}
 	} else {
-		recoveryCatalog, err := checkpointRecoveryCatalog(checkpoint)
-		if err != nil {
-			return err
-		}
 		if err := validateRecoveryCatalog(
 			checkpoint.State.PendingRecovery,
-			recoveryCatalog,
+			checkpoint.State.PendingRecoveryCatalog,
 			checkpoint.Batch.Result,
 		); err != nil {
 			return fmt.Errorf("run suspension checkpoint recovery state: %w", err)
@@ -447,22 +443,6 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 		return errors.New("run suspension checkpoint hard deadline precedes budget deadline")
 	}
 	return nil
-}
-
-// checkpointRecoveryCatalog returns the one catalog representation permitted
-// by typed pending failures. Exact correction tools are derived from the saved
-// failures and reject a duplicate serialized catalog. Recovery actions whose
-// visible tools cannot be derived still require their serialized catalog.
-func checkpointRecoveryCatalog(checkpoint *workflowCheckpoint) (*RecoveryCatalog, error) {
-	catalog := checkpoint.State.PendingRecoveryCatalog
-	exactTools := correctCallCatalog(checkpoint.State.PendingRecovery)
-	if len(exactTools) == 0 {
-		return catalog, nil
-	}
-	if catalog != nil {
-		return nil, errors.New("run suspension checkpoint correct-call recovery cannot carry a recovery catalog")
-	}
-	return &RecoveryCatalog{Tools: exactTools}, nil
 }
 
 // validatePublicRunSuspension checks the portion of a child suspension that a
