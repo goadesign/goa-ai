@@ -2196,11 +2196,14 @@ Incoming `run_id`, `session_id`, `turn_id`, `tool_call_id`, and
 bytes and reject NUL at the generated transport boundary; provider and
 incarnation IDs reject NUL as well. An invalid identifier is rejected before
 any tool-call publication.
-Every accepted planner request receives a runtime execution ID equal to `call-`
-plus lowercase SHA-256 over `goa-ai/runtime-tool-call-id/v1\0` and
-length-delimited run ID, turn ID, attempt, batch index, and tool name. The
-opaque ID is deterministic across workflow replay and changes when any identity
-input changes. A provider's own correlation ID remains separate.
+Every accepted planner request receives a runtime execution ID containing all
+64 lowercase hexadecimal characters of a SHA-256 digest, without a prefix.
+The hash input starts with `goa-ai/runtime-tool-call-id/v2\0`, followed by
+length-delimited run ID and turn ID, signed variable-length integers for attempt
+and batch index, and length-delimited tool name. Repeating those inputs with the
+same algorithm produces the same opaque ID. A provider's own correlation ID
+remains separate and unchanged. The [tool-call ID upgrade requirements](#tool-call-id-upgrade)
+apply when replacing workers that used the previous prefixed encoding.
 The gateway requires `tool_call_id` and derives the global transport
 `tool_use_id` as lowercase SHA-256 over the domain
 `goa-ai/tool-registry-use/v1\0` plus uint64-length-delimited `run_id` and
@@ -3192,6 +3195,36 @@ session through its own administrative API. Purging permanently reserves the
 session ID before removing the session, every owned run, all private
 checkpoints, and all ordered records. The integrated in-memory store exposes
 these host operations for local development and tests.
+
+##### Tool-call ID upgrade
+
+New runtime-generated tool-call IDs contain the same complete 64-character
+SHA-256 digest as before, but no longer start with `call-`. The hash domain and
+inputs are unchanged. Removing the five-character prefix lets new
+runtime-authored transcript calls fit a provider's 64-character call-ID limit;
+it does not claim that all providers have that limit. Treat IDs as opaque
+strings, not as values to parse by prefix.
+
+Saved execution IDs, provider-authored IDs, and stored references are not
+rewritten. Already saved suspensions restore their original IDs when a new
+workflow continues them. No stored-data migration or regeneration is required
+for this ID change. Old conversation transcripts can still contain 69-character
+synthetic IDs: upgrading the generator does not make those histories acceptable
+to a model endpoint that rejects them. Moving such conversations to another
+model is a separate migration concern.
+
+Do not replace workers underneath unfinished workflows without a verified
+deployment procedure. Some IDs are recomputed in workflow code, so replay with
+the new encoding can change execution IDs and suspension checkpoint contents.
+A successful Temporal replay check alone does not establish unchanged activity
+inputs or checkpoint bytes. For drain-and-replacement, stop admitting new work
+but allow existing executions to start the child workflows they need. Let those
+executions finish, including completing with a durably saved suspension, on their
+old workers before replacement; resume admission after replacement.
+Alternatively, use an already configured and verified worker-versioning setup
+that keeps those executions on their original build. Do not assume previously
+unversioned executions become pinned retrospectively. Apply the same constraints
+when rolling back: do not replay new-encoding workflows on old workers.
 
 ### Clarification Requests
 

@@ -1361,6 +1361,8 @@ planners do not populate `ModelName` or `ModelPayload`. The workflow commits the
 selected response once after atomic admission and before effects. Usage includes
 all attempts. Provider tool-call IDs remain opaque and unchanged in durable
 transcripts.
+See the [tool-call ID upgrade requirements](docs/runtime.md#tool-call-id-upgrade)
+before replacing workers that generated prefixed execution IDs.
 
 The runtime checks these two request sources separately. Model-derived requests
 must use the exact catalog shown to the model. Planner-authored requests leave
