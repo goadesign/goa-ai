@@ -62,6 +62,12 @@ type (
 		// and "high".
 		ThinkingEffort string
 
+		// DisabledThinkingEffort configures the reasoning effort sent when
+		// Request.Thinking is present with Enable false. Set "none" only when
+		// the configured models support it. Empty preserves provider defaults;
+		// absent Request.Thinking always leaves the effort unspecified.
+		DisabledThinkingEffort string
+
 		transport transport
 	}
 
@@ -73,9 +79,10 @@ type (
 		highModel    string
 		smallModel   string
 
-		maxCompletionTokens int
-		temperature         float32
-		thinkingEffort      string
+		maxCompletionTokens    int
+		temperature            float32
+		thinkingEffort         string
+		disabledThinkingEffort string
 		// bedrock selects the fixed Bedrock Responses contract: exact tool
 		// schemas, no native structured output, and no implicit cache writes.
 		bedrock bool
@@ -247,6 +254,9 @@ func newProvider(opts Options, bedrock bool) (*provider, error) {
 	if err := validateThinkingEffort(opts.ThinkingEffort); err != nil {
 		return nil, err
 	}
+	if opts.DisabledThinkingEffort != "" && opts.DisabledThinkingEffort != string(shared.ReasoningEffortNone) {
+		return nil, fmt.Errorf("openai: unsupported disabled thinking effort %q", opts.DisabledThinkingEffort)
+	}
 	tr := opts.transport
 	if tr == nil {
 		if opts.Client == nil {
@@ -255,14 +265,15 @@ func newProvider(opts Options, bedrock bool) (*provider, error) {
 		tr = sdkTransport{client: opts.Client}
 	}
 	return &provider{
-		transport:           tr,
-		defaultModel:        opts.DefaultModel,
-		highModel:           opts.HighModel,
-		smallModel:          opts.SmallModel,
-		maxCompletionTokens: opts.MaxCompletionTokens,
-		temperature:         opts.Temperature,
-		thinkingEffort:      opts.ThinkingEffort,
-		bedrock:             bedrock,
+		transport:              tr,
+		defaultModel:           opts.DefaultModel,
+		highModel:              opts.HighModel,
+		smallModel:             opts.SmallModel,
+		maxCompletionTokens:    opts.MaxCompletionTokens,
+		temperature:            opts.Temperature,
+		thinkingEffort:         opts.ThinkingEffort,
+		disabledThinkingEffort: opts.DisabledThinkingEffort,
+		bedrock:                bedrock,
 	}, nil
 }
 
@@ -298,8 +309,9 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 		Input: responses.ResponseNewParamsInputUnion{
 			OfInputItemList: input,
 		},
-		Model: modelID,
-		Store: param.NewOpt(false),
+		Model:   modelID,
+		Store:   param.NewOpt(false),
+		Include: []responses.ResponseIncludable{responses.ResponseIncludableReasoningEncryptedContent},
 	}
 	if c.bedrock {
 		request.Background = param.NewOpt(false)
@@ -316,14 +328,18 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 		if req.Temperature > 0 {
 			return nil, errors.New("openai: temperature is not supported when thinking is enabled")
 		}
-		reasoning, include, err := c.effectiveThinkingRequest(req.Thinking)
+		reasoning, err := c.effectiveThinkingRequest(req.Thinking)
 		if err != nil {
 			return nil, err
 		}
 		request.Reasoning = reasoning
-		request.Include = append(request.Include, include...)
-	} else if temperature := c.effectiveTemperature(req.Temperature); temperature > 0 {
-		request.Temperature = param.NewOpt(float64(temperature))
+	} else {
+		if req.Thinking != nil && c.disabledThinkingEffort != "" {
+			request.Reasoning.Effort = shared.ReasoningEffort(c.disabledThinkingEffort)
+		}
+		if temperature := c.effectiveTemperature(req.Temperature); temperature > 0 {
+			request.Temperature = param.NewOpt(float64(temperature))
+		}
 	}
 	var outputProjection *strictSchemaProjection
 	if req.StructuredOutput != nil {
@@ -420,25 +436,23 @@ func (c *provider) effectiveTemperature(requested float32) float32 {
 
 // effectiveThinkingRequest maps the provider-neutral thinking request onto the
 // OpenAI reasoning controls when the requested shape is representable.
-func (c *provider) effectiveThinkingRequest(opts *model.ThinkingOptions) (shared.ReasoningParam, []responses.ResponseIncludable, error) {
+func (c *provider) effectiveThinkingRequest(opts *model.ThinkingOptions) (shared.ReasoningParam, error) {
 	if opts == nil || !opts.Enable {
-		return shared.ReasoningParam{}, nil, nil
+		return shared.ReasoningParam{}, nil
 	}
 	if opts.BudgetTokens > 0 {
-		return shared.ReasoningParam{}, nil, fmt.Errorf("openai: thinking budgets are not supported")
+		return shared.ReasoningParam{}, fmt.Errorf("openai: thinking budgets are not supported")
 	}
 	if opts.Interleaved {
-		return shared.ReasoningParam{}, nil, fmt.Errorf("openai: interleaved thinking is not supported")
+		return shared.ReasoningParam{}, fmt.Errorf("openai: interleaved thinking is not supported")
 	}
 	if c.thinkingEffort == "" {
-		return shared.ReasoningParam{}, nil, fmt.Errorf("openai: thinking requires ThinkingEffort configuration")
+		return shared.ReasoningParam{}, fmt.Errorf("openai: thinking requires ThinkingEffort configuration")
 	}
 	return shared.ReasoningParam{
-			Effort:  shared.ReasoningEffort(c.thinkingEffort),
-			Summary: shared.ReasoningSummaryAuto,
-		}, []responses.ResponseIncludable{
-			responses.ResponseIncludableReasoningEncryptedContent,
-		}, nil
+		Effort:  shared.ReasoningEffort(c.thinkingEffort),
+		Summary: shared.ReasoningSummaryAuto,
+	}, nil
 }
 
 func validateThinkingEffort(effort string) error {
