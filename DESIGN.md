@@ -1137,6 +1137,24 @@ redeploys.
 
 ### Transcript Boundary
 
+The OpenAI Responses adapter has distinct constructors for direct OpenAI and
+Amazon Bedrock. They share transcript encoding, streaming, provider-issued tool
+identity and encrypted reasoning replay. The constructor, not a per-request
+fallback, selects the tool-schema contract: direct OpenAI projects to
+`strict:true`; Bedrock sends the complete schema with `strict:false` and
+preserves returned arguments. The validated model client remains responsible
+for checking the original schema and generated decoder in both cases.
+
+The official OpenAI Go SDK v3 owns Bedrock authentication and endpoint
+resolution. The adapter accepts only the configuration it consumes: region,
+refreshable credentials, model options and SDK request options. Bedrock requests
+disable storage, background execution, input truncation and implicit prompt
+cache writes. Unsupported structured output and cache-bearing requests fail
+before transport. Neither Responses provider invents token counts; consumers
+that require exact counts must resolve that requirement before adopting it.
+See the [runtime provider contract](docs/runtime.md#openai-responses-on-amazon-bedrock)
+for details and the SDK source-compatibility change.
+
 - **Stateless model adapters**: Provider clients accept the full provider-ready
   transcript in `model.Request.Messages`; they never reload history from a
   runtime-owned `RunID`.

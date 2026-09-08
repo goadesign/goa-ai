@@ -9,7 +9,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/openai/openai-go/responses"
+	"github.com/openai/openai-go/v3/responses"
 
 	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"

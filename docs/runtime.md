@@ -549,9 +549,10 @@ repairs, or silently omits model output.
 
 ## OpenAI Adapter Matrix
 
-The `features/model/openai` adapter now targets the official `openai-go`
-Responses API while satisfying the core `model.Client` contract expected by
-planner and runtime streaming:
+The `features/model/openai` adapter uses the official `openai-go/v3` Responses
+API. The following matrix describes its direct OpenAI constructors (`New`,
+`NewProvider` and the API-key conveniences). Bedrock has the separate, fixed
+contract described below.
 
 | Capability | Status |
 |------------|--------|
@@ -571,6 +572,70 @@ planner and runtime streaming:
 
 This adapter boundary lets an inference backend change providers without
 changing its planners or runtime flow.
+
+### OpenAI Responses on Amazon Bedrock
+
+`openai.NewBedrock(ctx, region, credentials, opts, requestOpts...)` constructs a
+validated client using the official SDK's Bedrock Runtime transport.
+`NewBedrockProvider` returns the raw provider for middleware composition before
+`model.NewClient`. The arguments are an explicit AWS region, an
+`aws.CredentialsProvider`, the existing model `Options`, and optional official
+SDK transport settings. `opts.Client` must be absent: this constructor builds
+the SDK client instead of silently ignoring an injected client.
+
+The SDK owns AWS Signature Version 4 authentication, credential refresh and
+regional endpoint resolution, including AWS partitions. It selects Runtime by
+default and honors `AWS_BEDROCK_BASE_URL`. Supported request options include
+`option.WithHTTPClient` and `option.WithMaxRetries`; the SDK rejects
+`option.WithBaseURL` and authentication overrides when building a request,
+before HTTP, for this authenticated client.
+SDK retry defaults apply unless the caller explicitly configures them.
+
+This constructor advertises each tool's complete JSON Schema, including
+examples, definitions and numeric constraints, with `strict:false`. It does
+not project the schema into OpenAI strict form, remove optional nulls or repair
+arguments. The validated client checks returned arguments against the complete
+original schema and generated decoder. This provides local rejection, **not**
+a claim that Bedrock enforces the schema during generation. Direct OpenAI
+constructors retain their existing `strict:true` projection.
+
+Both constructors share full ordered transcript encoding, text and tool-call
+streaming, provider-issued tool IDs, reversible tool names, encrypted reasoning
+replay and the existing logical model classes. Enabling thinking uses the
+configured `low`, `medium` or `high` effort, requests a reasoning summary and
+encrypted replay content, and rejects budgeted or interleaved thinking. The
+model ID remains caller-owned; for example, use
+`global.openai.gpt-5.6-terra` where that Bedrock inference profile is available.
+
+Bedrock requests explicitly set `store:false`, `background:false`, disabled
+input truncation, and explicit prompt caching without checkpoints. They do not
+write prompt caches implicitly. Cache options or inline checkpoints are
+rejected before HTTP rather than silently moved or dropped. Provider-reported
+cache reads and writes are retained in usage. Native `StructuredOutput` is
+rejected with `model.ErrStructuredOutputUnsupported` before HTTP.
+
+`CountTokens` returns `model.ErrTokenCountingUnsupported`. No estimated or
+zero count is substituted. This is a framework provider integration, not a
+complete migration for an application whose history fitting, explicit count
+API or rate admission requires exact token counts. Those application contracts
+must be resolved separately before switching its production model.
+
+The provider contract follows the [official Go SDK Bedrock
+configuration](https://github.com/openai/openai-go/blob/v3.56.0/bedrock/bedrock.go),
+the [AWS Terra model card](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html),
+and [AWS explicit prompt caching](https://docs.aws.amazon.com/bedrock/latest/userguide/prompt-caching.html).
+
+### Upgrading injected OpenAI clients
+
+The adapter now depends on `github.com/openai/openai-go/v3`. API-key convenience
+constructors and `Runtime.NewOpenAIModelClient` keep their existing signatures.
+Code that injects `Options.Client`, implements `ResponsesClient`, or imports its
+SDK parameter/stream types must update those imports from
+`github.com/openai/openai-go/...` to `github.com/openai/openai-go/v3/...`.
+SDK v1 services no longer satisfy the interface; this is a source compatibility
+change, not a wire or persisted-transcript migration. Function-result SDK
+parameters now use optional `CallID` and a string/content `Output` union; custom
+SDK fakes must follow those v3 types. No DSL regeneration is required.
 
 Model adapters are stateless at the transcript boundary. They never rehydrate
 history from a `RunID`; runtime-owned callers must supply the full transcript,

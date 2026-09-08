@@ -20,8 +20,8 @@ import (
 	anthropicoption "github.com/anthropics/anthropic-sdk-go/option"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
-	openaisdk "github.com/openai/openai-go"
-	openaioption "github.com/openai/openai-go/option"
+	openaisdk "github.com/openai/openai-go/v3"
+	openaioption "github.com/openai/openai-go/v3/option"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 

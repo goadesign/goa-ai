@@ -39,8 +39,8 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
-	openaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
+	openaisdk "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	bedrock "goa.design/goa-ai/features/model/bedrock"
 	openai "goa.design/goa-ai/features/model/openai"
 	vertexprovider "goa.design/goa-ai/features/model/vertex"

@@ -11,12 +11,12 @@ import (
 	"net/http"
 	"strings"
 
-	openaisdk "github.com/openai/openai-go"
-	"github.com/openai/openai-go/option"
-	"github.com/openai/openai-go/packages/param"
-	"github.com/openai/openai-go/packages/ssestream"
-	"github.com/openai/openai-go/responses"
-	"github.com/openai/openai-go/shared"
+	openaisdk "github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/packages/ssestream"
+	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
 
 	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -32,8 +32,9 @@ type (
 
 	// Options configures optional OpenAI adapter behavior.
 	Options struct {
-		// Client is the SDK-backed Responses API client used by the default
-		// transport. It is required unless tests inject an internal transport.
+		// Client is the OpenAI Go SDK v3 Responses API client used by New and
+		// NewProvider. NewBedrock and NewBedrockProvider construct their own
+		// SDK client and require this field to be absent.
 		Client ResponsesClient
 
 		// DefaultModel is the default model identifier used when Request.Model is
@@ -75,6 +76,9 @@ type (
 		maxCompletionTokens int
 		temperature         float32
 		thinkingEffort      string
+		// bedrock selects the fixed Bedrock Responses contract: exact tool
+		// schemas, no native structured output, and no implicit cache writes.
+		bedrock bool
 	}
 
 	// preparedRequest carries the provider-ready request plus the reversible
@@ -131,34 +135,7 @@ func New(opts Options) (model.Client, error) {
 // Callers should use this constructor only to install provider-side middleware
 // before final canonical output validation.
 func NewProvider(opts Options) (model.Provider, error) {
-	if opts.DefaultModel == "" {
-		return nil, errors.New("openai: default model identifier is required")
-	}
-	if opts.MaxCompletionTokens < 0 {
-		return nil, errors.New("openai: default max completion tokens cannot be negative")
-	}
-	if err := validateOpenAITemperature(opts.Temperature); err != nil {
-		return nil, fmt.Errorf("openai: default %w", err)
-	}
-	if err := validateThinkingEffort(opts.ThinkingEffort); err != nil {
-		return nil, err
-	}
-	tr := opts.transport
-	if tr == nil {
-		if opts.Client == nil {
-			return nil, errors.New("openai: client is required")
-		}
-		tr = sdkTransport{client: opts.Client}
-	}
-	return &provider{
-		transport:           tr,
-		defaultModel:        opts.DefaultModel,
-		highModel:           opts.HighModel,
-		smallModel:          opts.SmallModel,
-		maxCompletionTokens: opts.MaxCompletionTokens,
-		temperature:         opts.Temperature,
-		thinkingEffort:      opts.ThinkingEffort,
-	}, nil
+	return newProvider(opts, false)
 }
 
 // NewFromAPIKey constructs a validated client using the default OpenAI HTTP
@@ -255,12 +232,49 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 	return streamer, nil
 }
 
+// newProvider shares Responses translation while each public constructor
+// chooses its documented provider contract, never a request-time fallback.
+func newProvider(opts Options, bedrock bool) (*provider, error) {
+	if opts.DefaultModel == "" {
+		return nil, errors.New("openai: default model identifier is required")
+	}
+	if opts.MaxCompletionTokens < 0 {
+		return nil, errors.New("openai: default max completion tokens cannot be negative")
+	}
+	if err := validateOpenAITemperature(opts.Temperature); err != nil {
+		return nil, fmt.Errorf("openai: default %w", err)
+	}
+	if err := validateThinkingEffort(opts.ThinkingEffort); err != nil {
+		return nil, err
+	}
+	tr := opts.transport
+	if tr == nil {
+		if opts.Client == nil {
+			return nil, errors.New("openai: client is required")
+		}
+		tr = sdkTransport{client: opts.Client}
+	}
+	return &provider{
+		transport:           tr,
+		defaultModel:        opts.DefaultModel,
+		highModel:           opts.HighModel,
+		smallModel:          opts.SmallModel,
+		maxCompletionTokens: opts.MaxCompletionTokens,
+		temperature:         opts.Temperature,
+		thinkingEffort:      opts.ThinkingEffort,
+		bedrock:             bedrock,
+	}, nil
+}
+
 func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) {
 	if req == nil {
 		return nil, errors.New("openai: request is required")
 	}
 	if err := validateRequestBoundary(req); err != nil {
 		return nil, err
+	}
+	if c.bedrock && req.StructuredOutput != nil {
+		return nil, fmt.Errorf("openai: Bedrock Responses: %w", model.ErrStructuredOutputUnsupported)
 	}
 	if len(req.Messages) == 0 {
 		return nil, errors.New("openai: messages are required")
@@ -272,7 +286,7 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 	if modelID == "" {
 		return nil, errors.New("openai: model identifier is required")
 	}
-	toolDefs, codec, err := encodeTools(req.Tools, modelID)
+	toolDefs, codec, err := encodeTools(req.Tools, modelID, c.bedrock)
 	if err != nil {
 		return nil, err
 	}
@@ -286,6 +300,11 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 		},
 		Model: modelID,
 		Store: param.NewOpt(false),
+	}
+	if c.bedrock {
+		request.Background = param.NewOpt(false)
+		request.Truncation = responses.ResponseNewParamsTruncationDisabled
+		request.PromptCacheOptions = responses.ResponseNewParamsPromptCacheOptions{Mode: "explicit"}
 	}
 	if len(toolDefs) > 0 {
 		request.Tools = toolDefs
