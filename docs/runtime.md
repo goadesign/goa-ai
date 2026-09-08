@@ -568,7 +568,7 @@ contract described below.
 | Structured output (`completion_delta` + final `completion`) | Supported via OpenAI `json_schema` response format, but not in combination with tools |
 | Strict schemas | Tool and structured-output schemas are always sent with `strict:true`; the adapter projects canonical schemas onto the strict subset (closed objects, all members required, optionals nullable) and canonicalizes returned payloads by dropping the null members the projection introduced. Root unions, unsupported composition and validation keywords, open objects or schema-valued `additionalProperties`, more than 5,000 properties, more than 1,000 enum values, more than 120,000 characters across property names, definition names, enum strings, and string constants, or nesting beyond 10 levels are rejected before the provider call. An enum with more than 250 string values may contain at most 15,000 characters. Fine-tuned model IDs beginning with `ft:` additionally reject unsupported string, numeric, array, and `patternProperties` constraints |
 | Cache options / cache checkpoints | Rejected explicitly |
-| Thinking | Only the representable subset is supported: `Thinking.Enable` maps to configured OpenAI `reasoning_effort`; budgeted or interleaved thinking requests fail fast. A request that explicitly combines thinking with temperature also fails; a configured default temperature is omitted from thinking requests |
+| Thinking | Enabled thinking uses `ThinkingEffort`; optional `DisabledThinkingEffort` maps explicit disabled thinking to `none`. Absent thinking leaves provider defaults unchanged. Enabled budgeted or interleaved requests and explicit enabled-thinking temperature fail fast; a configured default temperature is omitted when thinking is enabled |
 
 This adapter boundary lets an inference backend change providers without
 changing its planners or runtime flow.
@@ -608,6 +608,17 @@ includes `reasoning.encrypted_content`, even with absent or disabled thinking;
 returned encrypted content is preserved for replay without selecting an effort.
 The model ID remains caller-owned; for example, use
 `global.openai.gpt-5.6-terra` where that Bedrock inference profile is available.
+
+`Options.DisabledThinkingEffort` optionally maps an explicit
+`Thinking: &model.ThinkingOptions{Enable: false}` to `reasoning.effort:"none"`.
+The only accepted values are empty (omit the effort, preserving existing
+behavior) and `"none"`. Absent `Request.Thinking` always leaves the provider
+default unchanged; enabled thinking still uses `ThinkingEffort`. Configure
+`"none"` only when the models routed through that client support it, including
+explicit `Request.Model` overrides. The adapter does not guess capabilities
+from model names or retry with a different effort: unsupported settings return
+the provider's error. Disabled thinking retains ordinary temperature and output
+limit handling and does not request a reasoning summary.
 
 Bedrock requests explicitly set `store:false`, `background:false`, disabled
 input truncation, and explicit prompt caching without checkpoints. They do not

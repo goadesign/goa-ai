@@ -1565,6 +1565,9 @@ custom `Options.Client` implementations. Existing API-key convenience
 constructors retain their signatures.
 Both Responses constructors explicitly request encrypted reasoning content for
 stateless replay, independently of the caller's thinking settings.
+For models that support disabling reasoning, configure
+`Options.DisabledThinkingEffort: "none"`; only explicit disabled-thinking
+requests use it. Leaving this option empty preserves existing effort omission.
 
 Production checklist:
 

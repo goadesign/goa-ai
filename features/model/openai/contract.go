@@ -28,9 +28,12 @@
 //     with model.ErrStructuredOutputUnsupported before inference.
 //   - Cache-bearing requests and explicit cache checkpoints fail fast; the
 //     adapter does not silently drop unsupported cache semantics.
-//   - Thinking only supports the representable subset: enable + configured
-//     reasoning effort. Budgeted or interleaved thinking requests fail fast
-//     instead of being heuristically remapped.
+//   - Enabled thinking uses the configured ThinkingEffort. Disabled thinking
+//     sends DisabledThinkingEffort only when configured; absent thinking always
+//     leaves the effort unspecified. These options apply to every model routed
+//     through the client; unsupported model settings remain provider errors.
+//     Enabled budgeted or interleaved thinking requests fail fast instead of
+//     being heuristically remapped.
 //   - Neither Responses constructor implements token counting. The validated
 //     client returns model.ErrTokenCountingUnsupported, never a guessed count.
 package openai

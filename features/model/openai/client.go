@@ -62,6 +62,12 @@ type (
 		// and "high".
 		ThinkingEffort string
 
+		// DisabledThinkingEffort configures the reasoning effort sent when
+		// Request.Thinking is present with Enable false. Set "none" only when
+		// the configured models support it. Empty preserves provider defaults;
+		// absent Request.Thinking always leaves the effort unspecified.
+		DisabledThinkingEffort string
+
 		transport transport
 	}
 
@@ -73,9 +79,10 @@ type (
 		highModel    string
 		smallModel   string
 
-		maxCompletionTokens int
-		temperature         float32
-		thinkingEffort      string
+		maxCompletionTokens    int
+		temperature            float32
+		thinkingEffort         string
+		disabledThinkingEffort string
 		// bedrock selects the fixed Bedrock Responses contract: exact tool
 		// schemas, no native structured output, and no implicit cache writes.
 		bedrock bool
@@ -247,6 +254,9 @@ func newProvider(opts Options, bedrock bool) (*provider, error) {
 	if err := validateThinkingEffort(opts.ThinkingEffort); err != nil {
 		return nil, err
 	}
+	if opts.DisabledThinkingEffort != "" && opts.DisabledThinkingEffort != string(shared.ReasoningEffortNone) {
+		return nil, fmt.Errorf("openai: unsupported disabled thinking effort %q", opts.DisabledThinkingEffort)
+	}
 	tr := opts.transport
 	if tr == nil {
 		if opts.Client == nil {
@@ -255,14 +265,15 @@ func newProvider(opts Options, bedrock bool) (*provider, error) {
 		tr = sdkTransport{client: opts.Client}
 	}
 	return &provider{
-		transport:           tr,
-		defaultModel:        opts.DefaultModel,
-		highModel:           opts.HighModel,
-		smallModel:          opts.SmallModel,
-		maxCompletionTokens: opts.MaxCompletionTokens,
-		temperature:         opts.Temperature,
-		thinkingEffort:      opts.ThinkingEffort,
-		bedrock:             bedrock,
+		transport:              tr,
+		defaultModel:           opts.DefaultModel,
+		highModel:              opts.HighModel,
+		smallModel:             opts.SmallModel,
+		maxCompletionTokens:    opts.MaxCompletionTokens,
+		temperature:            opts.Temperature,
+		thinkingEffort:         opts.ThinkingEffort,
+		disabledThinkingEffort: opts.DisabledThinkingEffort,
+		bedrock:                bedrock,
 	}, nil
 }
 
@@ -322,8 +333,13 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 			return nil, err
 		}
 		request.Reasoning = reasoning
-	} else if temperature := c.effectiveTemperature(req.Temperature); temperature > 0 {
-		request.Temperature = param.NewOpt(float64(temperature))
+	} else {
+		if req.Thinking != nil && c.disabledThinkingEffort != "" {
+			request.Reasoning.Effort = shared.ReasoningEffort(c.disabledThinkingEffort)
+		}
+		if temperature := c.effectiveTemperature(req.Temperature); temperature > 0 {
+			request.Temperature = param.NewOpt(float64(temperature))
+		}
 	}
 	var outputProjection *strictSchemaProjection
 	if req.StructuredOutput != nil {
