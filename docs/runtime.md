@@ -1523,14 +1523,19 @@ recovery limit. A decoder rejection is eligible only when it returns a non-nil
 `*tools.ValidationError`,
 the typed error generated decoders use for invalid model-authored fields.
 For a tool specification with field metadata, a schema rejection may name one
-advertised field path and its required, JSON type, or enum rule. Generated tool
-and completion specifications include this metadata; callers that construct a
+advertised field path and its required, JSON type, enum, or array-length rule.
+Generated tool and completion specifications include this metadata; callers that construct a
 `ToolSpec` directly may include it too. The runtime uses only the union branch
 named by a valid string discriminator. A missing, non-string, or unknown
 discriminator keeps the generic replacement instruction. The correction is
 specific only when the structured schema failure has one unique deepest cause
 that matches the selected field metadata. Unsupported failures at that depth
 also make the correction generic.
+
+Array-length guidance uses the validator's inclusive minimum or maximum for
+that one array, such as `Field "items" must contain at most 3 items.` Generated
+metadata must identify the field as an array. Guidance does not split, truncate,
+or rewrite submitted arguments; the original validation error remains available.
 
 Array indexes and caller-chosen map keys appear as `*`. An undeclared field is
 reported only against its advertised parent object; the submitted field name is
