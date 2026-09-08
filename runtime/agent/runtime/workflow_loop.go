@@ -20,10 +20,19 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/run"
 )
 
 type (
+	// workflowConversation holds the original messages and run context between
+	// activities. Activity requests copy these fields; planner-only callbacks
+	// never become workflow state or serialized activity input.
+	workflowConversation struct {
+		Messages   []*model.Message
+		RunContext run.Context
+	}
+
 	workflowLoop struct {
 		r *Runtime
 
@@ -31,7 +40,7 @@ type (
 		reg   AgentRegistration
 
 		input *RunInput
-		base  *planner.PlanInput
+		base  *workflowConversation
 		st    *runLoopState
 
 		turnID        string
@@ -56,7 +65,7 @@ func newWorkflowLoop(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	st *runLoopState,
 	turnID string,
 	parentTracker *childTracker,

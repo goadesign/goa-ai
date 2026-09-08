@@ -362,7 +362,7 @@ func (r *Runtime) runLoop(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	initialResult *PlanResult,
 	caps policy.CapsState,
 	budgetDeadline time.Time,

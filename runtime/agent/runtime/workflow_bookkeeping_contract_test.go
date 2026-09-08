@@ -157,7 +157,7 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 	wfCtx := &testWorkflowContext{
 		ctx: context.Background(),
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -224,7 +224,7 @@ func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 	wfCtx := &testWorkflowContext{
 		ctx: context.Background(),
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -298,7 +298,7 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 		hasPlanResult:   true,
 		recoveryCatalog: &RecoveryCatalog{Tools: []tools.Ident{terminal.Name}},
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -362,7 +362,7 @@ func TestRunLoopRejectsProviderToolCallWithoutID(t *testing.T) {
 			"resume": rt.PlanResumeActivity,
 		},
 	}
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 	}}
 	input := &RunInput{
@@ -402,7 +402,7 @@ func TestRunLoopRejectsMultipleProviderToolCallsWithoutIDs(t *testing.T) {
 		&testWorkflowContext{ctx: context.Background()},
 		AgentRegistration{ExecuteToolActivity: "execute"},
 		&RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"},
-		&planner.PlanInput{RunContext: run.Context{
+		&workflowConversation{RunContext: run.Context{
 			RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 		}},
 		initial,
@@ -452,7 +452,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 		planResult:    &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}},
 		hasPlanResult: true,
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -532,7 +532,7 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 		hasPlanResult: true,
 	}
 
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -610,7 +610,7 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 		hasPlanResult: true,
 	}
 
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -687,7 +687,7 @@ func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 		},
 	}
 
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",

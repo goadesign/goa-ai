@@ -375,9 +375,9 @@ type (
 		// "finalize" | "await_clarification" | "resume"
 		OnMissingFields MissingFieldsAction
 
-		// History, when non-nil, transforms the message history before each planner
-		// invocation (PlanStart and PlanResume). It can truncate or compress history
-		// while preserving system prompts and logical turn boundaries.
+		// History, when non-nil, transforms the conversation on the first call to
+		// PrepareMessages in each planner activity. It can truncate or compress
+		// history while preserving system prompts and logical turn boundaries.
 		History HistoryPolicy
 
 		// Cache configures automatic prompt cache checkpoint placement.

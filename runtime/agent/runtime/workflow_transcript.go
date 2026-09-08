@@ -6,7 +6,7 @@ package runtime
 // Contract:
 // - Produces the complete provider assistant response, including every tool_use
 //   part in provider order.
-// - Appends messages to the PlanInput in the same order used for tool_result
+// - Appends messages to the workflow conversation in the same order used for tool_result
 //   correlation.
 
 import (
@@ -15,7 +15,6 @@ import (
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
@@ -24,7 +23,7 @@ import (
 func (r *Runtime) appendTranscriptMessages(
 	ctx context.Context,
 	agentID agent.Ident,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	turnID string,
 	messages []*model.Message,
 ) error {
@@ -56,7 +55,7 @@ func (r *Runtime) appendTranscriptMessages(
 func (r *Runtime) appendSelectedModelResponse(
 	ctx context.Context,
 	agentID agent.Ident,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	turnID string,
 	responseID string,
 	result *PlanResult,

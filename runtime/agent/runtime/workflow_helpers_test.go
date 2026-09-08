@@ -19,7 +19,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
-func appendUserToolResultsForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *planner.PlanInput, calls []ToolCall, results []*planner.ToolResult) {
+func appendUserToolResultsForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *workflowConversation, calls []ToolCall, results []*planner.ToolResult) {
 	t.Helper()
 	records := stepToolRecordsForTest(t, calls, results)
 	require.NoError(t, rt.appendUserToolRecordResults(t.Context(), agentID, base, records, ""))
@@ -97,7 +97,7 @@ func TestStepToolRecordsFromExecutionsRestoresCanonicalCallOrder(t *testing.T) {
 
 func TestCommitSelectedModelResponsePreservesCanonicalParts(t *testing.T) {
 	rt := New(newTestStore())
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 	transcript := []*model.Message{{
 		Role: model.ConversationRoleAssistant,
@@ -128,7 +128,7 @@ func TestCommitSelectedModelResponsePreservesCanonicalParts(t *testing.T) {
 
 func TestCommitSelectedModelResponseBuildsPlannerAuthoredModelIdentity(t *testing.T) {
 	rt := New(newTestStore())
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 	result := &PlanResult{ToolCalls: []ToolCall{{
 		Name:         "catalog.lookup.find_records",
@@ -180,7 +180,9 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
 		},
 		resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
-			require.NoError(t, transcript.ValidatePlannerTranscript(input.Messages))
+			messages, err := input.PrepareMessages()
+			require.NoError(t, err)
+			require.NoError(t, transcript.ValidatePlannerTranscript(messages))
 			require.Len(t, input.ToolOutputs, 1)
 			require.Equal(t, providerToolCallID, input.ToolOutputs[0].ModelToolCallID)
 			require.NotEqual(t, input.ToolOutputs[0].ToolCallID, input.ToolOutputs[0].ModelToolCallID)
@@ -284,7 +286,7 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 
 func TestAppendUserToolResults_IncludesErrorInToolResultContent(t *testing.T) {
 	rt := New(newTestStore())
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
 	call := ToolCall{
@@ -320,7 +322,7 @@ func TestAppendUserToolResults_DecodesSuccessfulResultContent(t *testing.T) {
 			},
 		},
 	})
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
 	call := ToolCall{
@@ -407,7 +409,7 @@ func TestAppendUserToolResults_MatchesReplayProjection(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+			base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 
 			appendUserToolResultsForTest(t, rt, agentID, base, []ToolCall{call}, []*planner.ToolResult{tc.tr})
 			require.Len(t, base.Messages, 1)
@@ -450,7 +452,7 @@ func TestAppendUserToolResults_AppendsBoundsReminderAfterToolResults(t *testing.
 			},
 		},
 	})
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
 	call := ToolCall{
@@ -510,7 +512,7 @@ func TestAppendUserToolResults_UsesContinuationActionNameInBoundsReminder(t *tes
 		t.Run(test.name, func(t *testing.T) {
 			rt := New(newTestStore())
 			seedTestToolSpecs(rt, search, continuation)
-			base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+			base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 			cursor := "opaque-cursor"
 			result := &planner.ToolResult{
 				Name:       test.call.Name,
@@ -546,7 +548,7 @@ func TestAppendUserToolResults_OmitsBoundsReminderForStandalonePlannerContinuati
 	continuation.ResultReminder = "Review the returned records before finishing."
 	rt := New(newTestStore())
 	seedTestToolSpecs(rt, continuation)
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	cursor := "private-next-page"
 	call := ToolCall{
 		Name:       continuation.Name,
@@ -610,7 +612,9 @@ func TestWorkflowTreatsPlannerAuthoredCanonicalContinuationAsStandalone(t *testi
 			require.Equal(t, cursor, *input.ToolOutputs[0].Bounds.NextCursor)
 			var transcriptText strings.Builder
 			var visibleToolResults int
-			for _, message := range input.Messages {
+			messages, err := input.PrepareMessages()
+			require.NoError(t, err)
+			for _, message := range messages {
 				for _, part := range message.Parts {
 					if text, ok := part.(model.TextPart); ok {
 						transcriptText.WriteString(text.Text)
@@ -710,7 +714,7 @@ func TestAppendUserToolResults_UsesRefinementWithoutContinuationCursor(t *testin
 	search, continuation := continuationTestSpecs()
 	rt := New(newTestStore())
 	seedTestToolSpecs(rt, search, continuation)
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	call := ToolCall{
 		Name:       search.Name,
 		ToolCallID: "source-call",
@@ -743,7 +747,7 @@ func TestAppendUserToolResults_UsesRefinementWithoutContinuationCursor(t *testin
 
 func TestRecoveryReminderIsEphemeralPlannerInput(t *testing.T) {
 	rt := New(newTestStore())
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
 	call := ToolCall{
@@ -791,7 +795,7 @@ func TestAppendUserToolResultsPreservesBookkeepingResults(t *testing.T) {
 			return spec
 		}(),
 	)
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
 	calls := []ToolCall{
@@ -831,7 +835,7 @@ func TestRecoveryRemindersDescribeSelectedTransition(t *testing.T) {
 		newAnyJSONSpec("svc.tools.correct"),
 		newAnyJSONSpec("svc.tools.finish"),
 	)
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	calls := []ToolCall{
 		{Name: "svc.tools.correct", ToolCallID: "call-1", Payload: rawjson.Message(`{"bad":true}`)},
 		{Name: "svc.tools.finish", ToolCallID: "call-2", Payload: rawjson.Message(`{}`)},
@@ -878,7 +882,7 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 			return spec
 		}(),
 	)
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 	agentID := agent.Ident("agent-1")
 
 	call := ToolCall{

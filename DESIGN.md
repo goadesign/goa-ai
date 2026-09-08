@@ -1252,7 +1252,17 @@ for details and the SDK source-compatibility change.
   instead of selecting by call order or visible text.
 - **History compression**: Agent designs may declare compression defaults with
   `CompressAtTurns`, `CompressAtMaxInputTokens`, `KeepMaxTurns`, and
-  `KeepMaxInputTokens`. The runtime supplies the selected older history as
+  `KeepMaxInputTokens`. Each planner activity supplies `PrepareMessages` instead
+  of eagerly prepared `Messages`. First access applies the history policy;
+  later accesses return the same prepared slice and error for that activity.
+  Planners must resolve messages before inspecting or transforming history.
+  Decisions based only on typed run state or tool outputs avoid preparation.
+  Preparation uses the activity context and a failure still fails the activity,
+  even if planner code ignores it. There is no persisted summary reuse or
+  raw-history alternative. Custom planners migrate the removed input fields
+  with their dependency upgrade; activity payloads and stored transcripts stay
+  unchanged. See [the preparation contract](docs/runtime.md#preparing-conversation-messages).
+  The runtime supplies the selected older history as
   complete quoted semantic parts, preserving tool values, correlation IDs, and
   errors. Native media keeps its original user-message groups and source
   positions; historical tools are not advertised for execution. Cited summary

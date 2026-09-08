@@ -47,7 +47,7 @@ func TestChildContinuationWaitsAfterParentCancellation(t *testing.T) {
 	input := &RunInput{
 		AgentID: "parent.agent", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
 	}
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID,
 	}}
 	suspension := &api.RunSuspension{ID: "child-suspension"}
@@ -122,7 +122,7 @@ func TestChildSuspensionPropagatesThroughParentContinuation(t *testing.T) {
 			firstContext,
 			parentRegistration,
 			firstInput,
-			&planner.PlanInput{RunContext: run.Context{
+			&workflowConversation{RunContext: run.Context{
 				RunID: firstInput.RunID, SessionID: firstInput.SessionID, TurnID: firstInput.TurnID, Attempt: 1,
 			}},
 			&PlanResult{ToolCalls: []ToolCall{{

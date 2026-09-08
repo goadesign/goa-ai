@@ -110,7 +110,7 @@ func TestRunLoopRecordsPartialInlineResultsBeforeExecutionError(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{ToolCalls: []ToolCall{
@@ -176,7 +176,7 @@ func TestRunLoopPreservesConcreteResultAndContinuesBookkeepingAfterHookError(t *
 	}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{ToolCalls: []ToolCall{
@@ -232,7 +232,7 @@ func TestRunLoopRecordsCompleteCapDenialBeforePublicationError(t *testing.T) {
 	}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{ToolCalls: []ToolCall{

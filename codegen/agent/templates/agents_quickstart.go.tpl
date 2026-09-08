@@ -168,7 +168,8 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
     // 1. Get an LLM client from the runtime.
     // mc, _ := in.Agent.PlannerModelClient("bedrock")
     
-    // 2. Build a prompt from in.Messages.
+    // 2. Call in.PrepareMessages(), return any error, then build your prompt
+    //    from the returned history. Do this before inspecting messages.
     
     // 3. Call the LLM and decide whether to call tools or give a final answer.
     return &planner.PlanResult{
@@ -184,7 +185,8 @@ func (p *MySmartPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 // PlanResume is called after tools have run, giving the agent new information.
 func (p *MySmartPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
     // 1. Inspect the tool results from in.ToolOutputs.
-    // 2. Build a new prompt including the tool results.
+    // 2. If conversation history is needed, call in.PrepareMessages() and
+    //    return any error before building a prompt from the returned messages.
     // 3. Call the LLM to decide what to do next.
     return &planner.PlanResult{
         FinalResponse: &planner.FinalResponse{
@@ -196,6 +198,12 @@ func (p *MySmartPlanner) PlanResume(ctx context.Context, in *planner.PlanResumeI
     }, nil
 }
 ```
+
+`PrepareMessages` applies the history policy once per planner invocation and
+returns the same messages and error on repeated calls. Code that decides an
+action using only run state or typed tool results need not call it. The fixed
+responses above do not read history, so they need no preparation call. Never
+retain the function after the planner returns.
 
 ---
 

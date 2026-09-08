@@ -30,7 +30,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 
 	wfCtx := &testWorkflowContext{ctx: t.Context()}
 
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
@@ -148,7 +148,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 	tool := newAnyJSONSpec(tools.Ident("assistant.ask_question"))
 	seedTestToolSpecs(rt, tool)
 
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: "run-1", SessionID: "session-1", TurnID: "turn-1", Attempt: 1,
 	}}
 	input := &RunInput{
@@ -248,7 +248,7 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 	secondTool := newAnyJSONSpec(tools.Ident("external.read_second"))
 	seedTestToolSpecs(rt, firstTool, secondTool)
 
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: "run-1", SessionID: "session-1", TurnID: "turn-1", Attempt: 1,
 	}}
 	input := &RunInput{
@@ -385,7 +385,7 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 func TestRunLoopSessionlessRunRejectsExternalInput(t *testing.T) {
 	runtime := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", TurnID: "turn-1"}
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: "run-1", TurnID: "turn-1", Attempt: 1,
 	}}
 	result := &PlanResult{Await: planner.NewAwait(

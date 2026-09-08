@@ -17,7 +17,11 @@
 //	type MyPlanner struct{}
 //
 //	func (p *MyPlanner) PlanStart(ctx context.Context, input *PlanInput) (*PlanResult, error) {
-//	    // Analyze input.Messages and decide:
+//	    messages, err := input.PrepareMessages()
+//	    if err != nil {
+//	        return nil, err
+//	    }
+//	    // Analyze messages and decide:
 //	    // - Return tool calls: &PlanResult{ToolCalls: [...]}
 //	    // - Return final answer: &PlanResult{FinalResponse: &FinalResponse{...}}
 //	    // - Request external input: &PlanResult{Await: NewAwait(AwaitClarificationItem(...))}
@@ -561,8 +565,15 @@ type Termination struct {
 
 // PlanInput carries the initial messages and context into PlanStart.
 type PlanInput struct {
-	// Messages is the full conversation history at run start.
-	Messages []*model.Message
+	// PrepareMessages returns this activity's policy-prepared conversation.
+	// Its first call applies the registered history policy using the activity
+	// context and deadline. Later calls return the same slice and error.
+	// Call it before inspecting or transforming conversation messages; decisions
+	// using only RunContext and ToolOutputs need not prepare messages.
+	// Preparation errors fail the activity even if the planner ignores them.
+	// The runtime always supplies this function. It must not escape the planner
+	// invocation, and all calls must finish before the planner returns.
+	PrepareMessages func() ([]*model.Message, error)
 
 	// RunContext contains durable identifiers and links for the run.
 	RunContext run.Context
@@ -581,8 +592,10 @@ type PlanInput struct {
 
 // PlanResumeInput carries messages plus execution history into PlanResume.
 type PlanResumeInput struct {
-	// Messages is the full conversation history including the most recent tool_use/tool_result blocks.
-	Messages []*model.Message
+	// PrepareMessages returns the policy-prepared conversation, including the
+	// latest complete tool calls and results. It has the same activity lifetime,
+	// cancellation, shared-slice, and failure contract as PlanInput.PrepareMessages.
+	PrepareMessages func() ([]*model.Message, error)
 
 	// RunContext contains durable identifiers and links for the run.
 	RunContext run.Context

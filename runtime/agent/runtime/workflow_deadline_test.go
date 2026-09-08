@@ -552,7 +552,7 @@ func newResumeDeadlineTestLoop(
 			"resume": resume,
 		},
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "session-1",

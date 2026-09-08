@@ -406,7 +406,7 @@ func (l *workflowLoop) resolveExpiredConfirmations(
 func (r *Runtime) recordStepToolResults(
 	ctx context.Context,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	st *runLoopState,
 	turnID string,
 	records []stepToolRecord,
@@ -447,7 +447,7 @@ func (r *Runtime) recordStepToolResults(
 func (r *Runtime) publishStepToolSchedule(
 	ctx context.Context,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	turnID string,
 	record *stepToolRecord,
 ) error {
@@ -468,7 +468,7 @@ func (r *Runtime) publishStepToolSchedule(
 func (r *Runtime) publishStepToolResult(
 	ctx context.Context,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	turnID string,
 	record *stepToolRecord,
 ) error {

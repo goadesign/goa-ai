@@ -35,7 +35,7 @@ func TestToolCallThoughtSignatureRoundTripsProviderChunkToTranscript(t *testing.
 	rt := New(newTestStore())
 	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.read"))
 	agentID := agent.Ident("agent-1")
-	base := &planner.PlanInput{RunContext: run.Context{RunID: "run-1"}}
+	base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 
 	// Step 1+2: provider chunk observed and captured at the client boundary.
 	invocations := &modelInvocationJournal{}

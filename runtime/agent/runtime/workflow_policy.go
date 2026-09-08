@@ -58,7 +58,7 @@ func (r *Runtime) applyPerRunOverrides(ctx context.Context, input *RunInput, can
 // publishes the policy decision.
 func (r *Runtime) applyRuntimePolicy(
 	ctx context.Context,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	input *RunInput,
 	candidates []ToolCall,
 	caps policy.CapsState,
@@ -181,7 +181,7 @@ func (r *Runtime) admitToolBatch(calls []ToolCall, caps policy.CapsState) (int, 
 
 // prepareAllowedCallsMetadata adds run metadata after the call's owner has
 // supplied its stable ID.
-func (r *Runtime) prepareAllowedCallsMetadata(agentID agent.Ident, base *planner.PlanInput, allowed []ToolCall, parentTracker *childTracker) []ToolCall {
+func (r *Runtime) prepareAllowedCallsMetadata(agentID agent.Ident, base *workflowConversation, allowed []ToolCall, parentTracker *childTracker) []ToolCall {
 	for i := range allowed {
 		if allowed[i].RunID == "" {
 			allowed[i].RunID = base.RunContext.RunID
