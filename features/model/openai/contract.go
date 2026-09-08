@@ -17,11 +17,17 @@
 //     sanitization, while goa-ai keeps using canonical dotted tool identifiers.
 //   - Model-class routing stays inside the adapter; planners continue selecting
 //     logical model families instead of raw provider IDs.
-//   - Structured output is provider-enforced when requested, but it cannot be
-//     combined with tools.
+//   - Direct OpenAI uses strict projected schemas. NewBedrock preserves full
+//     tool schemas with strict:false; canonical output validation still rejects
+//     invalid arguments without repairing them.
+//   - Direct OpenAI structured output is provider-enforced when requested, but
+//     it cannot be combined with tools. NewBedrock rejects structured output
+//     with model.ErrStructuredOutputUnsupported before inference.
 //   - Cache-bearing requests and explicit cache checkpoints fail fast; the
 //     adapter does not silently drop unsupported cache semantics.
 //   - Thinking only supports the representable subset: enable + configured
 //     reasoning effort. Budgeted or interleaved thinking requests fail fast
 //     instead of being heuristically remapped.
+//   - Neither Responses constructor implements token counting. The validated
+//     client returns model.ErrTokenCountingUnsupported, never a guessed count.
 package openai

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openai/openai-go/responses"
+	"github.com/openai/openai-go/v3/responses"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -218,8 +218,8 @@ func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 	assert.Equal(t, toolname.Sanitize("reports.summarize"), items[1].OfFunctionCall.Name)
 	assert.JSONEq(t, `{"query":"sales"}`, items[1].OfFunctionCall.Arguments)
 	require.NotNil(t, items[2].OfFunctionCallOutput)
-	assert.Equal(t, "call_1", items[2].OfFunctionCallOutput.CallID)
-	assert.JSONEq(t, `{"status":"ok"}`, items[2].OfFunctionCallOutput.Output)
+	assert.Equal(t, "call_1", items[2].OfFunctionCallOutput.CallID.Value)
+	assert.JSONEq(t, `{"status":"ok"}`, items[2].OfFunctionCallOutput.Output.OfString.Value)
 }
 
 func TestClientCompleteRejectsUnrepresentableExplicitTranscript(t *testing.T) {
@@ -330,7 +330,7 @@ func TestClientCompleteLowersRunlogReplayedTranscript(t *testing.T) {
 	require.NotNil(t, items[3].OfFunctionCall)
 	require.NotNil(t, items[4].OfFunctionCallOutput)
 	assert.Equal(t, "call_1", items[3].OfFunctionCall.CallID)
-	assert.Equal(t, "call_1", items[4].OfFunctionCallOutput.CallID)
+	assert.Equal(t, "call_1", items[4].OfFunctionCallOutput.CallID.Value)
 }
 
 func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
@@ -421,8 +421,8 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 	assert.Equal(t, "call_1", items[2].OfFunctionCall.CallID)
 	assert.JSONEq(t, `{"query":"sales"}`, items[2].OfFunctionCall.Arguments)
 	require.NotNil(t, items[3].OfFunctionCallOutput)
-	assert.Equal(t, "call_1", items[3].OfFunctionCallOutput.CallID)
-	assert.JSONEq(t, `{"status":"ok"}`, items[3].OfFunctionCallOutput.Output)
+	assert.Equal(t, "call_1", items[3].OfFunctionCallOutput.CallID.Value)
+	assert.JSONEq(t, `{"status":"ok"}`, items[3].OfFunctionCallOutput.Output.OfString.Value)
 
 	require.Len(t, resp.Content, 2)
 	assert.Equal(t, model.ConversationRoleAssistant, resp.Content[0].Role)
@@ -691,8 +691,8 @@ func TestClientCompleteEncodesToolResultErrorsExplicitly(t *testing.T) {
 	items := transport.completeRequests[0].Input.OfInputItemList
 	require.Len(t, items, 2)
 	require.NotNil(t, items[1].OfFunctionCallOutput)
-	assert.Equal(t, "call_1", items[1].OfFunctionCallOutput.CallID)
-	assert.JSONEq(t, `{"is_error":true,"error":"analysis backend unavailable"}`, items[1].OfFunctionCallOutput.Output)
+	assert.Equal(t, "call_1", items[1].OfFunctionCallOutput.CallID.Value)
+	assert.JSONEq(t, `{"is_error":true,"error":"analysis backend unavailable"}`, items[1].OfFunctionCallOutput.Output.OfString.Value)
 }
 
 func TestClientCompleteRejectsAssistantTextAfterToolUse(t *testing.T) {
@@ -1399,7 +1399,7 @@ func TestOpenAIChunkProcessorDefersDeltasThatNeedCanonicalization(t *testing.T) 
 			},
 			"required":["question"]
 		}`)),
-	}}, "gpt-5.6")
+	}}, "gpt-5.6", false)
 	require.NoError(t, err)
 	var chunks []model.Chunk
 	processor := &openAIChunkProcessor{

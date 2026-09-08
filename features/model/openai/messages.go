@@ -13,8 +13,8 @@ import (
 	"reflect"
 	"strings"
 
-	"github.com/openai/openai-go/packages/param"
-	"github.com/openai/openai-go/responses"
+	"github.com/openai/openai-go/v3/packages/param"
+	"github.com/openai/openai-go/v3/responses"
 
 	"goa.design/goa-ai/features/model/toolname"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -406,9 +406,9 @@ func encodeToolResultMessage(part model.ToolResultPart, sequence int, index int)
 	}
 	return responses.ResponseInputItemUnionParam{
 		OfFunctionCallOutput: &responses.ResponseInputItemFunctionCallOutputParam{
-			CallID: part.ToolUseID,
+			CallID: param.NewOpt(part.ToolUseID),
 			ID:     param.NewOpt(syntheticID("tool_result", sequence, index)),
-			Output: content,
+			Output: responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt(content)},
 		},
 	}, nil
 }

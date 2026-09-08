@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/openai/openai-go/responses"
+	"github.com/openai/openai-go/v3/responses"
 
 	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -431,12 +431,13 @@ func extractAssistantText(content []model.Message) string {
 func translateUsage(usage responses.ResponseUsage, modelID string, modelClass model.ModelClass) model.TokenUsage {
 	cacheReadTokens := int(usage.InputTokensDetails.CachedTokens)
 	return model.TokenUsage{
-		Model:           modelID,
-		ModelClass:      modelClass,
-		InputTokens:     int(usage.InputTokens),
-		OutputTokens:    int(usage.OutputTokens),
-		TotalTokens:     int(usage.TotalTokens),
-		CacheReadTokens: cacheReadTokens,
+		Model:            modelID,
+		ModelClass:       modelClass,
+		InputTokens:      int(usage.InputTokens),
+		OutputTokens:     int(usage.OutputTokens),
+		TotalTokens:      int(usage.TotalTokens),
+		CacheReadTokens:  cacheReadTokens,
+		CacheWriteTokens: int(usage.InputTokensDetails.CacheWriteTokens),
 	}
 }
 
