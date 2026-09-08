@@ -1054,6 +1054,11 @@ complete response, shared by all claims and reused unchanged for each permitted
 correction. There is no framework default or guarantee that a finite limit will
 complete a judgment. See the [constructor migration](docs/evals.md#how-judging-works).
 
+Judgments use required JSON properties named for each claim, so response order
+cannot shift a decision to another claim. Missing, unknown, or duplicate names
+are rejected; semantic labels and rationales remain model decisions. See the
+[judge contract](docs/evals.md#how-judging-works).
+
 ### Bookkeeping and Terminal Tools
 
 Use `Bookkeeping()` for control-plane records such as status markers, transition

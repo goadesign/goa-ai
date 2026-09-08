@@ -4,6 +4,7 @@ package judge
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -55,10 +56,8 @@ func newTestJudge(t *testing.T, provider model.Provider, opts ...Option) *Judge 
 
 func TestJudgeUsesForcedToolAndRestoresClaimIDs(t *testing.T) {
 	client := &recordingClient{responses: []*model.Response{toolResponse(`{
-		"judgments": [
-			{"label":"entailed","rationale":"The output says every alarm is listed."},
-			{"label":"not_addressed","rationale":"The output says nothing about temperatures."}
-		]
+		"temperatures": {"label":"not_addressed","rationale":"The output says nothing about temperatures."},
+		"complete": {"label":"entailed","rationale":"The output says every alarm is listed."}
 	}`)}}
 	claims := []aieval.Claim{
 		{ID: "complete", Text: "The answer is complete."},
@@ -93,18 +92,24 @@ func TestJudgeUsesForcedToolAndRestoresClaimIDs(t *testing.T) {
 	require.Len(t, request.Messages, 2)
 	user := request.Messages[1].Parts[0].(model.TextPart).Text
 	assert.JSONEq(t, `{
-		"output":"Every alarm is listed.",
-		"claims":["The answer is complete.","All temperatures are normal."]
+		"output":"Every alarm is listed."
 	}`, user)
 	assert.NotContains(t, user, "claim_id")
-	assert.Contains(t, string(request.Tools[0].Input.Contract().Schema), `"minItems": 2`)
-	assert.Contains(t, string(request.Tools[0].Input.Contract().Schema), `"maxItems": 2`)
+	var schema judgmentSchema
+	require.NoError(t, json.Unmarshal(request.Tools[0].Input.Contract().Schema, &schema))
+	assert.Equal(t, []string{"complete", "temperatures"}, schema.Required)
+	assert.Len(t, schema.Properties, 2)
+	for _, claim := range claims {
+		var property judgmentSchema
+		require.NoError(t, json.Unmarshal(schema.Properties[claim.ID], &property))
+		assert.Equal(t, claim.Text, property.Description)
+	}
 }
 
 func TestJudgeUsesRuntimeCorrectionForMalformedToolArguments(t *testing.T) {
 	client := &recordingClient{responses: []*model.Response{
 		toolResponse(`{"judgments":[]}`),
-		toolResponse(`{"judgments":[{"label":"entailed","rationale":"The output states the claim."}]}`),
+		toolResponse(`{"complete":{"label":"entailed","rationale":"The output states the claim."}}`),
 	}}
 
 	judgments, err := newTestJudge(t, client).Judge(
@@ -143,7 +148,7 @@ func TestJudgeStopsAfterRuntimeCorrectionLimit(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `completion tool "eval.submit_judgments" did not succeed: recovery_cap`)
 	assert.Contains(t, err.Error(), "judgments")
-	assert.Contains(t, err.Error(), "minItems")
+	assert.Contains(t, err.Error(), "missing property 'complete'")
 	var rejected *model.OutputValidationError
 	require.ErrorAs(t, err, &rejected)
 	assert.Len(t, client.requests, 4)
@@ -151,7 +156,7 @@ func TestJudgeStopsAfterRuntimeCorrectionLimit(t *testing.T) {
 
 func TestRunnerRetainsRealJudgeDiagnostics(t *testing.T) {
 	client := &recordingClient{responses: []*model.Response{
-		toolResponse(`{"judgments":[{"label":"entailed","rationale":"Running."},{"label":"contradicted","rationale":"Not stopped."},{"label":"not_addressed","rationale":"Not discussed."},{"label":"indeterminate","rationale":"Conflicting readings."}]}`),
+		toolResponse(`{"calibration_entailed":{"label":"entailed","rationale":"Running."},"calibration_contradicted":{"label":"contradicted","rationale":"Not stopped."},"calibration_not_addressed":{"label":"not_addressed","rationale":"Not discussed."},"calibration_indeterminate":{"label":"indeterminate","rationale":"Conflicting readings."}}`),
 		toolResponse(`{"judgments":[]}`),
 		toolResponse(`{"judgments":[]}`),
 		toolResponse(`{"judgments":[]}`),
@@ -174,14 +179,14 @@ func TestRunnerRetainsRealJudgeDiagnostics(t *testing.T) {
 	assert.False(t, report.Scenarios[0].Passed)
 	assert.Empty(t, report.Scenarios[0].Judgments)
 	assert.Contains(t, report.Scenarios[0].Error, "recovery_cap")
-	assert.Contains(t, report.Scenarios[0].Error, "minItems")
+	assert.Contains(t, report.Scenarios[0].Error, "missing property 'complete'")
 	assert.Contains(t, report.Scenarios[0].Error, "judgments")
 	assert.Len(t, client.requests, 5)
 }
 
 func TestJudgeReturnsValidContradictionWithoutError(t *testing.T) {
 	client := &recordingClient{responses: []*model.Response{
-		toolResponse(`{"judgments":[{"label":"contradicted","rationale":"The output says the opposite."}]}`),
+		toolResponse(`{"running":{"label":"contradicted","rationale":"The output says the opposite."}}`),
 	}}
 	judgments, err := newTestJudge(t, client).Judge(t.Context(), "The pump is stopped.", []aieval.Claim{{ID: "running", Text: "The pump is running."}})
 	require.NoError(t, err)

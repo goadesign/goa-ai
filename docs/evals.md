@@ -411,8 +411,9 @@ there is no framework default or promise that a given limit will suffice.
 This replaces `judge.New(modelClient, opts...)`, which returned only a judge and
 assigned 256 output tokens per claim. On upgrade, pass your explicit response
 limit as the second argument, handle the returned error, and keep options such
-as `judge.WithModelClass(...)` after that argument. No generated schema, wire
-format, stored report, or custom `eval.Judge` implementation changes.
+as `judge.WithModelClass(...)` after that argument. This constructor migration
+does not change generated suites, stored reports, or custom `eval.Judge`
+implementations.
 
 Custom judges implement this same batch contract:
 
@@ -421,8 +422,9 @@ Judge(ctx context.Context, output string, claims []eval.Claim) ([]eval.Judgment,
 ```
 
 The output is supplied once for the whole ordered claim list. Reports and
-judgments retain claim IDs, but model-backed judges do not ask the model to copy
-those IDs.
+judgments retain claim IDs. The model-backed judge uses those IDs as required
+JSON property names, not identifier values that the model must copy between
+separate lists or calls.
 
 For each scenario the judge receives the answer and the scenario's claims, and
 returns exactly one label and a short rationale per claim:
@@ -442,14 +444,36 @@ before touching the application. Calibration runs under a two-minute deadline
 owned by the runner, so an unreachable or stalled model endpoint fails the
 suite with a clear error instead of blocking it forever.
 
-The judge sends the answer once followed by the ordered claim texts. Claim IDs
-stay in the runner and are restored by position, so the model never has to copy
-an identifier merely to correlate its answer. A private `submit_judgments` tool
-requires exactly one ordered label and rationale per claim. Unknown labels,
-extra fields, missing judgments, and malformed arguments use the runtime's
-normal bounded tool-argument correction flow through
-`runtime/agent/tooloutput.Run`. Provider and transport failures are not retried
-by the judge.
+The judge sends only the answer in its user message. Its private
+`submit_judgments` tool requires one property per claim ID, with the exact claim
+text appearing once as that property's description. Each property contains a
+required label and nonempty rationale. For example, claims named `subject` and
+`severity` produce `{"subject":{"label":"entailed","rationale":"..."},
+"severity":{"label":"not_addressed","rationale":"..."}}`. JSON property
+order is irrelevant: the judge looks up each claim by name and returns judgments
+in the input claim order. It never assigns a result by list position.
+
+The schema rejects unknown or missing claim names, unknown fields, invalid labels,
+and empty rationales. The judge's raw JSON codec also rejects duplicate decoded
+member names at every object depth, including escaped spellings of the same name,
+before map decoding could discard one decision. These invalid arguments use the
+runtime's existing bounded correction flow through `runtime/agent/tooloutput.Run`:
+one initial call and at most three corrections, with the same response allowance.
+Provider and transport failures are not retried by the judge. There is no new
+native strict-output requirement or per-claim model call.
+
+Claim IDs remain unique, nonempty strings. The model-backed judge additionally
+requires valid UTF-8 so JSON encoding cannot silently change their names; it adds
+no naming pattern, trimming, or case normalization. Full claim texts count toward
+the existing 1 MiB tool-schema limit. An oversized schema fails before inference;
+claims and evidence are never truncated or automatically split across calls.
+
+This replaces only the private positional-array tool protocol. The public
+`eval.Judge` API, generated suites, calibration, labels, and stored report shape
+remain unchanged. Named properties enforce association and coverage, not semantic
+truth: a rationale about the wrong fact under a valid property is still a model
+judgment error. The framework preserves its label and rationale exactly; it does
+not repair, reassign, or approve the decision.
 
 When judging fails, the existing wrapped error retains the private run's original
 causes and full diagnostic messages. The runner includes that text in

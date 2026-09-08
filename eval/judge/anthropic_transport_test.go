@@ -83,7 +83,7 @@ func TestJudgeAnthropicHTTPOutputAllowance(t *testing.T) {
 		{cap: 32768, method: "invoke-with-response-stream"},
 	} {
 		t.Run(fmt.Sprint(test.cap), func(t *testing.T) {
-			arguments := `{"judgments":[{"label":"entailed","rationale":"All supplied measurements appear exactly."}]}`
+			arguments := `{"complete":{"label":"entailed","rationale":"All supplied measurements appear exactly."}}`
 			transport := &judgmentHTTPTransport{t: t, arguments: arguments, stopReason: "tool_use", outputTokens: 300}
 			client, recorder := newJudgmentHTTPClient(t, transport)
 			evaluator, err := judge.New(client, test.cap)
@@ -117,9 +117,10 @@ func TestJudgeAnthropicHTTPRejectsIncompleteJudgments(t *testing.T) {
 		arguments string
 		cause     string
 	}{
-		{name: "missing judgments", arguments: `{}`, cause: "judgments"},
-		{name: "missing rationale", arguments: `{"judgments":[{"label":"entailed"}]}`, cause: "rationale"},
-		{name: "unknown field", arguments: `{"judgments":[{"label":"entailed","rationale":"Complete.","extra":"must not disappear"}]}`, cause: "extra"},
+		{name: "missing claim", arguments: `{}`, cause: "complete"},
+		{name: "missing rationale", arguments: `{"complete":{"label":"entailed"}}`, cause: "rationale"},
+		{name: "unknown field", arguments: `{"complete":{"label":"entailed","rationale":"Complete.","extra":"must not disappear"}}`, cause: "extra"},
+		{name: "duplicate claim", arguments: `{"complete":{"label":"contradicted","rationale":"First."},"complete":{"label":"entailed","rationale":"Second."}}`, cause: "duplicate JSON member"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			transport := &judgmentHTTPTransport{t: t, arguments: test.arguments, stopReason: "max_tokens", outputTokens: 32768}
@@ -158,7 +159,7 @@ func TestJudgeAnthropicHTTPRejectsIncompleteJudgments(t *testing.T) {
 func TestJudgeAnthropicHTTPRejectsPartialJSONWithoutRepair(t *testing.T) {
 	transport := &judgmentHTTPTransport{
 		t:            t,
-		arguments:    `{"judgments":[{"label":"entailed","rationale":"unfinished`,
+		arguments:    `{"complete":{"label":"entailed","rationale":"unfinished`,
 		stopReason:   "max_tokens",
 		outputTokens: 32768,
 	}
@@ -238,7 +239,8 @@ func newJudgmentHTTPClient(t *testing.T, transport *judgmentHTTPTransport) (mode
 }
 
 // assertJudgmentHTTPRequest verifies the actual wire body retains complete
-// evidence on initial and correction calls, while the model receives no claim ID.
+// evidence on initial and correction calls. Claim text appears exactly once,
+// in its named schema property, not in a separate positional input list.
 func assertJudgmentHTTPRequest(t *testing.T, request judgmentHTTPRequest, cap int, method, candidate, claim string) {
 	t.Helper()
 	assert.Equal(t, "/model/"+judgmentTransportModel+"/"+method, request.path)
@@ -259,13 +261,19 @@ func assertJudgmentHTTPRequest(t *testing.T, request judgmentHTTPRequest, cap in
 		}
 	}
 	require.Len(t, userText, 1)
-	var evidence struct {
-		Output string   `json:"output"`
-		Claims []string `json:"claims"`
-	}
+	var evidence map[string]string
 	require.NoError(t, json.Unmarshal([]byte(userText[0]), &evidence))
-	assert.Equal(t, candidate, evidence.Output)
-	assert.Equal(t, []string{claim}, evidence.Claims)
+	assert.Equal(t, map[string]string{"output": candidate}, evidence)
+	var schema struct {
+		Required   []string `json:"required"`
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(request.body.Tools[0].InputSchema, &schema))
+	assert.Equal(t, []string{"complete"}, schema.Required)
+	require.Len(t, schema.Properties, 1)
+	assert.Equal(t, claim, schema.Properties["complete"].Description)
 	assert.NotContains(t, userText[0], "claim_id")
 }
 

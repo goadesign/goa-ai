@@ -49,11 +49,17 @@ func TestJudgeConcurrentBatchesKeepOneResponseBudget(t *testing.T) {
 			return nil, err
 		}
 		assert.Equal(t, "Full candidate\n<quoted> ☃", body.Output)
-		assert.Contains(t, string(request.Tools[0].Input.Contract().Schema), fmt.Sprintf(`"minItems": %d`, len(body.Claims)))
-		assert.Contains(t, string(request.Tools[0].Input.Contract().Schema), fmt.Sprintf(`"maxItems": %d`, len(body.Claims)))
-		response := responseBody{Judgments: make([]modelJudgment, len(body.Claims))}
-		for index, text := range body.Claims {
-			response.Judgments[index] = modelJudgment{Label: aieval.Entailed, Rationale: text}
+		var schema judgmentSchema
+		if err := json.Unmarshal(request.Tools[0].Input.Contract().Schema, &schema); err != nil {
+			return nil, err
+		}
+		response := make(responseBody, len(schema.Properties))
+		for name, data := range schema.Properties {
+			var property judgmentSchema
+			if err := json.Unmarshal(data, &property); err != nil {
+				return nil, err
+			}
+			response[name] = modelJudgment{Label: aieval.Entailed, Rationale: property.Description}
 		}
 		encoded, err := json.Marshal(response)
 		if err != nil {
@@ -101,7 +107,7 @@ func TestJudgePreservesProviderCeiling(t *testing.T) {
 				if request.MaxTokens > ceiling {
 					return nil, limitError
 				}
-				return toolResponse(`{"judgments":[{"label":"entailed","rationale":"Supported."}]}`), nil
+				return toolResponse(`{"claim":{"label":"entailed","rationale":"Supported."}}`), nil
 			})
 			client, err := model.NewClient(provider)
 			require.NoError(t, err)
@@ -126,7 +132,7 @@ func TestJudgeAcceptsShortAndLargeAccountedResponses(t *testing.T) {
 			budget := outputTokens + 1
 			provider := budgetProvider(func(_ context.Context, request *model.Request) (*model.Response, error) {
 				assert.Equal(t, budget, request.MaxTokens)
-				response := toolResponse(fmt.Sprintf(`{"judgments":[{"label":"entailed","rationale":%q}]}`, strings.Repeat("Evidence. ", outputTokens)))
+				response := toolResponse(fmt.Sprintf(`{"evidence":{"label":"entailed","rationale":%q}}`, strings.Repeat("Evidence. ", outputTokens)))
 				response.Usage = model.TokenUsage{OutputTokens: outputTokens, TotalTokens: outputTokens}
 				return response, nil
 			})
@@ -160,7 +166,7 @@ func TestJudgeLimitedCorrectionsKeepBudgetAndDiagnostics(t *testing.T) {
 	require.Error(t, err)
 	assert.Nil(t, judgments)
 	assert.Contains(t, err.Error(), "recovery_cap")
-	assert.Contains(t, err.Error(), "judgments")
+	assert.Contains(t, err.Error(), "claim")
 	assert.Contains(t, err.Error(), "max_tokens")
 	assert.Contains(t, err.Error(), "513")
 	require.Len(t, provider.requests, 4)
@@ -174,7 +180,8 @@ func TestJudgeLimitedCorrectionsKeepBudgetAndDiagnostics(t *testing.T) {
 				}
 			}
 		}
-		assert.Contains(t, texts, `{"output":"Candidate.","claims":["Evidence."]}`)
+		assert.Contains(t, texts, `{"output":"Candidate."}`)
+		assert.Contains(t, string(request.Tools[0].Input.Contract().Schema), `"description":"Evidence."`)
 	}
 }
 

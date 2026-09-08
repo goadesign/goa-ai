@@ -4,12 +4,11 @@
 package judge
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
+	"unicode/utf8"
 
 	aieval "goa.design/goa-ai/eval"
 	"goa.design/goa-ai/runtime/agent/completion"
@@ -30,22 +29,27 @@ type (
 	// Option customizes a Judge.
 	Option func(*Judge)
 
-	// requestBody is the compact input sent to the model. Claim identity stays
-	// outside the model request because list position already correlates results.
+	// requestBody supplies the evidence; the tool schema describes each claim.
 	requestBody struct {
-		Output string   `json:"output"`
-		Claims []string `json:"claims"`
+		Output string `json:"output"`
 	}
 
-	// responseBody is the private completion tool payload.
-	responseBody struct {
-		Judgments []modelJudgment `json:"judgments"`
-	}
+	// responseBody associates each decision with its required schema property.
+	responseBody map[string]modelJudgment
 
 	// modelJudgment contains only the semantic decision the model must make.
 	modelJudgment struct {
 		Label     aieval.Label `json:"label"`
 		Rationale string       `json:"rationale"`
+	}
+
+	// judgmentSchema describes one named claim without a second claim-text list.
+	judgmentSchema struct {
+		Type                 string                     `json:"type"`
+		Description          string                     `json:"description,omitempty"`
+		AdditionalProperties bool                       `json:"additionalProperties"` //nolint:tagliatelle // JSON Schema owns this spelling.
+		Required             []string                   `json:"required"`
+		Properties           map[string]json.RawMessage `json:"properties"`
 	}
 )
 
@@ -54,7 +58,7 @@ const (
 
 	judgePrompt = `Classify each claim independently using only the supplied output.
 Return entailed when the output establishes the claim, contradicted when it establishes the claim is false, not_addressed when it does neither, and indeterminate only when ambiguity prevents classification.
-Call submit_judgments exactly once. Return one judgment for each claim in the same order. Each judgment must contain a label and a concise rationale.`
+Call submit_judgments exactly once. Each required property describes one claim; supply its label and a concise rationale in that property.`
 )
 
 // New creates a semantic judge backed by client. maxOutputTokens must be positive
@@ -81,9 +85,8 @@ func WithModelClass(class model.ModelClass) Option {
 	return func(j *Judge) { j.modelClass = class }
 }
 
-// Judge classifies claims against one model-authored output. It restores each
-// claim ID from list position after the private tool returns the exact number
-// of requested judgments.
+// Judge classifies claims against one model-authored output. Each claim ID names
+// a required tool property; results are returned in the caller's claim order.
 func (j *Judge) Judge(ctx context.Context, output string, claims []aieval.Claim) ([]aieval.Judgment, error) {
 	if len(claims) == 0 {
 		return nil, errors.New("judge requires at least one claim")
@@ -91,23 +94,28 @@ func (j *Judge) Judge(ctx context.Context, output string, claims []aieval.Claim)
 	if err := aieval.ValidateClaims(claims); err != nil {
 		return nil, fmt.Errorf("judge claims: %w", err)
 	}
-	claimTexts := make([]string, len(claims))
-	for index, claim := range claims {
-		claimTexts[index] = claim.Text
+	for _, claim := range claims {
+		if !utf8.ValidString(claim.ID) {
+			return nil, fmt.Errorf("judge claim ID %q is not valid UTF-8", claim.ID)
+		}
 	}
-	payload, err := json.Marshal(requestBody{Output: output, Claims: claimTexts})
+	payload, err := json.Marshal(requestBody{Output: output})
 	if err != nil {
 		return nil, fmt.Errorf("encode judge request: %w", err)
 	}
-	response, err := j.run(ctx, payload, len(claims))
+	spec, err := judgmentToolSpec(claims)
+	if err != nil {
+		return nil, fmt.Errorf("encode judge schema: %w", err)
+	}
+	response, err := j.run(ctx, payload, spec)
 	if err != nil {
 		return nil, fmt.Errorf("judge claims: %w", err)
 	}
-	judgments := make([]aieval.Judgment, len(response.Judgments))
-	for index, judgment := range response.Judgments {
+	judgments := make([]aieval.Judgment, len(claims))
+	for index, claim := range claims {
+		judgment := response[claim.ID]
 		judgments[index] = aieval.Judgment{
-			// #nosec G602 -- decodeResponse requires exactly one judgment per claim.
-			ClaimID:   claims[index].ID,
+			ClaimID:   claim.ID,
 			Label:     judgment.Label,
 			Rationale: judgment.Rationale,
 		}
@@ -118,7 +126,7 @@ func (j *Judge) Judge(ctx context.Context, output string, claims []aieval.Claim)
 	return judgments, nil
 }
 
-func (j *Judge) run(ctx context.Context, payload []byte, claimCount int) (responseBody, error) {
+func (j *Judge) run(ctx context.Context, payload []byte, spec completion.Spec[responseBody]) (responseBody, error) {
 	return tooloutput.Run[responseBody](ctx, j.client, &model.Request{
 		ModelClass: j.modelClass,
 		Messages: []*model.Message{
@@ -133,78 +141,60 @@ func (j *Judge) run(ctx context.Context, payload []byte, claimCount int) (respon
 		},
 		Temperature: 0,
 		MaxTokens:   j.maxOutputTokens,
-	}, judgmentToolSpec(claimCount))
+	}, spec)
 }
 
-func judgmentToolSpec(claimCount int) completion.Spec[responseBody] {
-	schema := rawjson.Message(fmt.Sprintf(`{
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["judgments"],
-  "properties": {
-    "judgments": {
-      "type": "array",
-      "minItems": %d,
-      "maxItems": %d,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["label", "rationale"],
-        "properties": {
-          "label": {
-            "type": "string",
-            "enum": ["entailed", "contradicted", "not_addressed", "indeterminate"]
-          },
-          "rationale": {"type": "string", "minLength": 1}
-        }
-      }
-    }
-  }
-}`, claimCount, claimCount))
+// judgmentToolSpec makes names and coverage part of the advertised schema. The
+// shared model validator owns required/unknown fields, labels, and rationales.
+func judgmentToolSpec(claims []aieval.Claim) (completion.Spec[responseBody], error) {
+	schema := judgmentSchema{
+		Type:       "object",
+		Required:   make([]string, len(claims)),
+		Properties: make(map[string]json.RawMessage, len(claims)),
+	}
+	for index, claim := range claims {
+		property, err := json.Marshal(judgmentSchema{
+			Type:        "object",
+			Description: claim.Text,
+			Required:    []string{"label", "rationale"},
+			Properties: map[string]json.RawMessage{
+				"label":     json.RawMessage(`{"type":"string","enum":["entailed","contradicted","not_addressed","indeterminate"]}`),
+				"rationale": json.RawMessage(`{"type":"string","minLength":1}`),
+			},
+		})
+		if err != nil {
+			return completion.Spec[responseBody]{}, err
+		}
+		schema.Required[index] = claim.ID
+		schema.Properties[claim.ID] = property
+	}
+	encoded, err := json.Marshal(schema)
+	if err != nil {
+		return completion.Spec[responseBody]{}, err
+	}
 	codec := tools.JSONCodec[responseBody]{
 		ToJSON: func(value responseBody) ([]byte, error) {
 			return json.Marshal(value)
 		},
-		FromJSON: func(data []byte) (responseBody, error) {
-			return decodeResponse(data, claimCount)
-		},
+		FromJSON: decodeResponse,
 	}
 	return completion.Spec[responseBody]{
 		Name:        submitJudgmentsID,
-		Description: "Submit one ordered semantic judgment for every supplied claim.",
-		Schema:      schema,
+		Description: "Submit a semantic judgment for each claim described by a required property.",
+		Schema:      rawjson.Message(encoded),
 		Codec:       codec,
-	}
+	}, nil
 }
 
-// decodeResponse strictly decodes one completion tool payload. The exact
-// length check lets the runtime ask the model to correct missing or extra
-// judgments before the tool executes.
-func decodeResponse(data []byte, claimCount int) (responseBody, error) {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
+// decodeResponse checks member uniqueness before JSON decoding can overwrite a
+// decision. All expressible shape rules belong to the advertised schema.
+func decodeResponse(data []byte) (responseBody, error) {
+	if err := validateMemberNames(data); err != nil {
+		return nil, err
+	}
 	var response responseBody
-	if err := decoder.Decode(&response); err != nil {
-		return responseBody{}, err
-	}
-	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return responseBody{}, errors.New("trailing JSON value")
-		}
-		return responseBody{}, err
-	}
-	if len(response.Judgments) != claimCount {
-		return responseBody{}, fmt.Errorf("got %d judgments for %d claims", len(response.Judgments), claimCount)
-	}
-	for index, judgment := range response.Judgments {
-		switch judgment.Label {
-		case aieval.Entailed, aieval.Contradicted, aieval.NotAddressed, aieval.Indeterminate:
-		default:
-			return responseBody{}, fmt.Errorf("judgment %d has invalid label %q", index, judgment.Label)
-		}
-		if judgment.Rationale == "" {
-			return responseBody{}, fmt.Errorf("judgment %d requires a rationale", index)
-		}
+	if err := json.Unmarshal(data, &response); err != nil {
+		return nil, err
 	}
 	return response, nil
 }

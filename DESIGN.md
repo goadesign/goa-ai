@@ -295,6 +295,14 @@ across the existing bounded corrections. The judge owns response shape; the
 application owns permitted response work; providers enforce their own ceilings.
 No finite limit guarantees a completed judgment.
 
+The private judge tool names each required property with its claim ID and places
+the full claim in that property's description. Code looks up results by name and
+returns them in input order; response position never establishes association.
+The schema owns shape and coverage, and the judge codec rejects duplicate raw
+JSON member names before decoding can overwrite a decision. Semantic truth remains
+model-owned. The public judge API and report shape do not change; see the
+[judge contract](docs/evals.md#how-judging-works) for validation and limits.
+
 See [docs/evals.md](docs/evals.md) for the DSL, generated API, runner methods,
 and report behavior.
 
