@@ -94,7 +94,7 @@ func (r *Runtime) executeGroupedToolCalls(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	agentID agent.Ident,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	expectedChildren int,
 	parentTracker *childTracker,
 	finishBy time.Time,
@@ -132,7 +132,7 @@ func (r *Runtime) executeGroupedToolCalls(
 func (r *Runtime) appendUserToolRecordResults(
 	ctx context.Context,
 	agentID agent.Ident,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	records []stepToolRecord,
 	turnID string,
 ) error {
@@ -311,7 +311,7 @@ func (r *Runtime) appendToolOutputRecords(ctx context.Context, st *runLoopState,
 // messages and builds the next PlanActivityInput.
 func (r *Runtime) buildNextResumeRequest(
 	agentID agent.Ident,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	runPolicy *PolicyOverrides,
 	toolOutputs []*planner.ToolOutput,
 	recovery []*planner.ToolOutput,

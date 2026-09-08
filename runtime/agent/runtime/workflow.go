@@ -289,7 +289,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		return out, nil
 	}
 
-	planInput := &planner.PlanInput{
+	planInput := &workflowConversation{
 		Messages:   input.Messages,
 		RunContext: runCtx,
 	}
@@ -494,7 +494,7 @@ func (r *Runtime) runLoopWithState(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	st *runLoopState,
 	budgetDeadline time.Time,
 	hardDeadline time.Time,

@@ -751,7 +751,7 @@ type Planner interface {
 
 ```go
 type PlanInput struct {
-    Messages   []*model.Message    // Conversation history
+    PrepareMessages func() ([]*model.Message, error) // Policy-prepared history
     RunContext run.Context         // Run metadata (IDs, caps, labels)
     Agent      PlannerContext      // Runtime services (memory, logger, models)
     Events     PlannerEvents       // Streaming event emitters
@@ -759,7 +759,7 @@ type PlanInput struct {
 }
 
 type PlanResumeInput struct {
-    Messages    []*model.Message
+    PrepareMessages func() ([]*model.Message, error)
     RunContext  run.Context
     Agent       PlannerContext
     Events      PlannerEvents
@@ -769,6 +769,13 @@ type PlanResumeInput struct {
     Reminders   []reminder.Reminder
 }
 ```
+
+Call `PrepareMessages` before reading or transforming conversation history.
+The runtime prepares it once per planner invocation; later calls return the same
+slice and error. Decisions using only run state or tool results may return
+without preparation. This replaces both inputs' former `Messages` field, not
+the messages in model requests or activity wire payloads. See the
+[preparation and migration contract](runtime.md#preparing-conversation-messages).
 
 ### PlanResult
 

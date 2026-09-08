@@ -44,7 +44,7 @@ func TestRunLoopStopsAfterTerminalTool(t *testing.T) {
 		ctx:     context.Background(),
 		runtime: rt,
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -135,7 +135,7 @@ func TestRunLoopRejectsMixedTerminalAndNonTerminalTools(t *testing.T) {
 			}
 			input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 			seedRunMeta(t, rt, input)
-			base := &planner.PlanInput{RunContext: run.Context{
+			base := &workflowConversation{RunContext: run.Context{
 				RunID:     input.RunID,
 				SessionID: input.SessionID,
 				TurnID:    input.TurnID,
@@ -186,7 +186,7 @@ func TestRunLoopRejectsTerminalToolWithPlannerAwait(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{
@@ -238,7 +238,7 @@ func TestPolicyExcludedToolRejectsTerminalPayloadBeforeTranscriptCommit(t *testi
 		Policy: &PolicyOverrides{RestrictToTool: "svc.other"},
 	}
 	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{
@@ -295,7 +295,7 @@ func TestRunLoopRejectsTerminalToolClarification(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID:     input.RunID,
 		SessionID: input.SessionID,
 		TurnID:    input.TurnID,
@@ -363,7 +363,7 @@ func TestRunLoopRecordsConfirmedTerminalToolBeforeRejectingClarification(t *test
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID:     input.RunID,
 		SessionID: input.SessionID,
 		TurnID:    input.TurnID,
@@ -415,7 +415,7 @@ func TestRunLoopTerminalToolExecutesWithExhaustedBudget(t *testing.T) {
 		now:     func() time.Time { return current },
 		runtime: rt,
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -486,7 +486,7 @@ func TestRunLoopTerminalResponseBookkeepingExecutesAtBudget(t *testing.T) {
 		now:     func() time.Time { return current },
 		runtime: rt,
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -583,7 +583,7 @@ func TestRunLoopMixedToolCallsUseOwnedDeadlinesAtBudget(t *testing.T) {
 		}},
 	}
 	rt.agents[input.AgentID] = reg
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     input.RunID,
 			SessionID: input.SessionID,
@@ -646,7 +646,7 @@ func TestRunLoopTerminalToolExecutesWithRetryRestriction(t *testing.T) {
 		ctx:     context.Background(),
 		runtime: rt,
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -791,7 +791,7 @@ func TestFinalizeWithPlannerRecoversRejectedModelOutput(t *testing.T) {
 					Usage: model.TokenUsage{InputTokens: 20, OutputTokens: 4, TotalTokens: 24},
 				}, plannerErr
 			}
-			base := &planner.PlanInput{RunContext: run.Context{
+			base := &workflowConversation{RunContext: run.Context{
 				RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 			}}
 			input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
@@ -837,7 +837,7 @@ func TestFinalizeWithPlannerStopsWhenRecoveryBudgetIsExhausted(t *testing.T) {
 			},
 		}, plannerErr
 	}
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 	}}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
@@ -928,7 +928,7 @@ func TestFinalizeWithPlannerRecoversCorrectableTerminalTool(t *testing.T) {
 			},
 		},
 	}
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 	}}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
@@ -1011,7 +1011,7 @@ func TestFinalizeWithPlannerTerminalToolUsesRuntimeReason(t *testing.T) {
 				}
 				return out, err
 			}
-			base := &planner.PlanInput{
+			base := &workflowConversation{
 				RunContext: run.Context{
 					RunID:     "run-1",
 					SessionID: "sess-1",
@@ -1081,7 +1081,7 @@ func TestFinalizeWithPlannerTerminalToolStopsAtHard(t *testing.T) {
 		current = hard
 		return out, err
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -1151,7 +1151,7 @@ func TestFinalizeWithPlannerRejectsTerminalPayloadWithToolCalls(t *testing.T) {
 			},
 		}, plannerErr
 	}
-	base := &planner.PlanInput{RunContext: run.Context{
+	base := &workflowConversation{RunContext: run.Context{
 		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 	}}
 	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
@@ -1231,7 +1231,7 @@ func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 			},
 		},
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -1272,11 +1272,11 @@ func TestFinalizeWithPlannerRejectsPartialTerminalToolFailure(t *testing.T) {
 
 // runTerminalFinalization drives the finalization path where the planner returns
 // the registered terminal bookkeeping tool.
-func runTerminalFinalization(t *testing.T, runPolicy *PolicyOverrides) (*RunOutput, *routeWorkflowContext, tools.ToolSpec, *planner.PlanInput, error) {
+func runTerminalFinalization(t *testing.T, runPolicy *PolicyOverrides) (*RunOutput, *routeWorkflowContext, tools.ToolSpec, *workflowConversation, error) {
 	t.Helper()
 
 	rt, terminalTool, wfCtx := newTerminalFinalizationRuntime(t)
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",

@@ -77,7 +77,7 @@ func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 		recoveryCatalog: &RecoveryCatalog{Tools: []tools.Ident{allowedSpec.Name}},
 	}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
 	initial := &PlanResult{ToolCalls: []ToolCall{
 		{ToolCallID: "allowed-call", Name: tools.Ident("allowed"), Payload: rawjson.Message(`{}`)},
 		{ToolCallID: "blocked-call", Name: tools.Ident("blocked"), Payload: rawjson.Message(`{}`)},
@@ -152,9 +152,8 @@ func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 		RunID:   "run-1",
 		Policy:  &PolicyOverrides{RestrictToTool: toolSpec.Name},
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{RunID: input.RunID},
-		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "read-call",
@@ -202,9 +201,8 @@ func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 		RunID:   "run-1",
 		Policy:  &PolicyOverrides{RestrictToTool: toolSpec.Name},
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{RunID: input.RunID},
-		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		Name:       toolSpec.Name,
@@ -262,9 +260,8 @@ func TestRestrictedRunRecoveryCapFinalizes(t *testing.T) {
 		RunID:   "run-1",
 		Policy:  &PolicyOverrides{RestrictToTool: toolSpec.Name},
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{RunID: input.RunID},
-		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "read-call",
@@ -305,9 +302,8 @@ func TestRestrictedUnknownToolFailsBeforeExecution(t *testing.T) {
 		RunID:   "run-1",
 		Policy:  &PolicyOverrides{RestrictToTool: "svc.tools.read"},
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{RunID: input.RunID},
-		Agent:      newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID}),
 	}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "missing-call",
@@ -468,7 +464,7 @@ func TestApplyRuntimePolicyRejectsInvalidRecoveryCaps(t *testing.T) {
 
 			_, got, err := rt.applyRuntimePolicy(
 				context.Background(),
-				&planner.PlanInput{RunContext: run.Context{RunID: "run-1"}},
+				&workflowConversation{RunContext: run.Context{RunID: "run-1"}},
 				&RunInput{AgentID: "svc.agent"},
 				nil,
 				current,

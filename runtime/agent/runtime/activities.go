@@ -38,7 +38,7 @@ type plannerActivityInvocation struct {
 	plannerAuthoredTools map[tools.Ident]struct{}
 	events               *runtimePlannerEvents
 	invocations          *modelInvocationJournal
-	messages             []*model.Message
+	history              *plannerHistory
 	reminders            []reminder.Reminder
 	runContext           run.Context
 	publicationBatchID   string
@@ -81,13 +81,22 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 		return nil, err
 	}
 	planInput := &planner.PlanInput{
-		Messages:   act.messages,
-		RunContext: input.RunContext,
-		Agent:      act.agentCtx,
-		Events:     act.events,
-		Reminders:  act.reminders,
+		PrepareMessages: act.history.prepare,
+		RunContext:      input.RunContext,
+		Agent:           act.agentCtx,
+		Events:          act.events,
+		Reminders:       act.reminders,
 	}
 	result, err := act.reg.Planner.PlanStart(ctx, planInput)
+	if historyErr := act.history.preparationError(); historyErr != nil {
+		// History failures returned directly before planner invocation when
+		// preparation was eager. Keep that precedence even if a planner ignores
+		// the preparation error and later produces invalid model output.
+		if sealErr := act.invocations.seal(); sealErr != nil {
+			span.RecordError(sealErr)
+		}
+		return nil, historyErr
+	}
 	err = act.planningError(err)
 	if err != nil {
 		return act.failureOutput(ctx, err)
@@ -238,16 +247,22 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		}
 	}
 	planInput := &planner.PlanResumeInput{
-		Messages:      act.messages,
-		RunContext:    input.RunContext,
-		Agent:         act.agentCtx,
-		Events:        act.events,
-		ToolOutputs:   toolOutputs,
-		SynthesisOnly: synthesisOnly,
-		Finalize:      input.Finalize,
-		Reminders:     act.reminders,
+		PrepareMessages: act.history.prepare,
+		RunContext:      input.RunContext,
+		Agent:           act.agentCtx,
+		Events:          act.events,
+		ToolOutputs:     toolOutputs,
+		SynthesisOnly:   synthesisOnly,
+		Finalize:        input.Finalize,
+		Reminders:       act.reminders,
 	}
 	result, err := act.reg.Planner.PlanResume(ctx, planInput)
+	if historyErr := act.history.preparationError(); historyErr != nil {
+		if sealErr := act.invocations.seal(); sealErr != nil {
+			span.RecordError(sealErr)
+		}
+		return nil, historyErr
+	}
 	err = act.planningError(err)
 	if err != nil {
 		return act.failureOutput(ctx, err)
@@ -518,10 +533,7 @@ func (r *Runtime) preparePlannerActivityWithSpecs(
 	if r.reminders != nil {
 		rems = r.reminders.Snapshot(input.RunID)
 	}
-	messages, err := r.applyHistoryPolicy(ctx, reg, input.Messages, agentCtx.AdvertisedToolDefinitions())
-	if err != nil {
-		return nil, err
-	}
+	history := r.newPlannerHistory(ctx, reg, input.Messages, agentCtx.AdvertisedToolDefinitions())
 	return &plannerActivityInvocation{
 		runtime:              r,
 		reg:                  reg,
@@ -529,7 +541,7 @@ func (r *Runtime) preparePlannerActivityWithSpecs(
 		plannerAuthoredTools: plannerAuthoredTools,
 		events:               events,
 		invocations:          invocations,
-		messages:             messages,
+		history:              history,
 		reminders:            rems,
 		runContext:           input.RunContext,
 		publicationBatchID:   publicationBatchID,

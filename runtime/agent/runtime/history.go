@@ -1,6 +1,7 @@
 // Package runtime provides history management policies for bounding conversation
 // context. HistoryPolicy implementations transform messages and advertised
-// tools before each planner invocation to prevent unbounded context growth.
+// tools when a planner requests its conversation, preventing unbounded context
+// growth without preparing history for decisions that do not use it.
 package runtime
 
 import (
@@ -20,8 +21,8 @@ type (
 	//   - Maintain ToolUse/ToolResult integrity (never orphan a result without
 	//     its call).
 	//
-	// Policies are applied by the runtime before each planner invocation
-	// (PlanStart and PlanResume). Policy errors mean the runtime cannot construct a
+	// Policies are applied once per activity when PlanStart or PlanResume calls
+	// PrepareMessages. Policy errors mean the runtime cannot construct a
 	// contract-valid planner transcript and should fail the run.
 	HistoryPolicy func(ctx context.Context, msgs []*model.Message, tools []*model.ToolDefinition) ([]*model.Message, error)
 

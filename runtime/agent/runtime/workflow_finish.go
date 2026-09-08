@@ -37,7 +37,7 @@ type terminalPlannerState struct {
 func (r *Runtime) finishCurrentPlanResult(
 	ctx context.Context,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	st *runLoopState,
 	turnID string,
 ) (*RunOutput, error) {
@@ -56,7 +56,7 @@ func (r *Runtime) finishCurrentPlanResult(
 func (r *Runtime) materializeTerminalPlannerResult(
 	ctx context.Context,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	turnID string,
 	state terminalPlannerState,
 ) (*RunOutput, error) {
@@ -154,7 +154,7 @@ func completedToolStats(events []*planner.ToolResult) (int, *telemetry.ToolTelem
 func (r *Runtime) finishAfterSuccessfulToolCompletion(
 	ctx context.Context,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	st *runLoopState,
 ) (*RunOutput, error) {
 	toolCount, toolTelemetry, err := completedToolStats(st.ToolEvents)

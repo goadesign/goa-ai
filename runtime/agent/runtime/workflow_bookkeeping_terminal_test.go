@@ -41,7 +41,7 @@ func TestRunLoopBookkeepingTerminalExecutesWithExhaustedBudget(t *testing.T) {
 		ctx:     context.Background(),
 		runtime: rt,
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",

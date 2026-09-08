@@ -152,7 +152,7 @@ func TestFinishCurrentPlanResult_UsesPlannerFinalToolResult(t *testing.T) {
 		AgentID:   "svc.agent",
 		SessionID: "sess-1",
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -189,7 +189,7 @@ func TestRunLoopWithStateAcceptsInitialFinalToolResult(t *testing.T) {
 		AgentID:   "svc.agent",
 		SessionID: "sess-1",
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -235,7 +235,7 @@ func TestFinishCurrentPlanResultRejectsDualTerminalOutputs(t *testing.T) {
 		AgentID:   "svc.agent",
 		SessionID: "sess-1",
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -278,7 +278,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 		AgentID:   "svc.agent",
 		SessionID: "sess-1",
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -342,7 +342,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 		AgentID:   "svc.agent",
 		SessionID: "sess-1",
 	}
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -483,7 +483,9 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 		"svc.agent": {
 			Definition: testAgentDefinition("svc.agent", "svc.agent.workflow", "test", []tools.ToolSpec{tool}, nil),
 			Planner: &stubPlanner{resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
-				require.NoError(t, transcript.ValidatePlannerTranscript(input.Messages))
+				messages, err := input.PrepareMessages()
+				require.NoError(t, err)
+				require.NoError(t, transcript.ValidatePlannerTranscript(messages))
 				return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
 					Role:  model.ConversationRoleAssistant,
 					Parts: []model.Part{model.TextPart{Text: "done"}},
@@ -509,7 +511,7 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 		firstContext,
 		AgentRegistration{ResumeActivityName: "resume"},
 		firstInput,
-		&planner.PlanInput{RunContext: run.Context{
+		&workflowConversation{RunContext: run.Context{
 			RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 		}},
 		&PlanResult{Await: planner.NewAwait(
@@ -1150,7 +1152,7 @@ func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
 		asyncResult: ToolOutput{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom")},
 	}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "fail-call",
 		Name:       tools.Ident("fail"),
@@ -1376,7 +1378,7 @@ func TestTimeBudgetExceeded(t *testing.T) {
 	seedTestToolset(rt, "svc.ts", toolSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := &planner.PlanInput{RunContext: run.Context{RunID: input.RunID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: input.AgentID, runID: input.RunID})}
+	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "tool-call",
 		Name:       tools.Ident("tool"),
@@ -1606,7 +1608,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 
 	// Parent run requests a single agent-tool invocation
 	parentInput := &RunInput{AgentID: "parent.agent", RunID: "run-parent", SessionID: "session-1", TurnID: "turn-1"}
-	base := &planner.PlanInput{RunContext: run.Context{RunID: parentInput.RunID, SessionID: parentInput.SessionID, TurnID: parentInput.TurnID}, Agent: newAgentContext(agentContextOptions{runtime: rt, agentID: parentInput.AgentID, runID: parentInput.RunID})}
+	base := &workflowConversation{RunContext: run.Context{RunID: parentInput.RunID, SessionID: parentInput.SessionID, TurnID: parentInput.TurnID}}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "invoke-call",
 		Name:       tools.Ident("invoke"),
@@ -1786,7 +1788,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	}
 	_, sessionErr := createSessionForTest(context.Background(), rt.Store, input.SessionID)
 	require.NoError(t, sessionErr)
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		Messages: []*model.Message{
 			{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}},
 		},
@@ -1796,11 +1798,6 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 			TurnID:    input.TurnID,
 			Labels:    cloneLabels(input.Labels),
 		},
-		Agent: newAgentContext(agentContextOptions{
-			runtime: rt,
-			agentID: input.AgentID,
-			runID:   input.RunID,
-		}),
 	}
 
 	wfCtx := &testWorkflowContext{

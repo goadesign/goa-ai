@@ -179,11 +179,15 @@ func suspendedRetiredToolFixture(
 	runtime.models["test"] = correctionToolCallModel(t, retired)
 	plannerImpl := &stubPlanner{
 		start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+			messages, err := input.PrepareMessages()
+			if err != nil {
+				return nil, err
+			}
 			client, ok := input.Agent.PlannerModelClient("test")
 			require.True(t, ok)
 			summary, err := client.Stream(ctx, &model.Request{
 				Model:    "test-model",
-				Messages: input.Messages,
+				Messages: messages,
 				Tools:    input.Agent.AdvertisedToolDefinitions(),
 			})
 			if err != nil {

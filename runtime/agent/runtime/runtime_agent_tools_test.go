@@ -73,7 +73,9 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 		if input == nil {
 			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 		}
-		got = append([]*model.Message{}, input.Messages...)
+		messages, err := input.PrepareMessages()
+		require.NoError(t, err)
+		got = append([]*model.Message{}, messages...)
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	})
 
@@ -130,7 +132,9 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 		if input == nil {
 			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 		}
-		got = append([]*model.Message{}, input.Messages...)
+		messages, err := input.PrepareMessages()
+		require.NoError(t, err)
+		got = append([]*model.Message{}, messages...)
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	})
 
@@ -168,7 +172,9 @@ func TestDefaultAgentToolExecute_DefaultContentFromPayload(t *testing.T) {
 	var got []*model.Message
 	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input != nil {
-			got = append([]*model.Message{}, input.Messages...)
+			messages, err := input.PrepareMessages()
+			require.NoError(t, err)
+			got = append([]*model.Message{}, messages...)
 		}
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	})
@@ -254,7 +260,9 @@ func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilde
 				},
 			}, nil
 		}
-		got = append([]*model.Message{}, input.Messages...)
+		messages, err := input.PrepareMessages()
+		require.NoError(t, err)
+		got = append([]*model.Message{}, messages...)
 		return &planner.PlanResult{
 			FinalResponse: &planner.FinalResponse{
 				Message: &model.Message{
@@ -358,7 +366,9 @@ func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 	var got []*model.Message
 	rt, ctx := setupTestAgentWithPlanner(func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input != nil {
-			got = append([]*model.Message{}, input.Messages...)
+			messages, err := input.PrepareMessages()
+			require.NoError(t, err)
+			got = append([]*model.Message{}, messages...)
 		}
 		return &planner.PlanResult{
 			FinalResponse: &planner.FinalResponse{

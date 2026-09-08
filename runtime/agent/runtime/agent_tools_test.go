@@ -206,7 +206,7 @@ func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
 				wfCtx,
 				parentRegistration,
 				input,
-				&planner.PlanInput{RunContext: run.Context{
+				&workflowConversation{RunContext: run.Context{
 					RunID: input.RunID, SessionID: sessionID, TurnID: input.TurnID, Attempt: 1,
 				}},
 				&PlanResult{ToolCalls: []ToolCall{{
@@ -237,7 +237,11 @@ func (p *capturePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 	if in == nil {
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	}
-	p.msgs = append([]*model.Message{}, in.Messages...)
+	messages, err := in.PrepareMessages()
+	if err != nil {
+		return nil, err
+	}
+	p.msgs = append([]*model.Message{}, messages...)
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 }
 func (p *capturePlanner) PlanResume(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {

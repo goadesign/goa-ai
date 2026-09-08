@@ -24,8 +24,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"text/template"
-
-	"goa.design/goa-ai/runtime/agent/planner"
 )
 
 type confirmationAwait struct {
@@ -37,7 +35,7 @@ type confirmationAwait struct {
 // splitConfirmationCalls partitions allowed tool calls into:
 // - calls that may execute immediately, and
 // - calls that require an await_confirmation boundary before execution.
-func (r *Runtime) splitConfirmationCalls(ctx context.Context, base *planner.PlanInput, allowed []ToolCall) ([]ToolCall, []confirmationAwait, error) {
+func (r *Runtime) splitConfirmationCalls(ctx context.Context, base *workflowConversation, allowed []ToolCall) ([]ToolCall, []confirmationAwait, error) {
 	if len(allowed) == 0 {
 		return nil, nil, nil
 	}

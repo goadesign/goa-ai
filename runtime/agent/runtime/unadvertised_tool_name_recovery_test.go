@@ -162,9 +162,11 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 					)
 					assert.NotContains(t, input.Reminders[0].Text, "rejected-call")
 					assert.NotContains(t, input.Reminders[0].Text, "ignored")
-					require.Len(t, input.Messages, 2)
-					assert.Equal(t, model.ConversationRoleUser, input.Messages[0].Role)
-					assert.Equal(t, "published text", input.Messages[1].Text())
+					messages, err := input.PrepareMessages()
+					require.NoError(t, err)
+					require.Len(t, messages, 2)
+					assert.Equal(t, model.ConversationRoleUser, messages[0].Role)
+					assert.Equal(t, "published text", messages[1].Text())
 					return &planner.PlanResult{
 						ToolCalls: []planner.ToolRequest{{
 							Name:    catalog.Name,

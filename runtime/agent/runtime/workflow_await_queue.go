@@ -29,7 +29,7 @@ func (r *Runtime) resolveConfirmationDecision(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	toolOpts engine.ActivityOptions,
 	call ToolCall,
 	awaitID string,
@@ -228,7 +228,7 @@ func (l *workflowLoop) handleAwaitQueue(
 // publishAwaitToolUses records provider-correlated tool calls when an await is
 // first created. The visible prompt is published later by the suspension
 // boundary under the workflow run that owns the pending response.
-func (r *Runtime) publishAwaitToolUses(ctx context.Context, input *RunInput, base *planner.PlanInput, turnID string, it planner.AwaitItem, idx int) error {
+func (r *Runtime) publishAwaitToolUses(ctx context.Context, input *RunInput, base *workflowConversation, turnID string, it planner.AwaitItem, idx int) error {
 	if it.Kind == "" {
 		return fmt.Errorf("await item %d missing kind", idx)
 	}
@@ -425,7 +425,7 @@ func (r *Runtime) publishAwaitPrompt(ctx context.Context, input *RunInput, turnI
 func (r *Runtime) consumeClarificationResponse(
 	ctx context.Context,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	parentTracker *childTracker,
 	turnID string,
 	it planner.AwaitItem,
@@ -504,7 +504,7 @@ func (r *Runtime) consumeClarificationResponse(
 func (r *Runtime) consumeToolResultsResponse(
 	ctx context.Context,
 	input *RunInput,
-	base *planner.PlanInput,
+	base *workflowConversation,
 	parentTracker *childTracker,
 	turnID string,
 	it planner.AwaitItem,
@@ -574,7 +574,7 @@ func (r *Runtime) consumeToolResultsResponse(
 	}
 }
 
-func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *RunInput, base *planner.PlanInput, turnID string, rs *api.ToolResultsSet, allowed []ToolCall, expected map[string]struct{}) ([]stepToolRecord, error) {
+func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *RunInput, base *workflowConversation, turnID string, rs *api.ToolResultsSet, allowed []ToolCall, expected map[string]struct{}) ([]stepToolRecord, error) {
 	if rs == nil {
 		return nil, errors.New("await: nil tool results set")
 	}

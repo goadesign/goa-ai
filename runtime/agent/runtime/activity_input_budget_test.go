@@ -17,7 +17,7 @@ import (
 
 func TestBuildNextResumeRequestKeepsLargePayloadAndResultsOffWire(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent.budget", &stubPlanner{})
-	base := &planner.PlanInput{
+	base := &workflowConversation{
 		Messages: []*model.Message{
 			{
 				Role:  model.ConversationRoleUser,
