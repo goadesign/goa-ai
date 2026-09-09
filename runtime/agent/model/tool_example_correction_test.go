@@ -82,7 +82,7 @@ func TestToolExampleCorrectionByteLimit(t *testing.T) {
 		return rejected.RecoveryCorrection()
 	}
 	base := get("")
-	assert.Equal(t, `Field "query" is required. Return a replacement tool call with valid arguments.`, base)
+	assert.Equal(t, `Field "query" is required.`, base)
 	const small = `{"query":"é"}`
 	withSmall := get(small)
 	// The exact limit includes UTF-8 bytes, field text, and all instructions.

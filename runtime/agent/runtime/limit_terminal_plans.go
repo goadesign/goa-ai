@@ -138,6 +138,7 @@ func (r *Runtime) finishLimitTerminalCall(
 		caps,
 		nextAttempt,
 		turnID,
+		nil,
 		reason,
 		hardDeadline,
 	)

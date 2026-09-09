@@ -97,8 +97,9 @@ func (d runDeadlines) shouldFinalize(now time.Time) bool {
 func (l *workflowLoop) run() (*RunOutput, error) {
 	ctx := l.wfCtx.Context()
 	for {
-		if recovery := modelOutputRecovery(l.st.PendingRecovery); recovery != nil {
-			out, err := l.resumePlanner(nil, false, recovery, nil)
+		pending, _ := toolRecovery(l.st.PendingRecovery)
+		if recovery := modelOutputRecovery(l.st.PendingCorrection); recovery != nil {
+			out, err := l.resumePlanner(pending, false, recovery, nil, true)
 			if err != nil {
 				return nil, err
 			}
@@ -107,8 +108,8 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 			}
 			continue
 		}
-		if recovery := modelInvocationRecovery(l.st.PendingRecovery); recovery != nil {
-			out, err := l.resumePlanner(nil, false, nil, recovery)
+		if recovery := modelInvocationRecovery(l.st.PendingCorrection); recovery != nil {
+			out, err := l.resumePlanner(pending, false, nil, recovery, true)
 			if err != nil {
 				return nil, err
 			}

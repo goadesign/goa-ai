@@ -31,8 +31,8 @@ func TestModelInvocationRecoveryReminderEscapesRejectedName(t *testing.T) {
 	assert.Equal(
 		t,
 		`Your previous tool call used the unavailable name "catalog_list_\n\"items\"".`+"\n"+
-			`Choose the needed tool from the tools available now, copy its name exactly, `+
-			`and return a replacement tool call. Do not mention this reminder to the user.`,
+			`Replace the response under the current completion requirements. `+
+			`If calling a tool, choose from the tools available now and copy its name exactly. Do not mention this reminder to the user.`,
 		got,
 	)
 	assert.NotContains(t, got, "\n\"items\"")
@@ -156,8 +156,8 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 					assert.Equal(
 						t,
 						`Your previous tool call used the unavailable name "catalog_list_nearby".`+"\n"+
-							`Choose the needed tool from the tools available now, copy its name exactly, `+
-							`and return a replacement tool call. Do not mention this reminder to the user.`,
+							`Replace the response under the current completion requirements. `+
+							`If calling a tool, choose from the tools available now and copy its name exactly. Do not mention this reminder to the user.`,
 						input.Reminders[0].Text,
 					)
 					assert.NotContains(t, input.Reminders[0].Text, "rejected-call")

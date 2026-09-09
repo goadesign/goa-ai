@@ -618,8 +618,11 @@ type PlanResumeInput struct {
 	// PlanResult requested SynthesizeAfterTools.
 	SynthesisOnly bool
 
-	// Finalize is non-nil when the runtime forbids further domain work and asks
-	// the planner for either a final response or terminal bookkeeping calls.
+	// Finalize forbids starting new operations. The planner may submit a final
+	// response or advertised terminal bookkeeping calls. With reason ToolFailure,
+	// advertised continuations may instead finish queries already started. Other
+	// reasons permit no pagination. The current catalog determines legal actions;
+	// final submission and pagination must never share a batch.
 	Finalize *Termination
 
 	// Reminders contains the active system reminders for this planner turn.

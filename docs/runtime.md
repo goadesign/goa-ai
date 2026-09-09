@@ -410,7 +410,16 @@ next planner activity starts from the last accepted conversation, receives the
 tools available for that new request, and gets a fixed reminder to choose one
 of those exact names. The runtime does not guess a replacement, apply aliases
 or fuzzy matching, copy the catalog into recovery state, or change the
-available tools.
+available tools. Correction feedback does not replace active failed-call IDs:
+  their restrictions remain in force on the replacement request. The replacement
+may use any action permitted by that request's completion contract, including
+a final answer when allowed.
+
+Input-correction text describes JSON/schema constraints and any validated
+example; it does not require another tool call. The runtime adds replacement
+instructions appropriate to the current actions and completion requirements.
+Direct model-client users still receive the same typed validation error and
+constraint details, and choose their own recovery behavior.
 
 For streams, validation can report the rejected name and valid token usage as
 soon as `Recv` detects the bad output. The runtime does not commit recovery at
@@ -1159,7 +1168,10 @@ Workflow step boundary:
   workers and cannot be rolled back to an older runtime,
 - `MaxRecoveryTurns` counts replacement planner activities scheduled after
   rejected tool output, a rejected model invocation, or a rejected completed
-  model response; successful budgeted tool work does not reset this count;
+  model response; successful domain work ends an ordinary recoverable episode,
+  but successful pagination cannot end an unresolved finish episode or reset
+  its count; fetching a successful page does not itself consume a replacement
+  attempt, and normal tool/time budgets still apply;
   agents that omit the setting receive three turns; the terminal finalization
   activity that explains or records exhaustion is not a replacement attempt
   and does not consume this budget,
@@ -1181,12 +1193,27 @@ Workflow step boundary:
   policy labels, planner output, and model output cannot replace this value,
 - ordinary tool calls do not receive the finalization-reason label; the runtime
   removes that reserved key if a run, policy, planner, or model supplies it,
+- a finish failure with still-live queries exposes their generated pagination
+  actions alongside registered terminal bookkeeping; the planner receives
+  `Finalize` with reason `tool_failure`, may finish immediately, and must never
+  combine pagination with terminal submission; successful pages and rejected
+  responses preserve the exact active failures and never reopen domain work;
+  deadline/cap finalization and terminal-tool payload repair allow no pagination,
 - recoverable failures supply one normal planner activity with their structured
   evidence and do not constrain this validated terminal bookkeeping path;
   caller-supplied `WithRestrictToTool` remains run-scoped and still applies,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
+
+Finish continuity does not change activity or suspension field shapes. Existing
+current-version checkpoints retain their failed outputs and recovery catalog.
+However, old workflow histories that reopened domain work after a finish failure
+are not execution-compatible: a recorded ordinary-tool plan cannot satisfy the
+retained finish restriction. Keep those histories with their owning worker
+version or complete them before replacing that worker. Do not infer replay
+compatibility from successful payload decoding, and do not mix old and new
+activity implementations for an affected workflow.
 
 Consumers of fixed-limit and planner-authored finalization calls, including
 `tool_failure`, read the termination reason from
@@ -1279,7 +1306,7 @@ These fields answer different questions:
 | `ToolSpec.Meta` | One tool for every run | Which inert generated annotations are available to their named consumers? Metadata alone changes no runtime behavior. |
 | `ToolSpec.Bookkeeping` | One tool for every run | Does this call consume the tool-call budget, and does its success independently schedule another planner turn? |
 | `ToolSpec.TerminalRun` | One tool for every run | Does successful execution itself complete the run? |
-| `ToolOutput.Failure.Recovery.Action` | One failed result | Must the planner correct this call, replan, or finish without tools? |
+| `ToolOutput.Failure.Recovery.Action` | One failed result | Must the planner correct this call, replan, or stop starting new operations? |
 | `PlanResult.SynthesizeAfterTools` | One selected batch | If the batch has no recoverable failure, must the next turn answer? |
 | `PlanResumeInput.SynthesisOnly` | One planner activity | Must this planner result be terminal and tool-free? |
 | `PlanResumeInput.Finalize` | Runtime-forced planner termination | Did an unconfigured cap or deadline, or one tool failure, require the planner to finish? |

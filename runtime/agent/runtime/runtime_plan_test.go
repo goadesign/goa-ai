@@ -877,7 +877,6 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 				},
 				RecoveryToolCallIDs: []string{"call-1"},
 			},
-			wantErr: "cannot combine with tool recovery",
 		},
 		{
 			name: "model output recovery with finalization evidence",

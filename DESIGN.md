@@ -445,7 +445,7 @@ The runtime keeps execution policy and planner intent separate:
 | A cap or deadline requires finalization without either completion policy | `PlanResumeInput.Finalize` |
 | A successful `TerminalRun` tool completed without `CompletionTool` | End the run without another planner turn |
 | A failed tool requires `finish` recovery and no successful query has another page | `PlanResumeInput.Finalize` with reason `tool_failure` |
-| A failed tool requires `finish` recovery while a successful query has another page | Recovery turn containing the failure evidence and only the generated continuation actions |
+| A failed tool requires `finish` recovery while a successful query has another page | `Finalize` with reason `tool_failure`, retaining failure evidence, generated continuation actions, and terminal bookkeeping |
 | Any failed tool has a `ToolFailure` whose recovery action permits tools | Runtime-enforced correction or replan turn |
 | A finalization response is correctable, or its terminal tool returns `correct_call` | Spend one recovery turn while retaining finalization and, for a tool failure, advertise only that exact terminal tool |
 | A successful batch has `SynthesizeAfterTools` set without `CompletionTool` | `PlanResumeInput.SynthesisOnly` |
@@ -498,14 +498,23 @@ tool is rejected as invalid planner output before any sibling call executes.
 Planner-owned tool-backed awaits remain strict because they encode suspension
 rather than a raw model request. `finish` forbids new domain work. It enters
 finalization unless a successful sibling query already has another page. In
-that case the recovery turn excludes every authored domain tool and retains only
-the generated continuation actions for those unfinished queries; the planner
-may continue them or answer from the evidence already collected. The finalizer
-may return a final response or registered terminal bookkeeping calls, such as
-committing a Task report. When the same tool has both correction and replan
+that case the recovery turn excludes every authored domain tool and retains
+the generated continuation actions for those unfinished queries together with
+registered terminal bookkeeping. `PlanResumeInput.Finalize` carries reason
+`tool_failure`; the planner may continue a query or submit the final result, but
+may not combine pagination and terminal submission in one batch. A successful
+page never reopens domain tools. With no remaining continuation, finalization
+permits only a final response or registered terminal bookkeeping. When the same tool has both correction and replan
 failures in one batch, the correctable failure keeps that tool available. A
 recovery turn may end with an input suspension; its evidence remains available
 when a new workflow continues after the answer.
+Active tool failures and model-replacement feedback are separate workflow
+facts. A rejected response preserves active failed-call IDs and their execution
+restrictions. Ordinary correction/replan restrictions end when the accepted
+recovery work executes; finish restrictions last until terminal completion.
+Successful pages during finish do not reset the recovery allowance and do not
+consume replacement attempts. Their normal tool/time budgets still apply;
+each rejection-driven replacement consumes the shared recovery allowance.
 A failed batch never enters `SynthesisOnly` and does not preserve its earlier
 `SynthesizeAfterTools` intent; a planner that retries work selects synthesis
 again on that new batch.

@@ -513,6 +513,27 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		require.Equal(t, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}, catalog)
 	})
 
+	t.Run("current checkpoint retains finish independently of model correction", func(t *testing.T) {
+		suspension := suspensionContractFixture(t, spec.Name)
+		rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+			checkpoint.State.PendingRecovery = []*planner.ToolOutput{
+				recoveryOutput(spec.Name, "call-1", planner.RecoveryFinish),
+			}
+			checkpoint.State.PendingRecoveryCatalog = &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}
+		})
+		require.NoError(t, runtime.ValidateContinuation(suspension))
+		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
+		require.NoError(t, err)
+		state, err := runtime.restoreCheckpointState(checkpoint.State)
+		require.NoError(t, err)
+		state.PendingCorrection = pendingModelInvocationRecovery{recovery: ModelInvocationRecovery{UnadvertisedToolName: "unavailable"}}
+		outputs, catalog := toolRecovery(state.PendingRecovery)
+		require.True(t, finishRecovery(outputs))
+		require.Equal(t, "call-1", outputs[0].ToolCallID)
+		require.Equal(t, checkpoint.State.PendingRecoveryCatalog, catalog)
+		require.NotNil(t, modelInvocationRecovery(state.PendingCorrection))
+	})
+
 	t.Run("invalid current version absent catalog", func(t *testing.T) {
 		suspension := newCorrectCallSuspension(
 			t,
