@@ -587,12 +587,55 @@ import (
 	"encoding/json"
 	"testing"
 
+	genmcpcalc "generated.local/gen/mcp_calc"
+	genmcpformatter "generated.local/gen/mcp_formatter"
+	genmcpselector "generated.local/gen/mcp_selector"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 	"goa.design/goa-ai/runtime/agent/tools"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
+
+func TestGeneratedMCPModelAndExecutionCodecsMatch(t *testing.T) {
+	for _, specs := range [][]tools.ToolSpec{
+		FmtFmtToolsetToolSpecs,
+		genmcpcalc.CalcCalcToolsetToolSpecs,
+		genmcpformatter.FormatterFormatterToolsetToolSpecs,
+		genmcpselector.SelectorSelectorToolsetToolSpecs,
+	} {
+		for _, spec := range specs {
+			t.Run(spec.Name.String(), func(t *testing.T) {
+				if _, err := model.NewToolDefinitionFromSpec(spec); err != nil {
+					t.Fatal(err)
+				}
+				if string(spec.ExecutionPayloadSchema) != string(spec.Payload.Schema) {
+					t.Fatal("MCP execution schema differs from model input")
+				}
+				for _, codec := range []tools.JSONCodec[any]{spec.Payload.Codec, spec.ExecutionPayloadCodec} {
+					if codec.FromJSON == nil || codec.ToJSON == nil {
+						t.Fatal("generated payload codec is incomplete")
+					}
+					value, err := codec.FromJSON(spec.Payload.ExampleJSON)
+					if err != nil {
+						t.Fatal(err)
+					}
+					encoded, err := codec.ToJSON(value)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err := codec.FromJSON(encoded); err != nil {
+						t.Fatal(err)
+					}
+					if _, err := codec.FromJSON([]byte("null")); err == nil {
+						t.Fatal("generated payload codec accepted null")
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestRegisteredStringToolDecodesEveryControlCharacter(t *testing.T) {
 	want := "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f" +

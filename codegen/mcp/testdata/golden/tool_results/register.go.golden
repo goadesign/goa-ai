@@ -1,148 +1,161 @@
 // ReportsCoreToolsetToolSpecs contains the tool specifications for the core toolset.
-var ReportsCoreToolsetToolSpecs = []tools.ToolSpec{
-	{
-		Name:        "summarize",
-		Description: "Summarize a report",
-		Payload: tools.TypeSpec{
-			Name:                     "*reports.SummarizePayload",
-			Schema:                   []byte("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"additionalProperties\":false}"),
-			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"additionalProperties\":false}"),
-			ExampleJSON:              []byte("{\"text\":\"report\"}"),
-			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) {
-					value, ok := v.(*reports.SummarizePayload)
-					if !ok {
-						return nil, errors.New("tool reports.core.summarize payload must be *reports.SummarizePayload")
-					}
-					return mcpcodec.EncodeSummarizePayload(value)
+var ReportsCoreToolsetToolSpecs = func() []tools.ToolSpec {
+	specs := []tools.ToolSpec{
+		{
+			Name:        "summarize",
+			Description: "Summarize a report",
+			Payload: tools.TypeSpec{
+				Name:                     "*reports.SummarizePayload",
+				Schema:                   []byte("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"additionalProperties\":false}"),
+				SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{\"text\":{\"type\":\"string\"}},\"required\":[\"text\"],\"additionalProperties\":false}"),
+				ExampleJSON:              []byte("{\"text\":\"report\"}"),
+				Codec: tools.JSONCodec[any]{
+					ToJSON: func(v any) ([]byte, error) {
+						value, ok := v.(*reports.SummarizePayload)
+						if !ok {
+							return nil, errors.New("tool reports.core.summarize payload must be *reports.SummarizePayload")
+						}
+						return mcpcodec.EncodeSummarizePayload(value)
+					},
+					FromJSON: func(data []byte) (any, error) {
+						return mcpcodec.DecodeSummarizePayload(data)
+					},
 				},
-				FromJSON: func(data []byte) (any, error) {
-					return mcpcodec.DecodeSummarizePayload(data)
+			},
+			Result: tools.TypeSpec{
+				Name:   "*reports.SummarizeResult",
+				Schema: []byte("{\"type\":\"object\",\"additionalProperties\":false}"),
+				Codec: tools.JSONCodec[any]{
+					ToJSON: func(v any) ([]byte, error) {
+						value, ok := v.(*reports.SummarizeResult)
+						if !ok {
+							return nil, errors.New("tool reports.core.summarize result must be *reports.SummarizeResult")
+						}
+						return mcpcodec.EncodeSummarizeResult(value)
+					},
+					FromJSON: func(data []byte) (any, error) {
+						return mcpcodec.DecodeSummarizeResult(data)
+					},
 				},
 			},
 		},
-		Result: tools.TypeSpec{
-			Name:   "*reports.SummarizeResult",
-			Schema: []byte("{\"type\":\"object\",\"additionalProperties\":false}"),
-			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) {
-					value, ok := v.(*reports.SummarizeResult)
-					if !ok {
-						return nil, errors.New("tool reports.core.summarize result must be *reports.SummarizeResult")
-					}
-					return mcpcodec.EncodeSummarizeResult(value)
+		{
+			Name:        "title",
+			Description: "Return a title",
+			Payload: tools.TypeSpec{
+				Name:                     "any",
+				Schema:                   []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+				SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+				ExampleJSON:              []byte("{}"),
+				Codec: tools.JSONCodec[any]{
+					ToJSON: func(v any) ([]byte, error) {
+						if v != nil {
+							return nil, errors.New("tool reports.core.title does not accept a payload")
+						}
+						return []byte("{}"), nil
+					},
+					FromJSON: func(data []byte) (any, error) {
+						if err := validateNoArguments(data); err != nil {
+							return nil, err
+						}
+						return nil, nil
+					},
 				},
-				FromJSON: func(data []byte) (any, error) {
-					return mcpcodec.DecodeSummarizeResult(data)
+			},
+			Result: tools.TypeSpec{
+				Name:   "string",
+				Schema: []byte("{\"type\":\"string\"}"),
+				Codec: tools.JSONCodec[any]{
+					ToJSON: func(v any) ([]byte, error) {
+						value, ok := v.(string)
+						if !ok {
+							return nil, errors.New("tool reports.core.title result must be string")
+						}
+						return mcpcodec.EncodeTitleResult(value)
+					},
+					FromJSON: func(data []byte) (any, error) {
+						return mcpcodec.DecodeTitleResult(data)
+					},
 				},
 			},
 		},
-	},
-	{
-		Name:        "title",
-		Description: "Return a title",
-		Payload: tools.TypeSpec{
-			Name:                     "any",
-			Schema:                   []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-			ExampleJSON:              []byte("{}"),
-			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) {
-					if v != nil {
-						return nil, errors.New("tool reports.core.title does not accept a payload")
-					}
-					return []byte("{}"), nil
+		{
+			Name:        "tags",
+			Description: "Return report tags",
+			Payload: tools.TypeSpec{
+				Name:                     "any",
+				Schema:                   []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+				SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+				ExampleJSON:              []byte("{}"),
+				Codec: tools.JSONCodec[any]{
+					ToJSON: func(v any) ([]byte, error) {
+						if v != nil {
+							return nil, errors.New("tool reports.core.tags does not accept a payload")
+						}
+						return []byte("{}"), nil
+					},
+					FromJSON: func(data []byte) (any, error) {
+						if err := validateNoArguments(data); err != nil {
+							return nil, err
+						}
+						return nil, nil
+					},
 				},
-				FromJSON: func(data []byte) (any, error) {
-					if err := validateNoArguments(data); err != nil {
-						return nil, err
-					}
-					return nil, nil
+			},
+			Result: tools.TypeSpec{
+				Name:   "[]string",
+				Schema: []byte("{\"type\":\"array\",\"items\":{\"type\":\"string\"}}"),
+				Codec: tools.JSONCodec[any]{
+					ToJSON: func(v any) ([]byte, error) {
+						value, ok := v.([]string)
+						if !ok {
+							return nil, errors.New("tool reports.core.tags result must be []string")
+						}
+						return mcpcodec.EncodeTagsResult(value)
+					},
+					FromJSON: func(data []byte) (any, error) {
+						return mcpcodec.DecodeTagsResult(data)
+					},
 				},
 			},
 		},
-		Result: tools.TypeSpec{
-			Name:   "string",
-			Schema: []byte("{\"type\":\"string\"}"),
-			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) {
-					value, ok := v.(string)
-					if !ok {
-						return nil, errors.New("tool reports.core.title result must be string")
-					}
-					return mcpcodec.EncodeTitleResult(value)
-				},
-				FromJSON: func(data []byte) (any, error) {
-					return mcpcodec.DecodeTitleResult(data)
-				},
-			},
-		},
-	},
-	{
-		Name:        "tags",
-		Description: "Return report tags",
-		Payload: tools.TypeSpec{
-			Name:                     "any",
-			Schema:                   []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-			ExampleJSON:              []byte("{}"),
-			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) {
-					if v != nil {
-						return nil, errors.New("tool reports.core.tags does not accept a payload")
-					}
-					return []byte("{}"), nil
-				},
-				FromJSON: func(data []byte) (any, error) {
-					if err := validateNoArguments(data); err != nil {
-						return nil, err
-					}
-					return nil, nil
+		{
+			Name:        "notify",
+			Description: "Send a notification",
+			Payload: tools.TypeSpec{
+				Name:                     "any",
+				Schema:                   []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+				SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+				ExampleJSON:              []byte("{}"),
+				Codec: tools.JSONCodec[any]{
+					ToJSON: func(v any) ([]byte, error) {
+						if v != nil {
+							return nil, errors.New("tool reports.core.notify does not accept a payload")
+						}
+						return []byte("{}"), nil
+					},
+					FromJSON: func(data []byte) (any, error) {
+						if err := validateNoArguments(data); err != nil {
+							return nil, err
+						}
+						return nil, nil
+					},
 				},
 			},
 		},
-		Result: tools.TypeSpec{
-			Name:   "[]string",
-			Schema: []byte("{\"type\":\"array\",\"items\":{\"type\":\"string\"}}"),
-			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) {
-					value, ok := v.([]string)
-					if !ok {
-						return nil, errors.New("tool reports.core.tags result must be []string")
-					}
-					return mcpcodec.EncodeTagsResult(value)
-				},
-				FromJSON: func(data []byte) (any, error) {
-					return mcpcodec.DecodeTagsResult(data)
-				},
-			},
-		},
-	},
-	{
-		Name:        "notify",
-		Description: "Send a notification",
-		Payload: tools.TypeSpec{
-			Name:                     "any",
-			Schema:                   []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-			SchemaWithoutRootExample: []byte("{\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-			ExampleJSON:              []byte("{}"),
-			Codec: tools.JSONCodec[any]{
-				ToJSON: func(v any) ([]byte, error) {
-					if v != nil {
-						return nil, errors.New("tool reports.core.notify does not accept a payload")
-					}
-					return []byte("{}"), nil
-				},
-				FromJSON: func(data []byte) (any, error) {
-					if err := validateNoArguments(data); err != nil {
-						return nil, err
-					}
-					return nil, nil
-				},
-			},
-		},
-	},
-}
+	}
+	// MCP forwards the model's arguments unchanged. Both contracts therefore
+	// use the same generated schema and codec.
+	specs[0].ExecutionPayloadSchema = specs[0].Payload.Schema
+	specs[0].ExecutionPayloadCodec = specs[0].Payload.Codec
+	specs[1].ExecutionPayloadSchema = specs[1].Payload.Schema
+	specs[1].ExecutionPayloadCodec = specs[1].Payload.Codec
+	specs[2].ExecutionPayloadSchema = specs[2].Payload.Schema
+	specs[2].ExecutionPayloadCodec = specs[2].Payload.Codec
+	specs[3].ExecutionPayloadSchema = specs[3].Payload.Schema
+	specs[3].ExecutionPayloadCodec = specs[3].Payload.Codec
+	return specs
+}()
 
 // ReportsCoreToolsetToolMetadata describes each tool in the core toolset.
 var ReportsCoreToolsetToolMetadata = []policy.ToolMetadata{
