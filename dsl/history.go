@@ -1,3 +1,6 @@
+// Package dsl records agent designs for generation. This file declares history
+// and cache policy defaults; the runtime owns history grouping and provider
+// cache behavior. These declarations validate and record configuration only.
 package dsl
 
 import (
@@ -11,6 +14,13 @@ import (
 //   - KeepRecentTurns(N) to retain only the last N turns without summarizing, or
 //   - CompressAt... plus KeepMax... to summarize older turns while preserving
 //     a bounded exact tail of whole recent turns.
+//
+// A turn keeps a complete contiguous assistant response with its following tool
+// results and reminders, including a result message that also contains text.
+// Separate reasoning, text, and parallel-call messages in one response are not
+// separate turns. A user request stays with its first response; later responses
+// after completed results start new turns even without another user request.
+// A pending ordinary user request is also a turn and remains intact.
 //
 // Compression separates the trigger budget from the exact-retention budget:
 // CompressAtMaxInputTokens and CompressAtTurns decide when summarization runs,
@@ -117,7 +127,8 @@ func AfterTools() {
 }
 
 // KeepRecentTurns configures a history policy that retains only the most recent
-// N user/assistant turns while preserving system prompts and tool exchanges.
+// N complete turns as defined by History, preserving system prompts and intact
+// response/result exchanges even within an autonomous run.
 //
 // KeepRecentTurns must appear inside a History expression.
 //
@@ -149,8 +160,8 @@ func KeepRecentTurns(n int) {
 // CompressAtTurns configures compression to run once at least n logical turns
 // have accumulated. It is optional when CompressAtMaxInputTokens is set.
 //
-// A logical turn starts with a user request and includes subsequent assistant
-// messages and tool_use/tool_result exchanges up to the next user request.
+// History defines complete turns: one assistant response and its results stay
+// together, while later completed exchanges after one user request are separate.
 //
 // CompressAtTurns must appear inside a History expression.
 //

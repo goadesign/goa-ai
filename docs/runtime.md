@@ -4079,6 +4079,35 @@ const (
 History policies prepare conversation messages when a planner first requests
 them, preserving system messages and whole turns.
 
+### Complete history turns
+
+`KeepRecentTurns`, `CompressAtTurns`, and `KeepMaxTurns` count complete response
+exchanges, not individual message objects. One turn keeps all adjacent assistant
+messages in a response together, including separate reasoning, text, and parallel
+tool calls. The following tool-result message belongs to that same turn, even
+when it also contains text. Subsequent result reminders stay with the exchange.
+The original messages, parts, order, and provider signatures are unchanged.
+
+A user request stays with its first response. A later assistant response after
+completed tool results starts a new turn, so a long autonomous run remains
+compressible even when it began with only one user request. A new ordinary user
+request starts a new turn; a pending request remains intact. Adjacent text-only
+assistant messages also stay together. Leading system messages are preserved
+separately from these turns.
+
+For example, seven calls delivered as seven adjacent assistant messages and one
+user message containing their seven results form one exchange, not seven turns.
+Retention and token-count candidates never begin partway through that exchange.
+The existing transcript validator still owns matching call IDs and result
+counts; history policies neither repair malformed messages nor relax validation.
+
+Counting complete exchanges may summarize later than counting message fragments,
+and the newest indivisible exchange may be larger. Configured thresholds and
+token ceilings are unchanged: an oversized newest exchange still fails explicitly.
+This correction changes no public API, generated code, stored transcript, or
+workflow command. Applications adopt it through their framework dependency;
+there is no data migration, and older binaries retain their previous behavior.
+
 ### Preparing conversation messages
 
 `PlanInput.PrepareMessages` and `PlanResumeInput.PrepareMessages` are mandatory,

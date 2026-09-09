@@ -17,7 +17,8 @@ type (
 	// must:
 	//   - Preserve the System Prompt (typically the first message(s) with
 	//     system role).
-	//   - Respect turn boundaries (User + Assistant pairs).
+	//   - Keep each complete assistant response with its tool results and any
+	//     user request that introduced the response.
 	//   - Maintain ToolUse/ToolResult integrity (never orphan a result without
 	//     its call).
 	//
@@ -80,8 +81,9 @@ type (
 		tokenCounter model.TokenCounter
 	}
 
-	// turn represents a logical conversation turn: a user message and its
-	// corresponding assistant response (including any tool exchanges).
+	// turn holds one complete assistant response, its tool results and reminders,
+	// and the user request that introduced it, when present. A later response
+	// after tool results starts another turn even without a new user request.
 	turn struct {
 		messages []*model.Message
 	}
@@ -191,15 +193,18 @@ func WithTokenCounter(counter model.TokenCounter) CompressOption {
 }
 
 // KeepRecentTurns returns a policy that keeps only the most recent N turns of
-// conversation history. A "turn" is defined as a User message followed by its
-// corresponding Assistant response (including any tool use/result exchanges).
+// conversation history. A turn contains a complete contiguous assistant response
+// and its following tool results and reminders. A user request stays with its
+// first response; later responses after tool results start separate turns.
 //
 // The policy always preserves:
 //   - All System messages at the start of the conversation
 //   - Complete turn boundaries (never splits a user query from its response)
 //   - Tool use/result integrity (keeps results with their corresponding calls)
 //
-// Example: KeepRecentTurns(5) keeps the last 5 user-assistant exchanges.
+// Example: KeepRecentTurns(5) keeps the last 5 complete response/result exchanges,
+// even when one user request started all of them. A pending user request counts
+// as a turn and remains intact.
 func KeepRecentTurns(n int) HistoryPolicy {
 	return func(_ context.Context, msgs []*model.Message, _ []*model.ToolDefinition) ([]*model.Message, error) {
 		if n <= 0 || len(msgs) == 0 {
@@ -554,13 +559,12 @@ func flattenTurns(turns []turn) []*model.Message {
 	return msgs
 }
 
-// parseTurns groups messages into logical turns. A turn starts with a User
-// message (query) and includes all subsequent messages (assistant responses
-// and tool result exchanges) until the next User query message.
-//
-// To preserve tool call/result integrity, User messages containing only
-// tool_result parts are treated as continuations of the current turn rather
-// than the start of a new turn.
+// parseTurns keeps each contiguous assistant response with its following tool
+// results and reminders. Providers may split one response into several messages
+// for reasoning, text, or parallel calls; none is an independent history turn.
+// A new user request or a later response after results starts the next turn.
+// This groups existing messages only: transcript validation owns call/result
+// matching, and no message, part, signature, or order is changed here.
 func parseTurns(msgs []*model.Message) []turn {
 	if len(msgs) == 0 {
 		return nil
@@ -570,21 +574,17 @@ func parseTurns(msgs []*model.Message) []turn {
 	var current turn
 
 	hasAssistant := false
+	var previousRole model.ConversationRole
 	for _, m := range msgs {
 		if m == nil {
 			continue
 		}
-		// A User message starts a new turn UNLESS it contains only tool results,
-		// in which case it is a continuation of the prior assistant turn.
-		isNewTurn := m.Role == model.ConversationRoleUser && !isToolResultOnly(m)
-		// An Assistant message also starts a new turn once the current turn
-		// already holds one: autonomous runs have a single user kickoff, so
-		// without plan-step boundaries the whole run would be one monolithic
-		// newest turn that compression must keep whole and can never shrink.
-		// The kickoff stays paired with its first response step; each later
-		// plan step (assistant message plus the tool results that answer it)
-		// is its own logical turn.
-		if m.Role == model.ConversationRoleAssistant && hasAssistant {
+		// A result message belongs to the response it answers, including when
+		// it also carries text. Only an ordinary user request starts a turn.
+		isNewTurn := m.Role == model.ConversationRoleUser && !hasToolResult(m)
+		// Keep adjacent assistant messages together, but allow many completed
+		// response/result exchanges after a single user kickoff to be bounded.
+		if m.Role == model.ConversationRoleAssistant && hasAssistant && previousRole != model.ConversationRoleAssistant {
 			isNewTurn = true
 		}
 		if isNewTurn {
@@ -592,6 +592,7 @@ func parseTurns(msgs []*model.Message) []turn {
 		} else if m.Role == model.ConversationRoleAssistant {
 			hasAssistant = true
 		}
+		previousRole = m.Role
 
 		if isNewTurn {
 			// Start of a new turn - save previous if non-empty
@@ -613,15 +614,13 @@ func parseTurns(msgs []*model.Message) []turn {
 	return turns
 }
 
-// isToolResultOnly reports whether a message contains only tool_result parts.
-func isToolResultOnly(m *model.Message) bool {
-	if m == nil || m.Role != model.ConversationRoleUser || len(m.Parts) == 0 {
-		return false
-	}
+// hasToolResult distinguishes a response's result message from a new user
+// request. The transcript contract permits text alongside tool results.
+func hasToolResult(m *model.Message) bool {
 	for _, p := range m.Parts {
-		if _, ok := p.(model.ToolResultPart); !ok {
-			return false
+		if _, ok := p.(model.ToolResultPart); ok {
+			return true
 		}
 	}
-	return true
+	return false
 }

@@ -1266,7 +1266,13 @@ for details and the SDK source-compatibility change.
   instead of selecting by call order or visible text.
 - **History compression**: Agent designs may declare compression defaults with
   `CompressAtTurns`, `CompressAtMaxInputTokens`, `KeepMaxTurns`, and
-  `KeepMaxInputTokens`. Each planner activity supplies `PrepareMessages` instead
+  `KeepMaxInputTokens`. The shared history grouping keeps a complete contiguous
+  assistant response with its tool results and reminders, including results
+  accompanied by text. Later completed exchanges after one user kickoff remain
+  separate turns; individual reasoning or parallel-call messages do not.
+  `KeepRecentTurns` uses the same grouping. No messages, parts, order, signatures,
+  or validation rules are changed. See [complete history turns](docs/runtime.md#complete-history-turns).
+  Each planner activity supplies `PrepareMessages` instead
   of eagerly prepared `Messages`. First access applies the history policy;
   later accesses return the same prepared slice and error for that activity.
   Planners must resolve messages before inspecting or transforming history.
