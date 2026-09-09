@@ -1,5 +1,7 @@
 // Package model derives replacement guidance from the advertised tool input
-// contract. Guidance may repeat advertised schema text and validated examples,
+// contract. Guidance describes constraints, not the next workflow action; the
+// runtime owns whether a replacement may call tools or finish. Guidance may
+// repeat advertised schema text and validated examples,
 // but never submitted values, dynamic map keys, array indexes, undeclared
 // fields, or call IDs.
 package model
@@ -22,8 +24,8 @@ import (
 )
 
 const (
-	advertisedToolInputCorrection    = "The previous tool call did not match its advertised input schema. Return a replacement tool call with valid arguments."
-	malformedToolArgumentsCorrection = "The previous tool call arguments were not valid JSON. Return a replacement tool call whose arguments are one JSON object matching the advertised input schema."
+	advertisedToolInputCorrection    = "The previous tool call did not match its advertised input schema."
+	malformedToolArgumentsCorrection = "The previous tool call arguments were not valid JSON. Tool arguments must be one JSON object matching the advertised input schema."
 )
 
 type (
@@ -342,7 +344,6 @@ func unionBranchesMatch(match fieldPathMatch, input any) bool {
 // Oversized instructions are omitted whole, with an explicit notice; descriptions
 // and enum values are never cut into partial text or JSON.
 func formatToolCorrections(candidates []toolCorrectionCandidate) string {
-	const replacement = " Return a replacement tool call with valid arguments."
 	const omission = " Other schema errors are not detailed here."
 	byPath := make(map[string]string)
 	ambiguous := make(map[string]bool)
@@ -374,13 +375,13 @@ func formatToolCorrections(candidates []toolCorrectionCandidate) string {
 	for _, path := range paths {
 		blocks = append(blocks, byPath[path])
 	}
-	suffix := replacement
+	var suffix string
 	if omitted {
-		suffix = omission + suffix
+		suffix = omission
 	}
 	text := strings.Join(blocks, "\n")
 	if len(text)+len(suffix) > correction.MaxBytes {
-		suffix = omission + replacement
+		suffix = omission
 		kept := blocks[:0]
 		size := len(suffix)
 		for _, block := range blocks {

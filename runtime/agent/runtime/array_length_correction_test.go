@@ -29,7 +29,7 @@ func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedCall(t *
 	}
 	const invalid = `{"items":[1,2,3]}`
 	const accepted = `{"items":[1,2]}`
-	const guidance = `Field "items" must contain at most 2 items. Return a replacement tool call with valid arguments.`
+	const guidance = `Field "items" must contain at most 2 items.`
 	var providerCalls, executions, resumes int
 	h := newRecoveryHarness(t, "array-correction", []tools.ToolSpec{kickoff, batch},
 		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {

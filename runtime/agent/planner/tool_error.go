@@ -87,8 +87,9 @@ const (
 	// The planner may choose another advertised capability, await input, or
 	// finish from the evidence already collected.
 	RecoveryReplan RecoveryAction = "replan"
-	// RecoveryFinish forbids further domain tool execution and requires the run
-	// to finalize from evidence already collected.
+	// RecoveryFinish forbids starting new operations and requires the run to
+	// end using available evidence. Advertised continuations may first finish
+	// queries already started; final submission uses the current terminal contract.
 	RecoveryFinish RecoveryAction = "finish"
 )
 
