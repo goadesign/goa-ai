@@ -3640,6 +3640,45 @@ Failures are structured:
   - `error`: **user-safe** message suitable for direct display
   - `debug_error`: diagnostic error text; the application decides who may see it
 
+### Local model-request rejections
+
+Use `model.NewRequestValidationError(cause)` when application-side validation
+rejects a model request before a provider accepts it. For example, a remote
+model adapter can restore this type from its service's explicit request
+validation error. The required cause remains available through `Unwrap()` and
+its complete diagnostic is returned by `Error()`. The type does not carry a
+provider name, HTTP status, retry setting, or recovery instruction.
+
+This is an explicit classification, not a rule for all errors before model
+output. Do not wrap network, observer, cancellation, or provider failures in
+this type. Existing validators and adapters retain their current behavior
+unless their owner deliberately identifies a local request rejection. Genuine
+provider rejections continue to use `model.ProviderError`; invalid model or
+planner output keeps its separate output-validation contract.
+
+The runtime records kind `model_request` with `Retryable: false` and no provider,
+operation, provider code, or HTTP status. The default summary is “The AI request
+could not be prepared.” Applications can override `hooks.PublicErrorModelRequest`
+at process startup like the other public error messages. `DebugMessage` retains
+the complete diagnostic. Neither tool execution nor a nested agent converts the
+error into a model correction or a retry. If an earlier model call in that
+planner activity already published text, the workflow preserves that text before
+returning the same terminal classification.
+
+Temporal stores this error as `goa_ai.request_validation_error`, with
+`NonRetryable: true` and complete valid diagnostic text in the existing message.
+It carries neither details nor a cause object. Readers reject a saved instance
+that is retryable, has details or a cause, or has invalid UTF-8. Normal diagnostic
+encoding and external failure-size limits still apply; no new text limit is
+introduced. Existing saved provider, output, generic, and cancellation failures
+are not reinterpreted.
+
+Upgrade workers before an adapter starts producing this new type. Older workers
+do not recognize its saved classification and must not process histories that
+contain it, including during rollback. There is no database migration, generated
+API change, or compatibility mode; route affected histories only to upgraded
+workers. Upgrading does not relabel earlier saved failures.
+
 ### Diagnostic ownership and transport
 
 Applications decide what their instrumentation stores and exposes. The runtime
@@ -3677,7 +3716,8 @@ order, token accounting, and recovery budgets are unchanged. After assistant
 text has been published, the failure's internal `DebugMessage` also retains
 complete valid text. Customer-facing `Message` summaries do not change.
 
-New Temporal failures use the application types `goa_ai.provider_error.v3`,
+New provider, generic, output-contract, and invalid-reserved Temporal failures
+use the application types `goa_ai.provider_error.v3`,
 `goa_ai.generic_error.v3`, `goa_ai.output_contract_error.v3`, and
 `goa_ai.invalid_reserved_error.v3`. This uniform type version selects the
 concrete saved details before decoding; no redundant details version is needed.

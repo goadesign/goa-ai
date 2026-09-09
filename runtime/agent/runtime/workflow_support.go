@@ -833,7 +833,14 @@ func (r *Runtime) runPlanActivity(
 		return out, nil
 	}
 	if out.PlanningFailure != nil {
-		return out, &planningFailureError{failure: *out.PlanningFailure}
+		failure := &planningFailureError{failure: *out.PlanningFailure}
+		if out.PlanningFailure.Kind == hooks.ErrorKindModelRequest {
+			// The activity already published text and returned a classified
+			// failure value. Restore its terminal request-error type so child
+			// workflows keep that classification when they return through Temporal.
+			return out, model.NewRequestValidationError(failure)
+		}
+		return out, failure
 	}
 	r.logger.Info(wfCtx.Context(),
 		"runPlanActivity received PlanResult",
@@ -863,6 +870,10 @@ func (e *planningFailureError) Error() string {
 func validatePlanningFailure(failure *run.Failure) error {
 	if failure == nil || failure.Message == "" || failure.DebugMessage == "" || failure.Kind == "" || failure.HTTPStatus < 0 {
 		return errors.New("runPlanActivity received invalid PlanningFailure")
+	}
+	if failure.Kind == hooks.ErrorKindModelRequest &&
+		(failure.Retryable || failure.Provider != "" || failure.Operation != "" || failure.Code != "" || failure.HTTPStatus != 0) {
+		return errors.New("model request failure must be nonretryable without provider facts")
 	}
 	return nil
 }

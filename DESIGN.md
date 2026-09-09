@@ -385,6 +385,17 @@ that accepts that exact response. An output-limited response with tool calls is
 rejected before any call can execute because the provider may not have finished
 the complete call batch.
 Ordinary output contract errors are terminal and Temporal does not retry them.
+Local model-request rejection is a separate input failure:
+`model.RequestValidationError` retains its required cause and does not claim
+that a provider was called or produced invalid output. Adapters create it only
+for known application-side request validation. It remains non-retryable across
+tool activities, nested agents, and planner failures returned after visible
+text. The runtime preserves that text before ending the run and never turns the
+rejection into model correction guidance. The run failure has kind
+`model_request`, no provider facts, a host-customizable summary, and the full
+diagnostic. See [the saved error and worker upgrade
+contract](docs/runtime.md#local-model-request-rejections).
+
 Diagnostics are separate from that execution decision. Planner activities offer
 the original error to the application tracer and retain the exact selected
 reason in v2 rejection metadata when it is valid UTF-8, without a per-reason

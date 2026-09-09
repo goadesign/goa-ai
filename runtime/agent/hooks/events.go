@@ -544,6 +544,10 @@ const (
 	// ErrorKindTimeout indicates the run failed because a required operation timed out.
 	ErrorKindTimeout = "timeout"
 
+	// ErrorKindModelRequest indicates that application-side validation rejected
+	// a model request before the provider accepted it.
+	ErrorKindModelRequest = "model_request"
+
 	// ErrorKindModelOutput indicates that completed model output did not follow
 	// the required rules.
 	ErrorKindModelOutput = "model_output"
@@ -710,12 +714,20 @@ func RunFailureFromError(err error) *run.Failure {
 			Retryable:    pe.Retryable(),
 		}
 	}
+	if temporalerrors.IsRequestValidation(err) {
+		return &run.Failure{
+			Message:      PublicErrorModelRequest,
+			DebugMessage: err.Error(),
+			Kind:         ErrorKindModelRequest,
+			Retryable:    false,
+		}
+	}
 	kind, message := classifyNonProviderFailure(err)
 	return &run.Failure{
 		Message:      message,
 		DebugMessage: err.Error(),
 		Kind:         kind,
-		Retryable:    true, // Non-provider failures are always retryable.
+		Retryable:    true, // Unclassified failures retain their existing retry policy.
 	}
 }
 
