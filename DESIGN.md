@@ -300,7 +300,16 @@ the full claim in that property's description. Code looks up results by name and
 returns them in input order; response position never establishes association.
 The schema owns shape and coverage, and the judge codec rejects duplicate raw
 JSON member names before decoding can overwrite a decision. Semantic truth remains
-model-owned. The public judge API and report shape do not change; see the
+model-owned. Hooks supply shared factual context through `Result.Reference`;
+the runner passes it to `Judge(ctx, output, claims, reference)` and retains it in
+the report. Each model request includes the reference once, separate from the
+unchanged candidate. Reference facts cannot fill omissions in that candidate.
+An empty reference is legitimate, and an empty candidate still skips grading.
+The judge attaches structural field metadata to the same tool schema so the
+existing model validator can name an invalid object or field in correction
+guidance. Semantic claim text stays in the schema, not in that metadata;
+correction never supplies a verdict or changes the accepted judgments.
+See the
 [judge contract](docs/evals.md#how-judging-works) for validation and limits.
 
 See [docs/evals.md](docs/evals.md) for the DSL, generated API, runner methods,
@@ -1649,11 +1658,15 @@ tool-input validation errors qualify for limited-size correction guidance that
 omits rejected arguments. Code generation records field types through nested
 objects, collections, and union branches. Callers that build `ToolSpec` values
 directly may supply the same field metadata. The model client uses that metadata
-to name one field and its required, type, enum, or array-length rule when the
-structured schema failure has one unique deepest cause. For unions, only the branch named
-by a valid string discriminator participates. Array indexes and map keys appear
-as `*`. Ambiguous failures and specifications without field metadata keep
-generic guidance. The complete contract lives in
+to explain independently identified required, type, enum, or array-length
+violations. Sound instructions survive unrelated ambiguous failures. For unions,
+only the branch named by a valid string discriminator participates. Array indexes
+and map keys appear as `*`; distinct instructions for the same displayed path
+are omitted. With no sound field instruction, guidance remains generic.
+A request-owned copy of the validated input example
+can accompany that guidance, intact within the existing correction size limit.
+It illustrates argument structure without choosing the request's values or
+restricting valid tool or union choices. The complete contract lives in
 [Model-Visible Tool Arguments](docs/runtime.md#model-visible-tool-arguments).
 
 Fields marked with `Inject` are absent from the model-visible input and filled

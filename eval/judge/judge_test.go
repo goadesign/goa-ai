@@ -64,7 +64,7 @@ func TestJudgeUsesForcedToolAndRestoresClaimIDs(t *testing.T) {
 		{ID: "temperatures", Text: "All temperatures are normal."},
 	}
 
-	judgments, err := newTestJudge(t, client).Judge(context.Background(), "Every alarm is listed.", claims)
+	judgments, err := newTestJudge(t, client).Judge(context.Background(), "Every alarm is listed.", claims, "")
 
 	require.NoError(t, err)
 	assert.Equal(t, []aieval.Judgment{
@@ -116,6 +116,7 @@ func TestJudgeUsesRuntimeCorrectionForMalformedToolArguments(t *testing.T) {
 		context.Background(),
 		"Done.",
 		[]aieval.Claim{{ID: "complete", Text: "The work is complete."}},
+		"",
 	)
 
 	require.NoError(t, err)
@@ -127,7 +128,8 @@ func TestJudgeUsesRuntimeCorrectionForMalformedToolArguments(t *testing.T) {
 	}
 	assert.Nil(t, client.requests[1].StructuredOutput)
 	assert.Contains(t, systemText(client.requests[1]), "system-reminder")
-	assert.Contains(t, systemText(client.requests[1]), "judgments")
+	assert.Contains(t, systemText(client.requests[1]), `Field "$payload" contains an undeclared field.`)
+	assert.Contains(t, systemText(client.requests[1]), `Field "complete" is required.`)
 }
 
 func TestJudgeStopsAfterRuntimeCorrectionLimit(t *testing.T) {
@@ -142,6 +144,7 @@ func TestJudgeStopsAfterRuntimeCorrectionLimit(t *testing.T) {
 		context.Background(),
 		"Done.",
 		[]aieval.Claim{{ID: "complete", Text: "The work is complete."}},
+		"",
 	)
 
 	assert.Nil(t, judgments)
@@ -188,7 +191,7 @@ func TestJudgeReturnsValidContradictionWithoutError(t *testing.T) {
 	client := &recordingClient{responses: []*model.Response{
 		toolResponse(`{"running":{"label":"contradicted","rationale":"The output says the opposite."}}`),
 	}}
-	judgments, err := newTestJudge(t, client).Judge(t.Context(), "The pump is stopped.", []aieval.Claim{{ID: "running", Text: "The pump is running."}})
+	judgments, err := newTestJudge(t, client).Judge(t.Context(), "The pump is stopped.", []aieval.Claim{{ID: "running", Text: "The pump is running."}}, "")
 	require.NoError(t, err)
 	require.Len(t, judgments, 1)
 	assert.Equal(t, aieval.Contradicted, judgments[0].Label)
@@ -202,6 +205,7 @@ func TestJudgeRejectsInvalidClaimsBeforeInference(t *testing.T) {
 		context.Background(),
 		"Done.",
 		[]aieval.Claim{{ID: "duplicate", Text: "One."}, {ID: "duplicate", Text: "Two."}},
+		"",
 	)
 
 	require.ErrorContains(t, err, `duplicate claim "duplicate"`)
@@ -216,6 +220,7 @@ func TestJudgeDoesNotRetryProviderErrors(t *testing.T) {
 		context.Background(),
 		"Done.",
 		[]aieval.Claim{{ID: "complete", Text: "Complete."}},
+		"",
 	)
 
 	require.ErrorIs(t, err, want)
@@ -230,6 +235,7 @@ func TestWithModelClassOverridesRequestClass(t *testing.T) {
 		context.Background(),
 		"Output.",
 		[]aieval.Claim{{ID: "claim", Text: "Claim."}},
+		"",
 	)
 
 	require.ErrorContains(t, err, "stop")

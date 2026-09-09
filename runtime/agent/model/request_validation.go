@@ -606,6 +606,7 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 		}
 		validate := definition.Input.validate
 		fields := tools.CloneFieldMetadata(definition.Input.fields)
+		example := append(rawjson.Message(nil), definition.Input.exampleJSON...)
 		if validate == nil {
 			return nil, fmt.Errorf("model request tool %q has no payload validator", name)
 		}
@@ -628,7 +629,7 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 				}
 				return &toolCallValidationError{
 					toolName:   call.Name,
-					correction: toolInputCorrection(err, call.Payload, fields),
+					correction: toolInputCorrection(err, call.Payload, fields, example),
 					cause:      err,
 				}
 			}

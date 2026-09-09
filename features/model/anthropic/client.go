@@ -344,7 +344,12 @@ func completeFromAnthropicStream(stream model.Streamer) (*model.Response, error)
 			return response, nil
 		}
 		if recvErr != nil {
-			return nil, errors.Join(recvErr, stream.Close())
+			if closeErr := stream.Close(); closeErr != nil {
+				return nil, errors.Join(recvErr, closeErr)
+			}
+			// Successful cleanup must not wrap the receive error: callers need
+			// its original type to distinguish rejected output from other failures.
+			return nil, recvErr
 		}
 	}
 }

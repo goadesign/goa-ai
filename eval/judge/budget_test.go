@@ -78,7 +78,7 @@ func TestJudgeConcurrentBatchesKeepOneResponseBudget(t *testing.T) {
 			for index := range claims {
 				claims[index] = aieval.Claim{ID: fmt.Sprintf("batch-%d-claim-%d", count, index), Text: fmt.Sprintf("Full evidence %d/%d\n☃", count, index)}
 			}
-			judgments, err := judge.Judge(t.Context(), "Full candidate\n<quoted> ☃", claims)
+			judgments, err := judge.Judge(t.Context(), "Full candidate\n<quoted> ☃", claims, "")
 			if err != nil {
 				t.Errorf("judge batch of %d claims: %v", count, err)
 				return
@@ -113,7 +113,7 @@ func TestJudgePreservesProviderCeiling(t *testing.T) {
 			require.NoError(t, err)
 			judge, err := New(client, budget)
 			require.NoError(t, err)
-			judgments, err := judge.Judge(t.Context(), "Supported.", []aieval.Claim{{ID: "claim", Text: "Supported."}})
+			judgments, err := judge.Judge(t.Context(), "Supported.", []aieval.Claim{{ID: "claim", Text: "Supported."}}, "")
 			if budget > ceiling {
 				require.ErrorIs(t, err, limitError)
 				assert.Nil(t, judgments)
@@ -140,7 +140,7 @@ func TestJudgeAcceptsShortAndLargeAccountedResponses(t *testing.T) {
 			require.NoError(t, err)
 			judge, err := New(client, budget)
 			require.NoError(t, err)
-			judgments, err := judge.Judge(t.Context(), "Evidence.", []aieval.Claim{{ID: "evidence", Text: "Evidence."}})
+			judgments, err := judge.Judge(t.Context(), "Evidence.", []aieval.Claim{{ID: "evidence", Text: "Evidence."}}, "")
 			require.NoError(t, err)
 			require.Len(t, judgments, 1)
 			assert.Equal(t, strings.Repeat("Evidence. ", outputTokens), judgments[0].Rationale)
@@ -162,7 +162,7 @@ func TestJudgeLimitedCorrectionsKeepBudgetAndDiagnostics(t *testing.T) {
 	require.NoError(t, err)
 	judge, err := New(client, budget)
 	require.NoError(t, err)
-	judgments, err := judge.Judge(t.Context(), "Candidate.", []aieval.Claim{{ID: "claim", Text: "Evidence."}})
+	judgments, err := judge.Judge(t.Context(), "Candidate.", []aieval.Claim{{ID: "claim", Text: "Evidence."}}, "")
 	require.Error(t, err)
 	assert.Nil(t, judgments)
 	assert.Contains(t, err.Error(), "recovery_cap")
@@ -194,7 +194,7 @@ func TestJudgeCancellationPreservesCause(t *testing.T) {
 		cancel()
 		return nil, ctx.Err()
 	})
-	judgments, err := newTestJudge(t, provider).Judge(ctx, "Candidate.", []aieval.Claim{{ID: "claim", Text: "Evidence."}})
+	judgments, err := newTestJudge(t, provider).Judge(ctx, "Candidate.", []aieval.Claim{{ID: "claim", Text: "Evidence."}}, "")
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, judgments)
 	assert.Equal(t, 1, calls)

@@ -18,7 +18,7 @@ type hooks struct{}
 
 type judge struct{}
 
-func (judge) Judge(_ context.Context, output string, claims []aieval.Claim) ([]aieval.Judgment, error) {
+func (judge) Judge(_ context.Context, output string, claims []aieval.Claim, _ string) ([]aieval.Judgment, error) {
 	judgments := make([]aieval.Judgment, len(claims))
 	for index, claim := range claims {
 		var label aieval.Label

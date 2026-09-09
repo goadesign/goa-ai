@@ -33,18 +33,24 @@ type (
 	// judgmentHTTPTransport records actual SDK HTTP requests and returns one
 	// synthetic provider response for each request, including correction calls.
 	judgmentHTTPTransport struct {
-		t            *testing.T
-		arguments    string
-		stopReason   string
-		outputTokens int
-		requests     []judgmentHTTPRequest
+		t                  *testing.T
+		arguments          string
+		argumentsByRequest []string
+		stopReason         string
+		outputTokens       int
+		requests           []judgmentHTTPRequest
 	}
 
 	judgmentHTTPRequest struct {
 		path string
+		raw  []byte
 		body struct {
-			MaxTokens  int             `json:"max_tokens"`
-			Thinking   json.RawMessage `json:"thinking"`
+			MaxTokens int             `json:"max_tokens"`
+			Thinking  json.RawMessage `json:"thinking"`
+			System    []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"system"`
 			ToolChoice struct {
 				Type string `json:"type"`
 				Name string `json:"name"`
@@ -91,7 +97,7 @@ func TestJudgeAnthropicHTTPOutputAllowance(t *testing.T) {
 			candidate := strings.Repeat("Synthetic reading: 12.5 °C; source <sample>\n", 300)
 			claim := "The report preserves every reading. Reference evidence:\n" + strings.Repeat("Reading α: 12.5 °C\n", 500)
 
-			judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}})
+			judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}}, "")
 
 			require.NoError(t, err)
 			assert.Equal(t, []aieval.Judgment{{ClaimID: "complete", Label: aieval.Entailed, Rationale: "All supplied measurements appear exactly."}}, judgments)
@@ -129,7 +135,7 @@ func TestJudgeAnthropicHTTPRejectsIncompleteJudgments(t *testing.T) {
 			require.NoError(t, err)
 			candidate, claim := "Reading: 12.5 °C.", "The report includes the reading."
 
-			judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}})
+			judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}}, "")
 
 			require.Error(t, err)
 			assert.Nil(t, judgments)
@@ -168,7 +174,7 @@ func TestJudgeAnthropicHTTPRejectsPartialJSONWithoutRepair(t *testing.T) {
 	require.NoError(t, err)
 	candidate, claim := "Reading: 12.5 °C.", "The report includes the reading."
 
-	judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}})
+	judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}}, "")
 
 	require.Error(t, err)
 	assert.Nil(t, judgments)
@@ -200,9 +206,16 @@ func (r *judgmentHTTPTransport) RoundTrip(request *http.Request) (*http.Response
 	if err != nil {
 		return nil, err
 	}
-	observed := judgmentHTTPRequest{path: request.URL.Path}
+	observed := judgmentHTTPRequest{path: request.URL.Path, raw: data}
 	if err := json.Unmarshal(data, &observed.body); err != nil {
 		return nil, err
+	}
+	arguments := r.arguments
+	if len(r.argumentsByRequest) > 0 {
+		if len(r.requests) >= len(r.argumentsByRequest) {
+			return nil, fmt.Errorf("unexpected judgment request %d", len(r.requests)+1)
+		}
+		arguments = r.argumentsByRequest[len(r.requests)]
 	}
 	r.requests = append(r.requests, observed)
 	name := observed.body.ToolChoice.Name
@@ -210,9 +223,9 @@ func (r *judgmentHTTPTransport) RoundTrip(request *http.Request) (*http.Response
 	var body []byte
 	if strings.HasSuffix(request.URL.Path, "/invoke-with-response-stream") {
 		contentType = "application/vnd.amazon.eventstream"
-		body = judgmentEventStream(r.t, name, r.arguments, r.stopReason, r.outputTokens)
+		body = judgmentEventStream(r.t, name, arguments, r.stopReason, r.outputTokens)
 	} else {
-		body = []byte(fmt.Sprintf(`{"id":"msg_test","type":"message","role":"assistant","model":%q,"content":[{"type":"tool_use","id":"call_test","name":%q,"input":%s}],"stop_reason":%q,"usage":{"input_tokens":123,"output_tokens":%d}}`, judgmentTransportModel, name, r.arguments, r.stopReason, r.outputTokens))
+		body = []byte(fmt.Sprintf(`{"id":"msg_test","type":"message","role":"assistant","model":%q,"content":[{"type":"tool_use","id":"call_test","name":%q,"input":%s}],"stop_reason":%q,"usage":{"input_tokens":123,"output_tokens":%d}}`, judgmentTransportModel, name, arguments, r.stopReason, r.outputTokens))
 	}
 	return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{contentType}}, Body: io.NopCloser(bytes.NewReader(body)), Request: request}, nil
 }
@@ -243,6 +256,13 @@ func newJudgmentHTTPClient(t *testing.T, transport *judgmentHTTPTransport) (mode
 // in its named schema property, not in a separate positional input list.
 func assertJudgmentHTTPRequest(t *testing.T, request judgmentHTTPRequest, cap int, method, candidate, claim string) {
 	t.Helper()
+	const prompt = `Classify each claim independently against the supplied output.
+Use the reference, when supplied, as factual context only. Do not credit the output with information that appears only in the reference.
+Return entailed when the output establishes the claim, contradicted when it establishes the claim is false, not_addressed when it does neither, and indeterminate only when ambiguity prevents classification.
+Call the supplied grading tool exactly once. Each required property describes one claim; supply its label and a concise rationale in that property.`
+	require.NotEmpty(t, request.body.System)
+	assert.Equal(t, "text", request.body.System[0].Type)
+	assert.Equal(t, prompt, request.body.System[0].Text)
 	assert.Equal(t, "/model/"+judgmentTransportModel+"/"+method, request.path)
 	assert.Equal(t, cap, request.body.MaxTokens)
 	assert.Empty(t, request.body.Thinking, "forced tool requests must not enable thinking")
