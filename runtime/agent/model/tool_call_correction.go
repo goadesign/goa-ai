@@ -1,6 +1,7 @@
 // Package model derives replacement guidance from the advertised tool input
-// contract. Guidance may repeat advertised schema text, but never submitted
-// values, dynamic map keys, array indexes, undeclared fields, or call IDs.
+// contract. Guidance may repeat advertised schema text and validated examples,
+// but never submitted values, dynamic map keys, array indexes, undeclared
+// fields, or call IDs.
 package model
 
 import (
@@ -43,10 +44,23 @@ type (
 	}
 )
 
-// toolInputCorrection returns one specific advertised-field instruction when
+// toolInputCorrection makes one rejection self-contained using the example
+// already validated when this tool input was constructed. The example teaches
+// argument structure, not the values or union branch the caller must choose.
+// Advisory examples that do not fit are omitted whole; validation is unchanged.
+func toolInputCorrection(err error, payload rawjson.Message, fields []tools.FieldMetadata, example rawjson.Message) string {
+	text := toolFieldCorrection(err, payload, fields)
+	const instruction = "\nExample illustrates structure; use values and a valid variant appropriate to the request:\n"
+	if len(example) == 0 || len(text)+len(instruction)+len(example) > correction.MaxBytes {
+		return text
+	}
+	return text + instruction + string(example)
+}
+
+// toolFieldCorrection returns one specific advertised-field instruction when
 // the schema identifies it without ambiguity. Other failures keep the generic
 // replacement instruction.
-func toolInputCorrection(err error, payload rawjson.Message, fields []tools.FieldMetadata) string {
+func toolFieldCorrection(err error, payload rawjson.Message, fields []tools.FieldMetadata) string {
 	if len(fields) == 0 {
 		return advertisedToolInputCorrection
 	}

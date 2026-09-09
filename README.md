@@ -430,7 +430,9 @@ var Docs = Toolset("docs", func() {
   schema rejections and typed tool-input validation errors get limited-size
   correction guidance that omits rejected arguments. Schema rejections for
   specifications with field metadata name one advertised field and its stable
-  rule when the validator identifies it without ambiguity; ordinary decoder
+  rule when the validator identifies it without ambiguity. When it fits, the
+  correction also includes the complete validated input example, with guidance
+  to use values and a valid variant appropriate to the request. Ordinary decoder
   and internal errors stop the run. Local callers can inspect the original
   validator error and an isolated copy of a rejected response that passed the
   existing copying limits; correction guidance does not remove that evidence.

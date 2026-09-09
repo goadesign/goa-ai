@@ -1537,6 +1537,23 @@ that one array, such as `Field "items" must contain at most 3 items.` Generated
 metadata must identify the field as an array. Guidance does not split, truncate,
 or rewrite submitted arguments; the original validation error remains available.
 
+For each eligible rejection, the model client appends the tool's complete,
+validated input example after the existing field guidance, with an instruction
+to use values and a valid variant appropriate to the request. The example is
+copied from the same tool input as the validator before the model call starts;
+later request mutation cannot replace it. Each correction can therefore show
+the complete argument structure even when successive attempts fail at different
+fields. The example does not restrict the next tool choice or require its
+sample values or union branch.
+
+The full correction, including that instruction and example, must fit the
+existing 4,096-byte limit for one rejected model invocation. The runtime appends
+an example only when the entire text fits, including UTF-8 bytes. An absent or
+oversized example leaves the existing field guidance unchanged; JSON is never
+truncated. This limit bounds optional correction context, not tool argument
+size or validity. Validation, rejected-response diagnostics, accepted history,
+and the configured number of recovery turns remain unchanged.
+
 Array indexes and caller-chosen map keys appear as `*`. An undeclared field is
 reported only against its advertised parent object; the submitted field name is
 omitted. Correction text may repeat descriptions and enum values from the
