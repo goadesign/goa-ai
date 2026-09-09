@@ -968,6 +968,15 @@ or saved tool payloads from `Payload.Codec` to `ExecutionPayloadCodec`. Model
 validation continues to use `Payload.Codec`. This changes the in-process Go
 contract, not registry messages, model schemas, or saved payload formats.
 
+For tools with a dedicated continuation, the generated named initial payload
+codec now enforces the already-declared execution contract: the initial request
+does not accept a cursor. Decode later-page requests with the actual
+continuation tool's execution codec; do not relabel them as initial requests.
+Previously accepted initial requests containing a cursor were outside that
+contract and are not preserved by this upgrade. Declared execution schemas and
+valid saved history remain unchanged; no wire-format or stored-data migration
+is introduced.
+
 Tool payloads are decoded using a Goa‑style two‑step model:
 
 1. **Decode JSON into a helper “decode‑body” type** with pointer fields, so the codec can
