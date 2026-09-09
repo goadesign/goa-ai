@@ -1658,7 +1658,10 @@ to name one field and its required, type, enum, or array-length rule when the
 structured schema failure has one unique deepest cause. For unions, only the branch named
 by a valid string discriminator participates. Array indexes and map keys appear
 as `*`. Ambiguous failures and specifications without field metadata keep
-generic guidance. The complete contract lives in
+generic field guidance. A request-owned copy of the validated input example
+can accompany that guidance, intact within the existing correction size limit.
+It illustrates argument structure without choosing the request's values or
+restricting valid tool or union choices. The complete contract lives in
 [Model-Visible Tool Arguments](docs/runtime.md#model-visible-tool-arguments).
 
 Fields marked with `Inject` are absent from the model-visible input and filled
