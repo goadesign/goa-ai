@@ -110,7 +110,7 @@ func TestArrayLengthCorrectionSelectedUnionAndSize(t *testing.T) {
 			assert.Equal(t, test.want == "", rejected == nil)
 		})
 	}
-	base := `Field "items" must contain at most 1 items. Field description: "". Return a replacement tool call with valid arguments.`
+	base := `Field "items" must contain at most 1 items. Field description: "".`
 	for _, size := range []int{correction.MaxBytes - 1, correction.MaxBytes, correction.MaxBytes + 1} {
 		t.Run(fmt.Sprintf("correction bytes %d", size), func(t *testing.T) {
 			description := strings.Repeat("x", size-len(base))
@@ -150,9 +150,6 @@ func checkArrayCorrection(t *testing.T, definition *ToolDefinition, payload, wan
 	require.Nil(t, validated)
 	var rejected *OutputValidationError
 	require.ErrorAs(t, err, &rejected)
-	if want != advertisedToolInputCorrection {
-		want += " Return a replacement tool call with valid arguments."
-	}
 	assert.Equal(t, want, rejected.RecoveryCorrection())
 	assert.LessOrEqual(t, len(rejected.RecoveryCorrection()), correction.MaxBytes)
 	var schemaErr *jsonschema.ValidationError

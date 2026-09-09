@@ -1029,7 +1029,10 @@ tools; agent and toolset registration reject them. Similar authored names such
 as `continue_search` and qualified names such as `tools.continue_search` remain
 valid. If another call in the same parallel batch requires `finish` recovery,
 the runtime closes new domain work but keeps these already-started continuation
-actions available. Without a live continuation, the same failure enters
+actions and registered terminal bookkeeping available. The planner receives
+`Finalize` with reason `tool_failure` and may read another page or submit the
+final result, never both in one batch. A successful page does not reopen domain
+work. Without a live continuation, the same failure enters terminal-only
 finalization immediately.
 
 Use `Cursor` directly only when repeating the original arguments is part of the
@@ -1116,8 +1119,8 @@ successful results do not reset the recovery-turn counter. Their events are
 still durable and streamed, and their provider transcript blocks remain
 intact. Successful results stay out of compact future `ToolOutputs`. Every
 failure resumes through its typed recovery transition: `correct_call` and
-`replan` may use tools, while `finish` resumes without tools so the planner can
-synthesize the terminal outcome.
+`replan` may use tools, while `finish` forbids new operations and permits only
+available continuations or terminal submission, as described above.
 
 On an ordinary `correct_call` recovery turn, the runtime retains the current
 agent's executable tools and the exact registered contracts needed to correct
@@ -1143,8 +1146,10 @@ directive first. `correct_call` supplies structured correction evidence while
 letting the planner retry, combine work, choose another currently authorized
 action, continue an unfinished query, await input, or answer. `replan` removes the failed tool from the
 recovery turn while permitting another advertised action, input request, or
-answer. `finish` enters finalization and forbids further domain work. The
-planner may return a final response or registered terminal bookkeeping calls.
+answer. `finish` forbids starting new operations until the run ends. The planner
+may return a final response, use registered terminal bookkeeping, or fetch an
+advertised page of a query already started. Deadline and cap finalization never
+permit pagination. The terminal submission cannot share a batch with a page.
 The runtime enforces the advertised catalog, generated payload contracts, and execution
 caps; it does not infer how many semantic operations the planner must repeat.
 When one tool has both correction and replan failures in the same batch, the
@@ -1165,7 +1170,11 @@ bookkeeping result schedules another planner activity, that replacement
 activity consumes one recovery turn. Finalization uses the same budget: a
 rejected finalizer response or a terminal tool failure marked `correct_call`
 retains the finalization restriction while the model replaces that output.
-Other terminal-tool failures still end finalization.
+Other terminal-tool failures still end finalization. Successful domain work
+ends an ordinary recoverable episode. While a finish failure remains unresolved,
+successful pages neither replenish this allowance nor consume it: their tool
+and time costs remain charged normally, and rejected replacements still consume
+recovery turns.
 
 Agent-as-tool results use this same typed transition contract. The number of
 child tools observed during the nested run is telemetry for linked progress;
@@ -1178,12 +1187,20 @@ workers, generated packages, and callers must use the same generated input
 contract; mixed shapes are unsupported.
 
 A model invocation rejected before a canonical response exists carries a
-separate `ModelInvocationRecovery` value instead of failed call IDs. It carries
+separate `ModelInvocationRecovery` value alongside any active failed call IDs. It carries
 exactly one bounded fact: fixed malformed-JSON guidance, advertised-input
 correction text, or the untouched provider-returned name of a tool absent from
 that request's catalog. Malformed argument bytes stay private. The rejected
-response stays out of history, and the normal caller-authorized executable
-catalog remains available for the replacement.
+response stays out of history. Replacement feedback never removes active tool
+restrictions; an ordinary unrestricted correction retains the caller-authorized
+catalog. Finish restrictions survive both replacement attempts and successful
+pages, while ordinary correction/replan restrictions end with their episode.
+Model validation supplies constraints and examples, not a mandatory next tool
+call; the runtime adds the instruction to replace the response under its current
+completion requirements. This preserves legal tool, question, and answer choices.
+The existing activity/checkpoint fields are unchanged, but histories that relied
+on reopening domain work after a finish failure must remain with their owning
+worker version; see the compatibility guidance in `docs/runtime.md`.
 Temporal histories containing model-output recovery from an older runtime do
 not carry the required `answer` or `planning` kind and cannot resume on this
 version. New histories that contain this activity result require workers

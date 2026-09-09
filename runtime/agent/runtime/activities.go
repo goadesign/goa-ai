@@ -139,13 +139,6 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err := validatePlanResumeRecoveryInput(input); err != nil {
 		return nil, err
 	}
-	// A rejected ordinary final answer is replaced without tools. Rejected
-	// output from a tool-capable planning turn retains the normal catalog. A
-	// rejected finalization output retains the finalizer's response or
-	// terminal-tool contract.
-	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil &&
-		input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer &&
-		input.Finalize == nil
 	toolOutputs, err := r.loadPlannerToolOutputs(ctx, input.ToolOutputs)
 	if err != nil {
 		return nil, err
@@ -154,9 +147,22 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return nil, err
 	}
-	correctCallSpecs, err := r.correctCallSpecs(recoveryOutputs)
-	if err != nil {
-		return nil, err
+	// The active failure, not correction feedback or historical failures, owns
+	// whether new operations are forbidden. The workflow still permits existing
+	// pages on this turn; explicit finalization permits only a final submission.
+	finalize := input.Finalize
+	finishing := finishRecovery(recoveryOutputs)
+	if finalize == nil && finishing {
+		finalize = &planner.Termination{Reason: planner.TerminationReasonToolFailure}
+	}
+	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil &&
+		input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer && finalize == nil
+	var correctCallSpecs []tools.ToolSpec
+	if !synthesisOnly && (!finishing || input.Finalize != nil) {
+		correctCallSpecs, err = r.correctCallSpecs(recoveryOutputs)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// Ordinary corrections preserve the agent's other executable choices. A
 	// finalizer still repairs only its failed terminal tool, never domain work.
@@ -185,7 +191,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			return nil, err
 		}
 	}
-	unavailableTools := r.recoveryUnavailableTools(input.AgentID, recoveryOutputs, input.Finalize != nil)
+	unavailableTools := r.recoveryUnavailableTools(input.AgentID, recoveryOutputs)
 	if synthesisOnly {
 		specs := r.ToolSpecsForAgent(input.AgentID)
 		unavailableTools = make([]tools.Ident, len(specs))
@@ -213,7 +219,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		if input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer {
 			replacement = "Produce a replacement final answer now."
 		}
-		if input.Finalize != nil {
+		if finalize != nil {
 			replacement = "Produce a replacement response that satisfies the current finalization contract now."
 		}
 		act.reminders = append([]reminder.Reminder{{
@@ -252,7 +258,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		Events:          act.events,
 		ToolOutputs:     toolOutputs,
 		SynthesisOnly:   synthesisOnly,
-		Finalize:        input.Finalize,
+		Finalize:        finalize,
 		Reminders:       act.reminders,
 	}
 	result, err := act.reg.Planner.PlanResume(ctx, planInput)
@@ -368,9 +374,9 @@ func toolDefinitionNames(definitions []*model.ToolDefinition) []tools.Ident {
 	return names
 }
 
-// validatePlanResumeRecoveryInput requires one honest resume mode. Finalization
-// may retain failed tool IDs as evidence, while either model recovery variant
-// cannot combine with another resume directive.
+// validatePlanResumeRecoveryInput separates active execution restrictions from
+// replacement feedback. Either correction may retain active failed-call IDs;
+// only the two correction variants are mutually exclusive.
 func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 	if input == nil {
 		return errors.New("plan resume input is required")
@@ -394,9 +400,6 @@ func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 		if input.SynthesisOnly {
 			return errors.New("model-invocation recovery cannot combine with synthesis-only planning")
 		}
-		if len(input.RecoveryToolCallIDs) > 0 && input.Finalize == nil {
-			return errors.New("model-invocation recovery cannot combine with tool recovery")
-		}
 		return nil
 	}
 	if err := validateModelOutputRecovery(input.ModelOutputRecovery); err != nil {
@@ -404,9 +407,6 @@ func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 	}
 	if input.SynthesisOnly {
 		return errors.New("model-output recovery cannot combine with explicit synthesis-only planning")
-	}
-	if len(input.RecoveryToolCallIDs) > 0 && input.Finalize == nil {
-		return errors.New("model-output correction cannot combine with tool recovery")
 	}
 	return nil
 }
@@ -419,14 +419,14 @@ func modelInvocationRecoveryReminder(recovery *ModelInvocationRecovery) string {
 	if recovery.UnadvertisedToolName != "" {
 		return fmt.Sprintf(
 			"Your previous tool call used the unavailable name %q.\n"+
-				"Choose the needed tool from the tools available now, copy its name exactly, "+
-				"and return a replacement tool call. Do not mention this reminder to the user.",
+				"Replace the response under the current completion requirements. "+
+				"If calling a tool, choose from the tools available now and copy its name exactly. Do not mention this reminder to the user.",
 			recovery.UnadvertisedToolName,
 		)
 	}
 	return "Your previous tool call was rejected before it could run.\n" +
 		recovery.Correction +
-		"\nReturn a replacement tool call now. Do not mention this reminder to the user."
+		"\nReplace the response using the available actions and current completion requirements. Do not mention this reminder to the user."
 }
 
 // validatePlannerToolCatalogs checks model-facing and planner-authored tool

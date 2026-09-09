@@ -99,12 +99,12 @@ func TestMultipleFieldCorrectionKeepsWholeInstructionsWithinByteLimit(t *testing
 	assert.True(t, utf8.ValidString(atLimit))
 	assert.NotContains(t, atLimit, "not detailed")
 	fields[0].field.Description += "x"
-	assert.Equal(t, `Field "b" is required. Other schema errors are not detailed here. Return a replacement tool call with valid arguments.`, formatToolCorrections(fields))
+	assert.Equal(t, `Field "b" is required. Other schema errors are not detailed here.`, formatToolCorrections(fields))
 	// Both metadata descriptions and schema enum values are indivisible. A large
 	// first instruction must not erase the short useful instruction after it.
 	fields[0].field.Description = ""
 	fields[0].constraint = fmt.Sprintf("must contain one of these JSON values: [%q].", strings.Repeat("é", correction.MaxBytes))
-	assert.Equal(t, `Field "b" is required. Other schema errors are not detailed here. Return a replacement tool call with valid arguments.`, formatToolCorrections(fields))
+	assert.Equal(t, `Field "b" is required. Other schema errors are not detailed here.`, formatToolCorrections(fields))
 	assert.Equal(t, advertisedToolInputCorrection, formatToolCorrections(fields[:1]))
 	many := make([]toolCorrectionCandidate, 0, 200)
 	for i := range 200 {

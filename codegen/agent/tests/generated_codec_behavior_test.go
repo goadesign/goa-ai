@@ -817,10 +817,10 @@ func TestInvalidUnionPayloadsReceiveReplacementGuidance(t *testing.T) {
 				t.Fatalf("expected OutputValidationError, got %T: %v", err, err)
 			}
 			correction := validation.RecoveryCorrection()
-			if correction == "" || !strings.Contains(correction, "replacement tool call") {
-				t.Fatalf("expected replacement guidance, got %q", correction)
+			if correction == "" {
+				t.Fatal("expected advertised input constraints")
 			}
-			if test.wantCorrection == "" && correction != "The previous tool call did not match its advertised input schema. Return a replacement tool call with valid arguments." {
+			if test.wantCorrection == "" && correction != "The previous tool call did not match its advertised input schema." {
 				t.Fatalf("expected generic guidance, got %q", correction)
 			}
 			if test.wantCorrection != "" && !strings.Contains(correction, test.wantCorrection) {

@@ -522,7 +522,7 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg Agen
 	}
 	if batch.resumePlannerAfterPending {
 		recovery, _ := toolRecovery(state.PendingRecovery)
-		out, err := loop.resumePlanner(recovery, false, nil, nil)
+		out, err := loop.resumePlanner(recovery, false, nil, nil, true)
 		if err != nil || out != nil {
 			return out, err
 		}
@@ -641,7 +641,7 @@ func (r *Runtime) restoreCheckpointState(
 		ToolOutputs:       checkpoint.ToolOutputs,
 	}
 	if len(checkpoint.PendingRecovery) > 0 {
-		state.PendingRecovery = pendingToolRecovery{
+		state.PendingRecovery = &pendingToolRecovery{
 			outputs: checkpoint.PendingRecovery,
 			catalog: checkpoint.PendingRecoveryCatalog,
 		}

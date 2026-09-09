@@ -352,7 +352,7 @@ func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 
 	rt := New(newTestStore())
 	seedTestToolSpecs(rt, search, list)
-	assert.Equal(t, []tools.Ident{list.Name}, rt.recoveryUnavailableTools("", outputs, false))
+	assert.Equal(t, []tools.Ident{list.Name}, rt.recoveryUnavailableTools("", outputs))
 	reminders := rt.recoveryReminders(outputs)
 	require.Len(t, reminders, 3)
 	assert.Contains(t, reminders[0].Text, "remains available")
@@ -589,8 +589,11 @@ func TestFinishFailurePreservesLiveContinuation(t *testing.T) {
 				return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
 			case 2:
 				require.False(t, input.SynthesisOnly)
-				assertAdvertisedTools(t, input, search.Name, load.Name)
-				assert.Empty(t, input.Reminders)
+				assertAdvertisedTools(t, input)
+				require.NotNil(t, input.Finalize)
+				assert.Equal(t, planner.TerminationReasonToolFailure, input.Finalize.Reason)
+				require.Len(t, input.Reminders, 1)
+				assert.Contains(t, input.Reminders[0].Text, "load failed")
 				return finalPlannerResult("all pages collected"), nil
 			default:
 				require.FailNow(t, "unexpected planner resume")
@@ -1043,7 +1046,7 @@ func TestRunLoopRecoversGeneratedModelToolCallBeforeExecution(t *testing.T) {
 			assert.Contains(
 				t,
 				input.Reminders[0].Text,
-				`Field "query" must contain a JSON string. Return a replacement tool call with valid arguments.`,
+				`Field "query" must contain a JSON string.`,
 			)
 			assert.NotContains(t, input.Reminders[0].Text, "privateSecret")
 			assert.NotContains(t, input.Reminders[0].Text, "submitted-secret")

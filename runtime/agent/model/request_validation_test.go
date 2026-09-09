@@ -561,7 +561,7 @@ func TestAdvertisedSchemaDiagnosticRetainsIndexedPath(t *testing.T) {
 	var schemaErr *jsonschema.ValidationError
 	require.ErrorAs(t, err, &schemaErr)
 	assert.Contains(t, schemaErr.Error(), "/items/1/pressure")
-	assert.Equal(t, `Field "items.*.pressure" must contain a JSON number. Return a replacement tool call with valid arguments.`, outputErr.RecoveryCorrection())
+	assert.Equal(t, `Field "items.*.pressure" must contain a JSON number.`, outputErr.RecoveryCorrection())
 	assert.NotContains(t, outputErr.Error(), "invalid")
 }
 
@@ -626,7 +626,7 @@ func TestGeneratedToolSchemaRejectionsProduceActionableCorrections(t *testing.T)
 				"profile.name": "string",
 			},
 			descriptions: map[string]string{"profile.name": "Stable display name"},
-			want:         `Field "profile.name" is required. Field description: "Stable display name". Return a replacement tool call with valid arguments.`,
+			want:         `Field "profile.name" is required. Field description: "Stable display name".`,
 		},
 		{
 			name:   "array item type",
@@ -639,7 +639,7 @@ func TestGeneratedToolSchemaRejectionsProduceActionableCorrections(t *testing.T)
 				"steps.*.amount": "number",
 			},
 			descriptions: map[string]string{"steps.*.amount": "Amount for this step"},
-			want:         `Field "steps.*.amount" must contain a JSON number. Field description: "Amount for this step". Return a replacement tool call with valid arguments.`,
+			want:         `Field "steps.*.amount" must contain a JSON number. Field description: "Amount for this step".`,
 		},
 		{
 			name:   "map value type",
@@ -651,7 +651,7 @@ func TestGeneratedToolSchemaRejectionsProduceActionableCorrections(t *testing.T)
 				"scores.*":       "object",
 				"scores.*.value": "integer",
 			},
-			want: `Field "scores.*.value" must contain a JSON integer. Return a replacement tool call with valid arguments.`,
+			want: `Field "scores.*.value" must contain a JSON integer.`,
 		},
 		{
 			name:   "enum",
@@ -662,7 +662,7 @@ func TestGeneratedToolSchemaRejectionsProduceActionableCorrections(t *testing.T)
 				"mode":     "string",
 			},
 			descriptions: map[string]string{"mode": "Report interval"},
-			want:         `Field "mode" must contain one of these JSON values: ["daily","weekly"]. Field description: "Report interval". Return a replacement tool call with valid arguments.`,
+			want:         `Field "mode" must contain one of these JSON values: ["daily","weekly"]. Field description: "Report interval".`,
 		},
 		{
 			name:   "unknown field",
@@ -674,7 +674,7 @@ func TestGeneratedToolSchemaRejectionsProduceActionableCorrections(t *testing.T)
 				"profile.name": "string",
 			},
 			descriptions: map[string]string{"profile": "Profile settings"},
-			want:         `Field "profile" contains an undeclared field. Field description: "Profile settings". Return a replacement tool call with valid arguments.`,
+			want:         `Field "profile" contains an undeclared field. Field description: "Profile settings".`,
 		},
 	}
 
@@ -730,7 +730,7 @@ func TestGeneratedToolSchemaCorrectionReportsIndependentMissingFields(t *testing
 	require.Nil(t, validated)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.Equal(t, "Field \"left\" is required.\nField \"right\" is required. Return a replacement tool call with valid arguments.", validationErr.RecoveryCorrection())
+	require.Equal(t, "Field \"left\" is required.\nField \"right\" is required.", validationErr.RecoveryCorrection())
 	require.NotContains(t, validationErr.RecoveryCorrection(), "private-")
 }
 
@@ -842,7 +842,7 @@ func TestToolSchemaCorrectionUsesSelectedUnionBranchInsideArray(t *testing.T) {
 	require.ErrorAs(t, err, &validationErr)
 	require.Equal(
 		t,
-		`Field "items.*.value.address" must contain a JSON string. Field description: "Email address". Return a replacement tool call with valid arguments.`,
+		`Field "items.*.value.address" must contain a JSON string. Field description: "Email address".`,
 		validationErr.RecoveryCorrection(),
 	)
 	require.NotContains(t, validationErr.RecoveryCorrection(), "0")
@@ -875,7 +875,7 @@ func TestToolSchemaCorrectionNamesRequiredFieldWithoutFixedJSONType(t *testing.T
 	require.ErrorAs(t, err, &validationErr)
 	require.Equal(
 		t,
-		`Field "context" is required. Field description: "Required caller context". Return a replacement tool call with valid arguments.`,
+		`Field "context" is required. Field description: "Required caller context".`,
 		validationErr.RecoveryCorrection(),
 	)
 }
@@ -901,7 +901,7 @@ func TestToolSchemaCorrectionPreservesGuidanceBesideUnsupportedFailures(t *testi
 	_, err = contract.ValidateResponse(response)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.Equal(t, `Field "count" must contain a JSON integer. Field description: "Count". Other schema errors are not detailed here. Return a replacement tool call with valid arguments.`, validationErr.RecoveryCorrection())
+	require.Equal(t, `Field "count" must contain a JSON integer. Field description: "Count". Other schema errors are not detailed here.`, validationErr.RecoveryCorrection())
 }
 
 func TestToolSchemaCorrectionPreservesGuidanceBesideUnmappedFailures(t *testing.T) {
@@ -928,7 +928,7 @@ func TestToolSchemaCorrectionPreservesGuidanceBesideUnmappedFailures(t *testing.
 	_, err = contract.ValidateResponse(response)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.Equal(t, `Field "known" must contain a JSON string. Field description: "Known field". Other schema errors are not detailed here. Return a replacement tool call with valid arguments.`, validationErr.RecoveryCorrection())
+	require.Equal(t, `Field "known" must contain a JSON string. Field description: "Known field". Other schema errors are not detailed here.`, validationErr.RecoveryCorrection())
 }
 
 func TestGeneratedToolSchemaCorrectionSnapshotsGeneratedMetadata(t *testing.T) {
@@ -962,7 +962,7 @@ func TestGeneratedToolSchemaCorrectionSnapshotsGeneratedMetadata(t *testing.T) {
 	require.ErrorAs(t, err, &validationErr)
 	require.Equal(
 		t,
-		`Field "query" must contain a JSON string. Field description: "Original query". Return a replacement tool call with valid arguments.`,
+		`Field "query" must contain a JSON string. Field description: "Original query".`,
 		validationErr.RecoveryCorrection(),
 	)
 }
@@ -1020,7 +1020,7 @@ func TestCallerAuthoredToolMetadataProducesActionableCorrection(t *testing.T) {
 	require.Nil(t, validated)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.Equal(t, `Field "query" must contain a JSON string. Field description: "Search query". Return a replacement tool call with valid arguments.`, validationErr.RecoveryCorrection())
+	require.Equal(t, `Field "query" must contain a JSON string. Field description: "Search query".`, validationErr.RecoveryCorrection())
 	require.NotContains(t, validationErr.RecoveryCorrection(), "private-")
 }
 
