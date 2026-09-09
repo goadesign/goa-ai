@@ -213,6 +213,13 @@ Completion stream draft_task: ...
 
 Generation creates application-owned scaffolding under `internal/agents/` and generated contract code under `gen/`. Edit the planner and bootstrap files; do not edit `gen/`.
 
+Generated tool specifications separate arguments written by the model from the
+complete payload sent to an executor. `Payload.Codec` matches the advertised
+model schema; `ExecutionPayloadCodec` preserves runtime-supplied continuation
+arguments. Regenerate with this framework version before starting workers.
+Handwritten specifications must supply both codecs, sharing them when the two
+inputs are identical. See [tool payload codecs](docs/runtime.md#tool-payload-codecs-and-defaults-feature).
+
 ### 4. Run an Agent from Application Code
 
 The generated agent package exposes a typed client. Sessionful runs require an explicit session; one-shot runs do not.

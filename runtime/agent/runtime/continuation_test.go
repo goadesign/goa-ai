@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -216,6 +217,72 @@ func TestContinuationActionRetainsCanonicalQueryPayload(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"query":"alarms","limit":10,"cursor":"second-page"}`, string(calls[0].Payload))
+}
+
+func TestContinuationActionBindsAndEncodesWithExecutionCodec(t *testing.T) {
+	t.Parallel()
+
+	type payload struct {
+		Query  string `json:"query"`
+		Limit  int    `json:"limit"`
+		Cursor string `json:"cursor"`
+	}
+	rt, search, continuation := continuationTestRuntime()
+	continuation.Bounds.Paging.ReplayPayload = true
+	modelDecodes := 0
+	continuation.Payload.Codec.FromJSON = func(data []byte) (any, error) {
+		modelDecodes++
+		if string(data) != "{}" {
+			return nil, errors.New("query and cursor are execution-only")
+		}
+		return struct{}{}, nil
+	}
+	continuation.Payload.Codec.ToJSON = func(value any) ([]byte, error) {
+		if _, ok := value.(struct{}); !ok {
+			return nil, errors.New("model codec cannot encode retained query")
+		}
+		return json.Marshal(value)
+	}
+	executionDecodes, executionEncodes := 0, 0
+	continuation.ExecutionPayloadCodec = tools.JSONCodec[any]{
+		FromJSON: func(data []byte) (any, error) {
+			executionDecodes++
+			var decoded payload
+			if err := json.Unmarshal(data, &decoded); err != nil {
+				return nil, err
+			}
+			require.Equal(t, payload{Query: "alarms", Limit: 10, Cursor: "second-page"}, decoded)
+			return decoded, nil
+		},
+		ToJSON: func(value any) ([]byte, error) {
+			executionEncodes++
+			decoded, ok := value.(payload)
+			require.True(t, ok)
+			return json.Marshal(decoded)
+		},
+	}
+	rt.toolSpecs[continuation.Name] = continuation
+	rt.agentToolSpecs["svc.agent"][1] = continuation
+
+	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
+		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms","limit":10}`, "second-page"),
+	})
+	require.NoError(t, err)
+	require.Len(t, actions, 1)
+	calls, err := rt.compilePlannerToolCalls([]planner.ToolRequest{{
+		Name: actions[0].modelName, Payload: rawjson.Message(`{}`), ModelToolCallID: "model-call-1",
+	}}, actions, map[string]model.ToolCall{
+		"model-call-1": {ID: "model-call-1", Name: actions[0].modelName, Payload: rawjson.Message(`{}`)},
+	})
+
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+	assert.JSONEq(t, `{"query":"alarms","limit":10,"cursor":"second-page"}`, string(calls[0].Payload))
+	assert.JSONEq(t, `{}`, string(calls[0].ModelPayload))
+	assert.Equal(t, "source-1", calls[0].ContinuationRootToolCallID)
+	assert.Positive(t, executionDecodes)
+	assert.Positive(t, executionEncodes)
+	assert.Zero(t, modelDecodes)
 }
 
 func TestContinuationActionSupportsSourceWithoutModelFields(t *testing.T) {

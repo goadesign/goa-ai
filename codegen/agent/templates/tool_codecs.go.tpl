@@ -1,5 +1,5 @@
 {{- range .Types }}
-    {{- if .GenerateCodec }}
+    {{- if and .GenerateCodec (ne .Usage "model-payload") }}
 // {{ .ExportedCodec }} returns a fresh codec for {{ if .Pointer }}*{{ end }}{{ .FullRef }}.
     {{- if .InjectDecodeFunc }}
 // Prefer {{ .InjectDecodeFunc }} when decoding tool calls: FromJSON alone

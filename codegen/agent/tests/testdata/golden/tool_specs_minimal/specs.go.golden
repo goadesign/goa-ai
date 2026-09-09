@@ -54,6 +54,7 @@ func newSpecSummarizeDoc() tools.ToolSpec {
 		Description:            "Summarize a document",
 		Tags:                   []string{},
 		ExecutionPayloadSchema: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"doc_id\":{\"description\":\"Document identifier\",\"type\":\"string\"}},\"required\":[\"doc_id\"],\"type\":\"object\"}"),
+		ExecutionPayloadCodec:  summarizeDocPayloadCodec,
 		Payload: tools.TypeSpec{
 			Name:                     "SummarizeDocPayload",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"doc_id\":{\"description\":\"Document identifier\",\"type\":\"string\"}},\"required\":[\"doc_id\"],\"type\":\"object\"}"),

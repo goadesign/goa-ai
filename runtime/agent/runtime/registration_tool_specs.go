@@ -43,6 +43,9 @@ func (r *Runtime) validateToolSpecRegistrations(
 
 	for _, registration := range registrations {
 		for _, spec := range registration.specs {
+			if spec.ExecutionPayloadCodec.FromJSON == nil || spec.ExecutionPayloadCodec.ToJSON == nil {
+				return nil, fmt.Errorf("%w: tool %q execution payload codec must define both ToJSON and FromJSON", ErrInvalidConfig, spec.Name)
+			}
 			if err := validateToolResultSpec(spec); err != nil {
 				return nil, err
 			}
@@ -122,6 +125,7 @@ func equivalentToolSpec(a, b tools.ToolSpec) bool {
 func toolSpecShape(spec tools.ToolSpec) tools.ToolSpec {
 	spec = cloneToolSpec(spec)
 	spec.Payload.Codec = tools.JSONCodec[any]{}
+	spec.ExecutionPayloadCodec = tools.JSONCodec[any]{}
 	spec.Result.Codec = tools.JSONCodec[any]{}
 	spec.CanonicalizeServerData = nil
 	for _, item := range spec.ServerData {

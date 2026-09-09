@@ -1368,7 +1368,7 @@ func newRecoveryTestModel(t *testing.T) model.Client {
 // provider arguments with structured field issues and accepts only the
 // replacement payload used by these workflow tests.
 func newStrictRecoverySpec() tools.ToolSpec {
-	return tools.ToolSpec{
+	spec := tools.ToolSpec{
 		Name:        "catalog.lookup",
 		Description: "Looks up one synthetic record.",
 		Payload: tools.TypeSpec{
@@ -1409,6 +1409,11 @@ func newStrictRecoverySpec() tools.ToolSpec {
 			Codec:  tools.AnyJSONCodec,
 		},
 	}
+	spec.ExecutionPayloadCodec = tools.JSONCodec[any]{
+		FromJSON: spec.Payload.Codec.FromJSON,
+		ToJSON:   tools.AnyJSONCodec.ToJSON,
+	}
+	return spec
 }
 
 // newPreResponseRecoveryModel returns malformed generated tool arguments on

@@ -179,10 +179,8 @@ func TestValidateContinuationChecksSavedLimitTerminalPlans(t *testing.T) {
 	})
 	t.Run("changed payload", func(t *testing.T) {
 		changed := terminal
-		changed.Payload.Codec = tools.JSONCodec[any]{
-			FromJSON: func([]byte) (any, error) {
-				return nil, errors.New("result contract changed")
-			},
+		changed.ExecutionPayloadCodec.FromJSON = func([]byte) (any, error) {
+			return nil, errors.New("result contract changed")
 		}
 		runtime.agents["svc.agent"] = AgentRegistration{Definition: testRegistrationDefinition("svc.agent", engine.WorkflowDefinition{}, []tools.ToolSpec{lookup, changed}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler}
 		require.ErrorContains(t, runtime.ValidateContinuation(suspension), "result contract changed")
@@ -327,10 +325,8 @@ func TestValidateContinuationRejectsIncompatibleSavedResult(t *testing.T) {
 func TestValidateContinuationRejectsIncompatibleSavedPayload(t *testing.T) {
 	runtime := New(newTestStore())
 	spec := newAnyJSONSpec("svc.lookup")
-	spec.Payload.Codec = tools.JSONCodec[any]{
-		FromJSON: func([]byte) (any, error) {
-			return nil, errors.New("query must use a numeric identifier")
-		},
+	spec.ExecutionPayloadCodec.FromJSON = func([]byte) (any, error) {
+		return nil, errors.New("query must use a numeric identifier")
 	}
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
@@ -338,6 +334,38 @@ func TestValidateContinuationRejectsIncompatibleSavedPayload(t *testing.T) {
 	err := runtime.ValidateContinuation(suspension)
 	require.ErrorContains(t, err, "decode suspended tool payload")
 	require.ErrorContains(t, err, "query must use a numeric identifier")
+}
+
+func TestValidateContinuationUsesExecutionCodecForSavedPayload(t *testing.T) {
+	t.Parallel()
+
+	runtime := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
+	spec.Payload.Schema = rawjson.Message(`{"type":"object","additionalProperties":false}`)
+	modelDecodes := 0
+	spec.Payload.Codec.FromJSON = func(data []byte) (any, error) {
+		modelDecodes++
+		if string(data) != "{}" {
+			return nil, errors.New("query is execution-only")
+		}
+		return struct{}{}, nil
+	}
+	executionDecodes := 0
+	spec.ExecutionPayloadCodec.FromJSON = func(data []byte) (any, error) {
+		executionDecodes++
+		require.JSONEq(t, `{"query":"status"}`, string(data))
+		return tools.AnyJSONCodec.FromJSON(data)
+	}
+	_, err := spec.Payload.Codec.FromJSON([]byte(`{"query":"status"}`))
+	require.ErrorContains(t, err, "query is execution-only")
+	modelDecodes = 0
+	seedTestToolSpecs(runtime, spec)
+
+	err = runtime.ValidateContinuation(suspensionContractFixture(t, spec.Name))
+
+	require.NoError(t, err)
+	require.Positive(t, executionDecodes)
+	require.Zero(t, modelDecodes)
 }
 
 func TestValidateContinuationRejectsPublicPendingMutation(t *testing.T) {

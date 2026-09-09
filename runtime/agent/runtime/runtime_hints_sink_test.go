@@ -293,6 +293,7 @@ func newTypedHintSpec(name tools.Ident) tools.ToolSpec {
 			Name:  string(name) + "_payload",
 			Codec: codec,
 		},
+		ExecutionPayloadCodec: codec,
 		Result: tools.TypeSpec{
 			Name:  string(name) + "_result",
 			Codec: codec,
