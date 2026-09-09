@@ -107,6 +107,7 @@ const (
 	errorKindOutputContract
 	errorKindInvalidReserved
 	errorKindGeneric
+	errorKindRequestValidation
 )
 
 // wrapHistorical preserves the exact conversion of previously stored formats.
@@ -133,6 +134,7 @@ func wrapHistorical(err error) error {
 		return err
 	}
 	classified := classify(err)
+	//nolint:exhaustive // Request validation uses only the current writer, never historical formats.
 	switch classified.kind {
 	case errorKindOutputContract:
 		//nolint:errorlint // Only the exact Temporal envelope is already serialized.
@@ -213,6 +215,18 @@ func wrapHistorical(err error) error {
 // the same failure returned by Temporal.
 func IsOutputContract(err error) bool {
 	return classify(err).kind == errorKindOutputContract
+}
+
+// IsRequestValidation reports whether the owning error is a local model-request
+// rejection, either native or restored from its saved Temporal failure.
+func IsRequestValidation(err error) bool {
+	// Match Wrap: only a direct custom Temporal error owns an explicit retry
+	// policy. Ordinary wrappers still use the first recognized cause.
+	//nolint:errorlint // Only the exact top-level error owns this override.
+	if app, ok := err.(*temporal.ApplicationError); ok && app != nil && !reservedApplicationType(app.Type()) {
+		return false
+	}
+	return classify(err).kind == errorKindRequestValidation
 }
 
 // OutputContractOrigin returns the component whose output failed.
@@ -361,6 +375,8 @@ func classify(err error) classification {
 func classifyCurrent(err error) classification {
 	//nolint:errorlint // Classification intentionally gives the outer error ownership before children.
 	switch current := err.(type) {
+	case *model.RequestValidationError:
+		return classification{kind: errorKindRequestValidation}
 	case *model.ProviderError:
 		return classification{
 			kind:     errorKindProvider,
@@ -377,6 +393,8 @@ func classifyCurrent(err error) classification {
 		}
 	case *temporal.ApplicationError:
 		switch current.Type() {
+		case requestValidationApplicationType:
+			return classifyRequestValidation(current)
 		case currentOutputApplicationType:
 			return classifyCurrentOutput(current)
 		case currentProviderApplicationType:
@@ -884,7 +902,8 @@ func reservedApplicationType(typ string) bool {
 		typ == currentProviderApplicationType ||
 		typ == currentOutputApplicationType ||
 		typ == currentInvalidApplicationType ||
-		typ == currentGenericApplicationType
+		typ == currentGenericApplicationType ||
+		typ == requestValidationApplicationType
 }
 
 // historicalApplicationType selects the unchanged decoder and wrapping rules

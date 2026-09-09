@@ -1181,6 +1181,13 @@ bookkeeping and terminal-run semantics therefore remain independent. See
 
 ## Runtime and Observability
 
+Model adapters can mark a known local request rejection with
+`model.NewRequestValidationError(cause)`. It preserves the complete original
+diagnostic, ends the run without retry or model correction, and reports
+`model_request` without claiming a provider rejected it. Provider failures keep
+their existing classification. See the [request rejection and worker upgrade
+contract](docs/runtime.md#local-model-request-rejections).
+
 Application tracers receive original planner and activity errors before workflow
 transport, including typed causes and application-owned Temporal details.
 Planner rejection records retain exact valid UTF-8 diagnostic reasons separately

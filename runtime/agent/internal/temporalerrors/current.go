@@ -39,10 +39,11 @@ type (
 )
 
 const (
-	currentProviderApplicationType = "goa_ai.provider_error.v3"
-	currentGenericApplicationType  = "goa_ai.generic_error.v3"
-	currentOutputApplicationType   = "goa_ai.output_contract_error.v3"
-	currentInvalidApplicationType  = "goa_ai.invalid_reserved_error.v3"
+	currentProviderApplicationType   = "goa_ai.provider_error.v3"
+	currentGenericApplicationType    = "goa_ai.generic_error.v3"
+	currentOutputApplicationType     = "goa_ai.output_contract_error.v3"
+	currentInvalidApplicationType    = "goa_ai.invalid_reserved_error.v3"
+	requestValidationApplicationType = "goa_ai.request_validation_error"
 )
 
 // Wrap preserves failure classification and complete valid diagnostic text for
@@ -76,6 +77,10 @@ func Wrap(err error) error {
 		return err
 	}
 	switch classified.kind {
+	case errorKindRequestValidation:
+		return temporal.NewNonRetryableApplicationError(
+			errorevidence.DiagnosticMessage(errorevidence.Text(err)), requestValidationApplicationType, nil,
+		)
 	case errorKindOutputContract:
 		message := errorevidence.Text(err)
 		if classified.output != nil {
@@ -163,6 +168,18 @@ func validateCurrentApplication(app *temporal.ApplicationError) error {
 		return fmt.Errorf("reserved diagnostic message is not valid UTF-8")
 	}
 	return nil
+}
+
+// classifyRequestValidation accepts a saved local request rejection only when
+// it remains terminal and carries its diagnostic in the message alone.
+func classifyRequestValidation(app *temporal.ApplicationError) classification {
+	if err := validateCurrentApplication(app); err != nil {
+		return invalidReserved("request validation error: %v", err)
+	}
+	if !app.NonRetryable() || app.HasDetails() {
+		return invalidReserved("request validation error must be nonretryable without details")
+	}
+	return classification{kind: errorKindRequestValidation, application: app}
 }
 
 // classifyCurrentOutput reads a saved output failure without changing origin.

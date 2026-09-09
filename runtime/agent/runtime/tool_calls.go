@@ -620,7 +620,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 
 			out, err := info.future.Get(ctx)
 			if err != nil {
-				if isRunCancellationError(err) {
+				if isRunCancellationError(err) || temporalerrors.IsRequestValidation(err) {
 					return activityByID, pending, false, err
 				}
 				duration := wfCtx.Now().Sub(info.startTime)
@@ -739,7 +739,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 
 			outPtr, err := info.handle.Get(wfCtx.Context())
 			if err != nil {
-				if isRunCancellationError(err) || temporalerrors.IsOutputContract(err) {
+				if isRunCancellationError(err) || temporalerrors.IsOutputContract(err) || temporalerrors.IsRequestValidation(err) {
 					return out, pending, false, err
 				}
 				if _, ok := temporalerrors.Provider(err); ok {
