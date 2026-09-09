@@ -287,6 +287,9 @@ as `entailed`, `contradicted`, `not_addressed`, or `indeterminate`. Before any
 scenario runs, the runner verifies all four meanings with framework-owned
 examples. Applications cannot weaken that check by supplying easier examples.
 Only `entailed` passes. Deterministic-only suites may omit the judge entirely.
+The model applies each claim's conditions, distinguishing required content from
+constraints that permit omission. Code never infers claim categories or remaps
+judgments to make omitted content pass.
 
 The application constructing `eval/judge` supplies a required positive output-token
 limit for each complete model response and handles a construction error for invalid
