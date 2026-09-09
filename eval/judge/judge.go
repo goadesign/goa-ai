@@ -29,9 +29,11 @@ type (
 	// Option customizes a Judge.
 	Option func(*Judge)
 
-	// requestBody supplies the evidence; the tool schema describes each claim.
+	// requestBody separates the answer from shared factual context; the tool
+	// schema describes each claim without duplicating that context.
 	requestBody struct {
-		Output string `json:"output"`
+		Output    string `json:"output"`
+		Reference string `json:"reference,omitempty"`
 	}
 
 	// responseBody associates each decision with its required schema property.
@@ -56,7 +58,8 @@ type (
 const (
 	submitJudgmentsID completion.Ident = "eval.submit_judgments"
 
-	judgePrompt = `Classify each claim independently using only the supplied output.
+	judgePrompt = `Classify each claim independently against the supplied output.
+Use the reference, when supplied, as factual context only. Do not credit the output with information that appears only in the reference.
 Return entailed when the output establishes the claim, contradicted when it establishes the claim is false, not_addressed when it does neither, and indeterminate only when ambiguity prevents classification.
 Call submit_judgments exactly once. Each required property describes one claim; supply its label and a concise rationale in that property.`
 )
@@ -87,7 +90,8 @@ func WithModelClass(class model.ModelClass) Option {
 
 // Judge classifies claims against one model-authored output. Each claim ID names
 // a required tool property; results are returned in the caller's claim order.
-func (j *Judge) Judge(ctx context.Context, output string, claims []aieval.Claim) ([]aieval.Judgment, error) {
+// Reference supplies shared factual context, not content missing from output.
+func (j *Judge) Judge(ctx context.Context, output string, claims []aieval.Claim, reference string) ([]aieval.Judgment, error) {
 	if len(claims) == 0 {
 		return nil, errors.New("judge requires at least one claim")
 	}
@@ -99,7 +103,7 @@ func (j *Judge) Judge(ctx context.Context, output string, claims []aieval.Claim)
 			return nil, fmt.Errorf("judge claim ID %q is not valid UTF-8", claim.ID)
 		}
 	}
-	payload, err := json.Marshal(requestBody{Output: output})
+	payload, err := json.Marshal(requestBody{Output: output, Reference: reference})
 	if err != nil {
 		return nil, fmt.Errorf("encode judge request: %w", err)
 	}

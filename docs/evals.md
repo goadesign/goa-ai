@@ -418,13 +418,27 @@ implementations.
 Custom judges implement this same batch contract:
 
 ```go
-Judge(ctx context.Context, output string, claims []eval.Claim) ([]eval.Judgment, error)
+Judge(ctx context.Context, output string, claims []eval.Claim, reference string) ([]eval.Judgment, error)
 ```
 
 The output is supplied once for the whole ordered claim list. Reports and
 judgments retain claim IDs. The model-backed judge uses those IDs as required
 JSON property names, not identifier values that the model must copy between
 separate lists or calls.
+
+Hooks put shared factual context in `Result.Reference`, rather than repeating it
+inside several claims. The runner passes that string separately from the unchanged
+answer and retains it as `reference` in the JSON report; an empty reference is
+omitted and means no additional context is needed. The judge supplies it once per
+request, including corrections. Reference facts may establish whether the answer
+is accurate, but cannot supply content the answer omitted. An empty answer still
+receives `not_addressed` labels without a judge call, even with a rich reference.
+
+Custom judges and direct callers must adopt the fourth argument; pass `""` when
+no reference is needed. Calibration uses an empty reference. Existing reports
+without `reference` retain that meaning; no generated suite or product service
+contract changes. Applications with strict external report readers must accept
+the new report field before consuming reports that include it.
 
 For each scenario the judge receives the answer and the scenario's claims, and
 returns exactly one label and a short rationale per claim:
@@ -444,7 +458,8 @@ before touching the application. Calibration runs under a two-minute deadline
 owned by the runner, so an unreachable or stalled model endpoint fails the
 suite with a clear error instead of blocking it forever.
 
-The judge sends only the answer in its user message. Its private
+The judge sends the answer and, when present, one shared reference in its user
+message. Its private
 `submit_judgments` tool requires one property per claim ID, with the exact claim
 text appearing once as that property's description. Each property contains a
 required label and nonempty rationale. For example, claims named `subject` and
@@ -468,9 +483,9 @@ no naming pattern, trimming, or case normalization. Full claim texts count towar
 the existing 1 MiB tool-schema limit. An oversized schema fails before inference;
 claims and evidence are never truncated or automatically split across calls.
 
-This replaces only the private positional-array tool protocol. The public
-`eval.Judge` API, generated suites, calibration, labels, and stored report shape
-remain unchanged. Named properties enforce association and coverage, not semantic
+Named properties replace the private positional-array tool protocol without
+changing generated suites, calibration, or labels. They enforce association and
+coverage, not semantic
 truth: a rationale about the wrong fact under a valid property is still a model
 judgment error. The framework preserves its label and rationale exactly; it does
 not repair, reassign, or approve the decision.

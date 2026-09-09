@@ -241,7 +241,7 @@ func (r *Runner) calibrate(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, calibrationTimeout)
 	defer cancel()
 	output, claims, expected := calibrationCases()
-	judgments, err := r.judge.Judge(ctx, output, claims)
+	judgments, err := r.judge.Judge(ctx, output, claims, "")
 	if err != nil {
 		return fmt.Errorf("%w: %w", errCalibration, err)
 	}
@@ -333,7 +333,7 @@ func (r *Runner) judgeClaims(ctx context.Context, result Result) ([]Judgment, er
 		}
 		return judgments, nil
 	}
-	judgments, err := r.judge.Judge(ctx, result.Output, result.Claims)
+	judgments, err := r.judge.Judge(ctx, result.Output, result.Claims, result.Reference)
 	if err != nil {
 		return nil, err
 	}

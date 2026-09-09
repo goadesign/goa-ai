@@ -21,17 +21,18 @@ type scriptedJudge struct {
 }
 
 type judgeRequest struct {
-	output string
-	claims []Claim
+	output    string
+	claims    []Claim
+	reference string
 }
 
-func (j *scriptedJudge) Judge(_ context.Context, output string, claims []Claim) ([]Judgment, error) {
+func (j *scriptedJudge) Judge(_ context.Context, output string, claims []Claim, reference string) ([]Judgment, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if j.onJudge != nil {
 		j.onJudge()
 	}
-	j.requests = append(j.requests, judgeRequest{output: output, claims: claims})
+	j.requests = append(j.requests, judgeRequest{output: output, claims: claims, reference: reference})
 	index := len(j.requests) - 1
 	return j.responses[index], j.errors[index]
 }
@@ -60,7 +61,7 @@ type deadlineJudge struct {
 	sawDeadline bool
 }
 
-func (j *deadlineJudge) Judge(ctx context.Context, _ string, _ []Claim) ([]Judgment, error) {
+func (j *deadlineJudge) Judge(ctx context.Context, _ string, _ []Claim, _ string) ([]Judgment, error) {
 	_, j.sawDeadline = ctx.Deadline()
 	return calibrationJudgments(), nil
 }
@@ -70,7 +71,7 @@ type concurrentJudge struct {
 	release chan struct{}
 }
 
-func (j *concurrentJudge) Judge(ctx context.Context, _ string, claims []Claim) ([]Judgment, error) {
+func (j *concurrentJudge) Judge(ctx context.Context, _ string, claims []Claim, _ string) ([]Judgment, error) {
 	if len(claims) == 4 && claims[0].ID == "calibration_entailed" {
 		return calibrationJudgments(), nil
 	}
@@ -395,8 +396,9 @@ func TestRunnerLabelsClaimsNotAddressedWhenOutputEmpty(t *testing.T) {
 		ID: "case", Timeout: time.Second,
 		Run: func(context.Context) (Result, error) {
 			return Result{
-				Checks: []Check{{Name: "terminal", Passed: false, Diagnostic: "run failed"}},
-				Claims: []Claim{{ID: "complete", Text: "The inventory is complete."}},
+				Checks:    []Check{{Name: "terminal", Passed: false, Diagnostic: "run failed"}},
+				Claims:    []Claim{{ID: "complete", Text: "The inventory is complete."}},
+				Reference: "A complete inventory exists in the reference, not in the absent answer.",
 			}, nil
 		},
 	}}}
