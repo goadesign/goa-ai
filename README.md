@@ -1083,6 +1083,9 @@ cannot shift a decision to another claim. Missing, unknown, or duplicate names
 are rejected; semantic labels and rationales remain model decisions. See the
 [judge contract](docs/evals.md#how-judging-works).
 
+The judge distinguishes required answer content from constraints that permit
+omission; omission never supplies required content or missing factual support.
+
 The existing correction flow can give field-specific guidance for structural
 argument errors. Full claim text remains in the schema, not repeated in that
 feedback; neither the grading rules nor the correction limit changes.

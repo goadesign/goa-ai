@@ -450,6 +450,19 @@ returns exactly one label and a short rationale per claim:
 
 Only `entailed` counts as passing.
 
+The judge applies each claim's conditions as written. A requirement to report a
+price is not satisfied by omitting the price. A constraint that any quoted price
+must agree with the reference can be satisfied by quoting no price, when the
+claim permits that omission and its other requirements are satisfied. This is
+`entailed`, not `not_addressed`: the constraint itself was met. It does not
+supply missing required content, prove an unsupported statement, or resolve an
+unknown condition about the world. The separate no-answer rule still labels
+every claim `not_addressed` when the scenario produces an empty output.
+
+This interpretation remains a model judgment. The framework neither parses
+claims into categories nor changes returned labels or rationales. Its prompt
+clarifies the distinction without adding model calls, labels, or report fields.
+
 Before any scenario runs, the runner tests the judge with four fixed examples,
 one per label. This step is called calibration. A judge that cannot tell the
 labels apart — for example one that answers `entailed` for everything, which
