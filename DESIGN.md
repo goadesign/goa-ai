@@ -305,6 +305,10 @@ the runner passes it to `Judge(ctx, output, claims, reference)` and retains it i
 the report. Each model request includes the reference once, separate from the
 unchanged candidate. Reference facts cannot fill omissions in that candidate.
 An empty reference is legitimate, and an empty candidate still skips grading.
+The judge attaches structural field metadata to the same tool schema so the
+existing model validator can name an invalid object or field in correction
+guidance. Semantic claim text stays in the schema, not in that metadata;
+correction never supplies a verdict or changes the accepted judgments.
 See the
 [judge contract](docs/evals.md#how-judging-works) for validation and limits.
 
@@ -1654,11 +1658,12 @@ tool-input validation errors qualify for limited-size correction guidance that
 omits rejected arguments. Code generation records field types through nested
 objects, collections, and union branches. Callers that build `ToolSpec` values
 directly may supply the same field metadata. The model client uses that metadata
-to name one field and its required, type, enum, or array-length rule when the
-structured schema failure has one unique deepest cause. For unions, only the branch named
-by a valid string discriminator participates. Array indexes and map keys appear
-as `*`. Ambiguous failures and specifications without field metadata keep
-generic field guidance. A request-owned copy of the validated input example
+to explain independently identified required, type, enum, or array-length
+violations. Sound instructions survive unrelated ambiguous failures. For unions,
+only the branch named by a valid string discriminator participates. Array indexes
+and map keys appear as `*`; distinct instructions for the same displayed path
+are omitted. With no sound field instruction, guidance remains generic.
+A request-owned copy of the validated input example
 can accompany that guidance, intact within the existing correction size limit.
 It illustrates argument structure without choosing the request's values or
 restricting valid tool or union choices. The complete contract lives in

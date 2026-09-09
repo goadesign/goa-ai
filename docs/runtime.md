@@ -1522,15 +1522,25 @@ schema rejection is eligible for a replacement turn within the configured
 recovery limit. A decoder rejection is eligible only when it returns a non-nil
 `*tools.ValidationError`,
 the typed error generated decoders use for invalid model-authored fields.
-For a tool specification with field metadata, a schema rejection may name one
-advertised field path and its required, JSON type, enum, or array-length rule.
-Generated tool and completion specifications include this metadata; callers that construct a
-`ToolSpec` directly may include it too. The runtime uses only the union branch
-named by a valid string discriminator. A missing, non-string, or unknown
-discriminator keeps the generic replacement instruction. The correction is
-specific only when the structured schema failure has one unique deepest cause
-that matches the selected field metadata. Unsupported failures at that depth
-also make the correction generic.
+For a tool specification with field metadata, a schema rejection may identify
+several advertised field paths and their required, JSON type, enum, or
+array-length rules. Generated tool and completion specifications include this
+metadata; callers that construct a `ToolSpec` directly may include it too.
+The runtime gathers independently required constraints, including `allOf`, but
+does not treat alternative `anyOf` branches, array `contains` candidates, or
+property-name checks as instructions to change every corresponding value.
+For a union, only the branch named by a valid string discriminator participates.
+A missing, non-string, or unknown discriminator receives no branch-specific
+instruction; sound instructions for unrelated fields remain available.
+
+Instructions are sorted and deduplicated. Different instructions for the same
+displayed path are omitted; the runtime does not try to combine their
+constraints. This also avoids contradictory guidance when different collection
+entries collapse to one `*` path. Unsupported,
+ambiguous, or oversized instructions do not erase sound instructions for other
+fields. A partial correction states that other schema errors are not detailed;
+with no sound instruction, it keeps the generic replacement request. Each
+instruction is included whole within the existing correction byte limit.
 
 Array-length guidance uses the validator's inclusive minimum or maximum for
 that one array, such as `Field "items" must contain at most 3 items.` Generated
