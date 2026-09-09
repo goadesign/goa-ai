@@ -419,11 +419,11 @@ func (r *Runtime) continuationPayload(spec tools.ToolSpec, state continuationSta
 	if err != nil {
 		return nil, fmt.Errorf("encode query payload: %w", err)
 	}
-	value, err := spec.Payload.Codec.FromJSON(payload)
+	value, err := spec.ExecutionPayloadCodec.FromJSON(payload)
 	if err != nil {
 		return nil, fmt.Errorf("decode retained query with generated codec: %w", err)
 	}
-	canonical, err := spec.Payload.Codec.ToJSON(value)
+	canonical, err := spec.ExecutionPayloadCodec.ToJSON(value)
 	if err != nil {
 		return nil, fmt.Errorf("encode retained query with generated codec: %w", err)
 	}

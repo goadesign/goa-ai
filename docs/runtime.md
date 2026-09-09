@@ -410,7 +410,16 @@ next planner activity starts from the last accepted conversation, receives the
 tools available for that new request, and gets a fixed reminder to choose one
 of those exact names. The runtime does not guess a replacement, apply aliases
 or fuzzy matching, copy the catalog into recovery state, or change the
-available tools.
+available tools. Correction feedback does not replace active failed-call IDs:
+  their restrictions remain in force on the replacement request. The replacement
+may use any action permitted by that request's completion contract, including
+a final answer when allowed.
+
+Input-correction text describes JSON/schema constraints and any validated
+example; it does not require another tool call. The runtime adds replacement
+instructions appropriate to the current actions and completion requirements.
+Direct model-client users still receive the same typed validation error and
+constraint details, and choose their own recovery behavior.
 
 For streams, validation can report the rejected name and valid token usage as
 soon as `Recv` detects the bad output. The runtime does not commit recovery at
@@ -947,6 +956,36 @@ Start ──► PlanStart ──► Tool Calls? ──► Execute Tools ──�
 
 ### Tool payload codecs and defaults (Feature)
 
+`ToolSpec.Payload.Codec` accepts exactly the input described by `Payload.Schema`,
+including its authored example. `ToolSpec.ExecutionPayloadCodec` accepts the
+complete input described by `ExecutionPayloadSchema`, after the runtime adds
+retained query fields and a cursor. Both codecs are required on registered
+tools; generation reuses one implementation when the inputs are identical.
+
+For example, the model selects a dedicated continuation with `{}`. Its model
+codec accepts that object, while its execution codec requires the cursor and
+any retained query arguments. Runtime execution and saved-workflow restoration
+use the execution codec, never the smaller model codec. Fields declared with
+`Inject` are absent from both JSON inputs and filled inside the provider.
+Generated typed payload codecs and typed tool descriptors remain execution
+codecs. Model decoding may return that same Go payload type with fields left
+unset for the runtime to supply; it does not make that value ready to execute.
+
+When upgrading, regenerate all tool specifications and update handwritten
+specifications to supply `ExecutionPayloadCodec`. Change code decoding executed
+or saved tool payloads from `Payload.Codec` to `ExecutionPayloadCodec`. Model
+validation continues to use `Payload.Codec`. This changes the in-process Go
+contract, not registry messages, model schemas, or saved payload formats.
+
+For tools with a dedicated continuation, the generated named initial payload
+codec now enforces the already-declared execution contract: the initial request
+does not accept a cursor. Decode later-page requests with the actual
+continuation tool's execution codec; do not relabel them as initial requests.
+Previously accepted initial requests containing a cursor were outside that
+contract and are not preserved by this upgrade. Declared execution schemas and
+valid saved history remain unchanged; no wire-format or stored-data migration
+is introduced.
+
 Tool payloads are decoded using a Goa‑style two‑step model:
 
 1. **Decode JSON into a helper “decode‑body” type** with pointer fields, so the codec can
@@ -1129,7 +1168,10 @@ Workflow step boundary:
   workers and cannot be rolled back to an older runtime,
 - `MaxRecoveryTurns` counts replacement planner activities scheduled after
   rejected tool output, a rejected model invocation, or a rejected completed
-  model response; successful budgeted tool work does not reset this count;
+  model response; successful domain work ends an ordinary recoverable episode,
+  but successful pagination cannot end an unresolved finish episode or reset
+  its count; fetching a successful page does not itself consume a replacement
+  attempt, and normal tool/time budgets still apply;
   agents that omit the setting receive three turns; the terminal finalization
   activity that explains or records exhaustion is not a replacement attempt
   and does not consume this budget,
@@ -1151,12 +1193,27 @@ Workflow step boundary:
   policy labels, planner output, and model output cannot replace this value,
 - ordinary tool calls do not receive the finalization-reason label; the runtime
   removes that reserved key if a run, policy, planner, or model supplies it,
+- a finish failure with still-live queries exposes their generated pagination
+  actions alongside registered terminal bookkeeping; the planner receives
+  `Finalize` with reason `tool_failure`, may finish immediately, and must never
+  combine pagination with terminal submission; successful pages and rejected
+  responses preserve the exact active failures and never reopen domain work;
+  deadline/cap finalization and terminal-tool payload repair allow no pagination,
 - recoverable failures supply one normal planner activity with their structured
   evidence and do not constrain this validated terminal bookkeeping path;
   caller-supplied `WithRestrictToTool` remains run-scoped and still applies,
 - deadline checks happen before admitting new work; in-flight tool batches
   still respect the finalizer window and synthesize canceled tool results for
   unfinished calls.
+
+Finish continuity does not change activity or suspension field shapes. Existing
+current-version checkpoints retain their failed outputs and recovery catalog.
+However, old workflow histories that reopened domain work after a finish failure
+are not execution-compatible: a recorded ordinary-tool plan cannot satisfy the
+retained finish restriction. Keep those histories with their owning worker
+version or complete them before replacing that worker. Do not infer replay
+compatibility from successful payload decoding, and do not mix old and new
+activity implementations for an affected workflow.
 
 Consumers of fixed-limit and planner-authored finalization calls, including
 `tool_failure`, read the termination reason from
@@ -1249,7 +1306,7 @@ These fields answer different questions:
 | `ToolSpec.Meta` | One tool for every run | Which inert generated annotations are available to their named consumers? Metadata alone changes no runtime behavior. |
 | `ToolSpec.Bookkeeping` | One tool for every run | Does this call consume the tool-call budget, and does its success independently schedule another planner turn? |
 | `ToolSpec.TerminalRun` | One tool for every run | Does successful execution itself complete the run? |
-| `ToolOutput.Failure.Recovery.Action` | One failed result | Must the planner correct this call, replan, or finish without tools? |
+| `ToolOutput.Failure.Recovery.Action` | One failed result | Must the planner correct this call, replan, or stop starting new operations? |
 | `PlanResult.SynthesizeAfterTools` | One selected batch | If the batch has no recoverable failure, must the next turn answer? |
 | `PlanResumeInput.SynthesisOnly` | One planner activity | Must this planner result be terminal and tool-free? |
 | `PlanResumeInput.Finalize` | Runtime-forced planner termination | Did an unconfigured cap or deadline, or one tool failure, require the planner to finish? |

@@ -98,10 +98,10 @@ func decodeResultPreviewArgs(ctx context.Context, rt *Runtime, call *ToolCall) a
 		return nil
 	}
 	spec, ok := rt.toolSpec(call.Name)
-	if !ok || spec.Payload.Codec.FromJSON == nil {
+	if !ok || spec.ExecutionPayloadCodec.FromJSON == nil {
 		return nil
 	}
-	args, err := spec.Payload.Codec.FromJSON(call.Payload.RawMessage())
+	args, err := spec.ExecutionPayloadCodec.FromJSON(call.Payload.RawMessage())
 	if err != nil {
 		if rt.logger != nil {
 			rt.logger.Warn(ctx, "tool payload decode failed for result preview", "tool", call.Name, "err", err)

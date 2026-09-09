@@ -877,7 +877,6 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 				},
 				RecoveryToolCallIDs: []string{"call-1"},
 			},
-			wantErr: "cannot combine with tool recovery",
 		},
 		{
 			name: "model output recovery with finalization evidence",
@@ -2676,7 +2675,7 @@ func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 
 func TestPlanResumeActivityBindsModelSelectedContinuation(t *testing.T) {
 	search, continuation := continuationTestSpecs()
-	continuation.Payload.Codec = tools.JSONCodec[any]{
+	continuation.ExecutionPayloadCodec = tools.JSONCodec[any]{
 		ToJSON: json.Marshal,
 		FromJSON: func(data []byte) (any, error) {
 			var payload struct {

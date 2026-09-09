@@ -183,6 +183,7 @@ type (
 		injectedFieldLayouts       map[string]*goacodegen.GoTypePlan
 		injectedFieldValidations   map[string]*goacodegen.ValidationPlan
 		payloadType                *plannedSpecType
+		modelPayloadType           *plannedSpecType
 		resultType                 *plannedSpecType
 		serverDataTypes            map[string]*plannedSpecType
 		methodPayloadTransformPlan *goacodegen.TransformPlan

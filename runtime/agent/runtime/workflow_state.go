@@ -48,8 +48,13 @@ type (
 		// the lifetime of this run.
 		ToolOutputs []*planner.ToolOutput
 
-		// PendingRecovery is either failed tool work or one rejected model
-		// answer. The concrete type determines the next planner input.
-		PendingRecovery pendingPlannerRecovery
+		// PendingRecovery retains failed work and its current executable catalog.
+		// Finish failures remain active until the run ends; other failures last
+		// through their correction turn and any suspension it creates.
+		PendingRecovery *pendingToolRecovery
+
+		// PendingCorrection replaces one rejected model response without changing
+		// the operations permitted by PendingRecovery.
+		PendingCorrection pendingModelRecovery
 	}
 )

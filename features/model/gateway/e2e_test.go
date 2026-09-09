@@ -281,7 +281,7 @@ func TestE2EStreamGeneratedValidationRunsAfterRawGateway(t *testing.T) {
 	var outputErr *model.OutputValidationError
 	require.ErrorAs(t, err, &outputErr)
 	require.Equal(t,
-		"The previous tool call did not match its advertised input schema. Return a replacement tool call with valid arguments.",
+		"The previous tool call did not match its advertised input schema.",
 		outputErr.RecoveryCorrection(),
 	)
 	require.NotContains(t, outputErr.RecoveryCorrection(), `"k"`)

@@ -1300,7 +1300,8 @@ func newAnyJSONSpec(name tools.Ident) tools.ToolSpec {
 		},
 	}
 	return tools.ToolSpec{
-		Name: name,
+		Name:                  name,
+		ExecutionPayloadCodec: codec,
 		Payload: tools.TypeSpec{
 			Name:   string(name) + "_payload",
 			Schema: rawjson.Message(`{"type":"object"}`),

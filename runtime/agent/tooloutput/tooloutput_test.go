@@ -365,7 +365,7 @@ func assertCorrectionRequest(t *testing.T, request *model.Request) {
 	assert.Equal(t, model.ToolChoiceModeTool, request.ToolChoice.Mode)
 	assert.Equal(t, "results.submit", request.ToolChoice.Name)
 	assert.Contains(t, systemText(request), "system-reminder")
-	assert.Contains(t, systemText(request), "replacement tool call")
+	assert.Contains(t, systemText(request), "current completion requirements")
 }
 
 func systemText(request *model.Request) string {

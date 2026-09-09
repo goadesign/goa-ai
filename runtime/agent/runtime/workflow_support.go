@@ -310,6 +310,7 @@ func (r *Runtime) finalizeFromHistory(
 			caps,
 			nextAttempt,
 			turnID,
+			recovery,
 			reason,
 			hardDeadline,
 		)
@@ -405,6 +406,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	caps policy.CapsState,
 	nextAttempt int,
 	turnID string,
+	activeRecovery []*planner.ToolOutput,
 	reason planner.TerminationReason,
 	hardDeadline time.Time,
 ) (*RunOutput, error) {
@@ -512,6 +514,14 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		return nil, err
 	}
 	if len(recovery) > 0 {
+		// A terminal payload correction replaces that payload's diagnostic, not
+		// the original failure that required the run to end. Keep both in the
+		// next planner request while admitting only the failed terminal tool.
+		for _, output := range activeRecovery {
+			if output.Failure.Recovery.Action == planner.RecoveryFinish {
+				recovery = append(recovery, output)
+			}
+		}
 		if !consumeRecoveryTurn(&st.Caps) {
 			return nil, errors.New("finalization terminal tool correction exceeded the recovery turn cap")
 		}

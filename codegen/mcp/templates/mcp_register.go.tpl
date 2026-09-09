@@ -1,5 +1,6 @@
 // {{ .Register.HelperName }}ToolSpecs contains the tool specifications for the {{ .Register.SuiteName }} toolset.
-var {{ .Register.HelperName }}ToolSpecs = []tools.ToolSpec{
+var {{ .Register.HelperName }}ToolSpecs = func() []tools.ToolSpec {
+	specs := []tools.ToolSpec{
 {{- range .Register.Tools }}
 	{
 		Name:        {{ printf "%q" .ID }},
@@ -56,7 +57,15 @@ var {{ .Register.HelperName }}ToolSpecs = []tools.ToolSpec{
 		{{- end }}
 	},
 {{- end }}
-}
+	}
+	// MCP forwards the model's arguments unchanged. Both contracts therefore
+	// use the same generated schema and codec.
+{{- range $i, $tool := .Register.Tools }}
+	specs[{{ $i }}].ExecutionPayloadSchema = specs[{{ $i }}].Payload.Schema
+	specs[{{ $i }}].ExecutionPayloadCodec = specs[{{ $i }}].Payload.Codec
+{{- end }}
+	return specs
+}()
 
 // {{ .Register.HelperName }}ToolMetadata describes each tool in the {{ .Register.SuiteName }} toolset.
 var {{ .Register.HelperName }}ToolMetadata = []policy.ToolMetadata{

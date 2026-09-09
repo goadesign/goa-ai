@@ -32,9 +32,10 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 		FromJSON: func(_ []byte) (any, error) { return "decoded_result", nil },
 	}
 	spec := tools.ToolSpec{
-		Name:    tools.Ident("svc.ts.tool"),
-		Payload: tools.TypeSpec{Name: "P", Codec: payloadCodec},
-		Result:  tools.TypeSpec{Name: "R", Codec: resultCodec},
+		Name:                  tools.Ident("svc.ts.tool"),
+		Payload:               tools.TypeSpec{Name: "P", Codec: tools.AnyJSONCodec},
+		ExecutionPayloadCodec: payloadCodec,
+		Result:                tools.TypeSpec{Name: "R", Codec: resultCodec},
 	}
 
 	rt := &Runtime{
@@ -83,6 +84,8 @@ func TestExecuteToolActivity_RejectsEmptyPayloadAtActivityBoundary(t *testing.T)
 			},
 		},
 	}
+	spec.ExecutionPayloadCodec = spec.Payload.Codec
+	spec.ExecutionPayloadCodec.ToJSON = json.Marshal
 	rt := &Runtime{
 		toolsets: map[string]ToolsetRegistration{
 			"svc.ts": {

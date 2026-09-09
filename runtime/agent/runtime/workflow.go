@@ -443,13 +443,13 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	st.ResponseID = firstOutput.PublicationBatchID
 	if firstOutput.OutputContractFailure != nil {
 		st.ResponseID = ""
-		st.PendingRecovery = pendingModelOutputRecovery{
+		st.PendingCorrection = pendingModelOutputRecovery{
 			recovery: *firstOutput.OutputContractFailure.ModelOutputRecovery,
 		}
 	}
 	if firstOutput.ModelInvocationRecovery != nil {
 		st.ResponseID = ""
-		st.PendingRecovery = pendingModelInvocationRecovery{
+		st.PendingCorrection = pendingModelInvocationRecovery{
 			recovery: *firstOutput.ModelInvocationRecovery,
 		}
 	}
@@ -514,7 +514,7 @@ func (r *Runtime) runLoopWithState(
 	if st.Result != nil && st.ResponseID == "" {
 		return nil, errors.New("runLoop selected planner response is missing its response id")
 	}
-	if st.Result == nil && st.PendingRecovery == nil {
+	if st.Result == nil && st.PendingCorrection == nil {
 		return nil, fmt.Errorf("runLoop initial PlanResult is nil")
 	}
 	if st.Result != nil &&

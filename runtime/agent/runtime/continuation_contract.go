@@ -296,7 +296,7 @@ func decodeToolValue(definition AgentDefinition, name tools.Ident, data []byte, 
 	}
 	codec := spec.Result.Codec
 	if payload {
-		codec = spec.Payload.Codec
+		codec = spec.ExecutionPayloadCodec
 	}
 	if codec.FromJSON == nil {
 		return fmt.Errorf("tool %q has no current generated codec", name)

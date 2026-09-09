@@ -54,6 +54,7 @@ func newSpecAdd() tools.ToolSpec {
 		Description:            "Add",
 		Tags:                   []string{},
 		ExecutionPayloadSchema: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"left\":{\"description\":\"Left operand\",\"format\":\"int32\",\"type\":\"integer\"},\"right\":{\"description\":\"Right operand\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"left\",\"right\"],\"type\":\"object\"}"),
+		ExecutionPayloadCodec:  addPayloadCodec,
 		Payload: tools.TypeSpec{
 			Name:                     "AddPayload",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"left\":{\"description\":\"Left operand\",\"format\":\"int32\",\"type\":\"integer\"},\"right\":{\"description\":\"Right operand\",\"format\":\"int32\",\"type\":\"integer\"}},\"required\":[\"left\",\"right\"],\"type\":\"object\"}"),

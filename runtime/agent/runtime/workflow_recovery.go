@@ -1,10 +1,8 @@
 package runtime
 
-// This file represents the one pending recovery action owned by a workflow.
-// Tool recovery carries failed calls and their advertised catalog. Completed
-// answer recovery carries replacement guidance. Pre-canonical invocation
-// recovery carries exactly one generated correction or rejected tool name and
-// retains the normal executable tool catalog.
+// Tool failures constrain the work a workflow may perform. A rejected model
+// response adds correction feedback without replacing those constraints.
+// Only the two model-correction variants are mutually exclusive.
 
 import (
 	"errors"
@@ -16,8 +14,8 @@ import (
 )
 
 type (
-	pendingPlannerRecovery interface {
-		pendingPlannerRecovery()
+	pendingModelRecovery interface {
+		pendingModelRecovery()
 	}
 
 	pendingToolRecovery struct {
@@ -34,21 +32,27 @@ type (
 	}
 )
 
-func (pendingToolRecovery) pendingPlannerRecovery()            {}
-func (pendingModelOutputRecovery) pendingPlannerRecovery()     {}
-func (pendingModelInvocationRecovery) pendingPlannerRecovery() {}
+func (pendingModelOutputRecovery) pendingModelRecovery()     {}
+func (pendingModelInvocationRecovery) pendingModelRecovery() {}
 
 // toolRecovery returns the failed calls and catalog when the workflow is
 // waiting for the planner to repair tool work.
-func toolRecovery(recovery pendingPlannerRecovery) ([]*planner.ToolOutput, *RecoveryCatalog) {
+func toolRecovery(recovery *pendingToolRecovery) ([]*planner.ToolOutput, *RecoveryCatalog) {
 	if recovery == nil {
 		return nil, nil
 	}
-	pending, ok := recovery.(pendingToolRecovery)
-	if !ok {
-		return nil, nil
+	return recovery.outputs, recovery.catalog
+}
+
+// finishRecovery identifies active failures that forbid starting new operations.
+// Callers pass only pending failures, never the complete historical transcript.
+func finishRecovery(outputs []*planner.ToolOutput) bool {
+	for _, output := range outputs {
+		if output.Failure != nil && output.Failure.Recovery.Action == planner.RecoveryFinish {
+			return true
+		}
 	}
-	return pending.outputs, pending.catalog
+	return false
 }
 
 // correctCallToolNames identifies the failed tools whose correction contracts
@@ -72,7 +76,7 @@ func correctCallToolNames(outputs []*planner.ToolOutput) []tools.Ident {
 
 // modelOutputRecovery returns the rejected response kind and replacement
 // guidance when the workflow is waiting for corrected model output.
-func modelOutputRecovery(recovery pendingPlannerRecovery) *ModelOutputRecovery {
+func modelOutputRecovery(recovery pendingModelRecovery) *ModelOutputRecovery {
 	if recovery == nil {
 		return nil
 	}
@@ -85,9 +89,9 @@ func modelOutputRecovery(recovery pendingPlannerRecovery) *ModelOutputRecovery {
 }
 
 // modelInvocationRecovery returns the one recorded fact when the workflow is
-// waiting for a new tool call under the normal executable catalog. It returns
+// waiting for a replacement under the current executable catalog. It returns
 // a copy so callers cannot change workflow state after reading it.
-func modelInvocationRecovery(recovery pendingPlannerRecovery) *ModelInvocationRecovery {
+func modelInvocationRecovery(recovery pendingModelRecovery) *ModelInvocationRecovery {
 	if recovery == nil {
 		return nil
 	}

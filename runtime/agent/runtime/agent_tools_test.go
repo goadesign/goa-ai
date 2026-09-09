@@ -425,6 +425,8 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 		},
 		Result: tools.TypeSpec{Codec: tools.AnyJSONCodec},
 	}
+	spec.ExecutionPayloadCodec = spec.Payload.Codec
+	spec.ExecutionPayloadCodec.ToJSON = json.Marshal
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
 		Definition: testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
@@ -619,6 +621,7 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 		Payload: tools.TypeSpec{
 			Codec: tools.AnyJSONCodec,
 		},
+		ExecutionPayloadCodec: tools.AnyJSONCodec,
 		Result: tools.TypeSpec{
 			Codec: tools.JSONCodec[any]{
 				ToJSON: json.Marshal,
