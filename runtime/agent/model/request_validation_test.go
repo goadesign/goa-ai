@@ -706,7 +706,7 @@ func TestGeneratedToolSchemaRejectionsProduceActionableCorrections(t *testing.T)
 	}
 }
 
-func TestGeneratedToolSchemaCorrectionStaysGenericWhenCauseIsAmbiguous(t *testing.T) {
+func TestGeneratedToolSchemaCorrectionReportsIndependentMissingFields(t *testing.T) {
 	definition := generatedSchemaTool(
 		`{"type":"object","properties":{"left":{"type":"string"},"right":{"type":"string"}},"required":["left","right"],"additionalProperties":false}`,
 		map[string]string{
@@ -730,7 +730,7 @@ func TestGeneratedToolSchemaCorrectionStaysGenericWhenCauseIsAmbiguous(t *testin
 	require.Nil(t, validated)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
+	require.Equal(t, "Field \"left\" is required.\nField \"right\" is required. Return a replacement tool call with valid arguments.", validationErr.RecoveryCorrection())
 	require.NotContains(t, validationErr.RecoveryCorrection(), "private-")
 }
 
@@ -880,7 +880,7 @@ func TestToolSchemaCorrectionNamesRequiredFieldWithoutFixedJSONType(t *testing.T
 	)
 }
 
-func TestToolSchemaCorrectionIncludesUnsupportedFailuresInAmbiguity(t *testing.T) {
+func TestToolSchemaCorrectionPreservesGuidanceBesideUnsupportedFailures(t *testing.T) {
 	definition := schemaToolWithFields(
 		`{"type":"object","properties":{"label":{"type":"string","minLength":3},"count":{"type":"integer"}},"required":["label","count"],"additionalProperties":false}`,
 		[]tools.FieldMetadata{
@@ -901,10 +901,10 @@ func TestToolSchemaCorrectionIncludesUnsupportedFailuresInAmbiguity(t *testing.T
 	_, err = contract.ValidateResponse(response)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
+	require.Equal(t, `Field "count" must contain a JSON integer. Field description: "Count". Other schema errors are not detailed here. Return a replacement tool call with valid arguments.`, validationErr.RecoveryCorrection())
 }
 
-func TestToolSchemaCorrectionIncludesUnmappedFailuresInAmbiguity(t *testing.T) {
+func TestToolSchemaCorrectionPreservesGuidanceBesideUnmappedFailures(t *testing.T) {
 	definition := schemaToolWithFields(
 		`{"type":"object","properties":{"known":{"type":"string"},"unmapped":{"type":"integer"}},"required":["known","unmapped"],"additionalProperties":false}`,
 		[]tools.FieldMetadata{
@@ -928,7 +928,7 @@ func TestToolSchemaCorrectionIncludesUnmappedFailuresInAmbiguity(t *testing.T) {
 	_, err = contract.ValidateResponse(response)
 	var validationErr *OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
-	require.Equal(t, advertisedToolInputCorrection, validationErr.RecoveryCorrection())
+	require.Equal(t, `Field "known" must contain a JSON string. Field description: "Known field". Other schema errors are not detailed here. Return a replacement tool call with valid arguments.`, validationErr.RecoveryCorrection())
 }
 
 func TestGeneratedToolSchemaCorrectionSnapshotsGeneratedMetadata(t *testing.T) {

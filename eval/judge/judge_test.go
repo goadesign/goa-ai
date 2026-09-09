@@ -128,7 +128,8 @@ func TestJudgeUsesRuntimeCorrectionForMalformedToolArguments(t *testing.T) {
 	}
 	assert.Nil(t, client.requests[1].StructuredOutput)
 	assert.Contains(t, systemText(client.requests[1]), "system-reminder")
-	assert.Contains(t, systemText(client.requests[1]), "judgments")
+	assert.Contains(t, systemText(client.requests[1]), `Field "$payload" contains an undeclared field.`)
+	assert.Contains(t, systemText(client.requests[1]), `Field "complete" is required.`)
 }
 
 func TestJudgeStopsAfterRuntimeCorrectionLimit(t *testing.T) {

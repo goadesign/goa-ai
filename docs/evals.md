@@ -459,8 +459,9 @@ owned by the runner, so an unreachable or stalled model endpoint fails the
 suite with a clear error instead of blocking it forever.
 
 The judge sends the answer and, when present, one shared reference in its user
-message. Its private
-`submit_judgments` tool requires one property per claim ID, with the exact claim
+message. Its prompt asks for the supplied grading tool rather than spelling a
+provider-specific tool name. The private `eval.submit_judgments` tool requires
+one property per claim ID, with the exact claim
 text appearing once as that property's description. Each property contains a
 required label and nonempty rationale. For example, claims named `subject` and
 `severity` produce `{"subject":{"label":"entailed","rationale":"..."},
@@ -476,6 +477,20 @@ runtime's existing bounded correction flow through `runtime/agent/tooloutput.Run
 one initial call and at most three corrections, with the same response allowance.
 Provider and transport failures are not retried by the judge. There is no new
 native strict-output requirement or per-claim model call.
+
+The judge's tool schema also describes the required object structure and carries
+field metadata for each claim, label, and rationale. The existing validator uses
+that metadata to provide precise correction guidance: an extra root property is
+identified as an undeclared field, while a judgment encoded as a JSON string is
+instructed to become a JSON object. A claim named `requests` remains valid when
+that name is required by the schema; there is no reserved-name filter.
+
+Full claim text and reference evidence remain available to the judge unchanged.
+Correction metadata describes structure only, so even a long claim is not copied
+into the limited-size feedback. The judge adds no example labels or rationales
+that could influence the semantic decision. This changes neither grading rules,
+accepted labels, model selection, token limits, nor the existing correction count;
+it improves guidance without guaranteeing that the model will follow it.
 
 Claim IDs remain unique, nonempty strings. The model-backed judge additionally
 requires valid UTF-8 so JSON encoding cannot silently change their names; it adds

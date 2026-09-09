@@ -58,10 +58,12 @@ type (
 const (
 	submitJudgmentsID completion.Ident = "eval.submit_judgments"
 
+	judgmentRootDescription = "Return only the required claim properties shown in this schema. Each property contains a judgment object with label and rationale; do not add a wrapper or other properties."
+
 	judgePrompt = `Classify each claim independently against the supplied output.
 Use the reference, when supplied, as factual context only. Do not credit the output with information that appears only in the reference.
 Return entailed when the output establishes the claim, contradicted when it establishes the claim is false, not_addressed when it does neither, and indeterminate only when ambiguity prevents classification.
-Call submit_judgments exactly once. Each required property describes one claim; supply its label and a concise rationale in that property.`
+Call the supplied grading tool exactly once. Each required property describes one claim; supply its label and a concise rationale in that property.`
 )
 
 // New creates a semantic judge backed by client. maxOutputTokens must be positive
@@ -152,10 +154,12 @@ func (j *Judge) run(ctx context.Context, payload []byte, spec completion.Spec[re
 // shared model validator owns required/unknown fields, labels, and rationales.
 func judgmentToolSpec(claims []aieval.Claim) (completion.Spec[responseBody], error) {
 	schema := judgmentSchema{
-		Type:       "object",
-		Required:   make([]string, len(claims)),
-		Properties: make(map[string]json.RawMessage, len(claims)),
+		Type:        "object",
+		Description: judgmentRootDescription,
+		Required:    make([]string, len(claims)),
+		Properties:  make(map[string]json.RawMessage, len(claims)),
 	}
+	fields := []tools.FieldMetadata{{JSONType: "object", Description: judgmentRootDescription}}
 	for index, claim := range claims {
 		property, err := json.Marshal(judgmentSchema{
 			Type:        "object",
@@ -171,6 +175,13 @@ func judgmentToolSpec(claims []aieval.Claim) (completion.Spec[responseBody], err
 		}
 		schema.Required[index] = claim.ID
 		schema.Properties[claim.ID] = property
+		// Keep correction guidance structural. The full claim text remains in
+		// the schema, but repeating it in feedback could obscure the shape error.
+		fields = append(fields,
+			tools.FieldMetadata{Path: []tools.FieldPathSegment{tools.FixedField(claim.ID)}, JSONType: "object"},
+			tools.FieldMetadata{Path: []tools.FieldPathSegment{tools.FixedField(claim.ID), tools.FixedField("label")}, JSONType: "string"},
+			tools.FieldMetadata{Path: []tools.FieldPathSegment{tools.FixedField(claim.ID), tools.FixedField("rationale")}, JSONType: "string"},
+		)
 	}
 	encoded, err := json.Marshal(schema)
 	if err != nil {
@@ -186,6 +197,7 @@ func judgmentToolSpec(claims []aieval.Claim) (completion.Spec[responseBody], err
 		Name:        submitJudgmentsID,
 		Description: "Submit a semantic judgment for each claim described by a required property.",
 		Schema:      rawjson.Message(encoded),
+		Fields:      fields,
 		Codec:       codec,
 	}, nil
 }

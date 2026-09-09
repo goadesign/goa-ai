@@ -322,12 +322,13 @@ Mechanical response rejections return `*model.OutputValidationError`.
 `Kind()` reports one closed, privacy-safe category such as `tool_arguments` or
 `stream_protocol`; it never contains response text, provider text, tool names,
 arguments, or schema paths. The category is diagnostic only. A tool
-specification with field metadata may separately return one correction that
-names an unambiguous advertised field path and its required, type, enum, or
-array-length rule. Array indexes and map keys appear as `*`. Corrections may repeat advertised
+specification with field metadata may separately return correction guidance for
+independently identified advertised fields and their required, type, enum, or
+array-length rules. Array indexes and map keys appear as `*`. Corrections may repeat advertised
 descriptions and enum values, but never include submitted values, submitted map
-keys, array indexes, call IDs, or undeclared field names. Ambiguous failures and
-specifications without field metadata keep the generic replacement instruction.
+keys, array indexes, call IDs, or undeclared field names. Ambiguous failures do
+not erase sound instructions for other fields. With no sound field instruction,
+the correction keeps the generic replacement instruction.
 Recovery remains bounded by the runtime's configured recovery-turn limit.
 
 Model-call tracing records the full underlying validation cause on the existing
@@ -429,8 +430,8 @@ var Docs = Toolset("docs", func() {
   advertised schema is enforced before any attached input decoder. Only
   schema rejections and typed tool-input validation errors get limited-size
   correction guidance that omits rejected arguments. Schema rejections for
-  specifications with field metadata name one advertised field and its stable
-  rule when the validator identifies it without ambiguity. When it fits, the
+  specifications with field metadata name independently identified fields and
+  their stable rules without guessing between alternatives. When it fits, the
   correction also includes the complete validated input example, with guidance
   to use values and a valid variant appropriate to the request. Ordinary decoder
   and internal errors stop the run. Local callers can inspect the original
@@ -1071,6 +1072,10 @@ Judgments use required JSON properties named for each claim, so response order
 cannot shift a decision to another claim. Missing, unknown, or duplicate names
 are rejected; semantic labels and rationales remain model decisions. See the
 [judge contract](docs/evals.md#how-judging-works).
+
+The existing correction flow can give field-specific guidance for structural
+argument errors. Full claim text remains in the schema, not repeated in that
+feedback; neither the grading rules nor the correction limit changes.
 
 Hooks can supply shared factual context once in `Result.Reference`. The judge
 receives it separately from the unchanged answer and must not credit an answer
