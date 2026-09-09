@@ -67,6 +67,9 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	}
 	typeName := planned.publicDeclaration.Name()
 	key := "name:" + typeName
+	if usage == usageModelPayload {
+		key += ":model-input"
+	}
 
 	defineType := false
 	// Public tool types keep required fields as values and apply Goa defaults.
@@ -76,6 +79,9 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	)
 	b.materializeNestedLocalTypes(scope, planned.publicTypes, publicPtr, publicDefaults)
 	tt, defLine, fullRef := b.buildTypeDefinition(typeName, planned.public, scope, defineType, publicPtr, publicDefaults)
+	if usage == usageModelPayload {
+		defLine = ""
+	}
 	b.collectUnionSumTypes(scope, tt)
 	ptr := planned.publicLayout.ReferenceIsPointer()
 
@@ -106,10 +112,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	}
 	var executionSchemaBytes []byte
 	if usage == usagePayload {
-		executionSchemaBytes, err = specializeExecutionPayloadSchema(schemaWithoutRootExampleBytes, owner.Bounds)
-		if err != nil {
-			return nil, fmt.Errorf("build %s execution payload schema: %w", owner.QualifiedName, err)
-		}
+		executionSchemaBytes = append([]byte(nil), schemaWithoutRootExampleBytes...)
 	}
 	if usage == usagePayload && len(owner.ModelHiddenPayloadFields) > 0 {
 		schemaBytes, err = removePayloadSchemaFields(schemaBytes, owner.ModelHiddenPayloadFields)
@@ -265,7 +268,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	}
 	b.contractTypes[identity] = info
 	// Also index by Go name so the same type is not written twice.
-	nameKey := "name:" + typeName
+	nameKey := key
 	if _, exists := b.types[nameKey]; !exists {
 		b.types[nameKey] = info
 	}
@@ -281,6 +284,8 @@ func (p *toolSpecsPackagePlan) typeFor(owner *contractTypeOwner, usage typeUsage
 	switch usage {
 	case usagePayload:
 		return names.payloadType
+	case usageModelPayload:
+		return names.modelPayloadType
 	case usageResult:
 		return names.resultType
 	case usageServerData:
@@ -288,40 +293,6 @@ func (p *toolSpecsPackagePlan) typeFor(owner *contractTypeOwner, usage typeUsage
 	default:
 		panic(fmt.Sprintf("unknown type use %q", usage))
 	}
-}
-
-// specializeExecutionPayloadSchema gives each dedicated paging tool the exact
-// payload it receives from continuation handling. The first tool cannot accept
-// a cursor. Its continuation requires one.
-func specializeExecutionPayloadSchema(schemaBytes []byte, bounds *ToolBoundsData) ([]byte, error) {
-	if bounds == nil || bounds.Paging == nil || bounds.Paging.ContinueTool == "" {
-		return append([]byte(nil), schemaBytes...), nil
-	}
-	paging := bounds.Paging
-	if paging.SourceTool == "" {
-		return removePayloadSchemaFields(schemaBytes, []string{paging.CursorField})
-	}
-
-	var schema map[string]any
-	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
-		return nil, fmt.Errorf("decode payload schema: %w", err)
-	}
-	properties, ok := schema["properties"].(map[string]any)
-	if !ok || properties[paging.CursorField] == nil {
-		return nil, fmt.Errorf("continuation payload schema is missing cursor field %q", paging.CursorField)
-	}
-	required, _ := schema["required"].([]any)
-	for _, item := range required {
-		if name, ok := item.(string); ok && name == paging.CursorField {
-			return append([]byte(nil), schemaBytes...), nil
-		}
-	}
-	schema["required"] = append(required, paging.CursorField)
-	projected, err := json.Marshal(schema)
-	if err != nil {
-		return nil, fmt.Errorf("encode payload schema: %w", err)
-	}
-	return projected, nil
 }
 
 // removePayloadSchemaFields removes root fields from a generated JSON schema.

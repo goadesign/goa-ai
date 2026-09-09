@@ -1527,7 +1527,7 @@ func (r *Runtime) toolCodec(toolName tools.Ident, payload bool) (*tools.JSONCode
 		return nil, false
 	}
 	if payload {
-		return &spec.Payload.Codec, true
+		return &spec.ExecutionPayloadCodec, true
 	}
 	return &spec.Result.Codec, true
 }

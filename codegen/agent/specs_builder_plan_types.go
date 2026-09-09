@@ -138,6 +138,13 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 	if err := p.declareTypeImports(owner, payload, usagePayload); err != nil {
 		return err
 	}
+	if isDedicatedContinuation(tool) {
+		modelOwner := *owner
+		modelOwner.ModelHiddenPayloadFields = modelHiddenPayloadFields(tool)
+		if err := p.declareTypeImports(&modelOwner, payload, usageModelPayload); err != nil {
+			return err
+		}
+	}
 	publicPayload := effectiveObject(payload)
 	for _, name := range tool.InjectedFields {
 		if err := p.fileImports.publicInject.AddTypeExpressions(publicPayload.Attribute(name)); err != nil {
@@ -189,6 +196,15 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 	names := p.tools[tool.Name]
 	names.payloadType = p.types[stableTypeKey(owner, usagePayload, "")]
 	names.payloadType.jsonValidator.render = true
+	if isDedicatedContinuation(tool) {
+		modelOwner := *owner
+		modelOwner.ModelHiddenPayloadFields = modelHiddenPayloadFields(tool)
+		if err := p.declareType(&modelOwner, payload, usageModelPayload, ""); err != nil {
+			return err
+		}
+		names.modelPayloadType = p.types[stableTypeKey(owner, usageModelPayload, "")]
+		names.modelPayloadType.jsonValidator.render = true
+	}
 	publicPayload := effectiveObject(names.payloadType.publicShape)
 	for _, name := range tool.InjectedFields {
 		field := publicPayload.Attribute(name)
@@ -302,6 +318,8 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 	switch usage {
 	case usagePayload:
 		preferred += "Payload"
+	case usageModelPayload:
+		preferred += "ModelInput"
 	case usageResult:
 		preferred += "Result"
 	case usageServerData:
@@ -318,29 +336,38 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		TypeName:      preferred,
 	}
 	publicAttribute := &goaexpr.AttributeExpr{Type: publicType}
-	publicTypeDeclaration, err := p.public.DeclareGeneratedType(
-		preferred,
-		specNameOrder{packagePath: p.public.ImportPath(), key: key + ":public"},
+	var (
+		publicDeclaration *goacodegen.NameDeclaration
+		publicLayout      *goacodegen.GoTypePlan
+		err               error
 	)
-	if err != nil {
-		return err
-	}
-	if err := p.public.BindGeneratedType(publicType, publicTypeDeclaration); err != nil {
-		return err
-	}
-	publicDeclaration := publicTypeDeclaration.Declaration()
-	p.publicTypeUses[publicType] = publicDeclaration
-	if err := declareAttributeUnions(p.public, p.publicFixed, p.publicUnionErrors, public); err != nil {
-		return err
-	}
-
-	publicLayout, err := p.planDeclaredTypeLayout(
-		publicAttribute,
-		p.public,
-		goacodegen.GoLayoutPolicy{UseDefault: true, SumType: true},
-	)
-	if err != nil {
-		return err
+	if usage == usageModelPayload {
+		// Both decoders return the existing typed payload. Only the model's
+		// JSON transport omits values that execution supplies later.
+		execution := p.types[stableTypeKey(owner, usagePayload, "")]
+		publicAttribute = execution.public
+		publicDeclaration = execution.publicDeclaration
+		publicLayout = execution.publicLayout
+	} else {
+		publicTypeDeclaration, declareErr := p.public.DeclareGeneratedType(
+			preferred,
+			specNameOrder{packagePath: p.public.ImportPath(), key: key + ":public"},
+		)
+		if declareErr != nil {
+			return declareErr
+		}
+		if err := p.public.BindGeneratedType(publicType, publicTypeDeclaration); err != nil {
+			return err
+		}
+		publicDeclaration = publicTypeDeclaration.Declaration()
+		p.publicTypeUses[publicType] = publicDeclaration
+		if err := declareAttributeUnions(p.public, p.publicFixed, p.publicUnionErrors, public); err != nil {
+			return err
+		}
+		publicLayout, err = p.planDeclaredTypeLayout(publicAttribute, p.public, goacodegen.GoLayoutPolicy{UseDefault: true, SumType: true})
+		if err != nil {
+			return err
+		}
 	}
 
 	var (
@@ -399,6 +426,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		key,
 		preferred,
 		owner.Kind == contractTypeOwnerCompletion,
+		usage == usageModelPayload,
 		publicDeclaration,
 		transportDeclaration,
 	)
@@ -481,8 +509,28 @@ func localizedSpecShapes(owner *contractTypeOwner, attribute *goaexpr.AttributeE
 	}
 	public, publicTypes := localizeNestedTypes(shape, false, nil)
 	transportSource := public
-	if usage == usagePayload && len(owner.ModelHiddenPayloadFields) > 0 {
+	if (usage == usagePayload || usage == usageModelPayload) && len(owner.ModelHiddenPayloadFields) > 0 {
 		transportSource = modelTransportShape(public, owner.ModelHiddenPayloadFields)
+	}
+	if usage == usagePayload && owner.Bounds != nil && owner.Bounds.Paging != nil && owner.Bounds.Paging.ContinueTool != "" {
+		paging := owner.Bounds.Paging
+		for _, field := range *effectiveObject(transportSource) {
+			if modelJSONName(field.Name) != paging.CursorField {
+				continue
+			}
+			if paging.SourceTool == "" {
+				transportSource = modelTransportShape(transportSource, []string{field.Name})
+			} else {
+				transportSource = goaexpr.DupAtt(transportSource)
+				if transportSource.Validation == nil {
+					transportSource.Validation = &goaexpr.ValidationExpr{}
+				}
+				if !transportSource.IsRequired(field.Name) {
+					transportSource.Validation.Required = append(transportSource.Validation.Required, field.Name)
+				}
+			}
+			break
+		}
 	}
 	transport := cloneWithModelJSONTags(transportSource)
 	publicSources := make(map[goaexpr.UserType]goaexpr.UserType, len(publicTypes))
@@ -544,9 +592,16 @@ func (p *toolSpecsPackagePlan) planDeclaredTypeLayout(
 }
 
 // declareTypeNames records the variables and functions written with one type.
-func (p *toolSpecsPackagePlan) declareTypeNames(key, preferred string, completion bool, public, transport *goacodegen.NameDeclaration) (*plannedSpecType, error) {
+func (p *toolSpecsPackagePlan) declareTypeNames(key, preferred string, completion, modelInput bool, public, transport *goacodegen.NameDeclaration) (*plannedSpecType, error) {
 	names := &plannedSpecType{}
 	declarePublic := func(prefix, suffix, role string) (*goacodegen.NameDeclaration, error) {
+		if modelInput {
+			declaration := goacodegen.NewPreferredName(goacodegen.NameFunction, prefix+preferred+suffix, goacodegen.UnexportedName, specNameOrder{packagePath: p.public.ImportPath(), key: key + ":" + role})
+			if err := p.public.DeclareName(declaration); err != nil {
+				return nil, err
+			}
+			return declaration, nil
+		}
 		return p.public.DeclareDependentName(
 			goacodegen.NameFunction,
 			public,

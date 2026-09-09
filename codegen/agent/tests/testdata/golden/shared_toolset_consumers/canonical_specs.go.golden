@@ -56,6 +56,7 @@ func newSpecPing() tools.ToolSpec {
 		Description:            "Return the supplied message.",
 		Tags:                   []string{},
 		ExecutionPayloadSchema: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"message\":{\"description\":\"Message to return.\",\"type\":\"string\"}},\"required\":[\"message\"],\"type\":\"object\"}"),
+		ExecutionPayloadCodec:  pingPayloadCodec,
 		Payload: tools.TypeSpec{
 			Name:                     "PingPayload",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"message\":{\"description\":\"Message to return.\",\"type\":\"string\"}},\"required\":[\"message\"],\"type\":\"object\"}"),

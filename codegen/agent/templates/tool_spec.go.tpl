@@ -118,6 +118,7 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
         },
         {{- end }}
 		ExecutionPayloadSchema: {{- if and .Payload (gt (len .Payload.ExecutionSchemaJSON) 0) }}tools.RawJSON({{ printf "%q" .Payload.ExecutionSchemaJSON }}){{ else }}nil{{ end }},
+		ExecutionPayloadCodec: {{ .Payload.GenericCodec }},
         Payload: tools.TypeSpec{
             Name: {{ if .Payload }}{{ printf "%q" .Payload.TypeName }}{{ else }}""{{ end }},
             {{- if .Payload }}
@@ -125,7 +126,7 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
             SchemaWithoutRootExample: {{- if gt (len .Payload.SchemaWithoutRootExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Payload.SchemaWithoutRootExampleJSON }}){{ else }}nil{{ end }},
             ExampleJSON: {{- if gt (len .Payload.ExampleJSON) 0 }}tools.RawJSON({{ printf "%q" .Payload.ExampleJSON }}){{ else }}nil{{ end }},
             Fields: {{- if .Payload.Fields }}tools.CloneFieldMetadata({{ .Payload.FieldsVar }}){{ else }}nil{{ end }},
-            Codec:  {{ .Payload.GenericCodec }},
+            Codec:  {{ .ModelPayload.GenericCodec }},
             {{- else }}
             Schema: nil,
             SchemaWithoutRootExample: nil,

@@ -86,6 +86,38 @@ func TestValidateToolSpecRegistrationsRejectsIncompleteResultContract(t *testing
 	}
 }
 
+func TestRegisterToolsetRejectsIncompleteExecutionPayloadCodec(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		codec tools.JSONCodec[any]
+	}{
+		{name: "missing codec"},
+		{name: "encoder only", codec: tools.JSONCodec[any]{ToJSON: tools.AnyJSONCodec.ToJSON}},
+		{name: "decoder only", codec: tools.JSONCodec[any]{FromJSON: tools.AnyJSONCodec.FromJSON}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := New(newTestStore())
+			spec := newAnyJSONSpec("svc.lookup")
+			spec.ExecutionPayloadCodec = test.codec
+			err := runtime.RegisterToolset(ToolsetRegistration{
+				Name:  "svc",
+				Specs: []tools.ToolSpec{spec},
+				Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
+					return nil, nil
+				},
+			})
+
+			require.ErrorIs(t, err, ErrInvalidConfig)
+			require.ErrorContains(t, err, "execution payload codec must define both ToJSON and FromJSON")
+			_, registered := runtime.ToolSpec(spec.Name)
+			require.False(t, registered)
+		})
+	}
+}
+
 func TestRegisterToolsetRejectsInvalidPayloadContract(t *testing.T) {
 	t.Parallel()
 
@@ -130,8 +162,9 @@ func TestRegisterToolsetRejectsInvalidPayloadContract(t *testing.T) {
 			err := runtime.RegisterToolset(ToolsetRegistration{
 				Name: "svc",
 				Specs: []tools.ToolSpec{{
-					Name:    "svc.tool",
-					Payload: test.payload,
+					Name:                  "svc.tool",
+					Payload:               test.payload,
+					ExecutionPayloadCodec: tools.AnyJSONCodec,
 				}},
 				Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
 					return nil, nil
@@ -151,7 +184,8 @@ func TestRegisterToolsetCompilesPayloadContractWithoutRuntimeLock(t *testing.T) 
 	err := runtime.RegisterToolset(ToolsetRegistration{
 		Name: "svc",
 		Specs: []tools.ToolSpec{{
-			Name: "svc.tool",
+			Name:                  "svc.tool",
+			ExecutionPayloadCodec: tools.AnyJSONCodec,
 			Payload: tools.TypeSpec{
 				Schema:                   tools.RawJSON(`{"type":"object"}`),
 				SchemaWithoutRootExample: tools.RawJSON(`{"type":"object"}`),
@@ -365,9 +399,25 @@ func TestAddToolSpecsKeepsFirstCodecOwner(t *testing.T) {
 	first.Payload.Codec.ToJSON = func(any) ([]byte, error) {
 		return []byte(`"first"`), nil
 	}
+	first.ExecutionPayloadCodec = tools.JSONCodec[any]{
+		ToJSON: func(any) ([]byte, error) {
+			return []byte(`"first execution"`), nil
+		},
+		FromJSON: func([]byte) (any, error) {
+			return "first execution", nil
+		},
+	}
 	second := first
 	second.Payload.Codec.ToJSON = func(any) ([]byte, error) {
 		return []byte(`"second"`), nil
+	}
+	second.ExecutionPayloadCodec = tools.JSONCodec[any]{
+		ToJSON: func(any) ([]byte, error) {
+			return []byte(`"second execution"`), nil
+		},
+		FromJSON: func([]byte) (any, error) {
+			return "second execution", nil
+		},
 	}
 
 	runtime.mu.Lock()
@@ -380,6 +430,12 @@ func TestAddToolSpecsKeepsFirstCodecOwner(t *testing.T) {
 	encoded, err := stored.Payload.Codec.ToJSON(nil)
 	require.NoError(t, err)
 	require.JSONEq(t, `"first"`, string(encoded))
+	encoded, err = stored.ExecutionPayloadCodec.ToJSON(nil)
+	require.NoError(t, err)
+	require.JSONEq(t, `"first execution"`, string(encoded))
+	decoded, err := stored.ExecutionPayloadCodec.FromJSON([]byte(`{}`))
+	require.NoError(t, err)
+	require.Equal(t, "first execution", decoded)
 }
 
 // sharedRouteTestSpec returns a shared contract that can be bound by any local

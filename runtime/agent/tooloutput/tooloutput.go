@@ -68,7 +68,7 @@ func Run[T any](ctx context.Context, client model.Client, request *model.Request
 		Name:  "tooloutput",
 		Specs: []tools.ToolSpec{privateSpec},
 		Execute: func(_ context.Context, call *agentruntime.ToolCall) (*agentruntime.ToolExecutionResult, error) {
-			value, err := privateSpec.Payload.Codec.FromJSON(call.Payload)
+			value, err := privateSpec.ExecutionPayloadCodec.FromJSON(call.Payload)
 			if err != nil {
 				return nil, fmt.Errorf("decode accepted tool output %q: %w", call.Name, err)
 			}
@@ -233,9 +233,11 @@ func privateToolSpec[T any](spec completion.Spec[T]) tools.ToolSpec {
 		Codec:                    codec,
 	}
 	return tools.ToolSpec{
-		Name:        tools.Ident(spec.Name),
-		Description: spec.Description,
-		Payload:     typeSpec,
-		Result:      typeSpec,
+		Name:                   tools.Ident(spec.Name),
+		Description:            spec.Description,
+		Payload:                typeSpec,
+		ExecutionPayloadSchema: append(tools.RawJSON(nil), spec.SchemaWithoutRootExample...),
+		ExecutionPayloadCodec:  codec,
+		Result:                 typeSpec,
 	}
 }

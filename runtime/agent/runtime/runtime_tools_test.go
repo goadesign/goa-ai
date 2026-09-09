@@ -60,7 +60,8 @@ func newProjectedResultSpec() tools.ToolSpec {
 		},
 	}
 	return tools.ToolSpec{
-		Name: "tool",
+		Name:                  "tool",
+		ExecutionPayloadCodec: payloadCodec,
 		Payload: tools.TypeSpec{
 			Name:   "tool_payload",
 			Schema: rawjson.Message(`{"type":"object"}`),
@@ -137,7 +138,7 @@ func TestExecuteToolActivityEagerDecodeDefersCorrectionEvidence(t *testing.T) {
 	const toolName = tools.Ident("tool")
 	executionPayload := rawjson.Message(`{"query":42,"credential":"server-owned"}`)
 	spec := newAnyJSONSpec(toolName)
-	spec.Payload.Codec.FromJSON = func([]byte) (any, error) {
+	spec.ExecutionPayloadCodec.FromJSON = func([]byte) (any, error) {
 		return nil, tools.NewValidationError(
 			"query must be a string",
 			[]*tools.FieldIssue{{

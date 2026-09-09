@@ -66,7 +66,7 @@ func validateLimitTerminalCallForDefinition(definition AgentDefinition, call Lim
 	if err := validatePlannerToolPayload(call.Payload); err != nil {
 		return fmt.Errorf("tool %q payload: %w", call.Name, err)
 	}
-	if _, err := spec.Payload.Codec.FromJSON(call.Payload); err != nil {
+	if _, err := spec.ExecutionPayloadCodec.FromJSON(call.Payload); err != nil {
 		return fmt.Errorf("tool %q payload: %w", call.Name, err)
 	}
 	return nil

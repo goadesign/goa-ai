@@ -101,6 +101,9 @@ type (
 		MetaPairs []toolMetaPair
 		// Type metadata for the tool's input arguments.
 		Payload *typeData
+		// ModelPayload uses the model's smaller input shape when continuation
+		// execution requires arguments the model is not allowed to supply.
+		ModelPayload *typeData
 		// Type metadata for the tool's output result.
 		Result *typeData
 		// HasResult reports whether the tool returns a value.
@@ -382,7 +385,8 @@ const (
 	contractTypeOwnerTool       contractTypeOwnerKind = "tool"
 	contractTypeOwnerCompletion contractTypeOwnerKind = "completion"
 
-	usagePayload    typeUsage = "payload"
-	usageResult     typeUsage = "result"
-	usageServerData typeUsage = "server-data"
+	usagePayload      typeUsage = "payload"
+	usageModelPayload typeUsage = "model-payload"
+	usageResult       typeUsage = "result"
+	usageServerData   typeUsage = "server-data"
 )

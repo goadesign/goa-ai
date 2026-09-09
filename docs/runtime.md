@@ -947,6 +947,36 @@ Start ──► PlanStart ──► Tool Calls? ──► Execute Tools ──�
 
 ### Tool payload codecs and defaults (Feature)
 
+`ToolSpec.Payload.Codec` accepts exactly the input described by `Payload.Schema`,
+including its authored example. `ToolSpec.ExecutionPayloadCodec` accepts the
+complete input described by `ExecutionPayloadSchema`, after the runtime adds
+retained query fields and a cursor. Both codecs are required on registered
+tools; generation reuses one implementation when the inputs are identical.
+
+For example, the model selects a dedicated continuation with `{}`. Its model
+codec accepts that object, while its execution codec requires the cursor and
+any retained query arguments. Runtime execution and saved-workflow restoration
+use the execution codec, never the smaller model codec. Fields declared with
+`Inject` are absent from both JSON inputs and filled inside the provider.
+Generated typed payload codecs and typed tool descriptors remain execution
+codecs. Model decoding may return that same Go payload type with fields left
+unset for the runtime to supply; it does not make that value ready to execute.
+
+When upgrading, regenerate all tool specifications and update handwritten
+specifications to supply `ExecutionPayloadCodec`. Change code decoding executed
+or saved tool payloads from `Payload.Codec` to `ExecutionPayloadCodec`. Model
+validation continues to use `Payload.Codec`. This changes the in-process Go
+contract, not registry messages, model schemas, or saved payload formats.
+
+For tools with a dedicated continuation, the generated named initial payload
+codec now enforces the already-declared execution contract: the initial request
+does not accept a cursor. Decode later-page requests with the actual
+continuation tool's execution codec; do not relabel them as initial requests.
+Previously accepted initial requests containing a cursor were outside that
+contract and are not preserved by this upgrade. Declared execution schemas and
+valid saved history remain unchanged; no wire-format or stored-data migration
+is introduced.
+
 Tool payloads are decoded using a Goa‑style two‑step model:
 
 1. **Decode JSON into a helper “decode‑body” type** with pointer fields, so the codec can

@@ -54,6 +54,7 @@ func newSpecStore() tools.ToolSpec {
 		Description:            "Store",
 		Tags:                   []string{},
 		ExecutionPayloadSchema: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"id\",\"title\"],\"type\":\"object\"}"),
+		ExecutionPayloadCodec:  storePayloadCodec,
 		Payload: tools.TypeSpec{
 			Name:                     "StorePayload",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Identifier\",\"type\":\"string\"},\"title\":{\"description\":\"Title\",\"type\":\"string\"}},\"required\":[\"id\",\"title\"],\"type\":\"object\"}"),

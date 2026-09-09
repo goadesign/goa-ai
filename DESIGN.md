@@ -1708,6 +1708,16 @@ cursor violates the paging contract and fails immediately. The model chooses
 which semantic query with returned evidence to continue but never reproduces a
 cursor or correlation identifier.
 
+Each generated input schema has a matching generated codec. `Payload.Codec`
+accepts model-authored arguments, including the empty object for a dedicated
+continuation. `ExecutionPayloadCodec` accepts the restored execution payload
+and is used when running tools or restoring saved work. These codec functions
+are shared when both inputs have the same shape. The generator derives cursor
+presence and hidden fields before creating the schema and decoder, so adding
+an authored example cannot make a valid continuation fail registration.
+The existing typed payload and typed tool descriptors keep their execution
+meaning; no new model-visible fields or persisted representations are added.
+
 A new run reconstructs still-live continuation actions from structured
 transcript tool-call IDs and canonical scheduled/result events in the session
 run log. It never trusts a cursor copied through the transcript and never
