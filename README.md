@@ -681,6 +681,11 @@ History can also use model-assisted compression: declare
 or `KeepMaxTurns` exact-retention budgets inside `History`. Token budgets are
 counted at runtime by a history model that implements `model.TokenCounter` with
 exact counts and keep only whole recent turns, never truncated tool exchanges.
+A turn keeps a complete assistant response and its tool results together, even
+when reasoning, text, and parallel calls arrive as separate adjacent messages.
+Later completed exchanges after the same user request remain separate turns,
+so autonomous runs can still summarize older work. See
+[complete history turns](docs/runtime.md#complete-history-turns).
 The summary model receives complete quoted tool arguments, results, and source
 references, with native images and documents grouped by their original messages.
 It receives no executable tool catalog. Plain and cited summary sentences are

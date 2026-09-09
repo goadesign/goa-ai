@@ -1271,6 +1271,11 @@ RunPolicy(func() {
 
 History policies transform message history when a planner first calls
 `PrepareMessages`, preserving system prompts and logical turn boundaries.
+One turn contains a complete contiguous assistant response and its tool results,
+not each message fragment or an entire autonomous run. A user request stays with
+its first response; subsequent completed response/result exchanges can be
+retained or summarized independently. See [complete history turns](runtime.md#complete-history-turns)
+for parallel calls, accompanying result text, reminders, and pending requests.
 Decisions using only typed run state or tool results need not prepare history.
 See [the runtime preparation contract](runtime.md#preparing-conversation-messages)
 for lifetime, error handling, and custom planner migration.
