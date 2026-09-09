@@ -42,6 +42,7 @@ type (
 
 	judgmentHTTPRequest struct {
 		path string
+		raw  []byte
 		body struct {
 			MaxTokens  int             `json:"max_tokens"`
 			Thinking   json.RawMessage `json:"thinking"`
@@ -91,7 +92,7 @@ func TestJudgeAnthropicHTTPOutputAllowance(t *testing.T) {
 			candidate := strings.Repeat("Synthetic reading: 12.5 °C; source <sample>\n", 300)
 			claim := "The report preserves every reading. Reference evidence:\n" + strings.Repeat("Reading α: 12.5 °C\n", 500)
 
-			judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}})
+			judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}}, "")
 
 			require.NoError(t, err)
 			assert.Equal(t, []aieval.Judgment{{ClaimID: "complete", Label: aieval.Entailed, Rationale: "All supplied measurements appear exactly."}}, judgments)
@@ -129,7 +130,7 @@ func TestJudgeAnthropicHTTPRejectsIncompleteJudgments(t *testing.T) {
 			require.NoError(t, err)
 			candidate, claim := "Reading: 12.5 °C.", "The report includes the reading."
 
-			judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}})
+			judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}}, "")
 
 			require.Error(t, err)
 			assert.Nil(t, judgments)
@@ -168,7 +169,7 @@ func TestJudgeAnthropicHTTPRejectsPartialJSONWithoutRepair(t *testing.T) {
 	require.NoError(t, err)
 	candidate, claim := "Reading: 12.5 °C.", "The report includes the reading."
 
-	judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}})
+	judgments, err := evaluator.Judge(t.Context(), candidate, []aieval.Claim{{ID: "complete", Text: claim}}, "")
 
 	require.Error(t, err)
 	assert.Nil(t, judgments)
@@ -200,7 +201,7 @@ func (r *judgmentHTTPTransport) RoundTrip(request *http.Request) (*http.Response
 	if err != nil {
 		return nil, err
 	}
-	observed := judgmentHTTPRequest{path: request.URL.Path}
+	observed := judgmentHTTPRequest{path: request.URL.Path, raw: data}
 	if err := json.Unmarshal(data, &observed.body); err != nil {
 		return nil, err
 	}

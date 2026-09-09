@@ -300,7 +300,12 @@ the full claim in that property's description. Code looks up results by name and
 returns them in input order; response position never establishes association.
 The schema owns shape and coverage, and the judge codec rejects duplicate raw
 JSON member names before decoding can overwrite a decision. Semantic truth remains
-model-owned. The public judge API and report shape do not change; see the
+model-owned. Hooks supply shared factual context through `Result.Reference`;
+the runner passes it to `Judge(ctx, output, claims, reference)` and retains it in
+the report. Each model request includes the reference once, separate from the
+unchanged candidate. Reference facts cannot fill omissions in that candidate.
+An empty reference is legitimate, and an empty candidate still skips grading.
+See the
 [judge contract](docs/evals.md#how-judging-works) for validation and limits.
 
 See [docs/evals.md](docs/evals.md) for the DSL, generated API, runner methods,

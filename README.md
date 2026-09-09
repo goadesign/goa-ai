@@ -1070,6 +1070,12 @@ cannot shift a decision to another claim. Missing, unknown, or duplicate names
 are rejected; semantic labels and rationales remain model decisions. See the
 [judge contract](docs/evals.md#how-judging-works).
 
+Hooks can supply shared factual context once in `Result.Reference`. The judge
+receives it separately from the unchanged answer and must not credit an answer
+for facts it omitted. Custom judges implement
+`Judge(ctx, output, claims, reference)`; callers without reference context pass
+an empty string. Reports retain a nonempty reference for reproducible review.
+
 ### Bookkeeping and Terminal Tools
 
 Use `Bookkeeping()` for control-plane records such as status markers, transition
