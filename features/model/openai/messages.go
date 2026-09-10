@@ -17,6 +17,7 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 
 	"goa.design/goa-ai/features/model/toolname"
+	"goa.design/goa-ai/internal/modelmetadata"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
@@ -26,7 +27,7 @@ const (
 	openAIFunctionCallItemMetaKey      = "openai_function_call_item"
 	openAIFunctionCallVersionMetaKey   = "openai_function_call_version"
 	openAIFunctionCallPayloadMetaKey   = "openai_function_call_payload"
-	openAIReasoningItemsMetaKey        = "openai_reasoning_items"
+	openAIReasoningItemsMetaKey        = modelmetadata.OpenAIReasoningItems
 	openAIFunctionCallMetadataVersion2 = "2"
 )
 

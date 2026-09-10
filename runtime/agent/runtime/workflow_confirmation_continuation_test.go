@@ -12,11 +12,13 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
@@ -49,13 +51,25 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 	}))
 
 	firstInput := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
+	// Reasoning generated during this unfinished turn must survive suspension,
+	// even when a new completed-history turn would opt out of prior reasoning.
+	nativeMessages := priorReasoningFixture()
+	nativeMessages = nativeMessages[:len(nativeMessages)-1]
+	priorCall := nativeMessages[1].Parts[3].(model.ToolUsePart)
+	priorCall.ID = "prior-call"
+	nativeMessages[1].Parts[3] = priorCall
+	priorResult := nativeMessages[2].Parts[0].(model.ToolResultPart)
+	priorResult.ToolUseID = priorCall.ID
+	nativeMessages[2].Parts[0] = priorResult
+	originalMessages, err := transcript.EncodeRunLogDelta(nativeMessages)
+	require.NoError(t, err)
 	seedRunMeta(t, runtime, firstInput)
 	firstContext := &testWorkflowContext{ctx: t.Context(), runtime: runtime}
 	first, err := runtime.runLoop(
 		firstContext,
 		AgentRegistration{ExecuteToolActivity: "execute"},
 		firstInput,
-		&workflowConversation{RunContext: run.Context{
+		&workflowConversation{Messages: nativeMessages, RunContext: run.Context{
 			RunID: firstInput.RunID, SessionID: firstInput.SessionID, TurnID: firstInput.TurnID, Attempt: 1,
 		}},
 		&PlanResult{ToolCalls: []ToolCall{{
@@ -70,6 +84,11 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 
 	checkpoint, err := decodeWorkflowCheckpoint(first.Suspension, testRuntimeDefinition(runtime, "agent-1"))
 	require.NoError(t, err)
+	require.Len(t, checkpoint.BaseMessages, len(nativeMessages)+1)
+	checkpointMessages, err := transcript.EncodeRunLogDelta(checkpoint.BaseMessages[:len(nativeMessages)])
+	require.NoError(t, err)
+	require.Equal(t, originalMessages, checkpointMessages)
+	require.IsType(t, model.ThinkingPart{}, checkpoint.BaseMessages[1].Parts[0])
 	confirmation := first.Suspension.Pending[0].Confirmation
 	secondInput := &RunInput{
 		AgentID: "agent-1", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
@@ -94,6 +113,9 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 	require.Nil(t, second.Suspension)
 	require.Equal(t, 1, executions)
 	require.Equal(t, 1, second.ToolCount)
+	unchangedMessages, err := transcript.EncodeRunLogDelta(checkpoint.BaseMessages[:len(nativeMessages)])
+	require.NoError(t, err)
+	require.Equal(t, originalMessages, unchangedMessages)
 }
 
 func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {

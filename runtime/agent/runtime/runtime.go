@@ -419,9 +419,10 @@ type (
 
 	// runStart keeps engine launch settings separate from the workflow input.
 	runStart struct {
-		input   RunInput
-		options WorkflowOptions
-		launch  workflowLaunchSettings
+		input                 RunInput
+		options               WorkflowOptions
+		launch                workflowLaunchSettings
+		withoutPriorReasoning bool
 	}
 )
 
@@ -482,6 +483,20 @@ var (
 	ErrRegistrationClosed   = errors.New("registration closed after first run")
 	ErrMissingLabels        = errors.New("run start: missing required labels")
 )
+
+// WithoutPriorReasoning excludes private reasoning from the initial messages of
+// a new run. Use it when those messages contain completed conversation turns:
+// their visible content and tool exchanges remain, but ThinkingParts and native
+// reasoning continuation data do not. Caller messages are never modified.
+//
+// This option is consumed during preparation, before the initial messages are
+// serialized. It does not change how new reasoning is recorded, how an active
+// tool exchange continues, or how PrepareContinuation restores a suspended run.
+// Without this option, initial reasoning is preserved. It does not translate
+// other provider-specific content into a different provider's format.
+func WithoutPriorReasoning() RunOption {
+	return runOption(func(start *runStart) { start.withoutPriorReasoning = true })
+}
 
 // WithRunID sets the RunID on the constructed RunInput.
 func WithRunID(id string) RunOption {

@@ -393,7 +393,9 @@ func buildSessionRunStart(agentID agent.Ident, sessionID string, messages []*mod
 		SessionID: sessionID,
 		Messages:  messages,
 	}}
-	applyRunOptions(&start, opts)
+	if err := applyRunOptions(&start, opts); err != nil {
+		return runStart{}, err
+	}
 	launch, err := encodeWorkflowLaunch(start.options)
 	if err != nil {
 		return runStart{}, err
@@ -409,7 +411,9 @@ func buildOneShotRunStart(agentID agent.Ident, messages []*model.Message, opts [
 		AgentID:  agentID,
 		Messages: messages,
 	}}
-	applyRunOptions(&start, opts)
+	if err := applyRunOptions(&start, opts); err != nil {
+		return runStart{}, err
+	}
 	launch, err := encodeWorkflowLaunch(start.options)
 	if err != nil {
 		return runStart{}, err
@@ -483,11 +487,19 @@ func (r *Runtime) buildStoredContinuationRunInput(
 
 // applyRunOptions applies caller options in order to workflow input and launch
 // settings.
-func applyRunOptions(start *runStart, opts []RunOption) {
+func applyRunOptions(start *runStart, opts []RunOption) error {
 	for _, option := range opts {
 		if option == nil {
 			panic("runtime: run option is required")
 		}
 		option.apply(start)
 	}
+	if start.withoutPriorReasoning {
+		messages, err := completedTurnMessages(start.input.Messages)
+		if err != nil {
+			return fmt.Errorf("prepare initial messages without prior reasoning: %w", err)
+		}
+		start.input.Messages = messages
+	}
+	return nil
 }

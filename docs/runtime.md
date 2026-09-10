@@ -2866,6 +2866,24 @@ immutable copy of the complete workflow input. It does not write runtime state
 or call the workflow engine. A rejected response therefore leaves the requested
 run ID unused.
 
+For a **new user turn**, an application may pass `WithoutPriorReasoning()` to
+`Prepare` (or another initial-run method). The application must select completed
+history, not an unfinished tool exchange. Before freezing the initial request,
+the runtime copies its messages and removes prior `ThinkingPart` values, native
+reasoning metadata, and opaque tool thought signatures. It preserves text,
+citations, tool identities, arguments, results, and unrelated metadata; existing
+stored history is unchanged. Messages containing only removed reasoning are
+omitted. Without the option, initial reasoning is preserved.
+
+The option is not saved as workflow policy. Newly generated reasoning is still
+recorded normally, and `PrepareContinuation` always restores the original native
+checkpoint. Earlier hidden reasoning is intentionally unavailable to the new
+turn, even when the model provider has not changed. This does not translate
+other unsupported provider content: for example, canonical citations without
+native Responses output metadata still cannot replay through that adapter.
+Unrelated metadata on an otherwise emptied message is preserved; the ordinary
+model-request validator continues to reject a message without content.
+
 The owning service then atomically accepts one prepared answer, so concurrent
 answers cannot start two workflows from the same state, and starts that exact
 prepared value. It may safely retry the same prepared value after an uncertain

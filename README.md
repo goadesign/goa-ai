@@ -869,6 +869,13 @@ storage bytes, `ParsePreparedRun` loads them in a later process, and
 prepares and starts immediately. `Continue` does the same for a continuation
 and waits for its result.
 
+When initial messages contain completed turns, `runtime.WithoutPriorReasoning()`
+can omit their private thinking and native reasoning continuation data from the
+new run's initial context. Text, tools, results, citations, and unrelated metadata
+remain; saved history is not rewritten. The default keeps prior reasoning. This
+option does not suppress new reasoning or change suspended continuations, and
+does not translate other provider-specific content. See [runtime history policy](docs/runtime.md).
+
 `Prepare` and `PrepareOneShot` are client-only operations: they copy and
 validate the complete request without writing runtime storage, sealing worker
 registration, or calling the workflow engine. `PrepareContinuation` additionally
