@@ -52,7 +52,8 @@ func TestCompressFitsActualSummaryAndLongestEligibleSuffix(t *testing.T) {
 				provider.counts = append(provider.counts, fitCount{tokens: count})
 			}
 			tools := fitTools()
-			out, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, CompressAtMaxInputTokens: 200, KeepMaxTurns: 3, KeepMaxInputTokens: tc.keepBudget})(t.Context(), messages, tools)
+			historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, CompressAtMaxInputTokens: 200, KeepMaxTurns: 3, KeepMaxInputTokens: tc.keepBudget})(t.Context(), &model.Request{Messages: messages, Tools: tools, ModelClass: model.ModelClassSmall}, historyTestClient(t, provider), nil)
+			out := historyResult.Messages
 			if tc.wantErr != "" {
 				require.ErrorContains(t, err, tc.wantErr)
 				assert.Equal(t, messages, out)
@@ -111,7 +112,8 @@ func TestCompressActualFitStopsAtFirstCountFailure(t *testing.T) {
 			provider := &fitProvider{evidenceProvider: evidenceSummaryProvider(model.TextPart{Text: "Summary"}), counts: tc.counts}
 			messages := fitHistory()
 			before := canonicalHistory(t, messages)
-			out, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, CompressAtMaxInputTokens: 200, KeepMaxTurns: 3})(t.Context(), messages, nil)
+			historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, CompressAtMaxInputTokens: 200, KeepMaxTurns: 3})(t.Context(), &model.Request{Messages: messages, ModelClass: model.ModelClassSmall}, historyTestClient(t, provider), nil)
+			out := historyResult.Messages
 			require.ErrorContains(t, err, tc.want)
 			if errors.Is(tc.counts[len(tc.counts)-1].err, countErr) {
 				require.ErrorIs(t, err, countErr)
@@ -128,7 +130,8 @@ func TestCompressActualFitNewestOnlyHasOneFinalCount(t *testing.T) {
 	for _, count := range []int{200, 201} {
 		provider := &fitProvider{evidenceProvider: evidenceSummaryProvider(model.TextPart{Text: "Summary"}), counts: []fitCount{{tokens: 100}, {tokens: count}}}
 		messages := fitHistory()
-		out, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, CompressAtMaxInputTokens: 200, KeepMaxTurns: 1})(t.Context(), messages, nil)
+		historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, CompressAtMaxInputTokens: 200, KeepMaxTurns: 1})(t.Context(), &model.Request{Messages: messages, ModelClass: model.ModelClassSmall}, historyTestClient(t, provider), nil)
+		out := historyResult.Messages
 		if count == 200 {
 			require.NoError(t, err)
 			assert.Len(t, out, 4)
@@ -155,7 +158,8 @@ func TestCompressCustomPromptScopeFollowsTotalCeiling(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := &fitProvider{evidenceProvider: evidenceSummaryProvider(model.TextPart{Text: "Focused summary"}), counts: tc.counts}
 			messages := fitHistory()
-			out, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, KeepMaxTurns: 2, KeepMaxInputTokens: tc.budget, CompressAtMaxInputTokens: tc.ceiling}, WithSummaryPrompt("Keep dates 100%%\n%s\nEnd focus"), WithSummaryRole(model.ConversationRoleUser), WithModelClass(model.ModelClassHighReasoning))(t.Context(), messages, nil)
+			historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, KeepMaxTurns: 2, KeepMaxInputTokens: tc.budget, CompressAtMaxInputTokens: tc.ceiling}, WithSummaryPrompt("Keep dates 100%%\n%s\nEnd focus"), WithSummaryRole(model.ConversationRoleUser), WithModelClass(model.ModelClassHighReasoning))(t.Context(), &model.Request{Messages: messages, ModelClass: model.ModelClassHighReasoning}, historyTestClient(t, provider), nil)
+			out := historyResult.Messages
 			require.NoError(t, err)
 			require.Len(t, out, 6)
 			assert.Equal(t, model.ConversationRoleUser, out[1].Role)
@@ -208,7 +212,8 @@ func TestCompressActualFitPreservesToolEvidenceAndNewestParallelStep(t *testing.
 	}
 	before := canonicalHistory(t, messages)
 	provider := &fitProvider{evidenceProvider: evidenceSummaryProvider(model.TextPart{Text: "Synthetic summary, not semantic proof"}), counts: []fitCount{{tokens: 100}, {tokens: 160}, {tokens: 201}, {tokens: 200}}}
-	out, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 3, KeepMaxTurns: 2, KeepMaxInputTokens: 60, CompressAtMaxInputTokens: 200})(t.Context(), messages, fitTools())
+	historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 3, KeepMaxTurns: 2, KeepMaxInputTokens: 60, CompressAtMaxInputTokens: 200})(t.Context(), &model.Request{Messages: messages, Tools: fitTools(), ModelClass: model.ModelClassSmall}, historyTestClient(t, provider), nil)
+	out := historyResult.Messages
 	require.NoError(t, err)
 	require.Len(t, out, 5)
 	for i, original := range messages[6:] {
@@ -239,7 +244,8 @@ func TestCompressActualFitCountsRenderedCitationsAndPreservesNativeGroups(t *tes
 		{Role: model.ConversationRoleUser, Parts: []model.Part{document, image}}, assistantTextMsg("Second"),
 		userMsg("Newest"), assistantTextMsg("Current"),
 	}
-	out, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 3, KeepMaxTurns: 2, CompressAtMaxInputTokens: 200})(t.Context(), messages, nil)
+	historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 3, KeepMaxTurns: 2, CompressAtMaxInputTokens: 200})(t.Context(), &model.Request{Messages: messages, ModelClass: model.ModelClassSmall}, historyTestClient(t, provider), nil)
+	out := historyResult.Messages
 	require.NoError(t, err)
 	require.Len(t, provider.request.Messages, 4)
 	assert.Equal(t, []model.Part{model.TextPart{Text: "History message 0, part 0"}, image, model.TextPart{Text: "History message 0, part 1"}, document}, provider.request.Messages[2].Parts)
@@ -270,7 +276,8 @@ func TestCompressActualFitPreservesUncompressedPaths(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			provider := &fitProvider{evidenceProvider: evidenceSummaryProvider(model.TextPart{Text: "must not summarize"}), counts: tc.counts}
-			out, err := Compress(historyTestClient(t, provider), tc.config)(t.Context(), tc.messages, nil)
+			historyResult, err := Compress(historyTestClient(t, provider), tc.config)(t.Context(), &model.Request{Messages: tc.messages, ModelClass: model.ModelClassSmall}, historyTestClient(t, provider), nil)
+			out := historyResult.Messages
 			require.NoError(t, err)
 			assert.Equal(t, tc.messages, out)
 			assert.Zero(t, provider.completeCalls)
@@ -294,7 +301,8 @@ func TestCompressActualFitSummaryFailureDoesNotTrySmallerHistory(t *testing.T) {
 			provider := &fitProvider{evidenceProvider: evidenceSummaryProvider(tc.parts...), counts: []fitCount{{tokens: 100}, {tokens: 160}, {tokens: 190}}}
 			provider.err = tc.err
 			messages := fitHistory()
-			out, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, CompressAtMaxInputTokens: 200, KeepMaxTurns: 3})(t.Context(), messages, nil)
+			historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, CompressAtMaxInputTokens: 200, KeepMaxTurns: 3})(t.Context(), &model.Request{Messages: messages, ModelClass: model.ModelClassSmall}, historyTestClient(t, provider), nil)
+			out := historyResult.Messages
 			require.ErrorContains(t, err, tc.want)
 			if tc.err != nil {
 				require.ErrorIs(t, err, tc.err)
@@ -320,7 +328,8 @@ func TestCompressActualFitRecountsEachInvocationAndPreservesPriorSummary(t *test
 			messages[len(messages)-1] = assistantTextMsg("Newly received evidence")
 			tools = append(tools, &model.ToolDefinition{Name: "other", Input: mustRuntimeToolInput(rawjson.Message(`{"type":"object"}`))})
 		}
-		out, err := policy(t.Context(), messages, tools)
+		historyResult, err := policy(t.Context(), &model.Request{Messages: messages, Tools: tools, ModelClass: model.ModelClassSmall}, historyTestClient(t, provider), nil)
+		out := historyResult.Messages
 		require.NoError(t, err)
 		assert.Same(t, prior, out[0])
 		assert.Same(t, messages[1], out[1])
@@ -344,7 +353,8 @@ func TestCompressActualFitWithoutStepCapUsesFiniteEligibleCandidates(t *testing.
 		{tokens: 201}, {tokens: 230}, {tokens: 200},
 	}}
 	messages := fitHistory()
-	out, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, CompressAtMaxInputTokens: 200, KeepMaxInputTokens: 60})(t.Context(), messages, nil)
+	historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 4, CompressAtMaxInputTokens: 200, KeepMaxInputTokens: 60})(t.Context(), &model.Request{Messages: messages, ModelClass: model.ModelClassSmall}, historyTestClient(t, provider), nil)
+	out := historyResult.Messages
 	require.NoError(t, err)
 	assert.Len(t, out, 4)
 	assert.Len(t, provider.requests, 7)

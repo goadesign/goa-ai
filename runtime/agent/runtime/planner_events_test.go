@@ -490,7 +490,7 @@ func TestRuntimePlannerEventsRejectsCallsAfterMalformedResponse(t *testing.T) {
 			Err:    rejectedErr,
 		}},
 	}))
-	_, err = e.beginModelInvocation("", func() {})
+	_, err = e.beginModelInvocation(t.Context(), "", func() {})
 	var outputErr *planner.OutputContractError
 	require.ErrorAs(t, err, &outputErr)
 	require.ErrorContains(t, err, `duplicate tool call ID "duplicate"`)
@@ -498,7 +498,7 @@ func TestRuntimePlannerEventsRejectsCallsAfterMalformedResponse(t *testing.T) {
 
 func mustBeginModelInvocation(t *testing.T, events *modelInvocationJournal) modelInvocationID {
 	t.Helper()
-	invocationID, err := events.beginModelInvocation("", func() {})
+	invocationID, err := events.beginModelInvocation(t.Context(), "", func() {})
 	require.NoError(t, err)
 	return invocationID
 }

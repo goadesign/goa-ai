@@ -222,7 +222,7 @@ func TestRuntimeModelWrappersCloseStreamsReturnedWithErrors(t *testing.T) {
 		{
 			name: "cache policy",
 			wrap: func(inner model.Client) model.Client {
-				return newCacheConfiguredClient(inner, CachePolicy{AfterSystem: true})
+				return newRequestConfiguredClient(inner, CachePolicy{AfterSystem: true}, nil, "service.agent", nil, nil)
 			},
 		},
 		{
@@ -352,7 +352,7 @@ func TestModelInvocationStreamPreservesValidationAfterCloseFailure(t *testing.T)
 	require.NotErrorIs(t, err, closeErr)
 	require.ErrorIs(t, stream.Close(), closeErr)
 	require.Nil(t, invocations.recoverableModelInvocationRecovery())
-	_, err = invocations.beginModelInvocation("", func() {})
+	_, err = invocations.beginModelInvocation(t.Context(), "", func() {})
 	require.ErrorAs(t, err, &outputValidationErr)
 	require.NotErrorIs(t, err, closeErr)
 	require.ErrorContains(t, errors.Unwrap(outputValidationErr), "invalid canonical response")
@@ -674,7 +674,7 @@ func TestModelInvocationJournalBlocksCallsAfterSeal(t *testing.T) {
 	invocations := &modelInvocationJournal{}
 	require.NoError(t, invocations.seal())
 
-	_, err := invocations.beginModelInvocation("", func() {})
+	_, err := invocations.beginModelInvocation(t.Context(), "", func() {})
 
 	require.EqualError(t, err, "planner model invocation journal is sealed")
 }
@@ -1160,6 +1160,7 @@ type fakeModelInvocationSink struct {
 }
 
 func (s *fakeModelInvocationSink) beginModelInvocation(
+	_ context.Context,
 	_ model.ModelClass,
 	cancel context.CancelFunc,
 ) (modelInvocationID, error) {
@@ -1846,7 +1847,7 @@ func TestPlannerAndCacheClientsDropResponsesReturnedWithErrors(t *testing.T) {
 	require.Nil(t, response)
 	require.ErrorIs(t, err, providerErr)
 
-	cacheClient := newCacheConfiguredClient(inner, CachePolicy{AfterSystem: true})
+	cacheClient := newRequestConfiguredClient(inner, CachePolicy{AfterSystem: true}, nil, "service.agent", nil, nil)
 	response, err = cacheClient.Complete(t.Context(), &model.Request{})
 	require.Nil(t, response)
 	require.ErrorIs(t, err, providerErr)

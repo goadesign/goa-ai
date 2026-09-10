@@ -441,9 +441,10 @@ can also require confirmation dynamically for additional tools via `runtime.With
 Compression requires at least one `CompressAt...` trigger and at least one
 `KeepMax...` retention budget. Token budgets are defaults; generated agent
 config can replace them at runtime for the deployed model. When either trigger
-or retention uses tokens, the configured `HistoryModel` must implement
-`model.TokenCounter` with exact counts so the runtime counts the same request
-shape it will send to the provider.
+or retention uses tokens, the destination model's counter measures the actual
+request. `HistoryModel` only writes summaries. Counts must be exact unless
+`HistoryCompressionConfig.AllowEstimatedTokens` explicitly permits estimates;
+an estimate is not a context-window guarantee or a billing count.
 
 
 ### Cache Functions
@@ -1269,14 +1270,15 @@ RunPolicy(func() {
 
 ### History Policies
 
-History policies transform message history when a planner first calls
-`PrepareMessages`, preserving system prompts and logical turn boundaries.
+History policies transform the messages in an actual model request immediately
+before the runtime sends it, preserving system prompts and logical turn boundaries.
 One turn contains a complete contiguous assistant response and its tool results,
 not each message fragment or an entire autonomous run. A user request stays with
 its first response; subsequent completed response/result exchanges can be
 retained or summarized independently. See [complete history turns](runtime.md#complete-history-turns)
 for parallel calls, accompanying result text, reminders, and pending requests.
-Decisions using only typed run state or tool results need not prepare history.
+Planners read saved history from `Messages`; inspecting it or deciding an action
+without calling a model performs no history counting or summarization.
 See [the runtime preparation contract](runtime.md#preparing-conversation-messages)
 for lifetime, error handling, and custom planner migration.
 
@@ -1305,7 +1307,8 @@ RunPolicy(func() {
 When compression is configured, the generated agent config includes a
 `HistoryModel` field that callers must supply with a `model.Client`. The runtime
 uses `ModelClassSmall` for summarization and, when token budgets are set, counts
-tokens through the history model's exact `model.TokenCounter` implementation.
+the pending request through its destination model's counter. The summary model
+does not choose how another model's input is measured.
 
 ### Cache Policies
 

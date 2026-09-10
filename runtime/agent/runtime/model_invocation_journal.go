@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
@@ -45,6 +46,7 @@ type (
 		rejectedValidationErr    *model.OutputValidationError
 		rejectedOutputErr        error
 		outcome                  *modelcall.Outcome
+		historyContext           *api.HistoryContext
 	}
 
 	// modelFacingToolCall is the provider transcript identity of a planner
@@ -92,6 +94,7 @@ const maxPublishedAssistantTextBytes = maxPlanActivityOutputBytes / 8
 // beginModelInvocation creates a place to save one model response and the
 // runtime-owned controls that stop and join it when planning ends.
 func (j *modelInvocationJournal) beginModelInvocation(
+	ctx context.Context,
 	requestModelClass model.ModelClass,
 	cancel context.CancelFunc,
 ) (modelInvocationID, error) {
@@ -103,6 +106,14 @@ func (j *modelInvocationJournal) beginModelInvocation(
 	if j.outputErr != nil {
 		return modelInvocationID{}, j.outputErr
 	}
+	var historyContext *api.HistoryContext
+	if value := ctx.Value(preparedHistoryKey{}); value != nil {
+		var ok bool
+		historyContext, ok = value.(*api.HistoryContext)
+		if !ok {
+			return modelInvocationID{}, errors.New("model invocation has invalid prepared history context")
+		}
+	}
 	id := provenance.New()
 	if j.invocations == nil {
 		j.invocations = make(map[modelInvocationID]*modelInvocationCandidate)
@@ -111,6 +122,7 @@ func (j *modelInvocationJournal) beginModelInvocation(
 		requestModelClass: requestModelClass,
 		cancel:            cancel,
 		done:              make(chan struct{}),
+		historyContext:    historyContext,
 	}
 	j.order = append(j.order, id)
 	return id, nil

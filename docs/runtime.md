@@ -1072,7 +1072,7 @@ if violation := checkBatchRules(sum.ToolCalls); violation != nil {
 
 ```go
 type PlanInput struct {
-    PrepareMessages func() ([]*model.Message, error) // Policy-prepared history
+    Messages   []*model.Message     // Saved conversation history
     RunContext run.Context           // Run-level identifiers and labels
     Agent      PlannerContext        // Runtime services (memory, models, reminders)
     Events     PlannerEvents         // Streaming event emitter
@@ -1080,7 +1080,7 @@ type PlanInput struct {
 }
 
 type PlanResumeInput struct {
-    PrepareMessages func() ([]*model.Message, error)
+    Messages    []*model.Message
     RunContext  run.Context
     Agent       PlannerContext
     Events      PlannerEvents
@@ -1685,10 +1685,6 @@ selected response; run probes through `ModelClient` before obtaining it:
 
 ```go
 func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error) {
-    messages, err := input.PrepareMessages()
-    if err != nil {
-        return nil, err
-    }
     mc, ok := input.Agent.PlannerModelClient("bedrock")
     if !ok {
         return nil, errors.New("model not configured")
@@ -1696,7 +1692,7 @@ func (p *MyPlanner) PlanResume(ctx context.Context, input *PlanResumeInput) (*Pl
 
     req := &model.Request{
         ModelClass: model.ModelClassHighReasoning,
-        Messages:   messages,
+        Messages:   input.Messages,
         Stream:     true,
     }
 
@@ -4200,8 +4196,9 @@ const (
 
 ## History Policies
 
-History policies prepare conversation messages when a planner first requests
-them, preserving system messages and whole turns.
+History policies prepare the actual request immediately before a model call,
+preserving system messages and whole turns. A workflow can retain a summary of
+verified original evidence without replacing its saved conversation.
 
 ### Complete history turns
 
@@ -4234,46 +4231,113 @@ there is no data migration, and older binaries retain their previous behavior.
 
 ### Preparing conversation messages
 
-`PlanInput.PrepareMessages` and `PlanResumeInput.PrepareMessages` are mandatory,
-runtime-supplied functions. Call the function before inspecting, copying, or
-transforming conversation messages, including decisions made without a model.
-The first call applies the registered history policy to the original activity
-messages and advertised tool definitions. A decision based only on `RunContext`,
-`ToolOutputs`, or `Finalize` can return without calling it. Such a decision
-performs no history token counting or summarization, even for long transcripts.
-Runtime-owned automatic continuations likewise do not prepare unused history.
+`PlanInput.Messages` and `PlanResumeInput.Messages` contain saved conversation
+history. Planners may inspect it and build prompts directly. Reading history,
+retrieving a model client, and choosing actions without calling a model perform
+no history token counting or summarization. Runtime-owned automatic steps also
+avoid that work.
 
-Preparation uses the activity's context, deadline, and cancellation. Repeated
-or concurrent calls in one planner invocation run the policy once and return the
-same slice, message pointers, and error. No cloning is introduced: callers that
-need a changed copy must make that copy, and concurrent mutations remain their
-responsibility. All calls must finish before the planner returns; do not retain
-the function for later use. The runtime supplies it even for empty history or
-when no history policy is configured. There is no raw-history alternative.
+When a planner calls `Complete` or `Stream` through a runtime model client, the
+runtime applies the registered history policy to that actual request. Cache
+defaults and original request validation run first; final request validation and
+observers run after preparation. The policy receives the destination client's
+counter, separately from any client configured to write summaries:
 
-Return a preparation error immediately. If a planner ignores it, the runtime
-still rejects the planner result and returns the original preparation error
-directly. Its full message, wrapping, and error classification are preserved;
-subsequent planner or model errors cannot turn it into model-output recovery.
-Preparation is not retried within an activity. An engine retry gets a fresh
-activity and preparation function. Replaying a completed activity uses its
-recorded result without new preparation.
+```go
+type HistoryPolicy func(context.Context, *model.Request, model.TokenCounter, *HistorySummary) (HistoryResult, error)
 
-**Custom planner migration:** `PlanInput.Messages` and
-`PlanResumeInput.Messages` have been removed. Replace reads with a call to
-`PrepareMessages`, handle its error, and use the returned slice for all existing
-history inspection and prompt construction. Direct planner tests must supply
-the function too. Forward it unchanged when converting between planner inputs.
-Do not add it to serialized records: `api.PlanActivityInput.Messages`, model
-requests, stored transcripts, and suspension payloads are unchanged. This is a
-Go source-compatibility change, not a wire or data migration. Upgrade callers
-with their goa-ai dependency; existing binaries using an older version keep
-their existing behavior and can coexist without a network-protocol change.
+type HistoryResult struct {
+    Messages []*model.Message
+    Summary  *HistorySummary
+}
+```
 
-Deferring preparation does not reuse summaries across activities or change
-compression thresholds, exact token counting, whole-turn retention, final-fit
-rejection, tool/result pairing, provider reasoning signatures, or streaming.
-Each history-consuming activity continues to apply its registered policy.
+Each candidate count replaces only the request's messages. The selected model,
+tools, thinking, cache, output settings, and other request fields remain intact.
+The policy cannot accidentally count a different model's request merely because
+that model writes the summary. Calls with different prompts or options are
+prepared independently; there is no activity-wide cached request or token count.
+A matching prior summary can replace its original evidence before that request
+is counted. Saved transcripts and the caller's original messages are not rewritten.
+
+Preparation uses the model call's context and cancellation. A counting or summary
+error stops that call before destination inference and retains its full cause;
+there is no alternate counter, second summary, or implicit retry. Replaying a
+completed activity uses its recorded result rather than making fresh model calls.
+
+**Custom planner migration:** replace the removed `PrepareMessages()` callback
+with `Messages`, including direct planner tests and input conversions. Remove
+the callback-only error handling; handle errors from the model call normally.
+Custom history policies accept the actual `*model.Request`, destination
+`model.TokenCounter`, and an eligible prior `*HistorySummary`. They return
+`HistoryResult{Messages: preparedMessages}`; policies that cannot describe an
+exact reusable summary leave `Summary` nil. The former
+`WithTokenCounter` compression option is removed: counting belongs to the model
+destination, while `HistoryModel` and `WithModelClass` select summarization.
+Regenerate agent packages and upgrade custom callers with their goa-ai dependency.
+This changes Go APIs and adds bounded summary state to planner activity inputs
+and outputs. Their `Messages`, stored transcripts, public run inputs, and
+suspension payloads remain unchanged; no stored-data migration is required.
+
+Whole-turn retention, final-budget rejection, tool/result pairing, and retained
+provider reasoning signatures remain unchanged. The policy now evaluates the
+actual pending request rather than a pre-planner history approximation.
+
+### Reusing a summary within one workflow
+
+`HistorySummary` describes one exact prefix transformation:
+
+- `SourceMessages` counts the original non-System messages supplied as summary
+  evidence. `ReplacedMessages` counts the oldest non-System messages removed
+  from the prepared request. Both end at complete older turns; newest remains
+  exact. Source coverage can exceed replacement when summarized turns also
+  remain in the exact tail.
+- `Message` is the unchanged summary message inserted after leading System
+  instructions. Every original System message remains in its original order
+  among the other retained messages.
+- `PolicyFingerprint` identifies the summary's content contract. Reusable
+  content must depend only on its declared source and this fingerprint. The
+  current policy receives the actual request and owns semantic invalidation.
+  A custom policy depending on current tools or instructions must include those
+  dependencies in its fingerprint or return only prepared messages.
+
+The runtime verifies that a claimed summary reconstructs exactly the policy's
+returned messages. It separately checks original source contents against saved
+history and source positions against the actual request that generated the
+summary. Both checks are required: prepending an instruction can shift numbered
+source references without changing the source text. A planner that consistently
+prepends instructions can still reuse its summary; the saved conversation need
+not have those added instructions. A legitimate different request can compress
+normally without producing reusable workflow state. No content search or
+approximate matching reconnects changed evidence.
+
+`Compress` first constructs the prior summary plus unchanged instructions and
+the remaining original history, then evaluates that candidate with the current
+request's triggers and destination counter. If more reduction is needed, it
+first tries shorter exact tails within existing summary coverage. It generates
+another summary only when additional original evidence needs coverage or the
+summary content contract changed. Replacement summaries receive original
+evidence, not earlier generated summary text. It never summarizes an unchanged
+source again merely to seek a smaller answer after a failed fit.
+
+The built-in fingerprint covers summary instructions, summary role, and the
+evidence-encoding contract. Destination model, tools, reasoning, output budget,
+and cache settings are recounted, not cached. Changing the model that writes
+future summaries does not invalidate an existing summary under the same content
+contract; the fingerprint does not claim a resolved provider model identity.
+
+Only the summary belonging to the exact accepted model invocation, or the exact
+invocation selected for recoverable output, can advance workflow state. Parallel
+probes, abandoned calls, and a successful auxiliary call followed by a code-only
+result do not replace it. A code-only step that makes no model call performs no
+compression. Preparation and provider failures promote nothing.
+
+This state lasts for one workflow and is included in existing activity size
+limits. Replaying a recorded activity reuses its recorded state, not another
+model call. It is not a global cache or a stored-transcript replacement. It is
+not added to suspension checkpoints: a continuation workflow starts with the
+complete saved history and may summarize once again. An activity that fails
+before recording its result can also repeat preparation.
 
 ### KeepRecentTurns
 
@@ -4299,12 +4363,14 @@ trigger budget from the exact-retention budget:
   are eligible to remain exact. When both are set, both limits apply.
 - `KeepMaxInputTokens` never truncates a turn. The runtime walks backward from
   the newest turn and keeps only whole logical turns that fit the budget.
-- Token counts are computed at runtime through `HistoryModel`, because provider
-  tokenization depends on the deployed model. Token-budget compression requires
-  a history model that implements `model.TokenCounter` with exact counts.
-- One history-policy count includes the preserved system messages, candidate
-  complete turns, and the currently advertised tools. It does not claim to
-  include thinking or structured output that a planner may choose later.
+- Token counts come from the destination model's counter, not `HistoryModel`.
+  Counts must be exact unless `HistoryCompressionConfig.AllowEstimatedTokens`
+  explicitly permits that counter's declared estimates. Estimated budgets do
+  not guarantee provider context-window fit or billing accuracy. Counter errors
+  remain errors; no fallback counter is attempted.
+- Each count evaluates a complete candidate request: only messages change, while
+  its actual model selection, tools, thinking, cache, and output options remain
+  those chosen by the planner.
 - `CompressAtMaxInputTokens` is an exclusive trigger: a count equal to the
   threshold fits, while a larger count triggers compression. The runtime checks
   the newest turn even when retention uses only `KeepMaxTurns`. After generating
@@ -4338,15 +4404,24 @@ with only newest. System messages and the current tool catalog are included in
 both. Equality fits. The summary is not subtracted from this older-turn allowance;
 it counts against the separate `CompressAtMaxInputTokens` total ceiling.
 
-When that total ceiling is positive, the single summary receives every turn
-older than newest, including optional turns initially eligible for exact
-retention. The runtime then counts the preserved system messages, actual rendered
+Every original System-role message remains exact, wherever it appears in the
+request. Removing older conversation preserves each instruction's order relative
+to every retained original message; instructions are not moved to the front.
+They are counted in every candidate, including the newest-turn baseline, and
+never enter the summary. This includes current instructions placed between tool
+results and a later user message requesting the final answer. If these mandatory
+instructions plus the newest turn exceed the total ceiling, compression fails
+explicitly rather than dropping an instruction.
+
+When that total ceiling is positive, the single summary receives the non-System
+messages from every turn older than newest, including optional turns initially
+eligible for exact retention. The runtime then counts the preserved system messages, actual rendered
 summary, eligible exact turns, and unchanged tool catalog together. If too large,
 it removes only the oldest optional whole turn and counts the next complete
 candidate. It returns the longest fitting suffix permitted by the initial
 eligibility calculation. Counts are not assumed additive or monotonic.
 
-Every removed turn therefore entered the summary model before removal. Some
+Every removed conversational message therefore entered the summary model before removal. Some
 older turns may appear both in summary prose and in exact history; this does not
 execute their tools again, but the answering model must still interpret repeated
 or conflicting observations correctly. Complete delivery and a passing count do
@@ -4355,20 +4430,25 @@ plus newest cannot fit, the original history accompanies the explicit error.
 Counting and summary errors stop immediately, without another candidate attempt,
 fallback, second summary, or automatic restart.
 
-For `K` eligible turns, final selection makes at most `K` exact count calls,
+For `K` eligible turns, fitting one summary makes at most `K` calls to the selected counter,
 stopping at the first fit or error. Eligibility makes at most `M` counts, where
 `M` is the input turn count capped by a positive `KeepMaxTurns`; the trigger adds
-at most one count and skips it when the turn trigger fires first. There is one
-summary completion. These are logical calls, not provider HTTP-attempt or billing
+at most one count and skips it when the turn trigger fires first. A reusable
+summary is evaluated first and can need its own shorter-tail search. If newer
+evidence then requires a replacement summary, that summary has a separate fit
+search. Each policy invocation makes zero or one summary completions. These are
+logical calls, not provider HTTP-attempt or billing
 guarantees. Larger summary input and additional final counts can cost more and
 take longer. Existing deadlines and request limits still apply.
 
 With no total ceiling, the summary receives only the excluded older prefix and
 the eligible exact suffix stays unchanged. No final counts or overlapping
 coverage are added, including when an older-turn token allowance is configured.
-Empty, system-only, non-triggered, and nothing-to-summarize returns remain
-unchanged. A later invocation recomputes counts from its messages and tools;
-leading system messages, including existing summaries, remain preserved.
+Empty, system-only, and nothing-to-summarize returns remain unchanged. Without
+an eligible prior summary, non-triggered history also remains unchanged. A later
+invocation counts its eligible summary candidate rather than first counting the
+original uncompressed history. All original System messages remain preserved;
+workflow-private generated summaries are replaced separately from those messages.
 
 **Custom prompt upgrade:** for a positive total ceiling, `WithSummaryPrompt`
 now receives all turns older than newest, not only discarded history. Replace
@@ -4379,12 +4459,13 @@ new configuration is required. Without a total ceiling, prefix scope is unchange
 
 ### Evidence supplied to the summary model
 
-For the selected older messages, `Compress` supplies complete text, tool
+For the selected older non-System messages, `Compress` supplies complete text, tool
 arguments and results, call/result IDs, error status and full error text, and
 citation fields through the canonical `model.Message` JSON codec. Values are
 not selected, rounded, or replaced with tool-result placeholders. Repeated and
 conflicting observations remain separate occurrences with their original role,
-message position, and part position. The model decides which supplied facts
+message position, and part position. Skipped System messages do not renumber
+later messages or attachment references. The model decides which supplied facts
 matter for continuing the work; the runtime does not predict relevance.
 
 A runtime-owned system instruction treats the recorded conversation as evidence,
@@ -4451,7 +4532,7 @@ RunPolicy(func() {
 // Registration
 cfg := chat.ChatAgentConfig{
     Planner:      myPlanner,
-    HistoryModel: smallModelClient, // Counts tokens and writes summaries.
+    HistoryModel: smallModelClient, // Writes summaries; the destination counts.
 }
 ```
 
@@ -4469,6 +4550,27 @@ cfg := chat.ChatAgentConfig{
     },
 }
 ```
+
+If the destination counter supplies local estimates rather than native counts,
+permit that declared precision explicitly without changing the summary model:
+
+```go
+cfg.HistoryCompression = &runtime.HistoryCompressionConfig{
+    CompressAtMaxInputTokens: 180_000,
+    KeepMaxInputTokens:       60_000,
+    KeepMaxTurns:             16,
+    AllowEstimatedTokens:    true,
+}
+```
+
+This setting accepts `Exact=false` for the trigger, whole-turn retention, and
+final summary-plus-history check. It does not select an estimator or turn a
+counter error into a count. The destination remains responsible for supplying
+its measurement; the summary receives the quoted evidence described above, not
+foreign provider replay data. Estimated thresholds remain operational budgets,
+not hard context-window guarantees. Provider limits still apply to actual
+summary and planner calls. Rate limiting keeps its separate exact-count contract.
+Without this explicit permission, inexact counts still fail.
 
 ---
 
@@ -4592,11 +4694,6 @@ runtime captures and reattaches them without exposing the field to planners.
 When planners render prompts through `RenderPrompt`, copy prompt provenance into model requests:
 
 ```go
-messages, err := input.PrepareMessages()
-if err != nil {
-    return nil, err
-}
-
 content, err := input.Agent.RenderPrompt(ctx, "assistant.system", map[string]any{
     "AssistantName": "Ops Assistant",
 })
@@ -4605,7 +4702,7 @@ if err != nil {
 }
 
 resp, err := modelClient.Complete(ctx, &model.Request{
-    Messages:   messages,
+    Messages:   input.Messages,
     PromptRefs: []prompt.PromptRef{content.Ref},
 })
 ```

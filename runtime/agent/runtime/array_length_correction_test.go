@@ -46,10 +46,7 @@ func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedCall(t *
 			if len(input.ToolOutputs) == 2 {
 				return finalPlannerResult("accepted array completed"), nil
 			}
-			messages, err := input.PrepareMessages()
-			if err != nil {
-				return nil, err
-			}
+			messages := input.Messages
 			if resumes == 2 {
 				require.Len(t, input.Reminders, 1)
 				assert.Contains(t, input.Reminders[0].Text, guidance)
@@ -62,7 +59,7 @@ func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedCall(t *
 				}
 			}
 			// Planners compose the runtime-supplied reminders into model input.
-			messages, err = reminder.InjectMessages(messages, input.Reminders)
+			messages, err := reminder.InjectMessages(messages, input.Reminders)
 			if err != nil {
 				return nil, err
 			}

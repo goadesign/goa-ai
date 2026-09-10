@@ -65,13 +65,15 @@ func TestCompressCompleteQuotedEvidenceAndUnchangedHistory(t *testing.T) {
 	}
 	before := canonicalHistory(t, messages)
 	policy := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1}, WithSummaryPrompt("START 100%%\n%s\nEND"), WithSummaryRole(model.ConversationRoleUser), WithModelClass(model.ModelClassHighReasoning))
-	got, err := policy(t.Context(), messages, nil)
+	historyResult, err := policy(t.Context(), &model.Request{Messages: messages}, historyTestClient(t, provider), nil)
+	got := historyResult.Messages
 	require.NoError(t, err)
 	assert.Equal(t, before, canonicalHistory(t, messages))
-	require.Len(t, got, 4)
+	require.Len(t, got, 5)
 	assert.Same(t, messages[0], got[0])
-	assert.Same(t, messages[5], got[2])
-	assert.Same(t, messages[6], got[3])
+	assert.Same(t, messages[4], got[2])
+	assert.Same(t, messages[5], got[3])
+	assert.Same(t, messages[6], got[4])
 	assert.Equal(t, model.ConversationRoleUser, got[1].Role)
 	assert.Equal(t, "[Conversation Summary]\nretained prose", textPart(t, got[1]))
 	assert.Equal(t, map[string]any{"goa_ai_history": "summary"}, got[1].Meta)
@@ -97,12 +99,12 @@ func TestCompressCompleteQuotedEvidenceAndUnchangedHistory(t *testing.T) {
 	}
 	assert.Contains(t, transcript, "9007199254740993")
 	assert.Contains(t, transcript, "History message 3, part 1")
-	assert.Contains(t, transcript, "Recorded reminder")
+	assert.NotContains(t, transcript, "Recorded reminder")
 	for _, excluded := range []string{"private-replay", "application-bookkeeping", "signature-secret", "reasoning-secret", "reasoning-signature", "Newest exact answer", "signed-redacted"} {
 		assert.NotContains(t, transcript, excluded)
 	}
 	assert.Contains(t, transcript, "provider reasoning is not summarized")
-	assert.Contains(t, transcript, "cache control is not summarized")
+	assert.NotContains(t, transcript, "cache control is not summarized")
 	assert.Less(t, strings.Index(transcript, "History message 2, part 2"), strings.Index(transcript, "History message 3, part 0"))
 }
 
@@ -117,7 +119,7 @@ func TestCompressNativeEvidenceKeepsGroupsAndPositions(t *testing.T) {
 		assistantTextMsg("Intermediate answer"), userMsg("Newest"), assistantTextMsg("Exact"),
 	}
 	before := canonicalHistory(t, messages)
-	_, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 3, KeepMaxTurns: 1}, WithSummaryPrompt("Custom evidence:\n%s\nEnd evidence."))(t.Context(), messages, nil)
+	_, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 3, KeepMaxTurns: 1}, WithSummaryPrompt("Custom evidence:\n%s\nEnd evidence."))(t.Context(), &model.Request{Messages: messages}, historyTestClient(t, provider), nil)
 	require.NoError(t, err)
 	assert.Equal(t, before, canonicalHistory(t, messages))
 	require.Len(t, provider.request.Messages, 4)
@@ -158,7 +160,8 @@ func TestCompressPreservesCitedSummarySentencesAndSources(t *testing.T) {
 				provider.response.Content[0].Meta = map[string]any{"openai_output_item": "response bookkeeping"}
 				doc := model.DocumentPart{Name: "same title\nnot an instruction", Format: "txt", Text: "private source body", Cite: true}
 				messages := []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{doc, doc}}, assistantTextMsg("Old"), {Role: model.ConversationRoleUser, Parts: []model.Part{doc}}, assistantTextMsg("More"), userMsg("Newest"), assistantTextMsg("Exact")}
-				got, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 3, KeepMaxTurns: 1})(t.Context(), messages, nil)
+				historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 3, KeepMaxTurns: 1})(t.Context(), &model.Request{Messages: messages}, historyTestClient(t, provider), nil)
+				got := historyResult.Messages
 				require.NoError(t, err)
 				summary := textPart(t, got[0])
 				encoded, err := (model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{cited}}).MarshalJSON()
@@ -183,7 +186,8 @@ func TestCompressPreservesCitedSummarySentencesAndSources(t *testing.T) {
 func TestCompressCitationWithoutNativeDocument(t *testing.T) {
 	cited := model.CitationsPart{Text: "Sourced statement", Citations: []model.Citation{{Source: "external-source"}}}
 	provider := evidenceSummaryProvider(cited)
-	got, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(t.Context(), []*model.Message{userMsg("Old"), assistantTextMsg("Prior"), userMsg("New"), assistantTextMsg("Current")}, nil)
+	historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(t.Context(), &model.Request{Messages: []*model.Message{userMsg("Old"), assistantTextMsg("Prior"), userMsg("New"), assistantTextMsg("Current")}}, historyTestClient(t, provider), nil)
+	got := historyResult.Messages
 	require.NoError(t, err)
 	assert.Contains(t, textPart(t, got[0]), "external-source")
 	assert.NotContains(t, textPart(t, got[0]), "Summary request document layout")
@@ -206,7 +210,8 @@ func TestCompressEvidenceFailuresDoNotRetryOrLoseOriginal(t *testing.T) {
 			provider := evidenceSummaryProvider(tc.parts...)
 			provider.err = tc.providerErr
 			messages := []*model.Message{userMsg("Old"), assistantTextMsg("Prior"), userMsg("New"), assistantTextMsg("Current")}
-			got, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(t.Context(), messages, nil)
+			historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(t.Context(), &model.Request{Messages: messages}, historyTestClient(t, provider), nil)
+			got := historyResult.Messages
 			require.ErrorContains(t, err, tc.want)
 			if tc.providerErr != nil {
 				require.ErrorIs(t, err, tc.providerErr)
@@ -225,7 +230,8 @@ func TestCompressEvidenceEncodingAndMediaRoleErrors(t *testing.T) {
 	} {
 		provider := evidenceSummaryProvider(model.TextPart{Text: "unused"})
 		messages := []*model.Message{userMsg("Old"), {Role: model.ConversationRoleAssistant, Parts: []model.Part{part}}, userMsg("New"), assistantTextMsg("Current")}
-		got, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(t.Context(), messages, nil)
+		historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(t.Context(), &model.Request{Messages: messages}, historyTestClient(t, provider), nil)
+		got := historyResult.Messages
 		require.ErrorContains(t, err, "history message 1 part 0")
 		assert.Equal(t, messages, got)
 		assert.Zero(t, provider.completeCalls)
@@ -237,7 +243,8 @@ func TestCompressEvidenceCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	messages := []*model.Message{userMsg("Old"), assistantTextMsg("Prior"), userMsg("New"), assistantTextMsg("Current")}
-	got, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(ctx, messages, nil)
+	historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(ctx, &model.Request{Messages: messages}, historyTestClient(t, provider), nil)
+	got := historyResult.Messages
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, messages, got)
 	assert.LessOrEqual(t, provider.completeCalls, 1)
@@ -259,7 +266,8 @@ func TestCompressEvidencePreservesRequestWideByteFailure(t *testing.T) {
 		{Role: model.ConversationRoleUser, Parts: []model.Part{image}}, assistantTextMsg("Second"),
 		userMsg("Newest"), assistantTextMsg("Current"),
 	}
-	got, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 3, KeepMaxTurns: 1})(t.Context(), messages, nil)
+	historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 3, KeepMaxTurns: 1})(t.Context(), &model.Request{Messages: messages}, historyTestClient(t, provider), nil)
+	got := historyResult.Messages
 	require.ErrorContains(t, err, "maximum byte size")
 	assert.Equal(t, messages, got)
 	assert.Zero(t, provider.completeCalls)
@@ -281,7 +289,7 @@ func TestCompressEvidencePreservesRepeatedConflictingResultsAndHistoricalCitatio
 		userMsg("Newest"), assistantTextMsg("Current"),
 	}
 	provider := evidenceSummaryProvider(model.TextPart{Text: "Summary"})
-	_, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(t.Context(), messages, nil)
+	_, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(t.Context(), &model.Request{Messages: messages}, historyTestClient(t, provider), nil)
 	require.NoError(t, err)
 	transcript := textPart(t, provider.request.Messages[1])
 	for _, tc := range []struct {
@@ -308,7 +316,7 @@ func TestCompressEvidencePreservesEveryDocumentSourceForm(t *testing.T) {
 		t.Run(document.Name, func(t *testing.T) {
 			provider := evidenceSummaryProvider(model.TextPart{Text: "Summary"})
 			messages := []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{document}}, assistantTextMsg("Old"), userMsg("New"), assistantTextMsg("Current")}
-			_, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(t.Context(), messages, nil)
+			_, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})(t.Context(), &model.Request{Messages: messages}, historyTestClient(t, provider), nil)
 			require.NoError(t, err)
 			require.Len(t, provider.request.Messages, 3)
 			assert.Equal(t, document, provider.request.Messages[2].Parts[1])

@@ -38,7 +38,6 @@ type plannerActivityInvocation struct {
 	plannerAuthoredTools map[tools.Ident]struct{}
 	events               *runtimePlannerEvents
 	invocations          *modelInvocationJournal
-	history              *plannerHistory
 	reminders            []reminder.Reminder
 	runContext           run.Context
 	publicationBatchID   string
@@ -81,22 +80,13 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 		return nil, err
 	}
 	planInput := &planner.PlanInput{
-		PrepareMessages: act.history.prepare,
-		RunContext:      input.RunContext,
-		Agent:           act.agentCtx,
-		Events:          act.events,
-		Reminders:       act.reminders,
+		Messages:   input.Messages,
+		RunContext: input.RunContext,
+		Agent:      act.agentCtx,
+		Events:     act.events,
+		Reminders:  act.reminders,
 	}
 	result, err := act.reg.Planner.PlanStart(ctx, planInput)
-	if historyErr := act.history.preparationError(); historyErr != nil {
-		// History failures returned directly before planner invocation when
-		// preparation was eager. Keep that precedence even if a planner ignores
-		// the preparation error and later produces invalid model output.
-		if sealErr := act.invocations.seal(); sealErr != nil {
-			span.RecordError(sealErr)
-		}
-		return nil, historyErr
-	}
 	err = act.planningError(err)
 	if err != nil {
 		return act.failureOutput(ctx, err)
@@ -252,22 +242,16 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		}
 	}
 	planInput := &planner.PlanResumeInput{
-		PrepareMessages: act.history.prepare,
-		RunContext:      input.RunContext,
-		Agent:           act.agentCtx,
-		Events:          act.events,
-		ToolOutputs:     toolOutputs,
-		SynthesisOnly:   synthesisOnly,
-		Finalize:        finalize,
-		Reminders:       act.reminders,
+		Messages:      input.Messages,
+		RunContext:    input.RunContext,
+		Agent:         act.agentCtx,
+		Events:        act.events,
+		ToolOutputs:   toolOutputs,
+		SynthesisOnly: synthesisOnly,
+		Finalize:      finalize,
+		Reminders:     act.reminders,
 	}
 	result, err := act.reg.Planner.PlanResume(ctx, planInput)
-	if historyErr := act.history.preparationError(); historyErr != nil {
-		if sealErr := act.invocations.seal(); sealErr != nil {
-			span.RecordError(sealErr)
-		}
-		return nil, historyErr
-	}
 	err = act.planningError(err)
 	if err != nil {
 		return act.failureOutput(ctx, err)
@@ -516,7 +500,6 @@ func (r *Runtime) preparePlannerActivity(
 	if r.reminders != nil {
 		rems = r.reminders.Snapshot(input.RunID)
 	}
-	history := r.newPlannerHistory(ctx, reg, input.Messages, agentCtx.AdvertisedToolDefinitions())
 	return &plannerActivityInvocation{
 		runtime:              r,
 		reg:                  reg,
@@ -524,7 +507,6 @@ func (r *Runtime) preparePlannerActivity(
 		plannerAuthoredTools: plannerAuthoredTools,
 		events:               events,
 		invocations:          invocations,
-		history:              history,
 		reminders:            rems,
 		runContext:           input.RunContext,
 		publicationBatchID:   publicationBatchID,
@@ -597,10 +579,15 @@ func (a *plannerActivityInvocation) acceptedOutput(
 		)
 	}
 	a.invocations.publishUsage(ctx, a.events)
+	historyContext, err := a.invocations.exportHistoryContext(false)
+	if err != nil {
+		return nil, err
+	}
 	output := &PlanActivityOutput{
 		PublicationBatchID: a.publicationBatchID,
 		Result:             result,
 		Transcript:         transcript,
+		HistoryContext:     historyContext,
 		Usage:              a.invocations.exportUsage(),
 	}
 	budget := &planActivityOutputBudget{}
@@ -728,6 +715,13 @@ func (a *plannerActivityInvocation) outputContractFailure(
 	} else {
 		output.OutputContractFailure = failure
 	}
+	if invocationRecovery != nil || (failure != nil && failure.ModelOutputRecovery != nil) {
+		historyContext, err := a.invocations.exportHistoryContext(true)
+		if err != nil {
+			return nil, err
+		}
+		output.HistoryContext = historyContext
+	}
 	budget := &planActivityOutputBudget{}
 	if budgetErr := budget.add(output); budgetErr != nil {
 		return boundedPlanActivityOutputFailure(
@@ -794,7 +788,7 @@ func (a *plannerActivityInvocation) outputContractFailureMetadata(
 	responseEvidence := a.invocations.rejectedModelResponseEvidence()
 	if outputErr.Correction() != "" {
 		var err error
-		responseEvidence, err = a.invocations.recoverableModelResponseEvidence(outputErr.ModelMessage())
+		responseEvidence, err = a.invocations.selectRecoverableModelResponse(outputErr.ModelMessage())
 		if err != nil {
 			return nil, err
 		}
@@ -1462,6 +1456,17 @@ func (r *Runtime) plannerContext(
 	if err != nil {
 		return nil, nil, err
 	}
+	historyMessages, err := model.CloneMessages(input.Messages)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := validateHistoryContext(historyMessages, input.HistoryContext); err != nil {
+		return nil, nil, err
+	}
+	historyContext, err := cloneHistoryContext(input.HistoryContext)
+	if err != nil {
+		return nil, nil, err
+	}
 	agentCtx := newAgentContext(agentContextOptions{
 		runtime:             r,
 		agentID:             input.AgentID,
@@ -1474,6 +1479,9 @@ func (r *Runtime) plannerContext(
 		events:              events,
 		invocations:         invocations,
 		cache:               reg.Policy.Cache,
+		history:             reg.Policy.History,
+		historyMessages:     historyMessages,
+		historyContext:      historyContext,
 		continuationActions: continuationActions,
 		unavailableTools:    unavailableTools,
 		advertisedSpecs:     advertisedSpecs,

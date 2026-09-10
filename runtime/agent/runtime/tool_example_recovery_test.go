@@ -45,8 +45,7 @@ func TestRunLoopToolExampleSurvivesSuccessiveSchemaFailures(t *testing.T) {
 			return successfulToolResult(call), nil
 		},
 		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
-			messages, err := input.PrepareMessages()
-			require.NoError(t, err)
+			messages := input.Messages
 			require.NoError(t, transcript.ValidatePlannerTranscript(messages))
 			for _, message := range messages {
 				for _, part := range message.Parts {
@@ -60,7 +59,7 @@ func TestRunLoopToolExampleSurvivesSuccessiveSchemaFailures(t *testing.T) {
 			}
 			assert.False(t, input.SynthesisOnly)
 			assertAdvertisedTools(t, input, kickoff.Name, lookup.Name, alternative.Name)
-			messages, err = reminder.InjectMessages(messages, input.Reminders)
+			messages, err := reminder.InjectMessages(messages, input.Reminders)
 			require.NoError(t, err)
 			client, ok := input.Agent.PlannerModelClient("test")
 			require.True(t, ok)

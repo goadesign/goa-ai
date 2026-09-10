@@ -222,8 +222,7 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 		called = true
 		require.NotNil(t, input)
 		require.Equal(t, run.Context{RunID: "run-123"}, input.RunContext)
-		messages, err := input.PrepareMessages()
-		require.NoError(t, err)
+		messages := input.Messages
 		require.Len(t, messages, 1)
 		require.Equal(t, "hello", messages[0].Text())
 		require.NotNil(t, input.Agent)
@@ -3144,9 +3143,9 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 	})
 	historyCalls := 0
 	reg := rt.agents["service.agent"]
-	reg.Policy.History = func(ctx context.Context, messages []*model.Message, definitions []*model.ToolDefinition) ([]*model.Message, error) {
+	reg.Policy.History = func(ctx context.Context, request *model.Request, counter model.TokenCounter, prior *HistorySummary) (HistoryResult, error) {
 		historyCalls++
-		return compress(ctx, messages, definitions)
+		return compress(ctx, request, counter, prior)
 	}
 	rt.agents["service.agent"] = reg
 	search, continuation := continuationTestSpecs()

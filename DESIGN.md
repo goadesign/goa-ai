@@ -1304,16 +1304,20 @@ for details and the SDK source-compatibility change.
   separate turns; individual reasoning or parallel-call messages do not.
   `KeepRecentTurns` uses the same grouping. No messages, parts, order, signatures,
   or validation rules are changed. See [complete history turns](docs/runtime.md#complete-history-turns).
-  Each planner activity supplies `PrepareMessages` instead
-  of eagerly prepared `Messages`. First access applies the history policy;
-  later accesses return the same prepared slice and error for that activity.
-  Planners must resolve messages before inspecting or transforming history.
-  Decisions based only on typed run state or tool outputs avoid preparation.
-  Preparation uses the activity context and a failure still fails the activity,
-  even if planner code ignores it. There is no persisted summary reuse or
-  raw-history alternative. Custom planners migrate the removed input fields
-  with their dependency upgrade; activity payloads and stored transcripts stay
-  unchanged. See [the preparation contract](docs/runtime.md#preparing-conversation-messages).
+  Each planner activity supplies saved `Messages`. The runtime applies history
+  policy only when a runtime model client receives an actual `Complete` or
+  `Stream` request, after cache defaults and original request validation and
+  before final validation and observers. Inspecting messages, choosing a
+  code-owned action, or retrieving a model client performs no counting or
+  summarization. Custom planners replace the removed `PrepareMessages`
+  callback with `Messages`; those messages and stored transcripts stay
+  unchanged. Planner activity inputs and outputs carry a bounded, separately
+  verified summary for reuse within one workflow. Source-content and
+  source-position checks preserve exact evidence and numbered references;
+  only the accepted or recoverable model invocation can advance it. Each
+  actual request is still counted independently. Suspension checkpoints do
+  not carry this optimization. See [the preparation contract](docs/runtime.md#preparing-conversation-messages)
+  and [summary reuse](docs/runtime.md#reusing-a-summary-within-one-workflow).
   The runtime supplies the selected older history as
   complete quoted semantic parts, preserving tool values, correlation IDs, and
   errors. Native media keeps its original user-message groups and source
@@ -1330,14 +1334,16 @@ for details and the SDK source-compatibility change.
   or generates another summary. Some older turns may appear both in summary
   prose and exact history; this is not a guarantee of correct interpretation.
   With no total ceiling, the existing disjoint prefix and suffix are preserved.
-  The runtime evaluates token budgets with the configured
-  model client's exact `model.TokenCounter`, so tokenization stays
-  deployment/model-specific while the design records the agent's default policy.
-  Each history-policy count includes its preserved system messages, candidate
-  complete turns, and advertised tools. Thinking and structured output remain
-  planner decisions made after the history policy runs, so they are not part of
-  this threshold. The selected adapter counts this exact history shape using
-  its provider tokenizer. A gateway
+  The runtime evaluates token budgets with the destination model client's
+  `model.TokenCounter`, not the separate summary model. A history policy receives
+  the actual request and its destination counter. Every candidate replaces only
+  `Messages`; the selected model, tools, thinking, cache, output settings, and
+  other request fields remain unchanged. Counts must be exact by default.
+  `HistoryCompressionConfig.AllowEstimatedTokens` explicitly permits estimates
+  declared by that counter; counter errors remain errors, never fallback
+  triggers. Estimated budgets do not prove provider context-window fit or
+  billing usage. Original messages and the exact-count requirement for adaptive
+  rate limiting remain unchanged. A gateway
   preserves exact counting only when its transport supplies the separate
   count operation through `NewCountingRemoteClient`; otherwise counting
   returns `model.ErrTokenCountingUnsupported`.

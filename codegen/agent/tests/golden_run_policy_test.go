@@ -34,6 +34,7 @@ func TestGolden_RunPolicyHistoryCompression(t *testing.T) {
 	require.Contains(t, reg, "KeepMaxTurns: 12")
 	require.Contains(t, reg, "if cfg.HistoryCompression != nil")
 	require.Contains(t, reg, "agentsruntime.Compress(cfg.HistoryModel, historyCompression)")
+	require.NotContains(t, cfg, "HistoryCompressionOptions")
 	require.Contains(t, cfg, "HistoryCompression *agentsruntime.HistoryCompressionConfig")
 	require.Contains(t, cfg, "c.HistoryCompression.Validate()")
 }

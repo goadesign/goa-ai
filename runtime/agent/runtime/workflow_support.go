@@ -171,10 +171,15 @@ func (r *Runtime) finalizeFromHistory(
 	if err != nil {
 		return nil, err
 	}
+	historyContext, err := cloneHistoryContext(base.HistoryContext)
+	if err != nil {
+		return nil, err
+	}
 	req := PlanActivityInput{
 		AgentID:             input.AgentID,
 		RunID:               base.RunContext.RunID,
 		Messages:            messages,
+		HistoryContext:      historyContext,
 		RunContext:          resumeCtx,
 		Policy:              clonePolicyOverrides(input.Policy),
 		ToolOutputs:         encodedToolOutputs,
@@ -222,6 +227,9 @@ func (r *Runtime) finalizeFromHistory(
 		return nil, errors.New(reasonText)
 	}
 	base.Messages = appendPublishedAssistantText(base.Messages, output)
+	if output.HistoryContext != nil {
+		base.HistoryContext = output.HistoryContext
+	}
 	aggUsage, err = addTokenUsage(aggUsage, output.Usage)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate finalization usage: %w", err)
@@ -808,7 +816,18 @@ func (r *Runtime) runPlanActivity(
 		return nil, fmt.Errorf("runPlanActivity received PlanResult with no ToolCalls, FinalResponse, FinalToolResult, or Await")
 	}
 	if out.Result != nil {
+		if out.HistoryContext != nil && len(out.Transcript) == 0 {
+			return nil, errors.New("code-only planner output cannot select a history summary")
+		}
 		if _, err := r.normalizePlanResultForExecution(wfCtx.Context(), out.Result, input.RunContext.Tool); err != nil {
+			return nil, err
+		}
+	}
+	if out.HistoryContext != nil {
+		if out.PlanningFailure != nil || (out.OutputContractFailure != nil && out.OutputContractFailure.ModelOutputRecovery == nil) {
+			return nil, errors.New("terminal planner failure cannot select a history summary")
+		}
+		if err := validateHistoryContext(input.Messages, out.HistoryContext); err != nil {
 			return nil, err
 		}
 	}

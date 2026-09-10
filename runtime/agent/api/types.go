@@ -378,6 +378,30 @@ type (
 		Tools []tools.Ident
 	}
 
+	// HistorySummary describes a summary of an ordered non-System history prefix.
+	// The original transcript remains unchanged; only model requests use the summary.
+	HistorySummary struct {
+		// SourceMessages counts the original non-System messages summarized.
+		SourceMessages int
+		// ReplacedMessages counts the original non-System messages omitted from requests.
+		ReplacedMessages int
+		// Message contains the complete summary message.
+		Message model.Message
+		// PolicyFingerprint identifies the policy configuration that produced this summary.
+		PolicyFingerprint string
+	}
+
+	// HistoryContext carries a runtime-verified summary between activities of one workflow.
+	// It is derived context, never a replacement for the saved conversation.
+	HistoryContext struct {
+		// Summary describes the exact source prefix and its replacement.
+		Summary HistorySummary
+		// SourceSHA256 binds the summary to the complete original non-System source messages.
+		SourceSHA256 string
+		// SourcePositionsSHA256 binds source references to their original model-request indices.
+		SourcePositionsSHA256 string
+	}
+
 	// PlanActivityInput carries the planner input for PlanStart and PlanResume activities.
 	PlanActivityInput struct {
 		// AgentID identifies which agent is being planned.
@@ -388,6 +412,9 @@ type (
 
 		// Messages is the current conversation transcript provided to the planner.
 		Messages []*model.Message
+
+		// HistoryContext is the last selected invocation's reusable summary, if any.
+		HistoryContext *HistoryContext `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// RunContext carries nested-run metadata (parent IDs, tool identifiers, etc.).
 		RunContext run.Context
@@ -579,6 +606,10 @@ type (
 
 		// Transcript contains the provider-visible transcript produced by the planner.
 		Transcript []*model.Message
+
+		// HistoryContext is derived from the selected or recoverable model invocation.
+		// Omission leaves the workflow's existing summary unchanged.
+		HistoryContext *HistoryContext `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// PublishedAssistantText is the exact text already sent to session
 		// subscribers when this activity does not return an executable PlanResult.

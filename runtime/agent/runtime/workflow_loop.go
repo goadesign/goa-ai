@@ -19,18 +19,20 @@ package runtime
 import (
 	"time"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
 )
 
 type (
-	// workflowConversation holds the original messages and run context between
-	// activities. Activity requests copy these fields; planner-only callbacks
-	// never become workflow state or serialized activity input.
+	// workflowConversation holds the original messages and derived summary
+	// between activities of this workflow. The summary never replaces Messages
+	// and is not included in the session transcript or suspension checkpoint.
 	workflowConversation struct {
-		Messages   []*model.Message
-		RunContext run.Context
+		Messages       []*model.Message
+		RunContext     run.Context
+		HistoryContext *api.HistoryContext
 	}
 
 	workflowLoop struct {

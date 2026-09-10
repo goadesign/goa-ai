@@ -104,10 +104,11 @@ func TestCompressPropagatesTokenCountError(t *testing.T) {
 		KeepMaxTurns:             1,
 	})
 
-	out, err := policy(context.Background(), []*model.Message{
+	historyResult, err := policy(context.Background(), &model.Request{Messages: []*model.Message{
 		userMsg("question"),
 		assistantTextMsg("answer"),
-	}, nil)
+	}}, historyTestClient(t, client), nil)
+	out := historyResult.Messages
 	require.ErrorContains(t, err, "count failed")
 	require.Len(t, out, 2)
 }
@@ -119,10 +120,11 @@ func TestCompressRequiresTokenCounterForTokenBudgets(t *testing.T) {
 		KeepMaxTurns:             1,
 	})
 
-	out, err := policy(context.Background(), []*model.Message{
+	historyResult, err := policy(context.Background(), &model.Request{Messages: []*model.Message{
 		userMsg("question"),
 		assistantTextMsg("answer"),
-	}, nil)
+	}}, client, nil)
+	out := historyResult.Messages
 	require.ErrorIs(t, err, model.ErrTokenCountingUnsupported)
 	require.Len(t, out, 2)
 }
@@ -134,10 +136,11 @@ func TestCompressRequiresExactTokenCounts(t *testing.T) {
 		KeepMaxTurns:             1,
 	})
 
-	out, err := policy(context.Background(), []*model.Message{
+	historyResult, err := policy(context.Background(), &model.Request{Messages: []*model.Message{
 		userMsg("question"),
 		assistantTextMsg("answer"),
-	}, nil)
+	}}, historyTestClient(t, client), nil)
+	out := historyResult.Messages
 	require.ErrorContains(t, err, "history compression requires exact token counts")
 	require.Len(t, out, 2)
 }
@@ -147,10 +150,11 @@ func TestCompressRequiresHistoryModel(t *testing.T) {
 		CompressAtTurns: 2,
 		KeepMaxTurns:    1,
 	})
-	out, err := policy(context.Background(), []*model.Message{
+	historyResult, err := policy(context.Background(), &model.Request{Messages: []*model.Message{
 		userMsg("question"),
 		assistantTextMsg("answer"),
-	}, nil)
+	}}, nil, nil)
+	out := historyResult.Messages
 	require.ErrorContains(t, err, "history compression model is required")
 	assert.Equal(t, []*model.Message{
 		userMsg("question"),
@@ -171,7 +175,8 @@ func TestCompressRejectsEmptySummary(t *testing.T) {
 		assistantTextMsg("answer 2"),
 	}
 
-	out, err := policy(context.Background(), msgs, nil)
+	historyResult, err := policy(context.Background(), &model.Request{Messages: msgs, ModelClass: model.ModelClassSmall}, historyTestClient(t, client), nil)
+	out := historyResult.Messages
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
 	require.ErrorContains(t, errors.Unwrap(validationErr), "text is empty")
@@ -207,7 +212,8 @@ func TestCompress_TokenBudgetTriggersAndKeepsWholeRecentTurns(t *testing.T) {
 		},
 	}
 
-	out, err := policy(context.Background(), msgs, toolDefs)
+	historyResult, err := policy(context.Background(), &model.Request{Messages: msgs, Tools: toolDefs, ModelClass: model.ModelClassSmall}, historyTestClient(t, client), nil)
+	out := historyResult.Messages
 	require.NoError(t, err)
 
 	require.True(t, client.tokenCounted)
@@ -264,7 +270,8 @@ func TestCompress_KeepBudgetExcludesToolCatalog(t *testing.T) {
 		},
 	}
 
-	out, err := policy(context.Background(), msgs, toolDefs)
+	historyResult, err := policy(context.Background(), &model.Request{Messages: msgs, Tools: toolDefs, ModelClass: model.ModelClassSmall}, historyTestClient(t, client), nil)
+	out := historyResult.Messages
 	require.NoError(t, err)
 
 	// Every counting request is a full planner-request shape: catalog
@@ -323,7 +330,8 @@ func TestCompress_ErrsWhenNewestTurnCannotFitCompressTrigger(t *testing.T) {
 
 	// Total counts 1050 (5 messages + catalog) which trips the 1025 trigger,
 	// and the newest tail alone counts 1030 which still exceeds it.
-	out, err := policy(context.Background(), msgs, toolDefs)
+	historyResult, err := policy(context.Background(), &model.Request{Messages: msgs, Tools: toolDefs, ModelClass: model.ModelClassSmall}, historyTestClient(t, client), nil)
+	out := historyResult.Messages
 	require.ErrorContains(t, err, "newest history turn cannot fit within CompressAtMaxInputTokens (1030 > 1025;")
 	require.Len(t, out, 5)
 	require.Len(t, client.countedAll, 2)
@@ -343,7 +351,8 @@ func TestCompressTurnRetentionRejectsNewestTurnAboveTokenTrigger(t *testing.T) {
 		assistantTextMsg("answer 2"),
 	}
 
-	out, err := policy(t.Context(), msgs, nil)
+	historyResult, err := policy(t.Context(), &model.Request{Messages: msgs, ModelClass: model.ModelClassSmall}, historyTestClient(t, client), nil)
+	out := historyResult.Messages
 
 	require.ErrorContains(t, err, "newest history turn cannot fit within CompressAtMaxInputTokens (30 > 25;")
 	assert.Equal(t, msgs, out)
@@ -365,7 +374,8 @@ func TestCompressTurnRetentionAlsoFitsTokenTrigger(t *testing.T) {
 		assistantTextMsg("answer 3"),
 	}
 
-	out, err := policy(t.Context(), msgs, nil)
+	historyResult, err := policy(t.Context(), &model.Request{Messages: msgs, ModelClass: model.ModelClassSmall}, historyTestClient(t, client), nil)
+	out := historyResult.Messages
 
 	require.NoError(t, err)
 	require.Len(t, out, 6)
@@ -452,17 +462,17 @@ func TestCompressDoesNotAdvertiseHistoricalUnavailableTool(t *testing.T) {
 		KeepMaxInputTokens:       40,
 	})
 
-	_, err := policy(context.Background(), []*model.Message{
+	_, err := policy(context.Background(), &model.Request{Messages: []*model.Message{
 		userMsg("question"),
 		assistantToolUseMsg("t1", "runtime.tool_unavailable"),
 		toolResultMsg("t1", "unavailable"),
 		assistantTextMsg("answer"),
 		userMsg("follow-up"),
 		assistantTextMsg("done"),
-	}, []*model.ToolDefinition{{
+	}, Tools: []*model.ToolDefinition{{
 		Name:  "known.tool",
 		Input: mustRuntimeToolInput(rawjson.Message(`{"type":"object"}`)),
-	}})
+	}}}, historyTestClient(t, client), nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, client.countedAll)
 	for _, req := range client.countedAll {

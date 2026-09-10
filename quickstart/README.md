@@ -307,8 +307,8 @@ func (p *chatPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*pl
     // 1. Get LLM client from runtime
     // mc, _ := in.Agent.PlannerModelClient("openai")
 
-    // 2. Call in.PrepareMessages(), return any error, and build the prompt
-    //    from the prepared messages.
+    // 2. Build the prompt from in.Messages. The runtime applies history
+    //    policy when you send the model request.
 
     // 3. Let the model decide: return ToolCalls or a FinalResponse
     return &planner.PlanResult{

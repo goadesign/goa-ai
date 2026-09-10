@@ -275,17 +275,13 @@ Tool executors decide how work is performed.
 
 ```go
 func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-	messages, err := in.PrepareMessages()
-	if err != nil {
-		return nil, err
-	}
 	mc, ok := in.Agent.PlannerModelClient("default")
 	if !ok {
 		return nil, errors.New("model client default is not registered")
 	}
 
 	summary, err := mc.Stream(ctx, &model.Request{
-		Messages: messages,
+		Messages: in.Messages,
 		Tools:    in.Agent.AdvertisedToolDefinitions(),
 		Stream:   true,
 	})
@@ -301,14 +297,15 @@ func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planne
 }
 ```
 
-Call `PrepareMessages` before inspecting or transforming conversation history.
-The runtime applies the registered history policy on first access and returns
-the same messages and error on later accesses in that planner invocation.
-Decisions using only typed run state or tool results need not prepare history.
-The former `PlanInput.Messages` and `PlanResumeInput.Messages` fields are removed;
-custom planners must migrate when upgrading. See [preparation and migration](docs/runtime.md#preparing-conversation-messages)
-for error, lifetime, and compatibility rules. Stored history and wire formats do
-not change.
+Read conversation history from `PlanInput.Messages` or `PlanResumeInput.Messages`.
+The runtime applies the registered history policy when the planner actually
+calls a model, using that request and its destination model's counter. Inspecting
+messages or making a code-owned decision does not count tokens or summarize.
+Replace the removed `PrepareMessages` calls with these fields when upgrading.
+See [preparation and migration](docs/runtime.md#preparing-conversation-messages)
+for the request, error, and compatibility contracts. Saved transcripts, public
+run inputs and suspension checkpoints do not change. Workflow activity records
+gain optional summary state; older records without it remain valid.
 
 Register model clients during bootstrap with `rt.RegisterModel(...)` or runtime
 factories such as `rt.NewOpenAIModelClient(...)`, `rt.NewBedrockModelClient(...)`,
@@ -689,8 +686,12 @@ finalization turn. Queue and attempt timeouts remain distinct failures.
 History can also use model-assisted compression: declare
 `CompressAtMaxInputTokens` or `CompressAtTurns` triggers plus `KeepMaxInputTokens`
 or `KeepMaxTurns` exact-retention budgets inside `History`. Token budgets are
-counted at runtime by a history model that implements `model.TokenCounter` with
-exact counts and keep only whole recent turns, never truncated tool exchanges.
+counted at runtime by the destination model's counter, separately from the
+model that writes summaries. Counts must be exact unless the application sets
+`HistoryCompressionConfig.AllowEstimatedTokens`; this permits a destination
+counter's declared estimates without falling back after an error. Estimates
+are not billing counts or context-window guarantees. Both measurements keep
+only whole recent turns, never truncated tool exchanges.
 A turn keeps a complete assistant response and its tool results together, even
 when reasoning, text, and parallel calls arrive as separate adjacent messages.
 Later completed exchanges after the same user request remain separate turns,
@@ -709,6 +710,11 @@ that ceiling, summary coverage and exact retention remain disjoint. Custom
 prompts with a positive ceiling must not assume that every summarized turn is
 discarded from exact history. See
 [history policies](docs/runtime.md#history-policies) for the evidence contract.
+Within one workflow, the runtime can reuse the selected model call's summary
+of unchanged original evidence. Each later request still counts its actual
+model settings and tools; growing evidence can require a replacement summary.
+The complete saved conversation and suspension checkpoints are not rewritten.
+See [summary reuse](docs/runtime.md#reusing-a-summary-within-one-workflow).
 
 Per-run options can further restrict execution:
 
