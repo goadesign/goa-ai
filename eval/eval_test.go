@@ -396,8 +396,11 @@ func TestRunnerLabelsClaimsNotAddressedWhenOutputEmpty(t *testing.T) {
 		ID: "case", Timeout: time.Second,
 		Run: func(context.Context) (Result, error) {
 			return Result{
-				Checks:    []Check{{Name: "terminal", Passed: false, Diagnostic: "run failed"}},
-				Claims:    []Claim{{ID: "complete", Text: "The inventory is complete."}},
+				Checks: []Check{{Name: "terminal", Passed: true}},
+				Claims: []Claim{
+					{ID: "complete", Text: "The inventory is complete."},
+					{ID: "accurate_prices", Text: "Any price quoted agrees with the reference. Quoting no prices satisfies this constraint."},
+				},
 				Reference: "A complete inventory exists in the reference, not in the absent answer.",
 			}, nil
 		},
@@ -410,9 +413,13 @@ func TestRunnerLabelsClaimsNotAddressedWhenOutputEmpty(t *testing.T) {
 	scenario := report.Scenarios[0]
 	assert.False(t, scenario.Passed)
 	assert.Empty(t, scenario.Error)
-	require.Len(t, scenario.Judgments, 1)
-	assert.Equal(t, NotAddressed, scenario.Judgments[0].Label)
-	assert.NotEmpty(t, scenario.Judgments[0].Rationale)
+	require.Len(t, scenario.Judgments, 2)
+	for _, judgment := range scenario.Judgments {
+		assert.Equal(t, NotAddressed, judgment.Label)
+		assert.NotEmpty(t, judgment.Rationale)
+	}
+	assert.False(t, report.Passed)
+	assert.Len(t, judge.requests, 1, "only calibration may call the judge")
 }
 
 func TestRunnerRecordsJudgeErrorsAtOwningBoundary(t *testing.T) {

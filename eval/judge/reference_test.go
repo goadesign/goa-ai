@@ -39,6 +39,50 @@ func TestJudgePreservesReferenceAcrossCorrection(t *testing.T) {
 	}
 }
 
+// This test proves request preservation, not semantic accuracy. The scripted
+// conditional judgment is deliberately wrong; the judge must return it unchanged.
+func TestJudgePreservesConditionalClaimsAcrossCorrection(t *testing.T) {
+	const output = "Delivery is tomorrow."
+	const reference = "The price is $12."
+	claims := []aieval.Claim{
+		{ID: "required_price", Text: "The answer reports the price."},
+		{ID: "accurate_prices", Text: "Any price quoted agrees with the reference. Quoting no prices satisfies this constraint."},
+	}
+	provider := &recordingClient{responses: []*model.Response{
+		toolResponse(`{"required_price":"wrong shape"}`),
+		toolResponse(`{"required_price":{"label":"not_addressed","rationale":"The answer omits the price."},"accurate_prices":{"label":"not_addressed","rationale":"Scripted decision preserved unchanged."}}`),
+	}}
+
+	judgments, err := newTestJudge(t, provider).Judge(t.Context(), output, claims, reference)
+
+	require.NoError(t, err)
+	assert.Equal(t, []aieval.Judgment{
+		{ClaimID: "required_price", Label: aieval.NotAddressed, Rationale: "The answer omits the price."},
+		{ClaimID: "accurate_prices", Label: aieval.NotAddressed, Rationale: "Scripted decision preserved unchanged."},
+	}, judgments)
+	require.Len(t, provider.requests, 2)
+	for _, request := range provider.requests {
+		body := sharedReferenceRequestBody(t, request)
+		assert.Equal(t, output, body.Output)
+		assert.Equal(t, reference, body.Reference)
+		prompt := systemText(request)
+		assert.Contains(t, prompt, "For a constraint on content the output may omit, absence of that content satisfies the constraint; use entailed if the rest of the claim is satisfied, not not_addressed.")
+		assert.Contains(t, prompt, "This does not satisfy a requirement to include content, supply missing evidence for content actually included, or resolve an unknown condition about the world.")
+		assert.Contains(t, prompt, "Do not credit the output with information that appears only in the reference.")
+		require.Len(t, request.Tools, 1)
+		var schema judgmentSchema
+		require.NoError(t, json.Unmarshal(request.Tools[0].Input.Contract().Schema, &schema))
+		assert.Equal(t, []string{"required_price", "accurate_prices"}, schema.Required)
+		require.Len(t, schema.Properties, len(claims))
+		for _, claim := range claims {
+			var property judgmentSchema
+			require.NoError(t, json.Unmarshal(schema.Properties[claim.ID], &property))
+			assert.Equal(t, claim.Text, property.Description)
+		}
+	}
+	assert.Equal(t, provider.requests[0].Tools[0].Input.Contract().Schema, provider.requests[1].Tools[0].Input.Contract().Schema)
+}
+
 func TestJudgeKeepsConcurrentReferencesSeparate(t *testing.T) {
 	const count = 12
 	provider := &recordingClient{}

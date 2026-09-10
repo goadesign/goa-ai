@@ -63,6 +63,7 @@ const (
 	judgePrompt = `Classify each claim independently against the supplied output.
 Use the reference, when supplied, as factual context only. Do not credit the output with information that appears only in the reference.
 Return entailed when the output establishes the claim, contradicted when it establishes the claim is false, not_addressed when it does neither, and indeterminate only when ambiguity prevents classification.
+Apply each claim's conditions and requirements as written. For a constraint on content the output may omit, absence of that content satisfies the constraint; use entailed if the rest of the claim is satisfied, not not_addressed. This does not satisfy a requirement to include content, supply missing evidence for content actually included, or resolve an unknown condition about the world.
 Call the supplied grading tool exactly once. Each required property describes one claim; supply its label and a concise rationale in that property.`
 )
 
