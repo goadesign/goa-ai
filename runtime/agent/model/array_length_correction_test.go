@@ -34,8 +34,8 @@ func TestArrayLengthCorrectionInclusiveBounds(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			schema := fmt.Sprintf(`{"type":"object","properties":{"items":{"type":"array","items":{"type":"integer"},%s}},"additionalProperties":false}`, test.rule)
-			definition := arrayCorrectionDefinition(schema, []tools.FieldMetadata{{Path: []tools.FieldPathSegment{tools.FixedField("items")}, JSONType: "array"}})
-			rejected := checkArrayCorrection(t, definition, test.payload, test.want)
+			definition := correctionToolDefinition(schema, []tools.FieldMetadata{{Path: []tools.FieldPathSegment{tools.FixedField("items")}, JSONType: "array"}})
+			rejected := checkToolCorrection(t, definition, test.payload, test.want)
 			if rejected != nil {
 				var schemaErr *jsonschema.ValidationError
 				require.ErrorAs(t, rejected, &schemaErr)
@@ -85,7 +85,7 @@ func TestArrayLengthCorrectionGeneratedPathsAndAmbiguity(t *testing.T) {
 		{name: "deeper type failure wins", schema: `{"type":"object","properties":{"items":{"type":"array","maxItems":1,"items":{"type":"integer"}}}}`, payload: `{"items":[1,"submitted-value"]}`, fields: testFieldMetadata(map[string]string{"items": "array", "items.*": "integer"}, nil), want: `Field "items.*" must contain a JSON integer.`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			rejected := checkArrayCorrection(t, arrayCorrectionDefinition(test.schema, test.fields), test.payload, test.want)
+			rejected := checkToolCorrection(t, correctionToolDefinition(test.schema, test.fields), test.payload, test.want)
 			assert.Equal(t, test.want == "", rejected == nil)
 		})
 	}
@@ -103,10 +103,10 @@ func TestArrayLengthCorrectionSelectedUnionAndSize(t *testing.T) {
 		{"selected small", `{"choice":{"type":"small","value":[1,2]}}`, `Field "choice.value" must contain at most 1 items.`},
 		{"selected large", `{"choice":{"type":"large","value":[1,2,3,4]}}`, `Field "choice.value" must contain at most 3 items.`},
 		{"valid other branch", `{"choice":{"type":"large","value":[1,2]}}`, ""},
-		{"unselected", `{"choice":{"type":"unknown","value":[1,2,3,4]}}`, advertisedToolInputCorrection},
+		{"unselected", `{"choice":{"type":"unknown","value":[1,2,3,4]}}`, `Field "choice.type" must be one of these JSON strings: ["small","large"].`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			rejected := checkArrayCorrection(t, arrayCorrectionDefinition(schema, fields), test.payload, test.want)
+			rejected := checkToolCorrection(t, correctionToolDefinition(schema, fields), test.payload, test.want)
 			assert.Equal(t, test.want == "", rejected == nil)
 		})
 	}
@@ -119,22 +119,22 @@ func TestArrayLengthCorrectionSelectedUnionAndSize(t *testing.T) {
 			if size > correction.MaxBytes {
 				want = advertisedToolInputCorrection
 			}
-			require.NotNil(t, checkArrayCorrection(t, arrayCorrectionDefinition(`{"type":"object","properties":{"items":{"type":"array","maxItems":1}}}`, []tools.FieldMetadata{field}), `{"items":[1,2]}`, want))
+			require.NotNil(t, checkToolCorrection(t, correctionToolDefinition(`{"type":"object","properties":{"items":{"type":"array","maxItems":1}}}`, []tools.FieldMetadata{field}), `{"items":[1,2]}`, want))
 		})
 	}
 }
 
-// arrayCorrectionDefinition gives the real request validator an advertised
+// correctionToolDefinition gives the real request validator an advertised
 // schema, generated-shape field metadata and its ordinary JSON decoder.
-func arrayCorrectionDefinition(schema string, fields []tools.FieldMetadata) *ToolDefinition {
+func correctionToolDefinition(schema string, fields []tools.FieldMetadata) *ToolDefinition {
 	return ToolDefinitionFromSpec(tools.ToolSpec{Name: "catalog.batch", Payload: tools.TypeSpec{
 		Name: "Batch", Schema: rawjson.Message(schema), Fields: fields, Codec: tools.AnyJSONCodec,
 	}})
 }
 
-// checkArrayCorrection compares unary and streamed validation, preserving exact
+// checkToolCorrection compares unary and streamed validation, preserving exact
 // accepted arguments and the original rejection. An empty expectation is valid.
-func checkArrayCorrection(t *testing.T, definition *ToolDefinition, payload, want string) *OutputValidationError {
+func checkToolCorrection(t *testing.T, definition *ToolDefinition, payload, want string) *OutputValidationError {
 	t.Helper()
 	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
 	require.NoError(t, err)
