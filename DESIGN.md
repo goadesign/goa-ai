@@ -600,6 +600,14 @@ with its durable command. Applications can store the versioned bytes and parse
 them after a process restart. `Start` and `Continue` are convenience methods
 that prepare and start through this same path.
 
+`WithoutPriorReasoning()` is an initial-run option for applications supplying
+completed conversation history. Before the prepared request is frozen, the
+runtime copies those messages and removes prior thinking and provider-native
+reasoning continuation data, preserving all other conversation content and
+metadata. The option itself is not workflow input or durable policy. The default
+preserves prior reasoning, new output is always recorded normally, and suspended
+continuations restore their native checkpoint without this transformation.
+
 Initial and one-shot calls express each launch setting through `WithTaskQueue`,
 `WithMemo`, or `WithSearchAttributes`. Continuations take one
 `runtime.WorkflowOptions` value because their other arguments identify the
