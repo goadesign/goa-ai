@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -121,7 +122,7 @@ func TestCompressExplicitCounterRejectsInvalidMeasurement(t *testing.T) {
 			out := historyResult.Messages
 			require.ErrorContains(t, err, tc.want)
 			if tc.err != nil {
-				assert.ErrorIs(t, err, tc.err)
+				require.ErrorIs(t, err, tc.err)
 			}
 			assertExactHistory(t, messages, out)
 			assert.False(t, provider.tokenCounted)
@@ -158,7 +159,7 @@ func TestCompressCountsCompleteRequestAtEveryRetentionBoundary(t *testing.T) {
 		assert.Equal(t, req.Model, counted.Model)
 		assert.Equal(t, req.ModelClass, counted.ModelClass)
 		assert.Equal(t, req.MaxTokens, counted.MaxTokens)
-		assert.Equal(t, req.Temperature, counted.Temperature)
+		assert.Equal(t, math.Float32bits(req.Temperature), math.Float32bits(counted.Temperature))
 		assert.Equal(t, req.Thinking, counted.Thinking)
 		assert.Equal(t, req.Cache, counted.Cache)
 		require.Len(t, counted.Tools, 1)

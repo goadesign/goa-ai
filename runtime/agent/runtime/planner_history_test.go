@@ -6,6 +6,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -30,18 +31,18 @@ func TestPlanActivitiesSkipUnusedCompression(t *testing.T) {
 	for _, resume := range []bool{false, true} {
 		t.Run(map[bool]string{false: "start", true: "resume"}[resume], func(t *testing.T) {
 			provider := &historyCountingClient{}
-			plan := func(agent planner.PlannerContext, messages []*model.Message) (*planner.PlanResult, error) {
+			plan := func(agent planner.PlannerContext, messages []*model.Message) *planner.PlanResult {
 				_, ok := agent.ModelClient("destination")
 				require.True(t, ok)
 				assert.Len(t, messages, 4)
-				return finalPlannerResult("already complete"), nil
+				return finalPlannerResult("already complete")
 			}
 			pl := &stubPlanner{
 				start: func(_ context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-					return plan(in.Agent, in.Messages)
+					return plan(in.Agent, in.Messages), nil
 				},
 				resume: func(_ context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-					return plan(in.Agent, in.Messages)
+					return plan(in.Agent, in.Messages), nil
 				},
 			}
 			rt := newTestRuntimeWithPlanner("service.agent", pl)
@@ -110,7 +111,7 @@ func TestPlannerHistoryCountsActualDestinationRequests(t *testing.T) {
 				assert.Equal(t, sent.Model, counted.Model)
 				assert.Equal(t, sent.ModelClass, counted.ModelClass)
 				assert.Equal(t, sent.MaxTokens, counted.MaxTokens)
-				assert.Equal(t, sent.Temperature, counted.Temperature)
+				assert.Equal(t, math.Float32bits(sent.Temperature), math.Float32bits(counted.Temperature))
 				assert.Equal(t, sent.Thinking, counted.Thinking)
 				require.Len(t, counted.Tools, len(sent.Tools))
 				for i, tool := range sent.Tools {

@@ -118,7 +118,8 @@ func TestCompressCompleteExchangesAtEverySelectionBoundary(t *testing.T) {
 			out := historyResult.Messages
 			require.NoError(t, err)
 			require.NoError(t, transcript.ValidatePlannerTranscript(out))
-			want := []*model.Message{exchanges[0][len(exchanges[0])-1], exchanges[1][len(exchanges[1])-1]}
+			want := make([]*model.Message, 0, 2+len(exchanges[2])+len(exchanges[3]))
+			want = append(want, exchanges[0][len(exchanges[0])-1], exchanges[1][len(exchanges[1])-1])
 			want = append(want, exchanges[2]...)
 			want = append(want, exchanges[3]...)
 			assertExactHistory(t, want, out[2:])
@@ -187,7 +188,8 @@ func TestPlanActivitiesPrepareCompleteResponseExchanges(t *testing.T) {
 					require.NoError(t, transcript.ValidatePlannerTranscript(request.Messages))
 					// Model request admission clones messages; history preparation
 					// preserves pointers, while the provider receives equal values.
-					want := []*model.Message{exchanges[0][len(exchanges[0])-1], exchanges[1][len(exchanges[1])-1]}
+					want := make([]*model.Message, 0, 2+len(exchanges[2])+len(exchanges[3]))
+					want = append(want, exchanges[0][len(exchanges[0])-1], exchanges[1][len(exchanges[1])-1])
 					want = append(want, exchanges[2]...)
 					want = append(want, exchanges[3]...)
 					assert.Equal(t, canonicalHistory(t, want), canonicalHistory(t, request.Messages[2:]))

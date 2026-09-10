@@ -1,8 +1,9 @@
+package runtime
+
 // This file reconstructs the exact request described by a reusable history
 // summary. Compression and activity admission use the same complete-turn checks
 // and message selection, so a policy cannot claim coverage by approximate text
 // matching or remove an instruction while describing a different prefix.
-package runtime
 
 import (
 	"errors"

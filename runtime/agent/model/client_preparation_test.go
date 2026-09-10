@@ -23,6 +23,8 @@ type (
 	}
 )
 
+var _ ProviderCallObserver = (*preparationContextProvider)(nil)
+
 func TestRequestPreparationContextReachesExactConcurrentCall(t *testing.T) {
 	parent, cancel := context.WithDeadline(t.Context(), time.Now().Add(time.Minute))
 	t.Cleanup(cancel)
@@ -205,7 +207,7 @@ func TestRequestPreparationRejectsInvalidInputAndOutput(t *testing.T) {
 			_, err = client.Complete(t.Context(), test.request)
 			require.Error(t, err)
 			if test.wantError != nil {
-				assert.ErrorIs(t, err, test.wantError)
+				require.ErrorIs(t, err, test.wantError)
 			}
 			assert.Equal(t, test.wantCalls, calls)
 			assert.Zero(t, provider.calls)
@@ -217,7 +219,7 @@ func TestRequestPreparationRequiresValidConfiguration(t *testing.T) {
 	base, err := NewClient(&clientTestProvider{})
 	require.NoError(t, err)
 	_, err = WithRequestPreparation(base, nil)
-	assert.EqualError(t, err, "model request preparation is required")
+	require.EqualError(t, err, "model request preparation is required")
 	_, err = WithRequestPreparation(nil, func(ctx context.Context, request *Request) (context.Context, *Request, error) {
 		return ctx, request, nil
 	})
