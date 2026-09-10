@@ -39,7 +39,7 @@ func TestJudgeRejectsNamedContractViolations(t *testing.T) {
 			for range 4 {
 				provider.responses = append(provider.responses, toolResponse(test.payload))
 			}
-			judgments, err := newTestJudge(t, provider).Judge(t.Context(), "Evidence.", []aieval.Claim{{ID: "claim", Text: "Evidence."}})
+			judgments, err := newTestJudge(t, provider).Judge(t.Context(), "Evidence.", []aieval.Claim{{ID: "claim", Text: "Evidence."}}, "")
 			require.ErrorContains(t, err, "recovery_cap")
 			require.ErrorContains(t, err, test.cause)
 			assert.Nil(t, judgments)
@@ -63,7 +63,7 @@ func TestJudgeCorrectsDuplicateMemberWithoutExtraBudget(t *testing.T) {
 		toolResponse(`{"claim":{"label":"entailed","label":"contradicted","rationale":"Conflicting decisions."}}`),
 		toolResponse(`{"claim":{"label":"contradicted","rationale":"The output says the opposite."}}`),
 	}}
-	judgments, err := newTestJudge(t, provider).Judge(t.Context(), "Stopped.", []aieval.Claim{{ID: "claim", Text: "Running."}})
+	judgments, err := newTestJudge(t, provider).Judge(t.Context(), "Stopped.", []aieval.Claim{{ID: "claim", Text: "Running."}}, "")
 	require.NoError(t, err)
 	assert.Equal(t, []aieval.Judgment{{ClaimID: "claim", Label: aieval.Contradicted, Rationale: "The output says the opposite."}}, judgments)
 	require.Len(t, provider.requests, 2)
@@ -84,7 +84,7 @@ func TestJudgePreservesJSONPropertyNamesAndSemanticDecisions(t *testing.T) {
 	data, err := json.Marshal(response)
 	require.NoError(t, err)
 	provider := &recordingClient{responses: []*model.Response{toolResponse(string(data))}}
-	judgments, err := newTestJudge(t, provider).Judge(t.Context(), "Unrelated evidence.", claims)
+	judgments, err := newTestJudge(t, provider).Judge(t.Context(), "Unrelated evidence.", claims, "")
 	require.NoError(t, err)
 	require.Len(t, judgments, len(claims))
 	for index, judgment := range judgments {
@@ -97,7 +97,7 @@ func TestJudgePreservesJSONPropertyNamesAndSemanticDecisions(t *testing.T) {
 
 func TestJudgeRejectsInvalidUTF8ClaimNamesBeforeInference(t *testing.T) {
 	provider := &recordingClient{}
-	_, err := newTestJudge(t, provider).Judge(t.Context(), "Evidence.", []aieval.Claim{{ID: "bad\xffname", Text: "Evidence."}})
+	_, err := newTestJudge(t, provider).Judge(t.Context(), "Evidence.", []aieval.Claim{{ID: "bad\xffname", Text: "Evidence."}}, "")
 	require.ErrorContains(t, err, "not valid UTF-8")
 	assert.Empty(t, provider.requests)
 }
@@ -111,7 +111,7 @@ func TestJudgeKeepsExistingSchemaSizeLimit(t *testing.T) {
 	for _, size := range []int{limit - 1, limit, limit + 1} {
 		claims[0].Text = strings.Repeat("x", size-overhead)
 		provider := &recordingClient{responses: []*model.Response{toolResponse(`{"claim":{"label":"entailed","rationale":"Evidence."}}`)}}
-		_, err := newTestJudge(t, provider).Judge(t.Context(), "Evidence.", claims)
+		_, err := newTestJudge(t, provider).Judge(t.Context(), "Evidence.", claims, "")
 		if size > limit {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "schema")

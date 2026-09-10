@@ -155,10 +155,7 @@ func TestCorrectCallChoicesPublicContinuationRetainsAlternateAsk(t *testing.T) {
 	}})
 	p := &stubPlanner{
 		start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
-			messages, err := input.PrepareMessages()
-			if err != nil {
-				return nil, err
-			}
+			messages := input.Messages
 			client, ok := input.Agent.PlannerModelClient("test")
 			require.True(t, ok)
 			summary, err := client.Complete(ctx, &model.Request{Model: "test", Messages: messages, Tools: input.Agent.AdvertisedToolDefinitions()})
@@ -174,10 +171,7 @@ func TestCorrectCallChoicesPublicContinuationRetainsAlternateAsk(t *testing.T) {
 			if resumes > 1 {
 				return finalPlannerResult("answer used supplied evidence"), nil
 			}
-			messages, err := input.PrepareMessages()
-			if err != nil {
-				return nil, err
-			}
+			messages := input.Messages
 			client, ok := input.Agent.PlannerModelClient("test")
 			require.True(t, ok)
 			summary, err := client.Complete(ctx, &model.Request{Model: "test", Messages: messages, Tools: input.Agent.AdvertisedToolDefinitions()})
@@ -256,10 +250,7 @@ func TestCorrectCallChoicesRetainBoundContinuation(t *testing.T) {
 			require.NotNil(t, chosen)
 			assert.True(t, chosen.NoArguments)
 			assert.NotContains(t, chosen.Description, "saved-next")
-			messages, err := input.PrepareMessages()
-			if err != nil {
-				return nil, err
-			}
+			messages := input.Messages
 			client, ok := input.Agent.PlannerModelClient("test")
 			require.True(t, ok)
 			response, err := client.Complete(ctx, &model.Request{Model: "test", Messages: messages, Tools: []*model.ToolDefinition{chosen}})

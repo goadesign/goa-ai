@@ -25,6 +25,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/engine/contract"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 )
 
@@ -425,7 +426,7 @@ func (e *eng) runWorkflow(
 			}
 			return copied, nil
 		}
-		if errors.Is(err, context.Canceled) || !workflowRetryAllowed(retryPolicy, attempt) {
+		if errors.Is(err, context.Canceled) || temporalerrors.IsRequestValidation(err) || !workflowRetryAllowed(retryPolicy, attempt) {
 			return result, err
 		}
 		cancellations.endAttempt()
@@ -1068,7 +1069,7 @@ func executeActivityWithRetry[T any](ctx context.Context, startToClose time.Dura
 			var zero T
 			return zero, context.DeadlineExceeded
 		}
-		if err == nil || engine.IsActivityErrorNonRetryable(err) {
+		if err == nil || engine.IsActivityErrorNonRetryable(err) || temporalerrors.IsRequestValidation(err) {
 			return output, err
 		}
 		if !retry.UnlimitedAttempts && (retry.MaxAttempts == 0 || attempt >= retry.MaxAttempts) {

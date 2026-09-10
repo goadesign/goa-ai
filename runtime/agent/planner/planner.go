@@ -17,10 +17,7 @@
 //	type MyPlanner struct{}
 //
 //	func (p *MyPlanner) PlanStart(ctx context.Context, input *PlanInput) (*PlanResult, error) {
-//	    messages, err := input.PrepareMessages()
-//	    if err != nil {
-//	        return nil, err
-//	    }
+//	    messages := input.Messages
 //	    // Analyze messages and decide:
 //	    // - Return tool calls: &PlanResult{ToolCalls: [...]}
 //	    // - Return final answer: &PlanResult{FinalResponse: &FinalResponse{...}}
@@ -565,15 +562,10 @@ type Termination struct {
 
 // PlanInput carries the initial messages and context into PlanStart.
 type PlanInput struct {
-	// PrepareMessages returns this activity's policy-prepared conversation.
-	// Its first call applies the registered history policy using the activity
-	// context and deadline. Later calls return the same slice and error.
-	// Call it before inspecting or transforming conversation messages; decisions
-	// using only RunContext and ToolOutputs need not prepare messages.
-	// Preparation errors fail the activity even if the planner ignores them.
-	// The runtime always supplies this function. It must not escape the planner
-	// invocation, and all calls must finish before the planner returns.
-	PrepareMessages func() ([]*model.Message, error)
+	// Messages is the complete saved conversation for this activity. Treat it
+	// as read-only. Runtime-managed clients apply the history policy separately
+	// to each actual Complete or Stream request, using its destination model.
+	Messages []*model.Message
 
 	// RunContext contains durable identifiers and links for the run.
 	RunContext run.Context
@@ -592,10 +584,9 @@ type PlanInput struct {
 
 // PlanResumeInput carries messages plus execution history into PlanResume.
 type PlanResumeInput struct {
-	// PrepareMessages returns the policy-prepared conversation, including the
-	// latest complete tool calls and results. It has the same activity lifetime,
-	// cancellation, shared-slice, and failure contract as PlanInput.PrepareMessages.
-	PrepareMessages func() ([]*model.Message, error)
+	// Messages is the complete saved conversation, including the latest tool
+	// calls and results. It has the same read-only contract as PlanInput.Messages.
+	Messages []*model.Message
 
 	// RunContext contains durable identifiers and links for the run.
 	RunContext run.Context
@@ -618,8 +609,11 @@ type PlanResumeInput struct {
 	// PlanResult requested SynthesizeAfterTools.
 	SynthesisOnly bool
 
-	// Finalize is non-nil when the runtime forbids further domain work and asks
-	// the planner for either a final response or terminal bookkeeping calls.
+	// Finalize forbids starting new operations. The planner may submit a final
+	// response or advertised terminal bookkeeping calls. With reason ToolFailure,
+	// advertised continuations may instead finish queries already started. Other
+	// reasons permit no pagination. The current catalog determines legal actions;
+	// final submission and pagination must never share a batch.
 	Finalize *Termination
 
 	// Reminders contains the active system reminders for this planner turn.

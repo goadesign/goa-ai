@@ -34,8 +34,8 @@ func TestArrayLengthCorrectionInclusiveBounds(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			schema := fmt.Sprintf(`{"type":"object","properties":{"items":{"type":"array","items":{"type":"integer"},%s}},"additionalProperties":false}`, test.rule)
-			definition := correctionToolDefinition(schema, []tools.FieldMetadata{{Path: []tools.FieldPathSegment{tools.FixedField("items")}, JSONType: "array"}})
-			rejected := checkToolCorrection(t, definition, test.payload, test.want)
+			definition := arrayCorrectionDefinition(schema, []tools.FieldMetadata{{Path: []tools.FieldPathSegment{tools.FixedField("items")}, JSONType: "array"}})
+			rejected := checkArrayCorrection(t, definition, test.payload, test.want)
 			if rejected != nil {
 				var schemaErr *jsonschema.ValidationError
 				require.ErrorAs(t, rejected, &schemaErr)
@@ -75,17 +75,17 @@ func TestArrayLengthCorrectionGeneratedPathsAndAmbiguity(t *testing.T) {
 		{name: "nested arrays deduplicate", schema: `{"type":"object","properties":{"rows":{"type":"array","items":{"type":"array","maxItems":1}}}}`, payload: `{"rows":[[1,2],[3,4]]}`, fields: testFieldMetadata(map[string]string{"rows": "array", "rows.*": "array"}, nil), want: `Field "rows.*" must contain at most 1 items.`},
 		{name: "map wildcard", schema: `{"type":"object","properties":{"groups":{"type":"object","additionalProperties":{"type":"array","minItems":2}}}}`, payload: `{"groups":{"submitted-key":[]}}`, fields: testFieldMetadata(map[string]string{"groups.*": "array"}, nil), want: `Field "groups.*" must contain at least 2 items.`},
 		{name: "literal special name", schema: `{"type":"object","properties":{"a.b":{"type":"array","maxItems":0}}}`, payload: `{"a.b":[1]}`, fields: []tools.FieldMetadata{{Path: []tools.FieldPathSegment{tools.FixedField("a.b")}, JSONType: "array"}}, want: `Field "[\"a.b\"]" must contain at most 0 items.`},
-		{name: "competing fields", schema: `{"type":"object","properties":{"left":{"type":"array","maxItems":1},"right":{"type":"array","maxItems":3}}}`, payload: `{"left":[1,2],"right":[1,2,3,4]}`, fields: testFieldMetadata(map[string]string{"left": "array", "right": "array"}, nil), want: advertisedToolInputCorrection},
+		{name: "independent fields", schema: `{"type":"object","properties":{"left":{"type":"array","maxItems":1},"right":{"type":"array","maxItems":3}}}`, payload: `{"left":[1,2],"right":[1,2,3,4]}`, fields: testFieldMetadata(map[string]string{"left": "array", "right": "array"}, nil), want: "Field \"left\" must contain at most 1 items.\nField \"right\" must contain at most 3 items."},
 		{name: "competing bounds", schema: `{"type":"object","properties":{"items":{"type":"array","allOf":[{"maxItems":1},{"maxItems":2}]}}}`, payload: `{"items":[1,2,3]}`, fields: testFieldMetadata(map[string]string{"items": "array"}, nil), want: advertisedToolInputCorrection},
 		{name: "identical bounds", schema: `{"type":"object","properties":{"items":{"type":"array","allOf":[{"maxItems":1},{"maxItems":1}]}}}`, payload: `{"items":[1,2,3]}`, fields: testFieldMetadata(map[string]string{"items": "array"}, nil), want: `Field "items" must contain at most 1 items.`},
-		{name: "unsupported peer", schema: `{"type":"object","properties":{"items":{"type":"array","maxItems":1,"uniqueItems":true}}}`, payload: `{"items":[1,1]}`, fields: testFieldMetadata(map[string]string{"items": "array"}, nil), want: advertisedToolInputCorrection},
+		{name: "unsupported peer", schema: `{"type":"object","properties":{"items":{"type":"array","maxItems":1,"uniqueItems":true}}}`, payload: `{"items":[1,1]}`, fields: testFieldMetadata(map[string]string{"items": "array"}, nil), want: `Field "items" must contain at most 1 items. Other schema errors are not detailed here.`},
 		{name: "absent metadata", schema: `{"type":"object","properties":{"items":{"type":"array","maxItems":1}}}`, payload: `{"items":[1,2]}`, want: advertisedToolInputCorrection},
 		{name: "wrong metadata type", schema: `{"type":"object","properties":{"items":{"type":"array","maxItems":1}}}`, payload: `{"items":[1,2]}`, fields: testFieldMetadata(map[string]string{"items": "object"}, nil), want: advertisedToolInputCorrection},
 		{name: "conflicting metadata", schema: `{"type":"object","properties":{"items":{"type":"array","maxItems":1}}}`, payload: `{"items":[1,2]}`, fields: []tools.FieldMetadata{{Path: []tools.FieldPathSegment{tools.FixedField("items")}, JSONType: "array"}, {Path: []tools.FieldPathSegment{tools.FixedField("items")}, JSONType: "object"}}, want: advertisedToolInputCorrection},
-		{name: "deeper type failure wins", schema: `{"type":"object","properties":{"items":{"type":"array","maxItems":1,"items":{"type":"integer"}}}}`, payload: `{"items":[1,"submitted-value"]}`, fields: testFieldMetadata(map[string]string{"items": "array", "items.*": "integer"}, nil), want: `Field "items.*" must contain a JSON integer.`},
+		{name: "array and item problems both reported", schema: `{"type":"object","properties":{"items":{"type":"array","maxItems":1,"items":{"type":"integer"}}}}`, payload: `{"items":[1,"submitted-value"]}`, fields: testFieldMetadata(map[string]string{"items": "array", "items.*": "integer"}, nil), want: "Field \"items\" must contain at most 1 items.\nField \"items.*\" must contain a JSON integer."},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			rejected := checkToolCorrection(t, correctionToolDefinition(test.schema, test.fields), test.payload, test.want)
+			rejected := checkArrayCorrection(t, arrayCorrectionDefinition(test.schema, test.fields), test.payload, test.want)
 			assert.Equal(t, test.want == "", rejected == nil)
 		})
 	}
@@ -103,14 +103,14 @@ func TestArrayLengthCorrectionSelectedUnionAndSize(t *testing.T) {
 		{"selected small", `{"choice":{"type":"small","value":[1,2]}}`, `Field "choice.value" must contain at most 1 items.`},
 		{"selected large", `{"choice":{"type":"large","value":[1,2,3,4]}}`, `Field "choice.value" must contain at most 3 items.`},
 		{"valid other branch", `{"choice":{"type":"large","value":[1,2]}}`, ""},
-		{"unselected", `{"choice":{"type":"unknown","value":[1,2,3,4]}}`, `Field "choice.type" must be one of these JSON strings: ["small","large"].`},
+		{"unselected", `{"choice":{"type":"unknown","value":[1,2,3,4]}}`, `Field "choice.type" must be one of these JSON strings: ["small","large"]. Other schema errors are not detailed here.`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			rejected := checkToolCorrection(t, correctionToolDefinition(schema, fields), test.payload, test.want)
+			rejected := checkArrayCorrection(t, arrayCorrectionDefinition(schema, fields), test.payload, test.want)
 			assert.Equal(t, test.want == "", rejected == nil)
 		})
 	}
-	base := `Field "items" must contain at most 1 items. Field description: "". Return a replacement tool call with valid arguments.`
+	base := `Field "items" must contain at most 1 items. Field description: "".`
 	for _, size := range []int{correction.MaxBytes - 1, correction.MaxBytes, correction.MaxBytes + 1} {
 		t.Run(fmt.Sprintf("correction bytes %d", size), func(t *testing.T) {
 			description := strings.Repeat("x", size-len(base))
@@ -119,22 +119,22 @@ func TestArrayLengthCorrectionSelectedUnionAndSize(t *testing.T) {
 			if size > correction.MaxBytes {
 				want = advertisedToolInputCorrection
 			}
-			require.NotNil(t, checkToolCorrection(t, correctionToolDefinition(`{"type":"object","properties":{"items":{"type":"array","maxItems":1}}}`, []tools.FieldMetadata{field}), `{"items":[1,2]}`, want))
+			require.NotNil(t, checkArrayCorrection(t, arrayCorrectionDefinition(`{"type":"object","properties":{"items":{"type":"array","maxItems":1}}}`, []tools.FieldMetadata{field}), `{"items":[1,2]}`, want))
 		})
 	}
 }
 
-// correctionToolDefinition gives the real request validator an advertised
+// arrayCorrectionDefinition gives the real request validator an advertised
 // schema, generated-shape field metadata and its ordinary JSON decoder.
-func correctionToolDefinition(schema string, fields []tools.FieldMetadata) *ToolDefinition {
+func arrayCorrectionDefinition(schema string, fields []tools.FieldMetadata) *ToolDefinition {
 	return ToolDefinitionFromSpec(tools.ToolSpec{Name: "catalog.batch", Payload: tools.TypeSpec{
 		Name: "Batch", Schema: rawjson.Message(schema), Fields: fields, Codec: tools.AnyJSONCodec,
 	}})
 }
 
-// checkToolCorrection compares unary and streamed validation, preserving exact
+// checkArrayCorrection compares unary and streamed validation, preserving exact
 // accepted arguments and the original rejection. An empty expectation is valid.
-func checkToolCorrection(t *testing.T, definition *ToolDefinition, payload, want string) *OutputValidationError {
+func checkArrayCorrection(t *testing.T, definition *ToolDefinition, payload, want string) *OutputValidationError {
 	t.Helper()
 	contract, err := NewRequestContract(&Request{Tools: []*ToolDefinition{definition}})
 	require.NoError(t, err)
@@ -150,9 +150,6 @@ func checkToolCorrection(t *testing.T, definition *ToolDefinition, payload, want
 	require.Nil(t, validated)
 	var rejected *OutputValidationError
 	require.ErrorAs(t, err, &rejected)
-	if want != advertisedToolInputCorrection {
-		want += " Return a replacement tool call with valid arguments."
-	}
 	assert.Equal(t, want, rejected.RecoveryCorrection())
 	assert.LessOrEqual(t, len(rejected.RecoveryCorrection()), correction.MaxBytes)
 	var schemaErr *jsonschema.ValidationError

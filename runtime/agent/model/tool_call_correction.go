@@ -1,6 +1,9 @@
 // Package model derives replacement guidance from the advertised tool input
-// contract. Guidance may repeat advertised schema text, but never submitted
-// values, dynamic map keys, array indexes, undeclared fields, or call IDs.
+// contract. Guidance describes constraints, not the next workflow action; the
+// runtime owns whether a replacement may call tools or finish. Guidance may
+// repeat advertised schema text and validated examples,
+// but never submitted values, dynamic map keys, array indexes, undeclared
+// fields, or call IDs.
 package model
 
 import (
@@ -10,6 +13,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 	"github.com/santhosh-tekuri/jsonschema/v6/kind"
@@ -20,8 +24,8 @@ import (
 )
 
 const (
-	advertisedToolInputCorrection    = "The previous tool call did not match its advertised input schema. Return a replacement tool call with valid arguments."
-	malformedToolArgumentsCorrection = "The previous tool call arguments were not valid JSON. Return a replacement tool call whose arguments are one JSON object matching the advertised input schema."
+	advertisedToolInputCorrection    = "The previous tool call did not match its advertised input schema."
+	malformedToolArgumentsCorrection = "The previous tool call arguments were not valid JSON. Tool arguments must be one JSON object matching the advertised input schema."
 )
 
 type (
@@ -30,7 +34,6 @@ type (
 	toolCorrectionCandidate struct {
 		field       tools.FieldMetadata
 		constraint  string
-		depth       int
 		unsupported bool
 	}
 
@@ -43,10 +46,22 @@ type (
 	}
 )
 
-// toolInputCorrection returns one specific advertised-field instruction when
-// the schema identifies it without ambiguity. Other failures keep the generic
-// replacement instruction.
-func toolInputCorrection(err error, payload rawjson.Message, fields []tools.FieldMetadata) string {
+// toolInputCorrection makes one rejection self-contained using the example
+// already validated when this tool input was constructed. The example teaches
+// argument structure, not the values or union branch the caller must choose.
+// Advisory examples that do not fit are omitted whole; validation is unchanged.
+func toolInputCorrection(err error, payload rawjson.Message, fields []tools.FieldMetadata, example rawjson.Message) string {
+	text := toolFieldCorrection(err, payload, fields)
+	const instruction = "\nExample illustrates structure; use values and a valid variant appropriate to the request:\n"
+	if len(example) == 0 || len(text)+len(instruction)+len(example) > correction.MaxBytes {
+		return text
+	}
+	return text + instruction + string(example)
+}
+
+// toolFieldCorrection reports independently identified field problems. Unknown
+// or ambiguous problems do not erase useful guidance for other fields.
+func toolFieldCorrection(err error, payload rawjson.Message, fields []tools.FieldMetadata) string {
 	if len(fields) == 0 {
 		return advertisedToolInputCorrection
 	}
@@ -58,38 +73,22 @@ func toolInputCorrection(err error, payload rawjson.Message, fields []tools.Fiel
 	if err != nil {
 		return advertisedToolInputCorrection
 	}
-	failures := collectToolCorrectionCandidates(schemaErr, input, fields)
-	candidate, ok := deepestToolCorrectionCandidate(failures)
-	if !ok {
-		return advertisedToolInputCorrection
-	}
-	text := fmt.Sprintf(
-		"Field %q %s",
-		tools.FieldPathString(candidate.field.Path),
-		candidate.constraint,
-	)
-	if candidate.field.Description != "" {
-		text += fmt.Sprintf(" Field description: %q.", candidate.field.Description)
-	}
-	text += " Return a replacement tool call with valid arguments."
-	if len(text) > correction.MaxBytes {
-		return advertisedToolInputCorrection
-	}
-	return text
+	return formatToolCorrections(collectToolCorrectionCandidates(schemaErr, input, fields))
 }
 
 // collectToolCorrectionCandidates follows the selected branch of each union
-// and records every deepest validator failure, including failures for which no
-// specific safe instruction exists.
+// and groups of independently required constraints. Alternative schemas,
+// candidate array matches and property-name checks must not become instructions
+// to change every corresponding field value.
 func collectToolCorrectionCandidates(
 	err *jsonschema.ValidationError,
 	input any,
 	fields []tools.FieldMetadata,
 ) []toolCorrectionCandidate {
-	if _, unionFailure := err.ErrorKind.(*kind.OneOf); unionFailure {
+	switch err.ErrorKind.(type) {
+	case *kind.OneOf:
 		return unionToolCorrectionCandidates(err, input, fields)
-	}
-	if len(err.Causes) > 0 {
+	case *kind.Schema, *kind.Group, *kind.Reference, *kind.AllOf:
 		var candidates []toolCorrectionCandidate
 		for _, cause := range err.Causes {
 			candidates = append(candidates, collectToolCorrectionCandidates(cause, input, fields)...)
@@ -107,7 +106,7 @@ func unionToolCorrectionCandidates(
 	input any,
 	fields []tools.FieldMetadata,
 ) []toolCorrectionCandidate {
-	unsupported := []toolCorrectionCandidate{{depth: len(err.InstanceLocation), unsupported: true}}
+	unsupported := []toolCorrectionCandidate{{unsupported: true}}
 	var selected fieldPathMatch
 	found := false
 	for _, field := range fields {
@@ -128,12 +127,7 @@ func unionToolCorrectionCandidates(
 			continue
 		}
 		if found {
-			if !slices.Equal(selected.field.Path, field.Path) ||
-				selected.field.JSONType != field.JSONType || selected.field.Description != field.Description ||
-				!slices.Equal(selected.field.DiscriminatorValues, field.DiscriminatorValues) {
-				return unsupported
-			}
-			continue
+			return unsupported
 		}
 		selected = match
 		found = true
@@ -166,8 +160,8 @@ func unionToolCorrectionCandidates(
 		constraint = fmt.Sprintf("must contain a JSON string from these values: %s.", values)
 	}
 	return []toolCorrectionCandidate{{
-		field: selected.field, constraint: constraint, depth: len(selected.actual),
-	}}
+		field: selected.field, constraint: constraint,
+	}, {unsupported: true}}
 }
 
 // toolCorrectionCandidatesForError converts one validator leaf into a safe
@@ -251,7 +245,7 @@ func toolCorrectionCandidatesForError(
 		candidate.constraint = "contains an undeclared field."
 		return []toolCorrectionCandidate{candidate}
 	default:
-		return []toolCorrectionCandidate{{depth: len(err.InstanceLocation), unsupported: true}}
+		return []toolCorrectionCandidate{{unsupported: true}}
 	}
 }
 
@@ -283,16 +277,15 @@ func toolCorrectionCandidateForPath(
 		if selected != nil && (selected.JSONType != field.JSONType ||
 			selected.Description != field.Description ||
 			tools.FieldPathString(selected.Path) != tools.FieldPathString(field.Path)) {
-			return toolCorrectionCandidate{depth: len(path), unsupported: true}
+			return toolCorrectionCandidate{unsupported: true}
 		}
 	}
 	if selected == nil {
-		return toolCorrectionCandidate{depth: len(path), unsupported: true}
+		return toolCorrectionCandidate{unsupported: true}
 	}
 	return toolCorrectionCandidate{
 		field:      *selected,
 		constraint: constraint,
-		depth:      len(path),
 	}
 }
 
@@ -359,38 +352,68 @@ func unionBranchesMatch(match fieldPathMatch, input any) bool {
 	return true
 }
 
-// deepestToolCorrectionCandidate returns one unique instruction at the
-// deepest invalid field. An unsupported failure at that depth makes the safe
-// result generic. Repeated reports of the same instruction count once.
-func deepestToolCorrectionCandidate(candidates []toolCorrectionCandidate) (toolCorrectionCandidate, bool) {
-	deepest := -1
-	unique := make(map[string]toolCorrectionCandidate)
-	unsupported := false
+// formatToolCorrections sorts and deduplicates complete field instructions.
+// Different instructions for one displayed path are withheld: replacing array
+// indexes and map keys with * can hide which selected union member each needs.
+// Oversized instructions are omitted whole, with an explicit notice; descriptions
+// and enum values are never cut into partial text or JSON.
+func formatToolCorrections(candidates []toolCorrectionCandidate) string {
+	const omission = " Other schema errors are not detailed here."
+	byPath := make(map[string]string)
+	ambiguous := make(map[string]bool)
+	omitted := false
 	for _, candidate := range candidates {
-		switch {
-		case candidate.depth > deepest:
-			deepest = candidate.depth
-			clear(unique)
-			unsupported = candidate.unsupported
-		case candidate.depth < deepest:
-			continue
-		default:
-			unsupported = unsupported || candidate.unsupported
-		}
 		if candidate.unsupported {
+			omitted = true
 			continue
 		}
-		key := tools.FieldPathString(candidate.field.Path) + "\x00" +
-			candidate.constraint + "\x00" + candidate.field.Description
-		unique[key] = candidate
+		path := tools.FieldPathString(candidate.field.Path)
+		text := fmt.Sprintf("Field %q %s", path, candidate.constraint)
+		if candidate.field.Description != "" {
+			text += fmt.Sprintf(" Field description: %q.", candidate.field.Description)
+		}
+		if previous, found := byPath[path]; found && previous != text {
+			ambiguous[path] = true
+			omitted = true
+		}
+		byPath[path] = text
 	}
-	if unsupported || len(unique) != 1 {
-		return toolCorrectionCandidate{}, false
+	paths := make([]string, 0, len(byPath))
+	for path := range byPath {
+		if !ambiguous[path] {
+			paths = append(paths, path)
+		}
 	}
-	for _, candidate := range unique {
-		return candidate, true
+	slices.Sort(paths)
+	blocks := make([]string, 0, len(paths))
+	for _, path := range paths {
+		blocks = append(blocks, byPath[path])
 	}
-	panic("model: unreachable empty correction candidate")
+	var suffix string
+	if omitted {
+		suffix = omission
+	}
+	text := strings.Join(blocks, "\n")
+	if len(text)+len(suffix) > correction.MaxBytes {
+		suffix = omission
+		kept := blocks[:0]
+		size := len(suffix)
+		for _, block := range blocks {
+			separator := 0
+			if len(kept) > 0 {
+				separator = 1
+			}
+			if size+separator+len(block) <= correction.MaxBytes {
+				kept = append(kept, block)
+				size += separator + len(block)
+			}
+		}
+		text = strings.Join(kept, "\n")
+	}
+	if text == "" {
+		return advertisedToolInputCorrection
+	}
+	return text + suffix
 }
 
 func decodeCorrectionInput(payload rawjson.Message) (any, error) {

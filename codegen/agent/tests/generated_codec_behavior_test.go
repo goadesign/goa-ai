@@ -781,9 +781,9 @@ func TestInvalidUnionPayloadsReceiveReplacementGuidance(t *testing.T) {
 		payload        string
 		wantCorrection string
 	}{
-		{name: "missing discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"value\":\"bad\"}}"},
-		{name: "non-string discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"type\":7,\"value\":\"bad\"}}"},
-		{name: "unknown discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"invented\",\"value\":\"bad\"}}"},
+		{name: "missing discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"value\":\"bad\"}}", wantCorrection: "Field \"value.type\" is required and must be one of these JSON strings: [\"number\",\"text\",\"structured\"]. Other schema errors are not detailed here."},
+		{name: "non-string discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"type\":7,\"value\":\"bad\"}}", wantCorrection: "Field \"value.type\" must contain a JSON string from these values: [\"number\",\"text\",\"structured\"]. Other schema errors are not detailed here."},
+		{name: "unknown discriminator", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"invented\",\"value\":\"bad\"}}", wantCorrection: "Field \"value.type\" must be one of these JSON strings: [\"number\",\"text\",\"structured\"]. Other schema errors are not detailed here."},
 		{name: "missing value", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"structured\"}}", wantCorrection: "Field \"value.value\" is required."},
 		{name: "wrong value type", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"number\",\"value\":\"bad\"}}", wantCorrection: "Field \"value.value\" must contain a JSON integer."},
 		{name: "wrong branch does not win", payload: "{\"id\":\"req_1\",\"value\":{\"type\":\"number\",\"value\":{}}}", wantCorrection: "Field \"value.value\" must contain a JSON integer."},
@@ -817,13 +817,10 @@ func TestInvalidUnionPayloadsReceiveReplacementGuidance(t *testing.T) {
 				t.Fatalf("expected OutputValidationError, got %T: %v", err, err)
 			}
 			correction := validation.RecoveryCorrection()
-			if correction == "" || !strings.Contains(correction, "replacement tool call") {
-				t.Fatalf("expected replacement guidance, got %q", correction)
+			if correction == "" {
+				t.Fatal("expected advertised input constraints")
 			}
-			if test.wantCorrection == "" && correction != "The previous tool call did not match its advertised input schema. Return a replacement tool call with valid arguments." {
-				t.Fatalf("expected generic guidance, got %q", correction)
-			}
-			if test.wantCorrection != "" && !strings.Contains(correction, test.wantCorrection) {
+			if !strings.Contains(correction, test.wantCorrection) {
 				t.Fatalf("expected correction to contain %q, got %q", test.wantCorrection, correction)
 			}
 			if strings.Contains(correction, "ready") || strings.Contains(correction, "extra") || strings.Contains(correction, "invented") {

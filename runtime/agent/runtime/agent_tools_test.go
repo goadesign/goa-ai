@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/temporal"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -86,15 +88,20 @@ func TestAgentToolProviderFailureEndsParentWorkflow(t *testing.T) {
 	require.True(t, providerErr.Retryable())
 }
 
-func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
+func TestAgentToolTerminalFailureSkipsParentResume(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		wrap func(error) error
+		name      string
+		wrap      func(error) error
+		request   bool
+		published bool
 	}{
 		{name: "native", wrap: func(err error) error { return err }},
 		{name: "Temporal", wrap: temporalerrors.Wrap},
+		{name: "native request", request: true, wrap: func(err error) error { return err }},
+		{name: "Temporal request", request: true, wrap: temporalerrors.Wrap},
+		{name: "request after published text", request: true, published: true, wrap: func(err error) error { return err }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -117,6 +124,29 @@ func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
 			childSpec.IsAgentTool = true
 			childSpec.AgentID = string(childID)
 			rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+			var childFailure error = planner.NewOutputContractError(errors.New("invalid child reply"))
+			if test.request {
+				childFailure = model.NewRequestValidationError(errors.New("local child request rejected"))
+			}
+			var childRunID string
+			var childStarts, modelCalls atomic.Int32
+			if test.published {
+				rt.streamSubscriber = runtimeWithModelOutputSink(t, &recordingStreamSink{}).streamSubscriber
+				rt.models["test"] = mustTestModelClient(stubModelClient{
+					stream: func(context.Context, *model.Request) (model.Streamer, error) {
+						modelCalls.Add(1)
+						message := model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "Visible child text."}}}
+						return &chunkStreamer{
+							chunks:   []model.Chunk{model.TextChunk{Message: message}, model.StopChunk{Reason: "stop"}},
+							response: &model.Response{Content: []model.Message{message}, StopReason: "stop"},
+						}, nil
+					},
+					complete: func(context.Context, *model.Request) (*model.Response, error) {
+						modelCalls.Add(1)
+						return nil, childFailure
+					},
+				})
+			}
 
 			require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(childID,
 
@@ -132,10 +162,22 @@ func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
 					Handler: func(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
 						return rt.ExecuteWorkflow(wfCtx, input)
 					},
-				}).Handler, Planner: &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
-					return nil, test.wrap(planner.NewOutputContractError(
-						errors.New("invalid child reply"),
-					))
+				}).Handler, Planner: &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+					childStarts.Add(1)
+					childRunID = input.RunContext.RunID
+					if !test.published {
+						return nil, test.wrap(childFailure)
+					}
+					// One successful planner stream has already shown text. A
+					// subsequent private model request is rejected locally.
+					client, ok := input.Agent.PlannerModelClient("test")
+					require.True(t, ok)
+					_, err := client.Stream(ctx, &model.Request{Model: "test"})
+					require.NoError(t, err)
+					probe, ok := input.Agent.ModelClient("test")
+					require.True(t, ok)
+					_, err = probe.Complete(ctx, &model.Request{Model: "test"})
+					return nil, err
 				}},
 
 				PlanActivityName:    childPlanActivity,
@@ -222,8 +264,26 @@ func TestAgentToolPlannerOutputFailureSkipsParentResume(t *testing.T) {
 			)
 
 			require.Error(t, err)
-			require.True(t, temporalerrors.IsOutputContract(err), "unexpected error: %v", err)
+			require.Equal(t, !test.request, temporalerrors.IsOutputContract(err), "unexpected error: %v", err)
+			require.Equal(t, test.request, temporalerrors.IsRequestValidation(err), "unexpected error: %v", err)
+			require.EqualValues(t, 1, childStarts.Load())
 			require.Zero(t, parentResumeCalls.Load())
+			if test.published {
+				require.EqualValues(t, 2, modelCalls.Load())
+				failure := hooks.RunFailureFromError(err)
+				require.Equal(t, hooks.ErrorKindModelRequest, failure.Kind)
+				require.False(t, failure.Retryable)
+				require.Empty(t, failure.Provider)
+				require.Equal(t, childFailure.Error(), failure.DebugMessage)
+				codec := temporal.GetDefaultFailureConverter()
+				saved := codec.FailureToError(codec.ErrorToFailure(temporalerrors.Wrap(err)))
+				require.True(t, temporalerrors.IsRequestValidation(saved))
+				require.False(t, hooks.RunFailureFromError(saved).Retryable)
+				snapshot, snapshotErr := rt.GetRunSnapshot(t.Context(), childRunID)
+				require.NoError(t, snapshotErr)
+				require.NotEmpty(t, snapshot.Transcript)
+				require.Equal(t, "Visible child text.", snapshot.Transcript[len(snapshot.Transcript)-1].Text())
+			}
 		})
 	}
 }
@@ -237,10 +297,7 @@ func (p *capturePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 	if in == nil {
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	}
-	messages, err := in.PrepareMessages()
-	if err != nil {
-		return nil, err
-	}
+	messages := in.Messages
 	p.msgs = append([]*model.Message{}, messages...)
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 }
@@ -365,6 +422,8 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 		},
 		Result: tools.TypeSpec{Codec: tools.AnyJSONCodec},
 	}
+	spec.ExecutionPayloadCodec = spec.Payload.Codec
+	spec.ExecutionPayloadCodec.ToJSON = json.Marshal
 	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
 		Definition: testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
@@ -559,6 +618,7 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 		Payload: tools.TypeSpec{
 			Codec: tools.AnyJSONCodec,
 		},
+		ExecutionPayloadCodec: tools.AnyJSONCodec,
 		Result: tools.TypeSpec{
 			Codec: tools.JSONCodec[any]{
 				ToJSON: json.Marshal,

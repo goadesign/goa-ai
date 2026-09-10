@@ -171,10 +171,15 @@ func (r *Runtime) finalizeFromHistory(
 	if err != nil {
 		return nil, err
 	}
+	historyContext, err := cloneHistoryContext(base.HistoryContext)
+	if err != nil {
+		return nil, err
+	}
 	req := PlanActivityInput{
 		AgentID:             input.AgentID,
 		RunID:               base.RunContext.RunID,
 		Messages:            messages,
+		HistoryContext:      historyContext,
 		RunContext:          resumeCtx,
 		Policy:              clonePolicyOverrides(input.Policy),
 		ToolOutputs:         encodedToolOutputs,
@@ -222,6 +227,9 @@ func (r *Runtime) finalizeFromHistory(
 		return nil, errors.New(reasonText)
 	}
 	base.Messages = appendPublishedAssistantText(base.Messages, output)
+	if output.HistoryContext != nil {
+		base.HistoryContext = output.HistoryContext
+	}
 	aggUsage, err = addTokenUsage(aggUsage, output.Usage)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate finalization usage: %w", err)
@@ -310,6 +318,7 @@ func (r *Runtime) finalizeFromHistory(
 			caps,
 			nextAttempt,
 			turnID,
+			recovery,
 			reason,
 			hardDeadline,
 		)
@@ -405,6 +414,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	caps policy.CapsState,
 	nextAttempt int,
 	turnID string,
+	activeRecovery []*planner.ToolOutput,
 	reason planner.TerminationReason,
 	hardDeadline time.Time,
 ) (*RunOutput, error) {
@@ -512,6 +522,14 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		return nil, err
 	}
 	if len(recovery) > 0 {
+		// A terminal payload correction replaces that payload's diagnostic, not
+		// the original failure that required the run to end. Keep both in the
+		// next planner request while admitting only the failed terminal tool.
+		for _, output := range activeRecovery {
+			if output.Failure.Recovery.Action == planner.RecoveryFinish {
+				recovery = append(recovery, output)
+			}
+		}
 		if !consumeRecoveryTurn(&st.Caps) {
 			return nil, errors.New("finalization terminal tool correction exceeded the recovery turn cap")
 		}
@@ -798,7 +816,18 @@ func (r *Runtime) runPlanActivity(
 		return nil, fmt.Errorf("runPlanActivity received PlanResult with no ToolCalls, FinalResponse, FinalToolResult, or Await")
 	}
 	if out.Result != nil {
+		if out.HistoryContext != nil && len(out.Transcript) == 0 {
+			return nil, errors.New("code-only planner output cannot select a history summary")
+		}
 		if _, err := r.normalizePlanResultForExecution(wfCtx.Context(), out.Result, input.RunContext.Tool); err != nil {
+			return nil, err
+		}
+	}
+	if out.HistoryContext != nil {
+		if out.PlanningFailure != nil || (out.OutputContractFailure != nil && out.OutputContractFailure.ModelOutputRecovery == nil) {
+			return nil, errors.New("terminal planner failure cannot select a history summary")
+		}
+		if err := validateHistoryContext(input.Messages, out.HistoryContext); err != nil {
 			return nil, err
 		}
 	}
@@ -833,7 +862,14 @@ func (r *Runtime) runPlanActivity(
 		return out, nil
 	}
 	if out.PlanningFailure != nil {
-		return out, &planningFailureError{failure: *out.PlanningFailure}
+		failure := &planningFailureError{failure: *out.PlanningFailure}
+		if out.PlanningFailure.Kind == hooks.ErrorKindModelRequest {
+			// The activity already published text and returned a classified
+			// failure value. Restore its terminal request-error type so child
+			// workflows keep that classification when they return through Temporal.
+			return out, model.NewRequestValidationError(failure)
+		}
+		return out, failure
 	}
 	r.logger.Info(wfCtx.Context(),
 		"runPlanActivity received PlanResult",
@@ -863,6 +899,10 @@ func (e *planningFailureError) Error() string {
 func validatePlanningFailure(failure *run.Failure) error {
 	if failure == nil || failure.Message == "" || failure.DebugMessage == "" || failure.Kind == "" || failure.HTTPStatus < 0 {
 		return errors.New("runPlanActivity received invalid PlanningFailure")
+	}
+	if failure.Kind == hooks.ErrorKindModelRequest &&
+		(failure.Retryable || failure.Provider != "" || failure.Operation != "" || failure.Code != "" || failure.HTTPStatus != 0) {
+		return errors.New("model request failure must be nonretryable without provider facts")
 	}
 	return nil
 }

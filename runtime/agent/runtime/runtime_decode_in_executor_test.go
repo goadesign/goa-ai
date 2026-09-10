@@ -56,6 +56,8 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 			IsAgentTool: false,
 		}},
 	}
+	ts.Specs[0].ExecutionPayloadCodec = ts.Specs[0].Payload.Codec
+	ts.Specs[0].ExecutionPayloadCodec.ToJSON = json.Marshal
 	rt.mu.Lock()
 	rt.addToolsetLocked(ts, mustToolDefinitions(ts.Specs))
 	rt.mu.Unlock()

@@ -213,6 +213,13 @@ Completion stream draft_task: ...
 
 Generation creates application-owned scaffolding under `internal/agents/` and generated contract code under `gen/`. Edit the planner and bootstrap files; do not edit `gen/`.
 
+Generated tool specifications separate arguments written by the model from the
+complete payload sent to an executor. `Payload.Codec` matches the advertised
+model schema; `ExecutionPayloadCodec` preserves runtime-supplied continuation
+arguments. Regenerate with this framework version before starting workers.
+Handwritten specifications must supply both codecs, sharing them when the two
+inputs are identical. See [tool payload codecs](docs/runtime.md#tool-payload-codecs-and-defaults-feature).
+
 ### 4. Run an Agent from Application Code
 
 The generated agent package exposes a typed client. Sessionful runs require an explicit session; one-shot runs do not.
@@ -268,17 +275,13 @@ Tool executors decide how work is performed.
 
 ```go
 func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-	messages, err := in.PrepareMessages()
-	if err != nil {
-		return nil, err
-	}
 	mc, ok := in.Agent.PlannerModelClient("default")
 	if !ok {
 		return nil, errors.New("model client default is not registered")
 	}
 
 	summary, err := mc.Stream(ctx, &model.Request{
-		Messages: messages,
+		Messages: in.Messages,
 		Tools:    in.Agent.AdvertisedToolDefinitions(),
 		Stream:   true,
 	})
@@ -294,14 +297,15 @@ func (p *Planner) PlanStart(ctx context.Context, in *planner.PlanInput) (*planne
 }
 ```
 
-Call `PrepareMessages` before inspecting or transforming conversation history.
-The runtime applies the registered history policy on first access and returns
-the same messages and error on later accesses in that planner invocation.
-Decisions using only typed run state or tool results need not prepare history.
-The former `PlanInput.Messages` and `PlanResumeInput.Messages` fields are removed;
-custom planners must migrate when upgrading. See [preparation and migration](docs/runtime.md#preparing-conversation-messages)
-for error, lifetime, and compatibility rules. Stored history and wire formats do
-not change.
+Read conversation history from `PlanInput.Messages` or `PlanResumeInput.Messages`.
+The runtime applies the registered history policy when the planner actually
+calls a model, using that request and its destination model's counter. Inspecting
+messages or making a code-owned decision does not count tokens or summarize.
+Replace the removed `PrepareMessages` calls with these fields when upgrading.
+See [preparation and migration](docs/runtime.md#preparing-conversation-messages)
+for the request, error, and compatibility contracts. Saved transcripts, public
+run inputs and suspension checkpoints do not change. Workflow activity records
+gain optional summary state; older records without it remain valid.
 
 Register model clients during bootstrap with `rt.RegisterModel(...)` or runtime
 factories such as `rt.NewOpenAIModelClient(...)`, `rt.NewBedrockModelClient(...)`,
@@ -322,12 +326,13 @@ Mechanical response rejections return `*model.OutputValidationError`.
 `Kind()` reports one closed, privacy-safe category such as `tool_arguments` or
 `stream_protocol`; it never contains response text, provider text, tool names,
 arguments, or schema paths. The category is diagnostic only. A tool
-specification with field metadata may separately return one correction that
-names an unambiguous advertised field path and its required, type, enum, or
-array-length rule. Array indexes and map keys appear as `*`. Corrections may repeat advertised
+specification with field metadata may separately return correction guidance for
+independently identified advertised fields and their required, type, enum, or
+array-length rules. Array indexes and map keys appear as `*`. Corrections may repeat advertised
 descriptions and enum values, but never include submitted values, submitted map
-keys, array indexes, call IDs, or undeclared field names. Ambiguous failures and
-specifications without field metadata keep the generic replacement instruction.
+keys, array indexes, call IDs, or undeclared field names. Ambiguous failures do
+not erase sound instructions for other fields. With no sound field instruction,
+the correction keeps the generic replacement instruction.
 Recovery remains bounded by the runtime's configured recovery-turn limit.
 
 Model-call tracing records the full underlying validation cause on the existing
@@ -429,8 +434,12 @@ var Docs = Toolset("docs", func() {
   advertised schema is enforced before any attached input decoder. Only
   schema rejections and typed tool-input validation errors get limited-size
   correction guidance that omits rejected arguments. Schema rejections for
-  specifications with field metadata name one advertised field and its stable
-  rule when the validator identifies it without ambiguity; ordinary decoder
+  specifications with field metadata name independently identified fields and
+  their stable rules without guessing between alternatives. Guidance names a
+  missing or invalid choice label and its allowed strings;
+  it never chooses the variant for the model. When space permits, the
+  correction also includes the complete validated input example, with guidance
+  to use values and a valid variant appropriate to the request. Ordinary decoder
   and internal errors stop the run. Local callers can inspect the original
   validator error and an isolated copy of a rejected response that passed the
   existing copying limits; correction guidance does not remove that evidence.
@@ -679,8 +688,12 @@ finalization turn. Queue and attempt timeouts remain distinct failures.
 History can also use model-assisted compression: declare
 `CompressAtMaxInputTokens` or `CompressAtTurns` triggers plus `KeepMaxInputTokens`
 or `KeepMaxTurns` exact-retention budgets inside `History`. Token budgets are
-counted at runtime by a history model that implements `model.TokenCounter` with
-exact counts and keep only whole recent turns, never truncated tool exchanges.
+counted at runtime by the destination model's counter, separately from the
+model that writes summaries. Counts must be exact unless the application sets
+`HistoryCompressionConfig.AllowEstimatedTokens`; this permits a destination
+counter's declared estimates without falling back after an error. Estimates
+are not billing counts or context-window guarantees. Both measurements keep
+only whole recent turns, never truncated tool exchanges.
 A turn keeps a complete assistant response and its tool results together, even
 when reasoning, text, and parallel calls arrive as separate adjacent messages.
 Later completed exchanges after the same user request remain separate turns,
@@ -699,6 +712,11 @@ that ceiling, summary coverage and exact retention remain disjoint. Custom
 prompts with a positive ceiling must not assume that every summarized turn is
 discarded from exact history. See
 [history policies](docs/runtime.md#history-policies) for the evidence contract.
+Within one workflow, the runtime can reuse the selected model call's summary
+of unchanged original evidence. Each later request still counts its actual
+model settings and tools; growing evidence can require a replacement summary.
+The complete saved conversation and suspension checkpoints are not rewritten.
+See [summary reuse](docs/runtime.md#reusing-a-summary-within-one-workflow).
 
 Per-run options can further restrict execution:
 
@@ -1019,7 +1037,10 @@ tools; agent and toolset registration reject them. Similar authored names such
 as `continue_search` and qualified names such as `tools.continue_search` remain
 valid. If another call in the same parallel batch requires `finish` recovery,
 the runtime closes new domain work but keeps these already-started continuation
-actions available. Without a live continuation, the same failure enters
+actions and registered terminal bookkeeping available. The planner receives
+`Finalize` with reason `tool_failure` and may read another page or submit the
+final result, never both in one batch. A successful page does not reopen domain
+work. Without a live continuation, the same failure enters terminal-only
 finalization immediately.
 
 Use `Cursor` directly only when repeating the original arguments is part of the
@@ -1070,6 +1091,19 @@ cannot shift a decision to another claim. Missing, unknown, or duplicate names
 are rejected; semantic labels and rationales remain model decisions. See the
 [judge contract](docs/evals.md#how-judging-works).
 
+The judge distinguishes required answer content from constraints that permit
+omission; omission never supplies required content or missing factual support.
+
+The existing correction flow can give field-specific guidance for structural
+argument errors. Full claim text remains in the schema, not repeated in that
+feedback; neither the grading rules nor the correction limit changes.
+
+Hooks can supply shared factual context once in `Result.Reference`. The judge
+receives it separately from the unchanged answer and must not credit an answer
+for facts it omitted. Custom judges implement
+`Judge(ctx, output, claims, reference)`; callers without reference context pass
+an empty string. Reports retain a nonempty reference for reproducible review.
+
 ### Bookkeeping and Terminal Tools
 
 Use `Bookkeeping()` for control-plane records such as status markers, transition
@@ -1096,8 +1130,8 @@ successful results do not reset the recovery-turn counter. Their events are
 still durable and streamed, and their provider transcript blocks remain
 intact. Successful results stay out of compact future `ToolOutputs`. Every
 failure resumes through its typed recovery transition: `correct_call` and
-`replan` may use tools, while `finish` resumes without tools so the planner can
-synthesize the terminal outcome.
+`replan` may use tools, while `finish` forbids new operations and permits only
+available continuations or terminal submission, as described above.
 
 On an ordinary `correct_call` recovery turn, the runtime retains the current
 agent's executable tools and the exact registered contracts needed to correct
@@ -1123,8 +1157,10 @@ directive first. `correct_call` supplies structured correction evidence while
 letting the planner retry, combine work, choose another currently authorized
 action, continue an unfinished query, await input, or answer. `replan` removes the failed tool from the
 recovery turn while permitting another advertised action, input request, or
-answer. `finish` enters finalization and forbids further domain work. The
-planner may return a final response or registered terminal bookkeeping calls.
+answer. `finish` forbids starting new operations until the run ends. The planner
+may return a final response, use registered terminal bookkeeping, or fetch an
+advertised page of a query already started. Deadline and cap finalization never
+permit pagination. The terminal submission cannot share a batch with a page.
 The runtime enforces the advertised catalog, generated payload contracts, and execution
 caps; it does not infer how many semantic operations the planner must repeat.
 When one tool has both correction and replan failures in the same batch, the
@@ -1145,7 +1181,11 @@ bookkeeping result schedules another planner activity, that replacement
 activity consumes one recovery turn. Finalization uses the same budget: a
 rejected finalizer response or a terminal tool failure marked `correct_call`
 retains the finalization restriction while the model replaces that output.
-Other terminal-tool failures still end finalization.
+Other terminal-tool failures still end finalization. Successful domain work
+ends an ordinary recoverable episode. While a finish failure remains unresolved,
+successful pages neither replenish this allowance nor consume it: their tool
+and time costs remain charged normally, and rejected replacements still consume
+recovery turns.
 
 Agent-as-tool results use this same typed transition contract. The number of
 child tools observed during the nested run is telemetry for linked progress;
@@ -1158,12 +1198,20 @@ workers, generated packages, and callers must use the same generated input
 contract; mixed shapes are unsupported.
 
 A model invocation rejected before a canonical response exists carries a
-separate `ModelInvocationRecovery` value instead of failed call IDs. It carries
+separate `ModelInvocationRecovery` value alongside any active failed call IDs. It carries
 exactly one bounded fact: fixed malformed-JSON guidance, advertised-input
 correction text, or the untouched provider-returned name of a tool absent from
 that request's catalog. Malformed argument bytes stay private. The rejected
-response stays out of history, and the normal caller-authorized executable
-catalog remains available for the replacement.
+response stays out of history. Replacement feedback never removes active tool
+restrictions; an ordinary unrestricted correction retains the caller-authorized
+catalog. Finish restrictions survive both replacement attempts and successful
+pages, while ordinary correction/replan restrictions end with their episode.
+Model validation supplies constraints and examples, not a mandatory next tool
+call; the runtime adds the instruction to replace the response under its current
+completion requirements. This preserves legal tool, question, and answer choices.
+The existing activity/checkpoint fields are unchanged, but histories that relied
+on reopening domain work after a finish failure must remain with their owning
+worker version; see the compatibility guidance in `docs/runtime.md`.
 Temporal histories containing model-output recovery from an older runtime do
 not carry the required `answer` or `planning` kind and cannot resume on this
 version. New histories that contain this activity result require workers
@@ -1180,6 +1228,13 @@ bookkeeping and terminal-run semantics therefore remain independent. See
 ---
 
 ## Runtime and Observability
+
+Model adapters can mark a known local request rejection with
+`model.NewRequestValidationError(cause)`. It preserves the complete original
+diagnostic, ends the run without retry or model correction, and reports
+`model_request` without claiming a provider rejected it. Provider failures keep
+their existing classification. See the [request rejection and worker upgrade
+contract](docs/runtime.md#local-model-request-rejections).
 
 Application tracers receive original planner and activity errors before workflow
 transport, including typed causes and application-owned Temporal details.

@@ -378,6 +378,30 @@ type (
 		Tools []tools.Ident
 	}
 
+	// HistorySummary describes a summary of an ordered non-System history prefix.
+	// The original transcript remains unchanged; only model requests use the summary.
+	HistorySummary struct {
+		// SourceMessages counts the original non-System messages summarized.
+		SourceMessages int
+		// ReplacedMessages counts the original non-System messages omitted from requests.
+		ReplacedMessages int
+		// Message contains the complete summary message.
+		Message model.Message
+		// PolicyFingerprint identifies the policy configuration that produced this summary.
+		PolicyFingerprint string
+	}
+
+	// HistoryContext carries a runtime-verified summary between activities of one workflow.
+	// It is derived context, never a replacement for the saved conversation.
+	HistoryContext struct {
+		// Summary describes the exact source prefix and its replacement.
+		Summary HistorySummary
+		// SourceSHA256 binds the summary to the complete original non-System source messages.
+		SourceSHA256 string
+		// SourcePositionsSHA256 binds source references to their original model-request indices.
+		SourcePositionsSHA256 string
+	}
+
 	// PlanActivityInput carries the planner input for PlanStart and PlanResume activities.
 	PlanActivityInput struct {
 		// AgentID identifies which agent is being planned.
@@ -388,6 +412,9 @@ type (
 
 		// Messages is the current conversation transcript provided to the planner.
 		Messages []*model.Message
+
+		// HistoryContext is the last selected invocation's reusable summary, if any.
+		HistoryContext *HistoryContext `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// RunContext carries nested-run metadata (parent IDs, tool identifiers, etc.).
 		RunContext run.Context
@@ -416,7 +443,8 @@ type (
 
 		// ModelOutputRecovery requests replacement of one rejected planner output.
 		// Rejected answers become synthesis-only turns; rejected output from a
-		// tool-capable planning turn retains the normal executable catalog. During
+		// tool-capable planning turn retains its current executable catalog and
+		// any restrictions selected by RecoveryToolCallIDs. During
 		// finalization, the existing final response or terminal-tool contract
 		// remains in force.
 		ModelOutputRecovery *ModelOutputRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
@@ -424,8 +452,8 @@ type (
 		// ModelInvocationRecovery requests replacement of one pre-canonical tool
 		// call rejected by generated input validation or provider response
 		// validation. Exactly one recovery variant is present. Ordinary turns retain
-		// their executable catalog; finalization retains its restricted terminal
-		// contract.
+		// their executable catalog and active RecoveryToolCallIDs; finalization
+		// retains its restricted terminal contract.
 		ModelInvocationRecovery *ModelInvocationRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// SynthesisOnly requires the planner to produce a final response without
@@ -578,6 +606,10 @@ type (
 
 		// Transcript contains the provider-visible transcript produced by the planner.
 		Transcript []*model.Message
+
+		// HistoryContext is derived from the selected or recoverable model invocation.
+		// Omission leaves the workflow's existing summary unchanged.
+		HistoryContext *HistoryContext `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// PublishedAssistantText is the exact text already sent to session
 		// subscribers when this activity does not return an executable PlanResult.

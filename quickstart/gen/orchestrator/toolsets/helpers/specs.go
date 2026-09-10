@@ -56,6 +56,7 @@ func newSpecAnswer() tools.ToolSpec {
 		Description:            "Answer a simple question",
 		Tags:                   []string{},
 		ExecutionPayloadSchema: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"question\":{\"description\":\"User question to answer\",\"type\":\"string\"}},\"required\":[\"question\"],\"type\":\"object\"}"),
+		ExecutionPayloadCodec:  answerPayloadCodec,
 		Payload: tools.TypeSpec{
 			Name:                     "AnswerPayload",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"question\":\"What is the capital of Japan?\"},\"properties\":{\"question\":{\"description\":\"User question to answer\",\"type\":\"string\"}},\"required\":[\"question\"],\"type\":\"object\"}"),

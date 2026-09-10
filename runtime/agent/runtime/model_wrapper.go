@@ -3,9 +3,12 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"sync"
 
+	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/internal/provenance"
@@ -90,38 +93,29 @@ func (c *plannerModelClient) begin() error {
 	return nil
 }
 
-// cacheConfiguredProvider wraps a model.Provider and applies the agent CachePolicy
-// to each request. It sets Request.Cache only when it is currently nil so
-// explicit per-request CacheOptions take precedence over the agent defaults.
-type cacheConfiguredProvider struct {
-	inner model.Provider
-	cache CachePolicy
-}
-
-func newCacheConfiguredClient(inner model.Client, cache CachePolicy) model.Client {
-	if !cache.AfterSystem && !cache.AfterTools {
+// newRequestConfiguredClient applies cache defaults and history selection to
+// each owned request before final validation and observers. The registered base
+// client supplies token counts, so preparation cannot recursively count itself.
+func newRequestConfiguredClient(inner model.Client, cache CachePolicy, history HistoryPolicy, agentID agent.Ident, canonical []*model.Message, saved *api.HistoryContext) model.Client {
+	if !cache.AfterSystem && !cache.AfterTools && history == nil {
 		return inner
 	}
-	return mustWrapModelClient(inner, func(provider model.Provider) model.Provider {
-		return &cacheConfiguredProvider{
-			inner: provider,
-			cache: cache,
+	client, err := model.WithRequestPreparation(inner, func(ctx context.Context, req *model.Request) (context.Context, *model.Request, error) {
+		applyCachePolicy(req, cache)
+		if history != nil {
+			preparedCtx, messages, err := prepareRequestHistory(ctx, req, inner, history, canonical, saved)
+			if err != nil {
+				return ctx, nil, fmt.Errorf("history policy for agent %s: %w", agentID, err)
+			}
+			ctx = preparedCtx
+			req.Messages = messages
 		}
+		return ctx, req, nil
 	})
-}
-
-func (c *cacheConfiguredProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	applyCachePolicy(req, c.cache)
-	response, err := c.inner.Complete(ctx, req)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	return response, nil
-}
-
-func (c *cacheConfiguredProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
-	applyCachePolicy(req, c.cache)
-	return c.inner.Stream(ctx, req)
+	return client
 }
 
 // modelInvocationSink saves separate model responses for one planner activity.
@@ -130,7 +124,7 @@ func (c *cacheConfiguredProvider) Stream(ctx context.Context, req *model.Request
 // It is separate from planner.PlannerEvents so custom planners do not save
 // responses themselves, and response storage does not depend on event wiring.
 type modelInvocationSink interface {
-	beginModelInvocation(model.ModelClass, context.CancelFunc) (modelInvocationID, error)
+	beginModelInvocation(context.Context, model.ModelClass, context.CancelFunc) (modelInvocationID, error)
 	designateModelInvocation(invocationID modelInvocationID) error
 	stageRejectedModelOutput(
 		invocationID modelInvocationID,
@@ -212,7 +206,7 @@ func (c *modelInvocationProvider) PrepareClientCall(
 		return ctx, nil, terminal
 	}
 	invocationCtx, cancel := context.WithCancel(ctx)
-	invocationID, err := c.sink.beginModelInvocation(req.ModelClass, cancel)
+	invocationID, err := c.sink.beginModelInvocation(invocationCtx, req.ModelClass, cancel)
 	if err != nil {
 		cancel()
 		return ctx, nil, err

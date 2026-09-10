@@ -59,6 +59,7 @@ func newSpecDangerousWrite() tools.ToolSpec {
 			DeniedResultTemplate: "{\"summary\":\"Cancelled\",\"key\":\"{{ .Key }}\"}",
 		},
 		ExecutionPayloadSchema: tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"key\":{\"description\":\"Key to update.\",\"type\":\"string\"},\"value\":{\"description\":\"New value.\",\"type\":\"string\"}},\"required\":[\"key\",\"value\"],\"type\":\"object\"}"),
+		ExecutionPayloadCodec:  dangerousWritePayloadCodec,
 		Payload: tools.TypeSpec{
 			Name:                     "DangerousWritePayload",
 			Schema:                   tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"key\":{\"description\":\"Key to update.\",\"type\":\"string\"},\"value\":{\"description\":\"New value.\",\"type\":\"string\"}},\"required\":[\"key\",\"value\"],\"type\":\"object\"}"),

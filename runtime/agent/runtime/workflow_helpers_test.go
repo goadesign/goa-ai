@@ -194,8 +194,7 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
 		},
 		resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
-			messages, err := input.PrepareMessages()
-			require.NoError(t, err)
+			messages := input.Messages
 			require.NoError(t, transcript.ValidatePlannerTranscript(messages))
 			require.Len(t, input.ToolOutputs, 1)
 			require.Equal(t, providerToolCallID, input.ToolOutputs[0].ModelToolCallID)
@@ -626,8 +625,7 @@ func TestWorkflowTreatsPlannerAuthoredCanonicalContinuationAsStandalone(t *testi
 			require.Equal(t, cursor, *input.ToolOutputs[0].Bounds.NextCursor)
 			var transcriptText strings.Builder
 			var visibleToolResults int
-			messages, err := input.PrepareMessages()
-			require.NoError(t, err)
+			messages := input.Messages
 			for _, message := range messages {
 				for _, part := range message.Parts {
 					if text, ok := part.(model.TextPart); ok {

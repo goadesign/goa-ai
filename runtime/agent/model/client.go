@@ -18,9 +18,10 @@ type (
 	// validatedClient applies the canonical request and output contract around
 	// one raw provider.
 	validatedClient struct {
-		provider  Provider
-		counter   TokenCounter
-		observers []ProviderCallObserver
+		provider     Provider
+		counter      TokenCounter
+		observers    []ProviderCallObserver
+		preparations []func(context.Context, *Request) (context.Context, *Request, error)
 	}
 
 	// clientCore identifies package-owned Client implementations and gives
@@ -29,6 +30,7 @@ type (
 		Client
 		rawProvider() Provider
 		callObservers() []ProviderCallObserver
+		requestPreparations() []func(context.Context, *Request) (context.Context, *Request, error)
 	}
 
 	// ProviderCallObserver lets provider-side middleware prepare call-scoped
@@ -98,11 +100,13 @@ func newValidatedClient(
 	provider Provider,
 	counter TokenCounter,
 	observers []ProviderCallObserver,
+	preparations ...func(context.Context, *Request) (context.Context, *Request, error),
 ) (Client, error) {
 	client := &validatedClient{
-		provider:  provider,
-		counter:   counter,
-		observers: observers,
+		provider:     provider,
+		counter:      counter,
+		observers:    observers,
+		preparations: preparations,
 	}
 	return client, nil
 }
@@ -127,7 +131,28 @@ func WrapClient(client Client, wrap func(Provider) Provider) (Client, error) {
 		observers = append(observers, observer)
 	}
 	counter, _ := provider.(TokenCounter)
-	return newValidatedClient(provider, counter, observers)
+	return newValidatedClient(provider, counter, observers, slices.Clone(core.requestPreparations())...)
+}
+
+// WithRequestPreparation returns a client that prepares each Complete or Stream
+// request before freezing its validation contract or notifying observers. The
+// callback receives an owned, valid request; its result is copied and validated
+// again. Preparations run in registration order and never run for CountTokens.
+// Errors stop that call before inference, and the original client is unchanged.
+// The callback must return a context derived from its input, preserving deadlines
+// and cancellation. Call-local values reach later preparations, observers and the
+// provider without changing another concurrent call's context.
+func WithRequestPreparation(client Client, prepare func(context.Context, *Request) (context.Context, *Request, error)) (Client, error) {
+	core, err := validatedClientCore(client)
+	if err != nil {
+		return nil, err
+	}
+	if prepare == nil {
+		return nil, errors.New("model request preparation is required")
+	}
+	preparations := append(slices.Clone(core.requestPreparations()), prepare)
+	counter, _ := core.rawProvider().(TokenCounter)
+	return newValidatedClient(core.rawProvider(), counter, slices.Clone(core.callObservers()), preparations...)
 }
 
 // ValidateClient rejects nil, typed-nil, or forged Client implementations.
@@ -148,11 +173,7 @@ func ValidateProvider(provider Provider) error {
 // Complete owns one request before observers or the raw provider can inspect
 // it, then validates the translated response against that exact snapshot.
 func (c *validatedClient) Complete(ctx context.Context, req *Request) (*Response, error) {
-	request, err := cloneRequest(req)
-	if err != nil {
-		return nil, err
-	}
-	contract, err := newRequestContract(request)
+	ctx, request, contract, err := c.prepareInferenceRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -214,11 +235,7 @@ func (c *validatedClient) Complete(ctx context.Context, req *Request) (*Response
 // Stream succeeds, the caller receives through cancellation or completion and
 // then closes or finalizes the stream.
 func (c *validatedClient) Stream(ctx context.Context, req *Request) (*ValidatedStream, error) {
-	request, err := cloneRequest(req)
-	if err != nil {
-		return nil, err
-	}
-	contract, err := newRequestContract(request)
+	ctx, request, contract, err := c.prepareInferenceRequest(ctx, req)
 	if err != nil {
 		return nil, err
 	}
@@ -279,7 +296,7 @@ func (c *validatedClient) CountTokens(ctx context.Context, req *Request) (TokenC
 	if err := validateTokenUsageModel(count.Model); err != nil {
 		return TokenCount{}, fmt.Errorf("model provider returned an invalid token-count model: %w", err)
 	}
-	if count.ModelClass != contract.stream.modelClass {
+	if contract.stream.modelClass != "" && count.ModelClass != contract.stream.modelClass {
 		return TokenCount{}, errors.New("model provider returned a token count for the wrong model class")
 	}
 	if count.Exact && count.Model == "" {
@@ -299,6 +316,51 @@ func (c *validatedClient) rawProvider() Provider {
 // callObservers returns the middleware hooks in inner-to-outer order.
 func (c *validatedClient) callObservers() []ProviderCallObserver {
 	return c.observers
+}
+
+// requestPreparations preserves pre-inference transformations when another
+// framework wrapper installs provider middleware on this client.
+func (c *validatedClient) requestPreparations() []func(context.Context, *Request) (context.Context, *Request, error) {
+	return c.preparations
+}
+
+// prepareInferenceRequest validates before and after each transformation so a
+// history policy cannot hide malformed input by removing it. Copies isolate both
+// the caller's input and any request retained by a preparation callback from
+// provider mutation. The returned contract describes the final owned request.
+func (c *validatedClient) prepareInferenceRequest(ctx context.Context, req *Request) (context.Context, *Request, *RequestContract, error) {
+	request, err := cloneRequest(req)
+	if err != nil {
+		return ctx, nil, nil, err
+	}
+	contract, err := newRequestContract(request)
+	if err != nil {
+		return ctx, nil, nil, err
+	}
+	for _, prepare := range c.preparations {
+		if err := ctx.Err(); err != nil {
+			return ctx, nil, nil, err
+		}
+		ctx, request, err = prepare(ctx, request)
+		if err != nil {
+			return ctx, nil, nil, err
+		}
+		if ctx == nil {
+			return nil, nil, nil, errors.New("model request preparation returned a nil context")
+		}
+		if err := ctx.Err(); err != nil {
+			return ctx, nil, nil, err
+		}
+		request, err = cloneRequest(request)
+		if err != nil {
+			return ctx, nil, nil, err
+		}
+		contract, err = newRequestContract(request)
+		if err != nil {
+			return ctx, nil, nil, err
+		}
+	}
+	return ctx, request, contract, nil
 }
 
 // prepareClientCall runs outer middleware first and returns completed hooks in

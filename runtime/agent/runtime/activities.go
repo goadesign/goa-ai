@@ -38,7 +38,6 @@ type plannerActivityInvocation struct {
 	plannerAuthoredTools map[tools.Ident]struct{}
 	events               *runtimePlannerEvents
 	invocations          *modelInvocationJournal
-	history              *plannerHistory
 	reminders            []reminder.Reminder
 	runContext           run.Context
 	publicationBatchID   string
@@ -81,22 +80,13 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 		return nil, err
 	}
 	planInput := &planner.PlanInput{
-		PrepareMessages: act.history.prepare,
-		RunContext:      input.RunContext,
-		Agent:           act.agentCtx,
-		Events:          act.events,
-		Reminders:       act.reminders,
+		Messages:   input.Messages,
+		RunContext: input.RunContext,
+		Agent:      act.agentCtx,
+		Events:     act.events,
+		Reminders:  act.reminders,
 	}
 	result, err := act.reg.Planner.PlanStart(ctx, planInput)
-	if historyErr := act.history.preparationError(); historyErr != nil {
-		// History failures returned directly before planner invocation when
-		// preparation was eager. Keep that precedence even if a planner ignores
-		// the preparation error and later produces invalid model output.
-		if sealErr := act.invocations.seal(); sealErr != nil {
-			span.RecordError(sealErr)
-		}
-		return nil, historyErr
-	}
 	err = act.planningError(err)
 	if err != nil {
 		return act.failureOutput(ctx, err)
@@ -139,13 +129,6 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err := validatePlanResumeRecoveryInput(input); err != nil {
 		return nil, err
 	}
-	// A rejected ordinary final answer is replaced without tools. Rejected
-	// output from a tool-capable planning turn retains the normal catalog. A
-	// rejected finalization output retains the finalizer's response or
-	// terminal-tool contract.
-	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil &&
-		input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer &&
-		input.Finalize == nil
 	toolOutputs, err := r.loadPlannerToolOutputs(ctx, input.ToolOutputs)
 	if err != nil {
 		return nil, err
@@ -154,9 +137,22 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return nil, err
 	}
-	correctCallSpecs, err := r.correctCallSpecs(recoveryOutputs)
-	if err != nil {
-		return nil, err
+	// The active failure, not correction feedback or historical failures, owns
+	// whether new operations are forbidden. The workflow still permits existing
+	// pages on this turn; explicit finalization permits only a final submission.
+	finalize := input.Finalize
+	finishing := finishRecovery(recoveryOutputs)
+	if finalize == nil && finishing {
+		finalize = &planner.Termination{Reason: planner.TerminationReasonToolFailure}
+	}
+	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil &&
+		input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer && finalize == nil
+	var correctCallSpecs []tools.ToolSpec
+	if !synthesisOnly && (!finishing || input.Finalize != nil) {
+		correctCallSpecs, err = r.correctCallSpecs(recoveryOutputs)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// Ordinary corrections preserve the agent's other executable choices. A
 	// finalizer still repairs only its failed terminal tool, never domain work.
@@ -185,7 +181,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			return nil, err
 		}
 	}
-	unavailableTools := r.recoveryUnavailableTools(input.AgentID, recoveryOutputs, input.Finalize != nil)
+	unavailableTools := r.recoveryUnavailableTools(input.AgentID, recoveryOutputs)
 	if synthesisOnly {
 		specs := r.ToolSpecsForAgent(input.AgentID)
 		unavailableTools = make([]tools.Ident, len(specs))
@@ -213,7 +209,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		if input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer {
 			replacement = "Produce a replacement final answer now."
 		}
-		if input.Finalize != nil {
+		if finalize != nil {
 			replacement = "Produce a replacement response that satisfies the current finalization contract now."
 		}
 		act.reminders = append([]reminder.Reminder{{
@@ -246,22 +242,16 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		}
 	}
 	planInput := &planner.PlanResumeInput{
-		PrepareMessages: act.history.prepare,
-		RunContext:      input.RunContext,
-		Agent:           act.agentCtx,
-		Events:          act.events,
-		ToolOutputs:     toolOutputs,
-		SynthesisOnly:   synthesisOnly,
-		Finalize:        input.Finalize,
-		Reminders:       act.reminders,
+		Messages:      input.Messages,
+		RunContext:    input.RunContext,
+		Agent:         act.agentCtx,
+		Events:        act.events,
+		ToolOutputs:   toolOutputs,
+		SynthesisOnly: synthesisOnly,
+		Finalize:      finalize,
+		Reminders:     act.reminders,
 	}
 	result, err := act.reg.Planner.PlanResume(ctx, planInput)
-	if historyErr := act.history.preparationError(); historyErr != nil {
-		if sealErr := act.invocations.seal(); sealErr != nil {
-			span.RecordError(sealErr)
-		}
-		return nil, historyErr
-	}
 	err = act.planningError(err)
 	if err != nil {
 		return act.failureOutput(ctx, err)
@@ -368,9 +358,9 @@ func toolDefinitionNames(definitions []*model.ToolDefinition) []tools.Ident {
 	return names
 }
 
-// validatePlanResumeRecoveryInput requires one honest resume mode. Finalization
-// may retain failed tool IDs as evidence, while either model recovery variant
-// cannot combine with another resume directive.
+// validatePlanResumeRecoveryInput separates active execution restrictions from
+// replacement feedback. Either correction may retain active failed-call IDs;
+// only the two correction variants are mutually exclusive.
 func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 	if input == nil {
 		return errors.New("plan resume input is required")
@@ -394,9 +384,6 @@ func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 		if input.SynthesisOnly {
 			return errors.New("model-invocation recovery cannot combine with synthesis-only planning")
 		}
-		if len(input.RecoveryToolCallIDs) > 0 && input.Finalize == nil {
-			return errors.New("model-invocation recovery cannot combine with tool recovery")
-		}
 		return nil
 	}
 	if err := validateModelOutputRecovery(input.ModelOutputRecovery); err != nil {
@@ -404,9 +391,6 @@ func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 	}
 	if input.SynthesisOnly {
 		return errors.New("model-output recovery cannot combine with explicit synthesis-only planning")
-	}
-	if len(input.RecoveryToolCallIDs) > 0 && input.Finalize == nil {
-		return errors.New("model-output correction cannot combine with tool recovery")
 	}
 	return nil
 }
@@ -419,14 +403,14 @@ func modelInvocationRecoveryReminder(recovery *ModelInvocationRecovery) string {
 	if recovery.UnadvertisedToolName != "" {
 		return fmt.Sprintf(
 			"Your previous tool call used the unavailable name %q.\n"+
-				"Choose the needed tool from the tools available now, copy its name exactly, "+
-				"and return a replacement tool call. Do not mention this reminder to the user.",
+				"Replace the response under the current completion requirements. "+
+				"If calling a tool, choose from the tools available now and copy its name exactly. Do not mention this reminder to the user.",
 			recovery.UnadvertisedToolName,
 		)
 	}
 	return "Your previous tool call was rejected before it could run.\n" +
 		recovery.Correction +
-		"\nReturn a replacement tool call now. Do not mention this reminder to the user."
+		"\nReplace the response using the available actions and current completion requirements. Do not mention this reminder to the user."
 }
 
 // validatePlannerToolCatalogs checks model-facing and planner-authored tool
@@ -516,7 +500,6 @@ func (r *Runtime) preparePlannerActivity(
 	if r.reminders != nil {
 		rems = r.reminders.Snapshot(input.RunID)
 	}
-	history := r.newPlannerHistory(ctx, reg, input.Messages, agentCtx.AdvertisedToolDefinitions())
 	return &plannerActivityInvocation{
 		runtime:              r,
 		reg:                  reg,
@@ -524,7 +507,6 @@ func (r *Runtime) preparePlannerActivity(
 		plannerAuthoredTools: plannerAuthoredTools,
 		events:               events,
 		invocations:          invocations,
-		history:              history,
 		reminders:            rems,
 		runContext:           input.RunContext,
 		publicationBatchID:   publicationBatchID,
@@ -597,10 +579,15 @@ func (a *plannerActivityInvocation) acceptedOutput(
 		)
 	}
 	a.invocations.publishUsage(ctx, a.events)
+	historyContext, err := a.invocations.exportHistoryContext(false)
+	if err != nil {
+		return nil, err
+	}
 	output := &PlanActivityOutput{
 		PublicationBatchID: a.publicationBatchID,
 		Result:             result,
 		Transcript:         transcript,
+		HistoryContext:     historyContext,
 		Usage:              a.invocations.exportUsage(),
 	}
 	budget := &planActivityOutputBudget{}
@@ -728,6 +715,13 @@ func (a *plannerActivityInvocation) outputContractFailure(
 	} else {
 		output.OutputContractFailure = failure
 	}
+	if invocationRecovery != nil || (failure != nil && failure.ModelOutputRecovery != nil) {
+		historyContext, err := a.invocations.exportHistoryContext(true)
+		if err != nil {
+			return nil, err
+		}
+		output.HistoryContext = historyContext
+	}
 	budget := &planActivityOutputBudget{}
 	if budgetErr := budget.add(output); budgetErr != nil {
 		return boundedPlanActivityOutputFailure(
@@ -794,7 +788,7 @@ func (a *plannerActivityInvocation) outputContractFailureMetadata(
 	responseEvidence := a.invocations.rejectedModelResponseEvidence()
 	if outputErr.Correction() != "" {
 		var err error
-		responseEvidence, err = a.invocations.recoverableModelResponseEvidence(outputErr.ModelMessage())
+		responseEvidence, err = a.invocations.selectRecoverableModelResponse(outputErr.ModelMessage())
 		if err != nil {
 			return nil, err
 		}
@@ -1462,6 +1456,17 @@ func (r *Runtime) plannerContext(
 	if err != nil {
 		return nil, nil, err
 	}
+	historyMessages, err := model.CloneMessages(input.Messages)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := validateHistoryContext(historyMessages, input.HistoryContext); err != nil {
+		return nil, nil, err
+	}
+	historyContext, err := cloneHistoryContext(input.HistoryContext)
+	if err != nil {
+		return nil, nil, err
+	}
 	agentCtx := newAgentContext(agentContextOptions{
 		runtime:             r,
 		agentID:             input.AgentID,
@@ -1474,6 +1479,9 @@ func (r *Runtime) plannerContext(
 		events:              events,
 		invocations:         invocations,
 		cache:               reg.Policy.Cache,
+		history:             reg.Policy.History,
+		historyMessages:     historyMessages,
+		historyContext:      historyContext,
 		continuationActions: continuationActions,
 		unavailableTools:    unavailableTools,
 		advertisedSpecs:     advertisedSpecs,
@@ -1527,7 +1535,7 @@ func (r *Runtime) toolCodec(toolName tools.Ident, payload bool) (*tools.JSONCode
 		return nil, false
 	}
 	if payload {
-		return &spec.Payload.Codec, true
+		return &spec.ExecutionPayloadCodec, true
 	}
 	return &spec.Result.Codec, true
 }

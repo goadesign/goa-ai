@@ -334,10 +334,15 @@ func (r *Runtime) buildNextResumeRequest(
 	if err != nil {
 		return PlanActivityInput{}, err
 	}
+	historyContext, err := cloneHistoryContext(base.HistoryContext)
+	if err != nil {
+		return PlanActivityInput{}, err
+	}
 	out := PlanActivityInput{
 		AgentID:             agentID,
 		RunID:               base.RunContext.RunID,
 		Messages:            plannerMsgs,
+		HistoryContext:      historyContext,
 		RunContext:          resumeCtx,
 		Policy:              clonePolicyOverrides(runPolicy),
 		ToolOutputs:         encodedToolOutputs,

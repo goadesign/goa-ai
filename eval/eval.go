@@ -52,6 +52,10 @@ type (
 		// Output neither establishes nor contradicts any claim, so the runner
 		// labels every claim not_addressed without consulting the judge.
 		Output string `json:"output,omitempty"`
+		// Reference is shared factual context for judging the claims. It is not
+		// part of Output and cannot supply content missing from the answer.
+		// An empty reference means the claims need no additional context.
+		Reference string `json:"reference,omitempty"`
 		// Artifacts link durable evidence used to diagnose this result.
 		Artifacts []Artifact `json:"artifacts,omitempty"`
 	}
@@ -91,9 +95,11 @@ type (
 	}
 
 	// Judge assigns exactly one semantic judgment to each supplied claim. A
-	// runner may call Judge concurrently for independent scenarios.
+	// reference supplies factual context, never missing answer content; an empty
+	// reference needs no additional context. A runner may call Judge concurrently
+	// for independent scenarios.
 	Judge interface {
-		Judge(context.Context, string, []Claim) ([]Judgment, error)
+		Judge(ctx context.Context, output string, claims []Claim, reference string) ([]Judgment, error)
 	}
 
 	// Reporter observes scenario lifecycle events. Runner may call its methods

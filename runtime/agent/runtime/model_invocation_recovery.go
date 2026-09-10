@@ -393,15 +393,17 @@ func (j *modelInvocationJournal) recoverableModelInvocationRecovery() *api.Model
 	return nil
 }
 
-// recoverableModelResponseEvidence verifies that the planner rejected one exact
-// completed answer from this activity and returns its response fingerprint.
-func (j *modelInvocationJournal) recoverableModelResponseEvidence(message *model.Message) (model.ResponseEvidence, error) {
+// selectRecoverableModelResponse verifies and selects the exact completed
+// response rejected by the planner. Its evidence and prepared history must
+// belong to the same invocation when the workflow requests a replacement.
+func (j *modelInvocationJournal) selectRecoverableModelResponse(message *model.Message) (model.ResponseEvidence, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if message == nil {
 		return model.ResponseEvidence{}, errors.New("recoverable model output is missing its rejected answer")
 	}
 	var matched *modelInvocationCandidate
+	var matchedID modelInvocationID
 	for _, id := range j.order {
 		candidate := j.invocations[id]
 		if candidate == nil {
@@ -418,6 +420,7 @@ func (j *modelInvocationJournal) recoverableModelResponseEvidence(message *model
 			return model.ResponseEvidence{}, errors.New("recoverable model output matches multiple model invocations")
 		}
 		matched = candidate
+		matchedID = id
 	}
 	if matched == nil {
 		return model.ResponseEvidence{}, errors.New("recoverable model output references a response from another planner activity")
@@ -428,6 +431,7 @@ func (j *modelInvocationJournal) recoverableModelResponseEvidence(message *model
 	if !matched.responseEvidence.Present || matched.responseEvidence.SHA256 == "" {
 		return model.ResponseEvidence{}, errors.New("recoverable model output response has no stable fingerprint")
 	}
+	j.recovery = matchedID
 	return matched.responseEvidence, nil
 }
 

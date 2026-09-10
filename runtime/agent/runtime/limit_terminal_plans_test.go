@@ -583,7 +583,7 @@ func strictLimitTerminalSpec() tools.ToolSpec {
 	type payload struct {
 		Result string `json:"result"`
 	}
-	return tools.ToolSpec{
+	spec := tools.ToolSpec{
 		Name:        "service.tools.complete",
 		Bookkeeping: true,
 		TerminalRun: true,
@@ -606,6 +606,11 @@ func strictLimitTerminalSpec() tools.ToolSpec {
 		},
 		Result: tools.TypeSpec{Codec: tools.AnyJSONCodec},
 	}
+	spec.ExecutionPayloadCodec = tools.JSONCodec[any]{
+		FromJSON: spec.Payload.Codec.FromJSON,
+		ToJSON:   json.Marshal,
+	}
+	return spec
 }
 
 // testLimitTerminalPlans assigns a distinct valid payload to each runtime

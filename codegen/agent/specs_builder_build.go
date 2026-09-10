@@ -48,6 +48,13 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 		if err != nil {
 			return nil, err
 		}
+		modelPayload := payload
+		if names.modelPayloadType != nil {
+			modelPayload, err = builder.typeFor(owner, tool.Args, usageModelPayload)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if payload != nil && len(tool.Injected) > 0 {
 			// Custom executors use this function to decode the input and fill fields
 			// supplied by the server.
@@ -90,6 +97,7 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 			Meta:           tool.Meta,
 			MetaPairs:      metaPairs,
 			Payload:        payload,
+			ModelPayload:   modelPayload,
 			Result:         result,
 			HasResult:      tool.HasResult,
 			Bounds:         tool.Bounds,
@@ -191,6 +199,7 @@ func toolMetaPairs(meta map[string][]string) []toolMetaPair {
 func (d *toolSpecsData) addTool(entry *toolEntry) {
 	d.tools = append(d.tools, entry)
 	d.addType(entry.Payload)
+	d.addType(entry.ModelPayload)
 	d.addType(entry.Result)
 	for _, sd := range entry.ServerData {
 		if sd == nil {

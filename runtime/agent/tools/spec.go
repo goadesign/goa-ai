@@ -120,7 +120,12 @@ type (
 		// the tool registry. It includes fields supplied by runtime continuation
 		// logic and excludes fields that the provider injects after delivery.
 		ExecutionPayloadSchema RawJSON
-		// Payload describes the request schema for the tool.
+		// ExecutionPayloadCodec decodes and encodes the payload delivered to an
+		// executor, after the runtime adds retained query arguments and cursors.
+		// Provider-injected fields are still filled after this decoding step.
+		ExecutionPayloadCodec JSONCodec[any]
+		// Payload describes exactly the arguments accepted from the model. Its
+		// codec excludes fields supplied by the runtime or provider.
 		Payload TypeSpec
 		// Result describes the response schema for the tool. It is the zero
 		// TypeSpec, including nil codec functions, when the tool succeeds without

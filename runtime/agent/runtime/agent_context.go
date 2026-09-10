@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/memory"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -27,9 +28,12 @@ type agentContextOptions struct {
 	events              planner.PlannerEvents
 	invocations         modelInvocationSink
 	cache               CachePolicy
+	history             HistoryPolicy
 	continuationActions []continuationAction
 	unavailableTools    []tools.Ident
 	advertisedSpecs     []tools.ToolSpec
+	historyMessages     []*model.Message
+	historyContext      *api.HistoryContext
 }
 
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
@@ -45,9 +49,12 @@ type simplePlannerContext struct {
 	ev                  planner.PlannerEvents
 	invocations         modelInvocationSink
 	cache               CachePolicy
+	history             HistoryPolicy
 	continuationActions []continuationAction
 	unavailableTools    []tools.Ident
 	advertisedSpecs     []tools.ToolSpec
+	historyMessages     []*model.Message
+	historyContext      *api.HistoryContext
 }
 
 func newAgentContext(opts agentContextOptions) planner.PlannerContext {
@@ -67,9 +74,12 @@ func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 		ev:                  opts.events,
 		invocations:         opts.invocations,
 		cache:               opts.cache,
+		history:             opts.history,
 		continuationActions: opts.continuationActions,
 		unavailableTools:    opts.unavailableTools,
 		advertisedSpecs:     advertisedSpecs,
+		historyMessages:     opts.historyMessages,
+		historyContext:      opts.historyContext,
 	}
 }
 
@@ -145,13 +155,10 @@ func (c *simplePlannerContext) configuredModelClient(id string, designated bool)
 	if !ok || m == nil {
 		return nil, false
 	}
-	cli := m
-	// Apply agent cache policy so planners do not need to thread CacheOptions
-	// through every model.Request construction. Explicit Request.Cache values
-	// continue to take precedence over the agent policy.
-	if c.cache.AfterSystem || c.cache.AfterTools {
-		cli = newCacheConfiguredClient(cli, c.cache)
-	}
+	// Cache defaults and history selection must use the same complete request
+	// that the destination provider receives. Client retrieval does no counting
+	// or summarization; preparation runs only on Complete or Stream.
+	cli := newRequestConfiguredClient(m, c.cache, c.history, c.agent, c.historyMessages, c.historyContext)
 	// Check and save each provider response before tracing or planner code can
 	// read it. This also keeps concurrent model calls separate.
 	if designated {

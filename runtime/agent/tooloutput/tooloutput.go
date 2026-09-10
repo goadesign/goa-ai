@@ -68,7 +68,7 @@ func Run[T any](ctx context.Context, client model.Client, request *model.Request
 		Name:  "tooloutput",
 		Specs: []tools.ToolSpec{privateSpec},
 		Execute: func(_ context.Context, call *agentruntime.ToolCall) (*agentruntime.ToolExecutionResult, error) {
-			value, err := privateSpec.Payload.Codec.FromJSON(call.Payload)
+			value, err := privateSpec.ExecutionPayloadCodec.FromJSON(call.Payload)
 			if err != nil {
 				return nil, fmt.Errorf("decode accepted tool output %q: %w", call.Name, err)
 			}
@@ -121,11 +121,7 @@ func Run[T any](ctx context.Context, client model.Client, request *model.Request
 
 // PlanStart asks the model for the required tool call on the first turn.
 func (p outputPlanner) PlanStart(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
-	messages, err := input.PrepareMessages()
-	if err != nil {
-		return nil, err
-	}
-	return p.plan(ctx, messages, input.Reminders, input.Agent)
+	return p.plan(ctx, input.Messages, input.Reminders, input.Agent)
 }
 
 // PlanResume asks the model to replace invalid tool arguments. A finalization
@@ -135,11 +131,7 @@ func (p outputPlanner) PlanResume(ctx context.Context, input *planner.PlanResume
 	if input.Finalize != nil {
 		return nil, fmt.Errorf("tool output %q was not accepted before the correction limit", p.tool)
 	}
-	messages, err := input.PrepareMessages()
-	if err != nil {
-		return nil, err
-	}
-	return p.plan(ctx, messages, input.Reminders, input.Agent)
+	return p.plan(ctx, input.Messages, input.Reminders, input.Agent)
 }
 
 func (p outputPlanner) plan(
@@ -233,9 +225,11 @@ func privateToolSpec[T any](spec completion.Spec[T]) tools.ToolSpec {
 		Codec:                    codec,
 	}
 	return tools.ToolSpec{
-		Name:        tools.Ident(spec.Name),
-		Description: spec.Description,
-		Payload:     typeSpec,
-		Result:      typeSpec,
+		Name:                   tools.Ident(spec.Name),
+		Description:            spec.Description,
+		Payload:                typeSpec,
+		ExecutionPayloadSchema: append(tools.RawJSON(nil), spec.SchemaWithoutRootExample...),
+		ExecutionPayloadCodec:  codec,
+		Result:                 typeSpec,
 	}
 }

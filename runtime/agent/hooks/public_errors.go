@@ -15,6 +15,10 @@ var (
 	// PublicErrorInternal is emitted when a run fails for an unclassified reason.
 	PublicErrorInternal = "The request failed. Please retry."
 
+	// PublicErrorModelRequest is shown when local validation rejects a model
+	// request. Retrying the unchanged request cannot correct it.
+	PublicErrorModelRequest = "The AI request could not be prepared."
+
 	// PublicErrorOutputContract is shown when completed model or planner output
 	// does not follow its required rules.
 	PublicErrorOutputContract = "The AI response did not meet the required response rules."

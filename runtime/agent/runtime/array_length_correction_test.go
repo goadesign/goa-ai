@@ -29,7 +29,7 @@ func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedCall(t *
 	}
 	const invalid = `{"items":[1,2,3]}`
 	const accepted = `{"items":[1,2]}`
-	const guidance = `Field "items" must contain at most 2 items. Return a replacement tool call with valid arguments.`
+	const guidance = `Field "items" must contain at most 2 items.`
 	var providerCalls, executions, resumes int
 	h := newRecoveryHarness(t, "array-correction", []tools.ToolSpec{kickoff, batch},
 		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
@@ -46,10 +46,7 @@ func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedCall(t *
 			if len(input.ToolOutputs) == 2 {
 				return finalPlannerResult("accepted array completed"), nil
 			}
-			messages, err := input.PrepareMessages()
-			if err != nil {
-				return nil, err
-			}
+			messages := input.Messages
 			if resumes == 2 {
 				require.Len(t, input.Reminders, 1)
 				assert.Contains(t, input.Reminders[0].Text, guidance)
@@ -62,7 +59,7 @@ func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedCall(t *
 				}
 			}
 			// Planners compose the runtime-supplied reminders into model input.
-			messages, err = reminder.InjectMessages(messages, input.Reminders)
+			messages, err := reminder.InjectMessages(messages, input.Reminders)
 			if err != nil {
 				return nil, err
 			}

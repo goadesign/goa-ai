@@ -30,20 +30,23 @@ var (
 			Option("missingkey=error").
 			Parse(toolUnavailableCallHintPattern),
 	)
+	toolUnavailablePayloadCodec = tools.JSONCodec[any]{
+		ToJSON: marshalToolUnavailablePayload,
+		FromJSON: func(data []byte) (any, error) {
+			return unmarshalToolUnavailablePayload(data)
+		},
+	}
 	toolUnavailableSpec = tools.ToolSpec{
-		Name:        tools.ToolUnavailable,
-		Description: "Runtime-owned tool that represents unavailable tool calls.",
+		Name:                   tools.ToolUnavailable,
+		Description:            "Runtime-owned tool that represents unavailable tool calls.",
+		ExecutionPayloadSchema: toolUnavailableSchema,
+		ExecutionPayloadCodec:  toolUnavailablePayloadCodec,
 		Payload: tools.TypeSpec{
 			Name:                     "ToolUnavailablePayload",
 			Schema:                   toolUnavailableSchema,
 			SchemaWithoutRootExample: toolUnavailableSchema,
 			ExampleJSON:              tools.RawJSON(`{"requested_tool":"svc_read_count_events","requested_payload":{"from":"2026-02-06T00:00:00Z"}}`),
-			Codec: tools.JSONCodec[any]{
-				ToJSON: marshalToolUnavailablePayload,
-				FromJSON: func(data []byte) (any, error) {
-					return unmarshalToolUnavailablePayload(data)
-				},
-			},
+			Codec:                    toolUnavailablePayloadCodec,
 		},
 		Result: tools.TypeSpec{
 			Name:   "ToolUnavailableResult",

@@ -533,7 +533,28 @@ func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
 	if err := validateRecoveryCatalog(recoveryOutputs, recoveryCatalog, program.result); err != nil {
 		return nil, planner.NewOutputContractError(err)
 	}
-	if program.result.Await == nil {
+	finishing := finishRecovery(recoveryOutputs)
+	if finishing {
+		if program.result.Await != nil || program.result.SynthesizeAfterTools {
+			return nil, planner.NewOutputContractError(errors.New("finish recovery cannot request new input or synthesis work"))
+		}
+		if l.r.hasBookkeepingToolCalls(program.calls) {
+			// This path validates the entire batch as terminal bookkeeping before
+			// publishing or executing it; a page cannot race the final submission.
+			return l.r.finishFinalizationTerminalToolCalls(
+				l.wfCtx, l.reg, l.input, l.base, program.result, l.st.Transcript,
+				l.st.ResponseID, l.st.ToolEvents, l.st.ToolOutputs, l.st.AggUsage,
+				l.st.Caps, l.base.RunContext.Attempt, l.turnID,
+				recoveryOutputs, planner.TerminationReasonToolFailure, l.deadlines.Hard,
+			)
+		}
+		for _, call := range program.calls {
+			if call.ContinuationRootToolCallID == "" {
+				return nil, planner.NewOutputContractError(fmt.Errorf("finish recovery cannot start operation %q", call.Name))
+			}
+		}
+	}
+	if program.result.Await == nil && !finishing {
 		l.st.PendingRecovery = nil
 	}
 	if len(program.calls) > 0 {
@@ -788,7 +809,10 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 
 	results := batch.results()
-	if l.r.hasSuccessfulBudgetedResult(batch.records) {
+	existingRecovery, _ := toolRecovery(l.st.PendingRecovery)
+	action, failed := dominantRecoveryAction(batch.records)
+	if !finishRecovery(existingRecovery) && action != planner.RecoveryFinish &&
+		l.r.hasSuccessfulBudgetedResult(batch.records) {
 		// Successful budgeted work ends the current recovery episode. Failed
 		// work consumes a turn only when the workflow schedules another planner
 		// activity below.
@@ -817,7 +841,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 			return nil, err
 		}
 		existing, catalog := toolRecovery(l.st.PendingRecovery)
-		l.st.PendingRecovery = pendingToolRecovery{
+		l.st.PendingRecovery = &pendingToolRecovery{
 			outputs: append(pendingRecoveryOutputs(batch.records), existing...),
 			catalog: catalog,
 		}
@@ -827,25 +851,24 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		return l.suspendRun(batch, nil, []planner.AwaitItem{*await})
 	}
 
-	action, failed := dominantRecoveryAction(batch.records)
 	recovery := pendingRecoveryOutputs(batch.records)
 	if failed && action == planner.RecoveryFinish {
+		recovery = dominantRecoveryOutputs(batch.records)
+	}
+	pendingRecovery := slices.Concat(recovery, existingRecovery)
+	// A successful sibling query still owns its unfinished pages. Preserve
+	// the finish failure while the planner chooses another page or submission.
+	if finishRecovery(pendingRecovery) {
 		continuations, err := l.r.availableContinuationActions(l.input.AgentID, l.st.ToolOutputs)
 		if err != nil {
 			return nil, err
 		}
 		if len(continuations) == 0 {
-			return l.finalizeRecoveryStep(dominantRecoveryOutputs(batch.records))
+			return l.finalizeRecoveryStep(pendingRecovery)
 		}
-		// A successful sibling query still owns its unfinished pages. Preserve
-		// the finish failure as exact recovery evidence while the next planner
-		// turn chooses whether to continue those already-started queries.
-		recovery = dominantRecoveryOutputs(batch.records)
 	}
-	existingRecovery, _ := toolRecovery(l.st.PendingRecovery)
-	pendingRecovery := slices.Concat(recovery, existingRecovery)
 	synthesisOnly := !failed && batch.program.result.SynthesizeAfterTools
-	if out, err := l.resumePlanner(pendingRecovery, synthesisOnly, nil, nil); err != nil || out != nil {
+	if out, err := l.resumePlanner(pendingRecovery, synthesisOnly, nil, nil, failed); err != nil || out != nil {
 		return out, err
 	}
 	return nil, nil
@@ -853,18 +876,19 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 
 // resumePlanner executes the next planner turn after one fully-accounted step
 // or one rejected model invocation or answer. Calls caused by a rejection
-// consume one shared recovery turn before the activity is scheduled.
+// consume one shared recovery turn before the activity is scheduled. Continuing
+// a successful page retains finish restrictions but is not a replacement.
 func (l *workflowLoop) resumePlanner(
 	pendingRecovery []*planner.ToolOutput,
 	synthesisOnly bool,
 	outputRecovery *ModelOutputRecovery,
 	invocationRecovery *ModelInvocationRecovery,
+	replacement bool,
 ) (*RunOutput, error) {
 	if err := l.wfCtx.Context().Err(); err != nil {
 		return nil, err
 	}
-	if (len(pendingRecovery) > 0 || outputRecovery != nil || invocationRecovery != nil) &&
-		!consumeRecoveryTurn(&l.st.Caps) {
+	if replacement && !consumeRecoveryTurn(&l.st.Caps) {
 		return l.finalizeStep(planner.TerminationReasonRecoveryCap)
 	}
 	resumeReq, err := l.r.buildNextResumeRequest(
@@ -892,7 +916,14 @@ func (l *workflowLoop) resumePlanner(
 	if resOutput == nil {
 		return nil, errors.New("plan activity returned nil output on resume")
 	}
+	l.st.PendingRecovery = nil
+	if len(pendingRecovery) > 0 {
+		l.st.PendingRecovery = &pendingToolRecovery{outputs: pendingRecovery, catalog: resOutput.RecoveryCatalog}
+	}
 	l.base.Messages = appendPublishedAssistantText(l.base.Messages, resOutput)
+	if resOutput.HistoryContext != nil {
+		l.base.HistoryContext = resOutput.HistoryContext
+	}
 	l.st.AggUsage, err = addTokenUsage(l.st.AggUsage, resOutput.Usage)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate run usage: %w", err)
@@ -902,7 +933,7 @@ func (l *workflowLoop) resumePlanner(
 		l.st.Transcript = nil
 		l.st.ResponseID = ""
 		l.st.ResponseCommitted = false
-		l.st.PendingRecovery = pendingModelOutputRecovery{
+		l.st.PendingCorrection = pendingModelOutputRecovery{
 			recovery: *resOutput.OutputContractFailure.ModelOutputRecovery,
 		}
 		return nil, nil
@@ -912,7 +943,7 @@ func (l *workflowLoop) resumePlanner(
 		l.st.Transcript = nil
 		l.st.ResponseID = ""
 		l.st.ResponseCommitted = false
-		l.st.PendingRecovery = pendingModelInvocationRecovery{
+		l.st.PendingCorrection = pendingModelInvocationRecovery{
 			recovery: *resOutput.ModelInvocationRecovery,
 		}
 		return nil, nil
@@ -924,13 +955,7 @@ func (l *workflowLoop) resumePlanner(
 	l.st.Transcript = resOutput.Transcript
 	l.st.ResponseID = resOutput.PublicationBatchID
 	l.st.ResponseCommitted = false
-	l.st.PendingRecovery = nil
-	if len(pendingRecovery) > 0 {
-		l.st.PendingRecovery = pendingToolRecovery{
-			outputs: pendingRecovery,
-			catalog: resOutput.RecoveryCatalog,
-		}
-	}
+	l.st.PendingCorrection = nil
 	return nil, nil
 }
 
@@ -969,24 +994,19 @@ func validateRecoveryCatalog(
 }
 
 // recoveryUnavailableTools returns authored tools excluded from the next
-// planner turn. A finish failure closes all new domain work. The finalization
-// turn retains terminal tools so the planner can persist the run's required
-// result, while an earlier continuation turn exposes only runtime-generated
-// actions for successful queries that already started. Replan excludes only
+// planner turn. A finish failure closes all new domain work but retains terminal
+// bookkeeping so the planner can persist the run's required result. Runtime
+// continuations for queries already started are added separately. Replan excludes only
 // rejected tools, and same-tool payload correction keeps the failed tool
 // available.
 func (r *Runtime) recoveryUnavailableTools(
 	agentID agent.Ident,
 	outputs []*planner.ToolOutput,
-	finalizing bool,
 ) []tools.Ident {
-	for _, output := range outputs {
-		if output.Failure == nil || output.Failure.Recovery.Action != planner.RecoveryFinish {
-			continue
-		}
+	if finishRecovery(outputs) {
 		var unavailable []tools.Ident
 		for _, spec := range r.ToolSpecsForAgent(agentID) {
-			if isDedicatedContinuationSpec(spec) || finalizing && spec.TerminalRun {
+			if isDedicatedContinuationSpec(spec) || spec.TerminalRun && spec.Bookkeeping {
 				continue
 			}
 			unavailable = append(unavailable, spec.Name)

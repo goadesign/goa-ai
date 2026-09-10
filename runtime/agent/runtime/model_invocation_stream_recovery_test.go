@@ -112,7 +112,7 @@ func TestRunLoopRecoversMalformedStreamedToolCallBeforeExecution(t *testing.T) {
 			assert.Contains(
 				t,
 				input.Reminders[0].Text,
-				`Field "query" must contain a JSON string. Return a replacement tool call with valid arguments.`,
+				`Field "query" must contain a JSON string.`,
 			)
 			assert.NotContains(t, input.Reminders[0].Text, "privateSecret")
 			assert.NotContains(t, input.Reminders[0].Text, "submitted-secret")
