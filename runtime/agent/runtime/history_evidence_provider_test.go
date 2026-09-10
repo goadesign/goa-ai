@@ -72,9 +72,10 @@ func TestCompressBedrockPreservesOriginalMediaGroups(t *testing.T) {
 		t.Run(fixture.name, func(t *testing.T) {
 			client, transport := historyEncodedClient(t, "bedrock", "")
 			history := historyMediaGroups(fixture.part, fixture.count)
-			compressed, err := agentruntime.Compress(client, agentruntime.HistoryCompressionConfig{
+			historyResult, err := agentruntime.Compress(client, agentruntime.HistoryCompressionConfig{
 				CompressAtTurns: 2, KeepMaxTurns: 1,
-			})(t.Context(), history, nil)
+			})(t.Context(), &model.Request{Messages: history}, client, nil)
+			compressed := historyResult.Messages
 			require.NoError(t, err)
 			assert.Equal(t, history[len(history)-1], compressed[len(compressed)-1])
 			require.Len(t, transport.bodies, 1)
@@ -139,7 +140,7 @@ func TestCompressAnthropicPreservesImageReferencesAndRejectsDocuments(t *testing
 		image := historyPNGImage(t)
 		_, err := agentruntime.Compress(client, agentruntime.HistoryCompressionConfig{
 			CompressAtTurns: 2, KeepMaxTurns: 1,
-		})(t.Context(), historyMediaGroups(image, 11), nil)
+		})(t.Context(), &model.Request{Messages: historyMediaGroups(image, 11)}, client, nil)
 		require.NoError(t, err)
 		require.Len(t, transport.bodies, 1)
 		var request historyWireRequest
@@ -174,7 +175,7 @@ func TestCompressAnthropicPreservesImageReferencesAndRejectsDocuments(t *testing
 		document := model.DocumentPart{Name: "spec", Format: model.DocumentFormatTXT, Text: "evidence", Cite: true}
 		_, err := agentruntime.Compress(client, agentruntime.HistoryCompressionConfig{
 			CompressAtTurns: 2, KeepMaxTurns: 1,
-		})(t.Context(), historyMediaGroups(document, 3), nil)
+		})(t.Context(), &model.Request{Messages: historyMediaGroups(document, 3)}, client, nil)
 		require.EqualError(t, err, "anthropic: unsupported user message part model.DocumentPart")
 		assert.Empty(t, transport.bodies)
 	})
@@ -184,9 +185,10 @@ func TestCompressCitedSummaryReencodesAsTextAcrossProviders(t *testing.T) {
 	response := `{"output":{"message":{"role":"assistant","content":[{"citationsContent":{"content":[{"text":"The document supports this sentence."}],"citations":[{"title":"same document","source":"original-source","location":{"documentPage":{"documentIndex":0,"start":1,"end":1}},"sourceContent":[{"text":"supporting excerpt"}]}]}}]}},"stopReason":"end_turn","usage":{"inputTokens":4,"outputTokens":3,"totalTokens":7},"metrics":{"latencyMs":1}}`
 	client, transport := historyEncodedClient(t, "bedrock", response)
 	document := model.DocumentPart{Name: "same document", Format: model.DocumentFormatTXT, Text: "supporting excerpt", Cite: true}
-	compressed, err := agentruntime.Compress(client, agentruntime.HistoryCompressionConfig{
+	historyResult, err := agentruntime.Compress(client, agentruntime.HistoryCompressionConfig{
 		CompressAtTurns: 2, KeepMaxTurns: 1,
-	})(t.Context(), historyMediaGroups(document, 3), nil)
+	})(t.Context(), &model.Request{Messages: historyMediaGroups(document, 3)}, client, nil)
+	compressed := historyResult.Messages
 	require.NoError(t, err)
 	require.Len(t, transport.bodies, 1)
 	require.Len(t, compressed, 3)

@@ -217,13 +217,17 @@ func TestBedrockResponsesRejectUnsupportedBeforeHTTP(t *testing.T) {
 			require.ErrorContains(t, err, test.message)
 			_, err = client.Stream(t.Context(), request)
 			require.ErrorContains(t, err, test.message)
+			_, err = client.CountTokens(t.Context(), request)
+			require.ErrorContains(t, err, test.message)
 			if test.name == "structured_output" {
 				assert.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
 			}
 		})
 	}
-	_, err := client.CountTokens(t.Context(), bedrockTestRequest())
-	require.ErrorIs(t, err, model.ErrTokenCountingUnsupported)
+	count, err := client.CountTokens(t.Context(), bedrockTestRequest())
+	require.NoError(t, err)
+	assert.False(t, count.Exact)
+	assert.Positive(t, count.InputTokens)
 	assert.Zero(t, calls.Load())
 }
 

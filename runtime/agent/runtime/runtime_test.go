@@ -483,8 +483,7 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 		"svc.agent": {
 			Definition: testAgentDefinition("svc.agent", "svc.agent.workflow", "test", []tools.ToolSpec{tool}, nil),
 			Planner: &stubPlanner{resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
-				messages, err := input.PrepareMessages()
-				require.NoError(t, err)
+				messages := input.Messages
 				require.NoError(t, transcript.ValidatePlannerTranscript(messages))
 				return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
 					Role:  model.ConversationRoleAssistant,

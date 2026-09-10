@@ -34,6 +34,8 @@
 //     through the client; unsupported model settings remain provider errors.
 //     Enabled budgeted or interleaved thinking requests fail fast instead of
 //     being heuristically remapped.
-//   - Neither Responses constructor implements token counting. The validated
-//     client returns model.ErrTokenCountingUnsupported, never a guessed count.
+//   - Direct OpenAI counting remains unsupported. Bedrock estimates the fully
+//     prepared SDK request's byte size locally, including encrypted reasoning,
+//     with Exact=false. This is not a native count or a guaranteed upper bound;
+//     callers decide whether estimates satisfy their admission policy.
 package openai

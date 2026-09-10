@@ -297,10 +297,7 @@ func (p *capturePlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (
 	if in == nil {
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	}
-	messages, err := in.PrepareMessages()
-	if err != nil {
-		return nil, err
-	}
+	messages := in.Messages
 	p.msgs = append([]*model.Message{}, messages...)
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 }

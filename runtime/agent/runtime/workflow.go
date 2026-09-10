@@ -423,6 +423,9 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		return nil, finalErr
 	}
 	planInput.Messages = appendPublishedAssistantText(planInput.Messages, firstOutput)
+	if firstOutput.HistoryContext != nil {
+		planInput.HistoryContext = firstOutput.HistoryContext
+	}
 	result := firstOutput.Result
 	if result == nil &&
 		firstOutput.OutputContractFailure == nil &&

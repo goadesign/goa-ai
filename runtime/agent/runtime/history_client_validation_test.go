@@ -60,7 +60,8 @@ func TestCompressRejectsForgedEmbeddedClientBeforeInference(t *testing.T) {
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "answer"}}},
 	}
 
-	got, err := policy(t.Context(), messages, nil)
+	historyResult, err := policy(t.Context(), &model.Request{Messages: messages}, client, nil)
+	got := historyResult.Messages
 
 	require.ErrorContains(t, err, "model client is not an intact validated client")
 	require.Equal(t, messages, got)

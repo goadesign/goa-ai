@@ -302,6 +302,18 @@ func TestDirectProviderCompilesItsOwnRequestContract(t *testing.T) {
 	require.Nil(t, provider.completePrepared)
 }
 
+func TestClientTokenCountAcceptsProviderResolvedClass(t *testing.T) {
+	provider := &clientTestCountingProvider{count: TokenCount{
+		Model: "configured-default", ModelClass: ModelClassDefault,
+		InputTokens: 42, Exact: false,
+	}}
+	client, err := NewClient(provider)
+	require.NoError(t, err)
+	count, err := client.CountTokens(t.Context(), &Request{})
+	require.NoError(t, err)
+	require.Equal(t, provider.count, count)
+}
+
 func TestClientRejectsInvalidProviderTokenCounts(t *testing.T) {
 	tests := []struct {
 		name  string

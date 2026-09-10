@@ -375,8 +375,8 @@ type (
 		// "finalize" | "await_clarification" | "resume"
 		OnMissingFields MissingFieldsAction
 
-		// History, when non-nil, transforms the conversation on the first call to
-		// PrepareMessages in each planner activity. It can truncate or compress
+		// History transforms messages in each actual model request using that
+		// request's destination counter. It can truncate or compress
 		// history while preserving system prompts and logical turn boundaries.
 		History HistoryPolicy
 

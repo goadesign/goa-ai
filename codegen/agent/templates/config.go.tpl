@@ -13,14 +13,13 @@ type {{ .ConfigType }} struct {
     Planner {{ .PlannerAlias }}.Planner
 {{- if .RunPolicy.History }}
     {{- if eq .RunPolicy.History.Mode "compress" }}
-    // HistoryModel provides the model client used for history compression when a
-    // compression history policy is configured. Token-budget compression counts
-    // tokens through this client at runtime because tokenization is model-specific.
+    // HistoryModel writes summaries of older messages. The destination client
+    // for each actual model request supplies its token counts separately.
     HistoryModel {{ .ModelAlias }}.Client
 
     // HistoryCompression overrides the DSL compression defaults for this
     // deployment. Leave nil to use the generated defaults. Set this when the
-    // configured HistoryModel has a different context window or operational
+    // configured destination model has a different context window or operational
     // budget than the design-time default.
     HistoryCompression *{{ .RuntimeAlias }}.HistoryCompressionConfig
     {{- end }}

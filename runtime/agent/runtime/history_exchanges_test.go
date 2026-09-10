@@ -42,12 +42,20 @@ func TestHistoryPoliciesKeepCompleteResponseExchanges(t *testing.T) {
 			require.Len(t, turns, len(exchanges))
 			assert.Same(t, messages[1], turns[0].messages[0], "kickoff stays with the first response")
 			for keep := 1; keep <= len(exchanges); keep++ {
-				out, err := KeepRecentTurns(keep)(t.Context(), messages, nil)
+				historyResult, err := KeepRecentTurns(keep)(t.Context(), &model.Request{Messages: messages}, nil, nil)
+				out := historyResult.Messages
 				require.NoError(t, err)
 				require.NoError(t, transcript.ValidatePlannerTranscript(out))
 				want := []*model.Message{messages[0]}
 				if keep == len(exchanges) {
 					want = append(want, messages[1])
+				}
+				for _, exchange := range exchanges[:len(exchanges)-keep] {
+					for _, message := range exchange {
+						if message.Role == model.ConversationRoleSystem {
+							want = append(want, message)
+						}
+					}
 				}
 				for _, exchange := range exchanges[len(exchanges)-keep:] {
 					want = append(want, exchange...)
@@ -70,7 +78,8 @@ func TestHistoryGroupsTextOnlyResponsesAndOrdinaryRequests(t *testing.T) {
 	assertExactHistory(t, messages[1:4], turns[0].messages)
 	assertExactHistory(t, messages[4:6], turns[1].messages)
 	assertExactHistory(t, messages[6:], turns[2].messages)
-	out, err := KeepRecentTurns(2)(t.Context(), messages, nil)
+	historyResult, err := KeepRecentTurns(2)(t.Context(), &model.Request{Messages: messages}, nil, nil)
+	out := historyResult.Messages
 	require.NoError(t, err)
 	assertExactHistory(t, append([]*model.Message{messages[0]}, messages[4:]...), out)
 }
@@ -105,10 +114,14 @@ func TestCompressCompleteExchangesAtEverySelectionBoundary(t *testing.T) {
 			messages, exchanges := completeExchangeHistory(4)
 			before := canonicalHistory(t, messages)
 			provider := newExchangeHistoryProvider(t, tc.counts)
-			out, err := Compress(historyTestClient(t, provider), tc.config)(t.Context(), messages, fitTools())
+			historyResult, err := Compress(historyTestClient(t, provider), tc.config)(t.Context(), &model.Request{Messages: messages, Tools: fitTools()}, provider, nil)
+			out := historyResult.Messages
 			require.NoError(t, err)
 			require.NoError(t, transcript.ValidatePlannerTranscript(out))
-			assertExactHistory(t, append(exchanges[2], exchanges[3]...), out[2:])
+			want := []*model.Message{exchanges[0][len(exchanges[0])-1], exchanges[1][len(exchanges[1])-1]}
+			want = append(want, exchanges[2]...)
+			want = append(want, exchanges[3]...)
+			assertExactHistory(t, want, out[2:])
 			assert.Same(t, messages[0], out[0])
 			assert.Equal(t, 1, provider.completeCalls)
 			assert.Len(t, provider.requests, len(tc.counts))
@@ -129,9 +142,10 @@ func TestCompressCompleteExchangesAtEverySelectionBoundary(t *testing.T) {
 func TestCompressRejectsOversizedCompleteNewestExchange(t *testing.T) {
 	messages, _ := completeExchangeHistory(3)
 	provider := newExchangeHistoryProvider(t, []fitCount{{tokens: 201}})
-	out, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{
+	historyResult, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{
 		CompressAtTurns: 3, KeepMaxTurns: 1, CompressAtMaxInputTokens: 200,
-	})(t.Context(), messages, fitTools())
+	})(t.Context(), &model.Request{Messages: messages, Tools: fitTools()}, provider, nil)
+	out := historyResult.Messages
 	require.ErrorContains(t, err, "newest history turn cannot fit")
 	assertExactHistory(t, messages, out)
 	assert.Zero(t, provider.completeCalls)
@@ -145,19 +159,11 @@ func TestPlanActivitiesPrepareCompleteResponseExchanges(t *testing.T) {
 			before := canonicalHistory(t, messages)
 			provider := newExchangeHistoryProvider(t, nil)
 			modelCalls := 0
-			plan := func(ctx context.Context, prepare func() ([]*model.Message, error), agentCtx planner.PlannerContext) (*planner.PlanResult, error) {
-				prepared, err := prepare()
-				if err != nil {
-					return nil, err
-				}
-				again, err := prepare()
-				require.NoError(t, err)
-				assert.Same(t, &prepared[0], &again[0])
-				require.NoError(t, transcript.ValidatePlannerTranscript(prepared))
-				assertExactHistory(t, append(exchanges[2], exchanges[3]...), prepared[2:])
+			plan := func(ctx context.Context, full []*model.Message, agentCtx planner.PlannerContext) (*planner.PlanResult, error) {
+				assertExactHistory(t, messages, full)
 				client, ok := agentCtx.PlannerModelClient("test")
 				require.True(t, ok)
-				response, err := client.Complete(ctx, &model.Request{Model: "test", Messages: prepared})
+				response, err := client.Complete(ctx, &model.Request{Model: "test", Messages: full, Tools: fitTools()})
 				if err != nil {
 					return nil, err
 				}
@@ -165,10 +171,10 @@ func TestPlanActivitiesPrepareCompleteResponseExchanges(t *testing.T) {
 			}
 			pl := &stubPlanner{
 				start: func(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
-					return plan(ctx, in.PrepareMessages, in.Agent)
+					return plan(ctx, in.Messages, in.Agent)
 				},
 				resume: func(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
-					return plan(ctx, in.PrepareMessages, in.Agent)
+					return plan(ctx, in.Messages, in.Agent)
 				},
 			}
 			rt := newTestRuntimeWithPlanner("service.agent", pl)
@@ -181,7 +187,10 @@ func TestPlanActivitiesPrepareCompleteResponseExchanges(t *testing.T) {
 					require.NoError(t, transcript.ValidatePlannerTranscript(request.Messages))
 					// Model request admission clones messages; history preparation
 					// preserves pointers, while the provider receives equal values.
-					assert.Equal(t, canonicalHistory(t, append(exchanges[2], exchanges[3]...)), canonicalHistory(t, request.Messages[2:]))
+					want := []*model.Message{exchanges[0][len(exchanges[0])-1], exchanges[1][len(exchanges[1])-1]}
+					want = append(want, exchanges[2]...)
+					want = append(want, exchanges[3]...)
+					assert.Equal(t, canonicalHistory(t, want), canonicalHistory(t, request.Messages[2:]))
 					return &model.Response{Content: []model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "Complete"}}}}, StopReason: "stop"}, nil
 				},
 			})

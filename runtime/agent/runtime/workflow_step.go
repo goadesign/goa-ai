@@ -921,6 +921,9 @@ func (l *workflowLoop) resumePlanner(
 		l.st.PendingRecovery = &pendingToolRecovery{outputs: pendingRecovery, catalog: resOutput.RecoveryCatalog}
 	}
 	l.base.Messages = appendPublishedAssistantText(l.base.Messages, resOutput)
+	if resOutput.HistoryContext != nil {
+		l.base.HistoryContext = resOutput.HistoryContext
+	}
 	l.st.AggUsage, err = addTokenUsage(l.st.AggUsage, resOutput.Usage)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate run usage: %w", err)
