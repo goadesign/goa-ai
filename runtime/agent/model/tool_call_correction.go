@@ -87,11 +87,7 @@ func collectToolCorrectionCandidates(
 ) []toolCorrectionCandidate {
 	switch err.ErrorKind.(type) {
 	case *kind.OneOf:
-		selected, ok := selectedUnionCause(err, input, fields)
-		if !ok {
-			return []toolCorrectionCandidate{{unsupported: true}}
-		}
-		return collectToolCorrectionCandidates(selected, input, fields)
+		return unionToolCorrectionCandidates(err, input, fields)
 	case *kind.Schema, *kind.Group, *kind.Reference, *kind.AllOf:
 		var candidates []toolCorrectionCandidate
 		for _, cause := range err.Causes {
@@ -102,15 +98,16 @@ func collectToolCorrectionCandidates(
 	return toolCorrectionCandidatesForError(err, input, fields)
 }
 
-// selectedUnionCause returns only the validation failure for the branch named
-// by the submitted discriminator. JSON Schema reports every branch when none
-// matches, but the other branches do not describe the model's selected value.
-func selectedUnionCause(
+// unionToolCorrectionCandidates follows only a recognized discriminator's
+// branch. Otherwise it describes that discriminator's advertised string choices
+// without guessing a branch from the rejected value or unrelated fields.
+func unionToolCorrectionCandidates(
 	err *jsonschema.ValidationError,
 	input any,
 	fields []tools.FieldMetadata,
-) (*jsonschema.ValidationError, bool) {
-	var selected int
+) []toolCorrectionCandidate {
+	unsupported := []toolCorrectionCandidate{{unsupported: true}}
+	var selected fieldPathMatch
 	found := false
 	for _, field := range fields {
 		if len(field.DiscriminatorValues) == 0 || len(field.Path) != len(err.InstanceLocation)+1 {
@@ -129,25 +126,42 @@ func selectedUnionCause(
 		if !unionBranchesMatch(match, input) {
 			continue
 		}
-		value, ok := jsonValueAt(input, match.actual)
-		if !ok {
-			return nil, false
+		if found {
+			return unsupported
 		}
-		discriminator, ok := value.(string)
-		if !ok {
-			return nil, false
-		}
-		index := slices.Index(field.DiscriminatorValues, discriminator)
-		if index < 0 || found {
-			return nil, false
-		}
-		selected = index
+		selected = match
 		found = true
 	}
-	if !found || selected >= len(err.Causes) {
-		return nil, false
+	if !found {
+		return unsupported
 	}
-	return err.Causes[selected], true
+	value, present := jsonValueAt(input, selected.actual)
+	discriminator, isString := value.(string)
+	if index := slices.Index(selected.field.DiscriminatorValues, discriminator); isString && index >= 0 {
+		if index >= len(err.Causes) {
+			return unsupported
+		}
+		return collectToolCorrectionCandidates(err.Causes[index], input, fields)
+	}
+	// A missing child property is meaningful only inside an object. Keep the
+	// existing validator feedback when the union value itself has another type.
+	container, _ := jsonValueAt(input, err.InstanceLocation)
+	if _, object := container.(map[string]any); !object || selected.field.JSONType != "string" {
+		return unsupported
+	}
+	values, marshalErr := json.Marshal(selected.field.DiscriminatorValues)
+	if marshalErr != nil {
+		return unsupported
+	}
+	constraint := fmt.Sprintf("must be one of these JSON strings: %s.", values)
+	if !present {
+		constraint = "is required and " + constraint
+	} else if !isString {
+		constraint = fmt.Sprintf("must contain a JSON string from these values: %s.", values)
+	}
+	return []toolCorrectionCandidate{{
+		field: selected.field, constraint: constraint,
+	}, {unsupported: true}}
 }
 
 // toolCorrectionCandidatesForError converts one validator leaf into a safe

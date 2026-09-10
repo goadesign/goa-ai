@@ -435,7 +435,9 @@ var Docs = Toolset("docs", func() {
   schema rejections and typed tool-input validation errors get limited-size
   correction guidance that omits rejected arguments. Schema rejections for
   specifications with field metadata name independently identified fields and
-  their stable rules without guessing between alternatives. When it fits, the
+  their stable rules without guessing between alternatives. Guidance names a
+  missing or invalid choice label and its allowed strings;
+  it never chooses the variant for the model. When space permits, the
   correction also includes the complete validated input example, with guidance
   to use values and a valid variant appropriate to the request. Ordinary decoder
   and internal errors stop the run. Local callers can inspect the original

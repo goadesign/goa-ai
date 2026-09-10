@@ -1144,6 +1144,12 @@ Workflow step boundary:
   repeat an advertised field path, JSON type, description, or enum value, but
   never copies tool names, submitted values, dynamic keys or indexes,
   undeclared field names, raw provider output, or provider diagnostics,
+- for a generated union inside a JSON object, a missing, non-string or unknown
+  discriminator receives its advertised field name and allowed strings. For
+  example, an absent `choice.type` can be reported as required with choices
+  `"text"` and `"count"`; feedback does not pick either one. Only a recognized
+  choice permits guidance about that branch's fields. Other independent field
+  failures remain visible, with the existing notice for undetailed errors,
 - the workflow ties that guidance to the exact rejected invocation selected in
   invocation start order, records its token usage, keeps the malformed call out
   of transcript history, and schedules one normal resume activity with the

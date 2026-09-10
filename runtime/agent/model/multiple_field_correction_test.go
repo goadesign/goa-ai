@@ -73,9 +73,9 @@ func TestMultipleFieldCorrectionSelectedUnionWildcardAmbiguity(t *testing.T) {
 	for _, test := range []struct{ name, payload, want string }{
 		{"identical displayed requirements", `{"known":1,"choices":[{"type":"short","value":[1,2]},{"type":"short","value":[3,4]}]}`, "Field \"choices.*.value\" must contain at most 1 items.\nField \"known\" must contain a JSON string."},
 		{"conflicting displayed requirements", `{"known":1,"choices":[{"type":"short","value":[1,2]},{"type":"long","value":[3,4,5]}]}`, `Field "known" must contain a JSON string. Other schema errors are not detailed here.`},
-		{"missing discriminator", `{"known":1,"choices":[{"value":[1,2,3]}]}`, `Field "known" must contain a JSON string. Other schema errors are not detailed here.`},
-		{"unknown discriminator", `{"known":1,"choices":[{"type":"submitted-name","value":[1,2,3]}]}`, `Field "known" must contain a JSON string. Other schema errors are not detailed here.`},
-		{"nonstring discriminator", `{"known":1,"choices":[{"type":7,"value":[1,2,3]}]}`, `Field "known" must contain a JSON string. Other schema errors are not detailed here.`},
+		{"missing discriminator", `{"known":1,"choices":[{"value":[1,2,3]}]}`, "Field \"choices.*.type\" is required and must be one of these JSON strings: [\"short\",\"long\"].\nField \"known\" must contain a JSON string. Other schema errors are not detailed here."},
+		{"unknown discriminator", `{"known":1,"choices":[{"type":"submitted-name","value":[1,2,3]}]}`, "Field \"choices.*.type\" must be one of these JSON strings: [\"short\",\"long\"].\nField \"known\" must contain a JSON string. Other schema errors are not detailed here."},
+		{"nonstring discriminator", `{"known":1,"choices":[{"type":7,"value":[1,2,3]}]}`, "Field \"choices.*.type\" must contain a JSON string from these values: [\"short\",\"long\"].\nField \"known\" must contain a JSON string. Other schema errors are not detailed here."},
 		{"valid selected members", `{"known":"valid","choices":[{"type":"short","value":[1]},{"type":"long","value":[1,2]}]}`, ""},
 	} {
 		t.Run(test.name, func(t *testing.T) {

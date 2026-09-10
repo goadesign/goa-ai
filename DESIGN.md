@@ -169,6 +169,11 @@ telemetry or transport data;
 the calling application owns their use and retention. The
 [runtime tool-input contract](docs/runtime.md#model-visible-tool-arguments)
 separates diagnostic access from the correction sent to the model.
+Generated choice metadata also identifies a missing or invalid discriminator
+(the field naming the chosen variant). Feedback names that field and its
+allowed strings without guessing a variant or applying every branch's rules.
+Independent field failures remain visible; undetailed branch failures retain
+the existing omission notice.
 Formatting the underlying validator or malformed-argument error includes its
 original diagnostic after the existing summary prefix. Direct callers of those
 errors receive more detail; `OutputValidationError.Error()` and correction text

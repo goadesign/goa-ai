@@ -103,7 +103,7 @@ func TestArrayLengthCorrectionSelectedUnionAndSize(t *testing.T) {
 		{"selected small", `{"choice":{"type":"small","value":[1,2]}}`, `Field "choice.value" must contain at most 1 items.`},
 		{"selected large", `{"choice":{"type":"large","value":[1,2,3,4]}}`, `Field "choice.value" must contain at most 3 items.`},
 		{"valid other branch", `{"choice":{"type":"large","value":[1,2]}}`, ""},
-		{"unselected", `{"choice":{"type":"unknown","value":[1,2,3,4]}}`, advertisedToolInputCorrection},
+		{"unselected", `{"choice":{"type":"unknown","value":[1,2,3,4]}}`, `Field "choice.type" must be one of these JSON strings: ["small","large"]. Other schema errors are not detailed here.`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			rejected := checkArrayCorrection(t, arrayCorrectionDefinition(schema, fields), test.payload, test.want)
