@@ -87,7 +87,7 @@ func TestCompressFitsActualSummaryAndLongestEligibleSuffix(t *testing.T) {
 				assert.Equal(t, 1, strings.Count(transcript, text))
 			}
 			assert.NotContains(t, transcript, "newest question")
-			assert.NotContains(t, transcript, `"text":"system"`)
+			assert.Contains(t, transcript, `"text":"system"`)
 		})
 	}
 }
@@ -336,7 +336,9 @@ func TestCompressActualFitRecountsEachInvocationAndPreservesPriorSummary(t *test
 		assert.Same(t, messages[len(messages)-1], out[len(out)-1])
 		assert.Equal(t, canonicalHistory(t, out), canonicalHistory(t, provider.requests[len(provider.requests)-1].Messages))
 		assertToolDefinitionsEqual(t, tools, provider.requests[len(provider.requests)-1].Tools)
-		assert.NotContains(t, textPart(t, provider.request.Messages[1]), "Previous summary")
+		// This summary is explicitly supplied as an original instruction, not
+		// workflow-private summary state. It remains quoted source context.
+		assert.Contains(t, textPart(t, provider.request.Messages[1]), "Previous summary")
 		if i == 0 {
 			assert.Len(t, out, 7)
 		} else {

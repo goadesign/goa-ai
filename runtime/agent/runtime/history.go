@@ -277,7 +277,7 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 	// The fingerprint describes how evidence becomes summary text, not which
 	// destination or provider happens to generate or consume that text.
 	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(fmt.Sprintf(
-		"history-summary-v1\n%q\n%q\n%q", historySummaryInstruction, runtimeCfg.summaryPrompt, runtimeCfg.summaryRole,
+		"history-summary-v2\n%q\n%q\n%q", historySummaryInstruction, runtimeCfg.summaryPrompt, runtimeCfg.summaryRole,
 	))))
 	return func(ctx context.Context, request *model.Request, counter model.TokenCounter, prior *HistorySummary) (HistoryResult, error) {
 		msgs := request.Messages
@@ -306,7 +306,16 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		history := msgs[systemEnd:]
 		turns := parseTurns(history)
 		candidate := request
-		if prior != nil && prior.PolicyFingerprint == fingerprint {
+		if prior != nil {
+			_, currentFingerprint, err := historySummarySource(msgs, prior.SourceMessages, fingerprint)
+			if err != nil {
+				return original, err
+			}
+			if prior.PolicyFingerprint != currentFingerprint {
+				prior = nil
+			}
+		}
+		if prior != nil {
 			messages, err := historySummaryMessages(msgs, prior)
 			if err != nil {
 				return original, err
@@ -314,8 +323,6 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 			copy := *request
 			copy.Messages = messages
 			candidate = &copy
-		} else {
-			prior = nil
 		}
 		candidateTurns := turns
 		if prior != nil {
@@ -355,7 +362,12 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 
 		// Supply the selected older evidence once, keeping media native and
 		// historical tools quoted rather than executable in this summary call.
-		req, documentSources, err := historySummaryRequest(flattenTurns(toCompress), systemEnd, runtimeCfg)
+		sourceCount := historyConversationCount(toCompress)
+		source, sourceFingerprint, err := historySummarySource(msgs, sourceCount, fingerprint)
+		if err != nil {
+			return original, err
+		}
+		req, documentSources, err := historySummaryRequest(source, runtimeCfg)
 		if err != nil {
 			return original, err
 		}
@@ -382,9 +394,9 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 			},
 		}
 		summary := &HistorySummary{
-			SourceMessages:    historyConversationCount(toCompress),
+			SourceMessages:    sourceCount,
 			Message:           summaryMsg,
-			PolicyFingerprint: fingerprint,
+			PolicyFingerprint: sourceFingerprint,
 		}
 
 		result, _, err := fitHistorySummary(ctx, policyCfg, counter, request, turns, keepStart, summary)
@@ -596,18 +608,6 @@ func countMessages(
 		return model.TokenCount{}, errors.New("runtime: history compression requires exact token counts")
 	}
 	return count, nil
-}
-
-func flattenTurns(turns []turn) []*model.Message {
-	total := 0
-	for _, t := range turns {
-		total += len(t.messages)
-	}
-	msgs := make([]*model.Message, 0, total)
-	for _, t := range turns {
-		msgs = append(msgs, t.messages...)
-	}
-	return msgs
 }
 
 // parseTurns keeps each contiguous assistant response with its following tool

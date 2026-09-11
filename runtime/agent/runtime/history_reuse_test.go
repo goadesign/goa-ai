@@ -138,23 +138,71 @@ func TestCompressReusedSummaryRefitsCoveredHistoryWithoutAnotherSummary(t *testi
 	assert.Len(t, provider.requests, 11)
 }
 
-func TestCompressReusedSummaryKeepsCurrentInstructionsExact(t *testing.T) {
-	provider := evidenceSummaryProvider(model.TextPart{Text: "Earlier observations"})
-	client := historyTestClient(t, provider)
-	policy := Compress(client, HistoryCompressionConfig{CompressAtTurns: 4, KeepMaxTurns: 2})
-	messages := fitHistory()
-	instruction := historySystemMessage("Current answer requirements")
-	messages = append(messages[:3:3], append([]*model.Message{instruction}, messages[3:]...)...)
-	request := &model.Request{Messages: messages}
-	first, err := policy(t.Context(), request, nil, nil)
-	require.NoError(t, err)
-	request.Messages[3] = historySystemMessage("Updated answer requirements")
-	second, err := policy(t.Context(), request, nil, first.Summary)
-	require.NoError(t, err)
-	assert.Equal(t, first.Summary, second.Summary)
-	assert.Same(t, request.Messages[3], second.Messages[2])
-	assert.Equal(t, "Updated answer requirements", textPart(t, second.Messages[2]))
-	assert.Equal(t, 1, provider.completeCalls)
+func TestCompressReusedSummaryChecksHistoricalInstructions(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func([]*model.Message) []*model.Message
+		calls  int
+	}{
+		{"unchanged", func(messages []*model.Message) []*model.Message {
+			return messages
+		}, 1},
+		{"changed leading goal", func(messages []*model.Message) []*model.Message {
+			messages[0] = historySystemMessage("A changed original goal")
+			return messages
+		}, 2},
+		{"changed historical reminder", func(messages []*model.Message) []*model.Message {
+			messages[3] = historySystemMessage("Updated answer requirements")
+			return messages
+		}, 2},
+		{"prepended goal", func(messages []*model.Message) []*model.Message {
+			return append([]*model.Message{historySystemMessage("Additional original goal")}, messages...)
+		}, 2},
+		{"inserted historical reminder", func(messages []*model.Message) []*model.Message {
+			return append(messages[:2:2], append([]*model.Message{historySystemMessage("Historical requirement")}, messages[2:]...)...)
+		}, 2},
+		{"appended later reminder", func(messages []*model.Message) []*model.Message {
+			return append(messages, historySystemMessage("New requirement for the current answer"))
+		}, 1},
+		{"reminder immediately after source", func(messages []*model.Message) []*model.Message {
+			return append(messages[:6:6], append([]*model.Message{historySystemMessage("Later requirement")}, messages[6:]...)...)
+		}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			provider := evidenceSummaryProvider(model.TextPart{Text: "Earlier observations"})
+			client := historyTestClient(t, provider)
+			policy := Compress(client, HistoryCompressionConfig{CompressAtTurns: 4, KeepMaxTurns: 2})
+			messages := fitHistory()
+			instruction := historySystemMessage("Current answer requirements")
+			messages = append(messages[:3:3], append([]*model.Message{instruction}, messages[3:]...)...)
+			request := &model.Request{Messages: messages}
+			first, err := policy(t.Context(), request, nil, nil)
+			require.NoError(t, err)
+			request.Messages = tc.change(request.Messages)
+			before := canonicalHistory(t, request.Messages)
+			second, err := policy(t.Context(), request, nil, first.Summary)
+			require.NoError(t, err)
+			if tc.calls == 1 {
+				assert.Equal(t, first.Summary, second.Summary)
+			} else {
+				assert.NotEqual(t, first.Summary.PolicyFingerprint, second.Summary.PolicyFingerprint)
+			}
+			assert.Equal(t, tc.calls, provider.completeCalls)
+			assert.Equal(t, before, canonicalHistory(t, request.Messages))
+			var originalSystems, retainedSystems []*model.Message
+			for _, message := range request.Messages {
+				if message.Role == model.ConversationRoleSystem {
+					originalSystems = append(originalSystems, message)
+				}
+			}
+			for _, message := range second.Messages {
+				if message.Role == model.ConversationRoleSystem && message.Meta["goa_ai_history"] != "summary" {
+					retainedSystems = append(retainedSystems, message)
+				}
+			}
+			assert.Equal(t, originalSystems, retainedSystems)
+		})
+	}
 }
 
 func TestCompressReusedSummaryPropagatesCountFailure(t *testing.T) {

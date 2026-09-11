@@ -1335,7 +1335,11 @@ for details and the SDK source-compatibility change.
   and [summary reuse](docs/runtime.md#reusing-a-summary-within-one-workflow).
   The runtime supplies the selected older history as
   complete quoted semantic parts, preserving tool values, correlation IDs, and
-  errors. Native media keeps its original user-message groups and source
+  errors. Historical System messages are quoted context for relevance decisions,
+  while original instructions stay exact in the destination. The existing policy
+  fingerprint binds their contents and positions through the last source
+  conversational message; later reminders do not invalidate reuse. Native media
+  keeps its original user-message groups and source
   positions; historical tools are not advertised for execution. Cited summary
   sentences retain their supplied attribution as quoted text. Provider replay
   metadata and reasoning stay in exact history rather than entering a new

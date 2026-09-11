@@ -703,6 +703,9 @@ so autonomous runs can still summarize older work. See
 [complete history turns](docs/runtime.md#complete-history-turns).
 The summary model receives complete quoted tool arguments, results, and source
 references, with native images and documents grouped by their original messages.
+System messages within that historical prefix are quoted too, so goals found only
+in instructions can guide evidence selection. Every original System message
+remains an unchanged instruction in the destination request.
 It receives no executable tool catalog. Plain and cited summary sentences are
 preserved; provider replay metadata remains in the original history, not the
 summary request. Complete evidence can make that request larger, and existing
@@ -715,8 +718,10 @@ prompts with a positive ceiling must not assume that every summarized turn is
 discarded from exact history. See
 [history policies](docs/runtime.md#history-policies) for the evidence contract.
 Within one workflow, the runtime can reuse the selected model call's summary
-of unchanged original evidence. Each later request still counts its actual
-model settings and tools; growing evidence can require a replacement summary.
+of unchanged original evidence and historical System context. Changing that
+context invalidates reuse; a later reminder outside the summarized prefix does
+not. Each later request still counts its actual model settings and tools;
+growing evidence can require a replacement summary.
 The complete saved conversation and suspension checkpoints are not rewritten.
 See [summary reuse](docs/runtime.md#reusing-a-summary-within-one-workflow).
 
