@@ -216,12 +216,14 @@ the accepted arguments, so callers cannot insert domain execution or rewriting
 between accepted model output and the returned value.
 
 The private runtime also owns a per-call diagnostic receiver through its existing
-tracer interface. On failure, `Run` returns the terminal error first, followed by
-original observed errors, with every nested cause rendered and available for
+tracer interface. On failure, `Run` returns a `*tooloutput.RunError` whose
+`TerminalError()` exposes the exact cause that ended the call, before diagnostic
+observations were attached. Its text and `Unwrap` retain the original terminal
+and observed errors, with every nested cause rendered and available for
 `errors.Is` / `errors.As`. Observations do not determine execution policy and may
 record the same rejection at more than one operation. The returned snapshot is
 immutable even if caller cancellation lets an activity finish later. This adds no
-workflow state, exported API, model call, or global tracing configuration. The
+workflow state, model call, or global tracing configuration. The
 full [returned-error contract](docs/runtime.md#forced-typed-tool-output) describes
 which diagnostic facts are available.
 
