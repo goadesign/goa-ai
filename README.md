@@ -595,7 +595,9 @@ output, or streaming are rejected before inference.
 
 Failed calls return the terminal error and original errors observed during the
 private run, including full cause messages and known validation/response facts.
-`errors.Is` and `errors.As` preserve typed inspection. Successful correction still
+Every failure is a `*tooloutput.RunError`. Its `TerminalError()` returns the
+cause that ended the call, without earlier observations. `errors.Is` and
+`errors.As` on the full error still inspect all retained causes. Successful correction still
 returns a value and nil error; tracing exporters remain application-controlled.
 See [runtime diagnostics](docs/runtime.md#forced-typed-tool-output) for the
 retention and cancellation contract.

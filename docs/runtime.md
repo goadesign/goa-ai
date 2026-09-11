@@ -253,7 +253,8 @@ and internal contract failures are terminal. `Run` rejects a request that
 already sets `Tools`, `ToolChoice`, `StructuredOutput`, or `Stream` before
 inference.
 
-On failure, `Run` returns its terminal error followed by the original errors
+On failure, `Run` returns a `*tooloutput.RunError`. Its diagnostic text includes
+the terminal error followed by the original errors
 observed by that private runtime. Its text includes full nested and joined cause
 messages, even when workflow records bound or omit those messages. The original
 objects remain accessible with `errors.Is` and `errors.As`; exact failure strings
@@ -262,6 +263,15 @@ to the tracer: tool execution already converts encoder causes to a serializable
 `ToolError` chain, so their full messages survive but original encoder sentinel
 identity does not. An observed model rejection may appear again at its
 enclosing planner operation, so observations are not distinct model attempts.
+
+Use `RunError.TerminalError()` to inspect only the error that ended the call.
+For example, invalid arguments followed by a provider connection failure retain
+both errors for troubleshooting, but the terminal error is the connection
+failure. The returned terminal error may itself wrap or join causes; finding one
+model rejection inside a genuinely mixed terminal failure does not make all its
+causes model failures. Correction-limit exhaustion retains its existing terminal
+error and does not inherit the types of earlier rejected attempts. This method
+does not classify failures or change retry policy.
 
 Typed model validation errors add their category, response fingerprint, reported
 token usage, and retained response stop reason/output-limit flag when available.

@@ -44,6 +44,7 @@ const (
 // runtime's bounded correction turns. Provider failures and internal contract
 // failures are terminal. Errors retain the terminal failure and earlier observed
 // causes for errors.Is/As, with full diagnostic text and available response facts.
+// Every failure is a *RunError; its TerminalError excludes earlier observations.
 // A successful correction returns the accepted value and nil error.
 func Run[T any](ctx context.Context, client model.Client, request *model.Request, spec completion.Spec[T]) (_ T, err error) {
 	diagnostics := &runDiagnostics{}
@@ -51,7 +52,7 @@ func Run[T any](ctx context.Context, client model.Client, request *model.Request
 	// registration and decoding after the private workflow has returned.
 	defer func() {
 		if err != nil {
-			err = diagnostics.failure(err)
+			err = &RunError{terminal: err, diagnostics: diagnostics.failure(err)}
 		}
 	}()
 	var zero T

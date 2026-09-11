@@ -125,6 +125,11 @@ func TestRunRetainsRejectionBeforeResultEncoderFailure(t *testing.T) {
 	assert.Contains(t, err.Error(), encoderErr.Error())
 	var rejected *model.OutputValidationError
 	require.ErrorAs(t, err, &rejected)
+	var failure *RunError
+	require.ErrorAs(t, err, &failure)
+	require.ErrorContains(t, failure.TerminalError(), "tool_failure")
+	assert.NotErrorAs(t, failure.TerminalError(), &toolErr)
+	assert.NotErrorAs(t, failure.TerminalError(), &rejected)
 }
 
 func TestRunPreservesInternalDecoderErrorWithoutRetry(t *testing.T) {
@@ -136,6 +141,9 @@ func TestRunPreservesInternalDecoderErrorWithoutRetry(t *testing.T) {
 	provider := &recordingProvider{responses: []*model.Response{toolResponse(`{"value":"accepted"}`)}}
 	_, err := Run(t.Context(), testClient(t, provider), outputRequest(), spec)
 	require.ErrorIs(t, err, want)
+	var failure *RunError
+	require.ErrorAs(t, err, &failure)
+	require.ErrorContains(t, failure.TerminalError(), want.Error())
 	assert.Contains(t, err.Error(), want.Error())
 	assert.Len(t, provider.requests, 1)
 }
@@ -250,7 +258,9 @@ func TestRunCancellationReturnsBeforeLateProviderFailure(t *testing.T) {
 	}
 	require.ErrorIs(t, err, context.Canceled)
 	before := err.Error()
-	unwrap := append([]error(nil), err.(interface{ Unwrap() []error }).Unwrap()...)
+	var runErr *RunError
+	require.ErrorAs(t, err, &runErr)
+	unwrap := runErr.Unwrap()
 	release()
 	select {
 	case <-provider.finished:
@@ -261,7 +271,7 @@ func TestRunCancellationReturnsBeforeLateProviderFailure(t *testing.T) {
 	// its return. The direct snapshot test proves append-after-return isolation;
 	// this test proves prompt cancellation without changing engine lifetime.
 	assert.Equal(t, before, err.Error())
-	assert.Equal(t, unwrap, err.(interface{ Unwrap() []error }).Unwrap())
+	assert.Same(t, unwrap, runErr.Unwrap())
 }
 
 func TestConcurrentRunsKeepErrorsPrivate(t *testing.T) {
