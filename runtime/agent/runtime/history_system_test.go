@@ -45,8 +45,13 @@ func TestHistorySystemMessagesKeepOriginalPlacement(t *testing.T) {
 					want = append(want, out[1])
 					assert.Equal(t, "summary", out[1].Meta["goa_ai_history"])
 					quoted := textPart(t, provider.request.Messages[1])
-					assert.NotContains(t, quoted, "Before current question")
-					assert.NotContains(t, quoted, "Before tool call")
+					if keep == 1 {
+						assert.Contains(t, quoted, "Before current question")
+						assert.Contains(t, quoted, "Before tool call")
+					} else {
+						assert.NotContains(t, quoted, "Before current question")
+						assert.NotContains(t, quoted, "Before tool call")
+					}
 					assert.NotContains(t, quoted, "After tool result")
 				}
 				want = append(want, beforeUser)
@@ -85,10 +90,10 @@ func TestHistorySystemMessagesSurviveFinalAnswerProjection(t *testing.T) {
 	assertExactHistory(t, []*model.Message{messages[0], out[1], between, current, messages[6], last}, out)
 	assert.Equal(t, before, canonicalHistory(t, messages))
 	quoted := textPart(t, provider.request.Messages[1])
-	assert.NotContains(t, quoted, "Instruction before the document")
+	assert.Contains(t, quoted, "Instruction before the document")
 	assert.NotContains(t, quoted, "All requested work is complete")
 	assert.NotContains(t, quoted, "Current response format")
-	assert.NotContains(t, quoted, "History message 3,")
+	assert.Contains(t, quoted, "History message 3,")
 	assert.Contains(t, quoted, "History message 4, part 0")
 	require.Len(t, provider.request.Messages, 3)
 	assert.Equal(t, model.TextPart{Text: "History message 4, part 0"}, provider.request.Messages[2].Parts[0])

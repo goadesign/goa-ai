@@ -6,11 +6,39 @@ package runtime
 // matching or remove an instruction while describing a different prefix.
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"strings"
 
 	"goa.design/goa-ai/runtime/agent/model"
 )
+
+// historySummarySource selects the prefix ending at the count-th non-System
+// message. Its System messages supply historical goals, not current commands.
+// Bind their exact content and positions to the policy configuration because
+// the runtime's source hashes separately bind only conversational evidence.
+// Later reminders fall outside this fixed prefix and cannot change its summary.
+func historySummarySource(messages []*model.Message, count int, policy string) ([]*model.Message, string, error) {
+	var context strings.Builder
+	fmt.Fprintf(&context, "%q\n", policy)
+	seen := 0
+	for i, message := range messages {
+		if message.Role == model.ConversationRoleSystem {
+			encoded, err := message.MarshalJSON()
+			if err != nil {
+				return nil, "", fmt.Errorf("runtime: history summary instruction %d: %w", i, err)
+			}
+			fmt.Fprintf(&context, "%d:%s\n", i, encoded)
+		} else {
+			seen++
+			if seen == count {
+				return messages[:i+1], fmt.Sprintf("%x", sha256.Sum256([]byte(context.String()))), nil
+			}
+		}
+	}
+	return nil, "", fmt.Errorf("runtime: history summary source requires %d conversational messages, found %d", count, seen)
+}
 
 // historySummaryMessages checks a policy's source and replacement lengths
 // against the original request. Both must end after complete older turns;
@@ -51,7 +79,7 @@ func historySummaryMessages(messages []*model.Message, summary *HistorySummary) 
 }
 
 // historyConversationCount measures the source and replacement prefixes in
-// conversational messages. System instructions are never part of either prefix.
+// conversational messages. System instructions are not included in either count.
 func historyConversationCount(turns []turn) int {
 	count := 0
 	for _, turn := range turns {

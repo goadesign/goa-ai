@@ -58,6 +58,53 @@ func TestRequestHistoryActivityCarry(t *testing.T) {
 	assert.Equal(t, original, canonicalHistory(t, input.Messages[:len(messages)]))
 }
 
+func TestRequestHistoryCompressCarriesContextAndReplacesOldFingerprint(t *testing.T) {
+	for _, hasSystem := range []bool{false, true} {
+		t.Run(map[bool]string{false: "conversation goals", true: "system goals"}[hasSystem], func(t *testing.T) {
+			provider := evidenceSummaryProvider(model.TextPart{Text: "Earlier observations"})
+			policy := Compress(historyTestClient(t, provider), HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})
+			answer := func(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+				return requestHistoryAnswer(ctx, in.Agent, in.Messages)
+			}
+			rt := newRequestHistoryRuntime(&stubPlanner{start: answer, resume: func(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
+				return requestHistoryAnswer(ctx, in.Agent, in.Messages)
+			}}, policy)
+			messages := requestHistoryMessages()
+			if !hasSystem {
+				messages = messages[1:]
+			}
+			before := canonicalHistory(t, messages)
+			input := &PlanActivityInput{AgentID: "service.agent", RunID: "history-run", Messages: messages}
+			out, err := rt.PlanStartActivity(t.Context(), input)
+			require.NoError(t, err)
+			require.NotNil(t, out.HistoryContext)
+			input.HistoryContext = out.HistoryContext
+			encoded, err := json.Marshal(input)
+			require.NoError(t, err)
+			var restored PlanActivityInput
+			require.NoError(t, json.Unmarshal(encoded, &restored))
+			out, err = rt.PlanResumeActivity(t.Context(), &restored)
+			require.NoError(t, err)
+			assert.Equal(t, 1, provider.completeCalls)
+			assert.Equal(t, input.HistoryContext, out.HistoryContext)
+
+			// Recorded old summary state remains valid durable data. A new
+			// activity regenerates its content once under the current policy.
+			restored.HistoryContext.Summary.PolicyFingerprint = "earlier-summary-content-contract"
+			require.NoError(t, validateHistoryContext(restored.Messages, restored.HistoryContext))
+			out, err = rt.PlanResumeActivity(t.Context(), &restored)
+			require.NoError(t, err)
+			require.NotNil(t, out.HistoryContext)
+			assert.Equal(t, 2, provider.completeCalls)
+			restored.HistoryContext = out.HistoryContext
+			_, err = rt.PlanResumeActivity(t.Context(), &restored)
+			require.NoError(t, err)
+			assert.Equal(t, 2, provider.completeCalls)
+			assert.Equal(t, before, canonicalHistory(t, restored.Messages))
+		})
+	}
+}
+
 func TestRequestHistoryOnlySelectedConcurrentInvocationIsPromoted(t *testing.T) {
 	policy := func(_ context.Context, req *model.Request, _ model.TokenCounter, prior *HistorySummary) (HistoryResult, error) {
 		return requestHistoryResult(req.Messages, req.Model, prior)

@@ -4354,8 +4354,14 @@ summary content contract changed. Replacement summaries receive original
 evidence, not earlier generated summary text. It never summarizes an unchanged
 source again merely to seek a smaller answer after a failed fit.
 
-The built-in fingerprint covers summary instructions, summary role, and the
-evidence-encoding contract. Destination model, tools, reasoning, output budget,
+The built-in fingerprint covers summary instructions, summary role, the
+evidence-encoding contract, and the exact historical System messages with their
+positions. That context ends at the `SourceMessages`-th non-System message.
+Changing a goal or inserting an instruction within this prefix invalidates
+reuse. A reminder added after that last source message does not. Old fingerprints
+remain valid recorded state but are regenerated once if a new activity needs
+compression under the current policy. Original history is retained; no data
+conversion is needed. Destination model, tools, reasoning, output budget,
 and cache settings are recounted, not cached. Changing the model that writes
 future summaries does not invalidate an existing summary under the same content
 contract; the fingerprint does not claim a resolved provider model identity.
@@ -4442,9 +4448,10 @@ Every original System-role message remains exact, wherever it appears in the
 request. Removing older conversation preserves each instruction's order relative
 to every retained original message; instructions are not moved to the front.
 They are counted in every candidate, including the newest-turn baseline, and
-never enter the summary. This includes current instructions placed between tool
-results and a later user message requesting the final answer. If these mandatory
-instructions plus the newest turn exceed the total ceiling, compression fails
+are never replaced by the summary, including instructions placed between tool
+results and a later user message requesting the final answer. Those within the
+historical source prefix also enter the summary request as quoted context.
+If these mandatory instructions plus the newest turn exceed the total ceiling, compression fails
 explicitly rather than dropping an instruction.
 
 When that total ceiling is positive, the single summary receives the non-System
@@ -4498,9 +4505,12 @@ arguments and results, call/result IDs, error status and full error text, and
 citation fields through the canonical `model.Message` JSON codec. Values are
 not selected, rounded, or replaced with tool-result placeholders. Repeated and
 conflicting observations remain separate occurrences with their original role,
-message position, and part position. Skipped System messages do not renumber
-later messages or attachment references. The model decides which supplied facts
-matter for continuing the work; the runtime does not predict relevance.
+message position, and part position. System messages up to and including the last
+source conversational message are quoted through the same codec, so goals and
+constraints available only there can inform the summary. Later reminders are not
+part of that historical evidence. No message or attachment reference is
+renumbered. The model decides which supplied facts matter for continuing the
+work; the runtime does not predict relevance.
 
 A runtime-owned system instruction treats the recorded conversation as evidence,
 not current instructions or actions. The summary request advertises no tools.

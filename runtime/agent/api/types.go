@@ -387,7 +387,8 @@ type (
 		ReplacedMessages int
 		// Message contains the complete summary message.
 		Message model.Message
-		// PolicyFingerprint identifies the policy configuration that produced this summary.
+		// PolicyFingerprint binds the summary policy and any request-only context
+		// it used. Compress includes historical System messages and their positions.
 		PolicyFingerprint string
 	}
 
