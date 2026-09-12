@@ -84,9 +84,46 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOu
 	return outputs, nil
 }
 
-// plannerToolOutputFromCanonicalEvents builds one planner output from the
-// stored call and result events.
+// plannerToolOutputFromCanonicalEvents loads an output for active work and
+// checks its result and server data against the currently registered tool.
 func (r *Runtime) plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID string, callEvents, resultEvents *canonicalToolEvents) (*planner.ToolOutput, error) {
+	output, err := toolOutputFromStoredEvents(callRunID, resultRunID, toolCallID, callEvents, resultEvents)
+	if err != nil {
+		return nil, err
+	}
+	var spec *tools.ToolSpec
+	if output.Failure == nil {
+		registered, ok := r.toolSpec(output.Name)
+		if !ok {
+			return nil, fmt.Errorf("runtime: canonical tool history references unregistered tool %q", output.Name)
+		}
+		spec = &registered
+	}
+	if _, err := validatePersistedToolResult(
+		spec,
+		ToolCall{Name: output.Name, ToolCallID: output.ToolCallID},
+		resultEvents.result.ResultJSON,
+		output.ServerData,
+		output.Bounds,
+		output.Failure,
+	); err != nil {
+		return nil, fmt.Errorf(
+			"runtime: canonical tool result is invalid (run_id=%s tool_call_id=%s tool=%s): %w",
+			resultRunID,
+			toolCallID,
+			output.Name,
+			err,
+		)
+	}
+	return output, nil
+}
+
+// toolOutputFromStoredEvents checks that the saved call and result belong
+// together and that the result bytes are intact. It preserves those bytes
+// without interpreting them through a tool contract that may have changed.
+// Active work validates the current tool contract separately; historical
+// paging needs only the saved identity, query, and paging metadata.
+func toolOutputFromStoredEvents(callRunID, resultRunID, toolCallID string, callEvents, resultEvents *canonicalToolEvents) (*planner.ToolOutput, error) {
 	if callEvents == nil {
 		return nil, fmt.Errorf("runtime: missing canonical tool history in run log (run_id=%s tool_call_id=%s)", callRunID, toolCallID)
 	}
@@ -136,30 +173,6 @@ func (r *Runtime) plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, t
 			output.Name,
 			len(resultJSON),
 			resultEvents.result.ResultBytes,
-		)
-	}
-	var spec *tools.ToolSpec
-	if output.Failure == nil {
-		registered, ok := r.toolSpec(output.Name)
-		if !ok {
-			return nil, fmt.Errorf("runtime: canonical tool history references unregistered tool %q", output.Name)
-		}
-		spec = &registered
-	}
-	if _, err := validatePersistedToolResult(
-		spec,
-		ToolCall{Name: output.Name, ToolCallID: output.ToolCallID},
-		resultJSON,
-		output.ServerData,
-		output.Bounds,
-		output.Failure,
-	); err != nil {
-		return nil, fmt.Errorf(
-			"runtime: canonical tool result is invalid (run_id=%s tool_call_id=%s tool=%s): %w",
-			resultRunID,
-			toolCallID,
-			output.Name,
-			err,
 		)
 	}
 	if output.Failure == nil {

@@ -1045,6 +1045,13 @@ structured transcript, the runtime reconstructs still-live actions from the
 transcript's tool-call IDs and its canonical session run log. The action keeps
 the same model-facing name across turns without persisting or exposing a second
 cursor copy. `storage.Store.ListSessionRunRecords` supplies this canonical history.
+Historical paging reads saved call identity, query, and bounds, not the result
+body or server data through today's generated codecs. Earlier results remain
+unchanged conversation evidence even when the tool's result shape has changed.
+The reader still verifies stored event correlation, byte counts, failures, and
+paging metadata. A final page retires the prior cursor. A real next-page action
+must still satisfy the current execution-payload codec; active tool outputs and
+suspended checkpoints retain full current-contract validation.
 Names matching `continue_` plus exactly 24
 lowercase hexadecimal characters are reserved for these runtime-generated
 tools; agent and toolset registration reject them. Similar authored names such

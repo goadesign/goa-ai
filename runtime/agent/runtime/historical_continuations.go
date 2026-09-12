@@ -109,7 +109,7 @@ func (r *Runtime) loadHistoricalContinuationOutputs(
 		if entry == nil {
 			continue
 		}
-		output, err := r.plannerToolOutputFromCanonicalEvents(
+		output, err := toolOutputFromStoredEvents(
 			entry.callRunID,
 			entry.resultRunID,
 			toolCallID,
@@ -118,6 +118,23 @@ func (r *Runtime) loadHistoricalContinuationOutputs(
 		)
 		if err != nil {
 			return nil, fmt.Errorf("runtime: hydrate historical continuation output: %w", err)
+		}
+		// Earlier result bodies remain conversation evidence, not inputs to
+		// today's result codec. Failed outcomes and paging metadata still obey
+		// their runtime-owned contracts before they can affect available actions.
+		call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID}
+		if output.Failure != nil {
+			_, err = validatePersistedToolResult(nil, call, entry.events.result.ResultJSON,
+				output.ServerData, output.Bounds, output.Failure)
+		} else {
+			spec, ok := r.toolSpec(output.Name)
+			if !ok {
+				return nil, fmt.Errorf("runtime: historical continuation references unregistered tool %q", output.Name)
+			}
+			err = validateToolBoundsContract(spec, call, false, output.Bounds)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("runtime: invalid historical continuation metadata (tool_call_id=%s): %w", toolCallID, err)
 		}
 		outputs = append(outputs, output)
 	}
