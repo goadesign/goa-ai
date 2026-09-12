@@ -46,12 +46,11 @@ type (
 	}
 )
 
-// toolInputCorrection makes one rejection self-contained using the example
+// appendToolInputExample makes one rejection self-contained using the example
 // already validated when this tool input was constructed. The example teaches
 // argument structure, not the values or union branch the caller must choose.
 // Advisory examples that do not fit are omitted whole; validation is unchanged.
-func toolInputCorrection(err error, payload rawjson.Message, fields []tools.FieldMetadata, example rawjson.Message) string {
-	text := toolFieldCorrection(err, payload, fields)
+func appendToolInputExample(text string, example rawjson.Message) string {
 	const instruction = "\nExample illustrates structure; use values and a valid variant appropriate to the request:\n"
 	if len(example) == 0 || len(text)+len(instruction)+len(example) > correction.MaxBytes {
 		return text

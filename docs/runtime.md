@@ -1696,6 +1696,23 @@ truncated. This limit bounds optional correction context, not tool argument
 size or validity. Validation, rejected-response diagnostics, accepted history,
 and the configured number of recovery turns remain unchanged.
 
+When several advertised calls in the same complete response fail their input
+schemas, one replacement receives guidance for all of them. Each section names
+the canonical input contract as a diagnostic identifier, not a callable tool
+name: providers may spell callable names differently. It also identifies the
+call's position in that response, including valid calls when counting positions.
+No call in the rejected response executes. A single
+invalid call retains its existing guidance. This combines only the current
+response's failures; it does not accumulate corrections across attempts.
+The combined guidance first includes complete examples. If that exceeds 4,096
+bytes, all optional examples are omitted. If all existing per-call field-guidance
+blocks still exceed the limit together, the rejection is terminal. Each block
+retains the per-call formatter's existing explicit omission rules; full raw
+diagnostics are not model instructions. The runtime does not silently discard later
+calls to make recovery fit. Full validator causes remain inspectable even in
+that case. Any ordinary decoder or internal failure also remains terminal;
+combining known schema rejections does not make unrelated errors recoverable.
+
 Array indexes and caller-chosen map keys appear as `*`. An undeclared field is
 reported only against its advertised parent object; the submitted field name is
 omitted. Correction text may repeat descriptions and enum values from the

@@ -1229,6 +1229,11 @@ response stays out of history. Replacement feedback never removes active tool
 restrictions; an ordinary unrestricted correction retains the caller-authorized
 catalog. Finish restrictions survive both replacement attempts and successful
 pages, while ordinary correction/replan restrictions end with their episode.
+For multiple invalid advertised calls in one response, replacement guidance
+describes each call; none executes. Optional examples are omitted if necessary
+to fit the existing 4,096-byte limit. A batch whose combined field guidance still
+cannot fit is terminal, with every original validator cause preserved. Guidance
+is not accumulated across attempts, and the configured retry limit is unchanged.
 Model validation supplies constraints and examples, not a mandatory next tool
 call; the runtime adds the instruction to replace the response under its current
 completion requirements. This preserves legal tool, question, and answer choices.
