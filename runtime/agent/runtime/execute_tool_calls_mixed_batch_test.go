@@ -182,6 +182,7 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 	recorder := &recordingHooks{}
 	spec := newAnyJSONSpec("agent.cancel.child")
 	spec.IsAgentTool = true
+	spec.ReplanOnTimeout = true // Cancellation must not become alternative work.
 	spec.AgentID = "nested.cancel"
 	rt := &Runtime{
 		toolsets: make(map[string]ToolsetRegistration),

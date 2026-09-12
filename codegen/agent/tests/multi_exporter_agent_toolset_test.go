@@ -60,6 +60,16 @@ func TestPlainUseLinksUniqueAgentExporter(t *testing.T) {
 	files := buildAndGenerate(t, uniqueExporterAgentToolsetDesign())
 	consumer := fileContent(t, files, "gen/consumer/agents/worker/shared_agenttools_client.go")
 	require.Contains(t, consumer, `"goa.design/goa-ai/gen/alpha/agents/first/agenttools/shared"`)
+	// The provider owns the declaration; generated consumer code reuses its
+	// complete specification rather than reconstructing a weaker contract.
+	specs := fileContent(t, files, "gen/alpha/agents/first/exports/shared/specs.go")
+	require.Regexp(t, `ReplanOnTimeout:\s+true`, specs)
+	provider := fileContent(t, files, "gen/alpha/agents/first/agenttools/shared/helpers.go")
+	require.Contains(t, provider, "spec := sharedspecs.SpecLookup()")
+	require.Contains(t, provider, "spec.IsAgentTool = true")
+	aggregate := fileContent(t, files, "gen/consumer/agents/worker/specs/specs.go")
+	require.Contains(t, aggregate, "spec := shared.SpecLookup()")
+	require.Contains(t, aggregate, "spec.IsAgentTool = true")
 }
 
 // multiExporterAgentToolsetDesign declares two agents that export one shared
@@ -112,6 +122,7 @@ func uniqueExporterAgentToolsetDesign() func() {
 			Tool("lookup", "Look up a value.", func() {
 				Args(LookupInput)
 				Return(String)
+				ReplanOnTimeout()
 			})
 		})
 		Service("alpha", func() {

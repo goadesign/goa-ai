@@ -8,6 +8,7 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -147,6 +148,7 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 	tool := tools.Ident("svc.agenttools.slow")
 	spec := newAnyJSONSpec(tool)
 	spec.IsAgentTool = true
+	spec.ReplanOnTimeout = true // The parent's deadline still ends new work.
 	spec.AgentID = string(cfg.Definition.route.ID)
 	seedTestToolset(rt, reg.Name, spec)
 
@@ -206,6 +208,7 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 	require.True(t, got.timedOut)
 	require.Len(t, got.results, 1)
 	require.Equal(t, canceledByTimeBudgetMessage, got.results[0].ToolResult.Failure.Error.Message)
+	require.Equal(t, planner.RecoveryFinish, got.results[0].ToolResult.Failure.Recovery.Action)
 }
 
 func TestExecuteToolCalls_WaitsForAgentChildAfterParentCancellation(t *testing.T) {

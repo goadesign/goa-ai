@@ -43,6 +43,9 @@ func (r *Runtime) validateToolSpecRegistrations(
 
 	for _, registration := range registrations {
 		for _, spec := range registration.specs {
+			if spec.ReplanOnTimeout && !spec.IsAgentTool {
+				return nil, fmt.Errorf("%w: tool %q ReplanOnTimeout requires an agent-as-tool registration", ErrInvalidConfig, spec.Name)
+			}
 			if spec.ExecutionPayloadCodec.FromJSON == nil || spec.ExecutionPayloadCodec.ToJSON == nil {
 				return nil, fmt.Errorf("%w: tool %q execution payload codec must define both ToJSON and FromJSON", ErrInvalidConfig, spec.Name)
 			}

@@ -808,6 +808,26 @@ func TerminalRun() {
 	tool.TerminalRun = true
 }
 
+// ReplanOnTimeout allows the caller to choose other work after this exported
+// agent operation times out. The failed operation stays failed; this does not
+// retry it or extend any time, tool-call, or recovery budget.
+//
+// The provider promises that abandoning the operation cannot leave an unknown
+// external write. Do not use this for an operation that may change settings,
+// send messages, or otherwise have effects whose completion is unknown.
+//
+// ReplanOnTimeout must appear in a Tool exported by an agent. Generated
+// agent-as-tool consumers preserve the declaration. Direct service, inline,
+// MCP, and registry execution, including PublishTo, are not supported.
+func ReplanOnTimeout() {
+	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.ReplanOnTimeout = true
+}
+
 // Bookkeeping marks the current tool as a control record whose success does not
 // independently schedule another planner turn.
 //

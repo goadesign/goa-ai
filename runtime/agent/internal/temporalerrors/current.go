@@ -126,6 +126,9 @@ func Wrap(err error) error {
 	case errorKindInvalidReserved:
 		return wrapCurrentInvalid(classified.invalid)
 	case errorKindNone:
+		if IsNativeTimeout(err) {
+			return err
+		}
 		return wrapCurrentGeneric(err, "", true)
 	default:
 		panic(fmt.Sprintf("temporalerrors: unknown classification kind %d", classified.kind))

@@ -1078,6 +1078,65 @@ if violation := checkBatchRules(sum.ToolCalls); violation != nil {
 }
 ```
 
+### Agent timeout recovery
+
+An agent operation that only retrieves evidence may time out while other useful
+work is still possible. By default, an execution failure requires the caller to
+finish, because the runtime cannot know whether the operation changed anything.
+The provider can explicitly permit alternative work for one exported operation:
+
+```go
+var Catalog = Toolset("catalog", func() {
+    Tool("find", "Find matching records", func() {
+        Args(FindInput)
+        Return(FindResult)
+        ReplanOnTimeout()
+    })
+})
+// The provider exports Catalog; callers consume that generated agent export.
+```
+
+`ReplanOnTimeout()` promises that abandoning this operation cannot leave an
+unknown external write. Do not apply it to an operation that may change a
+setting, send a message, or perform another write whose outcome is unknown.
+The promise belongs to the tool definition, not to a consumer's configuration.
+It is supported only on generated agent exports and their generated
+agent-as-tool consumers. Direct service, inline, MCP, registry, and `PublishTo`
+routes are rejected during generation rather than losing the declaration.
+
+The runtime records a typed timeout as `ToolFailure{Kind: "timeout"}`. For the
+declared operation its action is `replan`; otherwise its action remains
+`finish`. The operation stays failed, with its diagnostic cause intact. This is
+not successful evidence or a claim that matching data does not exist. Other
+failure kinds, cancellation, overall time limits, and recovery/tool-call limits
+keep their existing behavior. No operation is retried automatically.
+
+The existing `replan` rules apply: on the recovery turn the failed tool is
+excluded while other authorized tools, questions, and answers remain available.
+A same-name `correct_call` failure in the same batch retains its existing
+precedence. This is not a permanent prohibition on that tool; ordinary recovery
+restrictions end when their episode ends. Required dependent work must still
+be reported as incomplete when its evidence could not be obtained.
+
+Temporal's SDK already encodes activity and child-workflow errors with their
+timeout type and diagnostic context. The runtime preserves an exact native
+SDK chain ending in a timeout with no previous failure. Application errors,
+joined errors, arbitrary wrappers, and timeouts carrying a previous failure
+retain their existing conversion. It never recognizes timeouts by searching
+error messages. Previously saved `goa_ai.generic_error.v3` failures therefore
+remain generic, and previously recorded `internal`/`finish` tool results are not
+reclassified when loading history.
+
+Regenerate the provider and consumer packages when adopting the declaration.
+There is no new result schema, registry field, or stored-data conversion.
+Completed histories remain readable; replay does not rewrite their saved
+failure records. Keep unfinished workflows with their owning worker version:
+adding a recovery declaration can change commands after a previously recorded
+native child failure. Do not move those histories between workers with different
+declarations or roll new recovery histories back to an older runtime. New calls
+need matching generated policy and runtime support; old callers otherwise keep
+their conservative finish behavior.
+
 ### PlanInput and PlanResumeInput
 
 ```go

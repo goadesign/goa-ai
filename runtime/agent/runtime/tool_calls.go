@@ -152,7 +152,7 @@ func toolFailureFromExecutionError(err error, message string) *planner.ToolFailu
 	case errors.As(err, &svcErr) && svcErr.Name == "service_unavailable":
 		kind = planner.FailureUnavailable
 		action = planner.RecoveryReplan
-	case errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, context.DeadlineExceeded) || temporalerrors.IsNativeTimeout(err):
 		kind = planner.FailureTimeout
 	}
 	return &planner.ToolFailure{
@@ -167,13 +167,18 @@ func toolFailureFromExecutionError(err error, message string) *planner.ToolFailu
 // synthesizeToolError converts an ordinary tool execution error into a
 // ToolResult and publishes the corresponding ToolResultReceived event.
 func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call ToolCall, err error, errMsg string, duration time.Duration) (*ToolExecutionResult, error) {
+	spec, ok := e.r.toolSpec(call.Name)
+	if !ok {
+		return e.synthesizeUnknownToolResult(ctx, call, duration)
+	}
+	failure := toolFailureFromExecutionError(err, errMsg)
+	if failure.Kind == planner.FailureTimeout && spec.ReplanOnTimeout {
+		failure.Recovery.Action = planner.RecoveryReplan
+	}
 	toolRes := &planner.ToolResult{
 		Name:       call.Name,
 		ToolCallID: call.ToolCallID,
-		Failure:    toolFailureFromExecutionError(err, errMsg),
-	}
-	if _, ok := e.r.toolSpec(call.Name); !ok {
-		return e.synthesizeUnknownToolResult(ctx, call, duration)
+		Failure:    failure,
 	}
 	result := Executed(toolRes)
 	result.duration = duration
