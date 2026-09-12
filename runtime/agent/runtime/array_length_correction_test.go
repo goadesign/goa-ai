@@ -1,5 +1,5 @@
-// This test sends an oversized array through the runtime's real model
-// validation and recovery path. The next planner receives the exact bound,
+// This test sends two invalid arrays through the runtime's real model
+// validation and recovery path. The next planner receives both exact bounds,
 // while rejected arguments never become executable conversation history.
 package runtime
 
@@ -19,17 +19,18 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedCall(t *testing.T) {
+func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedBatch(t *testing.T) {
 	kickoff, batch := newAnyJSONSpec("catalog.kickoff"), newAnyJSONSpec("catalog.batch")
 	batch.Payload = tools.TypeSpec{
 		Name:   "Batch",
-		Schema: rawjson.Message(`{"type":"object","properties":{"items":{"type":"array","items":{"type":"integer"},"maxItems":2}},"required":["items"],"additionalProperties":false}`),
+		Schema: rawjson.Message(`{"type":"object","properties":{"items":{"type":"array","items":{"type":"integer"},"minItems":1,"maxItems":2}},"required":["items"],"additionalProperties":false}`),
 		Fields: []tools.FieldMetadata{{Path: []tools.FieldPathSegment{tools.FixedField("items")}, JSONType: "array"}},
 		Codec:  tools.AnyJSONCodec,
 	}
 	const invalid = `{"items":[1,2,3]}`
+	const empty = `{"items":[]}`
 	const accepted = `{"items":[1,2]}`
-	const guidance = `Field "items" must contain at most 2 items.`
+	const guidance = "Tool call 1, input contract \"catalog.batch\" (diagnostic identifier, not a callable tool name):\nField \"items\" must contain at most 2 items.\n\nTool call 2, input contract \"catalog.batch\" (diagnostic identifier, not a callable tool name):\nField \"items\" must contain at least 1 items."
 	var providerCalls, executions, resumes int
 	h := newRecoveryHarness(t, "array-correction", []tools.ToolSpec{kickoff, batch},
 		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
@@ -43,7 +44,7 @@ func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedCall(t *
 		},
 		func(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			resumes++
-			if len(input.ToolOutputs) == 2 {
+			if len(input.ToolOutputs) == 3 {
 				return finalPlannerResult("accepted array completed"), nil
 			}
 			messages := input.Messages
@@ -55,6 +56,7 @@ func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedCall(t *
 				for _, part := range message.Parts {
 					if call, ok := part.(model.ToolUsePart); ok {
 						assert.NotEqual(t, invalid, string(call.Input))
+						assert.NotEqual(t, empty, string(call.Input))
 					}
 				}
 			}
@@ -73,16 +75,20 @@ func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedCall(t *
 				return nil, err
 			}
 			calls := response.ToolCalls()
-			require.Len(t, calls, 1)
-			request, err := planner.ToolRequestFromModelCall(calls[0])
-			require.NoError(t, err)
-			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
+			require.Len(t, calls, 2)
+			var requests []planner.ToolRequest
+			for _, call := range calls {
+				request, err := planner.ToolRequestFromModelCall(call)
+				require.NoError(t, err)
+				requests = append(requests, request)
+			}
+			return &planner.PlanResult{ToolCalls: requests}, nil
 		})
 	h.runtime.models["test"] = mustTestModelClient(stubModelClient{complete: func(_ context.Context, request *model.Request) (*model.Response, error) {
 		providerCalls++
-		payload, id := invalid, "oversized"
+		payload, second, id := invalid, empty, "oversized"
 		if providerCalls == 2 {
-			payload, id = accepted, "accepted"
+			payload, second, id = accepted, accepted, "accepted"
 			found := false
 			for _, message := range request.Messages {
 				for _, part := range message.Parts {
@@ -95,13 +101,13 @@ func TestArrayLengthCorrectionReachesNextPlannerWithoutExecutingRejectedCall(t *
 			}
 			assert.True(t, found, "runtime must deliver the same correction to the next model request")
 		}
-		return testModelResponseWithUsage(nil, model.TokenUsage{InputTokens: 6, OutputTokens: 4, TotalTokens: 10}, model.ToolCall{ID: id, Name: batch.Name, Payload: rawjson.Message(payload)}), nil
+		return testModelResponseWithUsage(nil, model.TokenUsage{InputTokens: 6, OutputTokens: 4, TotalTokens: 10}, model.ToolCall{ID: id, Name: batch.Name, Payload: rawjson.Message(payload)}, model.ToolCall{ID: id + "-second", Name: batch.Name, Payload: rawjson.Message(second)}), nil
 	}})
 	out, err := h.run(streamRecoveryKickoff(kickoff), policy.CapsState{MaxToolCalls: 3, RemainingToolCalls: 3, MaxRecoveryTurns: 1, RemainingRecoveryTurns: 1})
 	require.NoError(t, err)
 	assert.Equal(t, "accepted array completed", out.Final.Text())
 	assert.Equal(t, 2, providerCalls)
-	assert.Equal(t, 1, executions)
+	assert.Equal(t, 2, executions)
 	assert.Equal(t, 3, resumes)
 	require.NotNil(t, out.Usage)
 	assert.Equal(t, 20, out.Usage.TotalTokens)

@@ -65,9 +65,18 @@ type (
 	// toolCallValidationError keeps the original validator error available to
 	// callers while presenting separate correction guidance to the model.
 	toolCallValidationError struct {
-		toolName   tools.Ident
-		correction string
+		toolName        tools.Ident
+		correction      string
+		fieldCorrection string
+		cause           error
+	}
+
+	// toolBatchValidationError is constructed only from checks of one complete
+	// response. Its cause retains every rejected call; an empty correction means
+	// all per-call guidance blocks could not fit the existing recovery contract.
+	toolBatchValidationError struct {
 		cause      error
+		correction string
 	}
 )
 
@@ -627,10 +636,12 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 				if !isToolInputContractRejection(err) {
 					return fmt.Errorf("model tool %q payload failed its request contract: %w", call.Name, err)
 				}
+				guidance := toolFieldCorrection(err, call.Payload, fields)
 				return &toolCallValidationError{
-					toolName:   call.Name,
-					correction: toolInputCorrection(err, call.Payload, fields, example),
-					cause:      err,
+					toolName:        call.Name,
+					correction:      appendToolInputExample(guidance, example),
+					fieldCorrection: guidance,
+					cause:           err,
 				}
 			}
 			return nil
@@ -676,22 +687,57 @@ func validateConfiguredToolCalls(
 	validators map[tools.Ident]toolCallValidator,
 	response *Response,
 ) error {
-	for _, call := range response.ToolCalls() {
+	var failures []error
+	var complete, fields []string
+	for index, call := range response.ToolCalls() {
 		validate, exists := validators[call.Name]
 		if !exists {
-			return fmt.Errorf(
+			return errors.Join(append(failures, fmt.Errorf(
 				"model returned tool %q that was not present in its request: %w",
 				call.Name,
 				NewUnadvertisedToolNameError(string(call.Name)),
-			)
+			))...)
 		}
 		if validate != nil {
 			if err := validate(call); err != nil {
-				return err
+				failures = append(failures, err)
+				// Only this exact typed rejection proves that model arguments,
+				// rather than the decoder or another internal operation, failed.
+				//nolint:errorlint
+				rejected, ok := err.(*toolCallValidationError)
+				if !ok {
+					return errors.Join(failures...)
+				}
+				heading := fmt.Sprintf("Tool call %d, input contract %q (diagnostic identifier, not a callable tool name):\n", index+1, call.Name)
+				complete = append(complete, heading+rejected.correction)
+				fields = append(fields, heading+rejected.fieldCorrection)
 			}
 		}
 	}
-	return nil
+	if len(failures) == 0 {
+		return nil
+	}
+	if len(failures) == 1 {
+		return failures[0]
+	}
+	guidance := strings.Join(complete, "\n\n")
+	if len(guidance) > correction.MaxBytes {
+		guidance = strings.Join(fields, "\n\n")
+	}
+	if len(guidance) > correction.MaxBytes {
+		guidance = ""
+	}
+	return &toolBatchValidationError{cause: errors.Join(failures...), correction: guidance}
+}
+
+// Error renders every original validator diagnostic for the rejected batch.
+func (e *toolBatchValidationError) Error() string {
+	return e.cause.Error()
+}
+
+// Unwrap preserves inspection of all original validator causes.
+func (e *toolBatchValidationError) Unwrap() error {
+	return e.cause
 }
 
 // Error names the rejected tool contract and includes the original validator
@@ -885,6 +931,11 @@ func recoveryCorrectionFromError(err error) string {
 	// one correctable child while ignoring an unrelated failure beside it.
 	//nolint:errorlint
 	switch source := err.(type) {
+	case *toolBatchValidationError:
+		if source == nil {
+			return ""
+		}
+		return source.correction
 	case *toolCallValidationError:
 		if source == nil {
 			return ""
