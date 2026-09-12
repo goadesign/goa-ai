@@ -1239,8 +1239,12 @@ resolution. The adapter accepts only the configuration it consumes: region,
 refreshable credentials, model options and SDK request options. Bedrock requests
 disable storage, background execution, input truncation and implicit prompt
 cache writes. Unsupported structured output and cache-bearing requests fail
-before transport. Neither Responses provider invents token counts; consumers
-that require exact counts must resolve that requirement before adopting it.
+before transport. Bedrock Responses exposes a declared local token estimate;
+direct OpenAI counting remains unsupported. The Bedrock estimator counts
+GPT-5.6 images from dimensions rather than their base64 transfer size, retaining
+the byte approximation for text, tools, and opaque reasoning. Image counting
+requires a documented model rule; it does not change inference capabilities.
+Consumers requiring exact counts must resolve that requirement separately.
 See the [runtime provider contract](docs/runtime.md#openai-responses-on-amazon-bedrock)
 for details and the SDK source-compatibility change.
 

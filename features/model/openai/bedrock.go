@@ -33,7 +33,8 @@ var _ model.TokenCounter = (*bedrockProvider)(nil)
 // Function tools advertise their complete generated schemas with strict:false;
 // returned arguments are preserved and validated locally, never repaired.
 // Cache-bearing requests and StructuredOutput are rejected before inference.
-// CountTokens estimates the prepared request's byte size locally with Exact=false.
+// CountTokens estimates prepared text and tool bytes plus supported model image
+// tokens locally with Exact=false.
 // This approximation is neither a native token count nor a guaranteed upper bound;
 // callers that require exact counting must reject it.
 // Model IDs and logical model classes are configured through opts as usual.
@@ -81,9 +82,10 @@ func NewBedrockProvider(ctx context.Context, region string, credentials aws.Cred
 
 // CountTokens validates and prepares the same SDK request used for inference,
 // including encrypted reasoning and tool schemas, without sending HTTP. Its
-// estimate is serialized bytes divided by three (rounded up), plus 500 tokens
-// for framing. This is a wire-size approximation, not billing data or a hard
-// context-window guarantee; opaque content need not tokenize like ordinary text.
+// estimate is serialized non-image bytes divided by three (rounded up), plus
+// image tokens derived from dimensions and 500 tokens for framing. Image counting
+// requires a documented model rule. This is not billing data or a hard context
+// guarantee; text and opaque reasoning still use a byte-size approximation.
 func (c *bedrockProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
 	if err := ctx.Err(); err != nil {
 		return model.TokenCount{}, err
@@ -92,6 +94,10 @@ func (c *bedrockProvider) CountTokens(ctx context.Context, req *model.Request) (
 		return model.TokenCount{}, err
 	}
 	prepared, err := c.prepareRequest(req)
+	if err != nil {
+		return model.TokenCount{}, err
+	}
+	imageTokens, err := bedrockImageTokens(prepared)
 	if err != nil {
 		return model.TokenCount{}, err
 	}
@@ -105,7 +111,7 @@ func (c *bedrockProvider) CountTokens(ctx context.Context, req *model.Request) (
 	return model.TokenCount{
 		Model:       prepared.resolvedModelID,
 		ModelClass:  prepared.resolvedModelClass,
-		InputTokens: (len(body)+2)/3 + 500,
+		InputTokens: (len(body)+2)/3 + imageTokens + 500,
 		Exact:       false,
 	}, nil
 }
