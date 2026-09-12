@@ -395,6 +395,13 @@ exclusive with tool-input correction guidance. The replacement starts from the
 last accepted conversation with its current executable catalog. Unstructured
 validation failures remain terminal.
 
+When a new run restores paging actions from earlier turns, saved result bodies
+remain evidence rather than typed inputs to current work. The runtime verifies
+the saved events and paging metadata without decoding old result bodies or
+server data against today's tool contract. Active outputs, suspended work, and
+new page requests retain their current codec checks. See the
+[historical paging contract](README.md#bounded-results-and-server-data).
+
 When a completed model reply or planner result breaks its required shape, the
 planner returns `OutputContractError`. The runtime validates the full result
 before accepting its selected tool calls or storing its selected response. The
