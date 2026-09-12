@@ -84,6 +84,10 @@ type (
 		// cost. It is set via the Bookkeeping DSL helper.
 		Bookkeeping bool
 
+		// ReplanOnTimeout declares that a timed-out exported agent operation may
+		// be abandoned without an unknown external write, allowing other work.
+		ReplanOnTimeout bool
+
 		// ResultReminder is an optional system reminder that is injected into
 		// the conversation after the tool result is returned. It provides
 		// backstage guidance to the model about how to interpret or present

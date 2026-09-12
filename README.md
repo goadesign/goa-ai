@@ -1206,6 +1206,15 @@ child tools observed during the nested run is telemetry for linked progress;
 zero children does not turn a success or correctable failure into run
 finalization.
 
+An exported agent tool may declare `ReplanOnTimeout()` when its provider can
+promise that abandoning the timed-out operation leaves no unknown external
+write. Its timeout remains a failed result, but the caller can choose other
+available work within its existing budgets. This does not retry the operation
+or change other failures. Only generated agent-as-tool routes support the
+declaration; unsupported direct, MCP, registry, and `PublishTo` routes fail
+generation. See [agent timeout recovery](docs/runtime.md#agent-timeout-recovery)
+for the exact scope and worker-upgrade requirements.
+
 Recovery turns carry the selected failed call IDs in `PlanActivityInput`.
 Empty IDs are omitted from start and ordinary resume activities. Runtime
 workers, generated packages, and callers must use the same generated input

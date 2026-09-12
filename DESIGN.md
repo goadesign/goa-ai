@@ -426,7 +426,14 @@ v3 application types retain full valid diagnostic text and plain exact provider
 fields, while historical types keep their original decoding and re-wrapping.
 Native failure objects are not workflow argument payloads; backend failure-size
 limits and application-supplied converters remain separate contracts.
-Classification and retry settings are unchanged. Applications own
+The native Temporal activity/child chain ending in a timeout without a previous
+failure retains its SDK representation and full diagnostics. Other application,
+joined, and previously saved failures keep their existing conversion. A
+provider-authored `ReplanOnTimeout()` declaration on a generated agent export
+allows alternative work after that operation's typed timeout, without retrying
+it; unmarked operations still require finishing. See
+[agent timeout recovery](docs/runtime.md#agent-timeout-recovery).
+Other classification and retry settings are unchanged. Applications own
 capture, disclosure, and retention; arbitrary typed causes and custom Temporal
 details are available to the original-error tracer, not promised on the wire.
 See [diagnostic transport and upgrade restrictions](docs/runtime.md#diagnostic-ownership-and-transport).

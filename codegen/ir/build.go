@@ -107,6 +107,9 @@ func Build(generation *goacodegen.Generation, servicePlan *service.Plan) (*Desig
 	if err := attachToolsetRefs(genpkg, servicesByName, toolsetsByName, agents); err != nil {
 		return nil, err
 	}
+	if err := validateTimeoutRecoveryRoutes(agents, serviceExports); err != nil {
+		return nil, err
+	}
 	if err := linkOwnerReferences(toolsets, serviceExports); err != nil {
 		return nil, err
 	}

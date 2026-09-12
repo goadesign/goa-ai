@@ -66,6 +66,9 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
         {{- if .Bookkeeping }}
         Bookkeeping: true,
         {{- end }}
+        {{- if .ReplanOnTimeout }}
+        ReplanOnTimeout: true,
+        {{- end }}
         {{- if .Bounds }}
         Bounds: &tools.BoundsSpec{
             {{- if .Bounds.Paging }}

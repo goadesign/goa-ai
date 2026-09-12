@@ -82,6 +82,11 @@ type (
 		// not independently schedule another planner turn. Calls and results
 		// still remain in the exact provider transcript.
 		Bookkeeping bool
+		// ReplanOnTimeout permits alternative work after a typed execution
+		// timeout. Only agent-as-tool registrations support this declaration.
+		// The provider promises the failed operation may be abandoned without
+		// an unknown external write. It stays failed and is not retried.
+		ReplanOnTimeout bool
 		// IsAgentTool indicates this tool is implemented by an agent (agent-as-tool).
 		// When true, the runtime executes the tool by starting the provider agent as a
 		// child workflow from within the parent workflow loop. Set by codegen when
