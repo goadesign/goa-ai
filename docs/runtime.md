@@ -646,8 +646,24 @@ rejected before HTTP rather than silently moved or dropped. Provider-reported
 cache reads and writes are retained in usage. Native `StructuredOutput` is
 rejected with `model.ErrStructuredOutputUnsupported` before HTTP.
 
-`CountTokens` returns `model.ErrTokenCountingUnsupported`. No estimated or
-zero count is substituted. This is a framework provider integration, not a
+`CountTokens` prepares the request locally without HTTP and returns `Exact=false`.
+Text, tools, and opaque replay content use serialized bytes divided by three,
+rounded up, plus 500 framing tokens. Native image data URLs are excluded from
+that byte calculation. For GPT-5.6 Sol, Terra, and Luna, each image instead uses
+the [documented auto/original dimension rule](https://developers.openai.com/api/docs/guides/images-vision):
+fit within 65,535 pixels on each side, count 32-pixel patches, and round up the
+1.2 token multiplier. More than 30,000 patches rejects that individual image;
+multiple valid images add their counts independently. PNG, JPEG, GIF, and WebP
+headers are decoded without altering the image sent for inference.
+
+Image counting for another model returns `model.ErrTokenCountingUnsupported`
+with the model name. This tightens the previous wire-byte approximation for
+unknown models; text-only counting still accepts arbitrary configured model
+IDs. Unreadable image headers return a counting error. Completion and streaming
+keep their existing provider-owned validation and never depend on local image
+counting rules. The estimate is neither billing usage nor a context-window
+guarantee; exact-count callers must reject it. Direct OpenAI counting remains
+unsupported. This is a framework provider integration, not a
 complete migration for an application whose history fitting, explicit count
 API or rate admission requires exact token counts. Those application contracts
 must be resolved separately before switching its production model.

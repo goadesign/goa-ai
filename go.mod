@@ -28,6 +28,7 @@ require (
 	goa.design/clue v1.2.6
 	goa.design/goa/v3 v3.31.0-preview.5.0.20260906175214-920765e80ebe
 	goa.design/pulse v1.10.3-0.20260825143355-aea9ab01cba6
+	golang.org/x/image v0.43.0
 	golang.org/x/time v0.15.0
 	google.golang.org/genai v1.62.0
 	google.golang.org/grpc v1.83.1

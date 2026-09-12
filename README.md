@@ -1681,8 +1681,10 @@ OpenAI Responses is also available through `openai.NewBedrock` and
 provider. Bedrock receives full tool schemas with `strict:false`; local
 validation still rejects invalid arguments. Direct OpenAI keeps `strict:true`.
 The Bedrock constructor rejects native structured output and explicit cache
-requests. Token counting remains unsupported, so applications that require
-exact counts are not ready to switch solely by adding this provider.
+requests. Token counting returns a local estimate, not an exact provider count.
+GPT-5.6 images count by dimensions rather than encoded file size; image counting
+for models without a documented rule returns `ErrTokenCountingUnsupported`.
+Applications requiring exact counts cannot use this estimate.
 See [Bedrock Responses and the SDK v3 migration](docs/runtime.md#openai-responses-on-amazon-bedrock)
 for constructor options, replay behavior and the required import update for
 custom `Options.Client` implementations. Existing API-key convenience
