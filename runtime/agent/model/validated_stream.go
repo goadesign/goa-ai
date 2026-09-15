@@ -646,6 +646,7 @@ func observeStreamResult(inner Streamer, chunk Chunk, err error) StreamObservati
 			evidence,
 			observedResponse,
 			firstTokenUsage(rejectedUsageTotal, rejectedUsageDelta),
+			nil,
 		)
 	}
 	return StreamObservation{
@@ -893,6 +894,7 @@ func (s *validatedStreamer) failValidation(kind OutputValidationKind, err error)
 		s.responseEvidence,
 		s.rejected,
 		firstTokenUsage(s.rejectedTotal, s.rejectedDelta),
+		s.contract.toolValidators,
 	)
 	s.terminalErr = validationErr
 	return s.terminalErr

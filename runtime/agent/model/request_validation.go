@@ -147,7 +147,7 @@ func (c *RequestContract) ValidateResponse(response *Response) (*Response, error
 	usage := c.validatedUsageEvidence(response)
 	if response != nil {
 		if err := validateTokenUsage(response.Usage); err != nil {
-			return nil, newOutputValidationError(OutputValidationUsage, err, evidence, nil, usage)
+			return nil, newOutputValidationError(OutputValidationUsage, err, evidence, nil, usage, c.toolValidators)
 		}
 	}
 	if err := preflightResponse(response, &dynamicValueWalk{}, dynamicCloneEvidence); err != nil {
@@ -157,18 +157,19 @@ func (c *RequestContract) ValidateResponse(response *Response) (*Response, error
 			evidence,
 			nil,
 			usage,
+			c.toolValidators,
 		)
 	}
 	evidence = responseEvidencePreflighted(response)
 	owned, err := ownPreflightedResponse(response)
 	if err != nil {
-		return nil, newOutputValidationError(OutputValidationResponseShape, err, evidence, nil, usage)
+		return nil, newOutputValidationError(OutputValidationResponseShape, err, evidence, nil, usage, c.toolValidators)
 	}
 	if owned != nil {
 		c.stampUsageIdentity(&owned.Usage)
 	}
 	if kind, err := c.validateOwnedResponse(owned); err != nil {
-		return nil, newOutputValidationError(kind, err, evidence, owned, usage)
+		return nil, newOutputValidationError(kind, err, evidence, owned, usage, c.toolValidators)
 	}
 	return owned, nil
 }
@@ -189,6 +190,7 @@ func (c *RequestContract) RejectProviderOutput(
 		ResponseEvidence{Present: true},
 		nil,
 		c.validatedUsageValue(usage),
+		c.toolValidators,
 	)
 }
 
@@ -206,7 +208,7 @@ func (c *RequestContract) RejectResponse(
 	evidence := ResponseEvidence{Present: response != nil}
 	usage := c.validatedUsageEvidence(response)
 	if err := preflightResponse(response, &dynamicValueWalk{}, dynamicCloneEvidence); err != nil {
-		return newOutputValidationError(kind, errors.Join(cause, err), evidence, nil, usage)
+		return newOutputValidationError(kind, errors.Join(cause, err), evidence, nil, usage, c.toolValidators)
 	}
 	evidence = responseEvidencePreflighted(response)
 	owned, err := ownPreflightedResponse(response)
@@ -214,7 +216,7 @@ func (c *RequestContract) RejectResponse(
 		cause = errors.Join(cause, err)
 		owned = nil
 	}
-	return newOutputValidationError(kind, cause, evidence, owned, usage)
+	return newOutputValidationError(kind, cause, evidence, owned, usage, c.toolValidators)
 }
 
 // EvidenceForResponse returns a bounded fingerprint for one complete response.
@@ -638,7 +640,7 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 				}
 				guidance := toolFieldCorrection(err, call.Payload, fields)
 				return &toolCallValidationError{
-					toolName:        call.Name,
+					toolName:        name,
 					correction:      appendToolInputExample(guidance, example),
 					fieldCorrection: guidance,
 					cause:           err,
@@ -708,7 +710,7 @@ func validateConfiguredToolCalls(
 				if !ok {
 					return errors.Join(failures...)
 				}
-				heading := fmt.Sprintf("Tool call %d, input contract %q (diagnostic identifier, not a callable tool name):\n", index+1, call.Name)
+				heading := fmt.Sprintf("Tool call %d, input contract %q (diagnostic identifier, not a callable tool name):\n", index+1, rejected.toolName)
 				complete = append(complete, heading+rejected.correction)
 				fields = append(fields, heading+rejected.fieldCorrection)
 			}
@@ -716,9 +718,6 @@ func validateConfiguredToolCalls(
 	}
 	if len(failures) == 0 {
 		return nil
-	}
-	if len(failures) == 1 {
-		return failures[0]
 	}
 	guidance := strings.Join(complete, "\n\n")
 	if len(guidance) > correction.MaxBytes {
@@ -749,12 +748,6 @@ func (e *toolCallValidationError) Error() string {
 // Unwrap lets callers inspect the exact validator error that rejected the call.
 func (e *toolCallValidationError) Unwrap() error {
 	return e.cause
-}
-
-// modelRecoveryCorrection gives OutputValidationError the bounded guidance
-// derived from the advertised input contract, separate from the private cause.
-func (e *toolCallValidationError) modelRecoveryCorrection() string {
-	return e.correction
 }
 
 // validateToolChoiceResponse enforces the exact tool-use constraint copied
@@ -895,12 +888,15 @@ func responseEvidencePreflighted(response *Response) ResponseEvidence {
 }
 
 // newOutputValidationError stores only framework-owned rejected response data.
+// Malformed argument guidance requires the receiving request's tool catalog;
+// an error constructed without that catalog cannot expose a submitted name.
 func newOutputValidationError(
 	kind OutputValidationKind,
 	cause error,
 	evidence ResponseEvidence,
 	rejected *Response,
 	usage *TokenUsage,
+	validators map[tools.Ident]toolCallValidator,
 ) *OutputValidationError {
 	if !validOutputValidationKind(kind) {
 		panic(fmt.Sprintf("model: invalid output validation kind %q", kind))
@@ -912,7 +908,7 @@ func newOutputValidationError(
 	if errors.As(cause, &malformed) && kind != OutputValidationToolArguments {
 		panic("model: malformed tool arguments require the tool_arguments validation kind")
 	}
-	correction := recoveryCorrectionFromError(cause)
+	correction := recoveryCorrectionFromError(cause, validators)
 	return &OutputValidationError{
 		kind:       kind,
 		cause:      cause,
@@ -926,7 +922,7 @@ func newOutputValidationError(
 // recoveryCorrectionFromError accepts correction guidance only when every
 // error leaf describes the same correctable rejection. Any unrelated failure
 // keeps the combined error terminal.
-func recoveryCorrectionFromError(err error) string {
+func recoveryCorrectionFromError(err error, validators map[tools.Ident]toolCallValidator) string {
 	// Inspect this exact node before walking every child. errors.As would accept
 	// one correctable child while ignoring an unrelated failure beside it.
 	//nolint:errorlint
@@ -936,16 +932,11 @@ func recoveryCorrectionFromError(err error) string {
 			return ""
 		}
 		return source.correction
-	case *toolCallValidationError:
-		if source == nil {
-			return ""
-		}
-		return source.modelRecoveryCorrection()
 	case *malformedToolArgumentsError:
 		if source == nil {
 			return ""
 		}
-		return source.modelRecoveryCorrection()
+		return source.modelRecoveryCorrection(validators)
 	case *OutputValidationError:
 		if source == nil || !source.restored {
 			return ""
@@ -959,7 +950,7 @@ func recoveryCorrectionFromError(err error) string {
 			return ""
 		}
 		for _, child := range children {
-			childCorrection := recoveryCorrectionFromError(child)
+			childCorrection := recoveryCorrectionFromError(child, validators)
 			if childCorrection == "" || correction != "" && childCorrection != correction {
 				return ""
 			}
@@ -968,7 +959,7 @@ func recoveryCorrectionFromError(err error) string {
 		return correction
 	}
 	if cause := errors.Unwrap(err); cause != nil {
-		return recoveryCorrectionFromError(cause)
+		return recoveryCorrectionFromError(cause, validators)
 	}
 	return ""
 }

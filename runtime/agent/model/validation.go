@@ -252,6 +252,7 @@ func validateToolCallOutput(call *ToolCall) (OutputValidationKind, error) {
 	}
 	if !json.Valid(call.Payload) {
 		return OutputValidationToolArguments, NewMalformedToolArgumentsError(
+			call.Name,
 			fmt.Errorf("tool call %q payload is not valid JSON", call.ID),
 		)
 	}

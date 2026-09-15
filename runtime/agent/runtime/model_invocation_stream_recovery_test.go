@@ -402,6 +402,7 @@ func newProviderMalformedJSONStreamModel(t *testing.T, providerCalls *int) model
 					model.OutputValidationToolArguments,
 					&usage,
 					model.NewMalformedToolArgumentsError(
+						"catalog.lookup",
 						errors.New("privateSecret malformed provider payload"),
 					),
 				)}, nil

@@ -312,6 +312,7 @@ func translateToolCall(
 		return model.ToolCall{}, outputvalidation.New(
 			model.OutputValidationToolArguments,
 			model.NewMalformedToolArgumentsError(
+				tools.Ident(name),
 				fmt.Errorf("openai: tool call %q payload: %w", call.CallID, err),
 			),
 		)

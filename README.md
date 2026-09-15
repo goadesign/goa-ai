@@ -437,7 +437,10 @@ var Docs = Toolset("docs", func() {
   specifications with field metadata name independently identified fields and
   their stable rules without guessing between alternatives. Guidance names a
   missing or invalid choice label and its allowed strings;
-  it never chooses the variant for the model. When space permits, the
+  it never chooses the variant for the model. Every schema correction names
+  the request's input contract and the call's position, including a single
+  rejected call. Contract names are diagnostic identifiers; providers may use
+  different callable names. When space permits, the
   correction also includes the complete validated input example, with guidance
   to use values and a valid variant appropriate to the request. Ordinary decoder
   and internal errors stop the run. Local callers can inspect the original
@@ -469,6 +472,12 @@ var Docs = Toolset("docs", func() {
   infrastructure retries from producing different visible text under the same
   ID. Explicit recovery or continuation turns use new response IDs.
   Incomplete provider streams remain terminal.
+- Custom provider adapters must call
+  `model.NewMalformedToolArgumentsError(canonicalName, cause)` with the tool name
+  resolved through the request's name map. The request contract supplies named
+  JSON correction guidance only if it advertised that exact name. This replaces
+  the constructor's former single-cause signature; no generated code or stored
+  data migration is required.
 - Timeout and parent-budget failures are terminal for the current run and use
   `finish` recovery. Planners may repair invalid arguments, but elapsed
   execution time is not an instruction to repeat a call.
@@ -1229,7 +1238,7 @@ contract; mixed shapes are unsupported.
 
 A model invocation rejected before a canonical response exists carries a
 separate `ModelInvocationRecovery` value alongside any active failed call IDs. It carries
-exactly one bounded fact: fixed malformed-JSON guidance, advertised-input
+exactly one bounded fact: request-owned malformed-JSON guidance, advertised-input
 correction text, or the untouched provider-returned name of a tool absent from
 that request's catalog. Malformed argument bytes stay private. The rejected
 response stays out of history. Replacement feedback never removes active tool

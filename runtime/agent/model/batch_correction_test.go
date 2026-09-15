@@ -105,6 +105,25 @@ func TestBatchCorrectionBudgetAndInternalFailures(t *testing.T) {
 			default:
 				assert.Contains(t, errors.Unwrap(rejected).Error(), "catalog.other")
 			}
+			stream, err := contract.ValidateStream(&validatedStreamFixture{
+				chunks: []Chunk{
+					ToolCallChunk{ToolCall: response.ToolCalls()[0]},
+					ToolCallChunk{ToolCall: response.ToolCalls()[1]},
+					StopChunk{Reason: "tool_use"},
+				},
+				response: response,
+			})
+			require.NoError(t, err)
+			chunk, err := stream.Recv()
+			assert.Nil(t, chunk)
+			var streamed *OutputValidationError
+			require.ErrorAs(t, err, &streamed)
+			assert.Equal(t, rejected.Kind(), streamed.Kind())
+			assert.Equal(t, rejected.RecoveryCorrection(), streamed.RecoveryCorrection())
+			if test.decoderFailure {
+				require.ErrorIs(t, err, internal)
+			}
+			require.NoError(t, stream.Close())
 		})
 	}
 }

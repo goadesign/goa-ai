@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 func TestStreamPumpClassifiesMalformedEvents(t *testing.T) {
@@ -58,7 +59,7 @@ func TestStreamPumpClassifiesMalformedEvents(t *testing.T) {
 
 func TestStreamPumpDefersMalformedToolJSONUntilUsage(t *testing.T) {
 	index := int32(0)
-	providerName := "tasks_progress_complete"
+	providerName := "$FUNCTIONS.tasks_progress_complete"
 	malformed := `{"title":"Weekly review"`
 	inputTokens := int32(85_510)
 	outputTokens := int32(3_745)
@@ -103,7 +104,7 @@ func TestStreamPumpDefersMalformedToolJSONUntilUsage(t *testing.T) {
 	streamer := newMalformedBedrockStreamerWithNames(
 		t,
 		events,
-		map[string]string{providerName: "tasks.progress.complete"},
+		map[string]string{"tasks_progress_complete": "tasks.progress.complete"},
 	)
 
 	chunk, err := streamer.Recv()
@@ -114,7 +115,9 @@ func TestStreamPumpDefersMalformedToolJSONUntilUsage(t *testing.T) {
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
 	require.Equal(t, model.OutputValidationToolArguments, validationErr.Kind())
-	require.NotEmpty(t, validationErr.RecoveryCorrection())
+	require.Contains(t, validationErr.RecoveryCorrection(), `Input contract "tasks.progress.complete" (diagnostic identifier, not a callable tool name):`)
+	require.NotContains(t, validationErr.RecoveryCorrection(), providerName)
+	require.NotContains(t, validationErr.RecoveryCorrection(), "tooluse_1")
 	require.NotContains(t, validationErr.RecoveryCorrection(), "Weekly review")
 	require.Equal(t, int(totalTokens), validationErr.Usage().TotalTokens)
 	require.NoError(t, streamer.Close())
@@ -143,7 +146,13 @@ func newMalformedBedrockStreamerWithNames(
 			stream.Reader = reader
 		},
 	)
-	contract, err := model.NewRequestContract(&model.Request{})
+	request := &model.Request{}
+	for _, name := range nameMap {
+		input, inputErr := model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object"}`))
+		require.NoError(t, inputErr)
+		request.Tools = append(request.Tools, &model.ToolDefinition{Name: name, Input: input})
+	}
+	contract, err := model.NewRequestContract(request)
 	require.NoError(t, err)
 	return newBedrockStreamer(
 		context.Background(),
