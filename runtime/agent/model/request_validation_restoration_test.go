@@ -104,6 +104,7 @@ func TestRestoreOutputValidationErrorRejectsContradictoryCauses(t *testing.T) {
 		ResponseEvidence{Present: true},
 		nil,
 		nil,
+		nil,
 	)
 	provider := NewProviderError(
 		"test",
@@ -296,6 +297,7 @@ func TestRestoreCorrectableOutputValidationErrorRequiresRestoredTerminal(t *test
 		OutputValidationResponseShape,
 		errors.New("locally classified output rejection"),
 		ResponseEvidence{Present: true},
+		nil,
 		nil,
 		nil,
 	)

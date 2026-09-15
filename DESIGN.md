@@ -384,10 +384,12 @@ invocation by invocation start order, never by a model-supplied value or
 completion order.
 When a provider cannot represent a completed tool call because its arguments
 are not valid JSON, the adapter reads only the stream's terminal usage and
-completion evidence. The same recovery path supplies fixed JSON replacement
-guidance without adding malformed bytes, provider diagnostics, or tool identity
-to the replacement request. Local diagnostic access remains separate from that
-request.
+completion evidence. The adapter attaches the canonical tool name already
+resolved through its request map to the malformed-argument error. The receiving
+request contract supplies the fixed JSON instruction with that input contract's
+name only if it advertised the name. The name is a diagnostic identifier, not a
+callable provider name. Malformed bytes, call IDs and provider diagnostics stay
+private; an unknown name cannot authorize argument correction.
 When a supported provider instead returns a valid tool name absent from the
 request's advertised catalog, the adapter rejects the complete response. The
 same invocation-recovery value carries only that untouched name, mutually
@@ -1721,7 +1723,11 @@ are omitted. With no sound field instruction, guidance remains generic.
 A request-owned copy of the validated input example
 can accompany that guidance, intact within the existing correction size limit.
 It illustrates argument structure without choosing the request's values or
-restricting valid tool or union choices. The complete contract lives in
+restricting valid tool or union choices. One or many rejected calls use the same
+named sections and size checks. Each section identifies the request's input
+contract and the call's position in the response. Whole optional examples are
+omitted if necessary; if complete field blocks and headings still cannot fit,
+the rejection remains terminal. The complete contract lives in
 [Model-Visible Tool Arguments](docs/runtime.md#model-visible-tool-arguments).
 
 Fields marked with `Inject` are absent from the model-visible input and filled

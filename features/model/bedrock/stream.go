@@ -661,6 +661,7 @@ func (p *chunkProcessor) Handle(event any) error {
 					return outputvalidation.New(
 						model.OutputValidationToolArguments,
 						model.NewMalformedToolArgumentsError(
+							tools.Ident(tb.name),
 							fmt.Errorf("bedrock stream: finalize tool payload %q: %w", tb.id, err),
 						),
 					)

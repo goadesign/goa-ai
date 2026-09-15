@@ -683,6 +683,7 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 					return outputvalidation.New(
 						model.OutputValidationToolArguments,
 						model.NewMalformedToolArgumentsError(
+							tools.Ident(tb.name),
 							fmt.Errorf("anthropic stream: finalize tool payload %q: %w", tb.id, err),
 						),
 					)

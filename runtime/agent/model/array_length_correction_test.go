@@ -150,7 +150,13 @@ func checkArrayCorrection(t *testing.T, definition *ToolDefinition, payload, wan
 	require.Nil(t, validated)
 	var rejected *OutputValidationError
 	require.ErrorAs(t, err, &rejected)
-	assert.Equal(t, want, rejected.RecoveryCorrection())
+	expected := fmt.Sprintf("Tool call 1, input contract %q (diagnostic identifier, not a callable tool name):\n", definition.Name) + want
+	// A complete field block that fit before adding identity may now exceed
+	// the invocation limit. That rejection remains terminal, without truncation.
+	if len(expected) > correction.MaxBytes {
+		expected = ""
+	}
+	assert.Equal(t, expected, rejected.RecoveryCorrection())
 	assert.LessOrEqual(t, len(rejected.RecoveryCorrection()), correction.MaxBytes)
 	var schemaErr *jsonschema.ValidationError
 	require.ErrorAs(t, err, &schemaErr)

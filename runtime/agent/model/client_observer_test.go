@@ -261,7 +261,7 @@ func TestClientObserversRetainIndependentCorrectableRejections(t *testing.T) {
 				}
 				var outputErr *OutputValidationError
 				require.ErrorAs(t, observed, &outputErr)
-				assert.Equal(t, advertisedToolInputCorrection, outputErr.RecoveryCorrection())
+				assert.Equal(t, catalogCorrectionHeading+advertisedToolInputCorrection, outputErr.RecoveryCorrection())
 				assert.Equal(t, &response.Usage, outputErr.Usage())
 				assert.Equal(t, EvidenceForResponse(response), outputErr.Evidence())
 				require.EqualError(t, outputErr, "model output does not meet its request contract")

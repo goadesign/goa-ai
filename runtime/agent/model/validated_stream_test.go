@@ -439,7 +439,7 @@ func TestNestedValidatedStreamGeneratedCorrectionRetainsPrivateEvidence(t *testi
 	require.Nil(t, chunk)
 	var outputErr *OutputValidationError
 	require.ErrorAs(t, err, &outputErr)
-	require.Equal(t, advertisedToolInputCorrection, outputErr.RecoveryCorrection())
+	require.Equal(t, catalogCorrectionHeading+advertisedToolInputCorrection, outputErr.RecoveryCorrection())
 	require.NotContains(t, outputErr.RecoveryCorrection(), "submitted-secret")
 	require.Equal(t, &usage, outputErr.Usage())
 	require.Nil(t, stream.Response())

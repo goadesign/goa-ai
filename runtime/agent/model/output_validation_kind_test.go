@@ -80,7 +80,7 @@ func TestRequestContractRejectsMalformedToolArgumentsWithWrongKind(t *testing.T)
 			rejected := contract.RejectProviderOutput(
 				OutputValidationResponseShape,
 				nil,
-				NewMalformedToolArgumentsError(errors.New("private cause")),
+				NewMalformedToolArgumentsError("lookup", errors.New("private cause")),
 			)
 			require.NoError(t, rejected)
 		},

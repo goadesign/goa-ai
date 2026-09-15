@@ -508,7 +508,8 @@ Provider adapters still reject malformed JSON, unknown tool names, invalid
 identifiers, illegal event order, incomplete streams, and provider errors
 before output crosses the transport. For malformed tool argument JSON, an
 adapter may finish reading only terminal completion and usage events, then
-return fixed replacement guidance through the existing typed output rejection.
+return the fixed JSON instruction with the verified input contract name through
+the existing typed output rejection.
 It never exposes or repairs the malformed bytes.
 
 The consuming `model.Client` retains streamed tool argument fragments and
@@ -1225,10 +1226,10 @@ Workflow step boundary:
   and executes the call through the existing terminal-tool path,
 - when a model returns malformed tool argument JSON, fails an advertised input
   schema, or receives a non-nil `*tools.ValidationError` from its input decoder,
-  the model boundary produces fixed replacement guidance; that guidance may
-  repeat an advertised field path, JSON type, description, or enum value, but
-  never copies tool names, submitted values, dynamic keys or indexes,
-  undeclared field names, raw provider output, or provider diagnostics,
+  the model boundary produces replacement guidance; that guidance names the
+  request-owned input contract and may repeat an advertised field path, JSON
+  type, description, or enum value, but never copies submitted values, dynamic
+  keys or indexes, undeclared field names, raw provider output, or provider diagnostics,
 - for a generated union inside a JSON object, a missing, non-string or unknown
   discriminator receives its advertised field name and allowed strings. For
   example, an absent `choice.type` can be reported as required with choices
@@ -1704,21 +1705,23 @@ the complete argument structure even when successive attempts fail at different
 fields. The example does not restrict the next tool choice or require its
 sample values or union branch.
 
-The full correction, including that instruction and example, must fit the
-existing 4,096-byte limit for one rejected model invocation. The runtime appends
+The full correction, including the contract heading, instruction and example,
+must fit the existing 4,096-byte limit for one rejected model invocation. The runtime appends
 an example only when the entire text fits, including UTF-8 bytes. An absent or
 oversized example leaves the existing field guidance unchanged; JSON is never
 truncated. This limit bounds optional correction context, not tool argument
 size or validity. Validation, rejected-response diagnostics, accepted history,
 and the configured number of recovery turns remain unchanged.
 
-When several advertised calls in the same complete response fail their input
+When one or more advertised calls in the same complete response fail their input
 schemas, one replacement receives guidance for all of them. Each section names
 the canonical input contract as a diagnostic identifier, not a callable tool
 name: providers may spell callable names differently. It also identifies the
 call's position in that response, including valid calls when counting positions.
 No call in the rejected response executes. A single
-invalid call retains its existing guidance. This combines only the current
+invalid call receives the same heading, including when other calls are valid.
+The name comes from the tool definition copied before inference; later request
+mutation cannot change it. This combines only the current
 response's failures; it does not accumulate corrections across attempts.
 The combined guidance first includes complete examples. If that exceeds 4,096
 bytes, all optional examples are omitted. If all existing per-call field-guidance
@@ -1728,6 +1731,22 @@ diagnostics are not model instructions. The runtime does not silently discard la
 calls to make recovery fit. Full validator causes remain inspectable even in
 that case. Any ordinary decoder or internal failure also remains terminal;
 combining known schema rejections does not make unrelated errors recoverable.
+
+Malformed JSON uses `model.NewMalformedToolArgumentsError(name, cause)`.
+Provider adapters pass the canonical tool name they resolved through the
+request's tool-name map and the exact parsing failure. Both arguments are
+required. The error retains the name privately; the receiving `RequestContract`
+checks that it advertised that name before supplying correction guidance.
+Guidance identifies `Input contract "NAME"` as a diagnostic identifier, not a
+callable tool name, followed by the fixed JSON instruction. It does not add an
+example or invent a call position when translation produced no complete
+response. Unknown names, unrelated joined failures, or a heading and instruction
+that exceed 4,096 bytes remain terminal argument rejections. No malformed bytes,
+call IDs or parser messages enter this guidance.
+
+Custom adapters must update the constructor's former `cause`-only call to pass
+the resolved name. No exported error field, generated-code change, stored-data
+migration, or wire-format change is required.
 
 Array indexes and caller-chosen map keys appear as `*`. An undeclared field is
 reported only against its advertised parent object; the submitted field name is
@@ -1742,13 +1761,14 @@ The runtime still enforces its configured recovery-turn limit.
 
 Local callers can inspect the original tool-input validator error through
 `errors.As` and `errors.Is`, including recognized errors inside wrappers or
-joined errors. `OutputValidationError.Error()` and `RecoveryCorrection()` keep
-their existing summaries and guidance; they do not render the private cause.
+joined errors. `OutputValidationError.Error()` keeps its existing summary;
+neither it nor `RecoveryCorrection()` renders the private cause.
 Formatting the underlying validator or malformed-argument error includes the
 original diagnostic after its existing summary prefix. Applications can record
 that cause directly without walking its error tree. Direct callers that format
-these underlying errors now receive more detail; no public type, wire field,
-restoration rule, or numeric limit changes.
+these underlying errors receive the private detail; the malformed constructor's
+name argument does not change the wire fields, restoration rules, or numeric
+limits.
 `RejectedResponse()` returns an independent copy of the rejected response when
 the response passed the existing checks required for bounded copying. This
 includes errors with correction guidance. A response that could not be copied

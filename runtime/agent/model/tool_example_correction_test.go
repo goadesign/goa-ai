@@ -45,7 +45,8 @@ func TestToolExampleCorrectionPreservesCompleteShapeAcrossFailures(t *testing.T)
 		assert.Equal(t, 1, strings.Count(rejected.RecoveryCorrection(), example))
 		assert.Contains(t, rejected.RecoveryCorrection(), "use values and a valid variant appropriate to the request")
 		assert.NotContains(t, rejected.RecoveryCorrection(), "submitted quantity")
-		assert.NotContains(t, rejected.RecoveryCorrection(), "catalog.lookup")
+		assert.True(t, strings.HasPrefix(rejected.RecoveryCorrection(), catalogCorrectionHeading))
+		assert.NotContains(t, rejected.RecoveryCorrection(), "rejected-call")
 		saved, err := rejected.RejectedResponse()
 		require.NoError(t, err)
 		assert.Equal(t, test.payload, string(saved.ToolCalls()[0].Payload))
@@ -82,7 +83,7 @@ func TestToolExampleCorrectionByteLimit(t *testing.T) {
 		return rejected.RecoveryCorrection()
 	}
 	base := get("")
-	assert.Equal(t, `Field "query" is required.`, base)
+	assert.Equal(t, catalogCorrectionHeading+`Field "query" is required.`, base)
 	const small = `{"query":"é"}`
 	withSmall := get(small)
 	// The exact limit includes UTF-8 bytes, field text, and all instructions.
@@ -108,7 +109,7 @@ func TestToolExampleCorrectionRequestIsolation(t *testing.T) {
 			_, err = contract.ValidateResponse(responseWithToolCall(ToolCall{Name: "catalog.lookup", ID: "same-id", Payload: rawjson.Message(`{}`)}))
 			var rejected *OutputValidationError
 			require.ErrorAs(t, err, &rejected)
-			assert.True(t, strings.HasPrefix(rejected.RecoveryCorrection(), advertisedToolInputCorrection))
+			assert.True(t, strings.HasPrefix(rejected.RecoveryCorrection(), catalogCorrectionHeading+advertisedToolInputCorrection))
 			assert.True(t, strings.HasSuffix(rejected.RecoveryCorrection(), example))
 		})
 	}

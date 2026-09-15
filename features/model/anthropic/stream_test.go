@@ -984,11 +984,15 @@ func TestAnthropicChunkProcessorPreservesInitialToolInput(t *testing.T) {
 			err := processor.Handle(toolStop)
 			if test.wantErrorContains != "" {
 				require.ErrorContains(t, err, test.wantErrorContains)
-				contract, contractErr := model.NewRequestContract(&model.Request{})
+				contract, contractErr := model.NewRequestContract(&model.Request{Tools: []*model.ToolDefinition{{
+					Name: "catalog.continue_results", Input: mustAnthropicToolInput(t, rawjson.Message(`{"type":"object"}`)),
+				}}})
 				require.NoError(t, contractErr)
 				rejected := contract.RejectProviderOutput(outputvalidation.RequiredKind(err), nil, err)
 				require.NotEmpty(t, rejected.RecoveryCorrection())
-				require.NotContains(t, rejected.RecoveryCorrection(), "catalog.continue_results")
+				require.Contains(t, rejected.RecoveryCorrection(), `Input contract "catalog.continue_results" (diagnostic identifier, not a callable tool name):`)
+				require.NotContains(t, rejected.RecoveryCorrection(), "continue_abcd")
+				require.NotContains(t, rejected.RecoveryCorrection(), "toolu_1")
 				require.Empty(t, calls)
 				return
 			}

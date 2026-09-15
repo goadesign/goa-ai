@@ -120,10 +120,12 @@ func TestTranslateToolCallRejectsEmptyAndUnknownArguments(t *testing.T) {
 		Arguments: " \n ",
 	}, codec)
 	require.ErrorContains(t, err, "tool arguments are not valid JSON")
-	contract, contractErr := model.NewRequestContract(&model.Request{})
+	contract, contractErr := model.NewRequestContract(&model.Request{Tools: []*model.ToolDefinition{{
+		Name: "svc.lookup", Input: mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+	}}})
 	require.NoError(t, contractErr)
 	rejected := contract.RejectProviderOutput(outputvalidation.RequiredKind(err), nil, err)
-	require.NotEmpty(t, rejected.RecoveryCorrection())
+	require.Contains(t, rejected.RecoveryCorrection(), `Input contract "svc.lookup" (diagnostic identifier, not a callable tool name):`)
 	require.NotContains(t, rejected.RecoveryCorrection(), "call-1")
 
 	_, err = translateToolCall(responses.ResponseFunctionToolCall{
