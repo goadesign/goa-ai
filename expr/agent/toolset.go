@@ -1,3 +1,6 @@
+// Package agent keeps reusable tool contracts and consumer declarations
+// available to generation. Provider validation runs here; complete tool-name
+// resolution runs in the generator after MCP tools have been collected.
 package agent
 
 import (
@@ -25,9 +28,14 @@ type (
 		// Tags are labels for categorizing and filtering this toolset.
 		Tags []string
 
-		// Deferred asks the consuming agent to load these tool definitions
+		// Deferred asks the consuming agent to load all these tool definitions
 		// through model tool search. It never changes the shared tool contract.
 		Deferred bool
+
+		// DeferredTools lists the exact local tool names this consumer loads
+		// through model tool search. It cannot be combined with Deferred.
+		// Code generation resolves the names after collecting all compiled tools.
+		DeferredTools []string
 
 		// Meta carries arbitrary design-time metadata attached to the toolset via DSL.
 		// Keys map to one or more values, matching Goa's Meta conventions.

@@ -216,7 +216,9 @@ func (p *agentPackagesPlan) link(data *GeneratorData) error {
 			if planned == nil {
 				return fmt.Errorf("agent %q has no package name plan", agent.ID)
 			}
-			planned.link(agent, agentsByID)
+			if err := planned.link(agent, agentsByID); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -593,7 +595,7 @@ func (p *agentPackagePlan) order(key string) agentPackageNameOrder {
 }
 
 // link stores the final names used by all templates for one agent package.
-func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentData) {
+func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentData) error {
 	agent.StructName = p.structType.Name()
 	agent.ConfigType = p.configType.Name()
 	agent.PackageNames = AgentPackageNames{
@@ -613,7 +615,11 @@ func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentDa
 		agent.PackageNames.UsedToolsetOptions = p.usedOptions.Name()
 		agent.PackageNames.RegisterUsedToolsets = p.fixed[registerUsedToolsetsName].Name()
 	}
-	agent.packageFiles = p.linkFileData(agent, agentsByID)
+	files, err := p.linkFileData(agent, agentsByID)
+	if err != nil {
+		return err
+	}
+	agent.packageFiles = files
 	for _, toolset := range agent.AllToolsets {
 		if importPath := p.helperImportPaths[toolset.QualifiedName]; importPath != "" {
 			toolset.AgentPackageHelperAlias = p.pkg.ImportName(importPath)
@@ -643,11 +649,12 @@ func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentDa
 			toolset.agentToolsProviderAlias = p.pkg.ImportName(providerPath)
 		}
 	}
+	return nil
 }
 
 // linkFileData copies the selected import lines and qualifiers into the data
 // used by each agent package template.
-func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]*AgentData) *agentPackageFilesData {
+func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]*AgentData) (*agentPackageFilesData, error) {
 	for _, sources := range p.registrySources {
 		sources.TypeName = sources.declaration.Name()
 	}
@@ -672,7 +679,11 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 		RegistrySources: registrySourcesFor(agent.ID, p.registrySources),
 		ToolsAlias:      implementation.ToolsAlias,
 	}
-	implementation.RootDefinition.DeferredTools = agentDeferral(agent)
+	deferred, err := agentDeferral(agent)
+	if err != nil {
+		return nil, err
+	}
+	implementation.RootDefinition.DeferredTools = deferred
 	for _, childID := range p.definitionAgentIDs {
 		child := agentsByID[childID]
 		if child == nil {
@@ -683,7 +694,11 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 			RegistrySources: registrySourcesFor(child.ID, p.registrySources),
 			ToolsAlias:      implementation.ToolsAlias,
 		}
-		definition.DeferredTools = agentDeferral(child)
+		deferred, err := agentDeferral(child)
+		if err != nil {
+			return nil, err
+		}
+		definition.DeferredTools = deferred
 		if importPathIncluded(p.implementationPaths, child.ToolSpecsImportPath) {
 			definition.ToolSpecsAlias = p.pkg.ImportName(child.ToolSpecsImportPath)
 		}
@@ -728,7 +743,7 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 		implementation: implementation,
 		config:         config,
 		registry:       registry,
-	}
+	}, nil
 }
 
 // reachableAgentIDs returns every agent reachable through generated agent
