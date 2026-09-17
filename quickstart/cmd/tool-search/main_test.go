@@ -87,3 +87,32 @@ func TestGeneratedAgentSearchesExecutesAndReplays(t *testing.T) {
 		}
 	}
 }
+
+func TestGeneratedAgentReturnsProviderFailure(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, err := io.WriteString(w, `{"error":{"type":"invalid_request_error","code":"model_not_found","message":"The requested model does not exist."}}`)
+		if err != nil {
+			t.Errorf("write local model failure: %v", err)
+		}
+	}))
+	defer server.Close()
+	sdk := openaisdk.NewClient(
+		option.WithAPIKey("local-test"),
+		option.WithBaseURL(server.URL),
+		option.WithMaxRetries(0),
+	)
+	client, err := openai.New(openai.Options{Client: &sdk.Responses, DefaultModel: "missing-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	err = run(t.Context(), client, "missing-model", &output)
+	if err == nil || !strings.Contains(err.Error(), "model_not_found") {
+		t.Fatalf("expected the model failure, got %v", err)
+	}
+	if output.Len() != 0 {
+		t.Fatalf("provider failure produced an answer: %s", output.String())
+	}
+}
