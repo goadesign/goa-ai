@@ -13,6 +13,7 @@ import (
 // declareToolPackageNames records names shared by all files in one tool package.
 func (p *toolSpecsPackagePlan) declareToolPackageNames() error {
 	return declareExactNames(p.public, p.publicFixed, map[goacodegen.PackageNameKind][]string{
+		goacodegen.NameType:     {"registryDeclarations"},
 		goacodegen.NameVariable: {"metadata", "names"},
 		goacodegen.NameFunction: {
 			"Specs", "Names", "Spec", "PayloadSchema", "ResultSchema", "Metadata", "MetadataByName",

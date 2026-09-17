@@ -1,24 +1,27 @@
-// ToolSchemas returns complete registry declarations generated from this
-// toolset's design. Each call owns its schemas, metadata, and optional values.
-func ToolSchemas() []*genregistry.ToolSchema {
+// {{ .Name }} constructs one generated {{ .Kind }} declaration.
+func ({{ if or (eq .Kind "schema") (and (eq .Kind "metadata") .Value.Fields) }}declarations {{ end }}registryDeclarations) {{ .Name }}() {{ if eq .Kind "schema" }}*genregistry.ToolSchema{{ else if eq .Kind "metadata" }}*genregistry.ToolTypeMetadata{{ else }}*genregistry.ToolFieldMetadata{{ end }} {
 {{- range .Strings }}
     {{ .Name }} := {{ printf "%q" .Value }}
 {{- end }}
-    return []*genregistry.ToolSchema{
-{{- range .Schemas }}
-        {
-            Name: {{ printf "%q" .Name }},
-            Description: {{ pointer .Description }},
-            {{- if .Tags }}
-            Tags: []string{ {{ range .Tags }}{{ printf "%q" . }}, {{ end }} },
-            {{- end }}
-            PayloadSchema: []byte({{ printf "%q" .PayloadSchema }}),
-            ExecutionPayloadSchema: []byte({{ printf "%q" .ExecutionPayloadSchema }}),
-            ResultSchema: []byte({{ printf "%q" .ResultSchema }}),
-            ConsumerContract: {{ template "consumer" .ConsumerContract }},
-        },
-{{- end }}
+{{- if eq .Kind "schema" }}
+{{- with .Value }}
+    return &genregistry.ToolSchema{
+        Name: {{ printf "%q" .Name }},
+        Description: {{ pointer .Description }},
+        {{- if .Tags }}
+        Tags: []string{ {{ range .Tags }}{{ printf "%q" . }}, {{ end }} },
+        {{- end }}
+        PayloadSchema: []byte({{ printf "%q" .PayloadSchema }}),
+        ExecutionPayloadSchema: []byte({{ printf "%q" .ExecutionPayloadSchema }}),
+        ResultSchema: []byte({{ printf "%q" .ResultSchema }}),
+        ConsumerContract: {{ template "consumer" .ConsumerContract }},
     }
+{{- end }}
+{{- else if eq .Kind "metadata" }}
+    return {{ template "type" .Value }}
+{{- else }}
+    return {{ template "field" .Value }}
+{{- end }}
 }
 
 {{- define "consumer" -}}
@@ -29,9 +32,9 @@ func ToolSchemas() []*genregistry.ToolSchema {
         Length: {{ .Search.Length }},
         Terms: map[string]int{ {{ range $word, $count := .Search.Terms }}{{ printf "%q" $word }}: {{ $count }}, {{ end }} },
     },
-    Payload: {{ template "type" .Payload }},
+    Payload: {{ reference .Payload }},
     {{- if .Result }}
-    Result: {{ template "type" .Result }},
+    Result: {{ reference .Result }},
     {{- end }}
     {{- if .Meta }}
     Meta: map[string][]string{
@@ -79,7 +82,7 @@ func ToolSchemas() []*genregistry.ToolSchema {
             Description: {{ pointer .Description }},
             {{- end }}
             Schema: []byte({{ printf "%q" .Schema }}),
-            Type: {{ template "type" .Type }},
+            Type: {{ reference .Type }},
         },
     {{- end }}
     },
@@ -102,30 +105,7 @@ func ToolSchemas() []*genregistry.ToolSchema {
     {{- if .Fields }}
     Fields: []*genregistry.ToolFieldMetadata{
     {{- range .Fields }}
-        {
-            {{- if .Path }}
-            Path: {{ template "path" .Path }},
-            {{- end }}
-            {{- if .JSONType }}
-            JSONType: {{ pointer .JSONType }},
-            {{- end }}
-            {{- if .Description }}
-            Description: {{ pointer .Description }},
-            {{- end }}
-            {{- if .DiscriminatorValues }}
-            DiscriminatorValues: []string{ {{ range .DiscriminatorValues }}{{ printf "%q" . }}, {{ end }} },
-            {{- end }}
-            {{- if .Branches }}
-            Branches: []*genregistry.ToolUnionBranch{
-            {{- range .Branches }}
-                {
-                    Discriminator: {{ template "path" .Discriminator }},
-                    Value: {{ printf "%q" .Value }},
-                },
-            {{- end }}
-            },
-            {{- end }}
-        },
+        {{ reference . }},
     {{- end }}
     },
     {{- end }}
@@ -137,5 +117,32 @@ func ToolSchemas() []*genregistry.ToolSchema {
 {{- range . }}
     {Segment: {{ segment .Segment }}},
 {{- end }}
+}
+{{- end }}
+
+{{- define "field" -}}
+&genregistry.ToolFieldMetadata{
+    {{- if .Path }}
+    Path: {{ template "path" .Path }},
+    {{- end }}
+    {{- if .JSONType }}
+    JSONType: {{ pointer .JSONType }},
+    {{- end }}
+    {{- if .Description }}
+    Description: {{ pointer .Description }},
+    {{- end }}
+    {{- if .DiscriminatorValues }}
+    DiscriminatorValues: []string{ {{ range .DiscriminatorValues }}{{ printf "%q" . }}, {{ end }} },
+    {{- end }}
+    {{- if .Branches }}
+    Branches: []*genregistry.ToolUnionBranch{
+    {{- range .Branches }}
+        {
+            Discriminator: {{ template "path" .Discriminator }},
+            Value: {{ printf "%q" .Value }},
+        },
+    {{- end }}
+    },
+    {{- end }}
 }
 {{- end }}

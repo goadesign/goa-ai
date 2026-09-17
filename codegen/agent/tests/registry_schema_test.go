@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 	internaladmission "goa.design/goa-ai/internal/toolregistry/admission"
@@ -39,6 +40,31 @@ func TestGeneratedRegistrySchemaFactory(t *testing.T) {
 				}
 				return true
 			})
+			// Keep each tool, type, and field in its own constructor. Combining
+			// their literals into one function makes large catalogs slow to compile.
+			for _, declaration := range syntax.Decls {
+				function, ok := declaration.(*ast.FuncDecl)
+				if !ok {
+					continue
+				}
+				records := 0
+				ast.Inspect(function.Body, func(node ast.Node) bool {
+					literal, ok := node.(*ast.CompositeLit)
+					if !ok {
+						return true
+					}
+					selector, ok := literal.Type.(*ast.SelectorExpr)
+					if !ok {
+						return true
+					}
+					switch selector.Sel.Name {
+					case "ToolSchema", "ToolTypeMetadata", "ToolFieldMetadata":
+						records++
+					}
+					return true
+				})
+				assert.LessOrEqual(t, records, 1, "constructor %s combines generated records", function.Name.Name)
+			}
 			require.NotContains(t, source, "json.Unmarshal")
 			require.NotContains(t, source, "Specs()")
 			root := writeCompleteGeneratedModule(t, files)

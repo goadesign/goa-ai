@@ -14,11 +14,21 @@ import (
 )
 
 type (
-	// registrySchemaFileData records the literal declarations and the local
-	// string values needed by optional fields in Goa's generated wire types.
+	// registrySchemaFileData plans small literal constructors. Each generated
+	// method owns only its optional strings, keeping compiler work bounded by
+	// one tool or field instead of the whole registry catalog.
 	registrySchemaFileData struct {
-		Schemas []*genregistry.ToolSchema
-		Strings []registryStringLocal
+		Schemas   []*registryLiteralFunction
+		Functions []*registryLiteralFunction
+		methods   map[any]string
+	}
+
+	registryLiteralFunction struct {
+		Name       string
+		Kind       string
+		Value      any
+		Strings    []registryStringLocal
+		references map[*string]string
 	}
 
 	registryStringLocal struct {
@@ -162,70 +172,114 @@ func registryOptionalString(value string) *string {
 	return &value
 }
 
-// toolRegistrySchemasFile records optional string locals before rendering the
-// literal tree. Reflection runs only inside the generator; generated programs
-// contain no reflection, conversion loops, or branches over static metadata.
+// toolRegistrySchemasFile emits literal constructors for tools, type metadata,
+// and individual fields. Smaller functions keep large catalogs practical to
+// compile without parsing schemas or interpreting metadata at provider startup.
 func toolRegistrySchemasFile(ts *ToolsetData, entries []*toolEntry) *codegen.File {
-	data := &registrySchemaFileData{}
+	data := &registrySchemaFileData{methods: make(map[any]string)}
 	for _, entry := range entries {
-		data.Schemas = append(data.Schemas, entry.RegistrySchema)
+		data.Schemas = append(data.Schemas, data.add("schema", entry.RegistrySchema))
 	}
-	references := make(map[*string]string)
-	collectRegistryStringLocals(reflect.ValueOf(data.Schemas), data, references)
-	return &codegen.File{
-		Path: filepath.Join(ts.SpecsDir, "registry_schemas.go"),
-		SectionTemplates: []*codegen.SectionTemplate{
-			codegen.Header(ts.Name+" registry declarations", ts.SpecsPackageName, []*codegen.ImportSpec{
-				codegen.NewImport("genregistry", "goa.design/goa-ai/registry/gen/registry"),
-			}),
-			{
-				Name:   "tool-registry-schemas",
-				Source: agentsTemplates.Read(toolRegistrySchemasFileT),
-				Data:   data,
-				FuncMap: map[string]any{
-					"pointer": func(value *string) (string, error) {
-						name, ok := references[value]
-						if !ok {
-							return "", fmt.Errorf("registry declaration has an unplanned string pointer")
-						}
-						return "&" + name, nil
-					},
-					"segment": registryFieldSegmentLiteral,
-				},
-			},
+	sections := make([]*codegen.SectionTemplate, 0, 2+len(data.Functions))
+	sections = append(sections,
+		codegen.Header(ts.Name+" registry declarations", ts.SpecsPackageName, []*codegen.ImportSpec{
+			codegen.NewImport("genregistry", "goa.design/goa-ai/registry/gen/registry"),
+		}),
+		&codegen.SectionTemplate{
+			Name: "tool-registry-schemas",
+			Source: `// registryDeclarations groups private generated constructors. It holds no state.
+ type registryDeclarations struct{}
+
+// ToolSchemas returns complete generated declarations with fresh owned values.
+func ToolSchemas() []*genregistry.ToolSchema {
+{{- if .Schemas }}
+    declarations := registryDeclarations{}
+{{- end }}
+    return []*genregistry.ToolSchema{
+{{- range .Schemas }}
+        declarations.{{ .Name }}(),
+{{- end }}
+    }
+}`,
+			Data: data,
 		},
+	)
+	for _, function := range data.Functions {
+		sections = append(sections, &codegen.SectionTemplate{
+			Name:   "registry-" + function.Name,
+			Source: agentsTemplates.Read(toolRegistrySchemasFileT),
+			Data:   function,
+			FuncMap: map[string]any{
+				"pointer": func(value *string) (string, error) {
+					name, ok := function.references[value]
+					if !ok {
+						return "", fmt.Errorf("registry declaration has an unplanned string pointer")
+					}
+					return "&" + name, nil
+				},
+				"reference": func(value any) (string, error) {
+					name, ok := data.methods[value]
+					if !ok {
+						return "", fmt.Errorf("registry declaration has an unplanned constructor")
+					}
+					return "declarations." + name + "()", nil
+				},
+				"segment": registryFieldSegmentLiteral,
+			},
+		})
 	}
+	return &codegen.File{Path: filepath.Join(ts.SpecsDir, "registry_schemas.go"), SectionTemplates: sections}
 }
 
-// collectRegistryStringLocals assigns a fresh local to every optional string.
-// Map values in the contract are strings or integers and need no local address.
-func collectRegistryStringLocals(value reflect.Value, data *registrySchemaFileData, references map[*string]string) {
-	// Scalar values and maps of scalars never require an addressable local.
+// add reserves a method before visiting its children. The method calls below it
+// are fixed during generation; they do not dispatch on arriving runtime data.
+func (d *registrySchemaFileData) add(kind string, value any) *registryLiteralFunction {
+	function := &registryLiteralFunction{
+		Name: fmt.Sprintf("%s%d", kind, len(d.Functions)+1), Kind: kind, Value: value,
+		references: make(map[*string]string),
+	}
+	d.Functions = append(d.Functions, function)
+	d.methods[value] = function.Name
+	d.collect(reflect.ValueOf(value).Elem(), function)
+	return function
+}
+
+// collect assigns strings to their owning constructor and emits separate
+// constructors for nested type and field metadata. Reflection ends at codegen.
+func (d *registrySchemaFileData) collect(value reflect.Value, function *registryLiteralFunction) {
+	// Scalar values and maps of scalars need no addressable local.
 	//nolint:exhaustive
 	switch value.Kind() {
 	case reflect.Pointer:
 		if value.IsNil() {
 			return
 		}
-		if text, ok := value.Interface().(*string); ok {
-			name := fmt.Sprintf("registryText%d", len(data.Strings)+1)
-			data.Strings = append(data.Strings, registryStringLocal{Name: name, Value: *text})
-			references[text] = name
+		switch item := value.Interface().(type) {
+		case *string:
+			name := fmt.Sprintf("registryText%d", len(function.Strings)+1)
+			function.Strings = append(function.Strings, registryStringLocal{Name: name, Value: *item})
+			function.references[item] = name
+			return
+		case *genregistry.ToolTypeMetadata:
+			d.add("metadata", item)
+			return
+		case *genregistry.ToolFieldMetadata:
+			d.add("field", item)
 			return
 		}
-		collectRegistryStringLocals(value.Elem(), data, references)
+		d.collect(value.Elem(), function)
 	case reflect.Slice:
 		for index := 0; index < value.Len(); index++ {
-			collectRegistryStringLocals(value.Index(index), data, references)
+			d.collect(value.Index(index), function)
 		}
 	case reflect.Struct:
 		for index := 0; index < value.NumField(); index++ {
 			if value.Type().Field(index).IsExported() {
-				collectRegistryStringLocals(value.Field(index), data, references)
+				d.collect(value.Field(index), function)
 			}
 		}
 	default:
-		// All other fields are value literals and need no addressable local.
+		// Other fields are value literals and require no local variable.
 	}
 }
 
