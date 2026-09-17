@@ -225,6 +225,7 @@ func agentToolsConsumerFiles(agent *AgentData) []*codegen.File {
 			panic(fmt.Sprintf("agent codegen: consumed agent toolset %q has no linked helper", ts.QualifiedName))
 		}
 		data := agentToolsetConsumerFileData{
+			registryBindingsData:            agent.packageFiles.implementation.registryBindingsData,
 			Toolset:                         ts,
 			Imports:                         ts.agentToolsConsumerImports,
 			RuntimeAlias:                    ts.agentToolsRuntimeAlias,

@@ -472,9 +472,8 @@ type (
 
 	// RegistryToolsetMeta captures the information required to wire one DSL
 	// FromRegistry toolset reference into the local runtime. Registry-backed
-	// toolsets defer schema resolution to runtime discovery through the generated
-	// registry client, generating placeholder specs that are populated when the
-	// agent starts.
+	// toolsets load schemas during application startup. Generated discovery
+	// returns an immutable toolset supplied explicitly when constructing an agent.
 	RegistryToolsetMeta struct {
 		// RegistryName is the name of the registry source.
 		RegistryName string

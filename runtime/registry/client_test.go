@@ -31,12 +31,13 @@ func TestClientProjectsGeneratedDiscoveryResults(t *testing.T) {
 		Tags:         []string{"catalog"},
 		RegisteredAt: "2026-08-28T20:00:00Z",
 		Tools: []*genregistry.ToolSchema{{
-			Name:          "catalog.lookup.get",
-			Description:   &description,
-			Tags:          []string{"read"},
-			PayloadSchema: []byte(`{"type":"object"}`),
-			ResultSchema:  []byte(`{"type":"array"}`),
-			SidecarSchema: []byte(`{"type":"object"}`),
+			Name:                   "catalog.lookup.get",
+			Description:            &description,
+			Tags:                   []string{"read"},
+			PayloadSchema:          []byte(`{"type":"object"}`),
+			ExecutionPayloadSchema: []byte(`{"type":"object","required":["cursor"]}`),
+			ResultSchema:           []byte(`{"type":"array"}`),
+			SidecarSchema:          []byte(`{"type":"object"}`),
 		}},
 	}
 	searched := &genregistry.ToolsetInfo{
@@ -79,6 +80,7 @@ func TestClientProjectsGeneratedDiscoveryResults(t *testing.T) {
 	assert.Equal(t, "2026-08-28T20:00:00Z", toolset.RegisteredAt)
 	require.Len(t, toolset.Tools, 1)
 	assert.JSONEq(t, `{"type":"object"}`, string(toolset.Tools[0].PayloadSchema))
+	assert.JSONEq(t, `{"type":"object","required":["cursor"]}`, string(toolset.Tools[0].ExecutionPayloadSchema))
 	assert.JSONEq(t, `{"type":"array"}`, string(toolset.Tools[0].ResultSchema))
 	assert.JSONEq(t, `{"type":"object"}`, string(toolset.Tools[0].SidecarSchema))
 
@@ -96,11 +98,13 @@ func TestClientProjectsGeneratedDiscoveryResults(t *testing.T) {
 	found.Tags[0] = changed
 	found.Tools[0].Tags[0] = changed
 	found.Tools[0].PayloadSchema[0] = '['
+	found.Tools[0].ExecutionPayloadSchema[0] = '['
 	searched.Tags[0] = changed
 	assert.Equal(t, []string{"catalog"}, toolsets[0].Tags)
 	assert.Equal(t, []string{"catalog"}, toolset.Tags)
 	assert.Equal(t, []string{"read"}, toolset.Tools[0].Tags)
 	assert.JSONEq(t, `{"type":"object"}`, string(toolset.Tools[0].PayloadSchema))
+	assert.JSONEq(t, `{"type":"object","required":["cursor"]}`, string(toolset.Tools[0].ExecutionPayloadSchema))
 	assert.Equal(t, []string{"catalog"}, results[0].Tags)
 }
 

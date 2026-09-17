@@ -21,6 +21,10 @@ func New(ctx {{ .ContextAlias }}.Context, store {{ .StorageAlias }}.Store) (*{{ 
     {{- $a := . }}
     {
         cfg := {{ .Alias }}.{{ .Agent.ConfigType }}{ Planner: {{ .PlannerAlias }}.New() }
+        {{- if .HasRegistryBindings }}
+        // Load the declared registry toolsets and set cfg.RegistryToolsets here.
+        // Registration rejects an incomplete catalog before this worker starts.
+        {{- end }}
         {{- if .MCPToolsets }}
         // Configure MCP callers for external toolsets.
         cfg.MCPCallers = map[string]{{ $.MCPRuntimeAlias }}.Caller{}
@@ -45,6 +49,9 @@ func New(ctx {{ .ContextAlias }}.Context, store {{ .StorageAlias }}.Store) (*{{ 
         {{- if .ExampleToolsets }}
         // Register the application-owned example executors.
         if err := {{ .Alias }}.{{ .Agent.PackageNames.RegisterUsedToolsets }}(ctx, rt,
+            {{- if .HasRegistryBindings }}
+            cfg.RegistryToolsets,
+            {{- end }}
             {{- range .ExampleToolsets }}
             {{ $a.Alias }}.{{ .Toolset.ExecutorOption }}(
                 {{ $.AgentRuntimeAlias }}.ToolCallExecutorFunc({{ .ExecutorAlias }}.Execute),

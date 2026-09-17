@@ -2599,13 +2599,23 @@ The registry wire protocol and deterministic stream IDs are defined in `runtime/
 
 ### Registry discovery & catalog sync
 
-If you need runtime discovery of toolsets and schemas (for example, tool
-catalogs that change without a `goa gen`), use the generated agent-side
-registry client packages under `gen/<service>/registry/<name>/`.
+Registry-backed toolsets are discovered before agent startup. The generated
+toolset's `Discover` function returns an immutable `runtime/registry.Toolset`;
+pass it through the agent's generated `RegistryToolsets` input when constructing
+definitions, registering workers, and registering executors. The shared runtime
+compiles the discovered schemas and supplies validating codecs. See
+[Registry-Backed Toolsets](dsl.md#registry-backed-toolsets) for the complete
+startup contract, supported tools, and migration from package-global discovery.
 
-Those generated clients own the consumer-side discovery flow. The standalone
-clustered registry service implementation lives under `goa-ai/registry`, and
-the shared Pulse wire protocol lives under `goa-ai/runtime/toolregistry`.
+For the clustered registry, wrap its generated service client with
+`runtime/registry.NewClient`. Generated HTTP catalog clients use the same
+discovery resource types but require their own matching HTTP server.
+`runtime/registry.Manager` can synchronize a catalog for discovery; that does
+not replace the definitions in an already registered agent. Adopting changed
+definitions requires constructing a new runtime with the new toolsets.
+
+The standalone clustered registry implementation lives under `registry`, and
+the shared provider messaging protocol lives under `runtime/toolregistry`.
 
 **Inline tools** — Custom executor implementation:
 
@@ -3392,7 +3402,7 @@ For runtime storage and workflow adapters:
 Install the Goa revision required by this module before regenerating:
 
 ```bash
-go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.5
+go install goa.design/goa/v3/cmd/goa@v3.31.1
 ```
 
 For a release that changes generated or persisted runtime shapes:

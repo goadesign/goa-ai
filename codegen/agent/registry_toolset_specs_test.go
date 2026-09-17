@@ -14,10 +14,8 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// TestRegistryToolsetSpecsStructure verifies that registry-backed toolsets
-// generate specs files with the same structure as local toolsets.
-// **Feature: mcp-registry, Property 11: Provider-Agnostic Specs Generation**
-// **Validates: Requirements 11.1**
+// TestRegistryToolsetSpecsStructure checks that discovery returns an immutable
+// runtime value instead of writing generated package-global specifications.
 func TestRegistryToolsetSpecsStructure(t *testing.T) {
 	eval.Reset()
 	goaexpr.Root = new(goaexpr.RootExpr)
@@ -66,20 +64,15 @@ func TestRegistryToolsetSpecsStructure(t *testing.T) {
 	}
 	require.NotEmpty(t, specsContent, "expected generated specs.go at %s", expectedPath)
 
-	require.Contains(t, specsContent, "var Specs []tools.ToolSpec")
-	require.Contains(t, specsContent, "func Names() []tools.Ident")
-	require.Contains(t, specsContent, "func Spec(name tools.Ident) (*tools.ToolSpec, bool)")
-	require.Contains(t, specsContent, "func PayloadSchema(name tools.Ident) ([]byte, bool)")
-	require.Contains(t, specsContent, "func ResultSchema(name tools.Ident) ([]byte, bool)")
-	require.Contains(t, specsContent, "func Metadata() []policy.ToolMetadata")
-	require.Contains(t, specsContent, "func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool)")
+	require.Contains(t, specsContent, "func Discover(ctx context.Context, client registry.RegistryClient) (*registry.Toolset, error)")
+	require.Contains(t, specsContent, "return registry.NewToolset(toolset)")
+	require.NotContains(t, specsContent, "var Specs")
+	require.NotContains(t, specsContent, "sync.")
 	require.NotContains(t, specsContent, "RegistryToolsetID")
 	require.Contains(t, specsContent, "RegistryName")
 	require.Contains(t, specsContent, "ToolsetName")
-	require.Contains(t, specsContent, "func DiscoverAndPopulate")
-	require.Contains(t, specsContent, "type RegistryClient interface")
-	require.Contains(t, specsContent, "func ValidatePayload")
-	require.Contains(t, specsContent, "func ValidateResult")
+	require.NotContains(t, specsContent, "DiscoverAndPopulate")
+	require.NotContains(t, specsContent, "type ToolSchema")
 	require.NotContains(t, specsContent, "Service:")
 	require.NotContains(t, specsContent, "Toolset:")
 }
@@ -136,7 +129,7 @@ func TestRegistryToolsetSpecsMetadata(t *testing.T) {
 	require.Contains(t, specsContent, "\"test-registry\"")
 	require.Contains(t, specsContent, "\"enterprise-tools\"")
 	require.Contains(t, specsContent, "\"1.2.3\"")
-	require.Contains(t, specsContent, "BudgetClass: policy.ToolBudgetClassBudgeted")
+	require.Contains(t, specsContent, "if toolset.Version != Version")
 }
 
 // TestRegistryToolsetSpecsGeneratorData verifies generator data identifies registry toolsets.

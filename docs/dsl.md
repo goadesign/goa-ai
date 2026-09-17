@@ -688,15 +688,70 @@ var PinnedTools = Toolset(FromRegistry(CorpRegistry, "data-tools"), func() {
 })
 ```
 
-`FromRegistry` produces a dynamic toolset reference. Generated agent-side
-registry clients live under `gen/<svc>/registry/<name>/`, while the clustered
-registry service implementation lives under `registry/` and the shared wire
-protocol lives under `runtime/toolregistry/`.
+`FromRegistry` produces a toolset reference resolved during application startup.
+Its generated package exposes `Discover(ctx, client)`, which returns an immutable
+`*registry.Toolset`. The client implements `runtime/registry.RegistryClient`.
+For the clustered Goa registry, construct its generated service client with your
+chosen transport, then wrap it with `runtime/registry.NewClient`.
 
-Generated registry-backed specs expose `DiscoverAndPopulate`, `Specs`,
-`ValidatePayload`, and `ValidateResult`. Discovery remains dynamic because the
-catalog comes from the registry at runtime, but schema validation uses the shared
-runtime validator rather than duplicated generated validation code.
+For an agent named `analyst` consuming `DataTools`, startup wiring is:
+
+```go
+discovered, err := gendatatools.Discover(ctx, catalogClient)
+if err != nil {
+    return err
+}
+toolsets := genanalyst.RegistryToolsets{DataTools: discovered}
+if err := genanalyst.RegisterAnalystAgent(ctx, rt, genanalyst.AnalystAgentConfig{
+    Planner:         planner,
+    RegistryToolsets: toolsets,
+}); err != nil {
+    return err
+}
+if err := genanalyst.RegisterUsedToolsets(ctx, rt, toolsets,
+    genanalyst.WithDataToolsExecutor(executor),
+); err != nil {
+    return err
+}
+```
+
+The generated `Definition(toolsets)` and `NewClient(rt, toolsets)` helpers also
+require these inputs and return errors for incomplete bindings. An agent without
+registry dependencies keeps its existing no-argument `Definition()` helper.
+Reachable child agents share one input for each registry, toolset, and version
+combination.
+
+Discovery requires complete model-argument, execution-argument, and result
+schemas. It checks the requested toolset name and any `Version` pin, rejects
+duplicate or foreign tool names, and compiles schema-validating codecs. JSON
+numbers retain their exact value. Schema references must resolve within the
+registered document; discovery never loads another file or network resource.
+The returned toolset exposes `Specs`, `Names`, `Spec`, `MetadataByName`,
+`ValidatePayload`, and `ValidateResult`; unknown tools fail validation.
+
+This discovery contract supports ordinary, budgeted schema-based tools. Keep a
+static generated dependency for tools requiring confirmation, bounded results,
+continuations, bookkeeping, child-workflow execution, custom field metadata, or
+server-only result data. The registry catalog does not carry those complete
+declarations. Discovery explicitly rejects a supplied server-only data schema.
+
+Definitions remain fixed after startup. A later `Discover` call returns a new
+value; it does not update an existing agent or its active runs. Restart with the
+new definitions to adopt catalog changes, and keep provider contracts compatible
+with active consumers. Discovery does not imply deferred loading or tool search.
+
+Generated HTTP catalog clients under `gen/<svc>/registry/<name>/` share these
+resource types, but their HTTP endpoints are a separate transport contract from
+the clustered registry's generated gRPC API. The clustered service lives under
+`registry/`; its provider messaging protocol lives under `runtime/toolregistry/`.
+
+**Upgrading existing discovery code:** regenerate, replace `DiscoverAndPopulate`
+with `Discover`, and pass the returned values through `RegistryToolsets`.
+For a custom HTTP catalog, replace the former input-only `inputSchema` response
+with complete `payloadSchema`, `executionPayloadSchema`, and `resultSchema`
+JSON documents. The generated HTTP client's `ToolSchema` now aliases the shared
+runtime type. The clustered registry's gRPC contract is unchanged.
+Package-global discovered specifications and their accessors have been removed.
 
 ---
 

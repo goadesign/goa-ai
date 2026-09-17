@@ -54,20 +54,7 @@ func BuildRegisterPayload(registryRegisterMessage *string) (*registry.RegisterPa
 	if message.Tools != nil {
 		v.Tools = make([]*registry.ToolSchema, len(message.Tools))
 		for i, val := range message.Tools {
-			v.Tools[i] = &registry.ToolSchema{
-				Name:                   *val.Name,
-				Description:            val.Description,
-				PayloadSchema:          val.PayloadSchema,
-				ExecutionPayloadSchema: val.ExecutionPayloadSchema,
-				ResultSchema:           val.ResultSchema,
-				SidecarSchema:          val.SidecarSchema,
-			}
-			if val.Tags != nil {
-				v.Tools[i].Tags = make([]string, len(val.Tags))
-				for j, val := range val.Tags {
-					v.Tools[i].Tags[j] = val
-				}
-			}
+			v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 		}
 	}
 

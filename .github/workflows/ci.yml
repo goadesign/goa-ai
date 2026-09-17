@@ -30,7 +30,7 @@ jobs:
 
       - name: Install Goa CLI
         run: |
-          go install goa.design/goa/v3/cmd/goa@latest
+          go install goa.design/goa/v3/cmd/goa
           echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
 
       - name: Lint (golangci-lint v2)

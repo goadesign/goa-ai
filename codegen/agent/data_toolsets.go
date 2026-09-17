@@ -121,9 +121,8 @@ func buildToolsetData(
 				RegistryClientAlias:      registry.RegistryClientAlias,
 			}
 		}
-		// Registry toolsets have no compile-time tools; they are discovered at runtime.
-		// The Tools slice remains empty; specs generation will create placeholder
-		// structures that are populated via runtime discovery.
+		// Registry toolsets have no compile-time tools. Generated discovery
+		// returns their schemas and codecs before the agent is constructed.
 
 	case isMCPBacked:
 		if ref.Provider.MCP == nil {

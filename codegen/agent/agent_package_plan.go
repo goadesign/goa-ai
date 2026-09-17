@@ -39,6 +39,7 @@ type (
 		configPaths         []string
 		registryPaths       []string
 		definitionAgentIDs  []string
+		registryBindings    []*registryBindingData
 	}
 
 	// agentPackageFilesData contains the imports and package names used by the
@@ -53,6 +54,7 @@ type (
 	// agent.go.
 	agentImplementationFileData struct {
 		*AgentData
+		registryBindingsData
 		// Imports contains the packages used by agent.go.
 		Imports []*goacodegen.ImportSpec
 		// AgentAlias names the package that defines agent identifiers.
@@ -65,6 +67,14 @@ type (
 		ToolSpecsAlias string
 		// ToolsAlias names the runtime tool contract package.
 		ToolsAlias string
+		// RegistryAlias names the immutable discovered toolset package.
+		RegistryAlias string
+		// PolicyAlias names the tool metadata package.
+		PolicyAlias string
+		// FmtAlias names the formatting package used for startup errors.
+		FmtAlias string
+		// RootDefinition contains this agent's own tool inputs.
+		RootDefinition *agentDefinitionFileData
 		// ChildDefinitions contains every agent definition reachable through an
 		// agent tool, including definitions used only by nested child agents.
 		ChildDefinitions []*agentDefinitionFileData
@@ -76,11 +86,20 @@ type (
 		*AgentData
 		// ToolSpecsAlias names this agent's aggregate generated tool package.
 		ToolSpecsAlias string
+		// RegistryBindings selects the discovered tools advertised by this agent.
+		RegistryBindings []*registryBindingData
+		// ExecutableRegistryBindings selects the discovered tools it executes.
+		ExecutableRegistryBindings []*registryBindingData
+		// ToolsAlias names the runtime tool contract package.
+		ToolsAlias string
+		// PolicyAlias names the tool metadata package.
+		PolicyAlias string
 	}
 
 	// agentConfigFileData contains the chosen import names used by config.go.
 	agentConfigFileData struct {
 		*AgentData
+		registryBindingsData
 		// Imports contains the packages used by config.go.
 		Imports []*goacodegen.ImportSpec
 		// ErrorsAlias names the standard errors package.
@@ -99,6 +118,7 @@ type (
 
 	// agentRegistryImports contains the chosen import names used by registry.go.
 	agentRegistryImports struct {
+		registryBindingsData
 		// Imports contains the packages used by registry.go.
 		Imports []*goacodegen.ImportSpec
 		// ContextAlias names the standard context package.
@@ -180,6 +200,7 @@ func planAgentPackages(generation *goacodegen.Generation, design *agentir.Design
 			helperImportPaths:   make(map[string]string),
 			definitionAgentIDs:  reachableAgentIDs(agent),
 		}
+		packagePlan.registryBindings = planRegistryBindings(agent, packagePlan.definitionAgentIDs)
 		if err := packagePlan.declare(agent); err != nil {
 			return nil, fmt.Errorf("plan agent %q package names: %w", agent.ID, err)
 		}
@@ -223,6 +244,13 @@ func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
 		goacodegen.NameVariable: {agentDefinitionValueName},
 	}); err != nil {
 		return err
+	}
+	if len(p.registryBindings) > 0 {
+		if err := p.declareFixedNames(map[goacodegen.PackageNameKind][]string{
+			goacodegen.NameType: {registryToolsetsTypeName},
+		}); err != nil {
+			return err
+		}
 	}
 
 	var err error
@@ -292,6 +320,9 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 		runtimeImportPath,
 		"time",
 	}
+	if len(p.registryBindings) > 0 {
+		p.implementationPaths = append(p.implementationPaths, "fmt", registryRuntimePath, registryPolicyPath)
+	}
 
 	if agent.Expr.RunPolicy != nil && agent.Expr.RunPolicy.History != nil &&
 		agent.Expr.RunPolicy.History.Mode == agentexpr.HistoryModeCompress {
@@ -332,6 +363,8 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 		plannerImportPath:      "planner",
 		runtimeImportPath:      "agentsruntime",
 		toolsImportPath:        "tools",
+		registryRuntimePath:    "registry",
+		registryPolicyPath:     "policy",
 	}
 	explicit := map[string]bool{
 		agentRuntimeImportPath: true,
@@ -620,33 +653,55 @@ func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentDa
 // linkFileData copies the selected import lines and qualifiers into the data
 // used by each agent package template.
 func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]*AgentData) *agentPackageFilesData {
+	bindings := p.registryFileData(agent, agentsByID)
 	implementation := &agentImplementationFileData{
-		AgentData:    agent,
-		Imports:      p.linkImports(p.implementationPaths),
-		AgentAlias:   p.pkg.ImportName(agentRuntimeImportPath),
-		PlannerAlias: p.pkg.ImportName(plannerImportPath),
-		RuntimeAlias: p.pkg.ImportName(runtimeImportPath),
-		ToolsAlias:   p.pkg.ImportName(toolsImportPath),
+		AgentData:            agent,
+		registryBindingsData: bindings,
+		Imports:              p.linkImports(p.implementationPaths),
+		AgentAlias:           p.pkg.ImportName(agentRuntimeImportPath),
+		PlannerAlias:         p.pkg.ImportName(plannerImportPath),
+		RuntimeAlias:         p.pkg.ImportName(runtimeImportPath),
+		ToolsAlias:           p.pkg.ImportName(toolsImportPath),
+	}
+	if len(p.registryBindings) > 0 {
+		implementation.RegistryAlias = p.pkg.ImportName(registryRuntimePath)
+		implementation.PolicyAlias = p.pkg.ImportName(registryPolicyPath)
+		implementation.FmtAlias = p.pkg.ImportName("fmt")
 	}
 	if importPathIncluded(p.implementationPaths, agent.ToolSpecsImportPath) {
 		implementation.ToolSpecsAlias = p.pkg.ImportName(agent.ToolSpecsImportPath)
+	}
+	implementation.RootDefinition = &agentDefinitionFileData{
+		AgentData:                  agent,
+		ToolSpecsAlias:             implementation.ToolSpecsAlias,
+		RegistryBindings:           registryBindingsFor(agent.AllToolsets, p.registryBindings),
+		ExecutableRegistryBindings: registryBindingsFor(agent.UsedToolsets, p.registryBindings),
+		ToolsAlias:                 implementation.ToolsAlias,
+		PolicyAlias:                implementation.PolicyAlias,
 	}
 	for _, childID := range p.definitionAgentIDs {
 		child := agentsByID[childID]
 		if child == nil {
 			panic(fmt.Sprintf("agent codegen: reachable agent %q has no generator data", childID))
 		}
-		definition := &agentDefinitionFileData{AgentData: child}
+		definition := &agentDefinitionFileData{
+			AgentData:                  child,
+			RegistryBindings:           registryBindingsFor(child.AllToolsets, p.registryBindings),
+			ExecutableRegistryBindings: registryBindingsFor(child.UsedToolsets, p.registryBindings),
+			ToolsAlias:                 implementation.ToolsAlias,
+			PolicyAlias:                implementation.PolicyAlias,
+		}
 		if importPathIncluded(p.implementationPaths, child.ToolSpecsImportPath) {
 			definition.ToolSpecsAlias = p.pkg.ImportName(child.ToolSpecsImportPath)
 		}
 		implementation.ChildDefinitions = append(implementation.ChildDefinitions, definition)
 	}
 	config := &agentConfigFileData{
-		AgentData:    agent,
-		Imports:      p.linkImports(p.configPaths),
-		ErrorsAlias:  p.pkg.ImportName("errors"),
-		PlannerAlias: p.pkg.ImportName(plannerImportPath),
+		AgentData:            agent,
+		registryBindingsData: bindings,
+		Imports:              p.linkImports(p.configPaths),
+		ErrorsAlias:          p.pkg.ImportName("errors"),
+		PlannerAlias:         p.pkg.ImportName(plannerImportPath),
 	}
 	if importPathIncluded(p.configPaths, "fmt") {
 		config.FmtAlias = p.pkg.ImportName("fmt")
@@ -661,13 +716,14 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 		registryPaths = importPathsWithout(registryPaths, agent.ToolSpecsImportPath)
 	}
 	registry := &agentRegistryImports{
-		Imports:      p.linkImports(registryPaths),
-		ContextAlias: p.pkg.ImportName("context"),
-		EngineAlias:  p.pkg.ImportName(engineImportPath),
-		ErrorsAlias:  p.pkg.ImportName("errors"),
-		FmtAlias:     p.pkg.ImportName("fmt"),
-		RuntimeAlias: p.pkg.ImportName(runtimeImportPath),
-		TimeAlias:    p.pkg.ImportName("time"),
+		registryBindingsData: bindings,
+		Imports:              p.linkImports(registryPaths),
+		ContextAlias:         p.pkg.ImportName("context"),
+		EngineAlias:          p.pkg.ImportName(engineImportPath),
+		ErrorsAlias:          p.pkg.ImportName("errors"),
+		FmtAlias:             p.pkg.ImportName("fmt"),
+		RuntimeAlias:         p.pkg.ImportName(runtimeImportPath),
+		TimeAlias:            p.pkg.ImportName("time"),
 	}
 	registry.AgentVar = localNameForImports("agent", registry.Imports)
 	if importPathIncluded(p.registryPaths, hintsImportPath) {

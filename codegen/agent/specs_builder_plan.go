@@ -398,13 +398,8 @@ func (p *toolSpecsPlan) addRegistryPackage(generation *goacodegen.Generation, de
 	packagePlan.definition = definition
 	packagePlan.registry = true
 	names := map[goacodegen.PackageNameKind][]string{
-		goacodegen.NameType:     {"RegistryClient", "ToolsetSchema", "ToolSchema"},
 		goacodegen.NameConstant: {"RegistryName", "ToolsetName"},
-		goacodegen.NameVariable: {"Specs", "specIndex", "metadataIndex", "metadata", "mu"},
-		goacodegen.NameFunction: {
-			"DiscoverAndPopulate", "Names", "Spec", "PayloadSchema", "ResultSchema",
-			"Metadata", "MetadataByName", "ValidatePayload", "ValidateResult",
-		},
+		goacodegen.NameFunction: {"Discover"},
 	}
 	if definition.Owner.Ref.Provider.Registry.Version != "" {
 		names[goacodegen.NameConstant] = append(names[goacodegen.NameConstant], "Version")
@@ -415,11 +410,7 @@ func (p *toolSpecsPlan) addRegistryPackage(generation *goacodegen.Generation, de
 	if err := packagePlan.fileImports.publicSpecs.Require(
 		goacodegen.SimpleImport("context"),
 		goacodegen.SimpleImport("fmt"),
-		goacodegen.SimpleImport("sort"),
-		goacodegen.SimpleImport("sync"),
-		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/policy"),
-		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
-		goacodegen.NewImport("registryschema", "goa.design/goa-ai/runtime/toolregistry/schema"),
+		goacodegen.SimpleImport("goa.design/goa-ai/runtime/registry"),
 	); err != nil {
 		return fmt.Errorf("plan toolset %q registry imports: %w", definition.Name, err)
 	}

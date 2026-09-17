@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
@@ -108,11 +110,14 @@ type (
 		// Tags are optional metadata tags for discovery and filtering.
 		Tags []string
 		// PayloadSchema is the JSON Schema for arguments accepted from the model.
-		PayloadSchema []byte
+		PayloadSchema rawjson.Message
+		// ExecutionPayloadSchema validates the arguments delivered to a provider.
+		// It can differ from PayloadSchema when the runtime supplies fields.
+		ExecutionPayloadSchema rawjson.Message
 		// ResultSchema is the JSON Schema for tool output.
-		ResultSchema []byte
+		ResultSchema rawjson.Message
 		// SidecarSchema is the JSON Schema for tool sidecar (UI-only), when present.
-		SidecarSchema []byte
+		SidecarSchema rawjson.Message
 	}
 
 	// SearchResult contains a single search result from the registry.

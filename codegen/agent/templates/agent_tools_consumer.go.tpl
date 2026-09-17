@@ -9,6 +9,9 @@
 //
 //	reg, err := {{ .Toolset.AgentToolsRegistrationConstructor }}(
 //	    rt,
+{{- if .RegistryBindings }}
+//	    registryToolsets,
+{{- end }}
 //	    systemPrompt,
 //	    opts...,
 //	)
@@ -20,10 +23,21 @@
 //	}
 func {{ .Toolset.AgentToolsRegistrationConstructor }}(
     rt *{{ .RuntimeAlias }}.Runtime,
+{{- if .RegistryBindings }}
+    toolsets {{ .RegistryToolsetsType }},
+{{- end }}
     systemPrompt string,
     opts ...{{ .RuntimeAlias }}.AgentToolOption,
 ) ({{ .RuntimeAlias }}.ToolsetRegistration, error) {
+{{- if .RegistryBindings }}
+    parent, err := {{ .Definition }}(toolsets)
+    if err != nil {
+        return {{ .RuntimeAlias }}.ToolsetRegistration{}, err
+    }
+    definition, ok := parent.ChildDefinition({{ .ProviderAlias }}.AgentID)
+{{- else }}
     definition, ok := {{ .Definition }}().ChildDefinition({{ .ProviderAlias }}.AgentID)
+{{- end }}
     if !ok {
         panic("generated agent definition is missing its child agent")
     }

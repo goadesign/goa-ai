@@ -22,7 +22,9 @@ func TestRegistryFileDataClassifiesToolsets(t *testing.T) {
 	})
 
 	require.Equal(t, []*ToolsetData{remote}, data.MCPToolsets)
-	require.Equal(t, []*ToolsetData{direct}, data.DirectToolsets)
+	require.Len(t, data.DirectToolsets, 1)
+	require.Same(t, direct, data.DirectToolsets[0].ToolsetData)
+	require.Empty(t, data.DirectToolsets[0].RegistryField)
 }
 
 // TestQuickstartDataPreparesProviderFacts verifies that the guide receives

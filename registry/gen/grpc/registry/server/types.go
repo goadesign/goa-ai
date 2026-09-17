@@ -40,20 +40,7 @@ func NewRegisterPayload(message *registrypb.RegisterRequest) *registry.RegisterP
 	if message.Tools != nil {
 		v.Tools = make([]*registry.ToolSchema, len(message.Tools))
 		for i, val := range message.Tools {
-			v.Tools[i] = &registry.ToolSchema{
-				Name:                   *val.Name,
-				Description:            val.Description,
-				PayloadSchema:          val.PayloadSchema,
-				ExecutionPayloadSchema: val.ExecutionPayloadSchema,
-				ResultSchema:           val.ResultSchema,
-				SidecarSchema:          val.SidecarSchema,
-			}
-			if val.Tags != nil {
-				v.Tools[i].Tags = make([]string, len(val.Tags))
-				for j, val := range val.Tags {
-					v.Tools[i].Tags[j] = val
-				}
-			}
+			v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 		}
 	}
 	return v
@@ -163,23 +150,7 @@ func NewProtoListToolsetsResponse(result *registry.ListToolsetsResult) *registry
 	if result.Toolsets != nil {
 		message.Toolsets = make([]*registrypb.ToolsetInfo, len(result.Toolsets))
 		for i, val := range result.Toolsets {
-			message.Toolsets[i] = &registrypb.ToolsetInfo{
-				Name:         &val.Name,
-				Description:  val.Description,
-				RegisteredAt: &val.RegisteredAt,
-			}
-			if val.Version != nil {
-				version := string(*val.Version)
-				message.Toolsets[i].Version = &version
-			}
-			toolCount := int32(val.ToolCount)
-			message.Toolsets[i].ToolCount = &toolCount
-			if val.Tags != nil {
-				message.Toolsets[i].Tags = make([]string, len(val.Tags))
-				for j, val := range val.Tags {
-					message.Toolsets[i].Tags[j] = val
-				}
-			}
+			message.Toolsets[i] = transformToolsetInfoToProtoToolsetInfo(val)
 		}
 	}
 	return message
@@ -215,20 +186,7 @@ func NewProtoGetToolsetResponse(result *registry.Toolset) *registrypb.GetToolset
 	if result.Tools != nil {
 		message.Tools = make([]*registrypb.ToolSchema, len(result.Tools))
 		for i, val := range result.Tools {
-			message.Tools[i] = &registrypb.ToolSchema{
-				Name:                   &val.Name,
-				Description:            val.Description,
-				PayloadSchema:          val.PayloadSchema,
-				ExecutionPayloadSchema: val.ExecutionPayloadSchema,
-				ResultSchema:           val.ResultSchema,
-				SidecarSchema:          val.SidecarSchema,
-			}
-			if val.Tags != nil {
-				message.Tools[i].Tags = make([]string, len(val.Tags))
-				for j, val := range val.Tags {
-					message.Tools[i].Tags[j] = val
-				}
-			}
+			message.Tools[i] = transformToolSchemaToProtoToolSchema(val)
 		}
 	}
 	return message
@@ -269,23 +227,7 @@ func NewProtoSearchResponse(result *registry.SearchResult) *registrypb.SearchRes
 	if result.Toolsets != nil {
 		message.Toolsets = make([]*registrypb.ToolsetInfo, len(result.Toolsets))
 		for i, val := range result.Toolsets {
-			message.Toolsets[i] = &registrypb.ToolsetInfo{
-				Name:         &val.Name,
-				Description:  val.Description,
-				RegisteredAt: &val.RegisteredAt,
-			}
-			if val.Version != nil {
-				version := string(*val.Version)
-				message.Toolsets[i].Version = &version
-			}
-			toolCount := int32(val.ToolCount)
-			message.Toolsets[i].ToolCount = &toolCount
-			if val.Tags != nil {
-				message.Toolsets[i].Tags = make([]string, len(val.Tags))
-				for j, val := range val.Tags {
-					message.Toolsets[i].Tags[j] = val
-				}
-			}
+			message.Toolsets[i] = transformToolsetInfoToProtoToolsetInfo(val)
 		}
 	}
 	return message
@@ -446,9 +388,6 @@ func NewProtoClaimToolCallResponse(result *registry.ClaimToolCallResult) *regist
 func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 	if message.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
-	}
-	if message.Tools == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("tools", "message"))
 	}
 	if message.ProviderId == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
@@ -1203,6 +1142,72 @@ func ValidateClaimToolCallRequest(message *registrypb.ClaimToolCallRequest) (err
 		err = goa.MergeErrors(err, goa.ValidatePattern("message.request_event_id", *message.RequestEventId, "^\\d+-\\d+$"))
 	}
 	return
+}
+
+// transformProtoToolSchemaToToolSchema builds a value of type
+// *registry.ToolSchema from a value of type *registrypb.ToolSchema.
+func transformProtoToolSchemaToToolSchema(v *registrypb.ToolSchema) *registry.ToolSchema {
+	res := &registry.ToolSchema{
+		Name:                   *v.Name,
+		Description:            v.Description,
+		PayloadSchema:          v.PayloadSchema,
+		ExecutionPayloadSchema: v.ExecutionPayloadSchema,
+		ResultSchema:           v.ResultSchema,
+		SidecarSchema:          v.SidecarSchema,
+	}
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
+	}
+
+	return res
+}
+
+// transformToolsetInfoToProtoToolsetInfo builds a value of type
+// *registrypb.ToolsetInfo from a value of type *registry.ToolsetInfo.
+func transformToolsetInfoToProtoToolsetInfo(v *registry.ToolsetInfo) *registrypb.ToolsetInfo {
+	res := &registrypb.ToolsetInfo{
+		Name:         &v.Name,
+		Description:  v.Description,
+		RegisteredAt: &v.RegisteredAt,
+	}
+	if v.Version != nil {
+		version := string(*v.Version)
+		res.Version = &version
+	}
+	toolCount := int32(v.ToolCount)
+	res.ToolCount = &toolCount
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
+	}
+
+	return res
+}
+
+// transformToolSchemaToProtoToolSchema builds a value of type
+// *registrypb.ToolSchema from a value of type *registry.ToolSchema.
+func transformToolSchemaToProtoToolSchema(v *registry.ToolSchema) *registrypb.ToolSchema {
+	res := &registrypb.ToolSchema{
+		Name:                   &v.Name,
+		Description:            v.Description,
+		PayloadSchema:          v.PayloadSchema,
+		ExecutionPayloadSchema: v.ExecutionPayloadSchema,
+		ResultSchema:           v.ResultSchema,
+		SidecarSchema:          v.SidecarSchema,
+	}
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
+	}
+
+	return res
 }
 
 // transformProtoToolCallMetaToToolCallMeta builds a value of type

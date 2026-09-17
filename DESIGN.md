@@ -959,6 +959,21 @@ var AnthropicRegistry = Registry("anthropic", func() {
 
 Generated `registry.go` files in agent packages are local runtime registration helpers; they do not implement the clustered registry service.
 
+Registry consumer generation emits a `Discover` function for each named
+toolset. It returns an immutable `runtime/registry.Toolset` after validating
+the source name, version pin, and complete schemas. Generated agents require
+these values through a typed `RegistryToolsets` input, including definitions
+needed by reachable child agents. Discovery does not mutate package globals
+or an already constructed `AgentDefinition`.
+
+The shared registry layer owns dynamic JSON codecs. They return decoded JSON
+values with exact numbers and validate both encoding and decoding against
+self-contained schemas. Runtime registration retains its existing immutable
+contract checks. Catalog synchronization, deferred model loading, and changing
+the tools of an active agent are separate capabilities. The supported startup
+contract and its limitations are defined in
+[Registry-Backed Toolsets](docs/dsl.md#registry-backed-toolsets).
+
 Provider admission is owned by the clustered registry. `Serve` generates one
 UUID incarnation per lifecycle; leases are keyed by stable provider ID plus
 incarnation, so delayed old-process release cannot remove a replacement.

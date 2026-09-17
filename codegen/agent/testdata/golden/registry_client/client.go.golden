@@ -18,63 +18,16 @@ import (
 	"time"
 )
 
-// ToolsetInfo contains metadata about a toolset available in the registry.
-type ToolsetInfo struct {
-	// ID is the unique identifier for the toolset.
-	ID string `json:"id"`
-	// Name is the human-readable name.
-	Name string `json:"name"`
-	// Description provides details about the toolset.
-	Description string `json:"description,omitempty"`
-	// Version is the toolset version.
-	Version string `json:"version,omitempty"`
-	// Tags are metadata tags for discovery.
-	Tags []string `json:"tags,omitempty"`
-}
-
-// ToolsetSchema contains the full schema for a toolset including its tools.
-type ToolsetSchema struct {
-	// ID is the unique identifier for the toolset.
-	ID string `json:"id"`
-	// Name is the human-readable name.
-	Name string `json:"name"`
-	// Description provides details about the toolset.
-	Description string `json:"description,omitempty"`
-	// Version is the toolset version.
-	Version string `json:"version,omitempty"`
-	// Tools contains the tool definitions.
-	Tools []*ToolSchema `json:"tools,omitempty"`
-}
-
-// ToolSchema contains the schema for a single tool.
-type ToolSchema struct {
-	// Name is the tool identifier.
-	Name string `json:"name"`
-	// Description explains what the tool does.
-	Description string `json:"description,omitempty"`
-	// InputSchema is the JSON Schema for tool input.
-	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
-}
-
-// SearchResult contains a single search result from the registry.
-type SearchResult struct {
-	// ID is the unique identifier.
-	ID string `json:"id"`
-	// Name is the human-readable name.
-	Name string `json:"name"`
-	// Description provides details.
-	Description string `json:"description,omitempty"`
-	// Type indicates the result type (e.g., "tool", "toolset", "agent").
-	Type string `json:"type"`
-	// SchemaRef is a reference to the full schema.
-	SchemaRef string `json:"schemaRef,omitempty"`
-	// RelevanceScore indicates how relevant this result is to the query.
-	RelevanceScore float64 `json:"relevanceScore"`
-	// Tags are metadata tags.
-	Tags []string `json:"tags,omitempty"`
-	// Origin indicates the federation source if applicable.
-	Origin string `json:"origin,omitempty"`
-}
+type (
+	// ToolsetInfo contains catalog metadata shared by every registry client.
+	ToolsetInfo = registry.ToolsetInfo
+	// ToolsetSchema contains the complete schemas consumed during discovery.
+	ToolsetSchema = registry.ToolsetSchema
+	// ToolSchema contains model arguments, provider arguments, and result schemas.
+	ToolSchema = registry.ToolSchema
+	// SearchResult describes one catalog match.
+	SearchResult = registry.SearchResult
+)
 
 // AuthProvider provides authentication credentials for registry requests.
 type AuthProvider interface {
@@ -270,9 +223,19 @@ func (c *Client) doRequest(ctx context.Context, method, reqURL string, body []by
 		}
 		lastErr = err
 
-		// Don't retry on context cancellation or client errors
+		// Cancellation and permanent rejections cannot succeed by repeating
+		// the same request. Timeouts and rate limits may be temporary.
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		var responseErr *RegistryError
+		if errors.As(err, &responseErr) {
+			code := responseErr.StatusCode
+			if code == http.StatusNotImplemented ||
+				(code >= http.StatusBadRequest && code < http.StatusInternalServerError &&
+					code != http.StatusRequestTimeout && code != http.StatusTooManyRequests) {
+				return err
+			}
 		}
 	}
 	return lastErr
