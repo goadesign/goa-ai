@@ -41,6 +41,8 @@ func TestQuickstart_Renders_Minimal(t *testing.T) {
 	require.NotContains(t, content, "ExampleJSON:")
 	require.Contains(t, content, "## 4. 🧠 The Planner:")
 	require.NotContains(t, content, "Service-Side Tool Providers (Registry-Routed Execution)")
+	require.Contains(t, content, `Deferred("search", "analyze")`)
+	require.Contains(t, content, "but not `FromRegistry` or whole registries")
 
 	// No suites declared: the evaluation section renders the teaser only.
 	require.Contains(t, content, "## 8. 🧪 Evaluating Your Agents")
