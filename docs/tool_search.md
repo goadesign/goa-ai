@@ -251,6 +251,11 @@ calls retain their whole-toolset or whole-registry behavior. Named choices emit
 the same static deferred-ID argument already consumed by the runtime; they add
 no provider API or persisted state.
 
+`Deferred` now has type `func(...string)`, which is not assignable to `func()`.
+Replace `Use(Records, Deferred)` with `Use(Records, func() { Deferred() })`,
+and wrap other `func()` callback assignments the same way. Calls to `Deferred()`
+remain valid.
+
 Regenerate providers and consumers with Goa v3.31.1. Replace generated
 startup `Discover` calls, `RegistryToolsets` inputs, and dynamic executor wiring
 with `RegisterRegistry`. Publish generated `ToolSchemas()` records before
