@@ -1,22 +1,26 @@
 # Goa‑AI Quickstart
 
-Minimal, copy‑paste runnable example to go from zero → talking agent. Keep your design in `design/`, never edit `gen/`.
+A runnable agent loop, typed completions, and an evaluation suite. The checked-in
+example uses deterministic responses and in-memory execution, so no model
+credentials or external services are needed. Keep your design in `design/`;
+never edit `gen/`.
 
 ## Prerequisites
 
 - Go 1.25.5+
-- Goa v3 CLI (`go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.5`)
 
-## 1) Scaffold a fresh project
+## 1) Run the checked-in project
 
-```
-mkdir -p $GOPATH/src/example.com/quickstart && cd $_
-go mod init example.com/quickstart
-go get goa.design/goa/v3@v3.31.0-preview.5
-go get goa.design/goa-ai@latest
+```bash
+git clone https://github.com/goadesign/goa-ai.git
+cd goa-ai/quickstart
+go run ./cmd/orchestrator
 ```
 
-## 2) Add a tiny design (design/design.go)
+The quickstart's module uses the Goa-AI source in the parent checkout and its
+pinned Goa dependency. The generation commands below use that same version.
+
+## 2) Read the design (design/design.go)
 
 This declares one service (`orchestrator`) with a single agent (`chat`), a tiny
 helper toolset, a typed direct completion, and an evaluation suite.
@@ -106,8 +110,8 @@ var _ = Service("orchestrator", func() {
 ## 3) Generate code and example
 
 ```bash
-goa gen example.com/quickstart/design
-goa example example.com/quickstart/design
+go run goa.design/goa/v3/cmd/goa gen example.com/quickstart/design
+go run goa.design/goa/v3/cmd/goa example example.com/quickstart/design
 ```
 
 This creates:
@@ -322,29 +326,12 @@ func (p *chatPlanner) PlanStart(ctx context.Context, in *planner.PlanInput) (*pl
 }
 ```
 
-## (Optional) HTTP / JSON‑RPC server
+## (Optional) Expose tools over MCP
 
-`goa example` also generated an HTTP JSON‑RPC server under `cmd/orchestrator`.
-
-- Start it: `go run ./cmd/orchestrator -debug`
-- It mounts the MCP‑compatible JSON‑RPC API on POST `/rpc`.
-- Try a simple RPC (replace the tool name with one from your design):
-
-```bash
-curl -s http://localhost:8080/rpc \
-  -H 'Content-Type: application/json' \
-  -d '{
-        "jsonrpc":"2.0",
-        "id":1,
-        "method":"tools/call",
-        "params":{
-          "name":"orchestrator.helpers.answer",
-          "arguments": {"question": "What is the capital of Japan?"}
-        }
-      }' | jq .
-```
-
-Note: tool execution requires wiring executors. For a first run, the in‑process demo above is the simplest path. When you bind tools to service methods (`BindTo` in the design), `goa example` will scaffold executors you can fill in.
+This quickstart runs in process. To expose service methods as MCP tools, declare
+`MCP(...)`, a service-level JSON-RPC route, and the methods to expose in your
+design. Follow the [MCP server guide](../docs/dsl.md#mcp-server-definition) for
+the complete design and generated adapters.
 
 ## Notes
 

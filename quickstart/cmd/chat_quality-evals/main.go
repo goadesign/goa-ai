@@ -155,7 +155,7 @@ func (h *hooks) GreetingReply(ctx context.Context, input *genevalchatquality.Ask
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: input.Question}},
 		},
-	})
+	}, agentruntime.WithRunID("eval-greeting-reply-run"))
 	if closeErr := sub.Close(); closeErr != nil {
 		return eval.Result{}, fmt.Errorf("detach stream subscriber: %w", closeErr)
 	}
