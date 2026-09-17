@@ -10,10 +10,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,7 +42,7 @@ type (
 	// catalogEntry is the single CAS-owned admission record for one toolset.
 	catalogEntry struct {
 		State               catalogEntryState        `json:"state"`
-		Toolset             *genregistry.Toolset     `json:"toolset"`
+		Toolset             *catalogToolset          `json:"toolset"`
 		SchemaFingerprint   string                   `json:"schema_fingerprint"`
 		AdmissionRevision   string                   `json:"admission_revision"`
 		WireProtocolVersion int                      `json:"wire_protocol_version"`
@@ -73,6 +73,9 @@ type (
 	toolsetCatalog struct {
 		m     catalogMap
 		clock registryTimeSource
+
+		definitionsMu sync.Mutex
+		definitions   map[string]*catalogToolset
 	}
 
 	catalogEntryState string
@@ -94,7 +97,7 @@ var (
 
 // newToolsetCatalog constructs the canonical admission store.
 func newToolsetCatalog(m catalogMap, clock registryTimeSource) *toolsetCatalog {
-	return &toolsetCatalog{m: m, clock: clock}
+	return &toolsetCatalog{m: m, clock: clock, definitions: make(map[string]*catalogToolset)}
 }
 
 // validatePersistedEntries reads every authoritative catalog value and applies
@@ -102,7 +105,7 @@ func newToolsetCatalog(m catalogMap, clock registryTimeSource) *toolsetCatalog {
 // fails with every incompatible key named so cleanup can remove only the
 // affected records while the registry remains offline.
 func (c *toolsetCatalog) validatePersistedEntries(ctx context.Context) error {
-	keys, err := c.m.AuthoritativeKeys(ctx)
+	keys, err := c.authoritativeKeys(ctx)
 	if err != nil {
 		return fmt.Errorf("enumerate persisted catalog: %w", err)
 	}
@@ -122,7 +125,7 @@ func (c *toolsetCatalog) validatePersistedEntries(ctx context.Context) error {
 			continue
 		}
 		name := strings.TrimPrefix(key, toolsetCatalogKeyPrefix)
-		if _, err := parseCatalogEntry(name, raw); err != nil {
+		if _, err := c.parseCatalogEntry(name, raw); err != nil {
 			invalid = append(invalid, fmt.Errorf("catalog key %q: %w", key, err))
 		}
 	}
@@ -173,7 +176,7 @@ func (c *toolsetCatalog) Register(
 		}
 		lease := providerLease{ExpiresAtUnixMilli: now.Add(leaseDuration).UnixMilli()}
 		if !exists {
-			candidate := newCatalogEntry(
+			candidate, err := newCatalogEntry(
 				toolset,
 				fingerprint,
 				admissionRevision,
@@ -183,6 +186,9 @@ func (c *toolsetCatalog) Register(
 				now,
 				make(map[string]struct{}),
 			)
+			if err != nil {
+				return catalogEntry{}, err
+			}
 			candidateRaw, err := marshalCatalogEntry(candidate)
 			if err != nil {
 				return catalogEntry{}, err
@@ -197,7 +203,7 @@ func (c *toolsetCatalog) Register(
 			continue
 		}
 
-		existing, err := parseCatalogEntry(toolset.Name, raw)
+		existing, err := c.parseCatalogEntry(toolset.Name, raw)
 		if err != nil {
 			return catalogEntry{}, err
 		}
@@ -242,7 +248,7 @@ func (c *toolsetCatalog) Register(
 
 		retiredTokens := cloneTokenSet(existing.RetiredTokens)
 		retiredTokens[existing.RegistrationToken] = struct{}{}
-		candidate := newCatalogEntry(
+		candidate, err := newCatalogEntry(
 			toolset,
 			fingerprint,
 			admissionRevision,
@@ -252,6 +258,9 @@ func (c *toolsetCatalog) Register(
 			now,
 			retiredTokens,
 		)
+		if err != nil {
+			return catalogEntry{}, err
+		}
 		updated, err := c.replace(ctx, key, raw, candidate)
 		if err != nil {
 			return catalogEntry{}, err
@@ -278,7 +287,7 @@ func (c *toolsetCatalog) DrainProvider(
 		if !exists {
 			return nil
 		}
-		entry, err := parseCatalogEntry(name, raw)
+		entry, err := c.parseCatalogEntry(name, raw)
 		if err != nil {
 			return err
 		}
@@ -341,7 +350,7 @@ func (c *toolsetCatalog) ReleaseProvider(
 		if !exists {
 			return nil
 		}
-		entry, err := parseCatalogEntry(name, raw)
+		entry, err := c.parseCatalogEntry(name, raw)
 		if err != nil {
 			return err
 		}
@@ -395,7 +404,7 @@ func (c *toolsetCatalog) Retire(ctx context.Context, name, expectedToken string)
 		if !exists {
 			return nil
 		}
-		entry, err := parseCatalogEntry(name, raw)
+		entry, err := c.parseCatalogEntry(name, raw)
 		if err != nil {
 			return err
 		}
@@ -429,7 +438,7 @@ func (c *toolsetCatalog) GetToolset(ctx context.Context, name string) (*genregis
 	if err != nil {
 		return nil, err
 	}
-	return entry.Toolset, nil
+	return entry.Toolset.decode()
 }
 
 // ActiveRegistration returns the exact active admission used for routing.
@@ -441,7 +450,7 @@ func (c *toolsetCatalog) ActiveRegistration(ctx context.Context, name string) (c
 	if !exists {
 		return catalogEntry{}, errToolsetNotFound
 	}
-	entry, err := parseCatalogEntry(name, raw)
+	entry, err := c.parseCatalogEntry(name, raw)
 	if err != nil {
 		return catalogEntry{}, err
 	}
@@ -550,7 +559,7 @@ func (c *toolsetCatalog) RecordPong(
 		if !exists {
 			return nil
 		}
-		entry, err := parseCatalogEntry(name, raw)
+		entry, err := c.parseCatalogEntry(name, raw)
 		if err != nil {
 			return err
 		}
@@ -606,7 +615,7 @@ func (c *toolsetCatalog) healthEntry(ctx context.Context, name string) (catalogE
 		if !exists {
 			return catalogEntry{}, time.Time{}, errToolsetNotFound
 		}
-		entry, err := parseCatalogEntry(name, raw)
+		entry, err := c.parseCatalogEntry(name, raw)
 		if err != nil {
 			return catalogEntry{}, time.Time{}, err
 		}
@@ -631,15 +640,15 @@ func (c *toolsetCatalog) healthEntry(ctx context.Context, name string) (catalogE
 }
 
 // ListToolsets returns active catalog entries matching every requested tag.
-func (c *toolsetCatalog) ListToolsets(ctx context.Context, tags []string) ([]*genregistry.Toolset, error) {
+func (c *toolsetCatalog) ListToolsets(ctx context.Context, tags []string) ([]*genregistry.ToolsetInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	keys, err := c.m.AuthoritativeKeys(ctx)
+	keys, err := c.authoritativeKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
-	toolsets := make([]*genregistry.Toolset, 0, len(keys))
+	toolsets := make([]*genregistry.ToolsetInfo, 0, len(keys))
 	for _, key := range keys {
 		if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
 			continue
@@ -651,28 +660,28 @@ func (c *toolsetCatalog) ListToolsets(ctx context.Context, tags []string) ([]*ge
 		if !exists {
 			continue
 		}
-		entry, err := parseCatalogEntry(strings.TrimPrefix(key, toolsetCatalogKeyPrefix), raw)
+		entry, err := c.parseCatalogEntry(strings.TrimPrefix(key, toolsetCatalogKeyPrefix), raw)
 		if err != nil {
 			return nil, err
 		}
-		if entry.State == catalogEntryActive && catalogMatchesTags(entry.Toolset.Tags, tags) {
-			toolsets = append(toolsets, entry.Toolset)
+		if entry.State == catalogEntryActive && catalogMatchesTags(entry.Toolset.info.Tags, tags) {
+			toolsets = append(toolsets, entry.Toolset.info)
 		}
 	}
 	return toolsets, nil
 }
 
 // SearchToolsets returns active entries matching name, description, or tags.
-func (c *toolsetCatalog) SearchToolsets(ctx context.Context, query string) ([]*genregistry.Toolset, error) {
+func (c *toolsetCatalog) SearchToolsets(ctx context.Context, query string) ([]*genregistry.ToolsetInfo, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	lowerQuery := strings.ToLower(query)
-	keys, err := c.m.AuthoritativeKeys(ctx)
+	keys, err := c.authoritativeKeys(ctx)
 	if err != nil {
 		return nil, err
 	}
-	toolsets := make([]*genregistry.Toolset, 0, len(keys))
+	toolsets := make([]*genregistry.ToolsetInfo, 0, len(keys))
 	for _, key := range keys {
 		if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
 			continue
@@ -684,12 +693,12 @@ func (c *toolsetCatalog) SearchToolsets(ctx context.Context, query string) ([]*g
 		if !exists {
 			continue
 		}
-		entry, err := parseCatalogEntry(strings.TrimPrefix(key, toolsetCatalogKeyPrefix), raw)
+		entry, err := c.parseCatalogEntry(strings.TrimPrefix(key, toolsetCatalogKeyPrefix), raw)
 		if err != nil {
 			return nil, err
 		}
-		if entry.State == catalogEntryActive && catalogMatchesQuery(entry.Toolset, lowerQuery) {
-			toolsets = append(toolsets, entry.Toolset)
+		if entry.State == catalogEntryActive && catalogMatchesQuery(entry.Toolset.info, lowerQuery) {
+			toolsets = append(toolsets, entry.Toolset.info)
 		}
 	}
 	return toolsets, nil
@@ -712,11 +721,41 @@ func (c *toolsetCatalog) replace(
 	return updated, nil
 }
 
-// exactRaw reads authoritative Redis state through a no-op rmap CAS.
+// authoritativeKeys reads the current Redis keys and drops local definitions
+// whose records were removed. A concurrent registration can only lose reuse;
+// its next read still validates the exact saved definition.
+func (c *toolsetCatalog) authoritativeKeys(ctx context.Context) ([]string, error) {
+	keys, err := c.m.AuthoritativeKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	present := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		if name, ok := strings.CutPrefix(key, toolsetCatalogKeyPrefix); ok {
+			present[name] = struct{}{}
+		}
+	}
+	c.definitionsMu.Lock()
+	for name := range c.definitions {
+		if _, exists := present[name]; !exists {
+			delete(c.definitions, name)
+		}
+	}
+	c.definitionsMu.Unlock()
+	return keys, nil
+}
+
+// exactRaw reads authoritative Redis state through a no-op rmap CAS and drops
+// the local definition when Redis reports that its record no longer exists.
 func (c *toolsetCatalog) exactRaw(ctx context.Context, key string) (string, bool, error) {
 	raw, exists, _, err := c.m.TestAndSetEx(ctx, key, "", "")
 	if err != nil {
 		return "", false, fmt.Errorf("read catalog key %q: %w", key, err)
+	}
+	if !exists {
+		c.definitionsMu.Lock()
+		delete(c.definitions, strings.TrimPrefix(key, toolsetCatalogKeyPrefix))
+		c.definitionsMu.Unlock()
 	}
 	return raw, exists, nil
 }
@@ -728,12 +767,17 @@ func newCatalogEntry(
 	lease providerLease,
 	now time.Time,
 	retiredTokens map[string]struct{},
-) catalogEntry {
+) (catalogEntry, error) {
 	registeredAt := now.UTC().Format(time.RFC3339Nano)
-	toolset.RegisteredAt = registeredAt
+	registered := *toolset
+	registered.RegisteredAt = registeredAt
+	definition, err := newCatalogToolset(&registered, fingerprint)
+	if err != nil {
+		return catalogEntry{}, err
+	}
 	return catalogEntry{
 		State:               catalogEntryActive,
-		Toolset:             toolset,
+		Toolset:             definition,
 		SchemaFingerprint:   fingerprint,
 		AdmissionRevision:   revision,
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
@@ -742,7 +786,7 @@ func newCatalogEntry(
 		ProviderLeases:      map[string]providerLease{leaseKey: lease},
 		RetiredTokens:       retiredTokens,
 		HealthEpoch:         1,
-	}
+	}, nil
 }
 
 // pruneExpiredProviderLeases removes leases at or before Redis TIME and fences
@@ -802,101 +846,6 @@ func parseProviderLeaseKey(key string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid provider incarnation ID: %w", err)
 	}
 	return providerID, incarnationID, nil
-}
-
-// marshalCatalogEntry encodes the one persisted admission record.
-func marshalCatalogEntry(entry catalogEntry) (string, error) {
-	body, err := json.Marshal(entry)
-	if err != nil {
-		return "", fmt.Errorf("marshal toolset %q admission: %w", entry.Toolset.Name, err)
-	}
-	return string(body), nil
-}
-
-// parseCatalogEntry validates persisted admission identity and lease state.
-func parseCatalogEntry(name, body string) (catalogEntry, error) {
-	var entry catalogEntry
-	decoder := json.NewDecoder(strings.NewReader(body))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&entry); err != nil {
-		return catalogEntry{}, fmt.Errorf("unmarshal toolset %q: %w", name, err)
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return catalogEntry{}, fmt.Errorf("unmarshal toolset %q: trailing JSON value", name)
-	}
-	if entry.Toolset == nil || entry.Toolset.Name != name {
-		return catalogEntry{}, fmt.Errorf("toolset %q has invalid toolset payload", name)
-	}
-	if entry.RegisteredAt == "" || entry.Toolset.RegisteredAt != entry.RegisteredAt {
-		return catalogEntry{}, fmt.Errorf("toolset %q has invalid registered_at", name)
-	}
-	if _, err := time.Parse(time.RFC3339Nano, entry.RegisteredAt); err != nil {
-		return catalogEntry{}, fmt.Errorf("toolset %q invalid registered_at: %w", name, err)
-	}
-	if err := toolregistry.ValidateAdmissionRevision(entry.AdmissionRevision); err != nil {
-		return catalogEntry{}, fmt.Errorf("toolset %q invalid admission revision: %w", name, err)
-	}
-	if err := toolregistry.ValidateWireProtocolVersion(entry.WireProtocolVersion); err != nil {
-		return catalogEntry{}, fmt.Errorf("toolset %q invalid wire protocol version: %w", name, err)
-	}
-	fingerprint, err := toolsetSchemaFingerprint(entry.Toolset)
-	if err != nil {
-		return catalogEntry{}, err
-	}
-	if entry.SchemaFingerprint != fingerprint {
-		return catalogEntry{}, fmt.Errorf("toolset %q schema fingerprint does not match canonical schema", name)
-	}
-	token, err := admissionRegistrationToken(
-		fingerprint,
-		entry.AdmissionRevision,
-		entry.WireProtocolVersion,
-	)
-	if err != nil {
-		return catalogEntry{}, fmt.Errorf("derive toolset %q admission token: %w", name, err)
-	}
-	if entry.RegistrationToken != token {
-		return catalogEntry{}, fmt.Errorf("toolset %q registration token does not match admission identity", name)
-	}
-	switch entry.State {
-	case catalogEntryActive, catalogEntryRetired:
-	default:
-		return catalogEntry{}, fmt.Errorf("toolset %q has invalid catalog state %q", name, entry.State)
-	}
-	if entry.ProviderLeases == nil {
-		return catalogEntry{}, fmt.Errorf("toolset %q missing provider lease map", name)
-	}
-	if entry.HealthEpoch == 0 {
-		return catalogEntry{}, fmt.Errorf("toolset %q has invalid health epoch", name)
-	}
-	if entry.LastPongUnixNano < 0 {
-		return catalogEntry{}, fmt.Errorf("toolset %q has invalid last pong timestamp", name)
-	}
-	for leaseKey, lease := range entry.ProviderLeases {
-		if _, _, err := parseProviderLeaseKey(leaseKey); err != nil {
-			return catalogEntry{}, fmt.Errorf("toolset %q has invalid provider lease key: %w", name, err)
-		}
-		if lease.ExpiresAtUnixMilli <= 0 {
-			return catalogEntry{}, fmt.Errorf("toolset %q has invalid provider lease deadline", name)
-		}
-	}
-	if entry.RetiredTokens == nil {
-		return catalogEntry{}, fmt.Errorf("toolset %q missing retired registration token set", name)
-	}
-	for retiredToken := range entry.RetiredTokens {
-		if err := toolregistry.ValidateRegistrationToken(retiredToken); err != nil {
-			return catalogEntry{}, fmt.Errorf("toolset %q invalid retired registration token: %w", name, err)
-		}
-	}
-	if entry.State == catalogEntryActive {
-		if _, retired := entry.RetiredTokens[entry.RegistrationToken]; retired {
-			return catalogEntry{}, fmt.Errorf("toolset %q active token is retired", name)
-		}
-	} else {
-		if _, retired := entry.RetiredTokens[entry.RegistrationToken]; !retired {
-			return catalogEntry{}, fmt.Errorf("toolset %q retired token is missing its tombstone", name)
-		}
-	}
-	return entry, nil
 }
 
 // cloneTokenSet returns independent tombstone ownership for one replacement CAS.
@@ -981,7 +930,7 @@ func catalogMatchesTags(toolsetTags, filterTags []string) bool {
 	return true
 }
 
-func catalogMatchesQuery(toolset *genregistry.Toolset, query string) bool {
+func catalogMatchesQuery(toolset *genregistry.ToolsetInfo, query string) bool {
 	if strings.Contains(strings.ToLower(toolset.Name), query) {
 		return true
 	}
