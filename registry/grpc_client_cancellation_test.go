@@ -1,3 +1,7 @@
+// These tests exercise generated registry gRPC clients against a real server.
+// Local cancellation must retain context errors and gRPC diagnostics, while
+// remote interruptions remain separate errors. Claim retries retain their
+// operation ID.
 package registry
 
 import (
@@ -21,8 +25,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// blockingRegisterService keeps the server response pending until the client
-// returns, so tests observe local cancellation rather than a remote error.
+// blockingRegisterService withholds its application response until the client
+// returns. The gRPC transport can still reset the stream when its deadline expires.
 type blockingRegisterService struct {
 	genregistry.Service
 	started        chan struct{}
@@ -37,9 +41,9 @@ type recordingClaimService struct {
 	operationIDs []string
 }
 
-// Register waits for cancellation and for the test to observe the client's
-// result before returning the server error. Without that ordering, the server
-// deadline can win the race and arrive as a distinct remote service error.
+// Register waits for server context cancellation and the client's return before
+// replying. This prevents an application error response from competing with the
+// client's result; it does not control gRPC transport deadline resets.
 func (s *blockingRegisterService) Register(ctx context.Context, _ *genregistry.RegisterPayload) (*genregistry.RegisterResult, error) {
 	close(s.started)
 	<-ctx.Done()
@@ -98,13 +102,48 @@ func TestGeneratedGRPCClientPreservesRegisterDeadline(t *testing.T) {
 	}
 	defer close(service.clientReturned)
 	client := newGeneratedRegisterClient(t, service)
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	// End the caller context before invoking the client so error decoding cannot
+	// race with the context's deadline timer.
+	ctx, cancel := context.WithDeadline(context.Background(), time.Unix(0, 0))
 	defer cancel()
+	require.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 
 	_, err := client.Register(ctx, validRegisterPayloadForSchemaAdmission("deadline-test"))
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.ErrorContains(t, err, "rpc error: code = DeadlineExceeded")
 	require.Equal(t, codes.DeadlineExceeded, status.Code(err))
+}
+
+func TestGeneratedGRPCClientKeepsRemoteInterruptionSeparateFromCallerContext(t *testing.T) {
+	t.Parallel()
+
+	for _, code := range []codes.Code{codes.Canceled, codes.DeadlineExceeded} {
+		t.Run(code.String(), func(t *testing.T) {
+			t.Parallel()
+
+			service := &blockingRegisterService{
+				started:        make(chan struct{}),
+				clientReturned: make(chan struct{}),
+			}
+			defer close(service.clientReturned)
+			remoteErr := status.Error(code, "remote registration interrupted")
+			client := newGeneratedRegisterClient(
+				t,
+				service,
+				grpc.UnaryInterceptor(func(context.Context, any, *grpc.UnaryServerInfo, grpc.UnaryHandler) (any, error) {
+					return nil, remoteErr
+				}),
+			)
+			ctx := context.Background()
+
+			_, err := client.Register(ctx, validRegisterPayloadForSchemaAdmission("remote-interruption-test"))
+			require.Error(t, err)
+			require.NoError(t, ctx.Err())
+			require.ErrorContains(t, err, remoteErr.Error())
+			require.NotErrorIs(t, err, context.Canceled)
+			require.NotErrorIs(t, err, context.DeadlineExceeded)
+		})
+	}
 }
 
 func TestGeneratedGRPCClientRetriesClaimWithSameOperationID(t *testing.T) {
