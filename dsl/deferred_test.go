@@ -40,6 +40,133 @@ func TestDeferredBelongsToConsumer(t *testing.T) {
 	assert.False(t, agentsexpr.Root.Toolsets[0].Deferred)
 }
 
+func TestDeferredNamedToolsBelongToConsumer(t *testing.T) {
+	runDSL(t, func() {
+		shared := Toolset("shared", func() {
+			Tool("lookup", "Look up a record.")
+			Tool("search", "Search records.")
+		})
+		Service("records", func() {
+			Agent("selective", "Discover selected tools.", func() {
+				Use(shared, func() { Deferred("search") })
+			})
+			Agent("different", "Discover another tool.", func() {
+				Use(shared, func() { Deferred("lookup") })
+			})
+			Agent("eager", "Use tools directly.", func() { Use(shared) })
+			Export(shared)
+		})
+	})
+
+	require.Len(t, agentsexpr.Root.Agents, 3)
+	assert.Equal(t, []string{"search"}, agentsexpr.Root.Agents[0].Used.Toolsets[0].DeferredTools)
+	assert.Equal(t, []string{"lookup"}, agentsexpr.Root.Agents[1].Used.Toolsets[0].DeferredTools)
+	assert.Empty(t, agentsexpr.Root.Agents[2].Used.Toolsets[0].DeferredTools)
+	assert.Empty(t, agentsexpr.Root.Toolsets[0].DeferredTools)
+	assert.Empty(t, agentsexpr.Root.ServiceExports[0].Toolsets[0].DeferredTools)
+	assert.False(t, agentsexpr.Root.Agents[0].Used.Toolsets[0].Deferred)
+}
+
+func TestDeferredRepeatedDeclarations(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		use   func()
+		all   bool
+		names []string
+	}{
+		{"all", func() { Deferred(); Deferred() }, true, nil},
+		{"named", func() { Deferred("search"); Deferred("lookup") }, false, []string{"search", "lookup"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runDSL(t, func() {
+				Service("records", func() {
+					Agent("reader", "Read records.", func() {
+						Use("records", func() {
+							test.use()
+							Tool("search", "Search records.")
+							Tool("lookup", "Look up records.")
+						})
+					})
+				})
+			})
+			consumed := agentsexpr.Root.Agents[0].Used.Toolsets[0]
+			assert.Equal(t, test.all, consumed.Deferred)
+			assert.Equal(t, test.names, consumed.DeferredTools)
+		})
+	}
+}
+
+func TestDeferredRejectsInvalidSelections(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		use  func()
+		want string
+	}{
+		{"empty", func() { Deferred("") }, "tool name cannot be empty"},
+		{"empty among names", func() { Deferred("search", "") }, "tool name cannot be empty"},
+		{"duplicate", func() { Deferred("search", "search") }, `tool name "search" is repeated`},
+		{"repeated name", func() { Deferred("search"); Deferred("search") }, `tool name "search" is repeated`},
+		{"all then named", func() { Deferred(); Deferred("search") }, "cannot mix all tools with named tools"},
+		{"named then all", func() { Deferred("search"); Deferred() }, "cannot mix all tools with named tools"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := runDSLWithError(t, func() {
+				Service("records", func() {
+					Agent("reader", "Read records.", func() {
+						Use("records", func() {
+							Tool("search", "Search records.")
+							test.use()
+						})
+					})
+				})
+			})
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestDeferredRegistrySelections(t *testing.T) {
+	for _, whole := range []bool{false, true} {
+		for _, named := range []bool{false, true} {
+			name := "FromRegistry"
+			if whole {
+				name = "Registry"
+			}
+			if named {
+				name += "/named"
+			} else {
+				name += "/repeated all"
+			}
+			t.Run(name, func(t *testing.T) {
+				err := runDSLWithError(t, func() {
+					registry := Registry("company", func() { URL("https://registry.example.invalid") })
+					var source any = Toolset(FromRegistry(registry, "records"))
+					if whole {
+						source = registry
+					}
+					Service("records", func() {
+						Agent("reader", "Read records.", func() {
+							Use(source, func() {
+								if named {
+									Deferred("search")
+								} else {
+									Deferred()
+									Deferred()
+								}
+							})
+						})
+					})
+				})
+				if named {
+					require.ErrorContains(t, err, "Deferred cannot select named tools")
+				} else {
+					require.NoError(t, err)
+				}
+			})
+		}
+	}
+}
+
 func TestDeferredRejectsSharedDefinitionAndExport(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -51,6 +178,19 @@ func TestDeferredRejectsSharedDefinitionAndExport(t *testing.T) {
 				Agent("provider", "Provides tools.", func() {
 					Export("shared", func() { Deferred() })
 				})
+			})
+		}},
+		{"named definition", func() { Toolset("shared", func() { Deferred("lookup") }) }},
+		{"named agent export", func() {
+			Service("records", func() {
+				Agent("provider", "Provides tools.", func() {
+					Export("shared", func() { Deferred("lookup") })
+				})
+			})
+		}},
+		{"named service export", func() {
+			Service("records", func() {
+				Export("shared", func() { Deferred("lookup") })
 			})
 		}},
 	}

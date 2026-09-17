@@ -1,3 +1,5 @@
+// Package dsl declares agents and the toolsets they consume or export. Consuming
+// Use expressions own loading choices; reusable tool contracts do not.
 package dsl
 
 import (
@@ -82,6 +84,7 @@ func Agent(name, description string, dsl func()) *expragents.AgentExpr {
 // An optional DSL function can:
 //   - Subset tools from a referenced provider toolset by name (Tool("name"))
 //   - Define ad-hoc tools local to this agent
+//   - Defer all or selected tools through Deferred
 //
 // Example (referencing a provider toolset and subsetting):
 //
@@ -143,14 +146,24 @@ func Use(value any, fn ...func()) {
 // support reject deferred requests. The choice belongs to this consuming agent,
 // so other agents can use the same tools immediately.
 //
+// With no names, Deferred selects every tool in the consumed toolset or registry.
+// Otherwise, names must exactly match local tool names in the compiled toolset;
+// unlisted tools remain immediately available. Named selection is not supported
+// for FromRegistry toolsets or whole registries because their tools are resolved
+// at runtime. Empty, duplicate, unknown, and mixed all/named selections are errors.
+//
 // Deferred must appear inside a Use DSL function:
 //
 //	Use(Analytics, func() {
-//	    Deferred()
+//	    Deferred("analyze", "forecast")
 //	})
-func Deferred() {
+func Deferred(names ...string) {
 	switch current := eval.Current().(type) {
 	case *expragents.RegistryUseExpr:
+		if len(names) > 0 {
+			eval.ReportError("Deferred cannot select named tools from a Registry; use Deferred()")
+			return
+		}
 		current.Deferred = true
 	case *expragents.ToolsetExpr:
 		if current.Agent == nil || current.Agent.Used == nil ||
@@ -158,7 +171,33 @@ func Deferred() {
 			eval.ReportError("Deferred must appear inside a Use DSL function")
 			return
 		}
-		current.Deferred = true
+		if len(names) == 0 {
+			if len(current.DeferredTools) > 0 {
+				eval.ReportError("Deferred cannot mix all tools with named tools")
+				return
+			}
+			current.Deferred = true
+			return
+		}
+		if current.Provider != nil && current.Provider.Kind == expragents.ProviderRegistry {
+			eval.ReportError("Deferred cannot select named tools from FromRegistry; use Deferred()")
+			return
+		}
+		if current.Deferred {
+			eval.ReportError("Deferred cannot mix all tools with named tools")
+			return
+		}
+		for i, name := range names {
+			if name == "" {
+				eval.ReportError("Deferred tool name cannot be empty")
+				return
+			}
+			if slices.Contains(current.DeferredTools, name) || slices.Contains(names[:i], name) {
+				eval.ReportError("Deferred tool name %q is repeated", name)
+				return
+			}
+		}
+		current.DeferredTools = append(current.DeferredTools, names...)
 	default:
 		eval.IncompatibleDSL()
 	}
