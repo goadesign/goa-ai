@@ -28,6 +28,15 @@ func RetainUsage(err error, usage TokenUsage) error {
 	if invalid := validateTokenUsage(usage); invalid != nil {
 		return errors.Join(err, fmt.Errorf("model: invalid failed invocation usage: %w", invalid))
 	}
+	// A complete output rejection keeps its concrete type for transports that
+	// distinguish it from a rejection joined with another operation failure.
+	// Keep the original error in the chain and leave its evidence unchanged.
+	if rejected, ok := err.(*OutputValidationError); ok { //nolint:errorlint // Only an exact rejection can retain this classification.
+		owned := *rejected
+		owned.cause = rejected
+		owned.usage = &usage
+		return &owned
+	}
 	return &usageError{cause: err, usage: usage}
 }
 
@@ -35,14 +44,24 @@ func RetainUsage(err error, usage TokenUsage) error {
 // by RetainUsage or an OutputValidationError. It returns nil when no validated
 // counts are available. These totals replace, rather than add to, stream deltas.
 func UsageFromError(err error) *TokenUsage {
-	var failed *usageError
-	if errors.As(err, &failed) {
-		usage := failed.usage
+	switch failure := err.(type) { //nolint:errorlint // Walk in order so an outer total supersedes earlier nested counts.
+	case *usageError:
+		usage := failure.usage
 		return &usage
+	case *OutputValidationError:
+		if usage := failure.Usage(); usage != nil {
+			return usage
+		}
 	}
-	var rejected *OutputValidationError
-	if errors.As(err, &rejected) {
-		return rejected.Usage()
+	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
+		return UsageFromError(wrapped.Unwrap())
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, cause := range joined.Unwrap() {
+			if usage := UsageFromError(cause); usage != nil {
+				return usage
+			}
+		}
 	}
 	return nil
 }

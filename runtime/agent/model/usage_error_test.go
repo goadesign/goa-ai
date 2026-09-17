@@ -4,6 +4,8 @@ package model
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"math"
 	"testing"
 
@@ -34,6 +36,31 @@ func TestRetainUsagePreservesFailureAndOwnsCounts(t *testing.T) {
 	err := RetainUsage(context.Canceled, TokenUsage{InputTokens: -1})
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Nil(t, UsageFromError(err))
+}
+
+func TestRetainUsageKeepsExactOutputRejection(t *testing.T) {
+	originalUsage := TokenUsage{InputTokens: 3}
+	total := TokenUsage{InputTokens: 10, OutputTokens: 2}
+	cause := errors.New("malformed native output")
+	rejected, err := RestoreOutputValidationError(OutputValidationResponseShape, cause, ResponseEvidence{}, &originalUsage)
+	require.NoError(t, err)
+	retained := RetainUsage(rejected, total)
+	exact, ok := retained.(*OutputValidationError) //nolint:errorlint // The transport requires the exact root category.
+	require.True(t, ok)
+	assert.Equal(t, OutputValidationResponseShape, exact.Kind())
+	assert.Equal(t, &total, exact.Usage())
+	assert.Equal(t, &originalUsage, rejected.Usage())
+	require.ErrorIs(t, retained, rejected)
+	require.ErrorIs(t, retained, cause)
+	assert.Equal(t, &total, UsageFromError(fmt.Errorf("transport: %w", retained)))
+
+	mixed := RetainUsage(errors.Join(rejected, context.Canceled), total)
+	_, exactRoot := mixed.(*OutputValidationError) //nolint:errorlint // Mixed operation failures must not become exact output rejections.
+	assert.False(t, exactRoot)
+	require.ErrorIs(t, mixed, context.Canceled)
+	assert.Equal(t, &total, UsageFromError(mixed))
+	updated := RetainUsage(exact, TokenUsage{InputTokens: 20})
+	assert.Equal(t, 20, UsageFromError(updated).InputTokens)
 }
 
 func TestAddTokenUsageRejectsOverflowAndInvalidCounts(t *testing.T) {
