@@ -359,24 +359,12 @@ func (s *Service) ListToolsets(ctx context.Context, p *genregistry.ListToolsetsP
 
 	infos := make([]*genregistry.ToolsetInfo, len(toolsets))
 	for i, ts := range toolsets {
-		infos[i] = toolsetToInfo(ts)
+		infos[i] = copyToolsetInfo(ts)
 	}
 
 	return &genregistry.ListToolsetsResult{
 		Toolsets: infos,
 	}, nil
-}
-
-// toolsetToInfo converts a Toolset to ToolsetInfo (metadata without full tool schemas).
-func toolsetToInfo(ts *genregistry.Toolset) *genregistry.ToolsetInfo {
-	return &genregistry.ToolsetInfo{
-		Name:         ts.Name,
-		Description:  ts.Description,
-		Version:      ts.Version,
-		Tags:         ts.Tags,
-		ToolCount:    len(ts.Tools),
-		RegisteredAt: ts.RegisteredAt,
-	}
 }
 
 // GetToolset returns a specific toolset by name including all tool schemas.
@@ -432,7 +420,7 @@ func (s *Service) Search(ctx context.Context, p *genregistry.SearchPayload) (*ge
 
 	infos := make([]*genregistry.ToolsetInfo, len(toolsets))
 	for i, ts := range toolsets {
-		infos[i] = toolsetToInfo(ts)
+		infos[i] = copyToolsetInfo(ts)
 	}
 
 	return &genregistry.SearchResult{
@@ -1112,8 +1100,12 @@ func (s *Service) validatePreparedToolCall(
 			prepared.expectedRegistrationToken,
 		))
 	}
+	toolset, err := registration.Toolset.decode()
+	if err != nil {
+		return genregistry.MakeServiceUnavailable(err)
+	}
 	var schema *genregistry.ToolSchema
-	for _, candidate := range registration.Toolset.Tools {
+	for _, candidate := range toolset.Tools {
 		if candidate.Name == prepared.tool.String() {
 			schema = candidate
 			break

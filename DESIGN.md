@@ -1077,6 +1077,19 @@ health tracking starts. Unknown fields or any other non-current record keep the
 registry unready and report every affected key; startup never rewrites a stored
 record.
 
+Each registry replica retains a definition's serialized JSON, verified schema
+fingerprint, and small listing metadata. It reuses that validation only when the
+saved JSON is byte-for-byte identical. Provider leases, health state, and admission
+identity are still read and checked on every operation. Provider updates reuse
+the definition's serialized bytes, so health checks do not repeatedly decode and
+hash large tool catalogs. The replica retains at most one definition per toolset
+name. Successful catalog reads discard entries for missing names; retained data
+never establishes that an admission still exists. Complete definitions are decoded
+when schema consumers need them, including
+tool calls, get, and resolve operations. Callers receive independent values and
+cannot modify the registry's retained data. This reuse does not change the stored
+record format or the atomic admission transitions.
+
 The wire-visible `RegistrationToken` is not a secret. It is the lowercase
 SHA-256 digest of the domain `goa-ai/tool-registry-admission/v2\0`, the uint32
 big-endian wire protocol version, the raw 32-byte canonical schema fingerprint,
