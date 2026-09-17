@@ -114,6 +114,13 @@ func translateResponse(
 			if err != nil {
 				return nil, err
 			}
+			if search != nil {
+				if _, deferred := search.functions[string(toolCall.Name)]; deferred && actual.Namespace != actual.Name {
+					return nil, outputvalidation.New(model.OutputValidationToolIdentity,
+						fmt.Errorf("openai: discovered tool %q requires namespace %q, received %q",
+							actual.Name, actual.Name, actual.Namespace))
+				}
+			}
 			appendMessage(model.Message{
 				Role: model.ConversationRoleAssistant,
 				Parts: []model.Part{model.ToolUsePart{
@@ -329,6 +336,10 @@ func translateToolCall(
 				model.NewUnadvertisedToolNameError(call.Name),
 			),
 		)
+	}
+	if call.Namespace != "" && call.Namespace != call.Name {
+		return model.ToolCall{}, outputvalidation.New(model.OutputValidationToolIdentity,
+			fmt.Errorf("openai: tool %q returned unadvertised namespace %q", call.Name, call.Namespace))
 	}
 	payload, err := decodeToolPayload(call.Arguments)
 	if err != nil {

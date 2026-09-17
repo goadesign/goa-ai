@@ -974,7 +974,10 @@ clients once with `RegisterRegistry`; generated `Definition()` and
 
 Each planning activity resolves its own current catalog. The model adapter
 receives only permitted definitions. OpenAI uses native client search with
-private BM25 ranking; Claude uses provider-hosted deferred search, including
+private BM25 ranking and single-function native namespaces so discovered call
+identities replay completely on Bedrock. Namespace names derive directly from
+provider function names; they are not an application concept or new stored state.
+Claude uses provider-hosted deferred search, including
 the dedicated Messages transport on Bedrock. Provider-specific search records
 stay in existing message metadata. There is no separate loaded-tool store.
 

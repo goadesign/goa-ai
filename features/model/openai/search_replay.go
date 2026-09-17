@@ -80,20 +80,30 @@ func decodeSearchJSON(data []byte, value any) error {
 	return nil
 }
 
-// searchFunctionFromTool freezes an encoded function for both native loading
-// and later comparison against a changed permitted catalog.
+// searchFunctionFromTool reads this adapter's eager function or single-function
+// namespace. Both contain the same schema used to compare saved discovery with
+// the current permitted catalog.
 func searchFunctionFromTool(tool responses.ToolUnionParam) (searchFunction, error) {
-	function := tool.OfFunction
-	parameters, err := json.Marshal(function.Parameters)
+	var name, description string
+	var parametersValue any
+	var strict bool
+	if namespace := tool.OfNamespace; namespace != nil {
+		function := namespace.Tools[0].OfFunction
+		name, description, parametersValue, strict = function.Name, function.Description.Value, function.Parameters, function.Strict.Value
+	} else {
+		function := tool.OfFunction
+		name, description, parametersValue, strict = function.Name, function.Description.Value, function.Parameters, function.Strict.Value
+	}
+	parameters, err := json.Marshal(parametersValue)
 	if err != nil {
 		return searchFunction{}, fmt.Errorf("openai: encode search tool schema: %w", err)
 	}
 	return searchFunction{
 		Type:         "function",
-		Name:         function.Name,
-		Description:  function.Description.Value,
+		Name:         name,
+		Description:  description,
 		Parameters:   parameters,
-		Strict:       function.Strict.Value,
+		Strict:       strict,
 		DeferLoading: true,
 	}, nil
 }
@@ -186,12 +196,19 @@ func encodeSearchReplay(meta map[string]any, key string) (responses.ResponseInpu
 				if err != nil {
 					return nil, fmt.Errorf("openai: replay search schema: %w", err)
 				}
-				native.Tools = append(native.Tools, responses.ToolUnionParam{OfFunction: &responses.FunctionToolParam{
-					Name:         function.Name,
-					Description:  param.NewOpt(function.Description),
-					Parameters:   parameters,
-					Strict:       param.NewOpt(function.Strict),
-					DeferLoading: param.NewOpt(true),
+				// Bedrock omits the namespace of a bare dynamically loaded
+				// function, then rejects that same call during replay. An
+				// explicit namespace makes the returned identity complete.
+				native.Tools = append(native.Tools, responses.ToolUnionParam{OfNamespace: &responses.NamespaceToolParam{
+					Name:        function.Name,
+					Description: function.Description,
+					Tools: []responses.NamespaceToolToolUnionParam{{OfFunction: &responses.NamespaceToolToolFunctionParam{
+						Name:         function.Name,
+						Description:  param.NewOpt(function.Description),
+						Parameters:   parameters,
+						Strict:       param.NewOpt(function.Strict),
+						DeferLoading: param.NewOpt(true),
+					}}},
 				}})
 			}
 			items = append(items, responses.ResponseInputItemUnionParam{OfToolSearchOutput: native})

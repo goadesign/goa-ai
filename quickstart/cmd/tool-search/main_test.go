@@ -37,7 +37,7 @@ func TestGeneratedAgentSearchesExecutesAndReplays(t *testing.T) {
 		case 1:
 			output = `{"type":"tool_search_call","id":"search-1","call_id":"search-call-1","execution":"client","status":"completed","arguments":{"query":"answer question"}}`
 		case 2:
-			output = `{"type":"function_call","id":"function-1","call_id":"helper-1","name":"helpers_answer","status":"completed","arguments":"{\"question\":\"What is the capital of Japan?\"}"}`
+			output = `{"type":"function_call","id":"function-1","call_id":"helper-1","name":"helpers_answer","namespace":"helpers_answer","status":"completed","arguments":"{\"question\":\"What is the capital of Japan?\"}"}`
 		case 3:
 			output = `{"type":"message","id":"message-1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Tokyo is the capital of Japan.","annotations":[]}]}`
 		default:
