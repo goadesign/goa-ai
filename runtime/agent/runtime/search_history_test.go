@@ -37,7 +37,7 @@ func TestNativeSearchThroughNewTurnPreparationAndHistoryTrimming(t *testing.T) {
 		case 1:
 			output = `{"type":"reasoning","id":"rs_1","status":"completed","summary":[],"encrypted_content":"private-search-reasoning"},{"type":"tool_search_call","id":"search","call_id":"discovery","execution":"client","status":"completed","arguments":{"query":"weather"}}`
 		case 2:
-			output = `{"type":"function_call","id":"function","call_id":"business","name":"weather_lookup","status":"completed","arguments":"{\"city\":\"Paris\"}"}`
+			output = `{"type":"function_call","id":"function","call_id":"business","name":"weather_lookup","namespace":"weather_lookup","status":"completed","arguments":"{\"city\":\"Paris\"}"}`
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_, err = io.WriteString(w, `{"status":"completed","model":"gpt-5.4","output":[`+output+`],"usage":{"input_tokens":10,"output_tokens":2,"total_tokens":12}}`)

@@ -4,6 +4,8 @@ package openai
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
 	"strings"
 	"testing"
 
@@ -15,6 +17,57 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+func TestNativeSearchRejectsIncompleteOrUnadvertisedNamespace(t *testing.T) {
+	for _, namespace := range []string{"", "another_namespace"} {
+		call := strings.Replace(searchToolJSON, `"namespace":"weather_lookup"`, `"namespace":"`+namespace+`"`, 1)
+		for _, streaming := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/stream=%t", namespace, streaming), func(t *testing.T) {
+				var client model.Client
+				var err error
+				if streaming {
+					client, err = New(Options{DefaultModel: "gpt-5.4", transport: &searchStreamTransport{
+						streams: []responseStream{
+							searchResponseStream(t, searchCallJSON),
+							searchResponseStream(t, call),
+						},
+					}})
+				} else {
+					client, err = New(Options{DefaultModel: "gpt-5.4", transport: &searchTransport{
+						responses: []*responses.Response{
+							searchResponse(t, searchCallJSON),
+							searchResponse(t, call),
+						},
+					}})
+				}
+				require.NoError(t, err)
+				if streaming {
+					stream, streamErr := client.Stream(t.Context(), searchRequest())
+					require.NoError(t, streamErr)
+					for {
+						chunk, recvErr := stream.Recv()
+						_, isCall := chunk.(model.ToolCallChunk)
+						assert.False(t, isCall, "invalid identity must not become an executable call")
+						if recvErr != nil {
+							err = recvErr
+							break
+						}
+					}
+					require.NotErrorIs(t, err, io.EOF)
+					require.NoError(t, stream.Close())
+				} else {
+					_, err = client.Complete(t.Context(), searchRequest())
+				}
+				var rejected *model.OutputValidationError
+				require.ErrorAs(t, err, &rejected)
+				assert.Equal(t, model.OutputValidationToolIdentity, rejected.Kind())
+				assert.Contains(t, rejected.Unwrap().Error(), "namespace")
+				require.NotNil(t, model.UsageFromError(err))
+				assert.Equal(t, 24, model.UsageFromError(err).TotalTokens)
+			})
+		}
+	}
+}
 
 func TestNativeSearchRejectsMalformedReplay(t *testing.T) {
 	for _, record := range []string{

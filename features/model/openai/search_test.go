@@ -30,7 +30,7 @@ type (
 
 const (
 	searchCallJSON = `{"type":"tool_search_call","id":"search-1","call_id":"search-call-1","execution":"client","status":"completed","arguments":{"query":"weather"}}`
-	searchToolJSON = `{"type":"function_call","id":"function-1","call_id":"business-1","name":"weather_lookup","status":"completed","arguments":"{\"city\":\"Paris\"}"}`
+	searchToolJSON = `{"type":"function_call","id":"function-1","call_id":"business-1","name":"weather_lookup","namespace":"weather_lookup","status":"completed","arguments":"{\"city\":\"Paris\"}"}`
 	searchTextJSON = `{"type":"message","id":"message-1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Finished.","annotations":[]}]}`
 )
 
@@ -62,8 +62,12 @@ func TestNativeSearchLoadsOnlyMatchingPermittedDefinitions(t *testing.T) {
 	found := second.Input.OfInputItemList[2].OfToolSearchOutput
 	require.NotNil(t, found)
 	require.Len(t, found.Tools, 1)
-	assert.Equal(t, "weather_lookup", found.Tools[0].OfFunction.Name)
-	assert.True(t, found.Tools[0].OfFunction.DeferLoading.Value)
+	namespace := found.Tools[0].OfNamespace
+	require.NotNil(t, namespace)
+	assert.Equal(t, "weather_lookup", namespace.Name)
+	require.Len(t, namespace.Tools, 1)
+	assert.Equal(t, namespace.Name, namespace.Tools[0].OfFunction.Name)
+	assert.True(t, namespace.Tools[0].OfFunction.DeferLoading.Value)
 
 	// JSON persistence and a new provider invocation retain native references.
 	clone, err := model.CloneResponse(response)
@@ -83,6 +87,7 @@ func TestNativeSearchLoadsOnlyMatchingPermittedDefinitions(t *testing.T) {
 	assert.NotNil(t, prepared.request.Input.OfInputItemList[1].OfToolSearchCall)
 	assert.NotNil(t, prepared.request.Input.OfInputItemList[2].OfToolSearchOutput)
 	assert.NotNil(t, prepared.request.Input.OfInputItemList[3].OfFunctionCall)
+	assert.Equal(t, namespace.Name, prepared.request.Input.OfInputItemList[3].OfFunctionCall.Namespace.Value)
 }
 
 func TestNativeSearchMixedBusinessCallReturnsWithoutContinuation(t *testing.T) {

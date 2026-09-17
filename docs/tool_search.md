@@ -151,6 +151,18 @@ selection. For Claude, the complete catalog is transmitted to the provider,
 which manages deferred context loading. These have different network and
 token-accounting implications; measure the actual chosen model.
 
+Each OpenAI search result places the selected function inside a native namespace
+with the same provider name. This makes Bedrock return a complete function-call
+identity that can be replayed. The adapter owns this wire representation; it
+requires no namespace DSL, application mapping, or separate loaded-tool state.
+Saved function-call metadata preserves the returned namespace unchanged.
+Requests with tools loaded eagerly retain their existing representation.
+
+Bedrock histories created with bare dynamically loaded functions may contain
+calls without a namespace. Bedrock rejects those calls when replayed. Start a
+new conversation or deliberately remove the complete affected exchange through
+history policy; the adapter does not invent missing provider fields.
+
 Forcing one named tool makes that tool immediately available for that request.
 Disabling tools suppresses new discovery. Provider model and endpoint support
 must be checked in the deployment using them.
