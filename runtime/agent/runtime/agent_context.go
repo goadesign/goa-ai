@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"fmt"
+	"maps"
 	"slices"
 
 	agent "goa.design/goa-ai/runtime/agent"
@@ -34,6 +36,7 @@ type agentContextOptions struct {
 	advertisedSpecs     []tools.ToolSpec
 	historyMessages     []*model.Message
 	historyContext      *api.HistoryContext
+	catalog             *RegistryCatalog
 }
 
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
@@ -55,6 +58,7 @@ type simplePlannerContext struct {
 	advertisedSpecs     []tools.ToolSpec
 	historyMessages     []*model.Message
 	historyContext      *api.HistoryContext
+	catalog             *RegistryCatalog
 }
 
 func newAgentContext(opts agentContextOptions) planner.PlannerContext {
@@ -80,6 +84,7 @@ func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 		advertisedSpecs:     advertisedSpecs,
 		historyMessages:     opts.historyMessages,
 		historyContext:      opts.historyContext,
+		catalog:             opts.catalog,
 	}
 }
 
@@ -116,20 +121,36 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 		}
 		visible = append(visible, spec)
 	}
-	definitions := c.rt.advertisedToolDefinitions(visible, c.policy)
+	var definitions []*model.ToolDefinition
+	if c.catalog != nil {
+		definitions = advertisedDefinitions(visible, c.policy, c.catalog.definitions)
+	} else {
+		definitions = c.rt.advertisedToolDefinitions(visible, c.policy)
+	}
+	registration, ok := c.rt.agentByID(c.agent)
+	if !ok {
+		panic(fmt.Sprintf("runtime: planner context has no registered agent %q", c.agent))
+	}
+	for _, definition := range definitions {
+		if c.catalog != nil {
+			if _, dynamic := c.catalog.selections[tools.Ident(definition.Name)]; dynamic {
+				continue
+			}
+		}
+		_, definition.Deferred = registration.Definition.deferredTools[tools.Ident(definition.Name)]
+	}
 	for _, action := range c.continuationActions {
 		if slices.Contains(c.unavailableTools, action.spec.Name) ||
 			!c.policy.allowsTool(action.spec.Name, toolPolicyFactsFromSpec(action.spec)) {
 			continue
 		}
-		definition := c.rt.advertisedToolDefinitions(
-			[]tools.ToolSpec{action.spec},
-			compiledToolPolicy{},
-		)[0]
+		definition := *action.definition
+		definition.Search.Terms = maps.Clone(action.definition.Search.Terms)
 		definition.Name = action.modelName.String()
 		definition.Description = action.description
 		definition.NoArguments = true
-		definitions = append(definitions, definition)
+		definition.Deferred = false
+		definitions = append(definitions, &definition)
 	}
 	return definitions
 }

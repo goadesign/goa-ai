@@ -280,6 +280,15 @@ type (
 		// Name is the tool identifier as seen by the model.
 		Name string
 
+		// Search contains precomputed words from the tool name, title, and
+		// description. Deferred tools require a nonempty document.
+		Search tools.SearchDocument
+
+		// Deferred asks a supporting adapter to load this definition through
+		// tool search. The tool remains part of the request's validation
+		// contract. Unsupported adapters reject the request.
+		Deferred bool
+
 		// Description is a concise summary presented to the model to decide
 		// when to call the tool.
 		Description string
@@ -473,7 +482,7 @@ type (
 	// TokenUsage tracks token counts and model attribution for a single model
 	// invocation. The counts are additive; the identity fields (Model,
 	// ModelClass) describe the source of the delta and are not aggregated by
-	// addTokenUsage.
+	// AddTokenUsage.
 	TokenUsage struct {
 		// Model is the provider-resolved model identifier that produced this
 		// usage (e.g., "us.anthropic.claude-sonnet-4-20250514-v1:0"). Set by
@@ -1069,6 +1078,10 @@ var ErrStreamingUnsupported = errors.New("model: streaming not supported")
 // provider-enforced structured output for the requested model API.
 var ErrStructuredOutputUnsupported = errors.New("model: structured output not supported")
 
+// ErrToolSearchUnsupported indicates that the selected provider API cannot
+// discover deferred tool definitions. The adapter does not expose them eagerly.
+var ErrToolSearchUnsupported = errors.New("model: deferred tool search not supported")
+
 // ErrRateLimited indicates the provider rejected the request due to rate
 // limiting after exhausting any configured retries. Callers must not retry
 // in a tight loop and should treat this as a transient infrastructure
@@ -1137,6 +1150,7 @@ func NewToolDefinitionFromSpec(spec tools.ToolSpec) (*ToolDefinition, error) {
 	input.fields = tools.CloneFieldMetadata(spec.Payload.Fields)
 	return &ToolDefinition{
 		Name:        spec.Name.String(),
+		Search:      tools.SearchDocument{Length: spec.Search.Length, Terms: maps.Clone(spec.Search.Terms)},
 		Description: spec.Description,
 		Input:       input,
 	}, nil

@@ -22,9 +22,11 @@ type Client struct {
 	PongEndpoint                   goa.Endpoint
 	ListToolsetsEndpoint           goa.Endpoint
 	GetToolsetEndpoint             goa.Endpoint
+	ResolveToolsetEndpoint         goa.Endpoint
 	CheckAdmissionEndpoint         goa.Endpoint
 	SearchEndpoint                 goa.Endpoint
 	CallToolEndpoint               goa.Endpoint
+	CallResolvedToolEndpoint       goa.Endpoint
 	RetryToolEndpoint              goa.Endpoint
 	CompleteToolCallEndpoint       goa.Endpoint
 	PublishToolOutputDeltaEndpoint goa.Endpoint
@@ -33,7 +35,7 @@ type Client struct {
 }
 
 // NewClient initializes a "registry" service client given the endpoints.
-func NewClient(register, releaseProvider, drainProvider, unregister, pong, listToolsets, getToolset, checkAdmission, search, callTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
+func NewClient(register, releaseProvider, drainProvider, unregister, pong, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
 	return &Client{
 		RegisterEndpoint:               register,
 		ReleaseProviderEndpoint:        releaseProvider,
@@ -42,9 +44,11 @@ func NewClient(register, releaseProvider, drainProvider, unregister, pong, listT
 		PongEndpoint:                   pong,
 		ListToolsetsEndpoint:           listToolsets,
 		GetToolsetEndpoint:             getToolset,
+		ResolveToolsetEndpoint:         resolveToolset,
 		CheckAdmissionEndpoint:         checkAdmission,
 		SearchEndpoint:                 search,
 		CallToolEndpoint:               callTool,
+		CallResolvedToolEndpoint:       callResolvedTool,
 		RetryToolEndpoint:              retryTool,
 		CompleteToolCallEndpoint:       completeToolCall,
 		PublishToolOutputDeltaEndpoint: publishToolOutputDelta,
@@ -127,6 +131,20 @@ func (c *Client) GetToolset(ctx context.Context, p *GetToolsetPayload) (res *Too
 	return ires.(*Toolset), nil
 }
 
+// ResolveToolset calls the "ResolveToolset" endpoint of the "registry" service.
+// ResolveToolset may return the following errors:
+//   - "not_found" (type *goa.ServiceError): Toolset or tool not found
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) ResolveToolset(ctx context.Context, p *GetToolsetPayload) (res *ResolvedToolset, err error) {
+	var ires any
+	ires, err = c.ResolveToolsetEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ResolvedToolset), nil
+}
+
 // CheckAdmission calls the "CheckAdmission" endpoint of the "registry" service.
 // CheckAdmission may return the following errors:
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
@@ -160,6 +178,24 @@ func (c *Client) Search(ctx context.Context, p *SearchPayload) (res *SearchResul
 func (c *Client) CallTool(ctx context.Context, p *CallToolPayload) (res *CallToolResult, err error) {
 	var ires any
 	ires, err = c.CallToolEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*CallToolResult), nil
+}
+
+// CallResolvedTool calls the "CallResolvedTool" endpoint of the "registry"
+// service.
+// CallResolvedTool may return the following errors:
+//   - "not_found" (type *goa.ServiceError): Toolset or tool not found
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - "call_not_admitted" (type *goa.ServiceError): The registry chose a rejected decision for this tool-use identity before provider publication, so no exact retry can execute while the run-scoped decision is retained
+//   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
+//   - error: internal error
+func (c *Client) CallResolvedTool(ctx context.Context, p *CallResolvedToolPayload) (res *CallToolResult, err error) {
+	var ires any
+	ires, err = c.CallResolvedToolEndpoint(ctx, p)
 	if err != nil {
 		return
 	}

@@ -42,7 +42,7 @@ func TestRequestValidationToolFailureStopsWorkflow(t *testing.T) {
 				Definition: NewAgentDefinition(
 					AgentRoute{ID: "service.agent", WorkflowName: "service.workflow", DefaultTaskQueue: "queue"},
 					[]tools.ToolSpec{spec}, nil, nil, []tools.Ident{spec.Name}, nil,
-				),
+					nil),
 				WorkflowHandler: func(wfCtx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
 					return rt.ExecuteWorkflow(wfCtx, input)
 				},

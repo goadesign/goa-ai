@@ -25,7 +25,10 @@ import (
 // supplied by the executor with data from the saved model call and registered
 // tool definition, and returns encoded result JSON.
 func (r *Runtime) materializeToolResult(ctx context.Context, call ToolCall, result *planner.ToolResult) (rawjson.Message, error) {
-	spec, ok := r.toolSpec(call.Name)
+	spec, ok, err := lookupCallSpec(call, r.toolSpec)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, fmt.Errorf("tool %q is not registered", call.Name)
 	}
@@ -43,7 +46,10 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call ToolCall, resu
 // correction data for the model. The workflow retains the complete call and
 // adds that data after the activity returns.
 func (r *Runtime) materializeActivityToolResult(ctx context.Context, call ToolCall, result *planner.ToolResult) (rawjson.Message, error) {
-	spec, ok := r.toolSpec(call.Name)
+	spec, ok, err := lookupCallSpec(call, r.toolSpec)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, fmt.Errorf("tool %q is not registered", call.Name)
 	}
@@ -93,12 +99,12 @@ func (r *Runtime) materializeToolResultData(
 		setMalformedToolResult(result, call, err)
 		return nil, nil
 	}
-	encoded, err := r.marshalToolValue(ctx, call.Name, result.Result, result.Bounds)
+	encoded, err := EncodeCanonicalToolResult(spec, result.Result, result.Bounds)
 	if err != nil {
 		setMalformedToolResult(result, call, fmt.Errorf("encode %s tool result: %w", call.Name, err))
 		return nil, nil
 	}
-	return rawjson.Message(encoded), nil
+	return encoded, nil
 }
 
 // materializeToolExecutionResult validates the execution result, prepares its
@@ -156,6 +162,9 @@ func (r *Runtime) materializeActivityToolExecutionResult(
 // applyResultMaterializer invokes the toolset-owned typed result materializer
 // when the toolset registered one.
 func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSpec, call ToolCall, result *planner.ToolResult) error {
+	if call.Registry != nil {
+		return nil
+	}
 	_, reg, ok := r.toolsetForTool(spec.Name)
 	if !ok || reg.ResultMaterializer == nil {
 		return nil
@@ -181,7 +190,10 @@ func (r *Runtime) decodeProvidedToolRecords(ctx context.Context, allowed []ToolC
 		if item.Name != call.Name {
 			return nil, fmt.Errorf("await: result tool %q does not match awaited tool %q", item.Name, call.Name)
 		}
-		spec, ok := r.toolSpec(call.Name)
+		spec, ok, err := lookupCallSpec(call, r.toolSpec)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			return nil, fmt.Errorf("await: tool %q is not registered", call.Name)
 		}

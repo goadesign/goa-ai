@@ -2597,25 +2597,35 @@ The registry wire protocol and deterministic stream IDs are defined in `runtime/
 - Toolset request stream: `toolset:<toolsetID>:requests`
 - Per-call result stream: `result:<toolUseID>`
 
-### Registry discovery & catalog sync
+### Dynamic registry consumption
 
-Registry-backed toolsets are discovered before agent startup. The generated
-toolset's `Discover` function returns an immutable `runtime/registry.Toolset`;
-pass it through the agent's generated `RegistryToolsets` input when constructing
-definitions, registering workers, and registering executors. The shared runtime
-compiles the discovered schemas and supplies validating codecs. See
-[Registry-Backed Toolsets](dsl.md#registry-backed-toolsets) for the complete
-startup contract, supported tools, and migration from package-global discovery.
+Connect the clustered registry's generated service client and Pulse client with
+`rt.RegisterRegistry(name, registryClient, pulseClient)` before sealing the
+runtime. Generated named registry references and `Use(registry)`
+declarations emit direct source reads and permission checks. The named form is
+written as `Use(ToolsetReference)`, where the reference was declared with
+`Toolset(FromRegistry(...))`.
 
-For the clustered registry, wrap its generated service client with
-`runtime/registry.NewClient`. Generated HTTP catalog clients use the same
-discovery resource types but require their own matching HTTP server.
-`runtime/registry.Manager` can synchronize a catalog for discovery; that does
-not replace the definitions in an already registered agent. Adopting changed
-definitions requires constructing a new runtime with the new toolsets.
+Each planning activity that can start new work resolves its own catalog. Calls
+save only their selected contracts and fixed pagination partners with the
+existing registration token. Execution and overload retry require that token;
+confirmation and checkpoint restoration use the saved definitions without
+reading the current catalog. Current agent consumption and run policy still
+constrain new work. Runtime registration of static tools remains immutable.
 
-The standalone clustered registry implementation lives under `registry`, and
-the shared provider messaging protocol lives under `runtime/toolregistry`.
+`Deferred()` independently chooses native model tool search for either static
+or registry tools. Planners continue to pass
+`input.Agent.AdvertisedToolDefinitions()` to model requests. Search calls and
+provider-specific replay stay inside the adapter; ordinary tool calls keep the
+existing execution loop. Preserve message metadata when storing or copying
+history.
+
+The complete contract, provider support, failure behavior, and upgrade steps
+are in [Tool search and dynamic registries](tool_search.md).
+
+The lower-level `runtime/registry` HTTP catalog and synchronization helpers
+remain available for separate catalog integrations. They do not update an
+agent's static registration or substitute for the clustered execution client.
 
 **Inline tools** — Custom executor implementation:
 
@@ -3691,10 +3701,11 @@ The runtime treats confirmation as a boundary and validates:
 
 Notes:
 
+- Templates read canonical JSON property names, such as `{{ .key }}`, rather than generated Go field names. Use `index` for optional properties.
 - Confirmation templates (`PromptTemplate` and `DeniedResultTemplate`) are Go `text/template` strings
   executed with `missingkey=error`. In addition to the standard template functions (e.g. `printf`),
   Goa-AI provides:
-  - `json v` → JSON encodes `v` (useful for optional pointer fields or embedding structured values).
+  - `json v` → JSON encodes `v` without manual quoting or number conversion.
   - `quote s` → returns a Go-escaped quoted string (like `fmt.Sprintf("%q", s)`).
 
 ---

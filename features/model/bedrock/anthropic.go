@@ -90,7 +90,7 @@ func NewAnthropicProvider(
 	client := sdk.NewClient(clientOpts...)
 
 	opts.ToolExamplesInSchema = true
-	inference, err := anthropicprovider.NewProvider(&client.Messages, opts)
+	inference, err := anthropicprovider.NewProvider(&anthropicMessages{MessageService: &client.Messages}, opts)
 	if err != nil {
 		return nil, fmt.Errorf("bedrock: create Anthropic Messages provider: %w", err)
 	}

@@ -27,9 +27,11 @@ type Server struct {
 	PongH                   goagrpc.UnaryHandler
 	ListToolsetsH           goagrpc.UnaryHandler
 	GetToolsetH             goagrpc.UnaryHandler
+	ResolveToolsetH         goagrpc.UnaryHandler
 	CheckAdmissionH         goagrpc.UnaryHandler
 	SearchH                 goagrpc.UnaryHandler
 	CallToolH               goagrpc.UnaryHandler
+	CallResolvedToolH       goagrpc.UnaryHandler
 	RetryToolH              goagrpc.UnaryHandler
 	CompleteToolCallH       goagrpc.UnaryHandler
 	PublishToolOutputDeltaH goagrpc.UnaryHandler
@@ -48,9 +50,11 @@ func New(e *registry.Endpoints, uh goagrpc.UnaryHandler) *Server {
 		PongH:                   NewPongHandler(e.Pong, uh),
 		ListToolsetsH:           NewListToolsetsHandler(e.ListToolsets, uh),
 		GetToolsetH:             NewGetToolsetHandler(e.GetToolset, uh),
+		ResolveToolsetH:         NewResolveToolsetHandler(e.ResolveToolset, uh),
 		CheckAdmissionH:         NewCheckAdmissionHandler(e.CheckAdmission, uh),
 		SearchH:                 NewSearchHandler(e.Search, uh),
 		CallToolH:               NewCallToolHandler(e.CallTool, uh),
+		CallResolvedToolH:       NewCallResolvedToolHandler(e.CallResolvedTool, uh),
 		RetryToolH:              NewRetryToolHandler(e.RetryTool, uh),
 		CompleteToolCallH:       NewCompleteToolCallHandler(e.CompleteToolCall, uh),
 		PublishToolOutputDeltaH: NewPublishToolOutputDeltaHandler(e.PublishToolOutputDelta, uh),
@@ -248,6 +252,36 @@ func (s *Server) GetToolset(ctx context.Context, message *registrypb.GetToolsetR
 	return resp.(*registrypb.GetToolsetResponse), nil
 }
 
+// NewResolveToolsetHandler creates a gRPC handler which serves the "registry"
+// service "ResolveToolset" endpoint.
+func NewResolveToolsetHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeResolveToolsetRequest, EncodeResolveToolsetResponse)
+	}
+	return h
+}
+
+// ResolveToolset implements the "ResolveToolset" method in
+// registrypb.RegistryServer interface.
+func (s *Server) ResolveToolset(ctx context.Context, message *registrypb.ResolveToolsetRequest) (*registrypb.ResolveToolsetResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "ResolveToolset")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.ResolveToolsetH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "not_found":
+				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.ResolveToolsetResponse), nil
+}
+
 // NewCheckAdmissionHandler creates a gRPC handler which serves the "registry"
 // service "CheckAdmission" endpoint.
 func NewCheckAdmissionHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
@@ -328,6 +362,42 @@ func (s *Server) CallTool(ctx context.Context, message *registrypb.CallToolReque
 		return nil, goagrpc.EncodeError(err)
 	}
 	return resp.(*registrypb.CallToolResponse), nil
+}
+
+// NewCallResolvedToolHandler creates a gRPC handler which serves the
+// "registry" service "CallResolvedTool" endpoint.
+func NewCallResolvedToolHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeCallResolvedToolRequest, EncodeCallResolvedToolResponse)
+	}
+	return h
+}
+
+// CallResolvedTool implements the "CallResolvedTool" method in
+// registrypb.RegistryServer interface.
+func (s *Server) CallResolvedTool(ctx context.Context, message *registrypb.CallResolvedToolRequest) (*registrypb.CallResolvedToolResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "CallResolvedTool")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.CallResolvedToolH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "not_found":
+				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			case "call_not_admitted":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			case "admission_conflict":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.CallResolvedToolResponse), nil
 }
 
 // NewRetryToolHandler creates a gRPC handler which serves the "registry"

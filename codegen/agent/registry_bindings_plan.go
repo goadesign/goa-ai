@@ -1,7 +1,6 @@
-// Package codegen plans the discovered toolsets required to construct an agent.
-// The generated input has one named field per consumed toolset, including those
-// needed by reachable child agents. Discovery remains application startup work;
-// generated definitions never read a mutable package-global catalog.
+// Package codegen specializes registry consumption from the evaluated design.
+// Generated methods contain exact source reads and permission predicates; the
+// runtime supplies clients and handles only the catalog returned by those reads.
 package codegen
 
 import (
@@ -14,147 +13,67 @@ import (
 )
 
 type (
-	// registryBindingData identifies one startup input and its declared source.
-	registryBindingData struct {
-		// FieldName names the input in the generated RegistryToolsets struct.
-		FieldName string
-		// QualifiedName identifies the registry and remote toolset in errors.
-		QualifiedName string
-		// RegistryName identifies the declared catalog source.
+	// registrySourceData is one statically declared read. An empty ToolsetName
+	// selects the whole-registry template during generation, never at runtime.
+	registrySourceData struct {
 		RegistryName string
-		// ToolsetName identifies the provider's toolset within that catalog.
-		ToolsetName string
-		// Version is the optional design-time version requirement.
-		Version string
-		// References contains the local registration routes sharing this source.
-		References []string
+		ToolsetName  string
+		Version      string
+		Deferred     bool
 	}
 
-	// registryBindingKey identifies one catalog contract shared across local
-	// registration routes and reachable agents.
-	registryBindingKey struct {
-		registry string
-		toolset  string
-		version  string
-	}
-
-	// registryBindingsData contains the complete startup input for one generated
-	// agent package. StaticToolNames prevents dynamic inputs from replacing
-	// contracts already fixed by generation.
-	registryBindingsData struct {
-		// RegistryToolsetsType is the final generated startup input type name.
-		RegistryToolsetsType string
-		// RegistryBindings contains each distinct catalog contract exactly once.
-		RegistryBindings []*registryBindingData
-		// StaticToolNames contains identities already fixed by generated schemas.
-		StaticToolNames []string
+	// agentRegistrySourcesData owns the generated methods for one agent,
+	// including child definitions embedded in a caller's generated package.
+	agentRegistrySourcesData struct {
+		AgentID     string
+		Sources     []*registrySourceData
+		TypeName    string
+		declaration *goacodegen.NameDeclaration
 	}
 )
 
-const (
-	registryToolsetsTypeName = "RegistryToolsets"
-	registryRuntimePath      = "goa.design/goa-ai/runtime/registry"
-	registryPolicyPath       = "goa.design/goa-ai/runtime/agent/policy"
-)
-
-// planRegistryBindings collects known registry references from the generated
-// composition graph and assigns stable, distinct struct field names.
-func planRegistryBindings(root *agentir.Agent, childIDs []string) []*registryBindingData {
+// planRegistrySources collects each agent's own consumption without merging
+// child permissions into the parent. Source order is fixed during generation.
+func planRegistrySources(root *agentir.Agent, childIDs []string) []*agentRegistrySourcesData {
 	agents := make([]*agentir.Agent, 1, 1+len(childIDs))
 	agents[0] = root
 	for _, id := range childIDs {
 		agents = append(agents, agentByID(root, id))
 	}
-	byName := make(map[registryBindingKey]*registryBindingData)
+	var result []*agentRegistrySourcesData
 	for _, agent := range agents {
-		for _, refs := range [][]*agentir.ToolsetRef{agent.UsedToolsets, agent.ExportedToolsets} {
-			for _, ref := range refs {
-				if ref.Provider == nil || ref.Provider.Kind != agentexpr.ProviderRegistry {
-					continue
-				}
-				source := ref.Provider.Registry
-				key := registryBindingKey{
-					registry: source.RegistryName,
-					toolset:  source.ToolsetName,
-					version:  source.Version,
-				}
-				binding := byName[key]
-				if binding == nil {
-					binding = &registryBindingData{
-						QualifiedName: source.RegistryName + "." + source.ToolsetName,
-						RegistryName:  source.RegistryName,
-						ToolsetName:   source.ToolsetName,
-						Version:       source.Version,
-					}
-					byName[key] = binding
-				}
-				if !slices.Contains(binding.References, ref.QualifiedName) {
-					binding.References = append(binding.References, ref.QualifiedName)
-				}
-			}
+		data := &agentRegistrySourcesData{AgentID: agent.ID}
+		for _, use := range agent.Expr.Registries {
+			data.Sources = append(data.Sources, &registrySourceData{RegistryName: use.Registry.Name, Deferred: use.Deferred})
 		}
+		for _, ref := range agent.UsedToolsets {
+			if ref.Provider == nil || ref.Provider.Kind != agentexpr.ProviderRegistry {
+				continue
+			}
+			source := ref.Provider.Registry
+			data.Sources = append(data.Sources, &registrySourceData{
+				RegistryName: source.RegistryName, ToolsetName: source.ToolsetName,
+				Version: source.Version, Deferred: ref.Deferred,
+			})
+		}
+		if len(data.Sources) == 0 {
+			continue
+		}
+		slices.SortFunc(data.Sources, func(a, b *registrySourceData) int {
+			return cmp.Or(cmp.Compare(a.RegistryName, b.RegistryName), cmp.Compare(a.ToolsetName, b.ToolsetName))
+		})
+		result = append(result, data)
 	}
-	bindings := make([]*registryBindingData, 0, len(byName))
-	for _, binding := range byName {
-		bindings = append(bindings, binding)
-	}
-	slices.SortFunc(bindings, func(a, b *registryBindingData) int {
-		return cmp.Or(
-			cmp.Compare(a.RegistryName, b.RegistryName),
-			cmp.Compare(a.ToolsetName, b.ToolsetName),
-			cmp.Compare(a.Version, b.Version),
-		)
-	})
-	scope := goacodegen.NewNameScope()
-	scope.Unique("Validate")
-	for _, binding := range bindings {
-		binding.FieldName = scope.Unique(goacodegen.Goify(binding.ToolsetName, true))
-	}
-	return bindings
+	return result
 }
 
-// registryFileData attaches the declared type name and the tools already owned
-// by compiled contracts to this package's dynamic startup inputs.
-func (p *agentPackagePlan) registryFileData(root *AgentData, agents map[string]*AgentData) registryBindingsData {
-	data := registryBindingsData{RegistryBindings: p.registryBindings}
-	if len(p.registryBindings) == 0 {
-		return data
-	}
-	data.RegistryToolsetsType = p.fixed[registryToolsetsTypeName].Name()
-	names := make(map[string]struct{})
-	all := []*AgentData{root}
-	for _, id := range p.definitionAgentIDs {
-		all = append(all, agents[id])
-	}
-	for _, agent := range all {
-		for _, tool := range agent.Tools {
-			names[tool.QualifiedName] = struct{}{}
+// registrySourcesFor selects one already-planned generated type. Missing data
+// means this agent has only compiled tools and emits no registry methods.
+func registrySourcesFor(agentID string, sources []*agentRegistrySourcesData) *agentRegistrySourcesData {
+	for _, source := range sources {
+		if source.AgentID == agentID {
+			return source
 		}
 	}
-	for name := range names {
-		data.StaticToolNames = append(data.StaticToolNames, name)
-	}
-	slices.Sort(data.StaticToolNames)
-	return data
-}
-
-// registryBindingsFor selects the generated startup fields used by one agent
-// definition or its directly executable toolsets.
-func registryBindingsFor(toolsets []*ToolsetData, bindings []*registryBindingData) []*registryBindingData {
-	used := make(map[string]struct{}, len(toolsets))
-	for _, toolset := range toolsets {
-		if toolset.IsRegistryBacked {
-			used[toolset.QualifiedName] = struct{}{}
-		}
-	}
-	var selected []*registryBindingData
-	for _, binding := range bindings {
-		for _, reference := range binding.References {
-			if _, ok := used[reference]; ok {
-				selected = append(selected, binding)
-				break
-			}
-		}
-	}
-	return selected
+	return nil
 }

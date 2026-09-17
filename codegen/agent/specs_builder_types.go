@@ -3,6 +3,8 @@
 package codegen
 
 import (
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	toolcontracts "goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -88,6 +90,12 @@ type (
 		Title string
 		// Tool description for documentation and LLM context.
 		Description string
+		// Search stores word counts prepared before template rendering.
+		Search toolcontracts.SearchDocument
+		// RegistrySchema is the complete declaration emitted for remote consumers.
+		RegistrySchema *genregistry.ToolSchema
+		// ConsumerContractJSON is prepared once for the registration fingerprint.
+		ConsumerContractJSON []byte
 		// ServerData enumerates server-only payloads emitted alongside the tool
 		// result. Server data is never sent to model providers.
 		ServerData []*serverDataEntry

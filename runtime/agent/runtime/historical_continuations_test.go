@@ -126,7 +126,7 @@ func TestHistoricalContinuationRetiresCompletedChainAfterContractChange(t *testi
 			model.ToolUsePart{ID: "source-1", Name: search.Name.String()},
 			model.ToolUsePart{ID: "last-page", Name: continuationActionName(continuation.Name, "source-1").String()},
 		}}},
-	})
+	}, rt.toolSpecs)
 	require.NoError(t, err)
 	require.Len(t, outputs, 2)
 	actions, err := rt.availableContinuationActions("svc.agent", outputs)
@@ -176,7 +176,7 @@ func TestHistoricalContinuationRejectsDamagedMetadata(t *testing.T) {
 				Messages: []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{
 					model.ToolUsePart{ID: "source-1", Name: search.Name.String()},
 				}}},
-			})
+			}, rt.toolSpecs)
 			assert.ErrorContains(t, err, tc.wantErr)
 		})
 	}

@@ -58,6 +58,9 @@ var agentDefinition = agentsruntime.NewAgentDefinition(
 		tools.Ident("helpers.answer"),
 	},
 	nil,
+	[]tools.Ident{
+		"helpers.answer",
+	},
 )
 
 // Definition returns the immutable generated contract shared by callers and workers.

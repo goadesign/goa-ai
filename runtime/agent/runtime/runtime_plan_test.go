@@ -1826,6 +1826,7 @@ func TestPreparePlannerActivityFiltersPlannerExecutableCatalog(t *testing.T) {
 					RunContext: run.Context{RunID: "run-123"},
 					Policy:     test.policy,
 				},
+				rt.newRegistryCatalog(AgentDefinition{}),
 				nil,
 				test.unavailable,
 				test.advertisedSpecs,
@@ -3458,7 +3459,7 @@ func TestBuildPlannerToolOutputRecordsEncodesCompleteResult(t *testing.T) {
 	)
 	records[0].callRunID = runID
 	records[0].resultRunID = runID
-	outputs, err := rt.buildPlannerToolOutputRecords(context.Background(), records)
+	outputs, err := rt.buildPlannerToolOutputRecords(records)
 	require.NoError(t, err)
 	require.Len(t, outputs, 1)
 	require.JSONEq(t, `{"status":"ok"}`, string(outputs[0].Result))
@@ -3515,7 +3516,7 @@ func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 		records[i].callRunID = runID
 		records[i].resultRunID = runID
 	}
-	outputs, err := rt.buildPlannerToolOutputRecords(context.Background(), records)
+	outputs, err := rt.buildPlannerToolOutputRecords(records)
 	require.NoError(t, err)
 	require.Len(t, outputs, 1)
 	require.Equal(t, "call-1", outputs[0].ToolCallID)

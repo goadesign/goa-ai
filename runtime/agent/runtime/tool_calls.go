@@ -167,7 +167,10 @@ func toolFailureFromExecutionError(err error, message string) *planner.ToolFailu
 // synthesizeToolError converts an ordinary tool execution error into a
 // ToolResult and publishes the corresponding ToolResultReceived event.
 func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call ToolCall, err error, errMsg string, duration time.Duration) (*ToolExecutionResult, error) {
-	spec, ok := e.r.toolSpec(call.Name)
+	spec, ok, specErr := lookupCallSpec(call, e.r.toolSpec)
+	if specErr != nil {
+		return nil, specErr
+	}
 	if !ok {
 		return e.synthesizeUnknownToolResult(ctx, call, duration)
 	}
@@ -241,14 +244,17 @@ func (e *toolBatchExec) synthesizeCanceledExecution(ctx context.Context, call To
 	result := Executed(tr)
 	result.duration = duration
 	var resultJSON rawjson.Message
-	if _, ok := e.r.toolSpec(call.Name); ok {
+	_, ok, err := lookupCallSpec(call, e.r.toolSpec)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		encoded, err := e.r.materializeToolResult(ctx, call, tr)
 		if err != nil {
 			return result, err
 		}
 		resultJSON = encoded
 	}
-	var err error
 	result.resultRecord, err = e.publishToolResultReceived(ctx, call, tr, resultJSON, duration)
 	if err != nil {
 		return result, err
@@ -353,6 +359,7 @@ func newToolCallScheduledEvent(
 		expectedChildren,
 	)
 	event.ModelToolCallID = call.ModelToolCallID
+	event.Registry = call.Registry.Clone()
 	event.ContinuationRootToolCallID = call.ContinuationRootToolCallID
 	return event
 }
@@ -394,7 +401,11 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		call = e.normalizeToolCall(call)
 		b.calls[i] = call
 
-		spec, hasSpec := e.r.toolSpec(call.Name)
+		spec, hasSpec, err := lookupCallSpec(call, e.r.toolSpec)
+		if err != nil {
+			executionErr = errors.Join(executionErr, err)
+			continue
+		}
 		if !hasSpec {
 			state := toolScheduleState{expectedChildren: e.expectedChildren}
 			if err := e.publishToolCallScheduled(ctx, call, ""); err != nil {
@@ -417,10 +428,15 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			}
 			continue
 		}
-		toolsetName, ts, hasTS := e.r.toolsetForTool(call.Name)
+		var toolsetName string
+		var ts ToolsetRegistration
+		var hasTS bool
+		if call.Registry == nil {
+			toolsetName, ts, hasTS = e.r.toolsetForTool(call.Name)
+		}
 
 		queue := ""
-		if hasTS && !ts.Inline {
+		if call.Registry != nil || hasTS && !ts.Inline {
 			queue = e.toolActOptions.Queue
 			if queue == "" {
 				queue = ts.TaskQueue
@@ -538,6 +554,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 
 		// Activity path (service-backed tools).
 		toolInput := ToolInput{
+			Registry:         call.Registry.Clone(),
 			AgentID:          e.agentID,
 			RunID:            e.runID,
 			ToolsetName:      toolsetName,
@@ -665,14 +682,17 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 // executionFromActivityOutput decodes and validates one activity result, then
 // publishes the canonical result event for the tool call.
 func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info futureInfo, out *ToolOutput, duration time.Duration) (*ToolExecutionResult, error) {
-	spec, ok := e.r.toolSpec(info.call.Name)
+	spec, ok, err := lookupCallSpec(info.call, e.r.toolSpec)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return e.synthesizeUnknownToolResult(ctx, info.call, duration)
 	}
 
 	var decoded any
 	if out.Failure == nil && hasNonNullJSON(out.Payload.RawMessage()) {
-		v, err := e.r.unmarshalToolValue(ctx, info.call.Name, out.Payload.RawMessage(), false)
+		v, err := spec.Result.Codec.FromJSON(out.Payload)
 		if err != nil {
 			return nil, fmt.Errorf("tool %q result decode failed (tool_call_id=%s): %w", info.call.Name, info.call.ToolCallID, err)
 		}
@@ -699,7 +719,6 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 		Clarification: out.Clarification,
 		duration:      duration,
 	}
-	var err error
 	result.resultRecord, err = e.publishToolResultReceived(ctx, info.call, toolRes, out.Payload, duration)
 	if err != nil {
 		return result, err

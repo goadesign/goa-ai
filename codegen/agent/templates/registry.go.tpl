@@ -39,18 +39,8 @@ func {{ .PackageNames.Register }}(ctx {{ .ContextAlias }}.Context, rt *{{ .Runti
     if err != nil {
         return err
     }
-{{- if .RegistryBindings }}
-    definition, err := {{ .PackageNames.Definition }}(cfg.RegistryToolsets)
-    if err != nil {
-        return err
-    }
-{{- end }}
     if err := rt.RegisterAgent(ctx, {{ .RuntimeAlias }}.AgentRegistration{
-{{- if .RegistryBindings }}
-        Definition: definition,
-{{- else }}
         Definition: {{ .PackageNames.Definition }}(),
-{{- end }}
         Planner: {{ .AgentVar }}.Planner,
         WorkflowHandler: rt.ExecuteWorkflow,
 {{- if .PlanActivity }}
@@ -182,22 +172,14 @@ type {{ .PackageNames.UsedToolsetOptions }} struct {
 //
 // Example:
 //   err := {{ .PackageNames.RegisterUsedToolsets }}(ctx, rt,
-{{- if .RegistryBindings }}
-//       registryToolsets,
-{{- end }}
 {{- range .DirectToolsets }}
 //       {{ .ExecutorOption }}(exec),
 {{- end }}
 //   )
-func {{ .PackageNames.RegisterUsedToolsets }}(ctx {{ .ContextAlias }}.Context, rt *{{ .RuntimeAlias }}.Runtime, {{ if .RegistryBindings }}toolsets {{ .RegistryToolsetsType }}, {{ end }}opts ...func(*{{ .PackageNames.UsedToolsetOptions }})) error {
+func {{ .PackageNames.RegisterUsedToolsets }}(ctx {{ .ContextAlias }}.Context, rt *{{ .RuntimeAlias }}.Runtime, opts ...func(*{{ .PackageNames.UsedToolsetOptions }})) error {
     if rt == nil {
         return {{ .ErrorsAlias }}.New("runtime is required")
     }
-{{- if .RegistryBindings }}
-    if err := toolsets.Validate(); err != nil {
-        return err
-    }
-{{- end }}
     cfg := &{{ .PackageNames.UsedToolsetOptions }}{
         executors:           make(map[string]{{ .RuntimeAlias }}.ToolCallExecutor),
         resultMaterializers: make(map[string]{{ .RuntimeAlias }}.ResultMaterializer),
@@ -222,13 +204,8 @@ func {{ .PackageNames.RegisterUsedToolsets }}(ctx {{ .ContextAlias }}.Context, r
         exec := cfg.executors[{{ .RegistrationNameConst }}]
         reg := {{ $.RuntimeAlias }}.ToolsetRegistration{
             Name:               {{ .RegistrationNameConst }},
-{{- if .RegistryField }}
-            Specs:              toolsets.{{ .RegistryField }}.Specs(),
-            ToolMetadataLookup: toolsets.{{ .RegistryField }}.MetadataByName,
-{{- else }}
             Specs:              {{ .AgentPackageSpecsAlias }}.Specs(),
             ToolMetadataLookup: {{ .AgentPackageSpecsAlias }}.MetadataByName,
-{{- end }}
             ResultMaterializer: cfg.resultMaterializers[{{ .RegistrationNameConst }}],
             Execute: func(ctx {{ $.ContextAlias }}.Context, call *{{ $.RuntimeAlias }}.ToolCall) (*{{ $.RuntimeAlias }}.ToolExecutionResult, error) {
                 if call == nil {

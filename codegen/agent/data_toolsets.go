@@ -85,6 +85,7 @@ func buildToolsetData(
 		Title:                naming.HumanizeTitle(ref.Name),
 		Description:          ref.Description,
 		Tags:                 slices.Clone(ref.Tags),
+		Deferred:             ref.Deferred,
 		ServiceName:          serviceName,
 		SourceServiceName:    sourceServiceName,
 		SourceService:        sourceService,
@@ -110,19 +111,8 @@ func buildToolsetData(
 	switch {
 	case ref.Provider != nil && ref.Provider.Kind == agentsExpr.ProviderRegistry:
 		ts.IsRegistryBacked = true
-		if ref.Provider.Registry != nil {
-			registry := ref.Provider.Registry
-			ts.Registry = &RegistryToolsetMeta{
-				RegistryName:             registry.RegistryName,
-				ToolsetName:              registry.ToolsetName,
-				Version:                  registry.Version,
-				QualifiedName:            registry.QualifiedName,
-				RegistryClientImportPath: registry.RegistryClientImportPath,
-				RegistryClientAlias:      registry.RegistryClientAlias,
-			}
-		}
-		// Registry toolsets have no compile-time tools. Generated discovery
-		// returns their schemas and codecs before the agent is constructed.
+		// Registry toolsets have no compile-time tools. The generated agent
+		// reads their current contracts at the start of each planning activity.
 
 	case isMCPBacked:
 		if ref.Provider.MCP == nil {

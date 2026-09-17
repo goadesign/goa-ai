@@ -44,6 +44,7 @@ import (
 	bedrock "goa.design/goa-ai/features/model/bedrock"
 	openai "goa.design/goa-ai/features/model/openai"
 	vertexprovider "goa.design/goa-ai/features/model/vertex"
+	"goa.design/goa-ai/internal/registrycall"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
@@ -120,6 +121,9 @@ type (
 		// WithStream. It is invoked from hookActivity so stream emission can be
 		// made fatal while a session is active.
 		streamSubscriber *stream.Subscriber
+		// registryCallOptions applies this runtime's telemetry and stream
+		// configuration to every dynamically selected registry executor.
+		registryCallOptions []registrycall.Option
 
 		logger  telemetry.Logger
 		metrics telemetry.Metrics
@@ -129,10 +133,11 @@ type (
 		// model spans when enabled via WithCaptureGenAIMessages.
 		captureGenAIMessages bool
 
-		mu        sync.RWMutex
-		agents    map[agent.Ident]AgentRegistration
-		toolsets  map[string]ToolsetRegistration
-		toolSpecs map[tools.Ident]tools.ToolSpec
+		mu         sync.RWMutex
+		agents     map[agent.Ident]AgentRegistration
+		toolsets   map[string]ToolsetRegistration
+		toolSpecs  map[tools.Ident]tools.ToolSpec
+		registries map[string]registryConnection
 		// toolDefinitions stores the input schema validator compiled when each
 		// tool specification is first registered.
 		toolDefinitions map[tools.Ident]*model.ToolDefinition
@@ -750,19 +755,23 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 		logger:                 logger,
 		metrics:                metrics,
 		tracer:                 tracer,
-		captureGenAIMessages:   opts.CaptureGenAIMessages,
-		agents:                 make(map[agent.Ident]AgentRegistration),
-		toolsets:               make(map[string]ToolsetRegistration),
-		toolSpecs:              make(map[tools.Ident]tools.ToolSpec),
-		toolDefinitions:        make(map[tools.Ident]*model.ToolDefinition),
-		toolsetNames:           make(map[tools.Ident]string),
-		policyToolMetadata:     make(map[tools.Ident]policy.ToolMetadata),
-		toolSchemas:            make(map[string]map[string]any),
-		models:                 make(map[string]model.Client),
-		agentToolSpecs:         make(map[agent.Ident][]tools.ToolSpec),
-		reminders:              reminder.NewEngine(),
-		toolConfirmation:       opts.ToolConfirmation,
-		hintOverrides:          opts.HintOverrides,
+		registryCallOptions: []registrycall.Option{
+			registrycall.WithLogger(logger),
+			registrycall.WithTracer(tracer),
+		},
+		captureGenAIMessages: opts.CaptureGenAIMessages,
+		agents:               make(map[agent.Ident]AgentRegistration),
+		toolsets:             make(map[string]ToolsetRegistration),
+		toolSpecs:            make(map[tools.Ident]tools.ToolSpec),
+		toolDefinitions:      make(map[tools.Ident]*model.ToolDefinition),
+		toolsetNames:         make(map[tools.Ident]string),
+		policyToolMetadata:   make(map[tools.Ident]policy.ToolMetadata),
+		toolSchemas:          make(map[string]map[string]any),
+		models:               make(map[string]model.Client),
+		agentToolSpecs:       make(map[agent.Ident][]tools.ToolSpec),
+		reminders:            reminder.NewEngine(),
+		toolConfirmation:     opts.ToolConfirmation,
+		hintOverrides:        opts.HintOverrides,
 	}
 	// Install runtime-owned toolsets before any agent registration so planners
 	// and transcripts can rely on a stable tool vocabulary.
@@ -831,8 +840,10 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 		}
 	}
 	if opts.streamSink != nil {
+		rt.registryCallOptions = append(rt.registryCallOptions,
+			registrycall.WithStreamSink(opts.streamSink, opts.streamProfile))
 		streamSub, err := stream.NewSubscriber(
-			newHintingSink(rt, opts.streamSink),
+			opts.streamSink,
 			opts.streamProfile,
 		)
 		if err != nil {

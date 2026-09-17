@@ -236,6 +236,11 @@ func (c *modelInvocationCall) ObserveClientComplete(response *model.Response, er
 		if errors.As(err, &validationErr) {
 			return c.observeRejectedModelOutput(validationErr)
 		}
+		if usage := model.UsageFromError(err); usage != nil {
+			usageErr := c.provider.sink.recordRejectedModelUsageTotal(c.invocationID, *usage)
+			c.usage = append(c.usage, modelcall.Result{Called: true, Err: usageErr})
+			return usageErr
+		}
 		return nil
 	}
 	if err := c.provider.sink.recordValidatedModelResponse(c.invocationID, response); err != nil {
@@ -381,6 +386,11 @@ func (s *modelInvocationStreamer) ObserveStreamRecv(observation model.StreamObse
 			)
 			s.call.staging = append(s.call.staging, modelcall.Result{Called: true, Err: stageErr})
 			err = errors.Join(outputErr, recordingErr, stageErr)
+		}
+		if usage := model.UsageFromError(observation.Err); usage != nil && !model.IsStreamValidationError(observation.Err) {
+			usageErr := s.call.provider.sink.recordRejectedModelUsageTotal(s.call.invocationID, *usage)
+			s.call.usage = append(s.call.usage, modelcall.Result{Called: true, Err: usageErr})
+			err = errors.Join(err, usageErr)
 		}
 		if modelcall.Exact(observation.Err, io.EOF) {
 			if observation.Response == nil {

@@ -1,6 +1,8 @@
 package dsl
 
 import (
+	"slices"
+
 	expragents "goa.design/goa-ai/expr/agent"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
@@ -70,10 +72,12 @@ func Agent(name, description string, dsl func()) *expragents.AgentExpr {
 	return agent
 }
 
-// Use declares that the current agent consumes the specified toolset.
+// Use declares that the current agent consumes a toolset or registry.
 // The value may be either:
 //   - A *expragents.ToolsetExpr returned by Toolset (provider-owned)
 //   - A string name for an inline, agent-local toolset definition
+//   - A Registry expression, whose current service toolsets are resolved for
+//     each planning activity
 //
 // An optional DSL function can:
 //   - Subset tools from a referenced provider toolset by name (Tool("name"))
@@ -99,29 +103,65 @@ func Agent(name, description string, dsl func()) *expragents.AgentExpr {
 //	        Tool("foo", "Foo tool", func() { ... })
 //	    })
 //	})
-func Use(value any, fn ...func()) *expragents.ToolsetExpr {
+func Use(value any, fn ...func()) {
 	agent, ok := eval.Current().(*expragents.AgentExpr)
 	if !ok {
 		eval.IncompatibleDSL()
-		return nil
+		return
 	}
 	if len(fn) > 1 {
 		eval.ReportError("Use accepts at most one DSL function")
-		return nil
+		return
 	}
 	var dsl func()
 	if len(fn) > 0 {
 		dsl = fn[0]
+	}
+	if registry, ok := value.(*expragents.RegistryExpr); ok {
+		if registry == nil {
+			eval.ReportError("Use requires a registry")
+			return
+		}
+		agent.Registries = append(agent.Registries, &expragents.RegistryUseExpr{
+			Registry: registry, DSLFunc: dsl,
+		})
+		return
 	}
 	if agent.Used == nil {
 		agent.Used = &expragents.ToolsetGroupExpr{Agent: agent}
 	}
 	ts := instantiateToolset(value, dsl, agent)
 	if ts == nil {
-		return nil
+		return
 	}
 	agent.Used.Toolsets = append(agent.Used.Toolsets, ts)
-	return ts
+}
+
+// Deferred makes tools in the surrounding Use declaration discoverable on
+// demand. They remain permitted, but supporting model adapters load their full
+// definitions only after tool search selects them. Adapters without tool-search
+// support reject deferred requests. The choice belongs to this consuming agent,
+// so other agents can use the same tools immediately.
+//
+// Deferred must appear inside a Use DSL function:
+//
+//	Use(Analytics, func() {
+//	    Deferred()
+//	})
+func Deferred() {
+	switch current := eval.Current().(type) {
+	case *expragents.RegistryUseExpr:
+		current.Deferred = true
+	case *expragents.ToolsetExpr:
+		if current.Agent == nil || current.Agent.Used == nil ||
+			!slices.Contains(current.Agent.Used.Toolsets, current) {
+			eval.ReportError("Deferred must appear inside a Use DSL function")
+			return
+		}
+		current.Deferred = true
+	default:
+		eval.IncompatibleDSL()
+	}
 }
 
 // Export declares that the current agent or service exports the specified

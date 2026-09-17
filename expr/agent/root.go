@@ -81,6 +81,11 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	}
 
 	walk(eval.ToExpressionSet(r.Agents))
+	var registryUses []*RegistryUseExpr
+	for _, agent := range r.Agents {
+		registryUses = append(registryUses, agent.Registries...)
+	}
+	walk(eval.ToExpressionSet(registryUses))
 	if len(r.Completions) > 0 {
 		walk(eval.ToExpressionSet(r.Completions))
 	}
@@ -275,6 +280,7 @@ func (r *RootExpr) validateAgentToolsetSources(verr *eval.ValidationErrors) {
 // entry must own each generated registration inside an agent.
 func (r *RootExpr) validateAgentToolsetReferences(verr *eval.ValidationErrors) {
 	for _, agent := range r.Agents {
+		validateAgentRegistryUses(verr, agent)
 		if agent.Used != nil {
 			validateAgentToolsetGroup(verr, agent, "uses", agent.Used.Toolsets)
 		}
@@ -284,11 +290,49 @@ func (r *RootExpr) validateAgentToolsetReferences(verr *eval.ValidationErrors) {
 	}
 }
 
+// validateAgentRegistryUses prevents two declarations from assigning different
+// loading choices or versions to the same remote catalog membership.
+func validateAgentRegistryUses(verr *eval.ValidationErrors, agent *AgentExpr) {
+	whole := make(map[string]struct{})
+	for _, use := range agent.Registries {
+		name := use.Registry.Name
+		if _, exists := whole[name]; exists {
+			verr.Add(use, "agent %q consumes registry %q more than once", agent.Name, name)
+		}
+		whole[name] = struct{}{}
+	}
+	if agent.Used == nil {
+		return
+	}
+	type source struct {
+		registry, toolset string
+	}
+	named := make(map[source]struct{})
+	for _, toolset := range agent.Used.Toolsets {
+		if toolset.Provider == nil || toolset.Provider.Kind != ProviderRegistry ||
+			toolset.Provider.Registry == nil {
+			continue
+		}
+		registry := toolset.Provider.Registry.Name
+		if _, exists := whole[registry]; exists {
+			verr.Add(toolset, "named toolset %q overlaps whole registry %q consumption", toolset.Name, registry)
+		}
+		key := source{registry: registry, toolset: toolset.Provider.ToolsetName}
+		if _, exists := named[key]; exists {
+			verr.Add(toolset, "registry toolset %q is consumed more than once", toolset.Provider.ToolsetName)
+		}
+		named[key] = struct{}{}
+	}
+}
+
 // validateAgentToolsetGroup reports repeated names inside one Use or Export
 // group because both entries would generate the same registration.
 func validateAgentToolsetGroup(verr *eval.ValidationErrors, agent *AgentExpr, verb string, toolsets []*ToolsetExpr) {
 	seen := make(map[string]struct{})
 	for _, toolset := range toolsets {
+		if verb == "exports" && toolset.Provider != nil && toolset.Provider.Kind == ProviderRegistry {
+			verr.Add(toolset, "FromRegistry toolsets can be consumed with Use but cannot be exported")
+		}
 		if _, exists := seen[toolset.Name]; exists {
 			verr.Add(
 				toolset,
@@ -309,6 +353,9 @@ func (r *RootExpr) validateServiceExportRoutes(verr *eval.ValidationErrors) {
 	routes := make(map[string]*ToolsetExpr)
 	for _, exports := range r.ServiceExports {
 		for _, toolset := range exports.Toolsets {
+			if toolset.Provider != nil && toolset.Provider.Kind == ProviderRegistry {
+				verr.Add(toolset, "FromRegistry toolsets can be consumed with Use but cannot be exported")
+			}
 			key := exports.Service.Name + ":" + toolset.Name
 			if _, ok := routes[key]; ok {
 				verr.Add(

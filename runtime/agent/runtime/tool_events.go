@@ -7,11 +7,10 @@ package runtime
 // - planner.ToolResult contains `any` fields (Result). Crossing a
 //   workflow boundary with those values allows engines/codecs (e.g. Temporal) to
 //   rehydrate them as map[string]any, breaking tool codecs.
-// - encodeToolEvents converts typed tool results into api.ToolEvent values that
+// - encodeToolEvent converts typed tool results into api.ToolEvent values that
 //   only contain canonical JSON bytes plus structured metadata.
 
 import (
-	"context"
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/api"
@@ -19,42 +18,32 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
-// encodeToolEvents converts typed in-memory tool results into workflow-boundary safe
-// envelopes.
-//
-// Contract:
-//   - Input values are trusted to be runtime-produced tool results; nil entries are
-//     a bug.
-//   - Tool result values are encoded via the registered tool result codec and stored
-//     as canonical JSON bytes on api.ToolEvent.Result.
-func (r *Runtime) encodeToolEvents(ctx context.Context, events []*planner.ToolResult) ([]*api.ToolEvent, error) {
-	if len(events) == 0 {
-		return nil, nil
+// encodeToolEvent converts one result using its call's selected codec. The
+// returned event contains only JSON bytes and can cross a workflow boundary.
+func encodeToolEvent(event *planner.ToolResult, call ToolCall, lookup toolSpecLookup) (*api.ToolEvent, error) {
+	spec, ok, err := lookupCallSpec(call, lookup)
+	if err != nil {
+		return nil, err
 	}
-	out := make([]*api.ToolEvent, 0, len(events))
-	for _, ev := range events {
-		result, err := r.marshalToolValue(ctx, ev.Name, ev.Result, ev.Bounds)
-		if err != nil {
-			return nil, fmt.Errorf("encode tool result for %s: %w", ev.Name, err)
-		}
-		out = append(out, &api.ToolEvent{
-			Name:          ev.Name,
-			Result:        rawjson.Message(result),
-			ServerData:    append(rawjson.Message(nil), ev.ServerData...),
-			Bounds:        ev.Bounds,
-			Failure:       planner.CloneToolFailure(ev.Failure),
-			Telemetry:     ev.Telemetry,
-			ToolCallID:    ev.ToolCallID,
-			ChildrenCount: ev.ChildrenCount,
-			RunLink:       ev.RunLink,
-		})
+	if !ok {
+		return nil, fmt.Errorf("encode tool result: no contract for %q", call.Name)
 	}
-	return out, nil
+	result, err := EncodeCanonicalToolResult(spec, event.Result, event.Bounds)
+	if err != nil {
+		return nil, fmt.Errorf("encode tool result for %s: %w", event.Name, err)
+	}
+	return &api.ToolEvent{
+		Name: event.Name, Result: result,
+		ServerData: append(rawjson.Message(nil), event.ServerData...),
+		Bounds:     event.Bounds, Failure: planner.CloneToolFailure(event.Failure),
+		Telemetry: event.Telemetry, ToolCallID: event.ToolCallID,
+		ChildrenCount: event.ChildrenCount, RunLink: event.RunLink,
+	}, nil
 }
 
 // buildPlannerToolOutputRecords converts paired step records into planner
 // ToolOutput values suitable for run-loop state.
-func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []stepToolRecord) ([]*planner.ToolOutput, error) {
+func (r *Runtime) buildPlannerToolOutputRecords(records []stepToolRecord) ([]*planner.ToolOutput, error) {
 	records, err := r.filterResumeRequiredToolRecords(records)
 	if err != nil {
 		return nil, err
@@ -70,6 +59,7 @@ func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []s
 		call := record.call
 		result := record.result
 		output := &planner.ToolOutput{
+			Registry:                   call.Registry.Clone(),
 			CallRunID:                  record.callRunID,
 			ResultRunID:                record.resultRunID,
 			Name:                       call.Name,
@@ -83,11 +73,18 @@ func (r *Runtime) buildPlannerToolOutputRecords(ctx context.Context, records []s
 			Telemetry:                  result.Telemetry,
 		}
 		if result.Failure == nil {
-			resultJSON, err := r.marshalToolValue(ctx, call.Name, result.Result, result.Bounds)
+			spec, ok, err := lookupCallSpec(call, r.toolSpec)
+			if err != nil {
+				return nil, err
+			}
+			if !ok {
+				return nil, fmt.Errorf("build planner tool output: no contract for %q", call.Name)
+			}
+			resultJSON, err := EncodeCanonicalToolResult(spec, result.Result, result.Bounds)
 			if err != nil {
 				return nil, fmt.Errorf("build planner tool output result for %s: %w", call.Name, err)
 			}
-			output.Result = rawjson.Message(resultJSON)
+			output.Result = resultJSON
 		}
 		out = append(out, output)
 	}

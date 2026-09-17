@@ -25,6 +25,10 @@ type (
 		// Tags are labels for categorizing and filtering this toolset.
 		Tags []string
 
+		// Deferred asks the consuming agent to load these tool definitions
+		// through model tool search. It never changes the shared tool contract.
+		Deferred bool
+
 		// Meta carries arbitrary design-time metadata attached to the toolset via DSL.
 		// Keys map to one or more values, matching Goa's Meta conventions.
 		Meta goaexpr.MetaExpr
@@ -135,6 +139,15 @@ func (t *ToolsetExpr) Validate() error {
 				}
 			}
 		case ProviderRegistry:
+			if len(t.Tools) > 0 {
+				verr.Add(t, "FromRegistry tools own their remote contracts and cannot declare inline Tool schemas or subsets")
+			}
+			if len(t.Tags) > 0 {
+				verr.Add(t, "FromRegistry tool tags belong to the provider; use run policy to filter them")
+			}
+			if len(t.PublishTo) > 0 {
+				verr.Add(t, "FromRegistry references cannot publish provider contracts")
+			}
 			if t.Provider.Registry == nil {
 				verr.Add(t, "registry is required for FromRegistry provider")
 			}

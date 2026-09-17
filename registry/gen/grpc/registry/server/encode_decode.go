@@ -228,6 +228,39 @@ func DecodeGetToolsetRequest(ctx context.Context, v any, md metadata.MD) (any, e
 	return payload, nil
 }
 
+// EncodeResolveToolsetResponse encodes responses from the "registry" service
+// "ResolveToolset" endpoint.
+func EncodeResolveToolsetResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.ResolvedToolset)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ResolveToolset", "*registry.ResolvedToolset", v)
+	}
+	resp := NewProtoResolveToolsetResponse(result)
+	return resp, nil
+}
+
+// DecodeResolveToolsetRequest decodes requests sent to "registry" service
+// "ResolveToolset" endpoint.
+func DecodeResolveToolsetRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.ResolveToolsetRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.ResolveToolsetRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "ResolveToolset", "*registrypb.ResolveToolsetRequest", v)
+		}
+		if err := ValidateResolveToolsetRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.GetToolsetPayload
+	{
+		payload = NewResolveToolsetPayload(message)
+	}
+	return payload, nil
+}
+
 // EncodeCheckAdmissionResponse encodes responses from the "registry" service
 // "CheckAdmission" endpoint.
 func EncodeCheckAdmissionResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
@@ -323,6 +356,39 @@ func DecodeCallToolRequest(ctx context.Context, v any, md metadata.MD) (any, err
 	var payload *registry.CallToolPayload
 	{
 		payload = NewCallToolPayload(message)
+	}
+	return payload, nil
+}
+
+// EncodeCallResolvedToolResponse encodes responses from the "registry" service
+// "CallResolvedTool" endpoint.
+func EncodeCallResolvedToolResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.CallToolResult)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "CallResolvedTool", "*registry.CallToolResult", v)
+	}
+	resp := NewProtoCallResolvedToolResponse(result)
+	return resp, nil
+}
+
+// DecodeCallResolvedToolRequest decodes requests sent to "registry" service
+// "CallResolvedTool" endpoint.
+func DecodeCallResolvedToolRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.CallResolvedToolRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.CallResolvedToolRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "CallResolvedTool", "*registrypb.CallResolvedToolRequest", v)
+		}
+		if err := ValidateCallResolvedToolRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.CallResolvedToolPayload
+	{
+		payload = NewCallResolvedToolPayload(message)
 	}
 	return payload, nil
 }

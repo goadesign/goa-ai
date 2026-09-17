@@ -1,48 +1,5 @@
 {{- define "agentDefinitionTools" -}}
-{{- if .RegistryBindings }}
-    func() []{{ .ToolsAlias }}.ToolSpec {
-        {{- if .Tools }}
-        specs := {{ .ToolSpecsAlias }}.Specs()
-        {{- else }}
-        var specs []{{ .ToolsAlias }}.ToolSpec
-        {{- end }}
-        {{- range .RegistryBindings }}
-        specs = append(specs, toolsets.{{ .FieldName }}.Specs()...)
-        {{- end }}
-        return specs
-    }(),
-    func(name {{ .ToolsAlias }}.Ident) ({{ .PolicyAlias }}.ToolMetadata, bool) {
-        {{- if .Tools }}
-        if metadata, ok := {{ .ToolSpecsAlias }}.MetadataByName(name); ok {
-            return metadata, true
-        }
-        {{- end }}
-        {{- range .RegistryBindings }}
-        if metadata, ok := toolsets.{{ .FieldName }}.MetadataByName(name); ok {
-            return metadata, true
-        }
-        {{- end }}
-        return {{ .PolicyAlias }}.ToolMetadata{}, false
-    },
-    {{- if .Tools }}
-    {{ .ToolSpecsAlias }}.RequiredLabels(),
-    {{- else }}
-    nil,
-    {{- end }}
-    func() []{{ .ToolsAlias }}.Ident {
-        names := []{{ .ToolsAlias }}.Ident{
-        {{- range .UsedToolsets }}
-        {{- range .Tools }}
-            {{ printf "%q" .QualifiedName }},
-        {{- end }}
-        {{- end }}
-        }
-        {{- range .ExecutableRegistryBindings }}
-        names = append(names, toolsets.{{ .FieldName }}.Names()...)
-        {{- end }}
-        return names
-    }(),
-{{- else if .Tools }}
+{{- if .Tools }}
     {{ .ToolSpecsAlias }}.Specs(),
     {{ .ToolSpecsAlias }}.MetadataByName,
     {{ .ToolSpecsAlias }}.RequiredLabels(),
@@ -57,6 +14,18 @@
     nil,
     nil,
     nil,
+    nil,
+{{- end }}
+{{- end }}
+
+{{- define "agentDefinitionDeferral" -}}
+{{- if .DeferredTools }}
+    []{{ .ToolsAlias }}.Ident{
+    {{- range .DeferredTools }}
+        {{ printf "%q" . }},
+    {{- end }}
+    },
+{{- else }}
     nil,
 {{- end }}
 {{- end }}
@@ -91,55 +60,7 @@ func {{ .PackageNames.Constructor }}(cfg {{ .ConfigType }}) (*{{ .StructName }},
     return &{{ .StructName }}{Planner: cfg.Planner}, nil
 }
 
-{{- if .RegistryBindings }}
-// {{ .RegistryToolsetsType }} supplies the toolsets discovered before this
-// agent and its child agents are constructed. Each value is immutable.
-type {{ .RegistryToolsetsType }} struct {
-{{- range .RegistryBindings }}
-    // {{ .FieldName }} contains {{ .ToolsetName }} from registry {{ .RegistryName }}.
-    {{ .FieldName }} *{{ $.RegistryAlias }}.Toolset
-{{- end }}
-}
-
-// Validate checks required toolsets, their names and versions, and unique tool names.
-func (toolsets {{ .RegistryToolsetsType }}) Validate() error {
-    names := map[{{ .ToolsAlias }}.Ident]string{
-{{- range .StaticToolNames }}
-        {{ printf "%q" . }}: "generated tool contract",
-{{- end }}
-    }
-{{- range .RegistryBindings }}
-    if toolsets.{{ .FieldName }} == nil {
-        return {{ $.FmtAlias }}.Errorf("registry toolset %q is required", {{ printf "%q" .QualifiedName }})
-    }
-    if toolsets.{{ .FieldName }}.Name() != {{ printf "%q" .ToolsetName }} {
-        return {{ $.FmtAlias }}.Errorf("registry toolset %q requires %q, got %q", {{ printf "%q" .QualifiedName }}, {{ printf "%q" .ToolsetName }}, toolsets.{{ .FieldName }}.Name())
-    }
-    {{- if .Version }}
-    if toolsets.{{ .FieldName }}.Version() != {{ printf "%q" .Version }} {
-        return {{ $.FmtAlias }}.Errorf("registry toolset %q requires version %q, got %q", {{ printf "%q" .QualifiedName }}, {{ printf "%q" .Version }}, toolsets.{{ .FieldName }}.Version())
-    }
-    {{- end }}
-    for _, name := range toolsets.{{ .FieldName }}.Names() {
-        if owner, exists := names[name]; exists {
-            return {{ $.FmtAlias }}.Errorf("registry toolset %q repeats tool %q already supplied by %s", {{ printf "%q" .QualifiedName }}, name, owner)
-        }
-        names[name] = {{ printf "%q" .QualifiedName }}
-    }
-{{- end }}
-    return nil
-}
-
-// {{ .PackageNames.Definition }} combines the generated contracts with the
-// supplied registry toolsets and returns an immutable agent definition.
-func {{ .PackageNames.Definition }}(toolsets {{ .RegistryToolsetsType }}) ({{ .RuntimeAlias }}.AgentDefinition, error) {
-    if err := toolsets.Validate(); err != nil {
-        return {{ .RuntimeAlias }}.AgentDefinition{}, err
-    }
-    return {{ .RuntimeAlias }}.NewAgentDefinition(
-{{- else }}
 var {{ .PackageNames.DefinitionValue }} = {{ .RuntimeAlias }}.NewAgentDefinition(
-{{- end }}
     {{ .RuntimeAlias }}.AgentRoute{
         ID:               {{ .PackageNames.AgentID }},
         WorkflowName:     {{ .PackageNames.WorkflowName }},
@@ -157,37 +78,54 @@ var {{ .PackageNames.DefinitionValue }} = {{ .RuntimeAlias }}.NewAgentDefinition
             },
 {{- template "agentDefinitionTools" . }}
             nil,
-        ),
+{{- template "agentDefinitionDeferral" . }}
+        ){{ if .RegistrySources }}.WithRegistryTools({{ .RegistrySources.TypeName }}{}){{ end }},
 {{- end }}
     },
 {{- else }}
     nil,
 {{- end }}
-{{- if .RegistryBindings }}
-    ), nil
-}
-{{- else }}
-)
+{{- template "agentDefinitionDeferral" .RootDefinition }}
+){{ if .RootDefinition.RegistrySources }}.WithRegistryTools({{ .RootDefinition.RegistrySources.TypeName }}{}){{ end }}
 
 // {{ .PackageNames.Definition }} returns the immutable generated contract shared by callers and workers.
 func {{ .PackageNames.Definition }}() {{ .RuntimeAlias }}.AgentDefinition {
 	return {{ .PackageNames.DefinitionValue }}
 }
-{{- end }}
 
 // {{ .PackageNames.NewClient }} returns a runtime.AgentClient bound to this agent. In caller
 // processes that do not register the agent locally, it still validates starts
 // against the same generated contract as the worker.
-{{- if .RegistryBindings }}
-func {{ .PackageNames.NewClient }}(rt *{{ .RuntimeAlias }}.Runtime, toolsets {{ .RegistryToolsetsType }}) ({{ .RuntimeAlias }}.AgentClient, error) {
-    definition, err := {{ .PackageNames.Definition }}(toolsets)
-    if err != nil {
-        return nil, err
-    }
-    return rt.ClientFor(definition)
-}
-{{- else }}
 func {{ .PackageNames.NewClient }}(rt *{{ .RuntimeAlias }}.Runtime) {{ .RuntimeAlias }}.AgentClient {
     return rt.MustClientFor({{ .PackageNames.Definition }}())
+}
+
+{{- range .RegistrySources }}
+// {{ .TypeName }} contains only source operations known from the design.
+type {{ .TypeName }} struct{}
+
+// Resolve reads the declared sources once for the current planning activity.
+func ({{ .TypeName }}) Resolve(ctx {{ $.ContextAlias }}.Context, catalog *{{ $.RuntimeAlias }}.RegistryCatalog) error {
+{{- range .Sources }}
+    {{- if .ToolsetName }}
+    if err := catalog.IncludeToolset(ctx, {{ printf "%q" .RegistryName }}, {{ printf "%q" .ToolsetName }}, {{ printf "%q" .Version }}, {{ .Deferred }}); err != nil {
+    {{- else }}
+    if err := catalog.IncludeRegistry(ctx, {{ printf "%q" .RegistryName }}, {{ .Deferred }}); err != nil {
+    {{- end }}
+        return err
+    }
+{{- end }}
+    return nil
+}
+{{- $named := false }}
+{{- $versioned := false }}
+{{- range .Sources }}
+    {{- if .ToolsetName }}{{- $named = true }}{{- end }}
+    {{- if .Version }}{{- $versioned = true }}{{- end }}
+{{- end }}
+
+// Allows checks the saved source against this agent's generated consumption.
+func ({{ .TypeName }}) Allows(registry, {{ if $named }}toolset{{ else }}_{{ end }}, {{ if $versioned }}version{{ else }}_{{ end }} string) bool {
+    return {{ range $index, $source := .Sources }}{{ if $index }} || {{ end }}(registry == {{ printf "%q" .RegistryName }}{{ if .ToolsetName }} && toolset == {{ printf "%q" .ToolsetName }}{{ end }}{{ if .Version }} && version == {{ printf "%q" .Version }}{{ end }}){{ end }}
 }
 {{- end }}

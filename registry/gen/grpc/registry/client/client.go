@@ -203,6 +203,31 @@ func (c *Client) GetToolset() goa.Endpoint {
 	}
 }
 
+// ResolveToolset calls the "ResolveToolset" function in
+// registrypb.RegistryClient interface.
+func (c *Client) ResolveToolset() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildResolveToolsetFunc(c.grpccli, c.opts...),
+			EncodeResolveToolsetRequest,
+			DecodeResolveToolsetResponse)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+					return nil, ctxErr
+				}
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
 // CheckAdmission calls the "CheckAdmission" function in
 // registrypb.RegistryClient interface.
 func (c *Client) CheckAdmission() goa.Endpoint {
@@ -259,6 +284,31 @@ func (c *Client) CallTool() goa.Endpoint {
 			BuildCallToolFunc(c.grpccli, c.opts...),
 			EncodeCallToolRequest,
 			DecodeCallToolResponse)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+					return nil, ctxErr
+				}
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
+// CallResolvedTool calls the "CallResolvedTool" function in
+// registrypb.RegistryClient interface.
+func (c *Client) CallResolvedTool() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildCallResolvedToolFunc(c.grpccli, c.opts...),
+			EncodeCallResolvedToolRequest,
+			DecodeCallResolvedToolResponse)
 		res, err := inv.Invoke(ctx, v)
 		if err != nil {
 			resp := goagrpc.DecodeError(err)

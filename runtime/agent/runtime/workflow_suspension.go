@@ -217,10 +217,21 @@ func (l *workflowLoop) publishPendingInputPrompts(pending []*api.PendingInput) e
 // buildWorkflowCheckpoint converts every decoded tool value to canonical JSON
 // before the state crosses the workflow boundary.
 func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []confirmationAwait, items []planner.AwaitItem, restoredPending []checkpointPendingInput) (*workflowCheckpoint, []*api.PendingInput, []tools.Ident, error) {
-	ctx := l.wfCtx.Context()
-	stateEvents, err := l.r.encodeToolEvents(ctx, l.st.ToolEvents)
+	calls, err := recordedToolCalls(l.st.ToolOutputs)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	stateEvents := make([]*api.ToolEvent, 0, len(l.st.ToolEvents))
+	for _, event := range l.st.ToolEvents {
+		call, err := recordedResultCall(event.Name, event.ToolCallID, calls)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		encoded, err := encodeToolEvent(event, call, l.r.toolSpec)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		stateEvents = append(stateEvents, encoded)
 	}
 	records := make([]checkpointToolRecord, 0, len(batch.records))
 	for _, record := range batch.records {
@@ -230,11 +241,11 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 		}
 		var encodedResult *api.ToolEvent
 		if record.childSuspension == nil {
-			encoded, err := l.r.encodeToolEvents(ctx, []*planner.ToolResult{record.result})
+			encoded, err := encodeToolEvent(record.result, record.call, l.r.toolSpec)
 			if err != nil {
 				return nil, nil, nil, err
 			}
-			encodedResult = encoded[0]
+			encodedResult = encoded
 		}
 		records = append(records, checkpointToolRecord{
 			Call:             record.call,
@@ -259,7 +270,14 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 	if len(checkpointPending) == 0 {
 		checkpointPending = make([]checkpointPendingInput, 0, len(confirmations)+len(batch.pending)+len(items))
 		for _, confirmation := range confirmations {
-			denied, err := l.r.marshalToolValue(ctx, confirmation.call.Name, confirmation.plan.DeniedResult, nil)
+			spec, ok, err := lookupCallSpec(confirmation.call, l.r.toolSpec)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("confirmation tool %q has no contract", confirmation.call.Name)
+			}
+			denied, err := EncodeCanonicalToolResult(spec, confirmation.plan.DeniedResult, nil)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("encode denied result for %s: %w", confirmation.call.Name, err)
 			}
@@ -274,7 +292,7 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 					ExpectedChildren: batch.program.result.ExpectedChildren,
 					Title:            title,
 					Prompt:           confirmation.plan.Prompt,
-					DeniedResult:     rawjson.Message(denied),
+					DeniedResult:     denied,
 				},
 			})
 		}
@@ -395,22 +413,38 @@ func requiredCheckpointToolNames(checkpoint *workflowCheckpoint) []tools.Ident {
 		}
 	}
 	for _, output := range checkpoint.State.ToolOutputs {
-		set[output.Name] = struct{}{}
+		if output.Registry == nil {
+			set[output.Name] = struct{}{}
+		}
 	}
 	for _, output := range checkpoint.State.PendingRecovery {
-		set[output.Name] = struct{}{}
+		if output.Registry == nil {
+			set[output.Name] = struct{}{}
+		}
+	}
+	dynamicCalls := make(map[string]struct{})
+	for _, output := range checkpoint.State.ToolOutputs {
+		if output.Registry != nil {
+			dynamicCalls[output.ToolCallID] = struct{}{}
+		}
 	}
 	for _, event := range checkpoint.State.ToolEvents {
-		set[event.Name] = struct{}{}
+		if _, dynamic := dynamicCalls[event.ToolCallID]; !dynamic {
+			set[event.Name] = struct{}{}
+		}
 	}
 	for _, call := range checkpoint.Batch.Calls {
-		set[call.Name] = struct{}{}
+		if call.Registry == nil {
+			set[call.Name] = struct{}{}
+		}
 	}
 	for _, record := range checkpoint.Batch.Records {
-		set[record.Call.Name] = struct{}{}
+		if record.Call.Registry == nil {
+			set[record.Call.Name] = struct{}{}
+		}
 	}
 	for _, pending := range checkpoint.Pending {
-		if pending.Confirmation != nil {
+		if pending.Confirmation != nil && pending.Confirmation.Call.Registry == nil {
 			set[pending.Confirmation.Call.Name] = struct{}{}
 		}
 		if pending.Await != nil {
@@ -427,19 +461,21 @@ func requiredCheckpointToolNames(checkpoint *workflowCheckpoint) []tools.Ident {
 	return out
 }
 
-// decodeCheckpointToolEvent restores one runtime-produced tool result with the
-// registered result codec.
-func (r *Runtime) decodeCheckpointToolEvent(event *api.ToolEvent) (*planner.ToolResult, error) {
-	return decodeCheckpointToolEventWithSpecs(event, r.toolSpec)
-}
-
-func decodeCheckpointToolEventWithSpecs(event *api.ToolEvent, lookup toolSpecLookup) (*planner.ToolResult, error) {
+// decodeCheckpointToolEvent restores a saved result with the definition retained
+// by its call, or with the current generated codec for a compiled tool.
+func decodeCheckpointToolEvent(event *api.ToolEvent, call ToolCall, lookup toolSpecLookup) (*planner.ToolResult, error) {
 	if event == nil {
 		return nil, errors.New("run suspension contains nil tool event")
 	}
+	if event.Name != call.Name || event.ToolCallID != call.ToolCallID {
+		return nil, errors.New("suspended tool result does not match its saved call")
+	}
 	var spec *tools.ToolSpec
 	if event.Failure == nil {
-		registered, ok := lookup(event.Name)
+		registered, ok, err := lookupCallSpec(call, lookup)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			return nil, fmt.Errorf("suspended tool result references unregistered tool %q", event.Name)
 		}
@@ -447,7 +483,7 @@ func decodeCheckpointToolEventWithSpecs(event *api.ToolEvent, lookup toolSpecLoo
 	}
 	decoded, err := validatePersistedToolResult(
 		spec,
-		ToolCall{Name: event.Name, ToolCallID: event.ToolCallID},
+		call,
 		event.Result,
 		event.ServerData,
 		event.Bounds,
@@ -624,8 +660,16 @@ func (r *Runtime) restoreCheckpointState(
 	checkpoint checkpointRunState,
 ) (*runLoopState, error) {
 	toolEvents := make([]*planner.ToolResult, 0, len(checkpoint.ToolEvents))
+	calls, err := recordedToolCalls(checkpoint.ToolOutputs)
+	if err != nil {
+		return nil, err
+	}
 	for _, event := range checkpoint.ToolEvents {
-		decoded, err := r.decodeCheckpointToolEvent(event)
+		call, err := recordedResultCall(event.Name, event.ToolCallID, calls)
+		if err != nil {
+			return nil, err
+		}
+		decoded, err := decodeCheckpointToolEvent(event, call, r.toolSpec)
 		if err != nil {
 			return nil, err
 		}
@@ -657,7 +701,7 @@ func (r *Runtime) restoreCheckpointBatch(checkpoint checkpointStepBatch, input *
 		var decoded *planner.ToolResult
 		if record.ChildSuspension == nil {
 			var err error
-			decoded, err = r.decodeCheckpointToolEvent(record.Result)
+			decoded, err = decodeCheckpointToolEvent(record.Result, record.Call, r.toolSpec)
 			if err != nil {
 				return stepBatch{}, err
 			}
@@ -856,7 +900,14 @@ func (l *workflowLoop) applyConfirmationDecision(decision *api.ConfirmationDecis
 	if decision.ID != pending.ID {
 		return nil, nil, false, fmt.Errorf("confirmation response id %q does not match pending id %q", decision.ID, pending.ID)
 	}
-	deniedResult, err := l.r.unmarshalToolValue(l.wfCtx.Context(), pending.Call.Name, pending.DeniedResult.RawMessage(), false)
+	spec, ok, err := lookupCallSpec(pending.Call, l.r.toolSpec)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if !ok {
+		return nil, nil, false, fmt.Errorf("confirmation tool %q has no contract", pending.Call.Name)
+	}
+	deniedResult, err := spec.Result.Codec.FromJSON(pending.DeniedResult)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("decode denied result for %s: %w", pending.Call.Name, err)
 	}

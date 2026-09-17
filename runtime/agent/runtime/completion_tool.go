@@ -73,7 +73,10 @@ func validateCompletionToolPlanResultWithSpecs(result *PlanResult, completion to
 		}
 	}
 	for _, call := range result.ToolCalls {
-		spec, ok := lookup(call.Name)
+		spec, ok, err := lookupCallSpec(call, lookup)
+		if err != nil {
+			return err
+		}
 		if ok && spec.TerminalRun {
 			return completionToolRequiredError(
 				completion,

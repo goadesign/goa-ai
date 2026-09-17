@@ -33,9 +33,11 @@ const (
 	Registry_Pong_FullMethodName                   = "/goa_ai_registry.Registry/Pong"
 	Registry_ListToolsets_FullMethodName           = "/goa_ai_registry.Registry/ListToolsets"
 	Registry_GetToolset_FullMethodName             = "/goa_ai_registry.Registry/GetToolset"
+	Registry_ResolveToolset_FullMethodName         = "/goa_ai_registry.Registry/ResolveToolset"
 	Registry_CheckAdmission_FullMethodName         = "/goa_ai_registry.Registry/CheckAdmission"
 	Registry_Search_FullMethodName                 = "/goa_ai_registry.Registry/Search"
 	Registry_CallTool_FullMethodName               = "/goa_ai_registry.Registry/CallTool"
+	Registry_CallResolvedTool_FullMethodName       = "/goa_ai_registry.Registry/CallResolvedTool"
 	Registry_RetryTool_FullMethodName              = "/goa_ai_registry.Registry/RetryTool"
 	Registry_CompleteToolCall_FullMethodName       = "/goa_ai_registry.Registry/CompleteToolCall"
 	Registry_PublishToolOutputDelta_FullMethodName = "/goa_ai_registry.Registry/PublishToolOutputDelta"
@@ -88,6 +90,11 @@ type RegistryClient interface {
 	ListToolsets(ctx context.Context, in *ListToolsetsRequest, opts ...grpc.CallOption) (*ListToolsetsResponse, error)
 	// Get a specific toolset by name including all tool schemas
 	GetToolset(ctx context.Context, in *GetToolsetRequest, opts ...grpc.CallOption) (*GetToolsetResponse, error)
+	// Return a toolset definition and its exact registration token from one active
+	// catalog read. Consumers retain the token with accepted calls so a later
+	// provider replacement cannot change the contract selected by the model.
+	// Resolution describes registered tools; it does not guarantee provider health.
+	ResolveToolset(ctx context.Context, in *ResolveToolsetRequest, opts ...grpc.CallOption) (*ResolveToolsetResponse, error)
 	// Report whether the exact registration token derived from a deployed
 	// provider's generated tool schemas is active and currently has an unexpired,
 	// non-draining provider lease plus a fresh authenticated pong. Release
@@ -113,6 +120,13 @@ type RegistryClient interface {
 	// the registry establishes the result stream so the caller can create a reader
 	// immediately.
 	CallTool(ctx context.Context, in *CallToolRequest, opts ...grpc.CallOption) (*CallToolResponse, error)
+	// Admit a tool call only against the exact registration returned by
+	// ResolveToolset. The token is part of the immutable call identity. A
+	// replacement before publication commits call_not_admitted; published calls
+	// keep their original assignment and result. Repeating this operation attaches
+	// to the same call, or resumes its authoritative provider-overload event
+	// against the same registration and original deadline.
+	CallResolvedTool(ctx context.Context, in *CallResolvedToolRequest, opts ...grpc.CallOption) (*CallResolvedToolResponse, error)
 	// Republish one previously admitted call after provider overload recorded in
 	// the authoritative call record. The runtime supplies the exact original
 	// registration token; the registry rejects a changed active admission before
@@ -230,6 +244,16 @@ func (c *registryClient) GetToolset(ctx context.Context, in *GetToolsetRequest, 
 	return out, nil
 }
 
+func (c *registryClient) ResolveToolset(ctx context.Context, in *ResolveToolsetRequest, opts ...grpc.CallOption) (*ResolveToolsetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ResolveToolsetResponse)
+	err := c.cc.Invoke(ctx, Registry_ResolveToolset_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *registryClient) CheckAdmission(ctx context.Context, in *CheckAdmissionRequest, opts ...grpc.CallOption) (*CheckAdmissionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CheckAdmissionResponse)
@@ -254,6 +278,16 @@ func (c *registryClient) CallTool(ctx context.Context, in *CallToolRequest, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CallToolResponse)
 	err := c.cc.Invoke(ctx, Registry_CallTool_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *registryClient) CallResolvedTool(ctx context.Context, in *CallResolvedToolRequest, opts ...grpc.CallOption) (*CallResolvedToolResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CallResolvedToolResponse)
+	err := c.cc.Invoke(ctx, Registry_CallResolvedTool_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -355,6 +389,11 @@ type RegistryServer interface {
 	ListToolsets(context.Context, *ListToolsetsRequest) (*ListToolsetsResponse, error)
 	// Get a specific toolset by name including all tool schemas
 	GetToolset(context.Context, *GetToolsetRequest) (*GetToolsetResponse, error)
+	// Return a toolset definition and its exact registration token from one active
+	// catalog read. Consumers retain the token with accepted calls so a later
+	// provider replacement cannot change the contract selected by the model.
+	// Resolution describes registered tools; it does not guarantee provider health.
+	ResolveToolset(context.Context, *ResolveToolsetRequest) (*ResolveToolsetResponse, error)
 	// Report whether the exact registration token derived from a deployed
 	// provider's generated tool schemas is active and currently has an unexpired,
 	// non-draining provider lease plus a fresh authenticated pong. Release
@@ -380,6 +419,13 @@ type RegistryServer interface {
 	// the registry establishes the result stream so the caller can create a reader
 	// immediately.
 	CallTool(context.Context, *CallToolRequest) (*CallToolResponse, error)
+	// Admit a tool call only against the exact registration returned by
+	// ResolveToolset. The token is part of the immutable call identity. A
+	// replacement before publication commits call_not_admitted; published calls
+	// keep their original assignment and result. Repeating this operation attaches
+	// to the same call, or resumes its authoritative provider-overload event
+	// against the same registration and original deadline.
+	CallResolvedTool(context.Context, *CallResolvedToolRequest) (*CallResolvedToolResponse, error)
 	// Republish one previously admitted call after provider overload recorded in
 	// the authoritative call record. The runtime supplies the exact original
 	// registration token; the registry rejects a changed active admission before
@@ -448,6 +494,9 @@ func (UnimplementedRegistryServer) ListToolsets(context.Context, *ListToolsetsRe
 func (UnimplementedRegistryServer) GetToolset(context.Context, *GetToolsetRequest) (*GetToolsetResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetToolset not implemented")
 }
+func (UnimplementedRegistryServer) ResolveToolset(context.Context, *ResolveToolsetRequest) (*ResolveToolsetResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ResolveToolset not implemented")
+}
 func (UnimplementedRegistryServer) CheckAdmission(context.Context, *CheckAdmissionRequest) (*CheckAdmissionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckAdmission not implemented")
 }
@@ -456,6 +505,9 @@ func (UnimplementedRegistryServer) Search(context.Context, *SearchRequest) (*Sea
 }
 func (UnimplementedRegistryServer) CallTool(context.Context, *CallToolRequest) (*CallToolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CallTool not implemented")
+}
+func (UnimplementedRegistryServer) CallResolvedTool(context.Context, *CallResolvedToolRequest) (*CallResolvedToolResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CallResolvedTool not implemented")
 }
 func (UnimplementedRegistryServer) RetryTool(context.Context, *RetryToolRequest) (*RetryToolResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RetryTool not implemented")
@@ -619,6 +671,24 @@ func _Registry_GetToolset_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Registry_ResolveToolset_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ResolveToolsetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).ResolveToolset(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Registry_ResolveToolset_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).ResolveToolset(ctx, req.(*ResolveToolsetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Registry_CheckAdmission_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CheckAdmissionRequest)
 	if err := dec(in); err != nil {
@@ -669,6 +739,24 @@ func _Registry_CallTool_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RegistryServer).CallTool(ctx, req.(*CallToolRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Registry_CallResolvedTool_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CallResolvedToolRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).CallResolvedTool(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Registry_CallResolvedTool_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).CallResolvedTool(ctx, req.(*CallResolvedToolRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -799,6 +887,10 @@ var Registry_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Registry_GetToolset_Handler,
 		},
 		{
+			MethodName: "ResolveToolset",
+			Handler:    _Registry_ResolveToolset_Handler,
+		},
+		{
 			MethodName: "CheckAdmission",
 			Handler:    _Registry_CheckAdmission_Handler,
 		},
@@ -809,6 +901,10 @@ var Registry_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CallTool",
 			Handler:    _Registry_CallTool_Handler,
+		},
+		{
+			MethodName: "CallResolvedTool",
+			Handler:    _Registry_CallResolvedTool_Handler,
 		},
 		{
 			MethodName: "RetryTool",

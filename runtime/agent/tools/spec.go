@@ -52,6 +52,9 @@ type (
 		Name Ident
 		// Description provides human-readable context for planners and tooling.
 		Description string
+		// Search contains generated word counts for the name, title, and
+		// description. Local tools prepare these at code generation time.
+		Search SearchDocument
 		// Tags carries flat labels used by generic policy and UI filtering.
 		Tags []string
 		// Meta carries arbitrary design-time metadata attached to the tool via DSL.
@@ -195,10 +198,11 @@ type (
 	ConfirmationSpec struct {
 		// Title is an optional title shown in the confirmation UI (when supported).
 		Title string
-		// PromptTemplate is rendered with the tool payload to produce the prompt.
+		// PromptTemplate reads the tool payload's JSON property names to produce
+		// the prompt. It does not read generated Go field names.
 		PromptTemplate string
-		// DeniedResultTemplate is rendered with the tool payload to produce JSON for
-		// the denied tool result. The rendered JSON must decode with the tool result
+		// DeniedResultTemplate reads the same JSON properties to produce the
+		// denied tool result. The rendered JSON must decode with the tool result
 		// codec so consumers observe a schema-compliant tool_result.
 		DeniedResultTemplate string
 	}

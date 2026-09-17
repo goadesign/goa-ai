@@ -116,7 +116,6 @@ type (
 	}
 
 	agentToolsetConsumerFileData struct {
-		registryBindingsData
 		Toolset                         *ToolsetData
 		Imports                         []*codegen.ImportSpec
 		RuntimeAlias                    string

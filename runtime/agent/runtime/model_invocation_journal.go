@@ -265,7 +265,7 @@ func (j *modelInvocationJournal) recordRejectedModelUsageTotal(
 			continue
 		}
 		var err error
-		activityUsage, err = addTokenUsage(activityUsage, invocation.usage)
+		activityUsage, err = model.AddTokenUsage(activityUsage, invocation.usage)
 		if err != nil {
 			candidate.usage = previous
 			candidate.usageSeen = previousSeen
@@ -324,7 +324,7 @@ func (j *modelInvocationJournal) saveModelResponse(
 	candidate.responseEvidence = model.EvidenceForResponse(response)
 	if !candidate.usageSeen && hasTokenCounts(response.Usage) {
 		responseUsage := candidate.attributeUsage(response.Usage)
-		usage, err := addTokenUsage(j.usage, responseUsage)
+		usage, err := model.AddTokenUsage(j.usage, responseUsage)
 		if err != nil {
 			return outputcontract.NewWithOrigin(
 				fmt.Errorf("aggregate model usage: %w", err),
@@ -369,7 +369,7 @@ func (j *modelInvocationJournal) recordModelChunk(
 	}
 	if usage, ok := chunk.(model.UsageChunk); ok {
 		attributed := candidate.attributeUsage(usage.Usage)
-		activityUsage, err := addTokenUsage(j.usage, attributed)
+		activityUsage, err := model.AddTokenUsage(j.usage, attributed)
 		if err != nil {
 			j.mu.Unlock()
 			return outputcontract.NewWithOrigin(
@@ -377,7 +377,7 @@ func (j *modelInvocationJournal) recordModelChunk(
 				planner.OutputContractOriginPlanner,
 			)
 		}
-		accumulated, err := addTokenUsage(candidate.usage, attributed)
+		accumulated, err := model.AddTokenUsage(candidate.usage, attributed)
 		if err != nil {
 			j.mu.Unlock()
 			return outputcontract.NewWithOrigin(

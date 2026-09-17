@@ -89,12 +89,13 @@ func TestToolMetadataIncludesBudgetClass(t *testing.T) {
 		newTerminalSpec("term.a"),
 	)
 
-	metas := rt.toolMetadata([]ToolCall{
+	metas, err := rt.toolMetadata([]ToolCall{
 		{ToolCallID: "ret-a-call", Name: "ret.a"},
 		{ToolCallID: "book-a-call", Name: "book.a"},
 		{ToolCallID: "term-a-call", Name: "term.a"},
 		{ToolCallID: "unknown-call", Name: "unknown"},
 	})
+	require.NoError(t, err)
 	assert.Equal(t, []policy.ToolMetadata{
 		{ID: "ret.a", Title: "A", BudgetClass: policy.ToolBudgetClassBudgeted},
 		{ID: "book.a", Title: "A", BudgetClass: policy.ToolBudgetClassBookkeeping},

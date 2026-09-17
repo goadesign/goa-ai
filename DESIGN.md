@@ -959,20 +959,35 @@ var AnthropicRegistry = Registry("anthropic", func() {
 
 Generated `registry.go` files in agent packages are local runtime registration helpers; they do not implement the clustered registry service.
 
-Registry consumer generation emits a `Discover` function for each named
-toolset. It returns an immutable `runtime/registry.Toolset` after validating
-the source name, version pin, and complete schemas. Generated agents require
-these values through a typed `RegistryToolsets` input, including definitions
-needed by reachable child agents. Discovery does not mutate package globals
-or an already constructed `AgentDefinition`.
+Registry consumption and deferred loading are separate declarations. A named
+`Toolset(FromRegistry(...))` consumes one required registration; `Use(registry)`
+consumes its current toolsets. `Deferred()` inside either consuming `Use`, or a
+static `Use`, chooses native model tool search. No namespace concept is added.
 
-The shared registry layer owns dynamic JSON codecs. They return decoded JSON
-values with exact numbers and validate both encoding and decoding against
-self-contained schemas. Runtime registration retains its existing immutable
-contract checks. Catalog synchronization, deferred model loading, and changing
-the tools of an active agent are separate capabilities. The supported startup
-contract and its limitations are defined in
-[Registry-Backed Toolsets](docs/dsl.md#registry-backed-toolsets).
+Generation emits each agent's direct registry reads and exact source/version
+permission predicates, including independent child-agent declarations. Static
+search word counts, deferred IDs, complete provider `ConsumerContract` records,
+and schema fingerprints are generated literals. The runtime does not interpret
+these static choices. Applications connect already-built registry and Pulse
+clients once with `RegisterRegistry`; generated `Definition()` and
+`NewClient(rt)` require no catalog inputs and perform no remote reads.
+
+Each planning activity resolves its own current catalog. The model adapter
+receives only permitted definitions. OpenAI uses native client search with
+private BM25 ranking; Claude uses provider-hosted deferred search, including
+the dedicated Messages transport on Bedrock. Provider-specific search records
+stay in existing message metadata. There is no separate loaded-tool store.
+
+Accepted calls retain their selected definition and fixed pagination partner
+with the existing registration token. Confirmation, decoding, and replay use
+that saved contract; `CallResolvedTool` rejects a replaced registration before
+publication. Catalog changes cannot silently redirect an accepted call. Static
+runtime registrations remain immutable, and history never grants permission
+for new calls. Dynamic service tools carry generated confirmation, pagination,
+field, and server-only data metadata; agent/control execution remains compiled.
+
+[Tool search and dynamic registries](docs/tool_search.md) owns the full lifecycle,
+provider limitations, and upgrade contract.
 
 Provider admission is owned by the clustered registry. `Serve` generates one
 UUID incarnation per lifecycle; leases are keyed by stable provider ID plus

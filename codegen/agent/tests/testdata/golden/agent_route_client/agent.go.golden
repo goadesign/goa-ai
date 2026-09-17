@@ -57,6 +57,7 @@ var agentDefinition = agentsruntime.NewAgentDefinition(
 		tools.Ident("helpers.summarize_doc"),
 	},
 	nil,
+	nil,
 )
 
 // Definition returns the immutable generated contract shared by callers and workers.

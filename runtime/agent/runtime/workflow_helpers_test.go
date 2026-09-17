@@ -678,7 +678,7 @@ func TestWorkflowTreatsPlannerAuthoredCanonicalContinuationAsStandalone(t *testi
 		nil,
 		[]tools.Ident{continuation.Name},
 		nil,
-	)
+		nil)
 	rt.agents[agentID] = AgentRegistration{
 		Definition:          definition,
 		Planner:             plannerImpl,
@@ -785,11 +785,12 @@ func TestRecoveryReminderIsEphemeralPlannerInput(t *testing.T) {
 	require.Len(t, base.Messages, 1)
 	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
 
-	reminders := rt.recoveryReminders([]*planner.ToolOutput{{
+	reminders, err := rt.recoveryReminders([]*planner.ToolOutput{{
 		Name:       tr.Name,
 		ToolCallID: tr.ToolCallID,
 		Failure:    tr.Failure,
 	}})
+	require.NoError(t, err)
 	require.Len(t, reminders, 1)
 	require.Contains(t, reminders[0].Text, "A tool call failed.")
 	require.Contains(t, reminders[0].Text, "Tool: svc_read_aggregate")
@@ -872,13 +873,15 @@ func TestRecoveryRemindersDescribeSelectedTransition(t *testing.T) {
 		{Name: results[0].Name, ToolCallID: results[0].ToolCallID, Failure: results[0].Failure},
 		{Name: results[1].Name, ToolCallID: results[1].ToolCallID, Failure: results[1].Failure},
 	}
-	finishReminders := rt.recoveryReminders(outputs[1:])
+	finishReminders, err := rt.recoveryReminders(outputs[1:])
+	require.NoError(t, err)
 	require.Len(t, finishReminders, 1)
 	require.Contains(t, finishReminders[0].Text, "Do not retry this failed tool.")
 	require.Contains(t, finishReminders[0].Text, "advertised continuation")
 	require.NotContains(t, finishReminders[0].Text, "remains available")
 
-	correctionReminders := rt.recoveryReminders(outputs[:1])
+	correctionReminders, err := rt.recoveryReminders(outputs[:1])
+	require.NoError(t, err)
 	require.Len(t, correctionReminders, 1)
 	require.Contains(t, correctionReminders[0].Text, "failed tool remains available")
 }

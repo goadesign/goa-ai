@@ -10,13 +10,6 @@ import (
 	"goa.design/goa/v3/codegen"
 )
 
-type registryToolsetSpecsFileData struct {
-	PackageName   string
-	QualifiedName string
-	ServiceName   string
-	Registry      *RegistryToolsetMeta
-}
-
 type toolProviderFileData struct {
 	PackageName    string
 	ServiceTypeRef string
@@ -28,8 +21,8 @@ type toolProviderFileData struct {
 
 // toolsetSpecsFiles writes each tool package once. A package can contain public
 // types, JSON functions, tool descriptions, service conversion functions, and
-// an HTTP subpackage used while decoding JSON. Registry toolsets write only
-// their tool descriptions.
+// an HTTP subpackage used while decoding JSON. Registry consumption is emitted
+// in the agent definition and has no static tool package.
 func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 	if plan == nil {
 		return nil
@@ -48,8 +41,7 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 		if ts == nil {
 			continue
 		}
-		if ts.IsRegistryBacked && ts.Registry != nil {
-			out = append(out, toolsetRegistrySpecsFiles(ts, packagePlan)...)
+		if ts.IsRegistryBacked {
 			continue
 		}
 		if len(ts.Tools) == 0 {
@@ -173,6 +165,7 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 				},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
+			out = append(out, toolRegistrySchemasFile(ts, specsData.tools))
 			// inject.go fills fields supplied by the server.
 			if toolsNeedInject(ts.Tools) {
 				injectSections := []*codegen.SectionTemplate{
@@ -204,22 +197,15 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 func generatedToolsetSchemaFingerprints(routes []string, entries []*toolEntry) []*toolsetSchemaFingerprintData {
 	tools := make([]internaladmission.ToolSchema, len(entries))
 	for i, entry := range entries {
-		description := entry.Description
-		var payloadSchema, executionPayloadSchema, resultSchema []byte
-		if entry.Payload != nil {
-			payloadSchema = entry.Payload.SchemaJSON
-			executionPayloadSchema = entry.Payload.ExecutionSchemaJSON
-		}
-		if entry.Result != nil {
-			resultSchema = entry.Result.SchemaJSON
-		}
+		schema := entry.RegistrySchema
 		tools[i] = internaladmission.ToolSchema{
-			Name:                   entry.Name,
-			Description:            &description,
-			Tags:                   entry.Tags,
-			PayloadSchema:          payloadSchema,
-			ExecutionPayloadSchema: executionPayloadSchema,
-			ResultSchema:           resultSchema,
+			Name:                   schema.Name,
+			Description:            schema.Description,
+			Tags:                   schema.Tags,
+			PayloadSchema:          schema.PayloadSchema,
+			ExecutionPayloadSchema: schema.ExecutionPayloadSchema,
+			ResultSchema:           schema.ResultSchema,
+			ConsumerContract:       entry.ConsumerContractJSON,
 		}
 	}
 	fingerprints := make([]*toolsetSchemaFingerprintData, len(routes))
@@ -267,33 +253,5 @@ func toolsetProviderFile(ts *ToolsetData) *codegen.File {
 	return &codegen.File{
 		Path:             filepath.Join(ts.SpecsDir, "provider.go"),
 		SectionTemplates: sections,
-	}
-}
-
-func toolsetRegistrySpecsFiles(ts *ToolsetData, plan *toolSpecsPackagePlan) []*codegen.File {
-	if ts == nil || ts.Registry == nil || ts.SpecsDir == "" {
-		return nil
-	}
-
-	specImports := plan.fileImports.publicSpecs.Imports()
-	sections := []*codegen.SectionTemplate{
-		codegen.Header(ts.Name+" registry toolset specs", ts.SpecsPackageName, specImports),
-		{
-			Name:   "registry-toolset-specs",
-			Source: agentsTemplates.Read(registryToolsetSpecsFileT),
-			Data: registryToolsetSpecsFileData{
-				PackageName:   ts.SpecsPackageName,
-				QualifiedName: ts.QualifiedName,
-				ServiceName:   ts.ServiceName,
-				Registry:      ts.Registry,
-			},
-			FuncMap: templateFuncMap(),
-		},
-	}
-	return []*codegen.File{
-		{
-			Path:             filepath.Join(ts.SpecsDir, "specs.go"),
-			SectionTemplates: sections,
-		},
 	}
 }

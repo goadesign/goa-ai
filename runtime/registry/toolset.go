@@ -7,6 +7,7 @@ package registry
 import (
 	"cmp"
 	"fmt"
+	"maps"
 	"slices"
 
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -26,8 +27,10 @@ type (
 )
 
 // NewToolset validates one discovered toolset and compiles its JSON codecs.
-// Missing schemas, duplicate tool names, and names outside this toolset are
-// errors. The result is fixed for the lifetime of the agent using it.
+// Missing schemas, duplicate names, and unqualified tool identifiers are errors.
+// The registry's returned membership is authoritative: a generated registration
+// such as alpha.lookup can contain tools named lookup.search.
+// The result is fixed for the lifetime of the agent using it.
 func NewToolset(schema *ToolsetSchema) (*Toolset, error) {
 	if schema == nil || schema.Name == "" {
 		return nil, fmt.Errorf("registry toolset name is required")
@@ -46,8 +49,8 @@ func NewToolset(schema *ToolsetSchema) (*Toolset, error) {
 			return nil, fmt.Errorf("registry toolset %q contains a nil tool", schema.Name)
 		}
 		name := tools.Ident(tool.Name)
-		if name.Toolset() != schema.Name || name.Tool() == "" {
-			return nil, fmt.Errorf("registry tool %q does not belong to toolset %q", name, schema.Name)
+		if name.Toolset() == "" || name.Tool() == "" {
+			return nil, fmt.Errorf("registry tool %q must be a qualified tool identifier", name)
 		}
 		if _, exists := set.index[name]; exists {
 			return nil, fmt.Errorf("registry toolset %q repeats tool %q", schema.Name, name)
@@ -71,6 +74,7 @@ func NewToolset(schema *ToolsetSchema) (*Toolset, error) {
 		set.specs = append(set.specs, tools.ToolSpec{
 			Name:                   name,
 			Description:            tool.Description,
+			Search:                 tools.NewSearchDocument(tool.Name + " " + tool.Description),
 			Tags:                   slices.Clone(tool.Tags),
 			ExecutionPayloadSchema: slices.Clone(tool.ExecutionPayloadSchema),
 			ExecutionPayloadCodec:  execution,
@@ -171,6 +175,7 @@ func (t *Toolset) ValidateResult(name tools.Ident, value any) error {
 // cloneDiscoveredSpec copies the mutable fields populated by NewToolset.
 // The compiled codec functions capture immutable validators and may be shared.
 func cloneDiscoveredSpec(spec tools.ToolSpec) tools.ToolSpec {
+	spec.Search.Terms = maps.Clone(spec.Search.Terms)
 	spec.Tags = slices.Clone(spec.Tags)
 	spec.Payload.Schema = slices.Clone(spec.Payload.Schema)
 	spec.ExecutionPayloadSchema = slices.Clone(spec.ExecutionPayloadSchema)

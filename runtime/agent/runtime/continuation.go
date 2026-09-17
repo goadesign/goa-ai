@@ -14,6 +14,7 @@ import (
 	"io"
 	"strings"
 
+	"goa.design/goa-ai/internal/registrycontract"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -37,6 +38,16 @@ type (
 		spec              tools.ToolSpec
 		state             continuationState
 		executablePayload rawjson.Message
+		registry          *tools.RegistryBinding
+		definition        *model.ToolDefinition
+	}
+
+	// continuationGroup keeps pages of one tool pair and registration together.
+	continuationGroup struct {
+		spec     tools.ToolSpec
+		source   tools.ToolSpec
+		outputs  []*planner.ToolOutput
+		registry *tools.RegistryBinding
 	}
 
 	// continuationState is the successful page available to a dedicated
@@ -74,11 +85,13 @@ func IsGeneratedContinuationToolName(name tools.Ident) bool {
 func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*planner.ToolOutput) ([]continuationAction, error) {
 	var actions []continuationAction
 	names := make(map[tools.Ident]struct{})
-	for _, spec := range r.ToolSpecsForAgent(agentID) {
-		if !isDedicatedContinuationSpec(spec) {
-			continue
-		}
-		states, err := r.continuationStates(spec, outputs)
+	groups, err := r.continuationGroups(agentID, outputs)
+	if err != nil {
+		return nil, err
+	}
+	for _, group := range groups {
+		spec := group.spec
+		states, err := continuationStates(spec, group.source, group.outputs)
 		if err != nil {
 			return nil, err
 		}
@@ -87,7 +100,7 @@ func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*p
 			if err != nil {
 				return nil, err
 			}
-			action.executablePayload, err = r.continuationPayload(spec, state)
+			action.executablePayload, err = continuationPayload(spec, state)
 			if err != nil {
 				return nil, fmt.Errorf("runtime: build continuation action %q: %w", action.modelName, err)
 			}
@@ -98,10 +111,92 @@ func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*p
 				return nil, fmt.Errorf("runtime: continuation action name %q conflicts with a registered tool", action.modelName)
 			}
 			names[action.modelName] = struct{}{}
+			action.registry = group.registry
+			if group.registry != nil {
+				action.definition, err = model.NewToolDefinitionFromSpec(spec)
+				if err != nil {
+					return nil, err
+				}
+			} else {
+				action.definition = r.advertisedToolDefinitions([]tools.ToolSpec{spec}, compiledToolPolicy{})[0]
+			}
 			actions = append(actions, action)
 		}
 	}
 	return actions, nil
+}
+
+// continuationGroups reads each dynamic pair from its retained registration.
+// Pages under another token never share cursor state, even for identical names.
+func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.ToolOutput) ([]continuationGroup, error) {
+	var groups []continuationGroup
+	var staticOutputs []*planner.ToolOutput
+	for _, output := range outputs {
+		if output != nil && output.Registry == nil {
+			staticOutputs = append(staticOutputs, output)
+		}
+	}
+	for _, spec := range r.ToolSpecsForAgent(agentID) {
+		if !isDedicatedContinuationSpec(spec) {
+			continue
+		}
+		source, ok := r.toolSpec(spec.Bounds.Paging.SourceTool)
+		if !ok {
+			return nil, fmt.Errorf("continuation tool %q has no source contract", spec.Name)
+		}
+		groups = append(groups, continuationGroup{spec: spec, source: source, outputs: staticOutputs})
+	}
+	registration, ok := r.agentByID(agentID)
+	if !ok || registration.Definition.registryTools == nil {
+		return groups, nil
+	}
+	type groupKey struct {
+		registry, token string
+		tool            tools.Ident
+	}
+	indices := make(map[groupKey]int)
+	for _, output := range outputs {
+		if output == nil || output.Registry == nil {
+			continue
+		}
+		resolved, err := registrycontract.Read(output.Registry)
+		if err != nil {
+			return nil, err
+		}
+		version := ""
+		if resolved.Registered.Toolset.Version != nil {
+			version = string(*resolved.Registered.Toolset.Version)
+		}
+		if !registration.Definition.registryTools.Allows(output.Registry.Registry, resolved.Registered.Toolset.Name, version) {
+			continue
+		}
+		spec, ok := resolved.Specs[output.Name]
+		if !ok {
+			return nil, fmt.Errorf("saved continuation has no contract for %q", output.Name)
+		}
+		if spec.Bounds == nil || spec.Bounds.Paging == nil || spec.Bounds.Paging.ContinueTool == "" {
+			continue
+		}
+		continuation := resolved.Specs[spec.Bounds.Paging.ContinueTool]
+		if !isDedicatedContinuationSpec(continuation) {
+			continue
+		}
+		key := groupKey{registry: output.Registry.Registry, token: resolved.Registered.RegistrationToken, tool: continuation.Name}
+		index, exists := indices[key]
+		if !exists {
+			binding, err := resolved.Select(output.Registry.Registry, continuation.Name)
+			if err != nil {
+				return nil, err
+			}
+			index = len(groups)
+			indices[key] = index
+			groups = append(groups, continuationGroup{
+				spec: continuation, source: resolved.Specs[continuation.Bounds.Paging.SourceTool], registry: binding,
+			})
+		}
+		groups[index].outputs = append(groups[index].outputs, output)
+	}
+	return groups, nil
 }
 
 // compilePlannerToolCalls converts validated planner intent into runtime-owned
@@ -185,6 +280,7 @@ func (r *Runtime) compilePlannerToolCallsForRun(
 			)
 		}
 		call.Name = action.spec.Name
+		call.Registry = action.registry.Clone()
 		call.Payload = append(rawjson.Message(nil), action.executablePayload...)
 		call.ContinuationRootToolCallID = action.state.rootToolCallID
 		calls[i] = call
@@ -204,6 +300,7 @@ func (r *Runtime) automaticContinuationPlan(runCtx run.Context, actions []contin
 		}
 		calls = append(calls, ToolCall{
 			Name:                       action.spec.Name,
+			Registry:                   action.registry.Clone(),
 			ToolCallID:                 generateDeterministicToolCallID(runCtx.RunID, runCtx.TurnID, runCtx.Attempt, action.spec.Name, len(calls)),
 			Payload:                    append(rawjson.Message(nil), action.executablePayload...),
 			ContinuationRootToolCallID: action.state.rootToolCallID,
@@ -218,15 +315,7 @@ func (r *Runtime) automaticContinuationPlan(runCtx run.Context, actions []contin
 // continuationStates reconstructs one live head per source tool call. A
 // continuation result carries its source call identity explicitly, so equal
 // opaque cursors and repeated identical queries remain independent.
-func (r *Runtime) continuationStates(spec tools.ToolSpec, outputs []*planner.ToolOutput) ([]continuationState, error) {
-	sourceSpec, ok := r.toolSpec(spec.Bounds.Paging.SourceTool)
-	if !ok {
-		return nil, fmt.Errorf(
-			"runtime: continuation tool %q source tool %q is not registered",
-			spec.Name,
-			spec.Bounds.Paging.SourceTool,
-		)
-	}
+func continuationStates(spec, sourceSpec tools.ToolSpec, outputs []*planner.ToolOutput) ([]continuationState, error) {
 	states := make(map[string]continuationState)
 	var order []string
 	for _, output := range outputs {
@@ -403,7 +492,7 @@ func isContinuationOutput(spec tools.ToolSpec, output tools.Ident) bool {
 // continuationPayload builds the canonical executable payload. Replaying
 // continuations retain the exact prior query arguments and replace only the
 // generated cursor field; self-contained continuations need only the cursor.
-func (r *Runtime) continuationPayload(spec tools.ToolSpec, state continuationState) (rawjson.Message, error) {
+func continuationPayload(spec tools.ToolSpec, state continuationState) (rawjson.Message, error) {
 	fields := make(map[string]json.RawMessage)
 	if spec.Bounds.Paging.ReplayPayload {
 		if err := json.Unmarshal(state.payload, &fields); err != nil {

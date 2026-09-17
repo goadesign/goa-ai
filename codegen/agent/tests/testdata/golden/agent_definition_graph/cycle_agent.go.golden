@@ -72,8 +72,10 @@ var agentDefinition = runtime.NewAgentDefinition(
 				tools.Ident("alpha_work.alpha"),
 			},
 			nil,
+			nil,
 		),
 	},
+	nil,
 )
 
 // Definition returns the immutable generated contract shared by callers and workers.

@@ -199,6 +199,10 @@ func childDefinitionForCall(call ToolCall, definition AgentDefinition) (AgentDef
 // the continuation can execute or give back to planner code still satisfies
 // the current registered codecs.
 func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition AgentDefinition) error {
+	calls, err := recordedToolCalls(checkpoint.State.ToolOutputs)
+	if err != nil {
+		return err
+	}
 	for _, output := range checkpoint.State.ToolOutputs {
 		if err := validateCheckpointToolOutput(output, definition); err != nil {
 			return err
@@ -210,7 +214,11 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 		}
 	}
 	for _, event := range checkpoint.State.ToolEvents {
-		if _, err := decodeCheckpointToolEventWithSpecs(event, definition.spec); err != nil {
+		call, err := recordedResultCall(event.Name, event.ToolCallID, calls)
+		if err != nil {
+			return err
+		}
+		if _, err := decodeCheckpointToolEvent(event, call, definition.spec); err != nil {
 			return err
 		}
 	}
@@ -224,7 +232,7 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 			return err
 		}
 		if record.ChildSuspension == nil {
-			if _, err := decodeCheckpointToolEventWithSpecs(record.Result, definition.spec); err != nil {
+			if _, err := decodeCheckpointToolEvent(record.Result, record.Call, definition.spec); err != nil {
 				return err
 			}
 		}
@@ -234,7 +242,7 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 			if err := validateCheckpointToolRequest(pending.Confirmation.Call, definition); err != nil {
 				return err
 			}
-			if err := decodeToolValue(definition, pending.Confirmation.Call.Name, pending.Confirmation.DeniedResult.RawMessage(), false); err != nil {
+			if err := decodeToolValue(definition, pending.Confirmation.Call, pending.Confirmation.DeniedResult.RawMessage(), false); err != nil {
 				return fmt.Errorf("decode suspended denied result for %s: %w", pending.Confirmation.Call.Name, err)
 			}
 		}
@@ -252,7 +260,12 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 // validateCheckpointToolRequest decodes one saved executable payload through
 // the current generated input codec without executing the tool.
 func validateCheckpointToolRequest(call ToolCall, definition AgentDefinition) error {
-	if err := decodeToolValue(definition, call.Name, call.Payload.RawMessage(), true); err != nil {
+	if call.Registry != nil {
+		if _, err := validateRegistrySource(definition, call); err != nil {
+			return err
+		}
+	}
+	if err := decodeToolValue(definition, call, call.Payload.RawMessage(), true); err != nil {
 		return fmt.Errorf("decode suspended tool payload for %s: %w", call.Name, err)
 	}
 	return nil
@@ -264,12 +277,16 @@ func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDe
 	if output == nil {
 		return errors.New("run suspension contains nil tool output")
 	}
-	if err := decodeToolValue(definition, output.Name, output.Payload.RawMessage(), true); err != nil {
+	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Payload: output.Payload, Registry: output.Registry}
+	if err := validateCheckpointToolRequest(call, definition); err != nil {
 		return fmt.Errorf("decode suspended tool payload for %s: %w", output.Name, err)
 	}
 	var spec *tools.ToolSpec
 	if output.Failure == nil {
-		registered, ok := definition.spec(output.Name)
+		registered, ok, err := lookupCallSpec(call, definition.spec)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return fmt.Errorf("suspended tool result references unregistered tool %q", output.Name)
 		}
@@ -277,7 +294,7 @@ func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDe
 	}
 	if _, err := validatePersistedToolResult(
 		spec,
-		ToolCall{Name: output.Name, ToolCallID: output.ToolCallID},
+		call,
 		output.Result,
 		output.ServerData,
 		output.Bounds,
@@ -288,20 +305,23 @@ func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDe
 	return nil
 }
 
-// decodeToolValue decodes one saved value with the current generated codec.
-func decodeToolValue(definition AgentDefinition, name tools.Ident, data []byte, payload bool) error {
-	spec, ok := definition.spec(name)
+// decodeToolValue validates a saved value against the selected contract.
+func decodeToolValue(definition AgentDefinition, call ToolCall, data []byte, payload bool) error {
+	spec, ok, err := lookupCallSpec(call, definition.spec)
+	if err != nil {
+		return err
+	}
 	if !ok {
-		return fmt.Errorf("tool %q is not in the current agent definition", name)
+		return fmt.Errorf("tool %q is not in the current agent definition", call.Name)
 	}
 	codec := spec.Result.Codec
 	if payload {
 		codec = spec.ExecutionPayloadCodec
 	}
 	if codec.FromJSON == nil {
-		return fmt.Errorf("tool %q has no current generated codec", name)
+		return fmt.Errorf("tool %q has no current generated codec", call.Name)
 	}
-	_, err := codec.FromJSON(data)
+	_, err = codec.FromJSON(data)
 	return err
 }
 

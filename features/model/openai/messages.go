@@ -55,7 +55,23 @@ func encodeMessages(msgs []*model.Message, canonicalToProvider map[string]string
 		if err != nil {
 			return nil, err
 		}
+		before, err := encodeSearchReplay(msg.Meta, searchBeforeMetaKey)
+		if err != nil {
+			return nil, err
+		}
+		after, err := encodeSearchReplay(msg.Meta, searchAfterMetaKey)
+		if err != nil {
+			return nil, err
+		}
+		if (len(before) > 0 || len(after) > 0) && msg.Role != model.ConversationRoleAssistant {
+			return nil, errors.New("openai: native tool search history requires an assistant message")
+		}
+		if err := validateSearchReasoning(msg.Meta, before, after); err != nil {
+			return nil, err
+		}
+		conversation = append(conversation, before...)
 		conversation = append(conversation, encoded...)
+		conversation = append(conversation, after...)
 		sequence++
 	}
 	if len(conversation) == 0 {
@@ -189,14 +205,16 @@ func encodeAssistantMessage(
 	}
 
 	out := make([]responses.ResponseInputItemUnionParam, 0, len(reusedReasoning)+len(toolUses)+1)
-	if len(reusedReasoning) > 0 {
+	_, searchBefore := msg.Meta[searchBeforeMetaKey]
+	_, searchAfter := msg.Meta[searchAfterMetaKey]
+	if len(reusedReasoning) > 0 && !searchBefore && !searchAfter {
 		for _, item := range reusedReasoning {
 			itemCopy := item
 			out = append(out, responses.ResponseInputItemUnionParam{
 				OfReasoning: &itemCopy,
 			})
 		}
-	} else if len(reasoningParts) > 0 {
+	} else if len(reusedReasoning) == 0 && len(reasoningParts) > 0 {
 		return nil, errors.New("openai: thinking replay requires provider reasoning metadata")
 	}
 

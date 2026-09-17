@@ -505,6 +505,9 @@ type (
 	// workflow execution. Planner implementations cannot construct this type
 	// through their PlanResult contract.
 	ToolCall struct {
+		// Registry retains the exact registered contract selected for this call.
+		// It is runtime-owned and absent for statically compiled tools.
+		Registry *tools.RegistryBinding
 		// Name is the fully-qualified tool identifier the runtime will execute.
 		Name tools.Ident
 
@@ -839,6 +842,9 @@ type (
 	// ToolInput carries the execution payload for one tool call from workflow
 	// code to its activity. The workflow retains model-authored transcript data.
 	ToolInput struct {
+		// Registry carries the selected registration into the execution activity.
+		// Static tool calls leave it absent.
+		Registry *tools.RegistryBinding
 		// RunID identifies the run that owns this tool call.
 		RunID string
 

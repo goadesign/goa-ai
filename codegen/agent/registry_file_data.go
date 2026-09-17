@@ -3,8 +3,6 @@
 // registrations that belong in the final file.
 package codegen
 
-import "slices"
-
 type (
 	// agentRegistryFileData contains the toolset groups written into one agent's
 	// registry file. Import names and generated declarations have already been
@@ -15,7 +13,7 @@ type (
 		// MCPToolsets contains remote toolsets registered during agent startup.
 		MCPToolsets []*ToolsetData
 		// DirectToolsets contains toolsets supplied by application executors.
-		DirectToolsets []*registryDirectToolsetData
+		DirectToolsets []*ToolsetData
 		// PlanActivity contains the planning activity and its chosen import names.
 		PlanActivity *registryActivityData
 		// ResumeActivity contains the resume activity and its chosen import names.
@@ -32,14 +30,6 @@ type (
 		EngineAlias string
 		// TimeAlias names the standard time package.
 		TimeAlias string
-	}
-
-	// registryDirectToolsetData identifies either generated specifications or
-	// the immutable discovered value supplied during agent startup.
-	registryDirectToolsetData struct {
-		*ToolsetData
-		// RegistryField names the discovered toolset supplied at startup.
-		RegistryField string
 	}
 )
 
@@ -59,17 +49,8 @@ func newAgentRegistryFileData(agent *AgentData) *agentRegistryFileData {
 		}
 	}
 	for _, toolset := range agent.UsedToolsets {
-		if toolset.MCP == nil && toolset.AgentToolsImportPath == "" {
-			direct := &registryDirectToolsetData{ToolsetData: toolset}
-			if toolset.IsRegistryBacked {
-				for _, binding := range data.RegistryBindings {
-					if slices.Contains(binding.References, toolset.QualifiedName) {
-						direct.RegistryField = binding.FieldName
-						break
-					}
-				}
-			}
-			data.DirectToolsets = append(data.DirectToolsets, direct)
+		if toolset.MCP == nil && toolset.AgentToolsImportPath == "" && !toolset.IsRegistryBacked {
+			data.DirectToolsets = append(data.DirectToolsets, toolset)
 		}
 	}
 	return data

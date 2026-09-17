@@ -107,7 +107,14 @@ func (r *Runtime) resolveConfirmationDecision(
 			return decisionRecords, nil, false, err
 		}
 		decisionRecords[0].scheduleRequired = false
-		resultJSON, err := r.marshalToolValue(ctx, it.call.Name, deniedResult, nil)
+		spec, ok, err := lookupCallSpec(it.call, r.toolSpec)
+		if err != nil {
+			return decisionRecords, nil, false, err
+		}
+		if !ok {
+			return decisionRecords, nil, false, fmt.Errorf("confirmation tool %q has no result contract", it.call.Name)
+		}
+		resultJSON, err := EncodeCanonicalToolResult(spec, deniedResult, nil)
 		if err != nil {
 			return decisionRecords, nil, false, fmt.Errorf("encode %s denied tool result for streaming: %w", it.call.Name, err)
 		}
@@ -123,7 +130,7 @@ func (r *Runtime) resolveConfirmationDecision(
 			it.call.Name,
 			it.call.ToolCallID,
 			it.call.ParentToolCallID,
-			rawjson.Message(resultJSON),
+			resultJSON,
 			nil,
 			preview,
 			nil,
@@ -152,7 +159,7 @@ func (r *Runtime) resolveConfirmationDecision(
 	// Approved: execute the tool call.
 	grouped, timeouts := r.groupToolCallsByTimeout([]ToolCall{call}, input, toolOpts.StartToCloseTimeout)
 	finishBy := deadlines.Budget
-	if r.isBookkeeping(call.Name) {
+	if r.isBookkeepingCall(call) {
 		finishBy = deadlines.Hard
 	}
 	outcomes, timedOut, executionErr := r.executeGroupedToolCalls(
@@ -488,7 +495,7 @@ func (r *Runtime) consumeClarificationResponse(
 				Name:       c.ToolName,
 				ToolCallID: c.ToolCallID,
 				Success: &api.ProvidedToolSuccess{
-					Result: rawjson.Message(resultJSON),
+					Result: resultJSON,
 				},
 			}}},
 			[]ToolCall{call},

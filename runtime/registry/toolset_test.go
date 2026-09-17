@@ -28,9 +28,13 @@ func TestDiscoveredToolsetOwnsSchemasAndCodecs(t *testing.T) {
 	spec, ok := set.Spec("lookup.find")
 	require.True(t, ok)
 	assert.Equal(t, []string{"read"}, spec.Tags)
+	require.Positive(t, spec.Search.Length)
+	assert.Positive(t, spec.Search.Terms["find"])
+	spec.Search.Terms["find"] = 1000
 	spec.Tags[0] = "changed again"
 	spec.Payload.Schema[0] = '['
 	fresh := set.Specs()[0]
+	assert.NotEqual(t, 1000, fresh.Search.Terms["find"])
 	assert.Equal(t, []string{"read"}, fresh.Tags)
 	value, err := fresh.Payload.Codec.FromJSON([]byte(`{"query":"records"}`))
 	require.NoError(t, err)
@@ -79,18 +83,18 @@ func TestDiscoveredToolsetRejectsIncompleteContracts(t *testing.T) {
 			want: "nil tool",
 		},
 		{
-			name: "foreign name",
+			name: "unqualified name",
 			change: func(s *ToolsetSchema) {
-				s.Tools[0].Name = "other.find"
+				s.Tools[0].Name = "find"
 			},
-			want: "does not belong",
+			want: "qualified tool identifier",
 		},
 		{
 			name: "missing method",
 			change: func(s *ToolsetSchema) {
 				s.Tools[0].Name = "lookup."
 			},
-			want: "does not belong",
+			want: "qualified tool identifier",
 		},
 		{
 			name: "duplicate",
@@ -138,6 +142,16 @@ func TestDiscoveredToolsetRejectsIncompleteContracts(t *testing.T) {
 	}
 	_, err := NewToolset(nil)
 	require.Error(t, err)
+}
+
+func TestDiscoveredToolsetPreservesSeparateRegistrationName(t *testing.T) {
+	source := discoveredSchema()
+	source.Name = "alpha.lookup"
+	set, err := NewToolset(source)
+	require.NoError(t, err)
+	assert.Equal(t, "alpha.lookup", set.Name())
+	assert.Equal(t, []tools.Ident{"lookup.find"}, set.Names())
+	require.NoError(t, set.ValidatePayload("lookup.find", map[string]any{"query": "records"}))
 }
 
 func TestDiscoveredToolNamesHaveStableOrder(t *testing.T) {

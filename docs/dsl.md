@@ -381,8 +381,8 @@ Tool("dangerous_write", "Write a stateful change", func() {
     Return(DangerousWriteResult)
     Confirmation(func() {
         Title("Confirm change")
-        PromptTemplate(`Approve write: set {{ .Key }} to {{ .Value }}`)
-        DeniedResultTemplate(`{"summary":"Cancelled","key":"{{ .Key }}"}`)
+        PromptTemplate(`Approve write: set {{ .key }} to {{ json .value }}`)
+        DeniedResultTemplate(`{"summary":"Cancelled","key":{{ json .key }}}`)
     })
 })
 ```
@@ -393,10 +393,11 @@ Notes:
   the current workflow with a dedicated `AwaitConfirmation` request. The next
   workflow starts with the returned suspension and one typed confirmation
   decision. See `docs/runtime.md` for the expected payloads and flow.
+- Templates read canonical JSON property names, such as `{{ .key }}`, rather than generated Go field names. Use `index` for optional properties.
 - Confirmation templates (`PromptTemplate` and `DeniedResultTemplate`) are Go `text/template` strings
 executed with `missingkey=error`. In addition to the standard template functions (e.g. `printf`),
 Goa-AI provides:
-  - `json v` → JSON encodes `v` (useful for optional pointer fields or embedding structured values).
+  - `json v` → JSON encodes `v` without manual quoting or number conversion.
   - `quote s` → returns a Go-escaped quoted string (like `fmt.Sprintf("%q", s)`).
 - Design-time confirmation is the **common case** (“this tool always needs approval”), but runtimes
 can also require confirmation dynamically for additional tools via `runtime.WithToolConfirmation(...)`
@@ -688,70 +689,45 @@ var PinnedTools = Toolset(FromRegistry(CorpRegistry, "data-tools"), func() {
 })
 ```
 
-`FromRegistry` produces a toolset reference resolved during application startup.
-Its generated package exposes `Discover(ctx, client)`, which returns an immutable
-`*registry.Toolset`. The client implements `runtime/registry.RegistryClient`.
-For the clustered Goa registry, construct its generated service client with your
-chosen transport, then wrap it with `runtime/registry.NewClient`.
-
-For an agent named `analyst` consuming `DataTools`, startup wiring is:
+Consume a named registry toolset with `Use(DataTools)`, or consume every
+currently registered toolset with `Use(CorpRegistry)`. Add `Deferred()` inside
+that `Use` to load definitions through native model tool search:
 
 ```go
-discovered, err := gendatatools.Discover(ctx, catalogClient)
-if err != nil {
-    return err
-}
-toolsets := genanalyst.RegistryToolsets{DataTools: discovered}
-if err := genanalyst.RegisterAnalystAgent(ctx, rt, genanalyst.AnalystAgentConfig{
-    Planner:         planner,
-    RegistryToolsets: toolsets,
-}); err != nil {
-    return err
-}
-if err := genanalyst.RegisterUsedToolsets(ctx, rt, toolsets,
-    genanalyst.WithDataToolsExecutor(executor),
-); err != nil {
-    return err
-}
+Agent("analyst", "Analyze company data.", func() {
+    Use(DataTools, func() { Deferred() })
+})
 ```
 
-The generated `Definition(toolsets)` and `NewClient(rt, toolsets)` helpers also
-require these inputs and return errors for incomplete bindings. An agent without
-registry dependencies keeps its existing no-argument `Definition()` helper.
-Reachable child agents share one input for each registry, toolset, and version
-combination.
+Generated agents resolve current contracts once per planning activity. Connect
+an already-constructed clustered registry client and Pulse client with
+`rt.RegisterRegistry("corp", registryClient, pulseClient)` before starting runs.
+`Definition()` and `NewClient(rt)` perform no discovery and require no catalog
+arguments. Dynamic execution is provided by the runtime.
 
-Discovery requires complete model-argument, execution-argument, and result
-schemas. It checks the requested toolset name and any `Version` pin, rejects
-duplicate or foreign tool names, and compiles schema-validating codecs. JSON
-numbers retain their exact value. Schema references must resolve within the
-registered document; discovery never loads another file or network resource.
-The returned toolset exposes `Specs`, `Names`, `Spec`, `MetadataByName`,
-`ValidatePayload`, and `ValidateResult`; unknown tools fail validation.
+A named source must exist and match any version pin. A whole-registry source
+may be empty. Duplicate sources, overlapping whole/named consumption, inline
+registry `Tool` declarations, and exporting a registry reference are rejected.
+The provider owns each remote contract and publishes generated `ToolSchemas()`
+records. Service tools support confirmation, pagination, and server-only data;
+agent and control integration remain compiled.
 
-This discovery contract supports ordinary, budgeted schema-based tools. Keep a
-static generated dependency for tools requiring confirmation, bounded results,
-continuations, bookkeeping, child-workflow execution, custom field metadata, or
-server-only result data. The registry catalog does not carry those complete
-declarations. Discovery explicitly rejects a supplied server-only data schema.
+See [Tool search and dynamic registries](tool_search.md) for provider behavior,
+connection wiring, selected-call persistence, catalog changes, and upgrades
+from startup `Discover`/`RegistryToolsets` integration.
 
-Definitions remain fixed after startup. A later `Discover` call returns a new
-value; it does not update an existing agent or its active runs. Restart with the
-new definitions to adopt catalog changes, and keep provider contracts compatible
-with active consumers. Discovery does not imply deferred loading or tool search.
+### Deferred tools
 
-Generated HTTP catalog clients under `gen/<svc>/registry/<name>/` share these
-resource types, but their HTTP endpoints are a separate transport contract from
-the clustered registry's generated gRPC API. The clustered service lives under
-`registry/`; its provider messaging protocol lives under `runtime/toolregistry/`.
+`Deferred()` belongs inside a consuming `Use` for a compiled toolset, a named
+registry toolset, or a whole registry. It changes how the model loads tool
+definitions without changing which tools the agent may call. Another consumer
+of the same toolset can load it immediately. Generated code owns each agent's
+loading choice and prepares search terms from canonical tool metadata.
 
-**Upgrading existing discovery code:** regenerate, replace `DiscoverAndPopulate`
-with `Discover`, and pass the returned values through `RegistryToolsets`.
-For a custom HTTP catalog, replace the former input-only `inputSchema` response
-with complete `payloadSchema`, `executionPayloadSchema`, and `resultSchema`
-JSON documents. The generated HTTP client's `ToolSchema` now aliases the shared
-runtime type. The clustered registry's gRPC contract is unchanged.
-Package-global discovered specifications and their accessors have been removed.
+Planners pass `input.Agent.AdvertisedToolDefinitions()` to model requests.
+The adapter handles native search; planners need no search executor. An adapter
+that cannot implement the requested discovery rejects it explicitly. See the
+[provider behavior table](tool_search.md#provider-behavior).
 
 ---
 

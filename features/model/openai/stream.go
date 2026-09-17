@@ -20,10 +20,11 @@ type (
 	// openAIStreamer drains the provider stream on a background goroutine and
 	// emits provider-neutral chunks through a buffered channel.
 	openAIStreamer struct {
-		ctx      context.Context
-		cancel   context.CancelFunc
-		stream   responseStream
-		contract *model.RequestContract
+		ctx       context.Context
+		cancel    context.CancelFunc
+		transport transport
+		prepared  *preparedRequest
+		contract  *model.RequestContract
 
 		chunks chan model.Chunk
 		done   chan struct{}
@@ -32,8 +33,9 @@ type (
 		errSet   bool
 		finalErr error
 
-		closeOnce sync.Once
-		closeErr  error
+		streamMu sync.Mutex
+		stream   *openAIStreamLease
+		closeErr error
 
 		responseMu    sync.RWMutex
 		response      *model.Response
@@ -52,16 +54,27 @@ type (
 		thinkingIndexes map[int]int
 		nextThinking    int
 
-		codec      *toolCodec
-		modelID    string
-		modelClass model.ModelClass
-		output     *model.StructuredOutput
-		projection *strictSchemaProjection
+		codec             *toolCodec
+		modelID           string
+		modelClass        model.ModelClass
+		output            *model.StructuredOutput
+		projection        *strictSchemaProjection
+		search            *toolSearch
+		continueSearch    bool
+		completedResponse *responses.Response
 
 		completed      bool
 		sawText        bool
 		retainedBytes  int
 		retainedValues int
+	}
+
+	// openAIStreamLease closes each physical request once, even when caller
+	// cancellation races the pump moving to the next search request.
+	openAIStreamLease struct {
+		stream responseStream
+		once   sync.Once
+		err    error
 	}
 
 	streamToolBuffer struct {
@@ -75,24 +88,23 @@ type (
 func newOpenAIStreamer(
 	ctx context.Context,
 	stream responseStream,
-	codec *toolCodec,
-	modelID string,
-	modelClass model.ModelClass,
-	output *model.StructuredOutput,
-	projection *strictSchemaProjection,
+	transport transport,
+	prepared *preparedRequest,
 	contract *model.RequestContract,
 ) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
 	streamer := &openAIStreamer{
-		ctx:      cctx,
-		cancel:   cancel,
-		stream:   stream,
-		contract: contract,
-		chunks:   make(chan model.Chunk, 32),
-		done:     make(chan struct{}),
+		ctx:       cctx,
+		cancel:    cancel,
+		stream:    &openAIStreamLease{stream: stream},
+		transport: transport,
+		prepared:  prepared,
+		contract:  contract,
+		chunks:    make(chan model.Chunk, 32),
+		done:      make(chan struct{}),
 		rejectedUsage: model.TokenUsage{
-			Model:      modelID,
-			ModelClass: modelClass,
+			Model:      prepared.resolvedModelID,
+			ModelClass: prepared.resolvedModelClass,
 		},
 	}
 	processor := &openAIChunkProcessor{
@@ -102,11 +114,12 @@ func newOpenAIStreamer(
 		toolCalls:       make(map[string]*streamToolBuffer),
 		streamedCallIDs: make(map[string]struct{}),
 		thinkingIndexes: make(map[int]int),
-		codec:           codec,
-		modelID:         modelID,
-		modelClass:      modelClass,
-		output:          output,
-		projection:      projection,
+		codec:           prepared.codec,
+		modelID:         prepared.resolvedModelID,
+		modelClass:      prepared.resolvedModelClass,
+		output:          prepared.structuredOutput,
+		projection:      prepared.outputProjection,
+		search:          prepared.search,
 	}
 	go streamer.run(processor)
 	return streamer
@@ -120,10 +133,10 @@ func (s *openAIStreamer) Recv() (model.Chunk, error) {
 		}
 		if err := s.err(); err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-				return nil, err
+				return nil, s.withUsage(err)
 			}
 			s.setErr(err)
-			return nil, err
+			return nil, s.withUsage(err)
 		}
 		return nil, io.EOF
 	case <-s.ctx.Done():
@@ -132,15 +145,19 @@ func (s *openAIStreamer) Recv() (model.Chunk, error) {
 			err = context.Canceled
 		}
 		s.setErr(err)
-		return nil, err
+		return nil, s.withUsage(err)
 	}
 }
 
 func (s *openAIStreamer) Close() error {
 	s.cancel()
-	closeErr := s.closeProviderStream()
+	if err := s.closeProviderStream(); err != nil {
+		s.setErr(err)
+	}
 	<-s.done
-	return closeErr
+	s.streamMu.Lock()
+	defer s.streamMu.Unlock()
+	return s.closeErr
 }
 
 func (s *openAIStreamer) Response() *model.Response {
@@ -167,8 +184,11 @@ func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
 		default:
 		}
 
-		if !s.stream.Next() {
-			err := s.stream.Err()
+		s.streamMu.Lock()
+		active := s.stream.stream
+		s.streamMu.Unlock()
+		if !active.Next() {
+			err := active.Err()
 			if err != nil {
 				s.setErr(wrapOpenAIError("responses.stream", err))
 				return
@@ -180,9 +200,16 @@ func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
 				)))
 				return
 			}
+			if processor.continueSearch {
+				if err := s.nextSearchStream(processor); err != nil {
+					s.setErr(err)
+					return
+				}
+				continue
+			}
 			return
 		}
-		event := s.stream.Current()
+		event := active.Current()
 		if rejected != nil {
 			complete, err := processor.handleRejectedEvent(event)
 			if err != nil {
@@ -214,10 +241,60 @@ func (s *openAIStreamer) run(processor *openAIChunkProcessor) {
 // closeProviderStream closes the Responses API stream once and returns the
 // cached cleanup result to the pump and every caller of Close.
 func (s *openAIStreamer) closeProviderStream() error {
-	s.closeOnce.Do(func() {
-		s.closeErr = s.stream.Close()
+	s.streamMu.Lock()
+	active := s.stream
+	s.streamMu.Unlock()
+	active.once.Do(func() {
+		active.err = active.stream.Close()
+		s.streamMu.Lock()
+		s.closeErr = errors.Join(s.closeErr, active.err)
+		s.streamMu.Unlock()
 	})
-	return s.closeErr
+	return active.err
+}
+
+// nextSearchStream closes the completed request and starts the next one under
+// the same cancellation context. Only per-response parser state is reset.
+func (s *openAIStreamer) nextSearchStream(p *openAIChunkProcessor) error {
+	if err := s.closeProviderStream(); err != nil {
+		return err
+	}
+	if err := s.prepared.search.continueRequest(&s.prepared.request, p.completedResponse); err != nil {
+		return s.outputError(err)
+	}
+	if err := s.ctx.Err(); err != nil {
+		return err
+	}
+	next := s.transport.Stream(s.ctx, s.prepared.request)
+	if next == nil {
+		return errors.New("openai: search continuation stream is nil")
+	}
+	s.streamMu.Lock()
+	s.stream = &openAIStreamLease{stream: next}
+	s.streamMu.Unlock()
+	clear(p.toolCalls)
+	clear(p.streamedCallIDs)
+	clear(p.thinkingIndexes)
+	p.nextThinking = p.search.thinking
+	p.completed, p.continueSearch, p.sawText = false, false, false
+	p.completedResponse = nil
+	return nil
+}
+
+// withUsage preserves totals from completed search requests when the logical
+// stream subsequently ends with a transport error or cancellation.
+func (s *openAIStreamer) withUsage(err error) error {
+	if s.prepared.search == nil {
+		return err
+	}
+	var rejected *model.OutputValidationError
+	if errors.As(err, &rejected) {
+		return err
+	}
+	s.responseMu.RLock()
+	usage := s.rejectedUsage
+	s.responseMu.RUnlock()
+	return model.RetainUsage(err, usage)
 }
 
 // outputError preserves transport, cancellation, and provider failures while
@@ -307,12 +384,7 @@ func (p *openAIChunkProcessor) Handle(event responses.ResponseStreamEventUnion) 
 	case responses.ResponseIncompleteEvent:
 		return p.handleCompleted(actual.Response)
 	case responses.ResponseFailedEvent:
-		return providerErrorFromResponseFailure(
-			"responses.stream",
-			string(actual.Response.Error.Code),
-			actual.Response.Error.Message,
-			errors.New(actual.Response.Error.Message),
-		)
+		return p.handleFailed(actual.Response)
 	case responses.ResponseErrorEvent:
 		return providerErrorFromResponseFailure(
 			"responses.stream",
@@ -359,18 +431,11 @@ func (p *openAIChunkProcessor) discardSemanticOutput() {
 func (p *openAIChunkProcessor) handleRejectedEvent(event responses.ResponseStreamEventUnion) (bool, error) {
 	switch actual := event.AsAny().(type) {
 	case responses.ResponseCompletedEvent:
-		p.recordRejectedCompletion(actual.Response)
-		return true, nil
+		return true, p.recordRejectedCompletion(actual.Response)
 	case responses.ResponseIncompleteEvent:
-		p.recordRejectedCompletion(actual.Response)
-		return true, nil
+		return true, p.recordRejectedCompletion(actual.Response)
 	case responses.ResponseFailedEvent:
-		return false, providerErrorFromResponseFailure(
-			"responses.stream",
-			string(actual.Response.Error.Code),
-			actual.Response.Error.Message,
-			errors.New(actual.Response.Error.Message),
-		)
+		return false, p.handleFailed(actual.Response)
 	case responses.ResponseErrorEvent:
 		return false, providerErrorFromResponseFailure(
 			"responses.stream",
@@ -407,12 +472,40 @@ func (p *openAIChunkProcessor) handleRejectedEvent(event responses.ResponseStrea
 
 // recordRejectedCompletion retains only model identity and cumulative usage
 // from the terminal provider response.
-func (p *openAIChunkProcessor) recordRejectedCompletion(resp responses.Response) {
+func (p *openAIChunkProcessor) recordRejectedCompletion(resp responses.Response) error {
 	p.completed = true
 	p.modelID = chooseModelID(resp.Model, p.modelID)
-	p.recordUsage(translateUsage(resp.Usage, p.modelID, p.modelClass))
+	return p.accountUsage(resp)
 }
 
+// handleFailed retains the failed response's reported usage before returning
+// its provider error. Earlier search rounds and this final attempt are billed.
+func (p *openAIChunkProcessor) handleFailed(resp responses.Response) error {
+	p.modelID = chooseModelID(resp.Model, p.modelID)
+	failure := providerErrorFromResponseFailure(
+		"responses.stream",
+		string(resp.Error.Code),
+		resp.Error.Message,
+		errors.New(resp.Error.Message),
+	)
+	if err := p.accountUsage(resp); err != nil {
+		return errors.Join(failure, err)
+	}
+	return failure
+}
+
+// accountUsage records one physical response before translating its content.
+func (p *openAIChunkProcessor) accountUsage(resp responses.Response) error {
+	usage := translateUsage(resp.Usage, p.modelID, p.modelClass)
+	if p.search != nil {
+		if err := p.search.account(usage); err != nil {
+			return err
+		}
+		usage = p.search.usage
+	}
+	p.recordUsage(usage)
+	return nil
+}
 func (p *openAIChunkProcessor) registerOutputItem(item responses.ResponseOutputItemUnion) error {
 	switch actual := item.AsAny().(type) {
 	case responses.ResponseFunctionToolCall:
@@ -580,7 +673,9 @@ func (p *openAIChunkProcessor) retain(value string) error {
 func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 	p.completed = true
 	p.modelID = chooseModelID(resp.Model, p.modelID)
-	p.recordUsage(translateUsage(resp.Usage, p.modelID, p.modelClass))
+	if err := p.accountUsage(resp); err != nil {
+		return err
+	}
 	translated, err := translateResponse(
 		&resp,
 		p.codec,
@@ -588,14 +683,19 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 		p.modelClass,
 		p.output,
 		p.projection,
+		p.search,
 	)
 	if err != nil {
 		return err
 	}
+	if p.search != nil {
+		p.continueSearch = p.search.finishRound(translated)
+		p.completedResponse = &resp
+	}
 	if err := p.emitFinalThinking(translated.Content); err != nil {
 		return err
 	}
-	if p.output != nil {
+	if p.output != nil && !p.continueSearch {
 		payload, err := structuredOutputPayload(translated.Content, p.output, p.projection)
 		if err != nil {
 			return err
@@ -638,6 +738,14 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 					return err
 				}
 			}
+		}
+	}
+	if p.continueSearch {
+		return nil
+	}
+	if p.search != nil {
+		if err := p.search.complete(translated); err != nil {
+			return err
 		}
 	}
 	if translated.Usage != (model.TokenUsage{}) {

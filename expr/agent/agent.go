@@ -26,12 +26,24 @@ type (
 		// Used contains the toolsets this agent consumes from other
 		// agents or services.
 		Used *ToolsetGroupExpr
+		// Registries lists whole registries consumed at each planning activity.
+		Registries []*RegistryUseExpr
 		// Exported contains the toolsets this agent exposes for other
 		// agents to consume.
 		Exported *ToolsetGroupExpr
 		// RunPolicy defines runtime execution and resource constraints
 		// for this agent.
 		RunPolicy *RunPolicyExpr
+	}
+
+	// RegistryUseExpr consumes the current service toolsets from one registry.
+	// It is separate from a named toolset because membership is discovered.
+	RegistryUseExpr struct {
+		eval.DSLFunc
+		// Registry identifies the declared source.
+		Registry *RegistryExpr
+		// Deferred makes discovered tools eligible for native tool search.
+		Deferred bool
 	}
 
 	// ToolsetGroupExpr represents a logical group of toolsets, as exposed
@@ -70,10 +82,16 @@ func (a *AgentExpr) WalkSets(walk eval.SetWalker) {
 		walk(eval.ExpressionSet{a.Used})
 		walk(eval.ToExpressionSet(a.Used.Toolsets))
 	}
+	walk(eval.ToExpressionSet(a.Registries))
 	if a.Exported != nil {
 		walk(eval.ExpressionSet{a.Exported})
 		walk(eval.ToExpressionSet(a.Exported.Toolsets))
 	}
+}
+
+// EvalName describes a whole-registry consumption declaration in DSL errors.
+func (r *RegistryUseExpr) EvalName() string {
+	return fmt.Sprintf("use registry %q", r.Registry.Name)
 }
 
 // Prepare ensures there is run policy.

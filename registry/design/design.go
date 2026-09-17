@@ -108,6 +108,15 @@ var _ = Service("registry", func() {
 		GRPC(func() {})
 	})
 
+	Method("ResolveToolset", func() {
+		Description("Return a toolset definition and its exact registration token from one active catalog read. Consumers retain the token with accepted calls so a later provider replacement cannot change the contract selected by the model. Resolution describes registered tools; it does not guarantee provider health.")
+		Payload(GetToolsetPayload)
+		Result(ResolvedToolset)
+		Error("not_found")
+		Error("service_unavailable")
+		GRPC(func() {})
+	})
+
 	Method("CheckAdmission", func() {
 		Description("Report whether the exact registration token derived from a deployed provider's generated tool schemas is active and currently has an unexpired, non-draining provider lease plus a fresh authenticated pong. Release verification calls this after workload rollout because Kubernetes proves the intended pods are running while the registry proves their exact tool contract is routable. A missing or different active admission returns ready=false rather than an error.")
 		Payload(CheckAdmissionPayload)
@@ -133,6 +142,18 @@ var _ = Service("registry", func() {
 		Error("validation_error")
 		Error("service_unavailable")
 		Error("call_not_admitted")
+		GRPC(func() {})
+	})
+
+	Method("CallResolvedTool", func() {
+		Description("Admit a tool call only against the exact registration returned by ResolveToolset. The token is part of the immutable call identity. A replacement before publication commits call_not_admitted; published calls keep their original assignment and result. Repeating this operation attaches to the same call, or resumes its authoritative provider-overload event against the same registration and original deadline.")
+		Payload(CallResolvedToolPayload)
+		Result(CallToolResult)
+		Error("not_found")
+		Error("validation_error")
+		Error("service_unavailable")
+		Error("call_not_admitted")
+		Error("admission_conflict")
 		GRPC(func() {})
 	})
 
@@ -381,6 +402,16 @@ var GetToolsetPayload = Type("GetToolsetPayload", func() {
 	Required("name")
 })
 
+var ResolvedToolset = Type("ResolvedToolset", func() {
+	Description("One active toolset definition and the registration that supplied it.")
+	Field(1, "toolset", Toolset, "Complete toolset definition read from the active registration.")
+	Field(2, "registration_token", String, "Exact registration required when executing a call selected from this definition.", func() {
+		Pattern(toolregistry.RegistrationTokenPattern)
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
+	})
+	Required("toolset", "registration_token")
+})
+
 var CheckAdmissionPayload = Type("CheckAdmissionPayload", func() {
 	Description("The exact toolset admission derived from one deployed provider's generated schemas, admission revision, and wire protocol.")
 	Field(1, "name", String, "Name of the toolset whose admission must be checked.", func() {
@@ -466,6 +497,16 @@ var RetryToolPayload = Type("RetryToolPayload", func() {
 	Description("Runtime-owned identity and immutable request for retrying one admitted execution after provider overload.")
 	Extend(CallToolPayload)
 	Field(100, "expected_registration_token", String, "Exact admission-generation token returned by the original CallTool admission.", func() {
+		Pattern(toolregistry.RegistrationTokenPattern)
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
+	})
+	Required("expected_registration_token")
+})
+
+var CallResolvedToolPayload = Type("CallResolvedToolPayload", func() {
+	Description("Immutable tool call selected from one resolved registration.")
+	Extend(CallToolPayload)
+	Field(100, "expected_registration_token", String, "Exact registration returned with the definition used to select this call.", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
 		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
@@ -689,6 +730,7 @@ var ToolSchema = Type("ToolSchema", func() {
 	Field(6, "sidecar_schema", Bytes, "Canonical JSON schema for the tool sidecar (UI-only), when present.", func() {
 		Example([]byte(`{"type":"object","properties":{"artifact_kind":{"type":"string"}}}`))
 	})
+	Field(8, "consumer_contract", ConsumerContract, "Generated contract needed to consume this tool without a compiled Go dependency. Schema-only declarations remain usable by static consumers; dynamic consumers require this complete contract.")
 	Required("name", "payload_schema", "execution_payload_schema", "result_schema")
 })
 

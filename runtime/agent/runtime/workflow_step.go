@@ -12,7 +12,6 @@ package runtime
 //   paths.
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"slices"
@@ -21,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -118,6 +118,11 @@ func (r *Runtime) normalizeStep(result *PlanResult) (stepProgram, error) {
 func normalizeStepWithSpecs(result *PlanResult, lookup toolSpecLookup) (stepProgram, error) {
 	if result == nil {
 		return stepProgram{}, planner.NewOutputContractError(errors.New("workflow step received nil PlanResult"))
+	}
+	for _, call := range result.ToolCalls {
+		if _, _, err := lookupCallSpec(call, lookup); err != nil {
+			return stepProgram{}, planner.NewOutputContractError(err)
+		}
 	}
 	terminalPayloads := 0
 	if result.FinalResponse != nil {
@@ -240,13 +245,20 @@ func plannerResultValidationProjection(result *PlanResult) *planner.PlanResult {
 
 // normalizePlanResultForExecution validates generated tool payload contracts
 // before planner events are published or the workflow accepts tool work.
-func (r *Runtime) normalizePlanResultForExecution(ctx context.Context, result *PlanResult, parentTool tools.Ident) (stepProgram, error) {
+func (r *Runtime) normalizePlanResultForExecution(result *PlanResult, parentTool tools.Ident) (stepProgram, error) {
 	program, err := r.normalizePlanResultContract(result, parentTool)
 	if err != nil {
 		return stepProgram{}, err
 	}
 	for index, call := range result.ToolCalls {
-		if err := validatePlannerToolPayloadWithCodec(ctx, r, nil, call.Name, call.Payload); err != nil {
+		spec, ok, err := lookupCallSpec(call, r.toolSpec)
+		if err != nil {
+			return stepProgram{}, err
+		}
+		if !ok {
+			return stepProgram{}, planner.NewOutputContractError(fmt.Errorf("tool %q has no payload codec", call.Name))
+		}
+		if _, err := spec.ExecutionPayloadCodec.FromJSON(call.Payload); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(
 				fmt.Errorf("workflow step tool call %d payload: %w", index, err),
 			)
@@ -257,7 +269,7 @@ func (r *Runtime) normalizePlanResultForExecution(ctx context.Context, result *P
 		awaitItems = result.Await.Items
 	}
 	for index, call := range awaitToolRequests(awaitItems) {
-		if err := validatePlannerToolPayloadWithCodec(ctx, r, nil, call.Name, call.Payload); err != nil {
+		if err := validatePlannerToolPayloadWithCodec(r.toolSpec, nil, call.Name, call.Payload); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(
 				fmt.Errorf("workflow step await tool call %d payload: %w", index, err),
 			)
@@ -473,7 +485,10 @@ func cloneAwaitQuestions(questions []planner.AwaitQuestion) []planner.AwaitQuest
 
 func validateSynthesisAfterToolsWithSpecs(calls []ToolCall, lookup toolSpecLookup) error {
 	for _, call := range calls {
-		spec, ok := lookup(call.Name)
+		spec, ok, err := lookupCallSpec(call, lookup)
+		if err != nil {
+			return err
+		}
 		if ok && spec.TerminalRun {
 			return fmt.Errorf("workflow step synthesis-after-tools cannot include terminal tool %q", call.Name)
 		}
@@ -486,6 +501,9 @@ func validateSynthesisAfterToolsWithSpecs(calls []ToolCall, lookup toolSpecLooku
 
 func hasBudgetedToolCallsWithSpecs(calls []ToolCall, lookup toolSpecLookup) bool {
 	for _, call := range calls {
+		if call.Registry != nil {
+			return true
+		}
 		spec, ok := lookup(call.Name)
 		if !ok || !spec.Bookkeeping {
 			return true
@@ -498,7 +516,7 @@ func hasBudgetedToolCallsWithSpecs(calls []ToolCall, lookup toolSpecLookup) bool
 // which remains a completion obligation after Budget expires.
 func (r *Runtime) hasBudgetedToolCalls(calls []ToolCall) bool {
 	for _, call := range calls {
-		if !r.isBookkeeping(call.Name) {
+		if !r.isBookkeepingCall(call) {
 			return true
 		}
 	}
@@ -507,7 +525,7 @@ func (r *Runtime) hasBudgetedToolCalls(calls []ToolCall) bool {
 
 func (r *Runtime) hasBookkeepingToolCalls(calls []ToolCall) bool {
 	for _, call := range calls {
-		if r.isBookkeeping(call.Name) {
+		if r.isBookkeepingCall(call) {
 			return true
 		}
 	}
@@ -619,7 +637,10 @@ func (r *Runtime) validateToolTerminalProgram(calls []ToolCall) error {
 
 func validateToolTerminalProgramWithSpecs(calls []ToolCall, lookup toolSpecLookup) error {
 	for _, call := range calls {
-		spec, ok := lookup(call.Name)
+		spec, ok, err := lookupCallSpec(call, lookup)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return fmt.Errorf("workflow step terminal payload cannot accompany unknown tool %q", call.Name)
 		}
@@ -793,7 +814,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 		return nil, err
 	}
 	if completed {
-		return l.r.finishAfterSuccessfulToolCompletion(l.wfCtx.Context(), l.input, l.base, l.st)
+		return l.r.finishAfterSuccessfulToolCompletion(l.input, l.base, l.st)
 	}
 
 	resolution, err := l.r.classifyStep(batch)
@@ -802,7 +823,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	}
 	switch resolution {
 	case stepTransitionFinishTerminal:
-		return l.r.finishAfterSuccessfulToolCompletion(l.wfCtx.Context(), l.input, l.base, l.st)
+		return l.r.finishAfterSuccessfulToolCompletion(l.input, l.base, l.st)
 	case stepTransitionFinishCurrent:
 		return l.r.finishCurrentPlanResult(l.wfCtx.Context(), l.input, l.base, l.st, l.turnID)
 	case stepTransitionResume:
@@ -924,7 +945,7 @@ func (l *workflowLoop) resumePlanner(
 	if resOutput.HistoryContext != nil {
 		l.base.HistoryContext = resOutput.HistoryContext
 	}
-	l.st.AggUsage, err = addTokenUsage(l.st.AggUsage, resOutput.Usage)
+	l.st.AggUsage, err = model.AddTokenUsage(l.st.AggUsage, resOutput.Usage)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate run usage: %w", err)
 	}
@@ -1055,6 +1076,7 @@ func pendingRecoveryOutputs(records []stepToolRecord) []*planner.ToolOutput {
 			continue
 		}
 		outputs = append(outputs, &planner.ToolOutput{
+			Registry:        record.call.Registry.Clone(),
 			Name:            record.call.Name,
 			ToolCallID:      record.call.ToolCallID,
 			ModelToolCallID: record.call.ModelToolCallID,
@@ -1081,6 +1103,7 @@ func dominantRecoveryOutputs(records []stepToolRecord) []*planner.ToolOutput {
 			continue
 		}
 		outputs = append(outputs, &planner.ToolOutput{
+			Registry:        record.call.Registry.Clone(),
 			Name:            record.call.Name,
 			ToolCallID:      record.call.ToolCallID,
 			ModelToolCallID: record.call.ModelToolCallID,

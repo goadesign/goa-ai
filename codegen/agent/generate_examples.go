@@ -115,8 +115,8 @@ type (
 		ExampleToolsets []*exampleBootstrapToolsetData
 		MCPToolsets     []*exampleBootstrapMCPData
 		Agent           *AgentData
-		// HasRegistryBindings requires discovered definitions before registration.
-		HasRegistryBindings bool
+		// HasRegistrySources marks agents that need connected clients before a run.
+		HasRegistrySources bool
 	}
 
 	// exampleBootstrapToolsetData contains the executor import chosen for one
@@ -242,10 +242,10 @@ func emitInternalBootstrap(svc *ServiceAgentsData, bootstraps *exampleBootstrapP
 		imports = append(imports, planned.pkg.Import(agentPlan.agentImportPath))
 		imports = append(imports, planned.pkg.Import(agentPlan.plannerImportPath))
 		agentData := &exampleBootstrapAgentData{
-			Alias:               planned.pkg.ImportName(agentPlan.agentImportPath),
-			PlannerAlias:        planned.pkg.ImportName(agentPlan.plannerImportPath),
-			Agent:               ag,
-			HasRegistryBindings: len(ag.packageFiles.implementation.RegistryBindings) > 0,
+			Alias:              planned.pkg.ImportName(agentPlan.agentImportPath),
+			PlannerAlias:       planned.pkg.ImportName(agentPlan.plannerImportPath),
+			Agent:              ag,
+			HasRegistrySources: len(ag.packageFiles.implementation.RegistrySources) > 0,
 		}
 		for _, ts := range ag.UsedToolsets {
 			if !starterExecutorToolset(ts) {

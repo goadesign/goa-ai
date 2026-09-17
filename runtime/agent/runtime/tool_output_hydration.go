@@ -85,7 +85,8 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOu
 }
 
 // plannerToolOutputFromCanonicalEvents loads an output for active work and
-// checks its result and server data against the currently registered tool.
+// checks its result and server data against the selected contract. Static tools
+// use the registered codec; registry tools use the saved scheduled definition.
 func (r *Runtime) plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID string, callEvents, resultEvents *canonicalToolEvents) (*planner.ToolOutput, error) {
 	output, err := toolOutputFromStoredEvents(callRunID, resultRunID, toolCallID, callEvents, resultEvents)
 	if err != nil {
@@ -93,7 +94,10 @@ func (r *Runtime) plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, t
 	}
 	var spec *tools.ToolSpec
 	if output.Failure == nil {
-		registered, ok := r.toolSpec(output.Name)
+		registered, ok, err := lookupCallSpec(ToolCall{Name: output.Name, Registry: output.Registry}, r.toolSpec)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			return nil, fmt.Errorf("runtime: canonical tool history references unregistered tool %q", output.Name)
 		}
@@ -152,6 +156,7 @@ func toolOutputFromStoredEvents(callRunID, resultRunID, toolCallID string, callE
 	}
 
 	output := &planner.ToolOutput{
+		Registry:                   callEvents.scheduled.Registry.Clone(),
 		CallRunID:                  callRunID,
 		ResultRunID:                resultRunID,
 		Name:                       callEvents.scheduled.ToolName,

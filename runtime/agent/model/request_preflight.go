@@ -97,6 +97,17 @@ func preflightRequestTools(definitions []*ToolDefinition, walk *dynamicValueWalk
 		if err := chargeString(walk, definition.Name); err != nil {
 			return fmt.Errorf("model request tool %d name: %w", index, err)
 		}
+		if err := walk.checkChildren(len(definition.Search.Terms)); err != nil {
+			return fmt.Errorf("model request tool %d search words: %w", index, err)
+		}
+		for term := range definition.Search.Terms {
+			if err := walk.visit(); err != nil {
+				return fmt.Errorf("model request tool %d search words: %w", index, err)
+			}
+			if err := chargeString(walk, term); err != nil {
+				return fmt.Errorf("model request tool %d search word: %w", index, err)
+			}
+		}
 		if err := chargeString(walk, definition.Description); err != nil {
 			return fmt.Errorf("model request tool %d description: %w", index, err)
 		}

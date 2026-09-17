@@ -129,6 +129,9 @@ func (c *tracedProvider) Stream(ctx context.Context, req *model.Request) (model.
 // ObserveClientComplete records one final validated unary result.
 func (c *tracedCall) ObserveClientComplete(resp *model.Response, err error) error {
 	if err != nil {
+		if usage := model.UsageFromError(err); usage != nil {
+			c.span.SetAttributes(modelUsageAttrs(*usage)...)
+		}
 		c.span.SetAttributes(outputValidationAttrs(err)...)
 		if !telemetry.ShouldRecordSpanError(c.ctx, err) {
 			c.span.SetStatus(codes.Unset, "")
@@ -221,6 +224,11 @@ func (s *tracedStream) ObserveStreamRecv(observation model.StreamObservation) er
 			s.mu.Unlock()
 			s.end(codes.Ok, "eof")
 			return nil
+		}
+		if usage := model.UsageFromError(err); usage != nil {
+			s.mu.Lock()
+			s.usage = *usage
+			s.mu.Unlock()
 		}
 		if !telemetry.ShouldRecordSpanError(s.ctx, err) {
 			s.end(codes.Unset, "")

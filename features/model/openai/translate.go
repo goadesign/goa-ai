@@ -26,6 +26,7 @@ func translateResponse(
 	resolvedModelClass model.ModelClass,
 	output *model.StructuredOutput,
 	outputProjection *strictSchemaProjection,
+	search *toolSearch,
 ) (*model.Response, error) {
 	if resp == nil {
 		return nil, outputvalidation.New(
@@ -52,6 +53,16 @@ func translateResponse(
 		reasoningRaw    []string
 		thinkingIndex   int
 	)
+	if search != nil {
+		thinkingIndex = search.thinking
+	}
+	appendMessage := func(message model.Message) {
+		if search != nil {
+			search.appendMessage(&translated.Content, message)
+		} else {
+			translated.Content = append(translated.Content, message)
+		}
+	}
 	flushThinking := func() {
 		if len(pendingThinking) == 0 {
 			return
@@ -65,7 +76,7 @@ func translateResponse(
 				openAIReasoningItemsMetaKey: append([]string(nil), reasoningRaw...),
 			}
 		}
-		translated.Content = append(translated.Content, message)
+		appendMessage(message)
 		pendingThinking = nil
 		reasoningRaw = nil
 	}
@@ -88,7 +99,7 @@ func translateResponse(
 			if err != nil {
 				return nil, err
 			}
-			translated.Content = append(translated.Content, message)
+			appendMessage(message)
 			pendingThinking = nil
 			reasoningRaw = nil
 		case responses.ResponseFunctionToolCall:
@@ -103,7 +114,7 @@ func translateResponse(
 			if err != nil {
 				return nil, err
 			}
-			translated.Content = append(translated.Content, model.Message{
+			appendMessage(model.Message{
 				Role: model.ConversationRoleAssistant,
 				Parts: []model.Part{model.ToolUsePart{
 					ID:    toolCall.ID,
@@ -116,6 +127,15 @@ func translateResponse(
 					openAIFunctionCallPayloadMetaKey: string(toolCall.Payload),
 				},
 			})
+		case responses.ResponseToolSearchCall:
+			flushThinking()
+			if search == nil {
+				return nil, outputvalidation.New(model.OutputValidationResponseShape,
+					errors.New("openai: native search call was not enabled"))
+			}
+			if err := search.record(actual); err != nil {
+				return nil, outputvalidation.New(model.OutputValidationResponseShape, err)
+			}
 		default:
 			return nil, outputvalidation.New(
 				model.OutputValidationResponseShape,
@@ -124,9 +144,12 @@ func translateResponse(
 		}
 	}
 	flushThinking()
+	if search != nil {
+		search.thinking = thinkingIndex
+	}
 	translated.StopReason = translateStopReason(resp, len(translated.ToolCalls()) > 0)
 	translated.OutputLimited = openAIOutputLimited(resp)
-	if output != nil {
+	if output != nil && (search == nil || search.searches == 0) {
 		payload, err := structuredOutputPayload(translated.Content, output, outputProjection)
 		if err != nil {
 			return nil, err

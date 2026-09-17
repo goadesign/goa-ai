@@ -554,6 +554,8 @@ func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {
 		}),
 	}))
 
+	metas, err := rt.toolMetadata([]ToolCall{{ToolCallID: "search-call", Name: spec.Name}})
+	require.NoError(t, err)
 	require.Equal(t, []policy.ToolMetadata{
 		{
 			ID:          spec.Name,
@@ -562,7 +564,7 @@ func TestToolMetadataUsesRegisteredCanonicalMetadata(t *testing.T) {
 			Tags:        []string{"generated"},
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		},
-	}, rt.toolMetadata([]ToolCall{{ToolCallID: "search-call", Name: spec.Name}}))
+	}, metas)
 }
 
 func TestPolicyMetadataPanicsWithoutCanonicalMetadata(t *testing.T) {

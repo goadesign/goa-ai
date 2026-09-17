@@ -15,7 +15,7 @@ import (
 
 func TestTimeoutRecoveryRequiresGeneratedAgentRoutes(t *testing.T) {
 	const consumerOverride = "consumer override"
-	for _, route := range []string{"agent", "inline", "service", "publish", "MCP", "registry", consumerOverride} {
+	for _, route := range []string{"agent", "inline", "service", "publish", "MCP", consumerOverride} {
 		t.Run(route, func(t *testing.T) {
 			genpkg, roots := testhelpers.RunDesign(t, func() {
 				API("test", func() {})
@@ -30,10 +30,7 @@ func TestTimeoutRecoveryRequiresGeneratedAgentRoutes(t *testing.T) {
 					})
 				}
 				args := []any{"lookup", toolDSL}
-				switch route {
-				case "registry":
-					args = []any{"lookup", FromRegistry(registry, "lookup"), toolDSL}
-				case "MCP":
+				if route == "MCP" {
 					args = []any{"lookup", FromExternalMCP("provider", "lookup"), toolDSL}
 				}
 				lookup := Toolset(args...)
@@ -43,7 +40,7 @@ func TestTimeoutRecoveryRequiresGeneratedAgentRoutes(t *testing.T) {
 						return
 					}
 					Agent("lookup", "Find records", func() {
-						if route == "inline" || route == "MCP" || route == "registry" {
+						if route == "inline" || route == "MCP" {
 							Use(lookup)
 							return
 						}

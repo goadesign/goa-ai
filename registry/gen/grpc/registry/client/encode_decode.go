@@ -224,6 +224,44 @@ func DecodeGetToolsetResponse(ctx context.Context, v any, hdr, trlr metadata.MD)
 	return res, nil
 }
 
+// BuildResolveToolsetFunc builds the remote method to invoke for "registry"
+// service "ResolveToolset" endpoint.
+func BuildResolveToolsetFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.ResolveToolset(ctx, reqpb.(*registrypb.ResolveToolsetRequest), opts...)
+		}
+		return grpccli.ResolveToolset(ctx, &registrypb.ResolveToolsetRequest{}, opts...)
+	}
+}
+
+// EncodeResolveToolsetRequest encodes requests sent to registry ResolveToolset
+// endpoint.
+func EncodeResolveToolsetRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.GetToolsetPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ResolveToolset", "*registry.GetToolsetPayload", v)
+	}
+	return NewProtoResolveToolsetRequest(payload), nil
+}
+
+// DecodeResolveToolsetResponse decodes responses from the registry
+// ResolveToolset endpoint.
+func DecodeResolveToolsetResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.ResolveToolsetResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ResolveToolset", "*registrypb.ResolveToolsetResponse", v)
+	}
+	if err := ValidateResolveToolsetResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewResolveToolsetResult(message)
+	return res, nil
+}
+
 // BuildCheckAdmissionFunc builds the remote method to invoke for "registry"
 // service "CheckAdmission" endpoint.
 func BuildCheckAdmissionFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
@@ -331,6 +369,44 @@ func DecodeCallToolResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (
 		return nil, err
 	}
 	res := NewCallToolResult(message)
+	return res, nil
+}
+
+// BuildCallResolvedToolFunc builds the remote method to invoke for "registry"
+// service "CallResolvedTool" endpoint.
+func BuildCallResolvedToolFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.CallResolvedTool(ctx, reqpb.(*registrypb.CallResolvedToolRequest), opts...)
+		}
+		return grpccli.CallResolvedTool(ctx, &registrypb.CallResolvedToolRequest{}, opts...)
+	}
+}
+
+// EncodeCallResolvedToolRequest encodes requests sent to registry
+// CallResolvedTool endpoint.
+func EncodeCallResolvedToolRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.CallResolvedToolPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "CallResolvedTool", "*registry.CallResolvedToolPayload", v)
+	}
+	return NewProtoCallResolvedToolRequest(payload), nil
+}
+
+// DecodeCallResolvedToolResponse decodes responses from the registry
+// CallResolvedTool endpoint.
+func DecodeCallResolvedToolResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.CallResolvedToolResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "CallResolvedTool", "*registrypb.CallResolvedToolResponse", v)
+	}
+	if err := ValidateCallResolvedToolResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewCallResolvedToolResult(message)
 	return res, nil
 }
 

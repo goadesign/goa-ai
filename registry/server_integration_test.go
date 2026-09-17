@@ -719,9 +719,11 @@ func startServiceAndClients(
 		grpcCli.Pong(),
 		grpcCli.ListToolsets(),
 		grpcCli.GetToolset(),
+		grpcCli.ResolveToolset(),
 		grpcCli.CheckAdmission(),
 		grpcCli.Search(),
 		grpcCli.CallTool(),
+		grpcCli.CallResolvedTool(),
 		grpcCli.RetryTool(),
 		grpcCli.CompleteToolCall(),
 		grpcCli.PublishToolOutputDelta(),
@@ -749,7 +751,7 @@ func grpcRegisterRequest(
 			ResultSchema:           []byte(`{"type":"object"}`),
 		}},
 	}
-	request.SchemaFingerprint = strPtr(toolsetSchemaFingerprint(&genregistry.Toolset{
+	request.SchemaFingerprint = strPtr(schemaFingerprintForTest(&genregistry.Toolset{
 		Name:        name,
 		Description: &description,
 		Tools: []*genregistry.ToolSchema{{

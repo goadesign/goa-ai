@@ -152,12 +152,6 @@ type (
 		// Each entry captures the helper import/path information required to register
 		// the toolset with the runtime at agent registration time.
 		MCPToolsets []*MCPToolsetMeta
-		// RegistryToolsets lists the distinct DSL FromRegistry toolset references
-		// used by the agent. Each entry captures the generated agent-side registry
-		// client import/path information required to discover and register the
-		// dynamic toolset at runtime; it does not describe the clustered registry
-		// service or the runtime/toolregistry wire protocol directly.
-		RegistryToolsets []*RegistryToolsetMeta
 		// Runtime captures derived workflow/activity data used by templates.
 		Runtime RuntimeData
 		// Methods contains the routing strategies for agent methods.
@@ -346,6 +340,8 @@ type (
 		Description string
 		// Tags attaches toolset-level tags used by policy/filtering at registration time.
 		Tags []string
+		// Deferred loads the consumed tools through model tool search.
+		Deferred bool
 		// ServiceName identifies the owning Goa service (blank for global toolsets).
 		ServiceName string
 		// SourceServiceName maintains the original service that declared the toolset
@@ -429,9 +425,6 @@ type (
 		// MCP describes the external MCP helper metadata when this toolset references
 		// an MCP server/toolset.
 		MCP *MCPToolsetMeta
-		// Registry describes the registry metadata when this toolset is sourced
-		// from a registry via FromRegistry provider.
-		Registry *RegistryToolsetMeta
 		// NeedsAdapter indicates whether any method-backed tool in this toolset
 		// requires an adapter for payload or result mapping (i.e., the tool
 		// payload/result do not alias the bound method types). When false, the
@@ -468,25 +461,6 @@ type (
 		// partitions distinct so different remote bindings cannot collapse into the
 		// same Go identifier after sanitization.
 		ConstName string
-	}
-
-	// RegistryToolsetMeta captures the information required to wire one DSL
-	// FromRegistry toolset reference into the local runtime. Registry-backed
-	// toolsets load schemas during application startup. Generated discovery
-	// returns an immutable toolset supplied explicitly when constructing an agent.
-	RegistryToolsetMeta struct {
-		// RegistryName is the name of the registry source.
-		RegistryName string
-		// ToolsetName is the name of the toolset in the registry.
-		ToolsetName string
-		// Version is the optional version pin for the toolset.
-		Version string
-		// QualifiedName is the canonical toolset identifier.
-		QualifiedName string
-		// RegistryClientImportPath is the Go import path for the registry client.
-		RegistryClientImportPath string
-		// RegistryClientAlias is the import alias for the registry client.
-		RegistryClientAlias string
 	}
 
 	// ToolConfirmationData captures design-time confirmation requirements for a tool.
@@ -1076,16 +1050,10 @@ func newAgentData(
 
 	if len(agent.AllToolsets) > 0 {
 		mcpMap := make(map[string]*MCPToolsetMeta)
-		regMap := make(map[string]*RegistryToolsetMeta)
 		for _, ts := range agent.AllToolsets {
 			if ts.MCP != nil {
 				if _, ok := mcpMap[ts.MCP.QualifiedName]; !ok {
 					mcpMap[ts.MCP.QualifiedName] = ts.MCP
-				}
-			}
-			if ts.Registry != nil {
-				if _, ok := regMap[ts.Registry.QualifiedName]; !ok {
-					regMap[ts.Registry.QualifiedName] = ts.Registry
 				}
 			}
 		}
@@ -1093,12 +1061,6 @@ func newAgentData(
 			agent.MCPToolsets = append(agent.MCPToolsets, meta)
 		}
 		slices.SortFunc(agent.MCPToolsets, func(a, b *MCPToolsetMeta) int {
-			return strings.Compare(a.QualifiedName, b.QualifiedName)
-		})
-		for _, meta := range regMap {
-			agent.RegistryToolsets = append(agent.RegistryToolsets, meta)
-		}
-		slices.SortFunc(agent.RegistryToolsets, func(a, b *RegistryToolsetMeta) int {
 			return strings.Compare(a.QualifiedName, b.QualifiedName)
 		})
 	}

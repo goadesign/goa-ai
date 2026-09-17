@@ -11,10 +11,6 @@ const (
 type {{ .ConfigType }} struct {
     // Planner provides the concrete planner implementation used by the agent.
     Planner {{ .PlannerAlias }}.Planner
-{{- if .RegistryBindings }}
-    // RegistryToolsets supplies the immutable toolsets loaded before startup.
-    RegistryToolsets {{ .RegistryToolsetsType }}
-{{- end }}
 {{- if .RunPolicy.History }}
     {{- if eq .RunPolicy.History.Mode "compress" }}
     // HistoryModel writes summaries of older messages. The destination client
@@ -40,11 +36,6 @@ func (c {{ .ConfigType }}) Validate() error {
     if c.Planner == nil {
         return {{ .ErrorsAlias }}.New("planner is required")
     }
-{{- if .RegistryBindings }}
-    if err := c.RegistryToolsets.Validate(); err != nil {
-        return err
-    }
-{{- end }}
 {{- if .RunPolicy.History }}
     {{- if eq .RunPolicy.History.Mode "compress" }}
     if c.HistoryModel == nil {

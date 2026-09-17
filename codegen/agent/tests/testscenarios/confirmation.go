@@ -30,8 +30,8 @@ func ConfirmationDSL() func() {
 				Return(DangerousWriteResult)
 				Confirmation(func() {
 					Title("Confirm change")
-					PromptTemplate(`Approve write: set {{ .Key }} to {{ .Value }}`)
-					DeniedResultTemplate(`{"summary":"Cancelled","key":"{{ .Key }}"}`)
+					PromptTemplate(`Approve write: set {{ .key }} to {{ .value }}`)
+					DeniedResultTemplate(`{"summary":"Cancelled","key":{{ json .key }}}`)
 				})
 			})
 		})

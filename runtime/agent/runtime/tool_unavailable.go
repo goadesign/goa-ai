@@ -160,6 +160,7 @@ func (r *Runtime) rewriteToolCallUnavailable(call ToolCall) (ToolCall, error) {
 		return ToolCall{}, fmt.Errorf("runtime: encode tool_unavailable payload for %s: %w", call.Name, err)
 	}
 	call.Name = tools.ToolUnavailable
+	call.Registry = nil
 	call.Payload = rawjson.Message(payload)
 	return call, nil
 }

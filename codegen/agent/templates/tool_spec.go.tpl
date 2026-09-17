@@ -44,6 +44,14 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
     return tools.ToolSpec{
         Name:        {{ .ConstName }},
         Description: {{ printf "%q" .Description }},
+        Search: tools.SearchDocument{
+            Length: {{ .Search.Length }},
+            Terms: map[string]int{
+            {{- range $term, $count := .Search.Terms }}
+                {{ printf "%q" $term }}: {{ $count }},
+            {{- end }}
+            },
+        },
         Tags: []string{
         {{- range .Tags }}
             {{ printf "%q" . }},

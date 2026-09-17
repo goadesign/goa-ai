@@ -144,11 +144,7 @@ func TestStreamMarksUnadvertisedToolName(t *testing.T) {
 	)
 	raw := newAnthropicStreamer(
 		context.Background(),
-		providerStream,
-		map[string]string{"catalog_list_items": "catalog.list_items"},
-		nil,
-		"test",
-		model.ModelClassDefault,
+		providerStream, &encodedRequest{provToCanon: map[string]string{"catalog_list_items": "catalog.list_items"}, noArgumentTools: nil, model: "test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		contract,
 	)
@@ -200,11 +196,7 @@ func TestStreamTransportFailureSupersedesLatchedUnadvertisedName(t *testing.T) {
 	require.NoError(t, err)
 	streamer := newAnthropicStreamer(
 		context.Background(),
-		providerStream,
-		nil,
-		nil,
-		"test",
-		model.ModelClassDefault,
+		providerStream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		contract,
 	)
@@ -235,11 +227,7 @@ func TestStreamCancellationSupersedesLatchedUnadvertisedName(t *testing.T) {
 	require.NoError(t, err)
 	streamer := newAnthropicStreamer(
 		ctx,
-		providerStream,
-		nil,
-		nil,
-		"test",
-		model.ModelClassDefault,
+		providerStream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		contract,
 	)

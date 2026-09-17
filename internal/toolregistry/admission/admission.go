@@ -32,6 +32,7 @@ type (
 		ExecutionPayloadSchema []byte
 		ResultSchema           []byte
 		SidecarSchema          []byte
+		ConsumerContract       []byte
 	}
 
 	fingerprintTool struct {
@@ -42,6 +43,7 @@ type (
 		ExecutionPayloadSchema string   `json:"execution_payload_schema"`
 		ResultSchema           string   `json:"result_schema"`
 		SidecarSchema          string   `json:"sidecar_schema,omitempty"`
+		ConsumerContract       string   `json:"consumer_contract,omitempty"`
 	}
 )
 
@@ -61,6 +63,7 @@ func SchemaFingerprint(schema Schema) string {
 			ExecutionPayloadSchema: string(tool.ExecutionPayloadSchema),
 			ResultSchema:           string(tool.ResultSchema),
 			SidecarSchema:          string(tool.SidecarSchema),
+			ConsumerContract:       string(tool.ConsumerContract),
 		}
 	}
 	sort.SliceStable(tools, func(i, j int) bool {

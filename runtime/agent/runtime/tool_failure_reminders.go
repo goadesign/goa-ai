@@ -134,11 +134,15 @@ func selectRecoveryOutputs(outputs []*planner.ToolOutput, callIDs []string) ([]*
 
 // recoveryReminders renders selected failure evidence as ephemeral planner
 // guidance attached only to the recovery activity invocation.
-func (r *Runtime) recoveryReminders(outputs []*planner.ToolOutput) []reminder.Reminder {
+func (r *Runtime) recoveryReminders(outputs []*planner.ToolOutput) ([]reminder.Reminder, error) {
 	reminders := make([]reminder.Reminder, 0, len(outputs))
 	for _, output := range outputs {
 		var fields []tools.FieldMetadata
-		if spec, ok := r.toolSpec(output.Name); ok {
+		spec, ok, err := lookupCallSpec(ToolCall{Name: output.Name, Registry: output.Registry}, r.toolSpec)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			fields = spec.Payload.Fields
 		}
 		text := toolFailureReminder(&planner.ToolResult{
@@ -155,7 +159,7 @@ func (r *Runtime) recoveryReminders(outputs []*planner.ToolOutput) []reminder.Re
 			},
 		})
 	}
-	return reminders
+	return reminders, nil
 }
 
 // strongerRecoveryAction applies the runtime's one precedence order for

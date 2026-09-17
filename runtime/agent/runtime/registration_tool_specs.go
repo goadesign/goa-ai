@@ -169,6 +169,7 @@ func cloneToolSpecs(specs []tools.ToolSpec) []tools.ToolSpec {
 // cloneToolSpec copies every mutable declarative field while retaining codec
 // functions, which become owned by the first accepted registration.
 func cloneToolSpec(spec tools.ToolSpec) tools.ToolSpec {
+	spec.Search.Terms = maps.Clone(spec.Search.Terms)
 	spec.Tags = append([]string(nil), spec.Tags...)
 	spec.ExecutionPayloadSchema = append(tools.RawJSON(nil), spec.ExecutionPayloadSchema...)
 	if spec.Meta != nil {

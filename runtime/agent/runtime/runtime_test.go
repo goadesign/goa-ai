@@ -854,7 +854,7 @@ func TestRegisterAgentPlannerCatalogContainsOnlyExecutableTools(t *testing.T) {
 		nil,
 		[]tools.Ident{firstExecutable.Name, secondExecutable.Name},
 		nil,
-	)
+		nil)
 
 	err := rt.RegisterAgent(t.Context(), AgentRegistration{
 		Definition:          definition,
@@ -896,7 +896,7 @@ func TestRegisterAgentReplacesExecutableToolsWithEmptyList(t *testing.T) {
 			nil,
 			[]tools.Ident{executable.Name},
 			nil,
-		),
+			nil),
 		WorkflowHandler:     (engine.WorkflowDefinition{Handler: rt.ExecuteWorkflow}).Handler,
 		Planner:             &stubPlanner{},
 		PlanActivityName:    "service.plan",
@@ -917,7 +917,7 @@ func TestRegisterAgentReplacesExecutableToolsWithEmptyList(t *testing.T) {
 		nil,
 		nil,
 		nil,
-	)
+		nil)
 	require.NoError(t, rt.RegisterAgent(t.Context(), registration))
 	require.Empty(t, rt.ToolSpecsForAgent("service.agent"))
 }

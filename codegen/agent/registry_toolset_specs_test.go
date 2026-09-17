@@ -14,8 +14,8 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// TestRegistryToolsetSpecsStructure checks that discovery returns an immutable
-// runtime value instead of writing generated package-global specifications.
+// TestRegistryToolsetSpecsStructure checks that the agent emits its exact source
+// read without a startup discovery package or a runtime source loop.
 func TestRegistryToolsetSpecsStructure(t *testing.T) {
 	eval.Reset()
 	goaexpr.Root = new(goaexpr.RootExpr)
@@ -51,7 +51,7 @@ func TestRegistryToolsetSpecsStructure(t *testing.T) {
 	require.NoError(t, err)
 
 	var specsContent string
-	expectedPath := filepath.ToSlash("gen/registry_test/toolsets/data_tools/specs.go")
+	expectedPath := filepath.ToSlash("gen/registry_test/agents/data_agent/agent.go")
 	for _, f := range files {
 		if filepath.ToSlash(f.Path) == expectedPath {
 			var buf bytes.Buffer
@@ -62,19 +62,14 @@ func TestRegistryToolsetSpecsStructure(t *testing.T) {
 			break
 		}
 	}
-	require.NotEmpty(t, specsContent, "expected generated specs.go at %s", expectedPath)
+	require.NotEmpty(t, specsContent, "expected generated agent.go at %s", expectedPath)
 
-	require.Contains(t, specsContent, "func Discover(ctx context.Context, client registry.RegistryClient) (*registry.Toolset, error)")
-	require.Contains(t, specsContent, "return registry.NewToolset(toolset)")
-	require.NotContains(t, specsContent, "var Specs")
-	require.NotContains(t, specsContent, "sync.")
-	require.NotContains(t, specsContent, "RegistryToolsetID")
-	require.Contains(t, specsContent, "RegistryName")
-	require.Contains(t, specsContent, "ToolsetName")
-	require.NotContains(t, specsContent, "DiscoverAndPopulate")
-	require.NotContains(t, specsContent, "type ToolSchema")
-	require.NotContains(t, specsContent, "Service:")
-	require.NotContains(t, specsContent, "Toolset:")
+	require.Contains(t, specsContent, `catalog.IncludeToolset(ctx, "corp-registry", "data-tools", "", false)`)
+	require.Contains(t, specsContent, `registry == "corp-registry" && toolset == "data-tools"`)
+	require.Contains(t, specsContent, "WithRegistryTools(registryTools{})")
+	require.NotContains(t, specsContent, "RegistryToolsets")
+	require.NotContains(t, specsContent, "Discover(")
+	require.NotContains(t, specsContent, "for _,")
 }
 
 // TestRegistryToolsetSpecsMetadata verifies registry metadata is embedded.
@@ -113,7 +108,7 @@ func TestRegistryToolsetSpecsMetadata(t *testing.T) {
 	require.NoError(t, err)
 
 	var specsContent string
-	expectedPath := filepath.ToSlash("gen/meta_test/toolsets/pinned_tools/specs.go")
+	expectedPath := filepath.ToSlash("gen/meta_test/agents/meta_agent/agent.go")
 	for _, f := range files {
 		if filepath.ToSlash(f.Path) == expectedPath {
 			var buf bytes.Buffer
@@ -124,12 +119,13 @@ func TestRegistryToolsetSpecsMetadata(t *testing.T) {
 			break
 		}
 	}
-	require.NotEmpty(t, specsContent, "expected generated specs.go at %s", expectedPath)
+	require.NotEmpty(t, specsContent, "expected generated agent.go at %s", expectedPath)
 
 	require.Contains(t, specsContent, "\"test-registry\"")
 	require.Contains(t, specsContent, "\"enterprise-tools\"")
 	require.Contains(t, specsContent, "\"1.2.3\"")
-	require.Contains(t, specsContent, "if toolset.Version != Version")
+	require.Contains(t, specsContent, `catalog.IncludeToolset(ctx, "test-registry", "enterprise-tools", "1.2.3", false)`)
+	require.Contains(t, specsContent, `version == "1.2.3"`)
 }
 
 // TestRegistryToolsetSpecsGeneratorData verifies generator data identifies registry toolsets.
@@ -195,7 +191,5 @@ func TestRegistryToolsetSpecsGeneratorData(t *testing.T) {
 	}
 	require.NotNil(t, regToolset)
 	require.True(t, regToolset.IsRegistryBacked)
-	require.NotNil(t, regToolset.Registry)
-	require.Equal(t, "data-registry", regToolset.Registry.RegistryName)
-	require.Equal(t, "data-tools", regToolset.Registry.ToolsetName)
+	require.Empty(t, regToolset.Tools)
 }

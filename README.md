@@ -213,7 +213,8 @@ explains how to keep those responsibilities clear.
 | --- | --- |
 | [MCP servers](docs/dsl.md#mcp-server-definition) | Expose Goa service methods as MCP tools and resources, with static prompts and generated JSON-RPC adapters. |
 | [External tools](docs/dsl.md#mcp-backed-toolsets) | Consume MCP servers over stdio or HTTP using declared tool contracts. |
-| [Tool registries](docs/dsl.md#registry) | Host a clustered registry for tool discovery and invocation. Load schema-based provider toolsets at startup and pass immutable definitions into generated agents. |
+| [Tool registries](docs/tool_search.md) | Consume a named toolset or a changing registry catalog. Generated contracts preserve confirmation, pagination, and exact execution across provider changes. |
+| [Deferred tool search](docs/tool_search.md#provider-behavior) | Load definitions on demand using OpenAI native client search with BM25 or Claude hosted search, with per-agent choices generated from `Deferred()`. |
 | [Structured output](docs/runtime.md#typed-direct-completions) | Declare `Completion(...)` and get typed unary and streaming helpers. Use [typed tool output](docs/runtime.md#forced-typed-tool-output) when you want the same generated result contract with bounded model correction. |
 | [Specialist agents](docs/runtime.md#agent-as-tool-composition) | Expose an agent as a tool; the runtime runs it as a child workflow and links its progress and result to the parent. |
 | [Human input and approval](docs/runtime.md#external-input-and-workflow-continuations) | Ask structured questions or require confirmation, save the pending state, and continue from the answer. |

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	toolcontracts "goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -92,6 +93,7 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 			ConstName:       constName,
 			Title:           tool.Title,
 			Description:     tool.Description,
+			Search:          toolcontracts.NewSearchDocument(tool.QualifiedName + " " + tool.Title + " " + tool.Description),
 			ServerData:      serverDataEntries,
 			Tags:            tool.Tags,
 			Meta:            tool.Meta,
@@ -106,6 +108,9 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 			ReplanOnTimeout: tool.ReplanOnTimeout,
 			ResultReminder:  tool.ResultReminder,
 			Confirmation:    tool.Confirmation,
+		}
+		if err := prepareRegistrySchema(tool, entry); err != nil {
+			return nil, err
 		}
 		entry.ConstructorFunc = names.constructor.Name()
 		entry.SpecVar = names.spec.Name()

@@ -452,7 +452,7 @@ func testAgentDefinitionWithChildren(
 		requiredLabels,
 		nil,
 		children,
-	)
+		nil)
 }
 
 // testRegistrationDefinition converts the route and generated facts used by

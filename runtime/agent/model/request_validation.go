@@ -612,6 +612,12 @@ func configuredToolCallValidators(request *Request) (map[tools.Ident]toolCallVal
 		if name == "" {
 			return nil, errors.New("model request contains a tool definition with an empty name")
 		}
+		if err := definition.Search.Validate(); err != nil {
+			return nil, fmt.Errorf("model request tool %q: %w", name, err)
+		}
+		if definition.Deferred && definition.Search.Length == 0 {
+			return nil, fmt.Errorf("model request deferred tool %q requires a search document", name)
+		}
 		if _, exists := validators[name]; exists {
 			return nil, fmt.Errorf("model request contains duplicate tool definition %q", name)
 		}

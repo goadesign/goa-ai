@@ -691,6 +691,7 @@ func newToolsetRef(
 		QualifiedName:     qualifiedName,
 		Description:       expr.Description,
 		Tags:              slices.Clone(expr.Tags),
+		Deferred:          expr.Deferred,
 		Service:           service,
 		ServiceName:       service.Name,
 		Agent:             agent,

@@ -63,12 +63,10 @@ type (
 		serviceImportPath      string
 		registrationRoutes     []string
 		render                 *ToolsetData
-		registry               bool
 	}
 
 	// toolSpecsFileImports keeps the imports used by each generated file. Goa
 	// chooses their final package names after every file has recorded its needs.
-	// Registry toolsets write no transport files, so their transport plans are nil.
 	toolSpecsFileImports struct {
 		publicTypes       *goacodegen.GeneratedImportPlan
 		publicCodecs      *goacodegen.GeneratedImportPlan
@@ -266,15 +264,12 @@ func planToolSpecs(
 		if toolset == nil || toolset.Expr == nil {
 			continue
 		}
+		if isRegistryReference(toolset.Owner.Ref) {
+			continue
+		}
 		tools, err := toolExpressionsForDefinition(planned.mcp, toolset)
 		if err != nil {
 			return nil, err
-		}
-		if isRegistryReference(toolset.Owner.Ref) {
-			if err := planned.addRegistryPackage(generation, toolset); err != nil {
-				return nil, err
-			}
-			continue
 		}
 		if len(tools) == 0 {
 			continue
@@ -385,37 +380,6 @@ func toolsetRegistrationRoutes(design *ir.Design, definition *ir.Toolset) []stri
 	}
 	slices.Sort(routes)
 	return routes
-}
-
-// addRegistryPackage records the fixed declarations written for a registry
-// toolset whose tools are discovered after the program starts.
-func (p *toolSpecsPlan) addRegistryPackage(generation *goacodegen.Generation, definition *ir.Toolset) error {
-	public, err := generation.ClaimPackage(definition.SpecsImportPath)
-	if err != nil {
-		return fmt.Errorf("plan toolset %q registry specs package: %w", definition.Name, err)
-	}
-	packagePlan := newToolSpecsPackagePlan(generation, p.genpkg, public, nil)
-	packagePlan.definition = definition
-	packagePlan.registry = true
-	names := map[goacodegen.PackageNameKind][]string{
-		goacodegen.NameConstant: {"RegistryName", "ToolsetName"},
-		goacodegen.NameFunction: {"Discover"},
-	}
-	if definition.Owner.Ref.Provider.Registry.Version != "" {
-		names[goacodegen.NameConstant] = append(names[goacodegen.NameConstant], "Version")
-	}
-	if err := declareExactNames(public, packagePlan.publicFixed, names); err != nil {
-		return fmt.Errorf("plan toolset %q registry declarations: %w", definition.Name, err)
-	}
-	if err := packagePlan.fileImports.publicSpecs.Require(
-		goacodegen.SimpleImport("context"),
-		goacodegen.SimpleImport("fmt"),
-		goacodegen.SimpleImport("goa.design/goa-ai/runtime/registry"),
-	); err != nil {
-		return fmt.Errorf("plan toolset %q registry imports: %w", definition.Name, err)
-	}
-	p.byDir[definition.SpecsDir] = packagePlan
-	return nil
 }
 
 // addToolPackage records all names and conversions written to one tool package.
