@@ -342,3 +342,38 @@ the complete design and generated adapters.
   Generated specs keep both schema variants plus parsed example input so
   provider adapters can choose schema annotations or native `input_examples`.
 - Policies and caps are enforced by the runtime during execution; keep planners small and declarative.
+
+
+## Try native tool search
+
+The helper tool is declared `Deferred()` in this quickstart's design. The
+regular command still uses its deterministic planner and needs no credentials.
+The optional model-backed command uses that same generated contract:
+
+```bash
+export OPENAI_API_KEY=...        # Supply through your normal secret handling.
+go run ./cmd/tool-search -provider openai -model YOUR_MODEL_ID
+
+# Or use a Claude model supporting hosted tool search:
+export ANTHROPIC_API_KEY=...
+go run ./cmd/tool-search -provider anthropic -model YOUR_MODEL_ID
+```
+
+This makes billable model calls. It asks the model to discover the helper,
+execute it, and report its fixed Tokyo answer. The command uses a two-minute
+active run budget and a 4096-token output budget per logical model invocation;
+search rounds share that output budget. These are example settings.
+
+`Deferred()` and search word counts come from code generation. The planner
+passes `AdvertisedToolDefinitions()` and existing messages to the registered
+model client. OpenAI search executes inside its adapter; Claude search executes
+at the provider. The planner handles only ordinary tool calls and final text.
+The helper is intentionally a fixture and is not a general question-answering
+service. A one-tool demo establishes wiring, not a token-savings benchmark.
+
+For changing provider catalogs, consume `Toolset(FromRegistry(...))` or
+`Use(registry)` and connect the clients with `rt.RegisterRegistry`. Providers
+publish the generated `ToolSchemas()` factory. See
+[Tool search and dynamic registries](../docs/tool_search.md) for the complete
+consumer/provider wiring, execution guarantees, supported endpoints, and
+upgrade steps. No registry is required for the static example above.

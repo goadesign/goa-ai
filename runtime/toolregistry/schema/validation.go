@@ -3,23 +3,35 @@
 //
 // The registry catalog is discovered at runtime, so generated code cannot
 // specialize these checks per tool. This package owns JSON Schema compilation
-// and caching so generated registry specs expose only the stable Validate
-// boundary and do not leak the concrete validation library to callers.
+// and caching. Registry consumers use Validate and Codec without depending on
+// the concrete validation library.
 package schema
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"sync"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
-type validator struct {
-	mu       sync.RWMutex
-	compiled map[string]*jsonschema.Schema
-}
+type (
+	validator struct {
+		mu       sync.RWMutex
+		compiled map[string]*jsonschema.Schema
+	}
+
+	// schemaLoader supplies the registered schema and prevents a declaration
+	// from reading files or fetching another document during compilation.
+	schemaLoader struct {
+		resource string
+		data     []byte
+	}
+)
 
 var defaultValidator = newValidator()
 
@@ -36,8 +48,8 @@ func newValidator() *validator {
 }
 
 // Validate validates data against schemaBytes with the package-owned compiler
-// cache. The input data is normalized through JSON so Go numeric/map shapes match
-// the JSON document model used by the registry wire contract.
+// cache. JSON numbers retain their exact decimal representation while values
+// are checked against the registry's declared constraints.
 func (v *validator) Validate(schemaBytes []byte, data any, context string) error {
 	schema, err := v.compiledSchema(schemaBytes)
 	if err != nil {
@@ -49,12 +61,7 @@ func (v *validator) Validate(schemaBytes []byte, data any, context string) error
 		return fmt.Errorf("marshal %s for validation: %w", context, err)
 	}
 
-	var doc any
-	if err := json.Unmarshal(jsonData, &doc); err != nil {
-		return fmt.Errorf("parse %s data: %w", context, err)
-	}
-
-	if err := schema.Validate(doc); err != nil {
+	if _, err := validateJSON(schema, jsonData); err != nil {
 		return fmt.Errorf("validate %s: %w", context, err)
 	}
 	return nil
@@ -68,7 +75,7 @@ func (v *validator) compiledSchema(schemaBytes []byte) (*jsonschema.Schema, erro
 		return nil, fmt.Errorf("schema is required")
 	}
 
-	digest := schemaDigest(schemaBytes)
+	digest := fmt.Sprintf("%x", sha256.Sum256(schemaBytes))
 
 	v.mu.RLock()
 	schema := v.compiled[digest]
@@ -77,16 +84,9 @@ func (v *validator) compiledSchema(schemaBytes []byte) (*jsonschema.Schema, erro
 		return schema, nil
 	}
 
-	var schemaDoc any
-	if err := json.Unmarshal(schemaBytes, &schemaDoc); err != nil {
-		return nil, fmt.Errorf("unmarshal schema: %w", err)
-	}
-
 	compiler := jsonschema.NewCompiler()
-	resource := schemaResource(digest)
-	if err := compiler.AddResource(resource, schemaDoc); err != nil {
-		return nil, fmt.Errorf("add schema resource: %w", err)
-	}
+	resource := "schema://toolregistry/" + digest + ".json"
+	compiler.UseLoader(schemaLoader{resource: resource, data: schemaBytes})
 	compiled, err := compiler.Compile(resource)
 	if err != nil {
 		return nil, fmt.Errorf("compile schema: %w", err)
@@ -102,11 +102,23 @@ func (v *validator) compiledSchema(schemaBytes []byte) (*jsonschema.Schema, erro
 	return compiled, nil
 }
 
-func schemaDigest(schemaBytes []byte) string {
-	sum := sha256.Sum256(schemaBytes)
-	return fmt.Sprintf("%x", sum)
+// validateJSON checks exactly one JSON value without rounding its numbers.
+func validateJSON(schema *jsonschema.Schema, data []byte) (any, error) {
+	var document any
+	if err := rawjson.Unmarshal(data, &document); err != nil {
+		return nil, fmt.Errorf("decode JSON: %w", err)
+	}
+	if err := schema.Validate(document); err != nil {
+		return nil, err
+	}
+	return document, nil
 }
 
-func schemaResource(digest string) string {
-	return "schema://toolregistry/" + digest + ".json"
+// Load supplies only the schema bytes being compiled. References inside that
+// document remain valid; references to a different document are rejected.
+func (l schemaLoader) Load(resource string) (any, error) {
+	if resource != l.resource {
+		return nil, fmt.Errorf("external schema reference %q is not allowed", resource)
+	}
+	return jsonschema.UnmarshalJSON(bytes.NewReader(l.data))
 }

@@ -22,9 +22,11 @@ type Endpoints struct {
 	Pong                   goa.Endpoint
 	ListToolsets           goa.Endpoint
 	GetToolset             goa.Endpoint
+	ResolveToolset         goa.Endpoint
 	CheckAdmission         goa.Endpoint
 	Search                 goa.Endpoint
 	CallTool               goa.Endpoint
+	CallResolvedTool       goa.Endpoint
 	RetryTool              goa.Endpoint
 	CompleteToolCall       goa.Endpoint
 	PublishToolOutputDelta goa.Endpoint
@@ -42,9 +44,11 @@ func NewEndpoints(s Service) *Endpoints {
 		Pong:                   NewPongEndpoint(s),
 		ListToolsets:           NewListToolsetsEndpoint(s),
 		GetToolset:             NewGetToolsetEndpoint(s),
+		ResolveToolset:         NewResolveToolsetEndpoint(s),
 		CheckAdmission:         NewCheckAdmissionEndpoint(s),
 		Search:                 NewSearchEndpoint(s),
 		CallTool:               NewCallToolEndpoint(s),
+		CallResolvedTool:       NewCallResolvedToolEndpoint(s),
 		RetryTool:              NewRetryToolEndpoint(s),
 		CompleteToolCall:       NewCompleteToolCallEndpoint(s),
 		PublishToolOutputDelta: NewPublishToolOutputDeltaEndpoint(s),
@@ -62,9 +66,11 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Pong = m(e.Pong)
 	e.ListToolsets = m(e.ListToolsets)
 	e.GetToolset = m(e.GetToolset)
+	e.ResolveToolset = m(e.ResolveToolset)
 	e.CheckAdmission = m(e.CheckAdmission)
 	e.Search = m(e.Search)
 	e.CallTool = m(e.CallTool)
+	e.CallResolvedTool = m(e.CallResolvedTool)
 	e.RetryTool = m(e.RetryTool)
 	e.CompleteToolCall = m(e.CompleteToolCall)
 	e.PublishToolOutputDelta = m(e.PublishToolOutputDelta)
@@ -135,6 +141,15 @@ func NewGetToolsetEndpoint(s Service) goa.Endpoint {
 	}
 }
 
+// NewResolveToolsetEndpoint returns an endpoint function that calls the method
+// "ResolveToolset" of service "registry".
+func NewResolveToolsetEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetToolsetPayload)
+		return s.ResolveToolset(ctx, p)
+	}
+}
+
 // NewCheckAdmissionEndpoint returns an endpoint function that calls the method
 // "CheckAdmission" of service "registry".
 func NewCheckAdmissionEndpoint(s Service) goa.Endpoint {
@@ -159,6 +174,15 @@ func NewCallToolEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*CallToolPayload)
 		return s.CallTool(ctx, p)
+	}
+}
+
+// NewCallResolvedToolEndpoint returns an endpoint function that calls the
+// method "CallResolvedTool" of service "registry".
+func NewCallResolvedToolEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*CallResolvedToolPayload)
+		return s.CallResolvedTool(ctx, p)
 	}
 }
 

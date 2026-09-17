@@ -49,7 +49,7 @@ func newAgentRegistryFileData(agent *AgentData) *agentRegistryFileData {
 		}
 	}
 	for _, toolset := range agent.UsedToolsets {
-		if toolset.MCP == nil && toolset.AgentToolsImportPath == "" {
+		if toolset.MCP == nil && toolset.AgentToolsImportPath == "" && !toolset.IsRegistryBacked {
 			data.DirectToolsets = append(data.DirectToolsets, toolset)
 		}
 	}

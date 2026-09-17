@@ -178,12 +178,12 @@ func TestJudgeAnthropicHTTPRejectsPartialJSONWithoutRepair(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Nil(t, judgments)
-	require.ErrorContains(t, err, "anthropic: accumulate streamed response")
-	require.ErrorContains(t, err, "unexpected end of JSON input")
+	require.ErrorContains(t, err, "anthropic stream: finalize tool payload")
+	require.ErrorContains(t, err, "tool payload is not valid JSON")
 	var rejected *model.OutputValidationError
 	require.ErrorAs(t, err, &rejected)
 	assert.Equal(t, model.OutputValidationResponseShape, rejected.Kind())
-	// The SDK rejects the incomplete argument at content_block_stop, before
+	// The adapter rejects the incomplete argument at content_block_stop, before
 	// reading message_delta. Preserve known input usage and leave the later
 	// stop/output facts unknown; this failure does not authorize a correction.
 	require.ErrorContains(t, err, "stop_reason=unknown output_limited=unknown")

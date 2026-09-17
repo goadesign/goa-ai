@@ -154,7 +154,7 @@ func main() {
 	// Replace this with your own CLI, HTTP server, or integration.
 {{ range .Agents }}
 	{
-		client := {{ .Alias }}.NewClient(rt)
+		client := rt.MustClient({{ .Alias }}.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*{{ $.ModelAlias }}.Message{
 			{
 				Role:  {{ $.ModelAlias }}.ConversationRoleUser,

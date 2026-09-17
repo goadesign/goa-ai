@@ -108,7 +108,7 @@ func TestGeneratedRetryToolRequiresAdmissionFence(t *testing.T) {
 // registerPayloadWithSchemaFingerprint adds the generated identity that the
 // production provider sends with the exact schemas in payload.
 func registerPayloadWithSchemaFingerprint(payload *genregistry.RegisterPayload) *genregistry.RegisterPayload {
-	payload.SchemaFingerprint = toolsetSchemaFingerprint(&genregistry.Toolset{
+	payload.SchemaFingerprint = schemaFingerprintForTest(&genregistry.Toolset{
 		Name:        payload.Name,
 		Description: payload.Description,
 		Version:     payload.Version,
@@ -116,6 +116,16 @@ func registerPayloadWithSchemaFingerprint(payload *genregistry.RegisterPayload) 
 		Tools:       payload.Tools,
 	})
 	return payload
+}
+
+// schemaFingerprintForTest builds identities for known valid test declarations.
+// A malformed declaration is a test construction error, not a valid fingerprint.
+func schemaFingerprintForTest(toolset *genregistry.Toolset) string {
+	fingerprint, err := toolsetSchemaFingerprint(toolset)
+	if err != nil {
+		panic(err)
+	}
+	return fingerprint
 }
 
 // validRegisterPayloadForSchemaAdmission returns one fully bound registration

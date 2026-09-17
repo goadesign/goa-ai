@@ -40,20 +40,7 @@ func NewRegisterPayload(message *registrypb.RegisterRequest) *registry.RegisterP
 	if message.Tools != nil {
 		v.Tools = make([]*registry.ToolSchema, len(message.Tools))
 		for i, val := range message.Tools {
-			v.Tools[i] = &registry.ToolSchema{
-				Name:                   *val.Name,
-				Description:            val.Description,
-				PayloadSchema:          val.PayloadSchema,
-				ExecutionPayloadSchema: val.ExecutionPayloadSchema,
-				ResultSchema:           val.ResultSchema,
-				SidecarSchema:          val.SidecarSchema,
-			}
-			if val.Tags != nil {
-				v.Tools[i].Tags = make([]string, len(val.Tags))
-				for j, val := range val.Tags {
-					v.Tools[i].Tags[j] = val
-				}
-			}
+			v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 		}
 	}
 	return v
@@ -163,23 +150,7 @@ func NewProtoListToolsetsResponse(result *registry.ListToolsetsResult) *registry
 	if result.Toolsets != nil {
 		message.Toolsets = make([]*registrypb.ToolsetInfo, len(result.Toolsets))
 		for i, val := range result.Toolsets {
-			message.Toolsets[i] = &registrypb.ToolsetInfo{
-				Name:         &val.Name,
-				Description:  val.Description,
-				RegisteredAt: &val.RegisteredAt,
-			}
-			if val.Version != nil {
-				version := string(*val.Version)
-				message.Toolsets[i].Version = &version
-			}
-			toolCount := int32(val.ToolCount)
-			message.Toolsets[i].ToolCount = &toolCount
-			if val.Tags != nil {
-				message.Toolsets[i].Tags = make([]string, len(val.Tags))
-				for j, val := range val.Tags {
-					message.Toolsets[i].Tags[j] = val
-				}
-			}
+			message.Toolsets[i] = transformToolsetInfoToProtoToolsetInfo(val)
 		}
 	}
 	return message
@@ -215,21 +186,29 @@ func NewProtoGetToolsetResponse(result *registry.Toolset) *registrypb.GetToolset
 	if result.Tools != nil {
 		message.Tools = make([]*registrypb.ToolSchema, len(result.Tools))
 		for i, val := range result.Tools {
-			message.Tools[i] = &registrypb.ToolSchema{
-				Name:                   &val.Name,
-				Description:            val.Description,
-				PayloadSchema:          val.PayloadSchema,
-				ExecutionPayloadSchema: val.ExecutionPayloadSchema,
-				ResultSchema:           val.ResultSchema,
-				SidecarSchema:          val.SidecarSchema,
-			}
-			if val.Tags != nil {
-				message.Tools[i].Tags = make([]string, len(val.Tags))
-				for j, val := range val.Tags {
-					message.Tools[i].Tags[j] = val
-				}
-			}
+			message.Tools[i] = transformToolSchemaToProtoToolSchema(val)
 		}
+	}
+	return message
+}
+
+// NewResolveToolsetPayload builds *registry.GetToolsetPayload from
+// *registrypb.ResolveToolsetRequest.
+func NewResolveToolsetPayload(message *registrypb.ResolveToolsetRequest) *registry.GetToolsetPayload {
+	v := &registry.GetToolsetPayload{
+		Name: *message.Name,
+	}
+	return v
+}
+
+// NewProtoResolveToolsetResponse builds *registrypb.ResolveToolsetResponse
+// from *registry.ResolvedToolset.
+func NewProtoResolveToolsetResponse(result *registry.ResolvedToolset) *registrypb.ResolveToolsetResponse {
+	message := &registrypb.ResolveToolsetResponse{
+		RegistrationToken: &result.RegistrationToken,
+	}
+	if result.Toolset != nil {
+		message.Toolset = transformToolsetToProtoToolset(result.Toolset)
 	}
 	return message
 }
@@ -269,23 +248,7 @@ func NewProtoSearchResponse(result *registry.SearchResult) *registrypb.SearchRes
 	if result.Toolsets != nil {
 		message.Toolsets = make([]*registrypb.ToolsetInfo, len(result.Toolsets))
 		for i, val := range result.Toolsets {
-			message.Toolsets[i] = &registrypb.ToolsetInfo{
-				Name:         &val.Name,
-				Description:  val.Description,
-				RegisteredAt: &val.RegisteredAt,
-			}
-			if val.Version != nil {
-				version := string(*val.Version)
-				message.Toolsets[i].Version = &version
-			}
-			toolCount := int32(val.ToolCount)
-			message.Toolsets[i].ToolCount = &toolCount
-			if val.Tags != nil {
-				message.Toolsets[i].Tags = make([]string, len(val.Tags))
-				for j, val := range val.Tags {
-					message.Toolsets[i].Tags[j] = val
-				}
-			}
+			message.Toolsets[i] = transformToolsetInfoToProtoToolsetInfo(val)
 		}
 	}
 	return message
@@ -310,6 +273,34 @@ func NewCallToolPayload(message *registrypb.CallToolRequest) *registry.CallToolP
 // *registry.CallToolResult.
 func NewProtoCallToolResponse(result *registry.CallToolResult) *registrypb.CallToolResponse {
 	message := &registrypb.CallToolResponse{
+		ToolUseId:             &result.ToolUseID,
+		RegistrationToken:     &result.RegistrationToken,
+		ExecutionDeadline:     &result.ExecutionDeadline,
+		ResultStreamExpiresAt: &result.ResultStreamExpiresAt,
+	}
+	return message
+}
+
+// NewCallResolvedToolPayload builds *registry.CallResolvedToolPayload from
+// *registrypb.CallResolvedToolRequest.
+func NewCallResolvedToolPayload(message *registrypb.CallResolvedToolRequest) *registry.CallResolvedToolPayload {
+	v := &registry.CallResolvedToolPayload{
+		ExpectedRegistrationToken: *message.ExpectedRegistrationToken,
+		Toolset:                   *message.Toolset,
+		Tool:                      *message.Tool,
+		PayloadJSON:               message.PayloadJson,
+		WireProtocolVersion:       int(*message.WireProtocolVersion),
+	}
+	if message.Meta != nil {
+		v.Meta = transformProtoToolCallMetaToToolCallMeta(message.Meta)
+	}
+	return v
+}
+
+// NewProtoCallResolvedToolResponse builds *registrypb.CallResolvedToolResponse
+// from *registry.CallToolResult.
+func NewProtoCallResolvedToolResponse(result *registry.CallToolResult) *registrypb.CallResolvedToolResponse {
+	message := &registrypb.CallResolvedToolResponse{
 		ToolUseId:             &result.ToolUseID,
 		RegistrationToken:     &result.RegistrationToken,
 		ExecutionDeadline:     &result.ExecutionDeadline,
@@ -447,9 +438,6 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 	if message.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
 	}
-	if message.Tools == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("tools", "message"))
-	}
 	if message.ProviderId == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
 	}
@@ -550,6 +538,329 @@ func validateregistry_registry_ToolSchema_At_elem(elem *registrypb.ToolSchema) (
 	if elem.ResultSchema != nil {
 		if len(elem.ResultSchema) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.result_schema", elem.ResultSchema, len(elem.ResultSchema), 1, true))
+		}
+	}
+	if elem.ConsumerContract != nil {
+		if err2 := validateregistry_registry_ConsumerContract_Target_consumerContract_Context_consumer_5F_contract(elem.ConsumerContract); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ConsumerContract_Target_consumerContract_Context_consumer_5F_contract
+// runs the validations defined on ConsumerContract.
+func validateregistry_registry_ConsumerContract_Target_consumerContract_Context_consumer_5F_contract(consumerContract *registrypb.ConsumerContract) (err error) {
+	if consumerContract.Kind == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("kind", "consumer_contract"))
+	}
+	if consumerContract.Title == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("title", "consumer_contract"))
+	}
+	if consumerContract.Search == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("search", "consumer_contract"))
+	}
+	if consumerContract.Payload == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("payload", "consumer_contract"))
+	}
+	if consumerContract.Kind != nil {
+		if !(*consumerContract.Kind == "service" || *consumerContract.Kind == "agent" || *consumerContract.Kind == "control") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("consumer_contract.kind", *consumerContract.Kind, []any{"service", "agent", "control"}))
+		}
+	}
+	if consumerContract.Title != nil {
+		if utf8.RuneCountInString(*consumerContract.Title) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("consumer_contract.title", *consumerContract.Title, utf8.RuneCountInString(*consumerContract.Title), 1, true))
+		}
+	}
+	if consumerContract.Search != nil {
+		if err2 := validateregistry_registry_ToolSearchDocument_At_search(consumerContract.Search); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if consumerContract.Payload != nil {
+		if err2 := validateregistry_registry_ToolTypeMetadata_At_payload(consumerContract.Payload); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if consumerContract.Result != nil {
+		if err2 := validateregistry_registry_ToolTypeMetadata_At_result(consumerContract.Result); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if consumerContract.Bounds != nil {
+		if err2 := validateregistry_registry_ToolBounds_At_bounds(consumerContract.Bounds); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if consumerContract.Confirmation != nil {
+		if err2 := validateregistry_registry_ToolConfirmation_At_confirmation(consumerContract.Confirmation); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	for _, e := range consumerContract.ServerData {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolServerData_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolSearchDocument_At_search runs the validations
+// defined on ToolSearchDocument.
+func validateregistry_registry_ToolSearchDocument_At_search(search *registrypb.ToolSearchDocument) (err error) {
+	if search.Length == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("length", "search"))
+	}
+	if search.Length != nil {
+		if *search.Length < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("search.length", *search.Length, 1, true))
+		}
+	}
+	if len(search.Terms) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("search.terms", search.Terms, len(search.Terms), 1, true))
+	}
+	for _, v := range search.Terms {
+		if v < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("search.terms[key]", v, 1, true))
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolTypeMetadata_At_payload runs the validations
+// defined on ToolTypeMetadata.
+func validateregistry_registry_ToolTypeMetadata_At_payload(payload *registrypb.ToolTypeMetadata) (err error) {
+	if payload.SchemaWithoutRootExample == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("schema_without_root_example", "payload"))
+	}
+	if payload.SchemaWithoutRootExample != nil {
+		if len(payload.SchemaWithoutRootExample) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("payload.schema_without_root_example", payload.SchemaWithoutRootExample, len(payload.SchemaWithoutRootExample), 1, true))
+		}
+	}
+	for _, e := range payload.Fields {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolFieldMetadata_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolFieldMetadata_At_elem runs the validations
+// defined on ToolFieldMetadata.
+func validateregistry_registry_ToolFieldMetadata_At_elem(elem *registrypb.ToolFieldMetadata) (err error) {
+	for _, e := range elem.Path {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolFieldPathSegment_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if elem.JsonType != nil {
+		if !(*elem.JsonType == "object" || *elem.JsonType == "array" || *elem.JsonType == "string" || *elem.JsonType == "number" || *elem.JsonType == "integer" || *elem.JsonType == "boolean" || *elem.JsonType == "null") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("elem.json_type", *elem.JsonType, []any{"object", "array", "string", "number", "integer", "boolean", "null"}))
+		}
+	}
+	for _, e := range elem.Branches {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolUnionBranch_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolFieldPathSegment_At_elem runs the validations
+// defined on ToolFieldPathSegment.
+func validateregistry_registry_ToolFieldPathSegment_At_elem(elem *registrypb.ToolFieldPathSegment) (err error) {
+	if elem.Segment == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("segment", "elem"))
+	}
+	switch v := elem.Segment.(type) {
+	case *registrypb.ToolFieldPathSegment_Field:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("field", "elem.segment"))
+			break
+		}
+
+	case *registrypb.ToolFieldPathSegment_Element:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("element", "elem.segment"))
+			break
+		}
+		if v.Element == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("element", "elem.segment"))
+			break
+		}
+
+	}
+
+	return
+}
+
+// validateregistry_registry_ToolUnionBranch_At_elem runs the validations
+// defined on ToolUnionBranch.
+func validateregistry_registry_ToolUnionBranch_At_elem(elem *registrypb.ToolUnionBranch) (err error) {
+	if elem.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "elem"))
+	}
+	if len(elem.Discriminator) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("elem.discriminator", elem.Discriminator, len(elem.Discriminator), 1, true))
+	}
+	for _, e := range elem.Discriminator {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolFieldPathSegment_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if elem.Value != nil {
+		if utf8.RuneCountInString(*elem.Value) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.value", *elem.Value, utf8.RuneCountInString(*elem.Value), 1, true))
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolTypeMetadata_At_result runs the validations
+// defined on ToolTypeMetadata.
+func validateregistry_registry_ToolTypeMetadata_At_result(result *registrypb.ToolTypeMetadata) (err error) {
+	if result.SchemaWithoutRootExample == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("schema_without_root_example", "result"))
+	}
+	if result.SchemaWithoutRootExample != nil {
+		if len(result.SchemaWithoutRootExample) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("result.schema_without_root_example", result.SchemaWithoutRootExample, len(result.SchemaWithoutRootExample), 1, true))
+		}
+	}
+	for _, e := range result.Fields {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolFieldMetadata_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolBounds_At_bounds runs the validations defined
+// on ToolBounds.
+func validateregistry_registry_ToolBounds_At_bounds(bounds *registrypb.ToolBounds) (err error) {
+	if bounds.Paging != nil {
+		if err2 := validateregistry_registry_ToolPaging_At_paging(bounds.Paging); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolPaging_At_paging runs the validations defined
+// on ToolPaging.
+func validateregistry_registry_ToolPaging_At_paging(paging *registrypb.ToolPaging) (err error) {
+	if paging.ReplayPayload == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("replay_payload", "paging"))
+	}
+	if paging.CursorField == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cursor_field", "paging"))
+	}
+	if paging.NextCursorField == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("next_cursor_field", "paging"))
+	}
+	if paging.CursorField != nil {
+		if utf8.RuneCountInString(*paging.CursorField) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("paging.cursor_field", *paging.CursorField, utf8.RuneCountInString(*paging.CursorField), 1, true))
+		}
+	}
+	if paging.NextCursorField != nil {
+		if utf8.RuneCountInString(*paging.NextCursorField) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("paging.next_cursor_field", *paging.NextCursorField, utf8.RuneCountInString(*paging.NextCursorField), 1, true))
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolConfirmation_At_confirmation runs the
+// validations defined on ToolConfirmation.
+func validateregistry_registry_ToolConfirmation_At_confirmation(confirmation *registrypb.ToolConfirmation) (err error) {
+	if confirmation.PromptTemplate == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("prompt_template", "confirmation"))
+	}
+	if confirmation.DeniedResultTemplate == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("denied_result_template", "confirmation"))
+	}
+	if confirmation.PromptTemplate != nil {
+		if utf8.RuneCountInString(*confirmation.PromptTemplate) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("confirmation.prompt_template", *confirmation.PromptTemplate, utf8.RuneCountInString(*confirmation.PromptTemplate), 1, true))
+		}
+	}
+	if confirmation.DeniedResultTemplate != nil {
+		if utf8.RuneCountInString(*confirmation.DeniedResultTemplate) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("confirmation.denied_result_template", *confirmation.DeniedResultTemplate, utf8.RuneCountInString(*confirmation.DeniedResultTemplate), 1, true))
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolServerData_At_elem runs the validations
+// defined on ToolServerData.
+func validateregistry_registry_ToolServerData_At_elem(elem *registrypb.ToolServerData) (err error) {
+	if elem.Kind == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("kind", "elem"))
+	}
+	if elem.Audience == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("audience", "elem"))
+	}
+	if elem.Schema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("schema", "elem"))
+	}
+	if elem.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "elem"))
+	}
+	if elem.Kind != nil {
+		if utf8.RuneCountInString(*elem.Kind) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.kind", *elem.Kind, utf8.RuneCountInString(*elem.Kind), 1, true))
+		}
+	}
+	if elem.Audience != nil {
+		if !(*elem.Audience == "timeline" || *elem.Audience == "internal" || *elem.Audience == "evidence") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("elem.audience", *elem.Audience, []any{"timeline", "internal", "evidence"}))
+		}
+	}
+	if elem.Schema != nil {
+		if len(elem.Schema) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.schema", elem.Schema, len(elem.Schema), 1, true))
+		}
+	}
+	if elem.Type != nil {
+		if err2 := validateregistry_registry_ToolTypeMetadata_Target_type_5F__Context_type(elem.Type); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolTypeMetadata_Target_type_5F__Context_type runs
+// the validations defined on ToolTypeMetadata.
+func validateregistry_registry_ToolTypeMetadata_Target_type_5F__Context_type(type_ *registrypb.ToolTypeMetadata) (err error) {
+	if type_.SchemaWithoutRootExample == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("schema_without_root_example", "type"))
+	}
+	if type_.SchemaWithoutRootExample != nil {
+		if len(type_.SchemaWithoutRootExample) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("type.schema_without_root_example", type_.SchemaWithoutRootExample, len(type_.SchemaWithoutRootExample), 1, true))
+		}
+	}
+	for _, e := range type_.Fields {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolFieldMetadata_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 	}
 	return
@@ -725,6 +1036,20 @@ func ValidateGetToolsetRequest(message *registrypb.GetToolsetRequest) (err error
 	return
 }
 
+// ValidateResolveToolsetRequest runs the validations defined on
+// ResolveToolsetRequest.
+func ValidateResolveToolsetRequest(message *registrypb.ResolveToolsetRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+	}
+	return
+}
+
 // ValidateCheckAdmissionRequest runs the validations defined on
 // CheckAdmissionRequest.
 func ValidateCheckAdmissionRequest(message *registrypb.CheckAdmissionRequest) (err error) {
@@ -870,6 +1195,64 @@ func validateregistry_registry_ToolCallMeta_At_meta(meta *registrypb.ToolCallMet
 		}
 		if utf8.RuneCountInString(*meta.ParentToolCallId) > 256 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.parent_tool_call_id", *meta.ParentToolCallId, utf8.RuneCountInString(*meta.ParentToolCallId), 256, false))
+		}
+	}
+	return
+}
+
+// ValidateCallResolvedToolRequest runs the validations defined on
+// CallResolvedToolRequest.
+func ValidateCallResolvedToolRequest(message *registrypb.CallResolvedToolRequest) (err error) {
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.Toolset == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
+	}
+	if message.Tool == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool", "message"))
+	}
+	if message.PayloadJson == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("payload_json", "message"))
+	}
+	if message.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("meta", "message"))
+	}
+	if message.WireProtocolVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("wire_protocol_version", "message"))
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.Toolset != nil {
+		if utf8.RuneCountInString(*message.Toolset) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Toolset) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.toolset", *message.Toolset, utf8.RuneCountInString(*message.Toolset), 256, false))
+		}
+	}
+	if message.Tool != nil {
+		if utf8.RuneCountInString(*message.Tool) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool", *message.Tool, utf8.RuneCountInString(*message.Tool), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Tool) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.tool", *message.Tool, utf8.RuneCountInString(*message.Tool), 256, false))
+		}
+	}
+	if message.PayloadJson != nil {
+		if len(message.PayloadJson) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.payload_json", message.PayloadJson, len(message.PayloadJson), 1, true))
+		}
+	}
+	if message.Meta != nil {
+		if err2 := validateregistry_registry_ToolCallMeta_At_meta(message.Meta); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if message.WireProtocolVersion != nil {
+		if !(*message.WireProtocolVersion == 10) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
 		}
 	}
 	return
@@ -1203,6 +1586,544 @@ func ValidateClaimToolCallRequest(message *registrypb.ClaimToolCallRequest) (err
 		err = goa.MergeErrors(err, goa.ValidatePattern("message.request_event_id", *message.RequestEventId, "^\\d+-\\d+$"))
 	}
 	return
+}
+
+// transformProtoToolSchemaToToolSchema builds a value of type
+// *registry.ToolSchema from a value of type *registrypb.ToolSchema.
+func transformProtoToolSchemaToToolSchema(v *registrypb.ToolSchema) *registry.ToolSchema {
+	res := &registry.ToolSchema{
+		Name:                   *v.Name,
+		Description:            v.Description,
+		PayloadSchema:          v.PayloadSchema,
+		ExecutionPayloadSchema: v.ExecutionPayloadSchema,
+		ResultSchema:           v.ResultSchema,
+		SidecarSchema:          v.SidecarSchema,
+	}
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
+	}
+	if v.ConsumerContract != nil {
+		res.ConsumerContract = transformProtoConsumerContractToConsumerContract(v.ConsumerContract)
+	}
+
+	return res
+}
+
+// transformProtoConsumerContractToConsumerContract builds a value of type
+// *registry.ConsumerContract from a value of type *registrypb.ConsumerContract.
+func transformProtoConsumerContractToConsumerContract(v *registrypb.ConsumerContract) *registry.ConsumerContract {
+	res := &registry.ConsumerContract{
+		Kind:           *v.Kind,
+		Title:          *v.Title,
+		ResultReminder: v.ResultReminder,
+	}
+	if v.Search != nil {
+		res.Search = transformProtoToolSearchDocumentToToolSearchDocument(v.Search)
+	}
+	if v.Payload != nil {
+		res.Payload = transformProtoToolTypeMetadataToToolTypeMetadata(v.Payload)
+	}
+	if v.Result != nil {
+		res.Result = transformProtoToolTypeMetadataToToolTypeMetadata(v.Result)
+	}
+	if v.Meta != nil {
+		res.Meta = make(map[string][]string, len(v.Meta))
+		for key, val := range v.Meta {
+			tk := key
+			var tv []string
+			if val != nil {
+				tv = make([]string, len(val.Field))
+				for i, val := range val.Field {
+					tv[i] = val
+				}
+			}
+			res.Meta[tk] = tv
+		}
+	}
+	if v.RequiredLabels != nil {
+		res.RequiredLabels = make([]string, len(v.RequiredLabels))
+		for i, val := range v.RequiredLabels {
+			res.RequiredLabels[i] = val
+		}
+	}
+	if v.Bounds != nil {
+		res.Bounds = transformProtoToolBoundsToToolBounds(v.Bounds)
+	}
+	if v.Confirmation != nil {
+		res.Confirmation = transformProtoToolConfirmationToToolConfirmation(v.Confirmation)
+	}
+	if v.ServerData != nil {
+		res.ServerData = make([]*registry.ToolServerData, len(v.ServerData))
+		for i, val := range v.ServerData {
+			res.ServerData[i] = transformProtoToolServerDataToToolServerData(val)
+		}
+	}
+
+	return res
+}
+
+// transformProtoToolSearchDocumentToToolSearchDocument builds a value of type
+// *registry.ToolSearchDocument from a value of type
+// *registrypb.ToolSearchDocument.
+func transformProtoToolSearchDocumentToToolSearchDocument(v *registrypb.ToolSearchDocument) *registry.ToolSearchDocument {
+	res := &registry.ToolSearchDocument{
+		Length: int(*v.Length),
+	}
+	if v.Terms != nil {
+		res.Terms = make(map[string]int, len(v.Terms))
+		for key, val := range v.Terms {
+			tk := key
+			tv := int(val)
+			res.Terms[tk] = tv
+		}
+	}
+
+	return res
+}
+
+// transformProtoToolTypeMetadataToToolTypeMetadata builds a value of type
+// *registry.ToolTypeMetadata from a value of type *registrypb.ToolTypeMetadata.
+func transformProtoToolTypeMetadataToToolTypeMetadata(v *registrypb.ToolTypeMetadata) *registry.ToolTypeMetadata {
+	res := &registry.ToolTypeMetadata{
+		Name:                     v.Name,
+		SchemaWithoutRootExample: v.SchemaWithoutRootExample,
+		ExampleJSON:              v.ExampleJson,
+	}
+	if v.Fields != nil {
+		res.Fields = make([]*registry.ToolFieldMetadata, len(v.Fields))
+		for i, val := range v.Fields {
+			res.Fields[i] = transformProtoToolFieldMetadataToToolFieldMetadata(val)
+		}
+	}
+
+	return res
+}
+
+// transformProtoToolFieldMetadataToToolFieldMetadata builds a value of type
+// *registry.ToolFieldMetadata from a value of type
+// *registrypb.ToolFieldMetadata.
+func transformProtoToolFieldMetadataToToolFieldMetadata(v *registrypb.ToolFieldMetadata) *registry.ToolFieldMetadata {
+	res := &registry.ToolFieldMetadata{
+		JSONType:    v.JsonType,
+		Description: v.Description,
+	}
+	if v.Path != nil {
+		res.Path = make([]*registry.ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			res.Path[i] = transformProtoToolFieldPathSegmentToToolFieldPathSegment(val)
+		}
+	}
+	if v.Branches != nil {
+		res.Branches = make([]*registry.ToolUnionBranch, len(v.Branches))
+		for i, val := range v.Branches {
+			res.Branches[i] = transformProtoToolUnionBranchToToolUnionBranch(val)
+		}
+	}
+	if v.DiscriminatorValues != nil {
+		res.DiscriminatorValues = make([]string, len(v.DiscriminatorValues))
+		for i, val := range v.DiscriminatorValues {
+			res.DiscriminatorValues[i] = val
+		}
+	}
+
+	return res
+}
+
+// transformProtoToolFieldPathSegmentToToolFieldPathSegment builds a value of
+// type *registry.ToolFieldPathSegment from a value of type
+// *registrypb.ToolFieldPathSegment.
+func transformProtoToolFieldPathSegmentToToolFieldPathSegment(v *registrypb.ToolFieldPathSegment) *registry.ToolFieldPathSegment {
+	res := &registry.ToolFieldPathSegment{}
+	if v.Segment != nil {
+		switch val := v.Segment.(type) {
+		case *registrypb.ToolFieldPathSegment_Field:
+			{
+				u := res.Segment
+				u.SetField(registry.ToolFieldSegmentBranchField(val.Field))
+				res.Segment = u
+			}
+		case *registrypb.ToolFieldPathSegment_Element:
+			{
+				u := res.Segment
+				u.SetElement(transformProtoToolCollectionElementToToolCollectionElement(val.Element))
+				res.Segment = u
+			}
+		}
+	}
+
+	return res
+}
+
+// transformProtoToolCollectionElementToToolCollectionElement builds a value of
+// type *registry.ToolCollectionElement from a value of type
+// *registrypb.ToolCollectionElement.
+func transformProtoToolCollectionElementToToolCollectionElement(v *registrypb.ToolCollectionElement) *registry.ToolCollectionElement {
+	res := &registry.ToolCollectionElement{}
+
+	return res
+}
+
+// transformProtoToolUnionBranchToToolUnionBranch builds a value of type
+// *registry.ToolUnionBranch from a value of type *registrypb.ToolUnionBranch.
+func transformProtoToolUnionBranchToToolUnionBranch(v *registrypb.ToolUnionBranch) *registry.ToolUnionBranch {
+	res := &registry.ToolUnionBranch{
+		Value: *v.Value,
+	}
+	if v.Discriminator != nil {
+		res.Discriminator = make([]*registry.ToolFieldPathSegment, len(v.Discriminator))
+		for i, val := range v.Discriminator {
+			res.Discriminator[i] = transformProtoToolFieldPathSegmentToToolFieldPathSegment(val)
+		}
+	}
+
+	return res
+}
+
+// transformProtoToolBoundsToToolBounds builds a value of type
+// *registry.ToolBounds from a value of type *registrypb.ToolBounds.
+func transformProtoToolBoundsToToolBounds(v *registrypb.ToolBounds) *registry.ToolBounds {
+	res := &registry.ToolBounds{}
+	if v.Paging != nil {
+		res.Paging = transformProtoToolPagingToToolPaging(v.Paging)
+	}
+
+	return res
+}
+
+// transformProtoToolPagingToToolPaging builds a value of type
+// *registry.ToolPaging from a value of type *registrypb.ToolPaging.
+func transformProtoToolPagingToToolPaging(v *registrypb.ToolPaging) *registry.ToolPaging {
+	res := &registry.ToolPaging{
+		ContinueTool:    v.ContinueTool,
+		SourceTool:      v.SourceTool,
+		ReplayPayload:   *v.ReplayPayload,
+		CursorField:     *v.CursorField,
+		NextCursorField: *v.NextCursorField,
+	}
+
+	return res
+}
+
+// transformProtoToolConfirmationToToolConfirmation builds a value of type
+// *registry.ToolConfirmation from a value of type *registrypb.ToolConfirmation.
+func transformProtoToolConfirmationToToolConfirmation(v *registrypb.ToolConfirmation) *registry.ToolConfirmation {
+	res := &registry.ToolConfirmation{
+		Title:                v.Title,
+		PromptTemplate:       *v.PromptTemplate,
+		DeniedResultTemplate: *v.DeniedResultTemplate,
+	}
+
+	return res
+}
+
+// transformProtoToolServerDataToToolServerData builds a value of type
+// *registry.ToolServerData from a value of type *registrypb.ToolServerData.
+func transformProtoToolServerDataToToolServerData(v *registrypb.ToolServerData) *registry.ToolServerData {
+	res := &registry.ToolServerData{
+		Kind:        *v.Kind,
+		Audience:    *v.Audience,
+		Description: v.Description,
+		Schema:      v.Schema,
+	}
+	if v.Type != nil {
+		res.Type = transformProtoToolTypeMetadataToToolTypeMetadata(v.Type)
+	}
+
+	return res
+}
+
+// transformToolsetInfoToProtoToolsetInfo builds a value of type
+// *registrypb.ToolsetInfo from a value of type *registry.ToolsetInfo.
+func transformToolsetInfoToProtoToolsetInfo(v *registry.ToolsetInfo) *registrypb.ToolsetInfo {
+	res := &registrypb.ToolsetInfo{
+		Name:         &v.Name,
+		Description:  v.Description,
+		RegisteredAt: &v.RegisteredAt,
+	}
+	if v.Version != nil {
+		version := string(*v.Version)
+		res.Version = &version
+	}
+	toolCount := int32(v.ToolCount)
+	res.ToolCount = &toolCount
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
+	}
+
+	return res
+}
+
+// transformToolSchemaToProtoToolSchema builds a value of type
+// *registrypb.ToolSchema from a value of type *registry.ToolSchema.
+func transformToolSchemaToProtoToolSchema(v *registry.ToolSchema) *registrypb.ToolSchema {
+	res := &registrypb.ToolSchema{
+		Name:                   &v.Name,
+		Description:            v.Description,
+		PayloadSchema:          v.PayloadSchema,
+		ExecutionPayloadSchema: v.ExecutionPayloadSchema,
+		ResultSchema:           v.ResultSchema,
+		SidecarSchema:          v.SidecarSchema,
+	}
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
+	}
+	if v.ConsumerContract != nil {
+		res.ConsumerContract = transformConsumerContractToProtoConsumerContract(v.ConsumerContract)
+	}
+
+	return res
+}
+
+// transformConsumerContractToProtoConsumerContract builds a value of type
+// *registrypb.ConsumerContract from a value of type *registry.ConsumerContract.
+func transformConsumerContractToProtoConsumerContract(v *registry.ConsumerContract) *registrypb.ConsumerContract {
+	res := &registrypb.ConsumerContract{
+		Kind:           &v.Kind,
+		Title:          &v.Title,
+		ResultReminder: v.ResultReminder,
+	}
+	if v.Search != nil {
+		res.Search = transformToolSearchDocumentToProtoToolSearchDocument(v.Search)
+	}
+	if v.Payload != nil {
+		res.Payload = transformToolTypeMetadataToProtoToolTypeMetadata(v.Payload)
+	}
+	if v.Result != nil {
+		res.Result = transformToolTypeMetadataToProtoToolTypeMetadata(v.Result)
+	}
+	if v.Meta != nil {
+		res.Meta = make(map[string]*registrypb.ArrayOfString, len(v.Meta))
+		for key, val := range v.Meta {
+			tk := key
+			tv := &registrypb.ArrayOfString{}
+			tv.Field = make([]string, len(val))
+			for i, val := range val {
+				tv.Field[i] = val
+			}
+			res.Meta[tk] = tv
+		}
+	}
+	if v.RequiredLabels != nil {
+		res.RequiredLabels = make([]string, len(v.RequiredLabels))
+		for i, val := range v.RequiredLabels {
+			res.RequiredLabels[i] = val
+		}
+	}
+	if v.Bounds != nil {
+		res.Bounds = transformToolBoundsToProtoToolBounds(v.Bounds)
+	}
+	if v.Confirmation != nil {
+		res.Confirmation = transformToolConfirmationToProtoToolConfirmation(v.Confirmation)
+	}
+	if v.ServerData != nil {
+		res.ServerData = make([]*registrypb.ToolServerData, len(v.ServerData))
+		for i, val := range v.ServerData {
+			res.ServerData[i] = transformToolServerDataToProtoToolServerData(val)
+		}
+	}
+
+	return res
+}
+
+// transformToolSearchDocumentToProtoToolSearchDocument builds a value of type
+// *registrypb.ToolSearchDocument from a value of type
+// *registry.ToolSearchDocument.
+func transformToolSearchDocumentToProtoToolSearchDocument(v *registry.ToolSearchDocument) *registrypb.ToolSearchDocument {
+	res := &registrypb.ToolSearchDocument{}
+	length := int32(v.Length)
+	res.Length = &length
+	if v.Terms != nil {
+		res.Terms = make(map[string]int32, len(v.Terms))
+		for key, val := range v.Terms {
+			tk := key
+			tv := int32(val)
+			res.Terms[tk] = tv
+		}
+	}
+
+	return res
+}
+
+// transformToolTypeMetadataToProtoToolTypeMetadata builds a value of type
+// *registrypb.ToolTypeMetadata from a value of type *registry.ToolTypeMetadata.
+func transformToolTypeMetadataToProtoToolTypeMetadata(v *registry.ToolTypeMetadata) *registrypb.ToolTypeMetadata {
+	res := &registrypb.ToolTypeMetadata{
+		Name:                     v.Name,
+		SchemaWithoutRootExample: v.SchemaWithoutRootExample,
+		ExampleJson:              v.ExampleJSON,
+	}
+	if v.Fields != nil {
+		res.Fields = make([]*registrypb.ToolFieldMetadata, len(v.Fields))
+		for i, val := range v.Fields {
+			res.Fields[i] = transformToolFieldMetadataToProtoToolFieldMetadata(val)
+		}
+	}
+
+	return res
+}
+
+// transformToolFieldMetadataToProtoToolFieldMetadata builds a value of type
+// *registrypb.ToolFieldMetadata from a value of type
+// *registry.ToolFieldMetadata.
+func transformToolFieldMetadataToProtoToolFieldMetadata(v *registry.ToolFieldMetadata) *registrypb.ToolFieldMetadata {
+	res := &registrypb.ToolFieldMetadata{
+		JsonType:    v.JSONType,
+		Description: v.Description,
+	}
+	if v.Path != nil {
+		res.Path = make([]*registrypb.ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			res.Path[i] = transformToolFieldPathSegmentToProtoToolFieldPathSegment(val)
+		}
+	}
+	if v.Branches != nil {
+		res.Branches = make([]*registrypb.ToolUnionBranch, len(v.Branches))
+		for i, val := range v.Branches {
+			res.Branches[i] = transformToolUnionBranchToProtoToolUnionBranch(val)
+		}
+	}
+	if v.DiscriminatorValues != nil {
+		res.DiscriminatorValues = make([]string, len(v.DiscriminatorValues))
+		for i, val := range v.DiscriminatorValues {
+			res.DiscriminatorValues[i] = val
+		}
+	}
+
+	return res
+}
+
+// transformToolFieldPathSegmentToProtoToolFieldPathSegment builds a value of
+// type *registrypb.ToolFieldPathSegment from a value of type
+// *registry.ToolFieldPathSegment.
+func transformToolFieldPathSegmentToProtoToolFieldPathSegment(v *registry.ToolFieldPathSegment) *registrypb.ToolFieldPathSegment {
+	res := &registrypb.ToolFieldPathSegment{}
+	if v.Segment.Kind() != "" {
+		switch string(v.Segment.Kind()) {
+		case "field":
+			actual, _ := v.Segment.AsField()
+			res.Segment = &registrypb.ToolFieldPathSegment_Field{Field: string(actual)}
+		case "element":
+			actual, _ := v.Segment.AsElement()
+			res.Segment = &registrypb.ToolFieldPathSegment_Element{Element: transformToolCollectionElementToProtoToolCollectionElement(actual)}
+		}
+	}
+
+	return res
+}
+
+// transformToolCollectionElementToProtoToolCollectionElement builds a value of
+// type *registrypb.ToolCollectionElement from a value of type
+// *registry.ToolCollectionElement.
+func transformToolCollectionElementToProtoToolCollectionElement(v *registry.ToolCollectionElement) *registrypb.ToolCollectionElement {
+	res := &registrypb.ToolCollectionElement{}
+
+	return res
+}
+
+// transformToolUnionBranchToProtoToolUnionBranch builds a value of type
+// *registrypb.ToolUnionBranch from a value of type *registry.ToolUnionBranch.
+func transformToolUnionBranchToProtoToolUnionBranch(v *registry.ToolUnionBranch) *registrypb.ToolUnionBranch {
+	res := &registrypb.ToolUnionBranch{
+		Value: &v.Value,
+	}
+	if v.Discriminator != nil {
+		res.Discriminator = make([]*registrypb.ToolFieldPathSegment, len(v.Discriminator))
+		for i, val := range v.Discriminator {
+			res.Discriminator[i] = transformToolFieldPathSegmentToProtoToolFieldPathSegment(val)
+		}
+	}
+
+	return res
+}
+
+// transformToolBoundsToProtoToolBounds builds a value of type
+// *registrypb.ToolBounds from a value of type *registry.ToolBounds.
+func transformToolBoundsToProtoToolBounds(v *registry.ToolBounds) *registrypb.ToolBounds {
+	res := &registrypb.ToolBounds{}
+	if v.Paging != nil {
+		res.Paging = transformToolPagingToProtoToolPaging(v.Paging)
+	}
+
+	return res
+}
+
+// transformToolPagingToProtoToolPaging builds a value of type
+// *registrypb.ToolPaging from a value of type *registry.ToolPaging.
+func transformToolPagingToProtoToolPaging(v *registry.ToolPaging) *registrypb.ToolPaging {
+	res := &registrypb.ToolPaging{
+		ContinueTool:    v.ContinueTool,
+		SourceTool:      v.SourceTool,
+		ReplayPayload:   &v.ReplayPayload,
+		CursorField:     &v.CursorField,
+		NextCursorField: &v.NextCursorField,
+	}
+
+	return res
+}
+
+// transformToolConfirmationToProtoToolConfirmation builds a value of type
+// *registrypb.ToolConfirmation from a value of type *registry.ToolConfirmation.
+func transformToolConfirmationToProtoToolConfirmation(v *registry.ToolConfirmation) *registrypb.ToolConfirmation {
+	res := &registrypb.ToolConfirmation{
+		Title:                v.Title,
+		PromptTemplate:       &v.PromptTemplate,
+		DeniedResultTemplate: &v.DeniedResultTemplate,
+	}
+
+	return res
+}
+
+// transformToolServerDataToProtoToolServerData builds a value of type
+// *registrypb.ToolServerData from a value of type *registry.ToolServerData.
+func transformToolServerDataToProtoToolServerData(v *registry.ToolServerData) *registrypb.ToolServerData {
+	res := &registrypb.ToolServerData{
+		Kind:        &v.Kind,
+		Audience:    &v.Audience,
+		Description: v.Description,
+		Schema:      v.Schema,
+	}
+	if v.Type != nil {
+		res.Type = transformToolTypeMetadataToProtoToolTypeMetadata(v.Type)
+	}
+
+	return res
+}
+
+// transformToolsetToProtoToolset builds a value of type *registrypb.Toolset
+// from a value of type *registry.Toolset.
+func transformToolsetToProtoToolset(v *registry.Toolset) *registrypb.Toolset {
+	res := &registrypb.Toolset{
+		Name:         &v.Name,
+		Description:  v.Description,
+		RegisteredAt: &v.RegisteredAt,
+	}
+	if v.Version != nil {
+		version := string(*v.Version)
+		res.Version = &version
+	}
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
+	}
+	if v.Tools != nil {
+		res.Tools = make([]*registrypb.ToolSchema, len(v.Tools))
+		for i, val := range v.Tools {
+			res.Tools[i] = transformToolSchemaToProtoToolSchema(val)
+		}
+	}
+
+	return res
 }
 
 // transformProtoToolCallMetaToToolCallMeta builds a value of type

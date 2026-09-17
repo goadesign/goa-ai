@@ -34,7 +34,7 @@ func decrementCap(current, delta int) int {
 // Bookkeeping results do not end a recovery episode.
 func (r *Runtime) hasSuccessfulBudgetedResult(records []stepToolRecord) bool {
 	for _, record := range records {
-		if record.result == nil || r.isBookkeeping(record.call.Name) {
+		if record.result == nil || r.isBookkeepingCall(record.call) {
 			continue
 		}
 		if record.result.Failure == nil {

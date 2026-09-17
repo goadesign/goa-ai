@@ -21,6 +21,10 @@ func New(ctx {{ .ContextAlias }}.Context, store {{ .StorageAlias }}.Store) (*{{ 
     {{- $a := . }}
     {
         cfg := {{ .Alias }}.{{ .Agent.ConfigType }}{ Planner: {{ .PlannerAlias }}.New() }
+        {{- if .HasRegistrySources }}
+        // Before the first run, call rt.RegisterRegistry for the declared sources
+        // with the registry service client and its result-stream client.
+        {{- end }}
         {{- if .MCPToolsets }}
         // Configure MCP callers for external toolsets.
         cfg.MCPCallers = map[string]{{ $.MCPRuntimeAlias }}.Caller{}

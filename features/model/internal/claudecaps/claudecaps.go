@@ -143,6 +143,24 @@ func ForcedToolChoiceUnsupported(modelID string) bool {
 	return strings.Contains(modelID, "claude-mythos-preview")
 }
 
+// ToolChangesSupported identifies the Claude generation documented to support
+// tool availability changes inside Messages history. Endpoint adapters can impose
+// narrower restrictions when their host has not exposed the same capability.
+func ToolChangesSupported(modelID string) bool {
+	gen, _, _, ok := familyVersion(modelID, "claude-opus-")
+	if ok && gen == 5 {
+		return true
+	}
+	return IsFableGeneration(modelID)
+}
+
+// BedrockToolChangesSupported identifies the model AWS currently documents for
+// tool_addition and tool_removal on InvokeModel.
+func BedrockToolChangesSupported(modelID string) bool {
+	gen, _, _, ok := familyVersion(modelID, "claude-opus-")
+	return ok && gen == 5
+}
+
 // IsFableGeneration reports whether modelID belongs to the Claude 5
 // generation (Fable and its Mythos sibling), across every published naming
 // shape: bare, dated snapshot, Vertex "@" dated, and Bedrock in-region, geo,

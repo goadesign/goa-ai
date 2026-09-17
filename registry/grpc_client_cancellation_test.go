@@ -21,11 +21,12 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-// blockingRegisterService supplies one real generated Register endpoint whose
-// completion is controlled by client cancellation.
+// blockingRegisterService keeps the server response pending until the client
+// returns, so tests observe local cancellation rather than a remote error.
 type blockingRegisterService struct {
 	genregistry.Service
-	started chan struct{}
+	started        chan struct{}
+	clientReturned chan struct{}
 }
 
 // recordingClaimService records each operation ID received by the generated
@@ -36,11 +37,13 @@ type recordingClaimService struct {
 	operationIDs []string
 }
 
-// Register holds the generated server call until the client cancels its
-// context, then returns the server-observed cancellation.
+// Register waits for cancellation and for the test to observe the client's
+// result before returning the server error. Without that ordering, the server
+// deadline can win the race and arrive as a distinct remote service error.
 func (s *blockingRegisterService) Register(ctx context.Context, _ *genregistry.RegisterPayload) (*genregistry.RegisterResult, error) {
 	close(s.started)
 	<-ctx.Done()
+	<-s.clientReturned
 	return nil, ctx.Err()
 }
 
@@ -59,9 +62,14 @@ func (s *recordingClaimService) ClaimToolCall(
 func TestGeneratedGRPCClientPreservesCanceledRegisterContext(t *testing.T) {
 	t.Parallel()
 
-	service := &blockingRegisterService{started: make(chan struct{})}
+	service := &blockingRegisterService{
+		started:        make(chan struct{}),
+		clientReturned: make(chan struct{}),
+	}
+	defer close(service.clientReturned)
 	client := newGeneratedRegisterClient(t, service)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	result := make(chan error, 1)
 	go func() {
 		_, registerErr := client.Register(ctx, validRegisterPayloadForSchemaAdmission("cancellation-test"))
@@ -84,7 +92,11 @@ func TestGeneratedGRPCClientPreservesCanceledRegisterContext(t *testing.T) {
 func TestGeneratedGRPCClientPreservesRegisterDeadline(t *testing.T) {
 	t.Parallel()
 
-	service := &blockingRegisterService{started: make(chan struct{})}
+	service := &blockingRegisterService{
+		started:        make(chan struct{}),
+		clientReturned: make(chan struct{}),
+	}
+	defer close(service.clientReturned)
 	client := newGeneratedRegisterClient(t, service)
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()

@@ -38,37 +38,31 @@ type anthropicStreamer struct {
 	responseMu sync.RWMutex
 	response   *model.Response
 
-	toolNameMap     map[string]string
-	noArgumentTools map[string]struct{}
-	modelID         string
-	modelClass      model.ModelClass
-	output          *model.StructuredOutput
-	contract        *model.RequestContract
+	encoded    *encodedRequest
+	modelClass model.ModelClass
+	output     *model.StructuredOutput
+	contract   *model.RequestContract
 }
 
 func newAnthropicStreamer(
 	ctx context.Context,
 	stream *ssestream.Stream[sdk.MessageStreamEventUnion],
-	nameMap map[string]string,
-	noArgumentTools map[string]struct{},
-	modelID string,
+	encoded *encodedRequest,
 	modelClass model.ModelClass,
 	output *model.StructuredOutput,
 	contract *model.RequestContract,
 ) model.Streamer {
 	cctx, cancel := context.WithCancel(ctx)
 	as := &anthropicStreamer{
-		ctx:             cctx,
-		cancel:          cancel,
-		stream:          stream,
-		chunks:          make(chan model.Chunk, 32),
-		done:            make(chan struct{}),
-		toolNameMap:     nameMap,
-		noArgumentTools: noArgumentTools,
-		modelID:         modelID,
-		modelClass:      modelClass,
-		output:          output,
-		contract:        contract,
+		ctx:        cctx,
+		cancel:     cancel,
+		stream:     stream,
+		chunks:     make(chan model.Chunk, 32),
+		done:       make(chan struct{}),
+		encoded:    encoded,
+		modelClass: modelClass,
+		output:     output,
+		contract:   contract,
 	}
 	go as.run()
 	return as
@@ -122,10 +116,11 @@ func (s *anthropicStreamer) run() {
 
 	processor := newAnthropicChunkProcessor(
 		s.emitAttributedChunk,
-		s.toolNameMap,
-		s.noArgumentTools,
+		s.encoded.provToCanon,
+		s.encoded.noArgumentTools,
 		s.output,
 	)
+	processor.searchEnabled = s.encoded.search.enabled
 	var response sdk.Message
 	var rejected error
 
@@ -156,12 +151,12 @@ func (s *anthropicStreamer) run() {
 			case rejected != nil:
 				s.setErr(s.outputError(processor, rejected))
 			default:
-				translated, err := translateResponse(&response, s.toolNameMap)
+				translated, err := translateSearchResponse(&response, s.encoded)
 				if err != nil {
 					s.setErr(s.outputError(processor, err))
 					return
 				}
-				translated.Usage = processor.attributedUsage(s.modelID, s.modelClass)
+				translated.Usage = processor.attributedUsage(s.encoded.model, s.modelClass)
 				s.responseMu.Lock()
 				s.response = translated
 				s.responseMu.Unlock()
@@ -225,7 +220,7 @@ func anthropicAccumulatorFailureKind(response *sdk.Message, event sdk.MessageStr
 // token deltas before callers compare them with the complete response.
 func (s *anthropicStreamer) emitAttributedChunk(chunk model.Chunk) error {
 	if usage, ok := chunk.(model.UsageChunk); ok {
-		usage.Usage.Model = s.modelID
+		usage.Usage.Model = s.encoded.model
 		usage.Usage.ModelClass = s.modelClass
 		chunk = usage
 	}
@@ -256,7 +251,7 @@ func (s *anthropicStreamer) outputError(processor *anthropicChunkProcessor, err 
 	if errors.As(err, &validationErr) {
 		return err
 	}
-	usage := processor.attributedUsage(s.modelID, s.modelClass)
+	usage := processor.attributedUsage(s.encoded.model, s.modelClass)
 	return s.contract.RejectProviderOutput(
 		outputvalidation.RequiredKind(err),
 		&usage,
@@ -300,6 +295,8 @@ type anthropicChunkProcessor struct {
 	completion      *completionBuffer
 	completionSeen  bool
 	openBlocks      map[int]struct{}
+	searchBlocks    map[int]struct{}
+	searchEnabled   bool
 
 	toolNameMap     map[string]string
 	noArgumentTools map[string]struct{}
@@ -325,6 +322,7 @@ func newAnthropicChunkProcessor(
 		thinkingBlocks:  make(map[int]*thinkingBuffer),
 		thinkingIndexes: make(map[int]int),
 		openBlocks:      make(map[int]struct{}),
+		searchBlocks:    make(map[int]struct{}),
 		toolNameMap:     nameMap,
 		noArgumentTools: noArgumentTools,
 		output:          output,
@@ -347,6 +345,7 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		p.completion = nil
 		p.completionSeen = false
 		p.openBlocks = make(map[int]struct{})
+		p.searchBlocks = make(map[int]struct{})
 		p.stopReason = ""
 		p.usage = anthropicUsage(ev.Message.Usage)
 		p.started = true
@@ -374,6 +373,21 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		}
 		p.openBlocks[idx] = struct{}{}
 		start := ev.ContentBlock.AsAny()
+		if search, ok := start.(sdk.ServerToolUseBlock); ok {
+			if !p.searchEnabled || string(search.Name) != claudeSearchName || search.ID == "" {
+				return outputvalidation.New(model.OutputValidationResponseShape,
+					errors.New("anthropic stream: invalid or disabled native search call"))
+			}
+			p.searchBlocks[idx] = struct{}{}
+			return nil
+		}
+		if _, ok := start.(sdk.ToolSearchToolResultBlock); ok {
+			if !p.searchEnabled {
+				return outputvalidation.New(model.OutputValidationResponseShape,
+					errors.New("anthropic stream: native search result without search enabled"))
+			}
+			return nil
+		}
 		if text, ok := start.(sdk.TextBlock); ok {
 			if p.output != nil {
 				if p.completion != nil || p.completionSeen {
@@ -525,6 +539,11 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			if delta.PartialJSON == "" {
 				return nil
 			}
+			if _, ok := p.searchBlocks[idx]; ok {
+				// The SDK accumulates native arguments. They never become
+				// application tool deltas and are validated at completion.
+				return p.retain(delta.PartialJSON)
+			}
 			if tb := p.toolBlocks[idx]; tb != nil {
 				if err := p.retain(delta.PartialJSON); err != nil {
 					return err
@@ -632,6 +651,7 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			)
 		}
 		delete(p.openBlocks, idx)
+		delete(p.searchBlocks, idx)
 		if p.completion != nil && p.completion.index == idx {
 			payload, err := p.completion.finalPayload()
 			if err != nil {
@@ -678,14 +698,24 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 			payload := rawjson.Message(`{}`)
 			if !tb.noArguments {
 				var err error
-				payload, err = decodeToolPayload(tb.finalInput())
+				input := tb.finalInput()
+				payload, err = decodeToolPayload(input)
 				if err != nil {
+					// Absent arguments retain the existing missing-input
+					// correction contract. A nonempty malformed document
+					// cannot establish a completed model decision.
+					if input == "" {
+						return outputvalidation.New(
+							model.OutputValidationToolArguments,
+							model.NewMalformedToolArgumentsError(
+								tools.Ident(tb.name),
+								fmt.Errorf("anthropic stream: finalize tool payload %q: %w", tb.id, err),
+							),
+						)
+					}
 					return outputvalidation.New(
-						model.OutputValidationToolArguments,
-						model.NewMalformedToolArgumentsError(
-							tools.Ident(tb.name),
-							fmt.Errorf("anthropic stream: finalize tool payload %q: %w", tb.id, err),
-						),
+						model.OutputValidationResponseShape,
+						fmt.Errorf("anthropic stream: finalize tool payload %q: %w", tb.id, err),
 					)
 				}
 			}

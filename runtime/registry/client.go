@@ -79,9 +79,8 @@ func toolsetInfoFromGenerated(toolset *genregistry.ToolsetInfo) *ToolsetInfo {
 	return info
 }
 
-// toolsetSchemaFromGenerated retains the model payload, result, and sidecar
-// schemas used by registry-backed tool consumers. The execution payload schema
-// belongs to provider admission and is not exposed through this consumer view.
+// toolsetSchemaFromGenerated copies the schemas needed to validate model
+// arguments, provider arguments, results, and server-only result data.
 func toolsetSchemaFromGenerated(toolset *genregistry.Toolset) *ToolsetSchema {
 	schema := &ToolsetSchema{
 		ID:           toolset.Name,
@@ -106,11 +105,12 @@ func toolsetSchemaFromGenerated(toolset *genregistry.Toolset) *ToolsetSchema {
 // caches cannot alias mutable generated result slices.
 func toolSchemaFromGenerated(tool *genregistry.ToolSchema) *ToolSchema {
 	schema := &ToolSchema{
-		Name:          tool.Name,
-		Tags:          append([]string(nil), tool.Tags...),
-		PayloadSchema: append([]byte(nil), tool.PayloadSchema...),
-		ResultSchema:  append([]byte(nil), tool.ResultSchema...),
-		SidecarSchema: append([]byte(nil), tool.SidecarSchema...),
+		Name:                   tool.Name,
+		Tags:                   append([]string(nil), tool.Tags...),
+		PayloadSchema:          append([]byte(nil), tool.PayloadSchema...),
+		ExecutionPayloadSchema: append([]byte(nil), tool.ExecutionPayloadSchema...),
+		ResultSchema:           append([]byte(nil), tool.ResultSchema...),
+		SidecarSchema:          append([]byte(nil), tool.SidecarSchema...),
 	}
 	if tool.Description != nil {
 		schema.Description = *tool.Description

@@ -185,7 +185,7 @@ func main() {
 	// Replace this with your own CLI, HTTP server, or integration.
 
 	{
-		client := bootstrap.NewClient(rt)
+		client := rt.MustClient(bootstrap.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model2.Message{
 			{
 				Role:  model2.ConversationRoleUser,
@@ -204,7 +204,7 @@ func main() {
 	}
 
 	{
-		client := completions.NewClient(rt)
+		client := rt.MustClient(completions.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model2.Message{
 			{
 				Role:  model2.ConversationRoleUser,
@@ -223,7 +223,7 @@ func main() {
 	}
 
 	{
-		client := context2.NewClient(rt)
+		client := rt.MustClient(context2.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model2.Message{
 			{
 				Role:  model2.ConversationRoleUser,
@@ -242,7 +242,7 @@ func main() {
 	}
 
 	{
-		client := fmt2.NewClient(rt)
+		client := rt.MustClient(fmt2.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model2.Message{
 			{
 				Role:  model2.ConversationRoleUser,
@@ -261,7 +261,7 @@ func main() {
 	}
 
 	{
-		client := io.NewClient(rt)
+		client := rt.MustClient(io.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model2.Message{
 			{
 				Role:  model2.ConversationRoleUser,
@@ -280,7 +280,7 @@ func main() {
 	}
 
 	{
-		client := log.NewClient(rt)
+		client := rt.MustClient(log.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model2.Message{
 			{
 				Role:  model2.ConversationRoleUser,
@@ -299,7 +299,7 @@ func main() {
 	}
 
 	{
-		client := model.NewClient(rt)
+		client := rt.MustClient(model.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model2.Message{
 			{
 				Role:  model2.ConversationRoleUser,
@@ -318,7 +318,7 @@ func main() {
 	}
 
 	{
-		client := rawjson.NewClient(rt)
+		client := rt.MustClient(rawjson.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model2.Message{
 			{
 				Role:  model2.ConversationRoleUser,
@@ -337,7 +337,7 @@ func main() {
 	}
 
 	{
-		client := runtime.NewClient(rt)
+		client := rt.MustClient(runtime.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model2.Message{
 			{
 				Role:  model2.ConversationRoleUser,
@@ -356,7 +356,7 @@ func main() {
 	}
 
 	{
-		client := storageinmem.NewClient(rt)
+		client := rt.MustClient(storageinmem.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model2.Message{
 			{
 				Role:  model2.ConversationRoleUser,
@@ -375,7 +375,7 @@ func main() {
 	}
 
 	{
-		client := time.NewClient(rt)
+		client := rt.MustClient(time.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model2.Message{
 			{
 				Role:  model2.ConversationRoleUser,

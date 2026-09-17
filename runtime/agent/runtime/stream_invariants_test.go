@@ -149,7 +149,7 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 		nil,
 		[]tools.Ident{invokeToolID},
 		nil,
-	)
+		nil)
 	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{Definition: parentDefinition,
 
 		WorkflowHandler: (engine.WorkflowDefinition{

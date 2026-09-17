@@ -146,7 +146,10 @@ func (c *toolsetCatalog) Register(
 			toolregistry.MaxProviderLeaseDuration,
 		)
 	}
-	fingerprint := toolsetSchemaFingerprint(toolset)
+	fingerprint, err := toolsetSchemaFingerprint(toolset)
+	if err != nil {
+		return catalogEntry{}, err
+	}
 	token, err := admissionRegistrationToken(
 		fingerprint,
 		admissionRevision,
@@ -836,7 +839,10 @@ func parseCatalogEntry(name, body string) (catalogEntry, error) {
 	if err := toolregistry.ValidateWireProtocolVersion(entry.WireProtocolVersion); err != nil {
 		return catalogEntry{}, fmt.Errorf("toolset %q invalid wire protocol version: %w", name, err)
 	}
-	fingerprint := toolsetSchemaFingerprint(entry.Toolset)
+	fingerprint, err := toolsetSchemaFingerprint(entry.Toolset)
+	if err != nil {
+		return catalogEntry{}, err
+	}
 	if entry.SchemaFingerprint != fingerprint {
 		return catalogEntry{}, fmt.Errorf("toolset %q schema fingerprint does not match canonical schema", name)
 	}
@@ -903,9 +909,17 @@ func cloneTokenSet(tokens map[string]struct{}) map[string]struct{} {
 }
 
 // toolsetSchemaFingerprint returns the canonical schema identity.
-func toolsetSchemaFingerprint(toolset *genregistry.Toolset) string {
+func toolsetSchemaFingerprint(toolset *genregistry.Toolset) (string, error) {
 	tools := make([]internaladmission.ToolSchema, len(toolset.Tools))
 	for i, tool := range toolset.Tools {
+		var consumerContract []byte
+		if tool.ConsumerContract != nil {
+			var err error
+			consumerContract, err = json.Marshal(tool.ConsumerContract)
+			if err != nil {
+				return "", fmt.Errorf("encode tool %q consumer contract: %w", tool.Name, err)
+			}
+		}
 		tools[i] = internaladmission.ToolSchema{
 			Name:                   tool.Name,
 			Description:            tool.Description,
@@ -914,6 +928,7 @@ func toolsetSchemaFingerprint(toolset *genregistry.Toolset) string {
 			ExecutionPayloadSchema: tool.ExecutionPayloadSchema,
 			ResultSchema:           tool.ResultSchema,
 			SidecarSchema:          tool.SidecarSchema,
+			ConsumerContract:       consumerContract,
 		}
 	}
 	var version *string
@@ -927,7 +942,7 @@ func toolsetSchemaFingerprint(toolset *genregistry.Toolset) string {
 		Version:     version,
 		Tags:        toolset.Tags,
 		Tools:       tools,
-	})
+	}), nil
 }
 
 // admissionRegistrationToken derives the wire-visible execution fence from the

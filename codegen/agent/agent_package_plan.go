@@ -39,6 +39,7 @@ type (
 		configPaths         []string
 		registryPaths       []string
 		definitionAgentIDs  []string
+		registrySources     []*agentRegistrySourcesData
 	}
 
 	// agentPackageFilesData contains the imports and package names used by the
@@ -65,6 +66,12 @@ type (
 		ToolSpecsAlias string
 		// ToolsAlias names the runtime tool contract package.
 		ToolsAlias string
+		// RegistrySources contains generated source readers for the definition graph.
+		RegistrySources []*agentRegistrySourcesData
+		// ContextAlias names the package used by source reads.
+		ContextAlias string
+		// RootDefinition contains this agent's own tool inputs.
+		RootDefinition *agentDefinitionFileData
 		// ChildDefinitions contains every agent definition reachable through an
 		// agent tool, including definitions used only by nested child agents.
 		ChildDefinitions []*agentDefinitionFileData
@@ -76,6 +83,12 @@ type (
 		*AgentData
 		// ToolSpecsAlias names this agent's aggregate generated tool package.
 		ToolSpecsAlias string
+		// RegistrySources supplies this agent's statically specialized reads.
+		RegistrySources *agentRegistrySourcesData
+		// DeferredTools contains static names loaded through model tool search.
+		DeferredTools []string
+		// ToolsAlias names the runtime tool contract package.
+		ToolsAlias string
 	}
 
 	// agentConfigFileData contains the chosen import names used by config.go.
@@ -180,6 +193,7 @@ func planAgentPackages(generation *goacodegen.Generation, design *agentir.Design
 			helperImportPaths:   make(map[string]string),
 			definitionAgentIDs:  reachableAgentIDs(agent),
 		}
+		packagePlan.registrySources = planRegistrySources(agent, packagePlan.definitionAgentIDs)
 		if err := packagePlan.declare(agent); err != nil {
 			return nil, fmt.Errorf("plan agent %q package names: %w", agent.ID, err)
 		}
@@ -223,6 +237,17 @@ func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
 		goacodegen.NameVariable: {agentDefinitionValueName},
 	}); err != nil {
 		return err
+	}
+	for _, sources := range p.registrySources {
+		preferred := "registryTools"
+		if sources.AgentID != agent.ID {
+			preferred += goacodegen.Goify(sources.AgentID, true)
+		}
+		declaration, err := p.declarePreferred(goacodegen.NameType, preferred, goacodegen.UnexportedName, sources.AgentID+":registry-tools")
+		if err != nil {
+			return err
+		}
+		sources.declaration = declaration
 	}
 
 	var err error
@@ -291,6 +316,9 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 		engineImportPath,
 		runtimeImportPath,
 		"time",
+	}
+	if len(p.registrySources) > 0 {
+		p.implementationPaths = append(p.implementationPaths, "context")
 	}
 
 	if agent.Expr.RunPolicy != nil && agent.Expr.RunPolicy.History != nil &&
@@ -620,6 +648,9 @@ func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentDa
 // linkFileData copies the selected import lines and qualifiers into the data
 // used by each agent package template.
 func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]*AgentData) *agentPackageFilesData {
+	for _, sources := range p.registrySources {
+		sources.TypeName = sources.declaration.Name()
+	}
 	implementation := &agentImplementationFileData{
 		AgentData:    agent,
 		Imports:      p.linkImports(p.implementationPaths),
@@ -628,15 +659,31 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 		RuntimeAlias: p.pkg.ImportName(runtimeImportPath),
 		ToolsAlias:   p.pkg.ImportName(toolsImportPath),
 	}
+	if len(p.registrySources) > 0 {
+		implementation.RegistrySources = p.registrySources
+		implementation.ContextAlias = p.pkg.ImportName("context")
+	}
 	if importPathIncluded(p.implementationPaths, agent.ToolSpecsImportPath) {
 		implementation.ToolSpecsAlias = p.pkg.ImportName(agent.ToolSpecsImportPath)
 	}
+	implementation.RootDefinition = &agentDefinitionFileData{
+		AgentData:       agent,
+		ToolSpecsAlias:  implementation.ToolSpecsAlias,
+		RegistrySources: registrySourcesFor(agent.ID, p.registrySources),
+		ToolsAlias:      implementation.ToolsAlias,
+	}
+	implementation.RootDefinition.DeferredTools = agentDeferral(agent)
 	for _, childID := range p.definitionAgentIDs {
 		child := agentsByID[childID]
 		if child == nil {
 			panic(fmt.Sprintf("agent codegen: reachable agent %q has no generator data", childID))
 		}
-		definition := &agentDefinitionFileData{AgentData: child}
+		definition := &agentDefinitionFileData{
+			AgentData:       child,
+			RegistrySources: registrySourcesFor(child.ID, p.registrySources),
+			ToolsAlias:      implementation.ToolsAlias,
+		}
+		definition.DeferredTools = agentDeferral(child)
 		if importPathIncluded(p.implementationPaths, child.ToolSpecsImportPath) {
 			definition.ToolSpecsAlias = p.pkg.ImportName(child.ToolSpecsImportPath)
 		}
@@ -750,7 +797,8 @@ func (p *agentPackagePlan) linkImports(paths []string) []*goacodegen.ImportSpec 
 // registersUsedToolset reports whether RegisterUsedToolsets owns this reference.
 func registersUsedToolset(reference *agentir.ToolsetRef) bool {
 	return reference.AgentToolsImportPath == "" &&
-		(reference.Provider == nil || reference.Provider.Kind != agentexpr.ProviderMCP)
+		(reference.Provider == nil ||
+			reference.Provider.Kind != agentexpr.ProviderMCP && reference.Provider.Kind != agentexpr.ProviderRegistry)
 }
 
 // referenceHasHints reports whether generated registration installs call or result hints.

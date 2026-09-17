@@ -367,6 +367,18 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 	if len(req.Messages) == 0 {
 		return nil, errors.New("bedrock: messages are required")
 	}
+	toolDefs := make([]*model.ToolDefinition, 0, len(req.Tools))
+	for _, definition := range req.Tools {
+		if definition.Deferred {
+			if req.ToolChoice == nil || req.ToolChoice.Mode != model.ToolChoiceModeTool {
+				return nil, fmt.Errorf("bedrock Converse: use the Anthropic Messages adapter for deferred tools: %w", model.ErrToolSearchUnsupported)
+			}
+			if definition.Name != req.ToolChoice.Name {
+				continue
+			}
+		}
+		toolDefs = append(toolDefs, definition)
+	}
 	modelID, err := modelid.Resolve("bedrock", req, c.defaultModel, c.highModel, c.smallModel)
 	if err != nil {
 		return nil, err
@@ -384,7 +396,7 @@ func (c *provider) prepareRequest(req *model.Request) (*requestParts, error) {
 	// Converse receive the same provider-enforced schema. Derive the tool choice
 	// before thinking so unsupported manual-thinking combinations fail before
 	// the provider call.
-	toolDefs, toolChoice := req.Tools, req.ToolChoice
+	toolChoice := req.ToolChoice
 	useStructuredOutputTool := structuredOutputUsesTool(modelID, req.StructuredOutput)
 	if useStructuredOutputTool {
 		if len(req.Tools) > 0 || req.ToolChoice != nil {

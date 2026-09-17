@@ -81,7 +81,7 @@ func TestServiceExportFilesMoveDerivedNamesAroundServiceDeclarations(t *testing.
 	require.Equal(t, "alpha.shared", generatedConstants(t, content)["SharedToolsetName2"])
 }
 
-func TestServiceExportRegistrySpecsWithoutAgent(t *testing.T) {
+func TestRegistryConsumerEmitsNoStaticToolsetPackage(t *testing.T) {
 	genpkg, roots := testhelpers.RunDesign(t, func() {
 		API("exports", func() {})
 		registry := Registry("catalog", func() {
@@ -89,21 +89,21 @@ func TestServiceExportRegistrySpecsWithoutAgent(t *testing.T) {
 		})
 		shared := Toolset(FromRegistry(registry, "shared"))
 		Service("alpha", func() {
-			Export(shared)
+			Agent("reader", "Read shared tools.", func() { Use(shared) })
 		})
 		Service("beta", func() {
-			Export(shared)
+			Agent("reader", "Read shared tools.", func() { Use(shared) })
 		})
 	})
 
 	files, err := codegen.BuildFilesForTest(genpkg, roots, false)
 	require.NoError(t, err)
-	content := testhelpers.FileContent(t, files, "gen/alpha/toolsets/shared/specs.go")
-	require.NotContains(t, content, "RegistryToolsetID")
-	require.Contains(t, content, `const RegistryName = "catalog"`)
-	require.Contains(t, content, `const ToolsetName = "shared"`)
-	require.Equal(t, "alpha.shared", generatedConstants(t, testhelpers.FileContent(t, files, "gen/alpha/toolset_exports.go"))["SharedToolsetName"])
-	require.Equal(t, "beta.shared", generatedConstants(t, testhelpers.FileContent(t, files, "gen/beta/toolset_exports.go"))["SharedToolsetName"])
+	for _, service := range []string{"alpha", "beta"} {
+		content := testhelpers.FileContent(t, files, "gen/"+service+"/agents/reader/agent.go")
+		require.Contains(t, content, `catalog.IncludeToolset(ctx, "catalog", "shared", "", false)`)
+		require.False(t, testhelpers.FileExists(files, "gen/"+service+"/toolsets/shared/specs.go"))
+		require.False(t, testhelpers.FileExists(files, "gen/"+service+"/toolset_exports.go"))
+	}
 }
 
 // serviceExportSpecs returns every reusable specs file for one exported

@@ -98,6 +98,7 @@ type (
 		resolvedModelClass model.ModelClass
 		structuredOutput   *model.StructuredOutput
 		outputProjection   *strictSchemaProjection
+		search             *toolSearch
 	}
 
 	// responseStream is the minimal streaming surface needed by the adapter.
@@ -179,20 +180,13 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.transport.Complete(ctx, prepared.request)
-	if err != nil {
-		return nil, wrapOpenAIError("responses.create", err)
-	}
-	response, err := translateResponse(
-		resp,
-		prepared.codec,
-		prepared.resolvedModelID,
-		prepared.resolvedModelClass,
-		prepared.structuredOutput,
-		prepared.outputProjection,
-	)
-	if err != nil {
-		if _, providerFailure := model.AsProviderError(err); providerFailure {
+	for {
+		resp, err := c.transport.Complete(ctx, prepared.request)
+		if err != nil {
+			err = wrapOpenAIError("responses.create", err)
+			if prepared.search != nil {
+				err = model.RetainUsage(err, prepared.search.usage)
+			}
 			return nil, err
 		}
 		var usage model.TokenUsage
@@ -203,13 +197,35 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 				prepared.resolvedModelClass,
 			)
 		}
-		return nil, contract.RejectProviderOutput(
-			outputvalidation.RequiredKind(err),
-			&usage,
-			err,
+		if prepared.search != nil {
+			if err := prepared.search.account(usage); err != nil {
+				return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), &prepared.search.usage, err)
+			}
+			usage = prepared.search.usage
+		}
+		response, err := translateResponse(
+			resp, prepared.codec, prepared.resolvedModelID, prepared.resolvedModelClass,
+			prepared.structuredOutput, prepared.outputProjection, prepared.search,
 		)
+		if err != nil {
+			if _, providerFailure := model.AsProviderError(err); providerFailure {
+				return nil, model.RetainUsage(err, usage)
+			}
+			return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), &usage, err)
+		}
+		if prepared.search == nil {
+			return response, nil
+		}
+		if !prepared.search.finishRound(response) {
+			if err := prepared.search.complete(response); err != nil {
+				return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), &usage, err)
+			}
+			return response, nil
+		}
+		if err := prepared.search.continueRequest(&prepared.request, resp); err != nil {
+			return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), &usage, err)
+		}
 	}
-	return response, nil
 }
 
 // Stream renders a raw streaming response using the configured OpenAI client.
@@ -229,11 +245,8 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 	streamer := newOpenAIStreamer(
 		ctx,
 		stream,
-		prepared.codec,
-		prepared.resolvedModelID,
-		prepared.resolvedModelClass,
-		prepared.structuredOutput,
-		prepared.outputProjection,
+		c.transport,
+		prepared,
 		contract,
 	)
 	return streamer, nil
@@ -361,6 +374,10 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 			request.ToolChoice = choice
 		}
 	}
+	search, err := prepareToolSearch(req, &request)
+	if err != nil {
+		return nil, err
+	}
 	return &preparedRequest{
 		request:            request,
 		codec:              codec,
@@ -368,6 +385,7 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 		resolvedModelClass: modelClass,
 		structuredOutput:   req.StructuredOutput,
 		outputProjection:   outputProjection,
+		search:             search,
 	}, nil
 }
 

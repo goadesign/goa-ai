@@ -145,7 +145,10 @@ func (r *Runtime) appendUserToolRecordResults(
 	for _, record := range records {
 		call := record.call
 		tr := record.result
-		spec, hasSpec := r.toolSpec(tr.Name)
+		spec, hasSpec, err := lookupCallSpec(call, r.toolSpec)
+		if err != nil {
+			return err
+		}
 		content, err := r.toolResultContent(&call, tr)
 		if err != nil {
 			return err
@@ -259,7 +262,7 @@ func validateStepToolRecord(context string, record stepToolRecord) error {
 // toolResultRequiresResume reports whether an executed result requires another
 // planner turn.
 func (r *Runtime) toolResultRequiresResume(call ToolCall, result *planner.ToolResult) bool {
-	if !r.isBookkeeping(call.Name) {
+	if !r.isBookkeepingCall(call) {
 		return true
 	}
 	return result != nil && result.Failure != nil
@@ -271,11 +274,22 @@ func (r *Runtime) toolResultContent(call *ToolCall, tr *planner.ToolResult) (any
 	}
 	var resultJSON rawjson.Message
 	if tr.Result != nil {
-		raw, err := r.marshalToolValue(context.Background(), tr.Name, tr.Result, tr.Bounds)
+		contractCall := ToolCall{Name: tr.Name}
+		if call != nil {
+			contractCall = *call
+		}
+		spec, ok, err := lookupCallSpec(contractCall, r.toolSpec)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("runtime: no result contract for tool %q", tr.Name)
+		}
+		raw, err := EncodeCanonicalToolResult(spec, tr.Result, tr.Bounds)
 		if err != nil {
 			return nil, fmt.Errorf("runtime: encode tool_result for %s: %w", tr.Name, err)
 		}
-		resultJSON = rawjson.Message(raw)
+		resultJSON = raw
 	}
 	errorMessage := ""
 	if tr.Failure != nil {
@@ -295,8 +309,8 @@ func (r *Runtime) toolResultContent(call *ToolCall, tr *planner.ToolResult) (any
 
 // appendToolOutputRecords records canonical planner tool outputs from paired
 // step records in run-loop state.
-func (r *Runtime) appendToolOutputRecords(ctx context.Context, st *runLoopState, records []stepToolRecord) error {
-	outputs, err := r.buildPlannerToolOutputRecords(ctx, records)
+func (r *Runtime) appendToolOutputRecords(st *runLoopState, records []stepToolRecord) error {
+	outputs, err := r.buildPlannerToolOutputRecords(records)
 	if err != nil {
 		return err
 	}

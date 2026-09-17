@@ -27,7 +27,10 @@ func Confirmation(dsl func()) {
 }
 
 // PromptTemplate sets the operator-facing prompt template rendered
-// during confirmation. The template is executed with the tool payload value.
+// during confirmation. The template reads canonical JSON argument names, such
+// as {{ .device_alias }}, and never depends on generated Go field names.
+// Use index for optional JSON properties. The json function preserves exact
+// JSON values when inserting an argument into the prompt.
 func PromptTemplate(tmpl string) {
 	c, ok := eval.Current().(*agentsexpr.ToolConfirmationExpr)
 	if !ok {
@@ -39,7 +42,8 @@ func PromptTemplate(tmpl string) {
 
 // DeniedResultTemplate sets the JSON template used to construct a
 // schema-compliant tool result when the user denies confirmation. The template
-// is executed with the tool payload value and must render valid JSON.
+// reads canonical JSON argument names and must render valid JSON. Use the json
+// function to insert argument values without manual quoting.
 func DeniedResultTemplate(tmpl string) {
 	c, ok := eval.Current().(*agentsexpr.ToolConfirmationExpr)
 	if !ok {

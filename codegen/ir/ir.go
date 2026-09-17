@@ -187,6 +187,8 @@ type (
 		Description string `json:"description"`
 		// Tags are the toolset-level tags visible from the reference.
 		Tags []string `json:"tags,omitempty"`
+		// Deferred records this consumer's choice to discover tools on demand.
+		Deferred bool `json:"deferred,omitempty"`
 		// Service is the Goa service that owns the reference.
 		Service *Service `json:"-"`
 		// ServiceName is the Goa service name that owns the reference.

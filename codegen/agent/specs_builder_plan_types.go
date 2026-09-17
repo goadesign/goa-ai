@@ -41,10 +41,6 @@ func (p *toolSpecsPlan) link(data *GeneratorData) error {
 		if err != nil {
 			return err
 		}
-		if planned.registry {
-			planned.render = owner
-			continue
-		}
 		if err := linkToolsetNames(planned, owner); err != nil {
 			return err
 		}

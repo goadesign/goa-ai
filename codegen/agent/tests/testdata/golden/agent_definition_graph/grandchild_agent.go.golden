@@ -71,6 +71,7 @@ var agentDefinition = runtime.NewAgentDefinition(
 			specs2.RequiredLabels(),
 			[]tools.Ident{},
 			nil,
+			nil,
 		),
 		runtime.NewAgentDefinition(
 			runtime.AgentRoute{
@@ -85,8 +86,10 @@ var agentDefinition = runtime.NewAgentDefinition(
 				tools.Ident("grandchild_work.finish"),
 			},
 			nil,
+			nil,
 		),
 	},
+	nil,
 )
 
 // Definition returns the immutable generated contract shared by callers and workers.

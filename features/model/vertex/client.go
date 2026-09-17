@@ -147,6 +147,18 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 	if req == nil {
 		return nil, errors.New("vertex: request is required")
 	}
+	toolDefs := make([]*model.ToolDefinition, 0, len(req.Tools))
+	for _, definition := range req.Tools {
+		if definition.Deferred {
+			if req.ToolChoice == nil || req.ToolChoice.Mode != model.ToolChoiceModeTool {
+				return nil, fmt.Errorf("vertex Gemini: %w", model.ErrToolSearchUnsupported)
+			}
+			if definition.Name != req.ToolChoice.Name {
+				continue
+			}
+		}
+		toolDefs = append(toolDefs, definition)
+	}
 	modelID, err := c.opts.resolveModelID(req)
 	if err != nil {
 		return nil, err
@@ -157,7 +169,7 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 	if req.Cache != nil {
 		return nil, errors.New("vertex: cache options are not supported")
 	}
-	canonToProv, provToCanon, err := buildToolNameMaps(req.Tools)
+	canonToProv, provToCanon, err := buildToolNameMaps(toolDefs)
 	if err != nil {
 		return nil, err
 	}
@@ -190,8 +202,8 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 		}
 		config.Temperature = genai.Ptr(temperature)
 	}
-	if len(req.Tools) > 0 {
-		tools, err := encodeTools(req.Tools, canonToProv)
+	if len(toolDefs) > 0 {
+		tools, err := encodeTools(toolDefs, canonToProv)
 		if err != nil {
 			return nil, err
 		}

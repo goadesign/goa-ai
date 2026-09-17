@@ -138,10 +138,20 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 	l.r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(program.calls))
 	candidates := append([]ToolCall(nil), program.calls...)
 	for _, call := range candidates {
-		if _, ok := l.r.toolSpec(call.Name); !ok {
+		_, ok, err := lookupCallSpec(call, l.r.toolSpec)
+		if err != nil {
+			return err
+		}
+		if !ok {
 			return planner.NewOutputContractError(
 				fmt.Errorf("planner called unregistered tool %q", call.Name),
 			)
+		}
+		if call.Registry != nil {
+			call.Labels = mergeLabels(cloneLabels(l.base.RunContext.Labels), call.Labels)
+			if _, err := l.r.resolveRegistryExecution(l.input.AgentID, call); err != nil {
+				return err
+			}
 		}
 	}
 	candidates, err := l.r.applyPerRunOverrides(ctx, l.input, candidates)
@@ -191,7 +201,10 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 	}
 	if len(program.awaitItems) > 0 {
 		for _, call := range allowed {
-			spec, ok := l.r.toolSpec(call.Name)
+			spec, ok, err := lookupCallSpec(call, l.r.toolSpec)
+			if err != nil {
+				return err
+			}
 			if !ok {
 				return fmt.Errorf("unknown tool %q", call.Name)
 			}
@@ -258,7 +271,10 @@ func (r *Runtime) validateTerminalRunBatch(calls []ToolCall) error {
 	hasTerminal := false
 	hasNonTerminal := false
 	for _, call := range calls {
-		spec, ok := r.toolSpec(call.Name)
+		spec, ok, err := lookupCallSpec(call, r.toolSpec)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return fmt.Errorf("unknown tool %q", call.Name)
 		}
@@ -281,7 +297,10 @@ func (r *Runtime) validateTerminalToolClarifications(records []stepToolRecord) e
 		if record.clarification == nil {
 			continue
 		}
-		spec, ok := r.toolSpec(record.call.Name)
+		spec, ok, err := lookupCallSpec(record.call, r.toolSpec)
+		if err != nil {
+			return err
+		}
 		if !ok {
 			return fmt.Errorf("unknown tool %q", record.call.Name)
 		}
@@ -298,7 +317,7 @@ func (l *workflowLoop) executeImmediateToolCalls(calls []ToolCall, expectedChild
 	budgeted := make([]ToolCall, 0, len(calls))
 	bookkeeping := make([]ToolCall, 0, len(calls))
 	for _, call := range calls {
-		if l.r.isBookkeeping(call.Name) {
+		if l.r.isBookkeepingCall(call) {
 			bookkeeping = append(bookkeeping, call)
 		} else {
 			budgeted = append(budgeted, call)
@@ -357,7 +376,7 @@ func (l *workflowLoop) resolveExpiredConfirmations(
 	expiredBudgeted := make([]ToolCall, 0, len(confirmations))
 	expiredBookkeeping := make([]ToolCall, 0, len(confirmations))
 	for _, confirmation := range confirmations {
-		bookkeeping := l.r.isBookkeeping(confirmation.call.Name)
+		bookkeeping := l.r.isBookkeepingCall(confirmation.call)
 		deadline := l.deadlines.Budget
 		if bookkeeping {
 			deadline = l.deadlines.Hard
@@ -434,7 +453,7 @@ func (r *Runtime) recordStepToolResults(
 	}
 	results := stepToolResults(records)
 	st.ToolEvents = append(st.ToolEvents, cloneToolResults(results)...)
-	if err := r.appendToolOutputRecords(ctx, st, records); err != nil {
+	if err := r.appendToolOutputRecords(st, records); err != nil {
 		return err
 	}
 	if err := r.appendUserToolRecordResults(ctx, input.AgentID, base, records, turnID); err != nil {
@@ -477,7 +496,11 @@ func (r *Runtime) publishStepToolResult(
 	}
 	resultJSON := record.resultJSON
 	if len(resultJSON) == 0 {
-		if _, ok := r.toolSpec(record.call.Name); ok {
+		_, ok, err := lookupCallSpec(record.call, r.toolSpec)
+		if err != nil {
+			return err
+		}
+		if ok {
 			encoded, err := r.materializeToolResult(ctx, record.call, record.result)
 			if err != nil {
 				return err
@@ -529,7 +552,7 @@ func (r *Runtime) classifyToolRecords(records []stepToolRecord, result *PlanResu
 		return stepTransitionResume, nil
 	}
 	for _, record := range records {
-		if !r.isBookkeeping(record.call.Name) {
+		if !r.isBookkeepingCall(record.call) {
 			return stepTransitionResume, nil
 		}
 	}
@@ -568,7 +591,10 @@ func (r *Runtime) executedSuccessfulTerminalRunTool(records []stepToolRecord) (b
 		if record.result == nil {
 			return false, fmt.Errorf("missing tool result for %q", record.call.Name)
 		}
-		spec, ok := r.toolSpec(record.result.Name)
+		spec, ok, err := lookupCallSpec(record.call, r.toolSpec)
+		if err != nil {
+			return false, err
+		}
 		if !ok {
 			return false, fmt.Errorf("unknown tool %q", record.result.Name)
 		}
@@ -608,7 +634,11 @@ func (l *workflowLoop) recordCapDeniedToolCall(
 		return false, nil, err
 	}
 	var resultJSON rawjson.Message
-	if _, ok := l.r.toolSpec(call.Name); ok {
+	_, ok, err := lookupCallSpec(call, l.r.toolSpec)
+	if err != nil {
+		return true, nil, err
+	}
+	if ok {
 		encoded, err := l.r.materializeToolResult(ctx, call, tr)
 		if err != nil {
 			return true, nil, err

@@ -959,6 +959,36 @@ var AnthropicRegistry = Registry("anthropic", func() {
 
 Generated `registry.go` files in agent packages are local runtime registration helpers; they do not implement the clustered registry service.
 
+Registry consumption and deferred loading are separate declarations. A named
+`Toolset(FromRegistry(...))` consumes one required registration; `Use(registry)`
+consumes its current toolsets. `Deferred()` inside either consuming `Use`, or a
+static `Use`, chooses native model tool search. No namespace concept is added.
+
+Generation emits each agent's direct registry reads and exact source/version
+permission predicates, including independent child-agent declarations. Static
+search word counts, deferred IDs, complete provider `ConsumerContract` records,
+and schema fingerprints are generated literals. The runtime does not interpret
+these static choices. Applications connect already-built registry and Pulse
+clients once with `RegisterRegistry`; generated `Definition()` and
+`NewClient(rt)` require no catalog inputs and perform no remote reads.
+
+Each planning activity resolves its own current catalog. The model adapter
+receives only permitted definitions. OpenAI uses native client search with
+private BM25 ranking; Claude uses provider-hosted deferred search, including
+the dedicated Messages transport on Bedrock. Provider-specific search records
+stay in existing message metadata. There is no separate loaded-tool store.
+
+Accepted calls retain their selected definition and fixed pagination partner
+with the existing registration token. Confirmation, decoding, and replay use
+that saved contract; `CallResolvedTool` rejects a replaced registration before
+publication. Catalog changes cannot silently redirect an accepted call. Static
+runtime registrations remain immutable, and history never grants permission
+for new calls. Dynamic service tools carry generated confirmation, pagination,
+field, and server-only data metadata; agent/control execution remains compiled.
+
+[Tool search and dynamic registries](docs/tool_search.md) owns the full lifecycle,
+provider limitations, and upgrade contract.
+
 Provider admission is owned by the clustered registry. `Serve` generates one
 UUID incarnation per lifecycle; leases are keyed by stable provider ID plus
 incarnation, so delayed old-process release cannot remove a replacement.

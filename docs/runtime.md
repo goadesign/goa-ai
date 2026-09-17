@@ -2597,15 +2597,35 @@ The registry wire protocol and deterministic stream IDs are defined in `runtime/
 - Toolset request stream: `toolset:<toolsetID>:requests`
 - Per-call result stream: `result:<toolUseID>`
 
-### Registry discovery & catalog sync
+### Dynamic registry consumption
 
-If you need runtime discovery of toolsets and schemas (for example, tool
-catalogs that change without a `goa gen`), use the generated agent-side
-registry client packages under `gen/<service>/registry/<name>/`.
+Connect the clustered registry's generated service client and Pulse client with
+`rt.RegisterRegistry(name, registryClient, pulseClient)` before sealing the
+runtime. Generated named registry references and `Use(registry)`
+declarations emit direct source reads and permission checks. The named form is
+written as `Use(ToolsetReference)`, where the reference was declared with
+`Toolset(FromRegistry(...))`.
 
-Those generated clients own the consumer-side discovery flow. The standalone
-clustered registry service implementation lives under `goa-ai/registry`, and
-the shared Pulse wire protocol lives under `goa-ai/runtime/toolregistry`.
+Each planning activity that can start new work resolves its own catalog. Calls
+save only their selected contracts and fixed pagination partners with the
+existing registration token. Execution and overload retry require that token;
+confirmation and checkpoint restoration use the saved definitions without
+reading the current catalog. Current agent consumption and run policy still
+constrain new work. Runtime registration of static tools remains immutable.
+
+`Deferred()` independently chooses native model tool search for either static
+or registry tools. Planners continue to pass
+`input.Agent.AdvertisedToolDefinitions()` to model requests. Search calls and
+provider-specific replay stay inside the adapter; ordinary tool calls keep the
+existing execution loop. Preserve message metadata when storing or copying
+history.
+
+The complete contract, provider support, failure behavior, and upgrade steps
+are in [Tool search and dynamic registries](tool_search.md).
+
+The lower-level `runtime/registry` HTTP catalog and synchronization helpers
+remain available for separate catalog integrations. They do not update an
+agent's static registration or substitute for the clustered execution client.
 
 **Inline tools** — Custom executor implementation:
 
@@ -3392,7 +3412,7 @@ For runtime storage and workflow adapters:
 Install the Goa revision required by this module before regenerating:
 
 ```bash
-go install goa.design/goa/v3/cmd/goa@v3.31.0-preview.5
+go install goa.design/goa/v3/cmd/goa@v3.31.1
 ```
 
 For a release that changes generated or persisted runtime shapes:
@@ -3681,10 +3701,11 @@ The runtime treats confirmation as a boundary and validates:
 
 Notes:
 
+- Templates read canonical JSON property names, such as `{{ .key }}`, rather than generated Go field names. Use `index` for optional properties.
 - Confirmation templates (`PromptTemplate` and `DeniedResultTemplate`) are Go `text/template` strings
   executed with `missingkey=error`. In addition to the standard template functions (e.g. `printf`),
   Goa-AI provides:
-  - `json v` → JSON encodes `v` (useful for optional pointer fields or embedding structured values).
+  - `json v` → JSON encodes `v` without manual quoting or number conversion.
   - `quote s` → returns a Go-escaped quoted string (like `fmt.Sprintf("%q", s)`).
 
 ---

@@ -414,7 +414,7 @@ func TestAgentRegistrationSpecDoesNotGrantCorrectCallRecovery(t *testing.T) {
 
 	_, err := runtime.correctCallSpecs([]*planner.ToolOutput{
 		recoveryOutput(tool.Name, "saved-call", planner.RecoveryCorrectCall),
-	})
+	}, runtime.newRegistryCatalog(AgentDefinition{}))
 	require.ErrorContains(
 		t,
 		err,
@@ -665,7 +665,7 @@ func correctionTestRegistration(
 		nil,
 		executable,
 		nil,
-	),
+		nil),
 
 		WorkflowHandler: (engine.WorkflowDefinition{
 			Name:    "catalog.agent.workflow",

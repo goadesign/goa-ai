@@ -106,16 +106,23 @@ func (r *Runtime) advertisedToolDefinitions(
 ) []*model.ToolDefinition {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
+	return advertisedDefinitions(specs, policy, r.toolDefinitions)
+}
+
+// advertisedDefinitions copies only permitted definitions from one compiled
+// catalog. A missing definition is an internal construction error.
+func advertisedDefinitions(specs []tools.ToolSpec, policy compiledToolPolicy, compiled map[tools.Ident]*model.ToolDefinition) []*model.ToolDefinition {
 	definitions := make([]*model.ToolDefinition, 0, len(specs))
 	for _, spec := range specs {
 		if !policy.allowsTool(spec.Name, toolPolicyFactsFromSpec(spec)) {
 			continue
 		}
-		base := r.toolDefinitions[spec.Name]
+		base := compiled[spec.Name]
 		if base == nil {
 			panic(fmt.Sprintf("runtime: tool %q has no compiled model definition", spec.Name))
 		}
 		definition := *base
+		definition.Search.Terms = maps.Clone(base.Search.Terms)
 		definitions = append(definitions, &definition)
 	}
 	return definitions

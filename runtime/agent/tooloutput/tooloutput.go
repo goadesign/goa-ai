@@ -89,7 +89,7 @@ func Run[T any](ctx context.Context, client model.Client, request *model.Request
 		nil,
 		[]tools.Ident{privateSpec.Name},
 		nil,
-	)
+		nil)
 	planner := outputPlanner{request: *request, tool: privateSpec.Name}
 	if err := rt.RegisterAgent(ctx, agentruntime.AgentRegistration{
 		Definition:          definition,

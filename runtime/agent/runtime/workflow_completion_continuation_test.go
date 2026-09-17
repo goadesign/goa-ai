@@ -35,7 +35,7 @@ func TestCompletionStatisticsIncludeContinuationHistory(t *testing.T) {
 		}),
 	}))
 	reg := AgentRegistration{
-		Definition:       NewAgentDefinition(AgentRoute{ID: "records.agent", WorkflowName: "records.workflow", DefaultTaskQueue: "records.queue"}, []tools.ToolSpec{page, final}, nil, nil, []tools.Ident{page.Name, final.Name}, nil),
+		Definition:       NewAgentDefinition(AgentRoute{ID: "records.agent", WorkflowName: "records.workflow", DefaultTaskQueue: "records.queue"}, []tools.ToolSpec{page, final}, nil, nil, []tools.Ident{page.Name, final.Name}, nil, nil),
 		WorkflowHandler:  rt.ExecuteWorkflow,
 		PlanActivityName: "records.plan", ResumeActivityName: "records.resume", ExecuteToolActivity: "records.tool",
 		Planner: &stubPlanner{

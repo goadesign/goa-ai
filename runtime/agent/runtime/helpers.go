@@ -190,6 +190,7 @@ func cloneToolCall(src ToolCall) ToolCall {
 	cloned.Payload = append(rawjson.Message(nil), src.Payload...)
 	cloned.ModelPayload = append(rawjson.Message(nil), src.ModelPayload...)
 	cloned.Labels = cloneLabels(src.Labels)
+	cloned.Registry = src.Registry.Clone()
 	return cloned
 }
 
@@ -222,50 +223,6 @@ func cloneToolResults(src []*planner.ToolResult) []*planner.ToolResult {
 		out = append(out, &cp)
 	}
 	return out
-}
-
-// addTokenUsage combines nonnegative token counts without allowing integer
-// overflow to create invalid durable usage.
-func addTokenUsage(current, delta model.TokenUsage) (model.TokenUsage, error) {
-	input, err := addTokenCount("input", current.InputTokens, delta.InputTokens)
-	if err != nil {
-		return model.TokenUsage{}, err
-	}
-	output, err := addTokenCount("output", current.OutputTokens, delta.OutputTokens)
-	if err != nil {
-		return model.TokenUsage{}, err
-	}
-	total, err := addTokenCount("total", current.TotalTokens, delta.TotalTokens)
-	if err != nil {
-		return model.TokenUsage{}, err
-	}
-	cacheRead, err := addTokenCount("cache read", current.CacheReadTokens, delta.CacheReadTokens)
-	if err != nil {
-		return model.TokenUsage{}, err
-	}
-	cacheWrite, err := addTokenCount("cache write", current.CacheWriteTokens, delta.CacheWriteTokens)
-	if err != nil {
-		return model.TokenUsage{}, err
-	}
-	return model.TokenUsage{
-		InputTokens:      input,
-		OutputTokens:     output,
-		TotalTokens:      total,
-		CacheReadTokens:  cacheRead,
-		CacheWriteTokens: cacheWrite,
-	}, nil
-}
-
-// addTokenCount rejects invalid input and overflow before addition can wrap.
-func addTokenCount(name string, current, delta int) (int, error) {
-	if current < 0 || delta < 0 {
-		return 0, fmt.Errorf("%s token usage cannot be negative", name)
-	}
-	sum := current + delta
-	if sum < current {
-		return 0, fmt.Errorf("%s token usage exceeds the supported integer range", name)
-	}
-	return sum, nil
 }
 
 // mergeLabels merges src labels into dst. When dst is nil, it allocates a new
@@ -763,9 +720,17 @@ func (r *Runtime) isBookkeeping(name tools.Ident) bool {
 // toolMetadata retrieves policy metadata for each tool call by looking up the
 // registered canonical metadata. If the tool is not found, it constructs minimal
 // metadata with the tool name and the default budget class.
-func (r *Runtime) toolMetadata(calls []ToolCall) []policy.ToolMetadata {
+func (r *Runtime) toolMetadata(calls []ToolCall) ([]policy.ToolMetadata, error) {
 	metas := make([]policy.ToolMetadata, 0, len(calls))
 	for _, call := range calls {
+		if call.Registry != nil {
+			meta, err := registryCallMetadata(call)
+			if err != nil {
+				return nil, err
+			}
+			metas = append(metas, meta)
+			continue
+		}
 		if meta, ok := r.policyMetadata(call.Name); ok {
 			metas = append(metas, cloneToolMetadata(meta))
 			continue
@@ -776,7 +741,13 @@ func (r *Runtime) toolMetadata(calls []ToolCall) []policy.ToolMetadata {
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		})
 	}
-	return metas
+	return metas, nil
+}
+
+// isBookkeepingCall keeps dynamically discovered service tools budgeted even
+// when another agent has a static bookkeeping tool with the same name.
+func (r *Runtime) isBookkeepingCall(call ToolCall) bool {
+	return call.Registry == nil && r.isBookkeeping(call.Name)
 }
 
 func canonicalToolMetadata(spec tools.ToolSpec, lookup ToolMetadataLookup) policy.ToolMetadata {

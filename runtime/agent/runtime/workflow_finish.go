@@ -152,7 +152,6 @@ func completedToolStats(events []*planner.ToolResult) (int, *telemetry.ToolTelem
 // successful completion result as FinalToolResult without copying earlier tool
 // results, publishing an assistant message, or requesting another planner turn.
 func (r *Runtime) finishAfterSuccessfulToolCompletion(
-	ctx context.Context,
 	input *RunInput,
 	base *workflowConversation,
 	st *runLoopState,
@@ -161,7 +160,7 @@ func (r *Runtime) finishAfterSuccessfulToolCompletion(
 	if err != nil {
 		return nil, err
 	}
-	finalToolResult, err := r.successfulCompletionToolEvent(ctx, input, st.ToolEvents)
+	finalToolResult, err := r.successfulCompletionToolEvent(input, st.ToolEvents, st.ToolOutputs)
 	if err != nil {
 		return nil, err
 	}
@@ -179,14 +178,25 @@ func (r *Runtime) finishAfterSuccessfulToolCompletion(
 // ended the run. Earlier ordinary tools and failed completion attempts remain
 // only in the Store; multiple successful completion results are ambiguous and
 // violate the singular RunOutput contract.
-func (r *Runtime) successfulCompletionToolEvent(ctx context.Context, input *RunInput, events []*planner.ToolResult) (*api.ToolEvent, error) {
+func (r *Runtime) successfulCompletionToolEvent(input *RunInput, events []*planner.ToolResult, outputs []*planner.ToolOutput) (*api.ToolEvent, error) {
+	calls, err := recordedToolCalls(outputs)
+	if err != nil {
+		return nil, err
+	}
 	var completionTool tools.Ident
 	if input.Policy != nil {
 		completionTool = input.Policy.CompletionTool
 	}
 	var final *planner.ToolResult
 	for _, event := range events {
-		spec, ok := r.toolSpec(event.Name)
+		call, err := recordedResultCall(event.Name, event.ToolCallID, calls)
+		if err != nil {
+			return nil, err
+		}
+		spec, ok, err := lookupCallSpec(call, r.toolSpec)
+		if err != nil {
+			return nil, err
+		}
 		if !ok {
 			return nil, fmt.Errorf("unknown tool %q in completed run output", event.Name)
 		}
@@ -201,11 +211,7 @@ func (r *Runtime) successfulCompletionToolEvent(ctx context.Context, input *RunI
 	if final == nil {
 		return nil, errors.New("completed run is missing its successful terminal tool result")
 	}
-	encoded, err := r.encodeToolEvents(ctx, []*planner.ToolResult{final})
-	if err != nil {
-		return nil, err
-	}
-	return encoded[0], nil
+	return encodeToolEvent(final, ToolCall{Name: final.Name, ToolCallID: final.ToolCallID}, r.toolSpec)
 }
 
 // finalToolResultEvent converts the planner-owned final tool-result envelope

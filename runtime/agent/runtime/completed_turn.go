@@ -37,7 +37,12 @@ func completedTurnMessages(messages []*model.Message) ([]*model.Message, error) 
 		}
 		clear(message.Parts[len(parts):])
 		message.Parts = parts
-		delete(message.Meta, modelmetadata.OpenAIReasoningItems)
+		if err := modelmetadata.WithoutOpenAIReasoning(message.Meta); err != nil {
+			return nil, err
+		}
+		if err := modelmetadata.WithoutAnthropicReasoning(message.Meta); err != nil {
+			return nil, err
+		}
 		if len(message.Parts) > 0 || len(message.Meta) > 0 {
 			out = append(out, message)
 		}

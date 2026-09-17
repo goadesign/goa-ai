@@ -61,6 +61,7 @@ type (
 		provToCanon     map[string]string
 		noArgumentTools map[string]struct{}
 		opts            []option.RequestOption
+		search          *claudeSearch
 	}
 
 	// Options configures optional Anthropic adapter behavior.
@@ -224,7 +225,7 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	if err != nil {
 		return nil, wrapAnthropicError("complete", err)
 	}
-	response, err := translateResponse(msg, enc.provToCanon)
+	response, err := translateSearchResponse(msg, enc)
 	if err != nil {
 		usage := translateAnthropicUsage(msg, enc.model, req.ModelClass)
 		return nil, contract.RejectProviderOutput(
@@ -266,7 +267,10 @@ func (c *provider) CountTokens(ctx context.Context, req *model.Request) (model.T
 	if len(enc.tools) > 0 {
 		countTools := make([]sdk.MessageCountTokensToolUnionParam, len(enc.tools))
 		for i, tool := range enc.tools {
-			countTools[i] = sdk.MessageCountTokensToolUnionParam{OfTool: tool.OfTool}
+			countTools[i] = sdk.MessageCountTokensToolUnionParam{
+				OfTool:                        tool.OfTool,
+				OfToolSearchToolRegex20251119: tool.OfToolSearchToolRegex20251119,
+			}
 		}
 		countParams.Tools = countTools
 	}
@@ -319,9 +323,7 @@ func (c *provider) openPreparedStream(
 	return newAnthropicStreamer(
 		ctx,
 		stream,
-		enc.provToCanon,
-		enc.noArgumentTools,
-		enc.model,
+		enc,
 		req.ModelClass,
 		req.StructuredOutput,
 		contract,
@@ -389,15 +391,14 @@ func (c *provider) encodeRequest(ctx context.Context, req *model.Request) (*enco
 			req.ToolChoice.Mode,
 		)
 	}
-	var cacheAfterSystem, cacheAfterTools bool
+	var cacheAfterSystem bool
 	if req.Cache != nil {
 		cacheAfterSystem = req.Cache.AfterSystem
-		cacheAfterTools = req.Cache.AfterTools
 	}
 	tools, canonToProv, provToCanon, err := encodeTools(
 		ctx,
 		req.Tools,
-		cacheAfterTools,
+		false,
 		c.toolExamplesInSchema,
 	)
 	if err != nil {
@@ -409,19 +410,28 @@ func (c *provider) encodeRequest(ctx context.Context, req *model.Request) (*enco
 			noArgumentTools[definition.Name] = struct{}{}
 		}
 	}
-	msgs, system, err := encodeMessages(req.Messages, canonToProv, cacheAfterSystem)
-	if err != nil {
-		return nil, err
-	}
 	enc := &encodedRequest{
 		model:           modelID,
-		messages:        msgs,
-		system:          system,
 		tools:           tools,
 		outputConfig:    outputConfig,
 		provToCanon:     provToCanon,
 		noArgumentTools: noArgumentTools,
-		opts:            toolExampleOptions(tools),
+	}
+	if err := prepareClaudeSearch(ctx, req, enc); err != nil {
+		return nil, err
+	}
+	enc.opts = append(enc.opts, toolExampleOptions(enc.tools)...)
+	msgs, system, err := encodeMessages(req.Messages, canonToProv, cacheAfterSystem)
+	if err != nil {
+		return nil, err
+	}
+	enc.messages, enc.system = msgs, system
+	if len(enc.search.changes) > 0 {
+		changeMessage, err := searchChangeMessage(enc.search.changes)
+		if err != nil {
+			return nil, err
+		}
+		enc.messages = append(enc.messages, changeMessage)
 	}
 	if req.ToolChoice != nil {
 		tc, err := encodeToolChoice(req.ToolChoice, canonToProv, req.Tools)
@@ -548,7 +558,7 @@ func (c *provider) effectiveTemperature(requested float32) float64 {
 // activation (live-verified via rawPredict usage.input_tokens, 2026-07-18).
 func toolExampleOptions(toolParams []sdk.ToolUnionParam) []option.RequestOption {
 	for _, tool := range toolParams {
-		if len(tool.OfTool.InputExamples) > 0 {
+		if tool.OfTool != nil && len(tool.OfTool.InputExamples) > 0 {
 			return []option.RequestOption{
 				option.WithHeaderAdd("anthropic-beta", claudebeta.ToolExamples),
 			}
@@ -646,6 +656,21 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 		}
 		if len(blocks) == 0 {
 			continue
+		}
+		blocks, err := orderSearchBlocks(m, blocks)
+		if err != nil {
+			return nil, nil, err
+		}
+		changes, err := searchRecordStrings(m.Meta, searchChangesKey)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(changes) > 0 {
+			changeMessage, err := searchChangeMessage(changes)
+			if err != nil {
+				return nil, nil, err
+			}
+			conversation = append(conversation, changeMessage)
 		}
 		switch m.Role { //nolint:exhaustive
 		case model.ConversationRoleUser:

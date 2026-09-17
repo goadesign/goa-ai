@@ -24,6 +24,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"text/template"
+
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 type confirmationAwait struct {
@@ -98,13 +100,16 @@ func (r *Runtime) confirmationPlan(ctx context.Context, call *ToolCall) (*confir
 		}
 	}
 
-	spec, ok := r.toolSpec(call.Name)
+	spec, ok, err := lookupCallSpec(*call, r.toolSpec)
+	if err != nil {
+		return nil, false, err
+	}
 	if !ok || spec.Confirmation == nil {
 		return nil, false, nil
 	}
 	c := spec.Confirmation
-	payloadVal, err := r.unmarshalToolValue(ctx, call.Name, call.Payload.RawMessage(), true)
-	if err != nil {
+	var payloadVal any
+	if err := rawjson.Unmarshal(call.Payload, &payloadVal); err != nil {
 		return nil, false, fmt.Errorf("decode payload for confirmation %q: %w", call.Name, err)
 	}
 
@@ -120,7 +125,7 @@ func (r *Runtime) confirmationPlan(ctx context.Context, call *ToolCall) (*confir
 	if !json.Valid(deniedRaw) {
 		return nil, false, fmt.Errorf("denied result template for %q did not render valid JSON", call.Name)
 	}
-	deniedResult, err := r.unmarshalToolValue(ctx, call.Name, deniedRaw, false)
+	deniedResult, err := spec.Result.Codec.FromJSON(deniedRaw)
 	if err != nil {
 		return nil, false, fmt.Errorf("decode denied result for %q: %w", call.Name, err)
 	}
@@ -133,7 +138,8 @@ func (r *Runtime) confirmationPlan(ctx context.Context, call *ToolCall) (*confir
 }
 
 // renderConfirmationTemplate renders a confirmation template against a decoded
-// tool payload value.
+// tool payload's canonical JSON value. Both static and discovered tools use
+// JSON property names; generated Go types do not affect template rendering.
 //
 // Templates are compiled with missingkey=error to keep the contract strict:
 // if a template references a field not present in the payload, that is a bug

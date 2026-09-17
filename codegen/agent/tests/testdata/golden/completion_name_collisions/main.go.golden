@@ -175,7 +175,7 @@ func main() {
 	// Replace this with your own CLI, HTTP server, or integration.
 
 	{
-		client := writer.NewClient(rt)
+		client := rt.MustClient(writer.AgentID)
 		out, err := client.Run(ctx, "demo-session", []*model.Message{
 			{
 				Role:  model.ConversationRoleUser,

@@ -158,7 +158,7 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 		},
 	}
 
-	outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), input)
+	outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), input, rt.toolSpecs)
 	require.NoError(t, err)
 	require.Len(t, outputs, 2)
 	actions, err := rt.availableContinuationActions(agentID, outputs)
@@ -748,6 +748,12 @@ func continuationTestRuntime() (*Runtime, tools.ToolSpec, tools.ToolSpec) {
 	return &Runtime{
 		Store:           newTestStore(),
 		toolDefinitions: mustToolDefinitions([]tools.ToolSpec{search, continuation}),
+		agents: map[agent.Ident]AgentRegistration{
+			"svc.agent": {
+				Definition: testAgentDefinition("svc.agent", "svc.workflow", "svc.queue",
+					[]tools.ToolSpec{search, continuation}, nil),
+			},
+		},
 		toolSpecs: map[tools.Ident]tools.ToolSpec{
 			search.Name:       search,
 			continuation.Name: continuation,

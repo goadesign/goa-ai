@@ -172,7 +172,8 @@ func TestCatalogReleasePrunesExpiredRoutableEpochOnce(t *testing.T) {
 func TestAdmissionTokenBindsWireProtocolVersion(t *testing.T) {
 	t.Parallel()
 
-	fingerprint := toolsetSchemaFingerprint(testCatalogToolset("test.toolset", "test", nil))
+	fingerprint, err := toolsetSchemaFingerprint(testCatalogToolset("test.toolset", "test", nil))
+	require.NoError(t, err)
 	current, err := admissionRegistrationToken(
 		fingerprint,
 		testAdmissionRevisionA,
@@ -213,7 +214,11 @@ func TestSchemaFingerprintBindsExecutionPayloadSchema(t *testing.T) {
 		}},
 	}
 
-	assert.NotEqual(t, toolsetSchemaFingerprint(first), toolsetSchemaFingerprint(second))
+	firstFingerprint, err := toolsetSchemaFingerprint(first)
+	require.NoError(t, err)
+	secondFingerprint, err := toolsetSchemaFingerprint(second)
+	require.NoError(t, err)
+	assert.NotEqual(t, firstFingerprint, secondFingerprint)
 }
 
 func TestCatalogRejectsPersistedMismatchedWireProtocol(t *testing.T) {

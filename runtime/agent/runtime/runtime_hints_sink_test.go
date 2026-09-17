@@ -3,12 +3,14 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"text/template"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/internal/registrycontract"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	rthints "goa.design/goa-ai/runtime/agent/runtime/hints"
@@ -21,16 +23,16 @@ type hintRecordingStreamSink struct {
 	events []stream.Event
 }
 
-func (s *hintRecordingStreamSink) Send(ctx context.Context, event stream.Event) error {
+func (s *hintRecordingStreamSink) Send(_ context.Context, event stream.Event) error {
 	s.events = append(s.events, event)
 	return nil
 }
 
-func (s *hintRecordingStreamSink) Close(ctx context.Context) error {
+func (s *hintRecordingStreamSink) Close(context.Context) error {
 	return nil
 }
 
-func TestHintingSinkRendersHintForNilAndEmptyPayload(t *testing.T) {
+func TestScheduledCallHintRendersHintForNilAndEmptyPayload(t *testing.T) {
 	toolID := tools.Ident("runtime.hints.test.empty_payload")
 	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking active alarms"))
 
@@ -57,33 +59,11 @@ func TestHintingSinkRendersHintForNilAndEmptyPayload(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sink := &hintRecordingStreamSink{}
-			decorated := newHintingSink(rt, sink)
-
-			payload := stream.ToolStartPayload{
-				ToolCallID: "call-1",
-				ToolName:   string(toolID),
-				Payload:    tc.payload,
-			}
-			ev := stream.ToolStart{
-				Base: stream.NewBaseWithEventKey(
-					stream.EventToolStart,
-					"run-1",
-					"session-1",
-					payload,
-					"event-1",
-					time.Unix(1, 0).UTC(),
-				),
-				Data: payload,
-			}
-
-			require.NoError(t, decorated.Send(context.Background(), ev))
-			require.Len(t, sink.events, 1)
-
-			out, ok := sink.events[0].(stream.ToolStart)
-			require.True(t, ok)
-			assert.Equal(t, "event-1", out.EventKey())
-			assert.Equal(t, "Checking active alarms", out.Data.DisplayHint)
+			event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", toolID, "call-1", tc.payload, "queue", "", 0)
+			changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
+			require.NoError(t, err)
+			assert.True(t, changed)
+			assert.Equal(t, "Checking active alarms", event.DisplayHint)
 		})
 	}
 }
@@ -111,7 +91,7 @@ func TestAddToolsetLockedRegistersHints(t *testing.T) {
 	assert.Equal(t, "Checking registration", hint)
 }
 
-func TestHintingSinkRendersHintForRawJSONPayload(t *testing.T) {
+func TestScheduledCallHintRendersHintForRawJSONPayload(t *testing.T) {
 	toolID := tools.Ident("runtime.hints.test.rawjson")
 	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking {{.Resolution}} energy rates"))
 
@@ -122,27 +102,14 @@ func TestHintingSinkRendersHintForRawJSONPayload(t *testing.T) {
 		logger: telemetry.NoopLogger{},
 	}
 
-	sink := &hintRecordingStreamSink{}
-	decorated := newHintingSink(rt, sink)
-	payload := stream.ToolStartPayload{
-		ToolCallID: "call-rawjson-1",
-		ToolName:   string(toolID),
-		Payload:    rawjson.Message([]byte(`{"resolution":"hourly"}`)),
-	}
-	ev := stream.ToolStart{
-		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
-		Data: payload,
-	}
-
-	require.NoError(t, decorated.Send(context.Background(), ev))
-	require.Len(t, sink.events, 1)
-
-	out, ok := sink.events[0].(stream.ToolStart)
-	require.True(t, ok)
-	assert.Equal(t, "Checking hourly energy rates", out.Data.DisplayHint)
+	event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", toolID, "call-1", rawjson.Message(`{"resolution":"hourly"}`), "queue", "", 0)
+	changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	assert.Equal(t, "Checking hourly energy rates", event.DisplayHint)
 }
 
-func TestHintingSinkUsesToolTitleForMalformedPayload(t *testing.T) {
+func TestScheduledCallHintUsesToolTitleForMalformedPayload(t *testing.T) {
 	toolID := tools.Ident("runtime.hints.test.malformed_payload")
 	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking {{.Resolution}} energy rates"))
 
@@ -159,49 +126,23 @@ func TestHintingSinkUsesToolTitleForMalformedPayload(t *testing.T) {
 		logger: telemetry.NoopLogger{},
 	}
 
-	sink := &hintRecordingStreamSink{}
-	decorated := newHintingSink(rt, sink)
-	payload := stream.ToolStartPayload{
-		ToolCallID: "call-malformed-1",
-		ToolName:   string(toolID),
-		Payload:    rawjson.Message([]byte(`{"resolution":42}`)),
-	}
-	ev := stream.ToolStart{
-		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
-		Data: payload,
-	}
-
-	require.NoError(t, decorated.Send(context.Background(), ev))
-	require.Len(t, sink.events, 1)
-
-	out, ok := sink.events[0].(stream.ToolStart)
-	require.True(t, ok)
-	assert.Equal(t, "Check Energy Rates", out.Data.DisplayHint)
+	event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", toolID, "call-1", rawjson.Message(`{"resolution":42}`), "queue", "", 0)
+	changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	assert.Equal(t, "Check Energy Rates", event.DisplayHint)
 }
 
-func TestHintingSinkRendersHintForToolUnavailable(t *testing.T) {
+func TestScheduledCallHintRendersHintForToolUnavailable(t *testing.T) {
 	rt := New(newTestStore())
-	sink := &hintRecordingStreamSink{}
-	decorated := newHintingSink(rt, sink)
-	payload := stream.ToolStartPayload{
-		ToolCallID: "call-tool-unavailable-1",
-		ToolName:   tools.ToolUnavailable.String(),
-		Payload:    rawjson.Message([]byte(`{"requested_tool":"catalog.resolve_sources"}`)),
-	}
-	ev := stream.ToolStart{
-		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
-		Data: payload,
-	}
-
-	require.NoError(t, decorated.Send(context.Background(), ev))
-	require.Len(t, sink.events, 1)
-
-	out, ok := sink.events[0].(stream.ToolStart)
-	require.True(t, ok)
-	assert.Equal(t, "Tool not available: catalog.resolve_sources", out.Data.DisplayHint)
+	event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", tools.ToolUnavailable, "call-1", rawjson.Message(`{"requested_tool":"catalog.resolve_sources"}`), "queue", "", 0)
+	changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	assert.Equal(t, "Tool not available: catalog.resolve_sources", event.DisplayHint)
 }
 
-func TestHintingSinkOverrideWins(t *testing.T) {
+func TestScheduledCallHintOverrideWins(t *testing.T) {
 	toolID := tools.Ident("runtime.hints.test.override")
 	rthints.RegisterCallHint(toolID, mustTemplate(t, toolID, "Checking {{.Resolution}} energy rates"))
 
@@ -217,27 +158,14 @@ func TestHintingSinkOverrideWins(t *testing.T) {
 		},
 	}
 
-	sink := &hintRecordingStreamSink{}
-	decorated := newHintingSink(rt, sink)
-	payload := stream.ToolStartPayload{
-		ToolCallID: "call-override-1",
-		ToolName:   string(toolID),
-		Payload:    rawjson.Message([]byte(`{"resolution":"hourly"}`)),
-	}
-	ev := stream.ToolStart{
-		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
-		Data: payload,
-	}
-
-	require.NoError(t, decorated.Send(context.Background(), ev))
-	require.Len(t, sink.events, 1)
-
-	out, ok := sink.events[0].(stream.ToolStart)
-	require.True(t, ok)
-	assert.Equal(t, "Overridden hint", out.Data.DisplayHint)
+	event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", toolID, "call-1", rawjson.Message(`{"resolution":"hourly"}`), "queue", "", 0)
+	changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
+	require.NoError(t, err)
+	assert.True(t, changed)
+	assert.Equal(t, "Overridden hint", event.DisplayHint)
 }
 
-func TestHintingSinkRejectsEmptyOverride(t *testing.T) {
+func TestScheduledCallHintRejectsEmptyOverride(t *testing.T) {
 	toolID := tools.Ident("runtime.hints.test.empty_override")
 
 	rt := &Runtime{
@@ -258,20 +186,64 @@ func TestHintingSinkRejectsEmptyOverride(t *testing.T) {
 		},
 	}
 
-	sink := &hintRecordingStreamSink{}
-	decorated := newHintingSink(rt, sink)
-	payload := stream.ToolStartPayload{
-		ToolCallID: "call-empty-override-1",
-		ToolName:   string(toolID),
-		Payload:    rawjson.Message([]byte(`{"resolution":"hourly"}`)),
-	}
-	ev := stream.ToolStart{
-		Base: stream.NewBase(stream.EventToolStart, "run-1", "session-1", payload),
-		Data: payload,
-	}
+	event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", toolID, "call-1", rawjson.Message(`{"resolution":"hourly"}`), "queue", "", 0)
+	changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
+	require.ErrorContains(t, err, "returned empty display hint")
+	assert.False(t, changed)
+}
 
-	require.ErrorContains(t, decorated.Send(context.Background(), ev), "returned empty display hint")
-	require.Empty(t, sink.events)
+func TestScheduledCallHintStoredAndStreamedOnce(t *testing.T) {
+	for _, dynamic := range []bool{false, true} {
+		name := "static"
+		if dynamic {
+			name = "registry"
+		}
+		t.Run(name, func(t *testing.T) {
+			toolID := tools.Ident("runtime.hints.test.stored." + name)
+			sink := &hintRecordingStreamSink{}
+			overrideCalls := 0
+			rt := New(newTestStore(), WithStream(sink, stream.AgentDebugProfile()),
+				WithHintOverrides(map[tools.Ident]HintOverrideFunc{
+					toolID: func(context.Context, tools.Ident, any) (string, bool) {
+						overrideCalls++
+						return "Stored override", true
+					},
+				}))
+			rt.toolSpecs[toolID] = newTypedHintSpec(toolID)
+			event := hooks.NewToolCallScheduledEvent("run", "svc.agent", "session", toolID,
+				"call", rawjson.Message(`{"resolution":"hourly"}`), "queue", "", 0)
+			want := "Stored override"
+			if dynamic {
+				resolved, err := registrycontract.Resolve(testRuntimeRegistryResolution(toolID.String(), strings.Repeat("a", 64)))
+				require.NoError(t, err)
+				event.Registry, err = resolved.Select("company", toolID)
+				require.NoError(t, err)
+				want = "Find records"
+			}
+			record, err := hooks.EncodeToRecordInput(event, hooks.EncodeOptions{EventKey: "call", TimestampMS: 1})
+			require.NoError(t, err)
+			_, err = rt.recordResult(t.Context(), record)
+			require.NoError(t, err)
+			require.Len(t, sink.events, 1)
+			start, ok := sink.events[0].(stream.ToolStart)
+			require.True(t, ok)
+			assert.Equal(t, want, start.Data.DisplayHint)
+			assert.Equal(t, "call", start.EventKey())
+			page, err := rt.Store.ListRunRecords(t.Context(), "run", "", 10)
+			require.NoError(t, err)
+			require.Len(t, page.Events, 2)
+			var saved struct {
+				DisplayHint string
+			}
+			require.NoError(t, json.Unmarshal(page.Events[1].Payload, &saved))
+			assert.Equal(t, want, saved.DisplayHint)
+			if dynamic {
+				assert.Zero(t, overrideCalls)
+			} else {
+				assert.Equal(t, 1, overrideCalls)
+			}
+		})
+	}
 }
 
 func newTypedHintSpec(name tools.Ident) tools.ToolSpec {

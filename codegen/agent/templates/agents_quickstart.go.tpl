@@ -317,19 +317,7 @@ To serve tool calls from the registry gateway, run the provider loop inside the 
 ```go
 // In your service composition root, import the generated toolset package as
 // toolsetpkg and construct its provider around the service implementation.
-generatedSpecs := toolsetpkg.Specs()
-toolSchemas := make([]*registry.ToolSchema, len(generatedSpecs))
-for i, spec := range generatedSpecs {
-    description := spec.Description
-    toolSchemas[i] = &registry.ToolSchema{
-        Name:                   string(spec.Name),
-        Description:            &description,
-        Tags:                   spec.Tags,
-        PayloadSchema:          spec.Payload.Schema,
-        ExecutionPayloadSchema: spec.ExecutionPayloadSchema,
-        ResultSchema:           spec.Result.Schema,
-    }
-}
+toolSchemas := toolsetpkg.ToolSchemas()
 handler := toolsetpkg.NewProvider(svcImpl)
 podName := mustRequiredEnv("HOSTNAME")
 providerID := podName + "/" + toolsetID
@@ -650,7 +638,8 @@ Rerun `goa gen` to get a typed harness under `gen/evals/<suite>/` (one hook per 
 * **Policies & Caps:** The `RunPolicy` in your design (max tool calls, time budgets) is automatically enforced by the runtime.
 * **Persistence & Observability:** The `runtime.New` function requires one `storage.Store` that owns run metadata, continuation checkpoints, and ordered run records. Options configure the engine, memory, streaming, and telemetry.
 * **Temporal DataConverter:** The Temporal engine always installs its strict, bounded data converter. Applications provide connection and namespace settings through `ClientOptions`; they cannot replace the workflow data contract.
-* **Registries & Discovery:** When you declare registries and `FromRegistry(...)` toolsets in your DSL, Goa-AI generates typed registry HTTP clients under `gen/<svc>/registry/<name>/` plus per-toolset specs helpers such as `DiscoverAndPopulate` and `Specs`. Use the generated `<Toolset>ToolsetName` constant from the agent or service package when registering the discovered tools with `runtime.ToolsetRegistration`.
+* **Dynamic registries:** Consume one named `Toolset(FromRegistry(...))` or a whole `Registry` with `Use`. Connect the clustered registry's generated service client and Pulse client using `rt.RegisterRegistry(name, client, pulseClient)` before starting a run. Generated definitions read the catalog once per planning activity; `Definition()` and `NewClient(rt)` perform no network reads and require no catalog arguments. The runtime executes selected service tools using their saved contract and exact registration token. Publish provider `ToolSchemas()` records to carry confirmation, pagination, field metadata, and server-only data. Agent and control tools remain compiled dependencies.
+* **Deferred tool search:** Add `Deferred()` inside the consuming `Use` for static or registry tools. Pass `input.Agent.AdvertisedToolDefinitions()` to model requests; do not implement a planner search tool. OpenAI's adapter searches generated metadata with BM25 and returns native definition results; Claude performs hosted search, including through Bedrock's Messages adapter. Preserve message metadata through history storage and compaction. Unsupported adapters fail explicitly. Regenerate old startup `Discover`/`RegistryToolsets` integrations and replace their dynamic executor wiring with `RegisterRegistry`.
 
 ```go
 // Example of production-ready runtime options

@@ -38,6 +38,7 @@ func TestOpenAIOutputLimited(t *testing.T) {
 		model.ModelClassDefault,
 		nil,
 		nil,
+		nil,
 	)
 	require.NoError(t, err)
 	require.True(t, translated.OutputLimited)
@@ -48,6 +49,7 @@ func TestOpenAIOutputLimited(t *testing.T) {
 		nil,
 		"openai-test",
 		model.ModelClassDefault,
+		nil,
 		nil,
 		nil,
 	)
@@ -61,6 +63,7 @@ func TestOpenAIOutputLimited(t *testing.T) {
 		nil,
 		"openai-test",
 		model.ModelClassDefault,
+		nil,
 		nil,
 		nil,
 	)

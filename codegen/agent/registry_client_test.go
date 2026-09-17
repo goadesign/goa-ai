@@ -11,24 +11,23 @@ import (
 	goadsl "goa.design/goa/v3/dsl"
 )
 
-func TestRegistryClientGeneratedForServiceOnlyExport(t *testing.T) {
+func TestRegistryClientGeneratedForWholeRegistryConsumer(t *testing.T) {
 	design := func() {
 		goadsl.API("service_export", func() {})
 		registry := Registry("catalog", func() {
 			goadsl.URL("https://catalog.example")
 		})
-		tools := Toolset(FromRegistry(registry, "shared"))
-
-		goadsl.Service("provider", func() {
-			Export(tools)
+		goadsl.Service("consumer", func() {
+			Agent("reader", "Read current tools.", func() {
+				Use(registry, func() { Deferred() })
+			})
 		})
 	}
 
 	files := testhelpers.BuildAndGenerateWithPkg(t, "example.com/service_export", design)
-	specs := testhelpers.FileContent(t, files, "gen/provider/toolsets/shared/specs.go")
-	client := testhelpers.FileContent(t, files, "gen/provider/registry/catalog/client.go")
-	require.Contains(t, specs, `const RegistryName = "catalog"`)
-	require.Contains(t, specs, `const ToolsetName = "shared"`)
+	agent := testhelpers.FileContent(t, files, "gen/consumer/agents/reader/agent.go")
+	client := testhelpers.FileContent(t, files, "gen/consumer/registry/catalog/client.go")
+	require.Contains(t, agent, `catalog.IncludeRegistry(ctx, "catalog", true)`)
 	require.Contains(t, client, "type Client struct")
 	require.Contains(t, client, "func NewClient(")
 }

@@ -114,14 +114,15 @@ type (
 	// preparedToolCall is the immutable registry-owned request derived before
 	// initial admission or exact retry touches publication state.
 	preparedToolCall struct {
-		toolset           string
-		registrationToken string
-		toolUseID         string
-		resultStreamID    string
-		tool              tools.Ident
-		payload           json.RawMessage
-		meta              *toolregistry.ToolCallMeta
-		admissionDigest   string
+		toolset                   string
+		registrationToken         string
+		expectedRegistrationToken string
+		toolUseID                 string
+		resultStreamID            string
+		tool                      tools.Ident
+		payload                   json.RawMessage
+		meta                      *toolregistry.ToolCallMeta
+		admissionDigest           string
 	}
 
 	// providerUnavailableError reports a valid tool call that cannot yet be
@@ -237,14 +238,18 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 		Tags:        p.Tags,
 		Tools:       p.Tools,
 	}
-	if fingerprint := toolsetSchemaFingerprint(toolset); fingerprint != p.SchemaFingerprint {
+	fingerprint, err := toolsetSchemaFingerprint(toolset)
+	if err != nil {
+		return nil, genregistry.MakeValidationError(err)
+	}
+	if fingerprint != p.SchemaFingerprint {
 		return nil, genregistry.MakeValidationError(errors.New(
 			"schema fingerprint does not match registered tool schemas",
 		))
 	}
 
 	// Ensure the Pulse request stream for this toolset exists.
-	_, _, err := s.streamManager.GetOrCreateStream(ctx, p.Name)
+	_, _, err = s.streamManager.GetOrCreateStream(ctx, p.Name)
 	if err != nil {
 		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("create stream for toolset: %w", err))
 	}
@@ -509,19 +514,29 @@ func (s *Service) RetryTool(ctx context.Context, p *genregistry.RetryToolPayload
 			p.ExpectedRegistrationToken,
 		))
 	}
+	return s.retryExactToolCall(ctx, prepared, admission)
+}
+
+// retryExactToolCall resumes an overloaded call only while its original
+// registration remains active. A terminal result wins a concurrent replacement.
+func (s *Service) retryExactToolCall(
+	ctx context.Context,
+	prepared preparedToolCall,
+	admission callAdmission,
+) (*genregistry.CallToolResult, error) {
 	prepared.registrationToken = admission.registrationToken
 	if admission.terminal {
 		return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
 	}
 
-	registration, err := s.activeRegistration(ctx, p.Toolset)
+	registration, err := s.activeRegistration(ctx, prepared.toolset)
 	if err != nil {
 		return s.retryTerminalOrError(ctx, prepared, err)
 	}
 	if registration.RegistrationToken != admission.registrationToken {
 		return s.retryTerminalOrError(ctx, prepared, genregistry.MakeAdmissionConflict(fmt.Errorf(
 			"toolset %q active registration %s does not match retry admission %s",
-			p.Toolset,
+			prepared.toolset,
 			registration.RegistrationToken,
 			admission.registrationToken,
 		)))
@@ -1089,6 +1104,14 @@ func (s *Service) validatePreparedToolCall(
 	prepared preparedToolCall,
 	registration catalogEntry,
 ) error {
+	if prepared.expectedRegistrationToken != "" &&
+		prepared.expectedRegistrationToken != registration.RegistrationToken {
+		return genregistry.MakeServiceUnavailable(fmt.Errorf(
+			"toolset %q resolved registration %s is no longer active",
+			prepared.toolset,
+			prepared.expectedRegistrationToken,
+		))
+	}
 	var schema *genregistry.ToolSchema
 	for _, candidate := range registration.Toolset.Tools {
 		if candidate.Name == prepared.tool.String() {

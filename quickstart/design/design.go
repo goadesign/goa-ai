@@ -52,6 +52,7 @@ var _ = Service("orchestrator", func() {
 
 	Agent("chat", "Friendly Q&A assistant", func() {
 		Use("helpers", func() {
+			Deferred()
 			Tool("answer", "Answer a simple question", func() {
 				Args(AskPayload)
 				Return(Answer)

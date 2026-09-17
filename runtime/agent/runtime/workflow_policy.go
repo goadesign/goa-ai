@@ -41,7 +41,10 @@ func (r *Runtime) applyPerRunOverrides(ctx context.Context, input *RunInput, can
 		"tag_clauses",
 		len(input.Policy.TagClauses),
 	)
-	metas := r.toolMetadata(candidates)
+	metas, err := r.toolMetadata(candidates)
+	if err != nil {
+		return nil, err
+	}
 	for i, call := range candidates {
 		if runPolicy.allowsTool(call.Name, toolPolicyFactsFromMetadata(metas[i])) {
 			continue
@@ -68,9 +71,13 @@ func (r *Runtime) applyRuntimePolicy(
 		return candidates, caps, nil
 	}
 	r.logger.Info(ctx, "Applying runtime policy decision")
+	metas, err := r.toolMetadata(candidates)
+	if err != nil {
+		return nil, caps, err
+	}
 	decision, err := r.Policy.Decide(ctx, policy.Input{
 		RunContext:    base.RunContext,
-		Tools:         r.toolMetadata(candidates),
+		Tools:         metas,
 		RemainingCaps: caps,
 		Requested:     toolHandles(candidates),
 		Labels:        base.RunContext.Labels,
@@ -172,7 +179,7 @@ func (r *Runtime) admitToolBatch(calls []ToolCall, caps policy.CapsState) (int, 
 	}
 	budgetCost := 0
 	for _, call := range calls {
-		if !r.isBookkeeping(call.Name) {
+		if !r.isBookkeepingCall(call) {
 			budgetCost++
 		}
 	}

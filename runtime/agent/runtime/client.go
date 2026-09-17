@@ -122,6 +122,8 @@ type (
 		metadata        map[tools.Ident]policy.ToolMetadata
 		requiredLabels  []string
 		executableTools []tools.Ident
+		deferredTools   map[tools.Ident]struct{}
+		registryTools   RegistryTools
 		agents          map[agent.Ident]AgentDefinition
 	}
 
@@ -142,6 +144,7 @@ func NewAgentDefinition(
 	requiredLabels []string,
 	executableTools []tools.Ident,
 	children []AgentDefinition,
+	deferredTools []tools.Ident,
 ) AgentDefinition {
 	if route.ID == "" || route.WorkflowName == "" || route.DefaultTaskQueue == "" {
 		panic("runtime: agent definition requires a complete route")
@@ -170,6 +173,16 @@ func NewAgentDefinition(
 		}
 	}
 	ownedLabels := append([]string(nil), requiredLabels...)
+	ownedDeferred := make(map[tools.Ident]struct{}, len(deferredTools))
+	for _, name := range deferredTools {
+		if _, ok := byName[name]; !ok {
+			panic(fmt.Sprintf("runtime: deferred tool %q is not in the agent definition", name))
+		}
+		if _, exists := ownedDeferred[name]; exists {
+			panic(fmt.Sprintf("runtime: agent definition has duplicate deferred tool %q", name))
+		}
+		ownedDeferred[name] = struct{}{}
+	}
 	slices.Sort(ownedLabels)
 	for index, label := range ownedLabels {
 		if label == "" {
@@ -196,6 +209,7 @@ func NewAgentDefinition(
 		metadata:        ownedMetadata,
 		requiredLabels:  ownedLabels,
 		executableTools: ownedExecutable,
+		deferredTools:   ownedDeferred,
 		agents:          ownedAgents,
 	}
 	if _, exists := ownedAgents[route.ID]; exists {

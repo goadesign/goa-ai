@@ -41,6 +41,7 @@ type plannerActivityInvocation struct {
 	reminders            []reminder.Reminder
 	runContext           run.Context
 	publicationBatchID   string
+	catalog              *RegistryCatalog
 	// originalFailure remains available to the application tracer after a
 	// rejected planner result becomes a successful activity transport value.
 	originalFailure error
@@ -64,9 +65,13 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
+	catalog, err := r.planningCatalog(ctx, input)
+	if err != nil {
+		return nil, err
+	}
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !input.SynthesisOnly {
-		historicalOutputs, err := r.loadHistoricalContinuationOutputs(ctx, input)
+		historicalOutputs, err := r.loadHistoricalContinuationOutputs(ctx, input, catalog.specs)
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +80,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 			return nil, err
 		}
 	}
-	act, err := r.preparePlannerActivity(ctx, input, continuationActions, nil, nil)
+	act, err = r.preparePlannerActivity(ctx, input, catalog, continuationActions, nil, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -91,13 +96,13 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	if err != nil {
 		return act.failureOutput(ctx, err)
 	}
-	if err := validatePlannerActivityResult(r, result, input.RunContext.Tool, false); err != nil {
+	if err := validatePlannerActivityResult(r, act.catalog.spec, result, input.RunContext.Tool, false); err != nil {
 		return act.failureOutput(ctx, err)
 	}
 	if err := validatePlannerToolCatalogs(result, act.agentCtx.AdvertisedToolDefinitions(), act.plannerAuthoredTools); err != nil {
 		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
-	if err := validatePlannerResultPayloadCodecs(ctx, r, result, continuationActions); err != nil {
+	if err := validatePlannerResultPayloadCodecs(act.catalog.spec, result, continuationActions); err != nil {
 		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
 	output, err := act.output(ctx, r, result, false, continuationActions)
@@ -147,9 +152,18 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	}
 	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil &&
 		input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer && finalize == nil
+	effectiveInput := *input
+	effectiveInput.SynthesisOnly = synthesisOnly
+	// A finish failure still permits existing pages; only explicit finalization
+	// removes registry reads. New domain tools are excluded below.
+	catalog, err := r.planningCatalog(ctx, &effectiveInput)
+	if err != nil {
+		return nil, err
+	}
+	effectiveInput.Finalize = finalize
 	var correctCallSpecs []tools.ToolSpec
 	if !synthesisOnly && (!finishing || input.Finalize != nil) {
-		correctCallSpecs, err = r.correctCallSpecs(recoveryOutputs)
+		correctCallSpecs, err = r.correctCallSpecs(recoveryOutputs, catalog)
 		if err != nil {
 			return nil, err
 		}
@@ -173,7 +187,10 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			}
 		}
 	}
-	recoveryReminders := r.recoveryReminders(recoveryOutputs)
+	recoveryReminders, err := r.recoveryReminders(recoveryOutputs)
+	if err != nil {
+		return nil, err
+	}
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !synthesisOnly {
 		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs)
@@ -182,6 +199,13 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		}
 	}
 	unavailableTools := r.recoveryUnavailableTools(input.AgentID, recoveryOutputs)
+	if finishing {
+		for name := range catalog.selections {
+			if !isDedicatedContinuationSpec(catalog.specs[name]) {
+				unavailableTools = append(unavailableTools, name)
+			}
+		}
+	}
 	if synthesisOnly {
 		specs := r.ToolSpecsForAgent(input.AgentID)
 		unavailableTools = make([]tools.Ident, len(specs))
@@ -189,7 +213,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 			unavailableTools[index] = spec.Name
 		}
 	}
-	act, err = r.preparePlannerActivity(ctx, input, continuationActions, unavailableTools, advertisedSpecs)
+	act, err = r.preparePlannerActivity(ctx, &effectiveInput, catalog, continuationActions, unavailableTools, advertisedSpecs)
 	if err != nil {
 		return nil, err
 	}
@@ -256,13 +280,13 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return act.failureOutput(ctx, err)
 	}
-	if err := validatePlannerActivityResult(r, result, input.RunContext.Tool, synthesisOnly); err != nil {
+	if err := validatePlannerActivityResult(r, act.catalog.spec, result, input.RunContext.Tool, synthesisOnly); err != nil {
 		return act.failureOutput(ctx, err)
 	}
 	if err := validatePlannerToolCatalogs(result, act.agentCtx.AdvertisedToolDefinitions(), act.plannerAuthoredTools); err != nil {
 		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
-	if err := validatePlannerResultPayloadCodecs(ctx, r, result, continuationActions); err != nil {
+	if err := validatePlannerResultPayloadCodecs(act.catalog.spec, result, continuationActions); err != nil {
 		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
 	output, err := act.output(ctx, r, result, synthesisOnly, continuationActions)
@@ -283,16 +307,30 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 // toolset registration that owns both its generated contract and executable
 // path. It runs before planner setup, so removing that complete registration
 // revokes recovery without starting a model invocation.
-func (r *Runtime) correctCallSpecs(outputs []*planner.ToolOutput) ([]tools.ToolSpec, error) {
+func (r *Runtime) correctCallSpecs(outputs []*planner.ToolOutput, catalog *RegistryCatalog) ([]tools.ToolSpec, error) {
 	names := correctCallToolNames(outputs)
 	if len(names) == 0 {
 		return nil, nil
+	}
+	dynamic := make(map[tools.Ident]bool)
+	for _, output := range outputs {
+		if output.Registry != nil {
+			dynamic[output.Name] = true
+		}
 	}
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	specs := make([]tools.ToolSpec, 0, len(names))
 	for _, name := range names {
+		if dynamic[name] {
+			spec, exists := catalog.specs[name]
+			if !exists {
+				return nil, fmt.Errorf("correct-call tool %q is no longer in the consumed registry catalog", name)
+			}
+			specs = append(specs, spec)
+			continue
+		}
 		globalSpec, registered := r.toolSpecs[name]
 		if !registered {
 			return nil, fmt.Errorf("correct-call recovery references unregistered tool %q", name)
@@ -456,10 +494,26 @@ func validatePlannerToolCatalogs(
 func (r *Runtime) preparePlannerActivity(
 	ctx context.Context,
 	input *PlanActivityInput,
+	catalog *RegistryCatalog,
 	continuationActions []continuationAction,
 	unavailableTools []tools.Ident,
 	advertisedSpecs []tools.ToolSpec,
 ) (*plannerActivityInvocation, error) {
+	if advertisedSpecs == nil {
+		advertisedSpecs = r.ToolSpecsForAgent(input.AgentID)
+	} else {
+		advertisedSpecs = cloneToolSpecs(advertisedSpecs)
+	}
+	dynamicNames := make([]tools.Ident, 0, len(catalog.selections))
+	for name := range catalog.selections {
+		dynamicNames = append(dynamicNames, name)
+	}
+	slices.Sort(dynamicNames)
+	for _, name := range dynamicNames {
+		if !slices.ContainsFunc(advertisedSpecs, func(spec tools.ToolSpec) bool { return spec.Name == name }) {
+			advertisedSpecs = append(advertisedSpecs, catalog.specs[name])
+		}
+	}
 	events := newPlannerEvents(input.AgentID, input.RunID, input.RunContext.SessionID)
 	publicationBatchID := uuid.NewString()
 	invocations := &modelInvocationJournal{
@@ -478,21 +532,22 @@ func (r *Runtime) preparePlannerActivity(
 		continuationActions,
 		unavailableTools,
 		advertisedSpecs,
+		catalog,
 	)
 	if err != nil {
 		return nil, err
 	}
 	plannerAuthoredSpecs := advertisedSpecs
-	if plannerAuthoredSpecs == nil {
-		r.mu.RLock()
-		plannerAuthoredSpecs = append([]tools.ToolSpec(nil), r.agentToolSpecs[input.AgentID]...)
-		r.mu.RUnlock()
-	}
 	plannerAuthoredTools := make(map[tools.Ident]struct{}, len(plannerAuthoredSpecs))
 	for _, spec := range plannerAuthoredSpecs {
 		if slices.Contains(unavailableTools, spec.Name) ||
 			!runPolicy.allowsTool(spec.Name, toolPolicyFactsFromSpec(spec)) {
 			continue
+		}
+		for _, label := range catalog.labels[spec.Name] {
+			if input.RunContext.Labels[label] == "" {
+				return nil, fmt.Errorf("registry tool %q requires run label %q", spec.Name, label)
+			}
 		}
 		plannerAuthoredTools[spec.Name] = struct{}{}
 	}
@@ -510,6 +565,7 @@ func (r *Runtime) preparePlannerActivity(
 		reminders:            rems,
 		runContext:           input.RunContext,
 		publicationBatchID:   publicationBatchID,
+		catalog:              catalog,
 	}, nil
 }
 
@@ -523,7 +579,7 @@ func (a *plannerActivityInvocation) output(
 	synthesisOnly bool,
 	continuationActions []continuationAction,
 ) (*PlanActivityOutput, error) {
-	if err := validatePlannerActivityResult(r, result, a.runContext.Tool, synthesisOnly); err != nil {
+	if err := validatePlannerActivityResult(r, a.catalog.spec, result, a.runContext.Tool, synthesisOnly); err != nil {
 		return nil, err
 	}
 	transcript, err := a.invocations.exportModelInvocation(result)
@@ -546,6 +602,15 @@ func (a *plannerActivityInvocation) output(
 	toolCalls, err := r.compilePlannerToolCallsForRun(a.runContext, result.ToolCalls, continuationActions, modelCalls)
 	if err != nil {
 		return nil, err
+	}
+	for index := range toolCalls {
+		call := &toolCalls[index]
+		if selected, ok := a.catalog.selections[call.Name]; ok && call.Registry == nil {
+			call.Registry, err = selected.resolution.Select(selected.registry, call.Name)
+			if err != nil {
+				return nil, err
+			}
+		}
 	}
 	runtimeResult := &PlanResult{
 		ToolCalls:            toolCalls,
@@ -880,7 +945,7 @@ func (a *plannerActivityInvocation) planningError(err error) error {
 // cannot execute or save. Live model text may already have reached the trusted
 // host, but this check prevents invalid tool calls or transcript messages from
 // changing durable state.
-func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, parentTool tools.Ident, synthesisOnly bool) error {
+func validatePlannerActivityResult(r *Runtime, lookup toolSpecLookup, result *planner.PlanResult, parentTool tools.Ident, synthesisOnly bool) error {
 	if err := r.validatePlannerResultPayloads(result, parentTool); err != nil {
 		return planner.NewOutputContractError(err)
 	}
@@ -919,7 +984,7 @@ func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, paren
 	}
 	if result.SynthesizeAfterTools {
 		for _, call := range result.ToolCalls {
-			spec, ok := r.toolSpec(call.Name)
+			spec, ok := lookup(call.Name)
 			if !ok {
 				return planner.NewOutputContractError(fmt.Errorf("planner synthesis-after-tools references unknown tool %q", call.Name))
 			}
@@ -933,7 +998,7 @@ func validatePlannerActivityResult(r *Runtime, result *planner.PlanResult, paren
 	}
 	if hasTerminal && hasCalls {
 		for _, call := range result.ToolCalls {
-			spec, ok := r.toolSpec(call.Name)
+			spec, ok := lookup(call.Name)
 			if !ok {
 				return planner.NewOutputContractError(fmt.Errorf("planner terminal result references unknown tool %q", call.Name))
 			}
@@ -1179,13 +1244,12 @@ func validatePlannerToolPayload(payload rawjson.Message) error {
 // validatePlannerResultPayloadCodecs applies each visible tool's exact payload
 // codec before the planner result can cross the activity boundary.
 func validatePlannerResultPayloadCodecs(
-	ctx context.Context,
-	r *Runtime,
+	lookup toolSpecLookup,
 	result *planner.PlanResult,
 	continuations []continuationAction,
 ) error {
 	for index, call := range result.ToolCalls {
-		if err := validatePlannerToolPayloadWithCodec(ctx, r, continuations, call.Name, call.Payload); err != nil {
+		if err := validatePlannerToolPayloadWithCodec(lookup, continuations, call.Name, call.Payload); err != nil {
 			return fmt.Errorf("planner tool call %d payload: %w", index, err)
 		}
 	}
@@ -1198,8 +1262,7 @@ func validatePlannerResultPayloadCodecs(
 			continue
 		case planner.AwaitItemKindToolClarification:
 			if err := validatePlannerToolPayloadWithCodec(
-				ctx,
-				r,
+				lookup,
 				nil,
 				item.ToolClarification.ToolName,
 				item.ToolClarification.Payload,
@@ -1208,8 +1271,7 @@ func validatePlannerResultPayloadCodecs(
 			}
 		case planner.AwaitItemKindQuestions:
 			if err := validatePlannerToolPayloadWithCodec(
-				ctx,
-				r,
+				lookup,
 				nil,
 				item.Questions.ToolName,
 				item.Questions.Payload,
@@ -1218,7 +1280,7 @@ func validatePlannerResultPayloadCodecs(
 			}
 		case planner.AwaitItemKindExternalTools:
 			for toolIndex, tool := range item.ExternalTools.Items {
-				if err := validatePlannerToolPayloadWithCodec(ctx, r, nil, tool.Name, tool.Payload); err != nil {
+				if err := validatePlannerToolPayloadWithCodec(lookup, nil, tool.Name, tool.Payload); err != nil {
 					return fmt.Errorf("planner await item %d external tool %d payload: %w", itemIndex, toolIndex, err)
 				}
 			}
@@ -1233,14 +1295,13 @@ func validatePlannerResultPayloadCodecs(
 // object with the cursor-bearing payload and validates it with the canonical
 // continuation tool's generated codec.
 func validatePlannerToolPayloadWithCodec(
-	ctx context.Context,
-	r *Runtime,
+	lookup toolSpecLookup,
 	continuations []continuationAction,
 	name tools.Ident,
 	payload rawjson.Message,
 ) error {
-	if _, ok := r.toolSpec(name); ok {
-		if _, err := r.unmarshalToolValue(ctx, name, payload.RawMessage(), true); err != nil {
+	if spec, ok := lookup(name); ok {
+		if _, err := spec.ExecutionPayloadCodec.FromJSON(payload); err != nil {
 			return fmt.Errorf("tool %q payload does not satisfy its generated contract: %w", name, err)
 		}
 		return nil
@@ -1280,9 +1341,29 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if err := validatePlannerToolPayload(req.Payload); err != nil {
 		return nil, fmt.Errorf("tool payload is invalid: %w", err)
 	}
+	// Rebuild the activity-local call from execution data only. The workflow
+	// retains the model-authored call and owns any later correction evidence.
+	raw := append(rawjson.Message(nil), req.Payload...)
+	call := ToolCall{
+		Registry:         req.Registry.Clone(),
+		Name:             req.ToolName,
+		Payload:          raw,
+		RunID:            req.RunID,
+		AgentID:          req.AgentID,
+		SessionID:        req.SessionID,
+		Labels:           cloneLabels(req.Labels),
+		TurnID:           req.TurnID,
+		ParentToolCallID: req.ParentToolCallID,
+		ToolCallID:       req.ToolCallID,
+	}
+
+	spec, hasSpec, err := lookupCallSpec(call, r.toolSpec)
+	if err != nil {
+		return nil, err
+	}
 	// Forbid agent-as-tool execution from activities. Agent-tools must execute inside
 	// the workflow thread so child workflows can be started legally.
-	if spec, ok := r.toolSpec(req.ToolName); ok && spec.IsAgentTool {
+	if hasSpec && spec.IsAgentTool {
 		// When the provider agent attempts to execute its own agent-as-tool via
 		// ExecuteToolActivity, surface a precise error so callers fix the planner
 		// tool list instead of routing through activities.
@@ -1296,40 +1377,33 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 		return nil, fmt.Errorf("agent-as-tool %q must run in workflow context", req.ToolName)
 	}
-	if req.ToolsetName == "" {
-		return nil, errors.New("toolset name is required")
-	}
-	r.mu.RLock()
-	reg, ok := r.toolsets[req.ToolsetName]
-	r.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("toolset %q is not registered", req.ToolsetName)
-	}
-
-	// Rebuild the activity-local call from execution data only. The workflow
-	// retains the model-authored call and owns any later correction evidence.
-	raw := append(rawjson.Message(nil), req.Payload...)
-	call := ToolCall{
-		Name:             req.ToolName,
-		Payload:          raw,
-		RunID:            req.RunID,
-		AgentID:          req.AgentID,
-		SessionID:        req.SessionID,
-		Labels:           cloneLabels(req.Labels),
-		TurnID:           req.TurnID,
-		ParentToolCallID: req.ParentToolCallID,
-		ToolCallID:       req.ToolCallID,
+	var reg ToolsetRegistration
+	if req.Registry != nil {
+		if req.ToolsetName != "" {
+			return nil, errors.New("registry tool activity derives its route from the saved registration")
+		}
+		reg.Execute = r.executeRegistryTool
+	} else {
+		if req.ToolsetName == "" {
+			return nil, errors.New("toolset name is required")
+		}
+		r.mu.RLock()
+		var ok bool
+		reg, ok = r.toolsets[req.ToolsetName]
+		r.mu.RUnlock()
+		if !ok {
+			return nil, fmt.Errorf("toolset %q is not registered", req.ToolsetName)
+		}
 	}
 
 	// For non DecodeInExecutor toolsets, validate payloads eagerly using the
 	// generated codecs so we can surface structured correction contracts. Executors
 	// still receive the execution payload and may decode again as needed.
 	if !reg.DecodeInExecutor {
-		_, ok := r.toolSpec(req.ToolName)
-		if !ok {
+		if !hasSpec {
 			return nil, fmt.Errorf("tool %q has no registered ToolSpec", req.ToolName)
 		}
-		if _, decErr := r.unmarshalToolValue(ctx, req.ToolName, raw.RawMessage(), true); decErr != nil {
+		if _, decErr := spec.ExecutionPayloadCodec.FromJSON(raw); decErr != nil {
 			return &ToolOutput{
 				Failure: buildToolFailureFromPayloadError(decErr),
 			}, nil
@@ -1444,6 +1518,7 @@ func (r *Runtime) plannerContext(
 	continuationActions []continuationAction,
 	unavailableTools []tools.Ident,
 	advertisedSpecs []tools.ToolSpec,
+	catalog *RegistryCatalog,
 ) (*AgentRegistration, planner.PlannerContext, error) {
 	if input.AgentID == "" {
 		return nil, nil, errors.New("agent id is required")
@@ -1485,6 +1560,7 @@ func (r *Runtime) plannerContext(
 		continuationActions: continuationActions,
 		unavailableTools:    unavailableTools,
 		advertisedSpecs:     advertisedSpecs,
+		catalog:             catalog,
 	})
 	return &reg, agentCtx, nil
 }

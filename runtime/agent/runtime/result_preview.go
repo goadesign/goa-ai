@@ -62,7 +62,7 @@ func formatResultPreview(toolName tools.Ident, args, result any, bounds *agent.B
 // formatResultPreviewForCall decodes the original typed payload when available
 // and renders the user-facing tool result preview for call.Name.
 func formatResultPreviewForCall(ctx context.Context, rt *Runtime, call *ToolCall, result any, bounds *agent.Bounds) (string, error) {
-	if call == nil {
+	if call == nil || call.Registry != nil {
 		return "", nil
 	}
 	args := decodeResultPreviewArgs(ctx, rt, call)

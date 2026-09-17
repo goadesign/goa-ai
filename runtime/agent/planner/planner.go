@@ -248,6 +248,10 @@ func (ToolResult) MarshalJSON() ([]byte, error) {
 //     canonical run log before invoking planner code.
 //   - This type intentionally does not carry decoded `any` values.
 type ToolOutput struct {
+	// Registry retains the executed registration for result interpretation and
+	// runtime-owned pagination. It is never part of a model request.
+	Registry *tools.RegistryBinding
+
 	// CallRunID identifies the run log containing the canonical scheduled call.
 	// Planners must treat it as opaque execution metadata.
 	CallRunID string

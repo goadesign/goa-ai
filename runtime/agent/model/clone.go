@@ -6,6 +6,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"reflect"
 	"slices"
 	"unicode/utf8"
@@ -189,6 +190,7 @@ func cloneRequest(request *Request) (*Request, error) {
 			continue
 		}
 		cloned := *definition
+		cloned.Search.Terms = maps.Clone(definition.Search.Terms)
 		cloned.Input = ToolInput{
 			jsonSchema:               slices.Clone(definition.Input.jsonSchema),
 			schemaWithoutRootExample: slices.Clone(definition.Input.schemaWithoutRootExample),

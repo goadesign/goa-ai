@@ -54,6 +54,11 @@ type Service interface {
 	ListToolsets(context.Context, *ListToolsetsPayload) (res *ListToolsetsResult, err error)
 	// Get a specific toolset by name including all tool schemas
 	GetToolset(context.Context, *GetToolsetPayload) (res *Toolset, err error)
+	// Return a toolset definition and its exact registration token from one active
+	// catalog read. Consumers retain the token with accepted calls so a later
+	// provider replacement cannot change the contract selected by the model.
+	// Resolution describes registered tools; it does not guarantee provider health.
+	ResolveToolset(context.Context, *GetToolsetPayload) (res *ResolvedToolset, err error)
 	// Report whether the exact registration token derived from a deployed
 	// provider's generated tool schemas is active and currently has an unexpired,
 	// non-draining provider lease plus a fresh authenticated pong. Release
@@ -79,6 +84,13 @@ type Service interface {
 	// the registry establishes the result stream so the caller can create a reader
 	// immediately.
 	CallTool(context.Context, *CallToolPayload) (res *CallToolResult, err error)
+	// Admit a tool call only against the exact registration returned by
+	// ResolveToolset. The token is part of the immutable call identity. A
+	// replacement before publication commits call_not_admitted; published calls
+	// keep their original assignment and result. Repeating this operation attaches
+	// to the same call, or resumes its authoritative provider-overload event
+	// against the same registration and original deadline.
+	CallResolvedTool(context.Context, *CallResolvedToolPayload) (res *CallToolResult, err error)
 	// Republish one previously admitted call after provider overload recorded in
 	// the authoritative call record. The runtime supplies the exact original
 	// registration token; the registry rejects a changed active admission before
@@ -132,7 +144,7 @@ const ServiceName = "registry"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [15]string{"Register", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "CheckAdmission", "Search", "CallTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
+var MethodNames = [17]string{"Register", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "ResolveToolset", "CheckAdmission", "Search", "CallTool", "CallResolvedTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
 
 // AdmissionStatus is the result type of the registry service CheckAdmission
 // method.
@@ -140,6 +152,27 @@ type AdmissionStatus struct {
 	// True only when the expected registration token is active and has a routable
 	// provider plus a fresh authenticated pong.
 	Ready bool
+}
+
+// CallResolvedToolPayload is the payload type of the registry service
+// CallResolvedTool method.
+type CallResolvedToolPayload struct {
+	// Exact registration returned with the definition used to select this call.
+	ExpectedRegistrationToken string
+	// Toolset registration identifier used for routing (for example,
+	// "catalog.lookup").
+	Toolset string
+	// Globally unique tool identifier of the form "toolset.tool" (for example,
+	// "catalog.lookup.find_records").
+	Tool string
+	// Canonical JSON payload for the tool call. Must validate against the
+	// registered payload schema.
+	PayloadJSON []byte
+	// Execution metadata propagated alongside the tool call.
+	Meta *ToolCallMeta
+	// Required runtime-owned version of the consumer message envelope. The
+	// registry accepts only its exact canonical version.
+	WireProtocolVersion int
 }
 
 // CallToolPayload is the payload type of the registry service CallTool method.
@@ -235,6 +268,36 @@ type CompleteToolCallPayload struct {
 	RequestEventID string
 	// Exact registration token of the provider lease settling the claim.
 	ProviderRegistrationToken string
+}
+
+// Generated execution and presentation facts for one registry tool. The
+// registry includes this complete value in the registration fingerprint.
+type ConsumerContract struct {
+	// Execution kind fixed by the provider design. Dynamic consumers support
+	// service tools; agent and control tools require compiled runtime integration.
+	Kind string
+	// Human-readable title declared for the tool.
+	Title string
+	// Word counts generated from the tool's name, title, and description.
+	Search *ToolSearchDocument
+	// Generated details of the model-facing argument type.
+	Payload *ToolTypeMetadata
+	// Generated details of the result type. Omitted only when the tool returns no
+	// value.
+	Result *ToolTypeMetadata
+	// Consumer-owned design annotations whose semantics belong to the application
+	// interpreting each key.
+	Meta map[string][]string
+	// Run labels required by provider-side injection for this tool.
+	RequiredLabels []string
+	// Declared result limits and continuation relationship.
+	Bounds *ToolBounds
+	// Required user confirmation before this tool may execute.
+	Confirmation *ToolConfirmation
+	// Closed set of server-only result payloads emitted by this tool.
+	ServerData []*ToolServerData
+	// Model guidance emitted after this tool's result.
+	ResultReminder *string
 }
 
 // DrainProviderPayload is the payload type of the registry service
@@ -383,6 +446,16 @@ type ReleaseProviderPayload struct {
 	ProviderIncarnationID string
 }
 
+// ResolvedToolset is the result type of the registry service ResolveToolset
+// method.
+type ResolvedToolset struct {
+	// Complete toolset definition read from the active registration.
+	Toolset *Toolset
+	// Exact registration required when executing a call selected from this
+	// definition.
+	RegistrationToken string
+}
+
 // RetryToolPayload is the payload type of the registry service RetryTool
 // method.
 type RetryToolPayload struct {
@@ -419,6 +492,13 @@ type SearchResult struct {
 // Semantic version string (for example, "1.0.0" or "v1.0.0").
 type SemVer string
 
+// Declares that successful results include the runtime's canonical result
+// bounds.
+type ToolBounds struct {
+	// Cursor-based continuation contract, when supported.
+	Paging *ToolPaging
+}
+
 // Context metadata propagated alongside tool calls for routing, correlation,
 // and domain injection (for example, session-scoped data access).
 type ToolCallMeta struct {
@@ -435,6 +515,63 @@ type ToolCallMeta struct {
 	// Run labels and runtime-supplied values fixed for this call. Providers use
 	// them to fill fields declared with Inject; models never see them.
 	Labels map[string]string
+}
+
+// Marks one array index or map key without prescribing its value.
+type ToolCollectionElement struct {
+}
+
+// Templates rendered against canonical JSON arguments before execution.
+type ToolConfirmation struct {
+	// Optional title displayed with the confirmation prompt.
+	Title *string
+	// Go text/template reading JSON argument names to produce the confirmation
+	// prompt.
+	PromptTemplate string
+	// Go text/template reading JSON argument names to produce a schema-valid
+	// denial result.
+	DeniedResultTemplate string
+}
+
+// One generated field description, including the union branches in which it
+// exists.
+type ToolFieldMetadata struct {
+	// Path to this field. An omitted path identifies the root value.
+	Path []*ToolFieldPathSegment
+	// Single JSON type accepted by this field, when known.
+	JSONType *string
+	// Description already present in the tool schema.
+	Description *string
+	// All branch selections required for this field to apply.
+	Branches []*ToolUnionBranch
+	// Allowed branch names when this field selects a union branch.
+	DiscriminatorValues []string
+}
+
+// One fixed JSON property or one caller-selected array index or map key.
+type ToolFieldPathSegment struct {
+	// Exactly one path segment kind.
+	Segment ToolFieldSegment
+}
+
+// Exact JSON property name, including empty or punctuation-containing names.
+type ToolFieldSegmentBranchField string
+
+// Generated relationship between a query tool and its continuation.
+type ToolPaging struct {
+	// Qualified tool that advances this result; omitted when the tool advances
+	// itself.
+	ContinueTool *string
+	// Qualified query tool whose retained arguments a dedicated continuation
+	// advances.
+	SourceTool *string
+	// Whether the runtime retains the source query's arguments and replaces only
+	// its cursor.
+	ReplayPayload bool
+	// JSON argument name containing the continuation cursor.
+	CursorField string
+	// JSON result name containing the next cursor.
+	NextCursorField string
 }
 
 // Tool schema declaration for registration with the tool registry gateway.
@@ -455,6 +592,54 @@ type ToolSchema struct {
 	ResultSchema []byte
 	// Canonical JSON schema for the tool sidecar (UI-only), when present.
 	SidecarSchema []byte
+	// Generated contract needed to consume this tool without a compiled Go
+	// dependency. Schema-only declarations remain usable by static consumers;
+	// dynamic consumers require this complete contract.
+	ConsumerContract *ConsumerContract
+}
+
+// Precomputed word frequencies for local tool retrieval.
+type ToolSearchDocument struct {
+	// Total number of words in this document, including repeats.
+	Length int
+	// Lowercase words and their positive occurrence counts.
+	Terms map[string]int
+}
+
+// One server-only result kind, its audience, and complete payload contract.
+type ToolServerData struct {
+	// Unique kind emitted by this tool.
+	Kind string
+	// Consumers allowed to receive this payload.
+	Audience string
+	// Description of the data carried by this kind.
+	Description *string
+	// Canonical JSON schema for the item data.
+	Schema []byte
+	// Generated examples and field details for the item data.
+	Type *ToolTypeMetadata
+}
+
+// Precomputed schema variants, examples, and field details for one tool value.
+type ToolTypeMetadata struct {
+	// Generated type name used in diagnostics.
+	Name *string
+	// Canonical schema with its root example omitted for model providers that
+	// carry examples separately.
+	SchemaWithoutRootExample []byte
+	// Canonical example JSON when the design supplies one.
+	ExampleJSON []byte
+	// Field paths, descriptions, and union requirements prepared by code
+	// generation.
+	Fields []*ToolFieldMetadata
+}
+
+// One discriminator value that makes a generated field applicable.
+type ToolUnionBranch struct {
+	// Path to the union's discriminator property.
+	Discriminator []*ToolFieldPathSegment
+	// Branch name required at the discriminator.
+	Value string
 }
 
 // Toolset is the result type of the registry service GetToolset method.

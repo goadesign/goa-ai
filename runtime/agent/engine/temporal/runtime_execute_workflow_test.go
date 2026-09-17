@@ -58,7 +58,7 @@ func testTemporalAgentDefinition(
 		nil,
 		executable,
 		nil,
-	)
+		nil)
 }
 
 const runSuspensionType = "runtime.run_suspension"

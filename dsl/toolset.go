@@ -226,8 +226,11 @@ func cloneToolset(origin *agentsexpr.ToolsetExpr, agent *agentsexpr.AgentExpr, o
 		Description: origin.Description,
 		Tags:        append([]string(nil), origin.Tags...),
 		Agent:       agent,
-		Provider:    origin.Provider,
 		Origin:      origin,
+	}
+	if origin.Provider != nil {
+		provider := *origin.Provider
+		dup.Provider = &provider
 	}
 	switch {
 	case origin.DSLFunc != nil && overlay != nil:

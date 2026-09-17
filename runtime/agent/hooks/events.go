@@ -169,6 +169,9 @@ type (
 	// for execution.
 	ToolCallScheduledEvent struct {
 		baseEvent
+		// Registry retains the selected tool definition for execution and saved
+		// result validation. Static tools leave it absent.
+		Registry *tools.RegistryBinding
 		// ToolCallID uniquely identifies the scheduled tool invocation so progress
 		// updates can correlate with the original request.
 		ToolCallID string

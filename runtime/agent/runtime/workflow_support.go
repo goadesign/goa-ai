@@ -230,7 +230,7 @@ func (r *Runtime) finalizeFromHistory(
 	if output.HistoryContext != nil {
 		base.HistoryContext = output.HistoryContext
 	}
-	aggUsage, err = addTokenUsage(aggUsage, output.Usage)
+	aggUsage, err = model.AddTokenUsage(aggUsage, output.Usage)
 	if err != nil {
 		return nil, fmt.Errorf("aggregate finalization usage: %w", err)
 	}
@@ -551,7 +551,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 			hardDeadline,
 		)
 	}
-	return r.finishAfterSuccessfulToolCompletion(wfCtx.Context(), input, &execBase, st)
+	return r.finishAfterSuccessfulToolCompletion(input, &execBase, st)
 }
 
 // stampFinalizationReason gives each call that will execute its runtime-owned
@@ -819,7 +819,7 @@ func (r *Runtime) runPlanActivity(
 		if out.HistoryContext != nil && len(out.Transcript) == 0 {
 			return nil, errors.New("code-only planner output cannot select a history summary")
 		}
-		if _, err := r.normalizePlanResultForExecution(wfCtx.Context(), out.Result, input.RunContext.Tool); err != nil {
+		if _, err := r.normalizePlanResultForExecution(out.Result, input.RunContext.Tool); err != nil {
 			return nil, err
 		}
 	}

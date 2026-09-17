@@ -9,7 +9,6 @@ import (
 	"context"
 	"fmt"
 
-	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -31,8 +30,9 @@ type historicalToolEvents struct {
 func (r *Runtime) loadHistoricalContinuationOutputs(
 	ctx context.Context,
 	input *PlanActivityInput,
+	specs map[tools.Ident]tools.ToolSpec,
 ) ([]*planner.ToolOutput, error) {
-	names := r.historicalContinuationToolNames(input.AgentID)
+	names := historicalContinuationToolNames(specs)
 	toolCallIDs, err := historicalContinuationToolCallIDs(input.Messages, names)
 	if err != nil || len(toolCallIDs) == 0 {
 		return nil, err
@@ -122,12 +122,15 @@ func (r *Runtime) loadHistoricalContinuationOutputs(
 		// Earlier result bodies remain conversation evidence, not inputs to
 		// today's result codec. Failed outcomes and paging metadata still obey
 		// their runtime-owned contracts before they can affect available actions.
-		call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID}
+		call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
 		if output.Failure != nil {
 			_, err = validatePersistedToolResult(nil, call, entry.events.result.ResultJSON,
 				output.ServerData, output.Bounds, output.Failure)
 		} else {
-			spec, ok := r.toolSpec(output.Name)
+			spec, ok, lookupErr := lookupCallSpec(call, r.toolSpec)
+			if lookupErr != nil {
+				return nil, lookupErr
+			}
 			if !ok {
 				return nil, fmt.Errorf("runtime: historical continuation references unregistered tool %q", output.Name)
 			}
@@ -143,9 +146,9 @@ func (r *Runtime) loadHistoricalContinuationOutputs(
 
 // historicalContinuationToolNames returns the canonical source and continuation
 // tool names that can contribute live actions for one agent.
-func (r *Runtime) historicalContinuationToolNames(agentID agent.Ident) map[string]struct{} {
+func historicalContinuationToolNames(specs map[tools.Ident]tools.ToolSpec) map[string]struct{} {
 	names := make(map[string]struct{})
-	for _, spec := range r.ToolSpecsForAgent(agentID) {
+	for _, spec := range specs {
 		if !isDedicatedContinuationSpec(spec) {
 			continue
 		}

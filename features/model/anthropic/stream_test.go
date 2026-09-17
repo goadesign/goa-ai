@@ -198,11 +198,7 @@ func TestAnthropicStreamer_TextAndToolCall(t *testing.T) {
 
 	s := newAnthropicStreamer(
 		context.Background(),
-		stream,
-		nameMap,
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		stream, &encodedRequest{provToCanon: nameMap, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		anthropicTestContract(t),
 	)
@@ -320,11 +316,7 @@ func TestAnthropicStreamerTreatsBedrockEOFAsCleanCompletion(t *testing.T) {
 	)
 	translated := newAnthropicStreamer(
 		t.Context(),
-		stream,
-		nil,
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		stream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		anthropicTestContract(t),
 	)
@@ -434,11 +426,7 @@ func TestAnthropicStreamerValidatesNativeStructuredOutput(t *testing.T) {
 	)
 	raw := newAnthropicStreamer(
 		t.Context(),
-		providerStream,
-		nil,
-		nil,
-		"claude-sonnet-5",
-		model.ModelClassDefault,
+		providerStream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "claude-sonnet-5", search: &claudeSearch{}}, model.ModelClassDefault,
 		output,
 		contract,
 	)
@@ -486,11 +474,7 @@ func TestAnthropicStreamerRejectsOversizedSDKSnapshotBeforeAccumulation(t *testi
 	require.NoError(t, err)
 	validated := newAnthropicStreamer(
 		t.Context(),
-		stream,
-		nil,
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		stream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		contract,
 	)
@@ -518,11 +502,7 @@ func TestAnthropicStreamerClassifiesAccumulatorFailure(t *testing.T) {
 	)
 	translated := newAnthropicStreamer(
 		t.Context(),
-		stream,
-		nil,
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		stream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		anthropicTestContract(t),
 	)
@@ -608,11 +588,7 @@ func TestAnthropicStreamerClassifiesUnsupportedDeltaAsResponseShape(t *testing.T
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](&testDecoder{events: events}, nil)
 	translated := newAnthropicStreamer(
 		t.Context(),
-		stream,
-		nil,
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		stream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		anthropicTestContract(t),
 	)
@@ -662,11 +638,7 @@ func TestAnthropicStreamerRejectsMissingToolCallIDWithUsage(t *testing.T) {
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](&testDecoder{events: events}, nil)
 	translated := newAnthropicStreamer(
 		t.Context(),
-		stream,
-		map[string]string{"lookup": "svc.lookup"},
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		stream, &encodedRequest{provToCanon: map[string]string{"lookup": "svc.lookup"}, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		anthropicTestContract(t),
 	)
@@ -694,11 +666,7 @@ func TestAnthropicStreamer_MidStream429Classified(t *testing.T) {
 
 	s := newAnthropicStreamer(
 		context.Background(),
-		stream,
-		nil,
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		stream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		anthropicTestContract(t),
 	)
@@ -722,11 +690,7 @@ func TestAnthropicStreamer_ContextCancelPassthrough(t *testing.T) {
 
 	s := newAnthropicStreamer(
 		context.Background(),
-		stream,
-		nil,
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		stream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		anthropicTestContract(t),
 	)
@@ -748,11 +712,7 @@ func TestAnthropicStreamerClassifiesEventlessStreamAsEmptyStream(t *testing.T) {
 
 	s := newAnthropicStreamer(
 		context.Background(),
-		stream,
-		nil,
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		stream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		anthropicTestContract(t),
 	)
@@ -776,11 +736,7 @@ func TestAnthropicStreamerClassifiesMessageStopWithoutStart(t *testing.T) {
 
 	s := newAnthropicStreamer(
 		context.Background(),
-		stream,
-		nil,
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		stream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		anthropicTestContract(t),
 	)
@@ -833,11 +789,7 @@ func TestAnthropicStreamerRejectsMessageStopWithOpenContentBlock(t *testing.T) {
 	stream := ssestream.NewStream[sdk.MessageStreamEventUnion](&testDecoder{events: events}, nil)
 	s := newAnthropicStreamer(
 		context.Background(),
-		stream,
-		nil,
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		stream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		anthropicTestContract(t),
 	)
@@ -1063,11 +1015,7 @@ func TestAnthropicStreamerClosesProviderStreamOnce(t *testing.T) {
 	providerStream := ssestream.NewStream[sdk.MessageStreamEventUnion](decoder, nil)
 	streamer := newAnthropicStreamer(
 		t.Context(),
-		providerStream,
-		nil,
-		nil,
-		"claude-test",
-		model.ModelClassDefault,
+		providerStream, &encodedRequest{provToCanon: nil, noArgumentTools: nil, model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault,
 		nil,
 		anthropicTestContract(t),
 	)
