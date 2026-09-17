@@ -241,7 +241,7 @@ func TestCatalogRejectsPersistedMismatchedWireProtocol(t *testing.T) {
 	entry.WireProtocolVersion++
 	body, err := marshalCatalogEntry(entry)
 	require.NoError(t, err)
-	_, err = parseCatalogEntry("test.toolset", body)
+	_, err = newToolsetCatalog(newTestCatalogMap(), newTestTimeSource(time.Now())).parseCatalogEntry("test.toolset", body)
 	require.ErrorContains(t, err, "invalid wire protocol version")
 }
 

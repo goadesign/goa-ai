@@ -22,8 +22,12 @@ func (s *Service) ResolveToolset(ctx context.Context, p *genregistry.GetToolsetP
 	if err != nil {
 		return nil, err
 	}
+	toolset, err := registration.Toolset.decode()
+	if err != nil {
+		return nil, err
+	}
 	return &genregistry.ResolvedToolset{
-		Toolset:           registration.Toolset,
+		Toolset:           toolset,
 		RegistrationToken: registration.RegistrationToken,
 	}, nil
 }
