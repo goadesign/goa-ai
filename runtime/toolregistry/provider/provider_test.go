@@ -1580,9 +1580,12 @@ func TestServeSettlesExpiredQueuedCallAndKeepsServing(t *testing.T) {
 		return nil
 	})
 	registration.Claim = func(
-		_ context.Context,
+		ctx context.Context,
 		request ClaimRequest,
 	) (ClaimDisposition, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		assert.Equal(t, testRegistrationTokenA, request.ProviderRegistrationToken)
 		assert.Equal(t, testRegistrationTokenA, request.CallRegistrationToken)
 		if request.ToolUseID != "expired" {
@@ -1679,9 +1682,12 @@ func TestServeUsesRegistryExpirationForDeliveredCall(t *testing.T) {
 				return nil
 			})
 			registration.Claim = func(
-				_ context.Context,
+				ctx context.Context,
 				request ClaimRequest,
 			) (ClaimDisposition, error) {
+				if err := ctx.Err(); err != nil {
+					return "", err
+				}
 				assert.Equal(t, testRegistrationTokenA, request.ProviderRegistrationToken)
 				assert.Equal(t, testRegistrationTokenA, request.CallRegistrationToken)
 				settled <- request.ToolUseID
