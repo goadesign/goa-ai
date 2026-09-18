@@ -22,9 +22,9 @@ func TestCollectorProjectsRunTreeIntoEvidence(t *testing.T) {
 		toolStart("root", "svc.agents.helper", "call-2", ""),
 		assistantReply("root", "The answer "),
 		toolStart("child", "svc.read.detail", "call-2a", "call-2"),
-		toolEnd("child", "svc.read.detail", "call-2a", `{"detail":true}`, nil),
-		toolEnd("root", "svc.read.list", "call-1", `{"items":[1,2]}`, nil),
-		toolEnd("root", "svc.agents.helper", "call-2", `{"ok":true}`, nil),
+		toolEnd("child", "svc.read.detail", "call-2a", "call-2", `{"detail":true}`, nil),
+		toolEnd("root", "svc.read.list", "call-1", "", `{"items":[1,2]}`, nil),
+		toolEnd("root", "svc.agents.helper", "call-2", "", `{"ok":true}`, nil),
 		assistantReply("child", "child narration is excluded"),
 		assistantReply("root", "is 42."),
 		workflowEvent("root", "completed", nil),
@@ -65,7 +65,7 @@ func TestCollectorRecordsFailureAndTerminalFailure(t *testing.T) {
 		Error: planner.NewToolError("bad arguments"),
 	}
 	require.NoError(t, c.Consume(toolStart("root", "svc.read.list", "call-1", "")))
-	require.NoError(t, c.Consume(toolEnd("root", "svc.read.list", "call-1", "", failure)))
+	require.NoError(t, c.Consume(toolEnd("root", "svc.read.list", "call-1", "", "", failure)))
 	require.NoError(t, c.Consume(workflowEvent("root", "failed", &run.Failure{Message: "boom"})))
 
 	evidence, err := c.Finish()
@@ -117,7 +117,7 @@ func TestCollectorRejectsContractViolations(t *testing.T) {
 	})
 	t.Run("tool end without start", func(t *testing.T) {
 		c := NewCollector()
-		assert.ErrorContains(t, c.Consume(toolEnd("root", "svc.read.list", "call-1", "{}", nil)), "unknown tool call")
+		assert.ErrorContains(t, c.Consume(toolEnd("root", "svc.read.list", "call-1", "", "{}", nil)), "unknown tool call")
 	})
 	t.Run("orphaned parent at finish", func(t *testing.T) {
 		c := NewCollector()
@@ -142,11 +142,12 @@ func toolStart(runID, tool, callID, parentCallID string) stream.Event {
 }
 
 // toolEnd builds a synthetic tool_end event for tests.
-func toolEnd(runID, tool, callID, result string, failure *planner.ToolFailure) stream.Event {
+func toolEnd(runID, tool, callID, parentCallID, result string, failure *planner.ToolFailure) stream.Event {
 	payload := stream.ToolEndPayload{
-		ToolCallID: callID,
-		ToolName:   tool,
-		Failure:    failure,
+		ToolCallID:       callID,
+		ParentToolCallID: parentCallID,
+		ToolName:         tool,
+		Failure:          failure,
 	}
 	if result != "" {
 		payload.Result = rawjson.Message(result)

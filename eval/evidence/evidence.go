@@ -2,8 +2,9 @@
 // typed, assertable Evidence and evaluates declarative expectations over it.
 //
 // Evidence is the framework-owned record of one run tree's observable
-// behavior: tool calls in canonical causal order, the accumulated assistant
-// answer, a pending confirmation boundary, and the terminal workflow phase.
+// behavior: tool calls in canonical causal order, results in observation order,
+// the accumulated assistant answer, a pending confirmation boundary, and the
+// terminal workflow phase.
 // A Collector builds Evidence from stream.Event values; an Expect converts
 // Evidence into eval.Check results.
 //
@@ -41,6 +42,10 @@ type (
 		// agent-as-tool calls (identified by ParentToolCallID) while root and
 		// sibling order stays exact.
 		ToolCalls []ToolCall
+		// ToolCompletions are the results observed in this root's stream, in
+		// observation order. They include earlier invocations completed here
+		// without counting those invocations again in ToolCalls.
+		ToolCompletions []ToolCompletion
 		// Confirmation is the pending operator confirmation when the run
 		// stopped at an await_confirmation boundary.
 		Confirmation *Confirmation
@@ -51,6 +56,22 @@ type (
 		// TerminalFailure is the canonical failure payload when TerminalPhase
 		// is run.PhaseFailed.
 		TerminalFailure *run.Failure
+
+		// continuation preserves collector-owned pending observations. Public
+		// evidence fields are snapshots, never inputs to continuation state.
+		continuation *continuationContext
+	}
+
+	// ToolCompletion records one observed result and the original invocation.
+	// Its containing Evidence identifies the root stream that observed the
+	// completion. Neither root scope claims a native child workflow identity.
+	ToolCompletion struct {
+		// InvocationRootRunID is the root stream in which the invocation
+		// started, including invocations made by that root's children.
+		InvocationRootRunID string
+		// Call retains the exact invocation and its completed result, bounds,
+		// or failure. Completed is always true.
+		Call ToolCall
 	}
 
 	// ToolCall pairs one tool invocation with its result.
@@ -106,11 +127,12 @@ func (e *Evidence) Calls(name tools.Ident) []ToolCall {
 // parent immediately precedes its descendants while root and sibling order
 // stays exact. This keeps exact trajectories independent of how concurrent
 // child runs interleave on the stream.
-func causalOrder(calls []ToolCall) ([]ToolCall, error) {
+func causalOrder(calls []ToolCall, priorParents map[string]string) ([]ToolCall, error) {
 	children := make(map[string][]ToolCall)
 	var roots []ToolCall
 	for _, call := range calls {
-		if call.ParentToolCallID == "" {
+		_, priorParent := priorParents[call.ParentToolCallID]
+		if call.ParentToolCallID == "" || priorParent {
 			roots = append(roots, call)
 			continue
 		}

@@ -279,6 +279,16 @@ and return:
 - semantic claims for meaning that requires reading a model answer; and
 - artifacts that help diagnose a failure.
 
+The evidence collector owns correlation and assertion scope. `ToolCalls` records
+new invocations in one root run tree; ordered `ToolCompletions` records results
+delivered there, including earlier calls completed after an accepted continuation.
+The application supplies that accepted successor through
+`NewContinuationCollector`. Collector-produced context retains only pending calls
+and their observed ancestry across root stream boundaries. It cannot be authored
+through public evidence fields. Invocation and completion root scopes describe
+the observed run trees, not native child workflow identity. Exact trajectories,
+tool bans, and attempt policies continue to count only new invocations.
+
 The runner owns execution mechanics. Callers choose all scenarios, exact
 scenario IDs, or tags through separate methods. Selection is validated before
 any product or model call. An explicit positive concurrency limit bounds work;
