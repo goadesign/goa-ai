@@ -2069,24 +2069,13 @@ That generated provider implements a dispatcher that decodes the tool payload JS
 To run it, wire the generated provider into the runtime provider loop:
 
 ```go
-generatedSpecs := toolsetpkg.Specs()
-toolSchemas := make([]*genregistry.ToolSchema, len(generatedSpecs))
-for i, spec := range generatedSpecs {
-    description := spec.Description
-    toolSchemas[i] = &genregistry.ToolSchema{
-        Name:                   string(spec.Name),
-        Description:            &description,
-        Tags:                   spec.Tags,
-        PayloadSchema:          spec.Payload.Schema,
-        ExecutionPayloadSchema: spec.ExecutionPayloadSchema,
-        ResultSchema:           spec.Result.Schema,
-    }
-}
+toolSchemas := toolsetpkg.ToolSchemas()
 handler := toolsetpkg.NewProvider(serviceImpl)
 providerID := podName + "/" + toolsetID
 admissionRevision := mustRequiredEnv("TOOL_REGISTRY_ADMISSION_REVISION")
+providerErr := make(chan error, 1)
 go func() {
-    err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler,
+    providerErr <- toolprovider.Serve(ctx, pulseClient, toolsetID, handler,
         toolprovider.Registration{
             AdmissionRevision: admissionRevision,
             Register: func(ctx context.Context, toolset, providerID, incarnationID, admissionRevision string) (toolprovider.RegistrationLease, error) {
@@ -2096,9 +2085,6 @@ go func() {
                 }
                 result, err := registryClient.Register(ctx, &genregistry.RegisterPayload{
                     Name:              toolset,
-                    Description:       toolsetDescription,
-                    Version:           toolsetVersion,
-                    Tags:              toolsetTags,
                     Tools:             toolSchemas,
                     ProviderID:        providerID,
                     ProviderIncarnationID: incarnationID,
@@ -2113,6 +2099,18 @@ go func() {
                     RegistrationToken: result.RegistrationToken,
                     Duration:          time.Duration(result.LeaseDurationMs) * time.Millisecond,
                 }, nil
+            },
+            Renew: func(ctx context.Context, toolset, providerID, incarnationID, expectedToken string) (time.Duration, error) {
+                result, err := registryClient.RenewProvider(ctx, &genregistry.RenewProviderPayload{
+                    Name:                      toolset,
+                    ProviderID:                providerID,
+                    ProviderIncarnationID:     incarnationID,
+                    ExpectedRegistrationToken: expectedToken,
+                })
+                if err != nil {
+                    return 0, err
+                }
+                return time.Duration(result.LeaseDurationMs) * time.Millisecond, nil
             },
             Drain: func(ctx context.Context, toolset, providerID, incarnationID, expectedToken string, settlementDuration time.Duration) error {
                 return registryClient.DrainProvider(ctx, &genregistry.DrainProviderPayload{
@@ -2162,13 +2160,16 @@ go func() {
                     RequestEventID: requestEventID,
                 })
             },
-            Claim: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, callToken, toolUseID, requestEventID string) (toolprovider.ClaimDisposition, error) {
-                result, err := registryClient.ClaimToolCall(ctx, &genregistry.ProviderToolCallClaimPayload{
-                    Toolset: toolset, ProviderID: providerID,
-                    ProviderIncarnationID: incarnationID,
-                    ProviderRegistrationToken: providerToken,
-                    CallRegistrationToken: callToken, ToolUseID: toolUseID,
-                    RequestEventID: requestEventID,
+            Claim: func(ctx context.Context, claim toolprovider.ClaimRequest) (toolprovider.ClaimDisposition, error) {
+                result, err := registryClient.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
+                    Toolset:                   claim.Toolset,
+                    ProviderID:                claim.ProviderID,
+                    ProviderIncarnationID:     claim.ProviderIncarnationID,
+                    ProviderRegistrationToken: claim.ProviderRegistrationToken,
+                    CallRegistrationToken:     claim.CallRegistrationToken,
+                    ToolUseID:                 claim.ToolUseID,
+                    RequestEventID:            claim.RequestEventID,
+                    ClaimOperationID:          claim.OperationID,
                 })
                 if err != nil {
                     return "", err
@@ -2188,11 +2189,13 @@ go func() {
             },
         },
     )
-    if err != nil && !errors.Is(err, context.Canceled) {
-        panic(err)
-    }
 }()
 ```
+
+The application's lifecycle owner reads `providerErr` and handles the complete
+returned error. A real renewal or cleanup failure can be joined with context
+cancellation; `errors.Is(err, context.Canceled)` alone does not establish a clean
+shutdown.
 
 This integration is intentionally split:
 
@@ -2232,15 +2235,18 @@ func newRegistryClient(address string) (*genregistry.Client, func() error, error
 	transport := genregistrygrpc.NewClient(conn, grpc.WaitForReady(true))
 	return genregistry.NewClient(
 		transport.Register(),
+		transport.RenewProvider(),
 		transport.ReleaseProvider(),
 		transport.DrainProvider(),
 		transport.Unregister(),
 		transport.Pong(),
 		transport.ListToolsets(),
 		transport.GetToolset(),
+		transport.ResolveToolset(),
 		transport.CheckAdmission(),
 		transport.Search(),
 		transport.CallTool(),
+		transport.CallResolvedTool(),
 		transport.RetryTool(),
 		transport.CompleteToolCall(),
 		transport.PublishToolOutputDelta(),
@@ -2261,13 +2267,13 @@ both cases.
 
 Provider leases are scoped by stable `ProviderID` plus a runtime-generated UUID
 incarnation. `Serve` generates the incarnation once and passes it to typed
-Register, Drain, Release, Claim, Complete, and Pong callbacks; deployment code never supplies or
-infers it. A delayed old-process release therefore cannot delete its replacement.
+Register, Renew, Drain, Release, Claim, Complete, and Pong callbacks; deployment
+code never supplies or infers it. A delayed old-process release therefore cannot delete its replacement.
 Deployment
 configuration supplies one required `AdmissionRevision` shared by every replica
 in one fenced admission. Reuse it for scaling and same-contract RollingUpdate;
 change it only when a new schema or rollout fence is intended. `Serve` passes
-the revision and runtime identity to registration and Pong. It
+the revision to Register and the provider/incarnation identity to its callbacks. It
 opens the Pulse stream, waits for typed registration, and only then creates the
 consumer-group sink. Calls published after admission but before sink startup
 remain queued; an unadmitted process cannot claim them.
@@ -2278,53 +2284,89 @@ for a same-contract binary rollout. Do not derive the revision from pod names,
 startup time, random process IDs, ReplicaSet hashes, filesystem metadata, or
 runtime Kubernetes inspection. The accepted syntax is
 `^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,255}$`.
-Transient registration failures use bounded exponential jitter. `Serve`
-schedules successful renewal from the returned lease duration—approximately
-one third into the lease with jitter—so short and non-round lease durations
-retain time for retries. Every callback invocation
-receives an attempt deadline and must return promptly when that context is
-canceled because `Serve` waits for it during shutdown.
+`Registration.Register` runs only during startup. It submits the runtime-owned
+`WireProtocolVersion`, generated `ToolSchemas()`, schema fingerprint, and fixed
+`AdmissionRevision`. A successful result supplies the one `RegistrationToken`
+for this Serve lifecycle and its initial `LeaseDurationMs`. Startup may retry
+transient errors with bounded exponential jitter; an active provider never
+uses Register to recover lost lease authority.
 
-The registration callback must always submit the runtime-owned
-`WireProtocolVersion`, the same generated schema payload, and the same
-`AdmissionRevision` for one `Serve` lifecycle. The registry rejects a missing
-or mismatched version with `validation_error` before stream creation, catalog
-mutation, lease admission, or health scheduling. An identical wire
-version/schema/revision registration renews only that provider's application
-lease: it preserves
-catalog identity metadata and token, exact-CAS updates the embedded lease, and
-does not restart a healthy ticker. `RegisterResult` returns the active `RegistrationToken` and
-`LeaseDurationMs`. `Serve` derives a conservative monotonic deadline from the
-local attempt start, bounds retries by that deadline, and closes consumption
-before it expires. A failed or ambiguous identical renewal preserves the prior
-lease and is safe to retry. The single exact-CAS catalog record contains
-active/retired state, toolset metadata, wire protocol version, schema
-fingerprint, admission revision, token, Redis `RegisteredAt`, every
-provider-incarnation lease, health epoch, last pong, and the exact set of all
-retired registration tokens. Whenever
-the routable provider set transitions between empty and nonempty, CAS advances
-the epoch and clears pong freshness. Draining or releasing an already
-non-routable lease does not advance it. Ping IDs carry token plus epoch; Pong atomically authenticates that
-pair and the responding incarnation. Aggregate health requires one unexpired,
-non-draining embedded lease plus one fresh current-epoch pong; it does not require every
-replica to pong. Registry-issued leases are at least 45
-seconds—longer than the default shutdown, attempt, and retry budget—and at most
-24 hours. Providers additionally reject any returned lease that does not exceed
-their configured shutdown margin plus bounded attempt and retry delay.
+`Registration.Renew` is required; omitting it fails provider construction. It
+calls `RenewProvider` with only `Name`, `ProviderID`, `ProviderIncarnationID`, and
+`ExpectedRegistrationToken`. The result contains only `LeaseDurationMs`, and
+the callback returns `(time.Duration, error)`. Renewal sends no definitions,
+fingerprint, revision, or repeated wire version. It extends only the exact
+current unexpired lease; its token already binds the admitted wire version.
+
+The existing supervisor schedules renewal around one third of the granted
+duration with jitter. Each attempt has a timeout bounded by the prior lease's
+safety cutoff. The local expiry is calculated from the attempt's start, not
+from the response arrival. A late reply cannot extend the old cutoff. Transient
+or ambiguous transport failures retry within that cutoff without assuming
+state disappeared. Missing, expired, retired, or replaced authority returns
+`provider_lease_lost` and immediately starts shutdown without re-registration.
+
+Every callback must honor its context. Shutdown waits only within the shared
+settlement deadline and reports callbacks that outlive it. Registry-issued
+leases remain between 45 seconds and 24 hours. The provider also rejects a
+returned duration that does not exceed its configured shutdown margin plus
+bounded attempt and maximum retry delay. These duration checks apply to both
+startup registration and renewal.
+
+#### Registry storage and definition reuse
+
+The catalog owns compact current state, a separate current definition per
+toolset, and permanent retired tokens in Redis. Current state contains the
+active/retired status, listing summary, wire version, schema fingerprint,
+revision, token, registration time, provider-incarnation leases with draining
+flags and expiries, health epoch, and last pong. Definitions contain the schemas
+and generated consumer metadata; they do not supply registration time. Retired
+tokens are stored separately and never expire.
+
+Registry replicas use direct Redis reads and atomic conditional updates.
+There is no Pulse replicated catalog map, definition publication, or map-revision
+repair. Registration/replacement commits changed definitions, state, and
+retirement together. Renewal, health, pong, drain, release, and the atomic
+checks for call publication, claim, and completion use compact state without
+reading or copying full definitions. Pulse still carries requests and results.
+
+Startup strictly validates every state/definition pair and retirement history
+before serving. Unknown fields, old combined records, missing pairs, malformed
+schemas, invalid identities, mismatched fingerprints or summaries, and
+inconsistent retirement membership fail startup. It does not convert or repair
+stored data. Existing installations require the [offline storage
+upgrade](#registry-storage-upgrade).
+
+Each replica compares the fingerprint in current state with its cached
+definition before fetching definition bytes. On a miss, it reads state and
+definition together, validates them, and prepares a map from tool names to
+compiled execution schemas using the existing schema validator. Calls use that
+map to validate dynamic argument JSON without decoding the whole toolset or
+rehashing and recompiling its schemas. `GetToolset` and `ResolveToolset` still
+return independent full definitions with metadata from the selected state.
+The cache never substitutes for live authorization or changes the consumer's
+per-planning-activity catalog lifetime.
+
+A change between zero and nonzero routable providers advances the health epoch
+and clears pong freshness. Draining or releasing an already non-routable lease
+does not advance it. Ping IDs carry the registration token and epoch; Pong
+checks both and the responding incarnation atomically. Health requires at least
+one unexpired, non-draining lease and a fresh current-epoch pong, not a pong
+from every replica.
 
 A different token prunes leases using Redis TIME. While an old lease remains,
 `Register` returns retryable `admission_blocked`; once none remain, exact CAS
 replaces the record with the candidate and first lease. A blocked initial
-registration retries with jitter. A blocked renewal means the provider is
-superseded, so `Serve` immediately stops claiming work instead of waiting for
-its local lease cutoff. Replacement atomically adds the prior token to the
-catalog's permanent tombstone set. Retirement does the same for the current
+registration retries with jitter. An explicit full Register of an existing
+draining incarnation returns `provider_lease_lost`; it cannot reopen that
+incarnation. Replacement atomically adds the prior token to the catalog's
+permanent retired-token set. Retirement does the same for the current
 token. Any later A candidate after A→B receives permanent
 `admission_retired`; a fresh revision derives a new token. This exact set is
 permanent unbounded correctness history and grows with distinct admissions.
 Do not truncate or probabilistically compact it.
 
-After every admitted exit, `Serve` stops renewal and atomically marks the
+After every admitted exit, `Serve` cancels renewal and atomically marks the
 original admitted token/incarnation lease draining before it closes the shared
 sink. Workers finish only calls whose registry claims committed before
 draining began. Buffered, unclaimed request events remain pending for a
@@ -2332,14 +2374,17 @@ replacement provider; draining rejects new claims while preserving authority
 to complete previously claimed calls. The Drain request carries the
 configured shutdown duration plus `SettlementAuthorityMargin`, and Redis
 extends the lease from the transition time through that authority window.
-`Serve` retains the renewal result before cleanup. If renewal returns a
-different token at the same time as process cancellation, cleanup drains that
-token concurrently under the same deadline and reports the token change as a
-terminal contract failure. The changed token is released only when its drain
-and the remaining settlement both succeed; otherwise the returned error
-preserves the failed cleanup and lease expiry removes it.
-`Serve` applies one shared `ShutdownTimeout` deadline to sink closure, worker
-and registry-owned terminal settlement, and queued acknowledgement drain. The
+One Serve lifecycle drains and releases only its startup token. Renewal cannot
+return a different token. An in-flight renewal may still finish after drain:
+the registry accepts an unexpired draining lease while preserving its flag and
+the later of its current expiry and the new expiry. New claims remain forbidden,
+and a late successful response cannot resume the canceled supervisor. This
+normal shutdown race needs no extra cleanup token or suppressed error. A real
+renewal error remains visible even when cancellation occurs at the same time.
+`Serve` applies one shared `ShutdownTimeout` deadline to drain, sink closure,
+worker and registry-owned terminal settlement, queued acknowledgement drain,
+and waiting for renewal to stop. The final release retries within the separate
+bounded `Registration.ReleaseTimeout`. The
 lease margin keeps authority valid while the final operation crosses the
 transport boundary. `ShutdownTimeout` therefore cannot exceed
 `MaxShutdownTimeout`, which reserves that margin inside
@@ -2409,10 +2454,11 @@ optional fallback or dual decoder. The registry rejects a missing version
 (protobuf zero) or a mismatched version at the generated transport boundary and
 repeats the check at the first line of CallTool or RetryTool, before catalog
 lookup, health checks, result-stream creation, call admission, or Pulse
-publication. Register and renewal apply the same check before provider
-admission. The runtime-owned version therefore fences both producers of
-protocol bytes while the version-bound registration token fences provider
-generations.
+publication. Register applies the provider version check during startup.
+RenewProvider sends no version field: strict current-state validation and the
+exact expected token enforce the version admitted at startup. The storage
+upgrade keeps wire protocol 10, schema fingerprints, and token derivation
+unchanged.
 Incoming `run_id`, `session_id`, `turn_id`, `tool_call_id`, and
 `parent_tool_call_id` values are bounded to 256
 bytes and reject NUL at the generated transport boundary; provider and
@@ -2532,19 +2578,34 @@ protocol errors instead of being skipped until timeout. Providers stamp the
 call identity and validate the strict success/error/retry union before publishing
 or acknowledging a handler result.
 
-Recovery has two owners. Pulse owns recovery of an admitted provider sink.
-`Serve` registration reconciliation owns recovery of the catalog-owned lease,
-and the registry's ensure-only ping loop after temporary registry or Redis
-state loss. Supported rmap destruction, stream destruction, and ticker loss
-recover live under the same registry name without a process restart; the
-reconstructed ping/pong exchange restores group-health freshness.
+Recovery preserves existing authority. Temporary registry/Redis connection
+failures can retry within the provider's current lease cutoff. Registry restart
+with durable catalog data intact, loss of stream/group state, and loss of ping
+leases remain recoverable. Pulse repairs the original stream lifecycle and
+consumer group after accidental Redis state loss; `Serve` also periodically
+ensures the group exists, and the registry scheduler reacquires ping leases.
+Lightweight renewal extends the retained lease without resending definitions.
 
-A raw total Redis reset is not that supported path: it erases rmap revision
-history and the catalog's permanent retirement tombstones. Canonical schema and
-revision still derive the same token, but live recovery and anti-resurrection
-cannot be guaranteed from empty Redis. Stop incompatible admissions and restore
-a catalog backup or deliberately rebootstrap the registry before resuming
-providers. Never overlap incompatible admissions.
+Intentional Pulse `Stream.Destroy` permanently invalidates that generation and
+stops its existing sinks. It is not an accidental-loss simulation or a live
+repair operation. Consumer-group repair cannot reopen a destroyed generation.
+Recovery of accidental loss restores future delivery; it does not reconstruct
+messages erased from Redis.
+
+Loss of the authoritative registration or exact lease ends the active provider
+with `provider_lease_lost`. Neither a cached definition nor a matching token
+proves whether that incarnation was draining. Serve therefore does not Register
+again. Missing or corrupt paired definitions are reported as storage failures,
+not reconstructed. Destruction of a former replicated map is catalog data loss,
+not a supported lease-rebuilding path.
+
+After destructive catalog or retirement-history loss, stop automatic provider
+restarts and new admissions while restoring verified data or deliberately
+initializing fresh state. Complete erasure can look like a new installation;
+it does not preserve lost claims, terminal results, draining decisions, or
+retired tokens. Restoration cannot claim continuity for evidence that was not
+recovered. Never use deletion as the [protocol-10 storage
+upgrade](#registry-storage-upgrade).
 
 Catalog leases, token fencing, flat shared streams, and incompatible-admission
 non-overlap are permanent runtime contracts. Catalog and queued records must
@@ -3229,45 +3290,90 @@ For MCP services:
   packages; their constructors, adapters, and transport files are generated
   from the new contract.
 
-For tool registry wire protocol 10:
+##### Registry storage upgrade
 
-- Regenerate registry clients and providers together. Registration must send
-  both generated input schemas: `Payload.Schema` describes arguments accepted
-  from the model, while `ExecutionPayloadSchema` describes the payload sent to
-  the provider after continuation handling. A handwritten
-  `executor.Client` adapter must copy `ToolCallMeta.Labels` into both the first
-  call and every retry, as shown in
-  [Registry-Routed Execution](#registry-routed-execution-agentconsumer-side).
-- Before replacing protocol 8 or 9, prevent consumers from starting new tool
-  calls and let every admitted call finish. Prove that retained call records
-  are terminal, the global and per-provider settlement indexes are empty, and
-  each provider consumer group has no pending messages or lag. Then stop every
-  old registry, provider, and consumer process. Mixed versions reject each
-  other instead of translating the required registration schema.
-- Save the catalog hash before changing it. For a registry named `<name>`, the
-  hash is `map:<name>:toolsets:content`. Delete only hash fields whose names
-  start with `registry:toolset:`. Keep Pulse's `=rev` and `=kind` fields. The
-  following atomic Redis command returns every field it removes:
+This change keeps wire protocol 10, canonical schema fingerprints, and
+registration-token derivation unchanged. It changes persisted catalog storage
+from combined records to compact state, separate current definitions, and
+permanent retired tokens. Matching wire versions do **not** make old and new
+catalog writers compatible. Existing protocol-10 data requires offline
+conversion; do not delete the catalog or its retired-token history to upgrade.
 
-  ```text
-  EVAL "local fields=redis.call('HKEYS',KEYS[1]); local removed={}; for _,field in ipairs(fields) do if string.sub(field,1,17)=='registry:toolset:' then redis.call('HDEL',KEYS[1],field); table.insert(removed,field); end; end; return removed" 1 map:<name>:toolsets:content
-  ```
+Source changes are also required:
 
-  Verify afterward that
-  `HSCAN map:<name>:toolsets:content 0 MATCH registry:toolset:* COUNT 1000`
-  returns no matching fields and that `HMGET map:<name>:toolsets:content =rev
-  =kind` still returns the reserved map state.
-- Do not delete retained call records, settlement records, or Pulse streams.
-  Once drained, they do not block protocol-10 startup and retain the evidence
-  needed to prevent an old call from executing twice. Their configured expiry
-  removes call-specific state.
-- After the old processes have stopped and the catalog fields have been removed,
-  start the protocol-10 registry, providers, and consumers as one release. Then
-  verify every expected toolset registered with protocol 10 before accepting new
-  work. The catalog contains no product data; providers recreate its schemas,
-  leases, health, and tokens. The operation discards protocol-8 and protocol-9
-  retirement history, so rollback to either older protocol is unsupported after
-  protocol-10 traffic starts.
+- Add the required `Registration.Renew` callback shown in the
+  [provider example](#registry-routed-provider-execution-service-side). It calls
+  the generated `RenewProvider` method and returns only the granted duration.
+  There is no fallback to Register when the callback is missing or a lease is
+  lost. Keep full Register for startup, using generated `ToolSchemas()`.
+- Update generated registry clients/servers and application wiring together.
+  In positional `genregistry.NewClient` calls, pass `transport.RenewProvider()`
+  immediately after `transport.Register()`, using the full generated signature.
+- Remove references to `provider.ErrRegistrationTokenChanged` and
+  `provider.ErrRegistrationSuperseded`; both public symbols are removed.
+  Delete changed-token cleanup and superseded-renewal branches in custom hosts.
+  Lease authority loss now arrives as the typed `provider_lease_lost` service
+  error; `ErrRegistrationLeaseExpired` still reports the local safety cutoff.
+  Preserve real failures joined with cancellation.
+- No DSL, tool availability, consumer catalog lifetime, or provider message
+  shape changes. Do not change an admission revision merely for this storage
+  conversion when its schema and deployment admission remain the same.
+
+Use a coordinated maintenance cutover:
+
+1. Stop new tool work and let accepted calls settle under the old registry.
+   Verify retained calls are terminal, settlement indexes are empty, and
+   provider consumer groups have no pending work or lag. Gracefully stop the
+   providers while the old registry can still drain and release their leases.
+   If accepted work cannot settle, postpone the cutover and resolve that work.
+2. Stop **all old registry writers** and all processes that could start old
+   registrations or publish tool calls. Disable automatic restarts/admissions
+   during maintenance. No old/new writer overlap is supported, even though both
+   use protocol 10. Take a consistent backup with all writers stopped.
+3. Run an offline converter and verifier against that backup. Preserve exact
+   tokens, fingerprints, revisions, registration times, lease identities,
+   draining flags, lease expiries, health epochs, pong timestamps, and every
+   retired token. Preserve logical catalog keys used by saved calls. Do not
+   recreate leases, recompute identity, or reset timestamps during conversion.
+4. Keep retained call/settlement records, request/result streams, and execution
+   ownership/history intact. Preserve their original absolute expiry deadlines;
+   do not delete, replay, or extend them to perform this catalog conversion.
+   Verify definition/state consistency and retirement membership before startup.
+5. Start only the new registry against verified converted data. Its strict
+   startup checks must pass before updated providers and consumers resume.
+   Check each expected admission and representative tool calls before admitting
+   new work. Stream and health recovery alone do not prove correct conversion.
+
+An offline converter/verifier is being prepared as release evidence. This
+preview does not yet provide a published conversion artifact, download link, or
+executable migration command. Do not begin an existing-data cutover until that
+artifact and its verification procedure have been reviewed and rehearsed for
+the target installation. An empty development installation can start directly;
+that is not a migration of an existing registry.
+
+Before new writes resume, a failed conversion can be abandoned and the untouched
+backup restored with every writer stopped. Once new writes resume, recover
+forward; restoring a stale backup could resurrect retired tokens or discard new
+leases and execution evidence. Keep the verified backup as recovery evidence,
+not as a second live read/write path. Normal startup has no legacy decoder,
+dual-write mode, or automatic converter.
+
+##### Historical wire protocol 8/9 transition
+
+The earlier move from protocols 8/9 to protocol 10 changed the call-decision
+record and required registration schemas. It was a separate, incompatible
+wire-version transition. Earlier release guidance described retiring an old
+catalog after draining those versions; it did not define a lossless conversion
+of current protocol-10 catalog or retirement history. That historical reset
+procedure must not be applied to the storage upgrade above.
+
+Installations still on protocols 8/9 need a separately reviewed path from their
+actual release, with old writers stopped and retained call/stream evidence and
+its expiry preserved. Current readers reject those old record shapes instead
+of translating them. No protocol-8/9 converter or deletion command is supplied
+here. Registration still supplies both generated input schemas, and custom
+executor adapters preserve `ToolCallMeta.Labels` on initial calls and retries;
+see [registry-routed execution](#registry-routed-execution-agentconsumer-side).
 
 For runtime storage and workflow adapters:
 
@@ -5201,6 +5307,27 @@ type Tracer interface {
 
 ### Registry and model-request traces
 
+Catalog storage operations emit the following spans, each identified by
+`toolregistry.toolset`:
+
+| Span | Byte-count attributes and meaning |
+| --- | --- |
+| `toolregistry.catalog.state.read` | `toolregistry.catalog.state_read_bytes`: compact state returned by Redis. A warm read also checks that the paired definition exists without fetching its bytes. |
+| `toolregistry.catalog.state.update` | `toolregistry.catalog.state_compare_bytes`, `toolregistry.catalog.state_write_bytes`, and `toolregistry.catalog.definition_write_bytes`: the previous state compared and the proposed state/definition supplied to one conditional update. |
+| `toolregistry.catalog.definition.load` | `toolregistry.catalog.state_read_bytes` and `toolregistry.catalog.definition_read_bytes`: the coherent state/definition pair fetched for validation and cache loading. |
+
+Update byte counts describe the attempted write, including an attempt that
+loses to another writer. `toolregistry.catalog.conditional_retry` is `true`
+when the stored state changed before that update could commit; this is an
+ordinary retry, not a storage fault. Together these spans show whether frequent
+lease and health operations stay on compact state and whether definition loads
+are occurring.
+
+The catalog attributes contain byte counts and bounded metadata, not raw
+schemas, arguments, or results. Storage failures are recorded on the operation's
+span; caller context cancellation is not marked as a storage fault. These spans
+use the application's OpenTelemetry sampling policy.
+
 Every registry replica emits `toolregistry.catalog.entry` for each active
 toolset returned by the shared catalog. Retired records remain stored but do
 not produce this span. Its `toolregistry.registry` and
@@ -5237,8 +5364,8 @@ catalog read or trace delivery may have failed. Use an observed expectation
 span with `toolregistry.present=0` when the application configures required
 names. A missing `toolregistry.health` span does not mean the provider is unready because
 another replica may have won the lease. Each registry replica emits
-`toolregistry.health.sweep` for its scheduler attempt. Revision, catalog
-enumeration, and lease errors are recorded on that span with
+`toolregistry.health.sweep` for its scheduler attempt. Catalog enumeration and
+ping-lease errors are recorded on that span with
 `toolregistry.step`; a toolset name is included when the failing step had
 already selected one. A health span records catalog-read and ping-publication
 errors on itself.

@@ -1006,32 +1006,40 @@ runtime registrations remain immutable, and history never grants permission
 for new calls. Dynamic service tools carry generated confirmation, pagination,
 field, and server-only data metadata; agent/control execution remains compiled.
 
-[Tool search and dynamic registries](docs/tool_search.md) owns the full lifecycle,
-provider limitations, and upgrade contract.
+[Tool search and dynamic registries](docs/tool_search.md) describes consumer
+loading and execution. The [runtime provider guide](docs/runtime.md#registry-routed-provider-execution-service-side)
+owns callback wiring, recovery, and the storage upgrade procedure.
 
 Provider admission is owned by the clustered registry. `Serve` generates one
 UUID incarnation per lifecycle; leases are keyed by stable provider ID plus
 incarnation, so delayed old-process release cannot remove a replacement.
-Membership epoch and pong freshness live beside those leases in the same CAS
-record. The active `toolprovider.Serve` lifecycle owns an
+The health epoch (which identifies the routable provider set) and pong freshness
+live beside those leases in one compact current-state record. The active `toolprovider.Serve` lifecycle owns an
 immutable, required `AdmissionRevision`, opens the Pulse stream, invokes a typed
 context-compliant registration callback that sends the runtime-owned
 `toolregistry.WireProtocolVersion` with that revision, and creates the shared
-sink only after admission. It renews with jitter while the last
-duration-derived monotonic deadline remains valid and closes consumption before
-expiration. The first renewal is derived from one third of the granted lease
-duration; bounded retries preserve cutoff slack. After every admitted exit,
-`Serve` stops renewal, atomically marks the original admitted
-token/incarnation lease draining, then closes the canonical shared sink and
-leaves unclaimed local work for redelivery. A changed token returned by renewal
-is drained concurrently under the same shutdown deadline. Draining leases are
+sink only after admission. `Register` is used only during startup; it may retry
+until admission succeeds. The required `Registration.Renew` callback calls
+`RenewProvider` with the toolset, provider ID, incarnation, and original token.
+It receives only a duration, so renewal cannot change the admission identity.
+The same supervisor schedules renewal around one third of that duration with
+jitter. It measures the local deadline from the attempt start, bounds retries
+by the last accepted lease, and closes consumption before expiry. A late reply
+cannot extend the previous safety cutoff.
+
+After every admitted exit, `Serve` cancels renewal, atomically marks its one
+token/incarnation lease draining, then closes the shared sink and leaves
+unclaimed local work for redelivery. An in-flight renewal may succeed for an
+unexpired draining lease, but must preserve its draining flag and the later of
+the existing expiry and the newly granted expiry. It cannot reopen intake or
+shorten the time available to settle accepted work. Draining leases are
 excluded from new publication and new claims, but retain authority to settle
 claims that committed before draining.
 An exact retry of one of those claim operations returns its original `execute`
 decision. The drain transition carries the configured shutdown duration so
 Redis keeps that authority for the full settlement lifecycle. `Serve` waits
 workers and registry-owned terminal publication, drains every queued
-acknowledgement, and releases each successfully settled exact lease. Failed
+acknowledgement, and releases its one exact lease only after settlement succeeds. Failed
 settlement suppresses release and returns the cleanup error. A sink-setup
 failure has no consumption to settle and proceeds directly to bounded release.
 Shutdown classification follows the returned error's own `Unwrap` causes, not
@@ -1068,11 +1076,24 @@ Every replica with the same contract shares the revision across scaling and
 RollingUpdate; a revision changes only when a new execution fence is intended.
 The registry rejects a missing or mismatched wire version with
 `validation_error` before creating streams, mutating catalog state, admitting a
-lease, or scheduling health checks. It stores active/retired state, toolset,
-wire protocol version, canonical schema fingerprint, admission revision, token,
-Redis `RegisteredAt`, every provider-incarnation
-lease, health epoch, last pong, and the exact set of all retired registration
-tokens in one exact-CAS catalog record. A nonzero-to-zero lease transition
+lease, or scheduling health checks. The catalog privately owns three kinds of durable Redis data:
+
+| Data | Contents and ownership |
+| --- | --- |
+| Compact current state | Active/retired status, listing summary, wire version, schema fingerprint, admission revision, registration token/time, provider-incarnation leases with draining flags and expiry, health epoch, and last pong. |
+| Current definition | One serialized toolset per name, including generated schemas and consumer metadata. Registration time is supplied by current state, not the static definition. |
+| Permanent retired tokens | Every token invalidated by replacement or retirement. Tokens never expire and cannot be truncated. |
+
+Registry replicas read and update these records directly through Redis commands
+and conditional-update scripts; there is no Pulse replicated catalog map,
+full-definition publication, or map-revision repair. Registration/replacement
+commits state, any changed definition, and retirement history atomically.
+Renewal, health, pong, drain, release, and atomic call-ownership checks operate
+on compact state without transferring definitions. Publication, claim, and
+completion still check the exact lease in the same Redis operation that records
+their effects.
+
+A nonzero-to-zero lease transition
 advances the epoch and resets pong freshness. Ping IDs carry token plus epoch;
 pongs authenticate that pair and the responding incarnation atomically.
 Aggregate health and new-call routing require one unexpired, non-draining lease
@@ -1093,23 +1114,24 @@ a deployment verify the exact routable tool contract after Kubernetes confirms
 that the intended workload rollout completed. Workload readiness remains
 independent of admission, so a changed-token rolling update cannot deadlock.
 
-Registry construction enumerates every authoritative catalog key and applies
-the same strict current-format parser used by registration and routing before
-health tracking starts. Unknown fields or any other non-current record keep the
-registry unready and report every affected key; startup never rewrites a stored
-record.
+Registry construction validates every stored state/definition pair and all
+permanent retired tokens before starting health tracking. It rejects unknown
+fields, old combined records, missing pairs, invalid schemas or wire versions,
+inconsistent fingerprints or summaries, and disagreement with retirement
+history. Startup reports invalid data without rewriting or reconstructing it.
 
-Each registry replica retains a definition's serialized JSON, verified schema
-fingerprint, and small listing metadata. It reuses that validation only when the
-saved JSON is byte-for-byte identical. Provider leases, health state, and admission
-identity are still read and checked on every operation. Provider updates reuse
-the definition's serialized bytes, so health checks do not repeatedly decode and
-hash large tool catalogs. The replica retains at most one definition per current
-catalog name and discards definitions for names absent from a successful catalog
-read. Complete definitions are decoded when schema consumers need them, including
-tool calls, get, and resolve operations. Callers receive independent values and
-cannot modify the registry's retained data. This reuse does not change the stored
-record format or the atomic admission transitions.
+Each registry replica caches one current definition per toolset name. It reads
+compact current state and compares its fingerprint with the cached fingerprint
+before fetching definition bytes. A miss reads state and definition together,
+validates the pair, and prepares a tool-name map of compiled execution schemas.
+That map uses the existing schema validator's digest-keyed compilation cache;
+ordinary calls decode and validate only their dynamic arguments. They do not
+reparse or rehash tool schemas or decode the full consumer metadata graph.
+`GetToolset` and `ResolveToolset` still decode independent full definitions for
+callers. Registration timestamps and tokens come from the selected state, so
+reuse of the same static definition cannot supply stale admission metadata.
+Every consequential call operation still checks current authority; a cached
+definition alone never grants execution permission.
 
 The wire-visible `RegistrationToken` is not a secret. It is the lowercase
 SHA-256 digest of the domain `goa-ai/tool-registry-admission/v2\0`, the uint32
@@ -1124,13 +1146,16 @@ across replicas. Changing any of those inputs derives a different token. Every
 Goa and Pulse boundary requires the canonical lowercase 64-hex spelling
 `^[0-9a-f]{64}$`.
 
-Registration is one exact-CAS state machine. An absent record becomes an active
-candidate plus its first lease. The exact token adds or renews one provider.
+Registration uses atomic conditional updates. An absent state/definition pair
+may become a new admission and first lease after checking permanent retirement
+history. An explicit same-token Register can add or refresh a provider, but
+rejects an existing draining incarnation with `provider_lease_lost`. Active
+Serve lifecycles use only `RenewProvider` after startup.
 A different token first prunes expired leases using Redis TIME: while any old
 lease remains it returns retryable `admission_blocked`; once none remain it
 replaces the record with the candidate and first lease while atomically
 tombstoning the prior token. Concurrent renewal, replacement, and competing
-candidates serialize on that CAS. Retirement also atomically tombstones the
+candidates commit only if the previously read state still matches. Retirement also atomically tombstones the
 current token. Any candidate in the tombstone set returns permanent
 `admission_retired`; therefore A→B→A cannot resurrect A. Another fresh token may
 activate after retired leases are released or expire. Tombstones are permanent,
@@ -1158,19 +1183,30 @@ discovery and calls, and the retired exact token cannot register again.
 The wire protocol has no optional fallback, capability negotiation, or dual
 decoder. The registry rejects a missing or mismatched version before service
 invocation, catalog lookup, health checks, result-stream creation, call
-admission, or Pulse publication. Register and renewal apply the same check
-before provider admission. The runtime-owned version therefore fences both
-producers of protocol bytes, while the version-bound registration token
-preserves the provider-generation fence.
+admission, or Pulse publication. Register validates the provider's supplied
+version at startup. Renewal sends no repeated wire version: the exact token and
+strictly validated current state bind the version already admitted. The storage
+split changes neither wire protocol 10 nor schema fingerprints or token derivation.
 
-Supported rmap `Destroy`, stream destruction, and ticker loss recover live under
-the same registry name without a process restart: renewal reconstructs the
-catalog lease, the stream recreates, and ticker reconciliation restores pings.
-A raw total Redis reset is different because it erases rmap revision history and
-the permanent retirement tombstones. Deterministic identity still derives the
-same token, but live recovery and anti-resurrection cannot be claimed without a
-restored catalog backup. Operators must stop incompatible admissions and restore
-or deliberately rebootstrap state before resuming providers.
+Loss of current registration or exact lease authority is terminal for an active
+provider. `RenewProvider` returns `provider_lease_lost` for a missing, expired,
+retired, or replaced lease; Serve shuts down without calling Register again.
+Retained definitions cannot reconstruct a lost draining decision. Missing or
+corrupt paired definitions are storage errors, not permission to rebuild state.
+
+Temporary connection failures retry only within the existing lease cutoff.
+Registry restart with intact durable data, stream/group loss, and ping-lease
+loss remain recoverable: Pulse repairs the existing stream lifecycle and
+consumer group, the provider periodically ensures the group exists, and registry
+schedulers reacquire ping leases. Intentional Pulse `Stream.Destroy` is different:
+it permanently invalidates that stream generation, so existing sinks cannot
+resume it. Repair restores future delivery, not messages erased from Redis.
+Erased catalog or retirement data requires
+controlled restoration or a deliberate fresh initialization with providers and
+new admissions stopped. Complete erasure can look like an empty installation
+to a new process; it cannot establish continuity for lost claims, results, or
+retired tokens. The [storage upgrade](docs/runtime.md#registry-storage-upgrade)
+preserves current data through offline conversion, never catalog deletion.
 The gateway stamps each routed call with the exact active token used for
 validation. It derives the global transport `ToolUseID` as a domain-separated,
 uint64-length-delimited SHA-256 hash of required `run_id` plus model/provider
@@ -1232,12 +1268,11 @@ have occurred.
 The explicit decision record is wire protocol version 10. Registry replicas,
 providers, and consumers use that exact protocol. Records with another shape
 are rejected and never rewritten.
-Protocol 8 or 9 catalog entries must be removed before protocol 10 can start.
-Only the per-toolset fields in the
-registry's catalog hash are removed; drained call records and Pulse streams
-remain until their normal expiry so an old call cannot execute twice. The
-executable procedure is documented in the
-[preview upgrade guide](docs/runtime.md#preview-upgrade-guide).
+The earlier protocol-8/9 transition changed message and call-record contracts;
+it is distinct from the current protocol-10 storage split. Do not apply a
+historical catalog reset to current state or retirement history. See the
+[preview upgrade guide](docs/runtime.md#preview-upgrade-guide) for the separate
+source, storage, and historical wire-version requirements.
 `CallTool` owns only initial admission and publication. `RetryTool` owns overload
 republication and requires both the
 existing admission record and its still-active token. The request-stream append
@@ -1270,14 +1305,11 @@ shared streams, server-owned handoff, and incompatible-admission non-overlap
 are permanent. Catalog and queued records must match the current wire protocol;
 the runtime rejects unknown records instead of guessing how to translate them.
 
-Health tracking and provider registration self-heal after Redis state loss.
-Ping scheduling uses expiring per-toolset Redis leases that the next scheduler
-tick re-acquires, the registry repairs the catalog map's replicated revision
-counter so post-loss writes propagate to surviving nodes, and
-`toolprovider.Serve` periodically recreates its consumer group (see
-`Options.EnsureInterval`) while the required `Registration` supervision loop
-re-registers on every lease renewal, restoring the catalog entry without
-redeploys.
+Health scheduling and stream repair do not recreate provider authority.
+Expiring ping leases can be reacquired on the next scheduler tick, and
+`toolprovider.Serve` repairs the consumer group at `Options.EnsureInterval`
+while its catalog lease remains valid. The required renewal callback extends
+that exact lease without uploading definitions or changing its token.
 
 ### Transcript Boundary
 

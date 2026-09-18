@@ -62,19 +62,9 @@ func (v *schemaValidator) ValidateToolSchemas(tools []*genregistry.ToolSchema) e
 	return nil
 }
 
-// ValidatePayload validates the raw tool-call payload against the compiled
-// schema for the target tool. Missing payload schemas are rejected so corrupted
-// catalog entries fail fast instead of silently bypassing validation.
-func (v *schemaValidator) ValidatePayload(schemaBytes []byte, payloadJSON []byte) error {
-	if len(schemaBytes) == 0 {
-		return fmt.Errorf("payload schema is required")
-	}
-
-	schema, err := v.compiledSchema(schemaBytes)
-	if err != nil {
-		return err
-	}
-
+// validatePayload applies the definition's already-compiled execution schema.
+// Only dynamic arguments are decoded or validated on the call path.
+func validatePayload(schema *jsonschema.Schema, payloadJSON []byte) error {
 	var payloadDoc any
 	if err := json.Unmarshal(payloadJSON, &payloadDoc); err != nil {
 		return fmt.Errorf("unmarshal payload: %w", err)

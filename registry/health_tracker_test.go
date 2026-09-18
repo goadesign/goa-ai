@@ -1,8 +1,8 @@
 package registry
 
 // These tests pin catalog-owned health epochs independently from Pulse pool
-// integration. Redis integration tests cover the same CAS transitions across
-// registry replicas.
+// integration. Redis integration tests cover the same conditional updates
+// across registry replicas.
 
 import (
 	"context"
@@ -21,7 +21,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
-	"go.opentelemetry.io/otel/trace"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
@@ -32,12 +31,12 @@ type (
 	}
 
 	authoritativeKeysFailureMap struct {
-		catalogMap
+		catalogStore
 		err error
 	}
 
 	cancelableKeysMap struct {
-		catalogMap
+		catalogStore
 		started chan struct{}
 	}
 )
@@ -55,13 +54,15 @@ func TestHealthTrackerRecordsPeriodicHealthSpans(t *testing.T) {
 	incarnation := uuid.NewString()
 	admission, err := catalog.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "test", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "test", nil)),
 		testAdmissionRevisionA,
 		"provider-a",
 		incarnation,
 		time.Minute,
 	)
 	require.NoError(t, err)
+	catalog = newToolsetCatalog(catalogMap, clock)
+	catalogMap.snapshotErr = errors.New("health must not read full definitions")
 	streams := &recordingHealthStreamManager{}
 	tracker := newDirectHealthTracker(ctx, catalog)
 	tracker.streamManager = streams
@@ -103,7 +104,7 @@ func TestHealthTrackerRecordsPeriodicHealthSpans(t *testing.T) {
 	assert.Equal(t, 3, streams.pings, "a toolset without a provider must not receive a ping")
 
 	readErr := errors.New("catalog unavailable")
-	catalogMap.testAndSetErr = readErr
+	catalogMap.readErr = readErr
 	tracker.sampleRegisteredToolset(ctx, "test.toolset")
 	require.Len(t, recorder.Ended(), 5)
 	failed := recorder.Ended()[4]
@@ -123,41 +124,23 @@ func TestHealthTrackerRecordsPeriodicHealthSpans(t *testing.T) {
 	assert.Equal(t, codes.Unset, missing.Status().Code)
 	assert.Empty(t, missing.Events())
 	assert.Equal(t, 3, streams.pings)
+	assert.Zero(t, catalogMap.snapshotReads)
 }
 
 func TestHealthTrackerRecordsFailuresBeforeToolsetSamples(t *testing.T) {
-	t.Run("revision repair", func(t *testing.T) {
-		recorder := newHealthSpanRecorder(t)
-		catalog := newToolsetCatalog(newTestCatalogMap(), newTestTimeSource(time.Unix(1_700_000_000, 0)))
-		tracker := newDirectHealthTracker(context.Background(), catalog)
-		tracker.redis = newUnavailableRedisClient(t)
-		tracker.revisionHashKey = "map:test:content"
-
-		tracker.runHealthSweep(context.Background())
-
-		require.Len(t, recorder.Ended(), 1)
-		assertHealthSweepFailure(t, recorder.Ended()[0], "repair_revision", "")
-	})
-
 	t.Run("catalog enumeration", func(t *testing.T) {
 		recorder := newHealthSpanRecorder(t)
 		catalog := newToolsetCatalog(
 			authoritativeKeysFailureMap{
-				catalogMap: newTestCatalogMap(),
-				err:        errors.New("catalog unavailable"),
+				catalogStore: newTestCatalogMap(),
+				err:          errors.New("catalog unavailable"),
 			},
 			newTestTimeSource(time.Unix(1_700_000_000, 0)),
 		)
 		tracker := newDirectHealthTracker(context.Background(), catalog)
 		tracker.expectedToolsets = []string{"expected.toolset"}
 
-		ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(
-			context.Background(),
-			"toolregistry.health.sweep",
-			trace.WithAttributes(attribute.String("toolregistry.registry", tracker.leaseScope)),
-		)
-		tracker.pingRegisteredToolsets(ctx)
-		span.End()
+		tracker.runHealthSweep(context.Background())
 
 		require.Len(t, recorder.Ended(), 1)
 		assertHealthSweepFailure(t, recorder.Ended()[0], "enumerate_toolsets", "")
@@ -170,7 +153,7 @@ func TestHealthTrackerRecordsFailuresBeforeToolsetSamples(t *testing.T) {
 		catalog := newToolsetCatalog(newTestCatalogMap(), clock)
 		_, err := catalog.Register(
 			ctx,
-			testCatalogToolset("test.toolset", "test", nil),
+			testCatalogDefinition(t, testCatalogToolset("test.toolset", "test", nil)),
 			testAdmissionRevisionA,
 			"provider-a",
 			uuid.NewString(),
@@ -180,13 +163,7 @@ func TestHealthTrackerRecordsFailuresBeforeToolsetSamples(t *testing.T) {
 		tracker := newDirectHealthTracker(ctx, catalog)
 		tracker.redis = newUnavailableRedisClient(t)
 
-		ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(
-			ctx,
-			"toolregistry.health.sweep",
-			trace.WithAttributes(attribute.String("toolregistry.registry", tracker.leaseScope)),
-		)
-		tracker.pingRegisteredToolsets(ctx)
-		span.End()
+		tracker.runHealthSweep(ctx)
 
 		require.Len(t, recorder.Ended(), 2)
 		assertCatalogEntrySpan(t, recorder.Ended()[0], "test.toolset")
@@ -203,7 +180,7 @@ func TestHealthTrackerDoesNotReportRetiredCatalogEntries(t *testing.T) {
 	)
 	admission, err := catalog.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "test", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "test", nil)),
 		testAdmissionRevisionA,
 		"provider-a",
 		uuid.NewString(),
@@ -230,7 +207,7 @@ func TestHealthTrackerReportsExpectedCatalogPresenceAfterSuccessfulRead(t *testi
 	)
 	_, err := catalog.Register(
 		ctx,
-		testCatalogToolset("present.toolset", "test", nil),
+		testCatalogDefinition(t, testCatalogToolset("present.toolset", "test", nil)),
 		testAdmissionRevisionA,
 		"provider-a",
 		uuid.NewString(),
@@ -254,19 +231,14 @@ func TestHealthTrackerCloseCancelsCatalogRead(t *testing.T) {
 	recorder := newHealthSpanRecorder(t)
 	started := make(chan struct{})
 	catalog := newToolsetCatalog(
-		cancelableKeysMap{catalogMap: newTestCatalogMap(), started: started},
+		cancelableKeysMap{catalogStore: newTestCatalogMap(), started: started},
 		newTestTimeSource(time.Unix(1_700_000_000, 0)),
 	)
 	tracker := newDirectHealthTracker(context.Background(), catalog)
 	tracker.doneCh = make(chan struct{})
 	go func() {
 		defer close(tracker.doneCh)
-		ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(
-			tracker.schedulerCtx,
-			"toolregistry.health.sweep",
-		)
-		defer span.End()
-		tracker.pingRegisteredToolsets(ctx)
+		tracker.runHealthSweep(tracker.schedulerCtx)
 	}()
 	<-started
 
@@ -300,7 +272,7 @@ func TestHealthTrackerPongIsMonotonicAndIncarnationFenced(t *testing.T) {
 	incarnation := uuid.NewString()
 	admission, err := catalog.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "test", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "test", nil)),
 		testAdmissionRevisionA,
 		"provider-a",
 		incarnation,
@@ -345,7 +317,7 @@ func TestHealthTrackerZeroLeaseReregistrationRejectsOldPong(t *testing.T) {
 	firstIncarnation := uuid.NewString()
 	first, err := catalog.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "test", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "test", nil)),
 		testAdmissionRevisionA,
 		"provider",
 		firstIncarnation,
@@ -363,7 +335,7 @@ func TestHealthTrackerZeroLeaseReregistrationRejectsOldPong(t *testing.T) {
 	secondIncarnation := uuid.NewString()
 	second, err := catalog.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "test", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "test", nil)),
 		testAdmissionRevisionA,
 		"provider",
 		secondIncarnation,
@@ -396,11 +368,9 @@ func newDirectHealthTracker(ctx context.Context, catalog *toolsetCatalog) *healt
 	schedulerCtx, cancelScheduler := context.WithCancel(ctx) //nolint:gosec // Tests cancel through Close when needed.
 	return &healthTracker{
 		catalog:            catalog,
-		catalogMap:         catalog.m,
 		leaseScope:         "test",
 		pingInterval:       time.Second,
 		stalenessThreshold: 2 * time.Second,
-		revFloors:          make(map[string]int64),
 		schedulerCtx:       schedulerCtx,
 		cancelScheduler:    cancelScheduler,
 		doneCh:             closed,
@@ -544,13 +514,13 @@ func (m *recordingHealthStreamManager) PublishAdmittedToolCall(
 	return nil
 }
 
-func (m authoritativeKeysFailureMap) AuthoritativeKeys(context.Context) ([]string, error) {
+func (m authoritativeKeysFailureMap) Keys(context.Context) ([]string, error) {
 	return nil, m.err
 }
 
-// AuthoritativeKeys waits for tracker shutdown and proves the scheduler passes
+// Keys waits for tracker shutdown and proves the scheduler passes
 // a cancelable context into catalog reads.
-func (m cancelableKeysMap) AuthoritativeKeys(ctx context.Context) ([]string, error) {
+func (m cancelableKeysMap) Keys(ctx context.Context) ([]string, error) {
 	close(m.started)
 	<-ctx.Done()
 	return nil, ctx.Err()

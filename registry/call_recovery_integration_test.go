@@ -434,6 +434,71 @@ func TestDrainingLeaseCompletesCallClaimedBeforeDrain(t *testing.T) {
 	}))
 }
 
+// Retirement forbids a first execution claim but retains the exact replay and
+// completion authority of work accepted before the retirement.
+func TestRetiredLeasePreservesOnlyPreviouslyClaimedWork(t *testing.T) {
+	for _, claimBeforeRetirement := range []bool{false, true} {
+		t.Run(fmt.Sprintf("already_claimed_%t", claimBeforeRetirement), func(t *testing.T) {
+			ctx := t.Context()
+			rdb := getRedis(t)
+			reg, err := New(ctx, Config{Redis: rdb, Name: t.Name()})
+			require.NoError(t, err)
+			t.Cleanup(func() { require.NoError(t, reg.Close(context.Background())) })
+			svc := reg.Service()
+			svc.healthTracker = newMockHealthTracker()
+			provider := validRegisterPayloadForSchemaAdmission("retirement")
+			registration, err := svc.Register(ctx, provider)
+			require.NoError(t, err)
+			call, err := svc.CallTool(ctx, transitionCallPayload(provider.Name, t.Name()))
+			require.NoError(t, err)
+			store := svc.callAdmissions.(*callAdmissionStore)
+			eventID := retainedPublicationEventID(t, ctx, rdb, store, call.ToolUseID)
+			claim := &genregistry.ClaimToolCallPayload{
+				Toolset:                   provider.Name,
+				ProviderID:                provider.ProviderID,
+				ProviderIncarnationID:     provider.ProviderIncarnationID,
+				ProviderRegistrationToken: registration.RegistrationToken,
+				CallRegistrationToken:     registration.RegistrationToken,
+				ToolUseID:                 call.ToolUseID,
+				RequestEventID:            eventID,
+				ClaimOperationID:          uuid.NewString(),
+			}
+			if claimBeforeRetirement {
+				result, err := svc.ClaimToolCall(ctx, claim)
+				require.NoError(t, err)
+				require.Equal(t, string(callClaimExecute), result.Disposition)
+			}
+			require.NoError(t, svc.Unregister(ctx, &genregistry.UnregisterPayload{
+				Name:                      provider.Name,
+				ExpectedRegistrationToken: registration.RegistrationToken,
+			}))
+			replayed, err := svc.ClaimToolCall(ctx, claim)
+			if !claimBeforeRetirement {
+				require.Error(t, err)
+				owner, err := rdb.HGet(ctx, store.callKey(call.ToolUseID), "dispatch_provider_token").Result()
+				require.NoError(t, err)
+				require.Empty(t, owner)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, string(callClaimExecute), replayed.Disposition)
+			result, err := json.Marshal(toolregistry.NewToolResultMessage(
+				registration.RegistrationToken, call.ToolUseID, json.RawMessage(`{"ok":true}`)))
+			require.NoError(t, err)
+			require.NoError(t, svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+				Toolset:                   provider.Name,
+				ProviderID:                provider.ProviderID,
+				ProviderIncarnationID:     provider.ProviderIncarnationID,
+				RegistrationToken:         registration.RegistrationToken,
+				ProviderRegistrationToken: registration.RegistrationToken,
+				ToolUseID:                 call.ToolUseID,
+				RequestEventID:            eventID,
+				ResultJSON:                result,
+			}))
+		})
+	}
+}
+
 func TestMissingCallHashCleansGlobalAndLeaseSettlementIndexes(t *testing.T) {
 	rdb := getRedis(t)
 	ctx := context.Background()

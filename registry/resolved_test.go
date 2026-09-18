@@ -21,12 +21,12 @@ func TestResolveToolsetReturnsOneRegistration(t *testing.T) {
 	ctx := t.Context()
 	store := newTestCatalogMap()
 	catalog := newToolsetCatalog(store, newTestTimeSource(time.Now()))
-	original, err := catalog.Register(ctx, testCatalogToolset("tools", "original", nil),
+	original, err := catalog.Register(ctx, testCatalogDefinition(t, testCatalogToolset("tools", "original", nil)),
 		testAdmissionRevisionA, "provider-a", testIncarnationA, time.Hour)
 	require.NoError(t, err)
 	replacementStore := newTestCatalogMap()
 	replacementCatalog := newToolsetCatalog(replacementStore, newTestTimeSource(time.Now()))
-	replacement, err := replacementCatalog.Register(ctx, testCatalogToolset("tools", "replacement", nil),
+	replacement, err := replacementCatalog.Register(ctx, testCatalogDefinition(t, testCatalogToolset("tools", "replacement", nil)),
 		testAdmissionRevisionB, "provider-b", testIncarnationB, time.Hour)
 	require.NoError(t, err)
 	key := toolsetCatalogKey("tools")
@@ -38,6 +38,7 @@ func TestResolveToolsetReturnsOneRegistration(t *testing.T) {
 		replace.Do(func() {
 			store.mu.Lock()
 			store.content[key] = replacementRaw
+			store.definitions[key] = replacementStore.definitions[key]
 			store.mu.Unlock()
 		})
 	}

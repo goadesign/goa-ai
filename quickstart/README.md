@@ -373,7 +373,17 @@ service. A one-tool demo establishes wiring, not a token-savings benchmark.
 
 For changing provider catalogs, consume `Toolset(FromRegistry(...))` or
 `Use(registry)` and connect the clients with `rt.RegisterRegistry`. Providers
-publish the generated `ToolSchemas()` factory. See
+send generated `ToolSchemas()` during startup registration, then supply the
+required duration-only `Registration.Renew` callback to renew that exact lease
+without uploading definitions again. An active provider stops on lost lease
+authority instead of registering again. See
 [Tool search and dynamic registries](../docs/tool_search.md) for the complete
 consumer/provider wiring, execution guarantees, supported endpoints, and
 upgrade steps. No registry is required for the static example above.
+
+An existing registry needs the [offline storage upgrade](../docs/runtime.md#registry-storage-upgrade)
+before using this layout. Stop all old writers and preserve the current
+catalog, retired-token history, calls, streams, and their expiry during
+conversion. The wire version and schema fingerprints remain unchanged.
+The preview guide describes the required verification; a published converter
+is not yet supplied.

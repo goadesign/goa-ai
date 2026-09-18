@@ -131,4 +131,21 @@ func TestQuickstart_IncludesProvidersSection_WhenGenerated(t *testing.T) {
 	require.NotEmpty(t, content)
 	require.Contains(t, content, "Service-Side Tool Providers (Registry-Routed Execution)")
 	require.Contains(t, content, "gen/<service>/toolsets/<toolset>/provider.go")
+
+	// The generated example must renew the existing lease through the small
+	// typed operation; it cannot upload tool definitions after startup.
+	_, renewal, found := strings.Cut(content, "Renew: func(")
+	require.True(t, found, "the provider example must supply the required Renew callback")
+	renewal, _, found = strings.Cut(renewal, "Drain: func(")
+	require.True(t, found, "the provider example must retain its shutdown callbacks")
+	require.Contains(t, renewal, "(time.Duration, error)")
+	require.Contains(t, renewal, "registryClient.RenewProvider(ctx, &registry.RenewProviderPayload{")
+	for _, field := range []string{"Name:", "ProviderID:", "ProviderIncarnationID:", "ExpectedRegistrationToken:"} {
+		require.Contains(t, renewal, field)
+	}
+	require.Contains(t, renewal, "LeaseDurationMs")
+	require.NotContains(t, renewal, "registryClient.Register(")
+	require.NotContains(t, renewal, "RegistrationLease")
+	require.NotContains(t, renewal, "Tools:")
+	require.NotContains(t, renewal, "SchemaFingerprint")
 }

@@ -17,14 +17,23 @@ option go_package = "/goa_ai_registrypb";
 // discover and invoke only healthy admitted providers.
 service Registry {
 	// Reject providers whose required runtime-owned wire protocol version differs
-// from the registry, then atomically admit or renew one provider-incarnation
-// lease in the catalog admission record. The same wire version, schema, and
-// admission revision add or renew replicas under one token. A different token
-// replaces the admission after Redis-time pruning proves every old lease
-// expired and atomically tombstones the prior token; otherwise
-// admission_blocked asks the provider to retry. Any candidate in the permanent
-// retired-token set returns admission_retired and cannot resurrect.
+// from the registry, then atomically admit one provider-incarnation lease in
+// the catalog admission record. The same wire version, schema, and admission
+// revision add or renew replicas under one token. A different token replaces
+// the admission after Redis-time pruning proves every old lease expired and
+// atomically tombstones the prior token; otherwise admission_blocked asks the
+// provider to retry. Any candidate in the permanent retired-token set returns
+// admission_retired and cannot resurrect. An already-draining incarnation
+// returns provider_lease_lost; full registration cannot reopen it. Active
+// providers use RenewProvider without resending definitions.
 	rpc Register (RegisterRequest) returns (RegisterResponse);
+	// Extend only the exact current unexpired provider-incarnation lease without
+// reading or writing tool definitions. Preserve its registration token,
+// health, draining status, and any longer settlement deadline. A missing,
+// expired, replaced, or retired lease returns provider_lease_lost; renewal
+// never creates admission authority. Infrastructure failures are retryable
+// only within the provider's existing lease cutoff.
+	rpc RenewProvider (RenewProviderRequest) returns (RenewProviderResponse);
 	// Release one exact provider-incarnation lease from the admission token after
 // that Serve lifecycle has stopped claiming work and settled in-flight calls.
 // Missing incarnations and stale tokens succeed without mutation;
@@ -325,14 +334,30 @@ message RegisterResponse {
 	optional sint64 lease_duration_ms = 3;
 }
 
-message ReleaseProviderRequest {
-	// Name of the toolset whose provider is leaving
+message RenewProviderRequest {
+	// Name of the registered toolset
 	optional string name = 1;
-	// Stable identity of the provider process releasing its lease
+	// Stable identity of the provider process
 	optional string provider_id = 2;
 	// Exact admission-generation token returned by Register
 	optional string expected_registration_token = 3;
-	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
+	// Runtime-generated UUID of the exact Serve lifecycle.
+	optional string provider_incarnation_id = 4;
+}
+
+message RenewProviderResponse {
+	// Renewed provider lease duration in milliseconds
+	optional sint64 lease_duration_ms = 1;
+}
+
+message ReleaseProviderRequest {
+	// Name of the registered toolset
+	optional string name = 1;
+	// Stable identity of the provider process
+	optional string provider_id = 2;
+	// Exact admission-generation token returned by Register
+	optional string expected_registration_token = 3;
+	// Runtime-generated UUID of the exact Serve lifecycle.
 	optional string provider_incarnation_id = 4;
 }
 
@@ -343,13 +368,13 @@ message DrainProviderRequest {
 	// Full provider shutdown duration for which the draining lease must retain
 // settlement authority.
 	optional sint64 settlement_duration_ms = 100;
-	// Name of the toolset whose provider is leaving
+	// Name of the registered toolset
 	optional string name = 1;
-	// Stable identity of the provider process releasing its lease
+	// Stable identity of the provider process
 	optional string provider_id = 2;
 	// Exact admission-generation token returned by Register
 	optional string expected_registration_token = 3;
-	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
+	// Runtime-generated UUID of the exact Serve lifecycle.
 	optional string provider_incarnation_id = 4;
 }
 

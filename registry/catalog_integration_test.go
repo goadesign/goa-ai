@@ -3,8 +3,7 @@
 package registry
 
 // Redis-backed admission tests prove exact CAS serialization across registry
-// replicas, stopped same-admission rebootstrap, and live recovery after
-// store-owned rmap/stream destruction.
+// replicas, durable restart, and recovery of repairable stream state.
 
 import (
 	"context"
@@ -24,7 +23,6 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
-	"goa.design/pulse/rmap"
 	"goa.design/pulse/streaming"
 	streamopts "goa.design/pulse/streaming/options"
 )
@@ -77,19 +75,13 @@ func TestMain(m *testing.M) {
 func TestMultiNodeAdmissionHandoff(t *testing.T) {
 	ctx := context.Background()
 	name := fmt.Sprintf("catalog-handoff-%d", time.Now().UnixNano())
-	map1, err := rmap.Join(ctx, name, testRedisClient)
-	require.NoError(t, err)
-	t.Cleanup(map1.Close)
-	map2, err := rmap.Join(ctx, name, testRedisClient)
-	require.NoError(t, err)
-	t.Cleanup(map2.Close)
 	clock := newRedisTimeSource(testRedisClient)
-	catalog1 := newToolsetCatalog(authoritativeCatalogMap{Map: map1, rdb: testRedisClient}, clock)
-	catalog2 := newToolsetCatalog(authoritativeCatalogMap{Map: map2, rdb: testRedisClient}, clock)
+	catalog1 := newToolsetCatalog(newRedisCatalogStore(testRedisClient, name), clock)
+	catalog2 := newToolsetCatalog(newRedisCatalogStore(testRedisClient, name), clock)
 
 	old, err := catalog1.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "old", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "old", nil)),
 		testAdmissionRevisionA,
 		"old-a",
 		testIncarnationA,
@@ -98,7 +90,7 @@ func TestMultiNodeAdmissionHandoff(t *testing.T) {
 	require.NoError(t, err)
 	_, err = catalog2.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "new", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "new", nil)),
 		testAdmissionRevisionB,
 		"new-a",
 		testIncarnationB,
@@ -109,7 +101,7 @@ func TestMultiNodeAdmissionHandoff(t *testing.T) {
 	require.NoError(t, catalog1.ReleaseProvider(ctx, "test.toolset", "old-a", testIncarnationA, old.RegistrationToken))
 	replacement, err := catalog2.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "new", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "new", nil)),
 		testAdmissionRevisionB,
 		"new-a",
 		testIncarnationB,
@@ -125,31 +117,25 @@ func TestMultiNodeAdmissionHandoff(t *testing.T) {
 	assert.Contains(t, active.ProviderLeases, providerLeaseKey("new-a", testIncarnationB))
 }
 
-func TestStoppedRedisRebootstrapReconstructsSameAdmission(t *testing.T) {
+func TestRegistryRestartRetainsSameAdmission(t *testing.T) {
 	ctx := context.Background()
 	name := fmt.Sprintf("catalog-loss-%d", time.Now().UnixNano())
-	m, err := rmap.Join(ctx, name, testRedisClient)
-	require.NoError(t, err)
 	clock := newRedisTimeSource(testRedisClient)
-	catalog := newToolsetCatalog(authoritativeCatalogMap{Map: m, rdb: testRedisClient}, clock)
+	catalog := newToolsetCatalog(newRedisCatalogStore(testRedisClient, name), clock)
 	first, err := catalog.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "same", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "same", nil)),
 		testAdmissionRevisionA,
 		"provider-a",
 		testIncarnationA,
 		time.Minute,
 	)
 	require.NoError(t, err)
-	m.Close()
-
-	require.NoError(t, testRedisClient.FlushDB(ctx).Err())
-	recoveredMap, err := rmap.Join(ctx, name+"-recovered", testRedisClient)
-	require.NoError(t, err)
-	t.Cleanup(recoveredMap.Close)
-	recovered, err := newToolsetCatalog(authoritativeCatalogMap{Map: recoveredMap, rdb: testRedisClient}, clock).Register(
+	restarted := newToolsetCatalog(newRedisCatalogStore(testRedisClient, name), clock)
+	require.NoError(t, restarted.validatePersistedEntries(ctx))
+	recovered, err := restarted.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "same", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "same", nil)),
 		testAdmissionRevisionA,
 		"provider-b",
 		testIncarnationB,
@@ -242,11 +228,8 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 	name := fmt.Sprintf("call-admission-%d", time.Now().UnixNano())
 	firstStore := newCallAdmissionStore(testRedisClient, name)
 	secondStore := newCallAdmissionStore(testRedisClient, name)
-	catalogMap, err := rmap.Join(ctx, name+":toolsets", testRedisClient)
-	require.NoError(t, err)
-	t.Cleanup(catalogMap.Close)
 	catalog := newToolsetCatalog(
-		authoritativeCatalogMap{Map: catalogMap, rdb: testRedisClient},
+		newRedisCatalogStore(testRedisClient, name),
 		newRedisTimeSource(testRedisClient),
 	)
 	const (
@@ -257,7 +240,7 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 	)
 	registration, err := catalog.Register(
 		ctx,
-		testCatalogToolset(toolset, "atomic publication", nil),
+		testCatalogDefinition(t, testCatalogToolset(toolset, "atomic publication", nil)),
 		testAdmissionRevisionA,
 		"provider",
 		testIncarnationA,
@@ -484,11 +467,8 @@ func TestUnpublishedCallMovesToReplacementProvider(t *testing.T) {
 	ctx := context.Background()
 	name := fmt.Sprintf("call-handoff-%d", time.Now().UnixNano())
 	store := newCallAdmissionStore(testRedisClient, name)
-	catalogMap, err := rmap.Join(ctx, name+":toolsets", testRedisClient)
-	require.NoError(t, err)
-	t.Cleanup(catalogMap.Close)
 	catalog := newToolsetCatalog(
-		authoritativeCatalogMap{Map: catalogMap, rdb: testRedisClient},
+		newRedisCatalogStore(testRedisClient, name),
 		newRedisTimeSource(testRedisClient),
 	)
 	const (
@@ -500,7 +480,7 @@ func TestUnpublishedCallMovesToReplacementProvider(t *testing.T) {
 	toolsetSchema := testCatalogToolset(toolset, "provider handoff", nil)
 	oldRegistration, err := catalog.Register(
 		ctx,
-		toolsetSchema,
+		testCatalogDefinition(t, toolsetSchema),
 		testAdmissionRevisionA,
 		"old-provider",
 		testIncarnationA,
@@ -548,7 +528,7 @@ func TestUnpublishedCallMovesToReplacementProvider(t *testing.T) {
 	))
 	newRegistration, err := catalog.Register(
 		ctx,
-		toolsetSchema,
+		testCatalogDefinition(t, toolsetSchema),
 		testAdmissionRevisionB,
 		"new-provider",
 		testIncarnationB,
@@ -1038,18 +1018,12 @@ func assertCallHashUnchanged(
 func TestRedisConcurrentRenewalReplacementAndCandidates(t *testing.T) {
 	ctx := context.Background()
 	name := fmt.Sprintf("catalog-races-%d", time.Now().UnixNano())
-	map1, err := rmap.Join(ctx, name, testRedisClient)
-	require.NoError(t, err)
-	t.Cleanup(map1.Close)
-	map2, err := rmap.Join(ctx, name, testRedisClient)
-	require.NoError(t, err)
-	t.Cleanup(map2.Close)
 	clock := newRedisTimeSource(testRedisClient)
-	catalog1 := newToolsetCatalog(authoritativeCatalogMap{Map: map1, rdb: testRedisClient}, clock)
-	catalog2 := newToolsetCatalog(authoritativeCatalogMap{Map: map2, rdb: testRedisClient}, clock)
+	catalog1 := newToolsetCatalog(newRedisCatalogStore(testRedisClient, name), clock)
+	catalog2 := newToolsetCatalog(newRedisCatalogStore(testRedisClient, name), clock)
 	oldRenewal, err := catalog1.Register(
 		ctx,
-		testCatalogToolset("renewal-race", "old", nil),
+		testCatalogDefinition(t, testCatalogToolset("renewal-race", "old", nil)),
 		testAdmissionRevisionA,
 		"old",
 		testIncarnationA,
@@ -1068,7 +1042,7 @@ func TestRedisConcurrentRenewalReplacementAndCandidates(t *testing.T) {
 	go func() {
 		_, registerErr := catalog1.Register(
 			ctx,
-			testCatalogToolset("renewal-race", "old", nil),
+			testCatalogDefinition(t, testCatalogToolset("renewal-race", "old", nil)),
 			testAdmissionRevisionA,
 			"old",
 			testIncarnationA,
@@ -1079,7 +1053,7 @@ func TestRedisConcurrentRenewalReplacementAndCandidates(t *testing.T) {
 	go func() {
 		_, registerErr := catalog2.Register(
 			ctx,
-			testCatalogToolset("renewal-race", "new", nil),
+			testCatalogDefinition(t, testCatalogToolset("renewal-race", "new", nil)),
 			testAdmissionRevisionB,
 			"new",
 			testIncarnationB,
@@ -1104,7 +1078,7 @@ func TestRedisConcurrentRenewalReplacementAndCandidates(t *testing.T) {
 
 	oldCandidate, err := catalog1.Register(
 		ctx,
-		testCatalogToolset("candidate-race", "old", nil),
+		testCatalogDefinition(t, testCatalogToolset("candidate-race", "old", nil)),
 		testAdmissionRevisionA,
 		"old",
 		testIncarnationA,
@@ -1130,7 +1104,7 @@ func TestRedisConcurrentRenewalReplacementAndCandidates(t *testing.T) {
 		go func() {
 			_, registerErr := catalog2.Register(
 				ctx,
-				testCatalogToolset("candidate-race", candidate.description, nil),
+				testCatalogDefinition(t, testCatalogToolset("candidate-race", candidate.description, nil)),
 				candidate.revision,
 				candidate.provider,
 				testIncarnationB,
@@ -1155,7 +1129,7 @@ func TestRedisConcurrentRenewalReplacementAndCandidates(t *testing.T) {
 	assert.Equal(t, 1, blocked)
 }
 
-func TestLiveRegistryRecoversOwnedStateLossSameName(t *testing.T) {
+func TestLiveRegistryRecoversStreamLossWithRetainedAdmission(t *testing.T) {
 	rdb := getRedis(t)
 	ctx := context.Background()
 	registryName := fmt.Sprintf("live-loss-%d", time.Now().UnixNano())
@@ -1189,7 +1163,6 @@ func TestLiveRegistryRecoversOwnedStateLossSameName(t *testing.T) {
 	events := sink.Subscribe()
 	waitForRegistrationPing(t, events, first.RegistrationToken)
 
-	require.NoError(t, reg.registryMap.Destroy(ctx))
 	// Simulate Redis losing the toolset stream's state (data, groups, and
 	// lifecycle) rather than an intentional Stream.Destroy: destruction leaves
 	// a terminal tombstone by contract, while genuine loss is what Pulse's
@@ -1200,9 +1173,13 @@ func TestLiveRegistryRecoversOwnedStateLossSameName(t *testing.T) {
 		streamKey+":lifecycle",
 		streamKey+":sink-recovery:1",
 	).Err())
-	recovered, err := reg.Service().Register(ctx, payload)
+	_, err = reg.Service().RenewProvider(ctx, &genregistry.RenewProviderPayload{
+		Name:                      payload.Name,
+		ProviderID:                payload.ProviderID,
+		ProviderIncarnationID:     payload.ProviderIncarnationID,
+		ExpectedRegistrationToken: first.RegistrationToken,
+	})
 	require.NoError(t, err)
-	assert.Equal(t, first.RegistrationToken, recovered.RegistrationToken)
 	recoveredSink, err := stream.NewSink(ctx, "loss-observer-recovered")
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -1210,7 +1187,7 @@ func TestLiveRegistryRecoversOwnedStateLossSameName(t *testing.T) {
 		defer cancel()
 		recoveredSink.Close(closeCtx)
 	})
-	waitForRegistrationPing(t, recoveredSink.Subscribe(), recovered.RegistrationToken)
+	waitForRegistrationPing(t, recoveredSink.Subscribe(), first.RegistrationToken)
 }
 
 // assertStoredCallDecision verifies the explicit state stored for one tool-use

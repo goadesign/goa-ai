@@ -5,12 +5,10 @@ package registry
 import (
 	"context"
 	"fmt"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"goa.design/pulse/rmap"
 )
 
 // TestNewRegistry verifies that the Registry constructor wires all components correctly.
@@ -56,34 +54,18 @@ func TestNewRegistryRejectsIncompatibleCatalog(t *testing.T) {
 	rdb := getRedis(t)
 	ctx := context.Background()
 	name := fmt.Sprintf("poisoned-catalog-%d", time.Now().UnixNano())
-	registryMap, err := rmap.Join(ctx, name+":toolsets", rdb)
-	require.NoError(t, err)
-	entry := testPersistedCatalogEntry(t, "poison.toolset", time.Unix(1_700_000_000, 0))
-	body, err := marshalCatalogEntry(entry)
-	require.NoError(t, err)
-	for _, lease := range entry.ProviderLeases {
-		body = strings.Replace(
-			body,
-			fmt.Sprintf(
-				`{"expires_at_unix_milli":%d,"draining":%t}`,
-				lease.ExpiresAtUnixMilli,
-				lease.Draining,
-			),
-			"123",
-			1,
-		)
-		break
-	}
-	inserted, err := registryMap.SetIfNotExists(ctx, toolsetCatalogKey("poison.toolset"), body)
-	require.NoError(t, err)
-	require.True(t, inserted)
-	registryMap.Close()
+	// A combined record from the old format must not be accepted by the new
+	// state-only decoder, even when paired definition bytes exist.
+	store := newRedisCatalogStore(rdb, name)
+	key := toolsetCatalogKey("poison.toolset")
+	require.NoError(t, rdb.HSet(ctx, store.state, key, `{"toolset":{"name":"poison.toolset"},"registration_token":"`+testActiveRegistrationToken+`"}`).Err())
+	require.NoError(t, rdb.HSet(ctx, store.definitions, key, `{}`).Err())
 
 	reg, err := New(ctx, Config{Redis: rdb, Name: name})
 
 	require.Nil(t, reg)
 	require.ErrorContains(t, err, toolsetCatalogKey("poison.toolset"))
-	require.ErrorContains(t, err, "provider_leases")
+	require.ErrorContains(t, err, `unknown field "toolset"`)
 }
 
 // TestRegistryGracefulShutdown verifies that Close properly cleans up resources.

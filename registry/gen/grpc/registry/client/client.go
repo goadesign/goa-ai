@@ -56,6 +56,31 @@ func (c *Client) Register() goa.Endpoint {
 	}
 }
 
+// RenewProvider calls the "RenewProvider" function in
+// registrypb.RegistryClient interface.
+func (c *Client) RenewProvider() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildRenewProviderFunc(c.grpccli, c.opts...),
+			EncodeRenewProviderRequest,
+			DecodeRenewProviderResponse)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+					return nil, ctxErr
+				}
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
 // ReleaseProvider calls the "ReleaseProvider" function in
 // registrypb.RegistryClient interface.
 func (c *Client) ReleaseProvider() goa.Endpoint {

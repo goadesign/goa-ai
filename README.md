@@ -213,7 +213,7 @@ explains how to keep those responsibilities clear.
 | --- | --- |
 | [MCP servers](docs/dsl.md#mcp-server-definition) | Expose Goa service methods as MCP tools and resources, with static prompts and generated JSON-RPC adapters. |
 | [External tools](docs/dsl.md#mcp-backed-toolsets) | Consume MCP servers over stdio or HTTP using declared tool contracts. |
-| [Tool registries](docs/tool_search.md) | Consume a named toolset or a changing registry catalog. Generated contracts preserve confirmation, pagination, and exact execution across provider changes. Providers resolve expired deliveries through the registry before acknowledging them. |
+| [Tool registries](docs/tool_search.md) | Consume a named toolset or a changing registry catalog. Generated contracts preserve confirmation, pagination, and exact execution across provider changes. Providers register definitions at startup and renew exact leases without resending schemas. |
 | [Deferred tool search](docs/tool_search.md) | Load definitions on demand using OpenAI native client search with BM25 or Claude hosted search. Consumers choose whole toolsets with `Deferred()` or exact compiled tools with `Deferred("search")`, keeping other tools immediately available. |
 | [Structured output](docs/runtime.md#typed-direct-completions) | Declare `Completion(...)` and get typed unary and streaming helpers. Use [typed tool output](docs/runtime.md#forced-typed-tool-output) when you want the same generated result contract with bounded model correction. |
 | [Specialist agents](docs/runtime.md#agent-as-tool-composition) | Expose an agent as a tool; the runtime runs it as a child workflow and links its progress and result to the parent. |
@@ -240,6 +240,14 @@ idempotency, storage, and deployment. Deploy generated packages, callers, and
 workers as a coordinated release. Read the [production configuration](docs/runtime.md#production-configuration),
 [workflow result migration](docs/workflow-results.md), and
 [upgrade guide](docs/runtime.md#preview-upgrade-guide) before replacing existing workers.
+
+Existing registries need an [offline catalog storage conversion](docs/runtime.md#registry-storage-upgrade)
+with all old writers stopped. The new layout separates current definitions,
+compact provider state, and permanent retired tokens. Wire protocol 10 and
+fingerprints stay unchanged; catalog, call, and retirement history must be
+preserved. Providers require the duration-only Renew callback and stop if their
+lease authority is lost. The preview guide states the conversion prerequisites;
+it does not yet supply a published converter.
 
 ## Learn more
 

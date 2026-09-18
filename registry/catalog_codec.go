@@ -5,14 +5,20 @@ package registry
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
@@ -21,40 +27,31 @@ type (
 	// catalogToolset retains serialized schemas and compact information, without
 	// keeping the decoded consumer metadata graph alive between requests.
 	catalogToolset struct {
-		raw         json.RawMessage
-		info        *genregistry.ToolsetInfo
-		fingerprint string
+		raw              json.RawMessage
+		info             *genregistry.ToolsetInfo
+		fingerprint      string
+		executionSchemas map[string]*jsonschema.Schema
 	}
-
-	// catalogToolsetJSON retains every occurrence so duplicate JSON members
-	// cannot conceal an invalid definition before the final member.
-	catalogToolsetJSON []json.RawMessage
 )
-
-// MarshalJSON retains the saved definition when only admission state changes.
-//
-//nolint:unparam // encoding/json requires the error result.
-func (t *catalogToolset) MarshalJSON() ([]byte, error) {
-	return t.raw, nil
-}
-
-// UnmarshalJSON keeps each member for the same ordered decoding that a Toolset
-// pointer would receive from encoding/json.
-//
-//nolint:unparam // encoding/json requires the error result.
-func (t *catalogToolsetJSON) UnmarshalJSON(raw []byte) error {
-	*t = append(*t, bytes.Clone(raw))
-	return nil
-}
 
 // newCatalogToolset serializes registration inputs and copies their compact
 // information so later input changes cannot affect the saved definition.
-func newCatalogToolset(toolset *genregistry.Toolset, fingerprint string) (*catalogToolset, error) {
-	raw, err := json.Marshal(toolset)
+func newCatalogToolset(toolset *genregistry.Toolset, fingerprint string, validator *schemaValidator) (*catalogToolset, error) {
+	definition := *toolset
+	definition.RegisteredAt = ""
+	raw, err := json.Marshal(&definition)
 	if err != nil {
 		return nil, fmt.Errorf("marshal toolset %q: %w", toolset.Name, err)
 	}
-	return &catalogToolset{raw: raw, info: toolsetToInfo(toolset), fingerprint: fingerprint}, nil
+	schemas := make(map[string]*jsonschema.Schema, len(toolset.Tools))
+	for _, tool := range toolset.Tools {
+		schema, err := validator.compiledSchema(tool.ExecutionPayloadSchema)
+		if err != nil {
+			return nil, err
+		}
+		schemas[tool.Name] = schema
+	}
+	return &catalogToolset{raw: raw, info: toolsetToInfo(&definition), fingerprint: fingerprint, executionSchemas: schemas}, nil
 }
 
 // toolsetToInfo retains only the fields needed for discovery and health.
@@ -99,133 +96,146 @@ func decodeCatalogToolset(raw []byte, toolset **genregistry.Toolset) error {
 }
 
 // decode gives a caller its own complete definition for schema-dependent work.
-func (t *catalogToolset) decode() (*genregistry.Toolset, error) {
+func (t *catalogToolset) decode(registeredAt string) (*genregistry.Toolset, error) {
 	var result *genregistry.Toolset
 	if err := decodeCatalogToolset(t.raw, &result); err != nil {
 		return nil, fmt.Errorf("decode toolset %q: %w", t.info.Name, err)
 	}
+	result.RegisteredAt = registeredAt
 	return result, nil
 }
 
-// marshalCatalogEntry encodes the one persisted admission record.
-func marshalCatalogEntry(entry catalogEntry) (string, error) {
+// marshalCatalogState encodes only provider state and compact discovery fields.
+func marshalCatalogState(entry catalogState) (string, error) {
 	body, err := json.Marshal(entry)
 	if err != nil {
-		return "", fmt.Errorf("marshal toolset %q admission: %w", entry.Toolset.info.Name, err)
+		return "", fmt.Errorf("marshal toolset %q state: %w", entry.Info.Name, err)
 	}
 	return string(body), nil
 }
 
-// parseCatalogEntry validates persisted admission identity and lease state.
-func (c *toolsetCatalog) parseCatalogEntry(name, body string) (catalogEntry, error) {
-	var entry catalogEntry
-	envelope := struct {
-		*catalogEntry
-		Toolset catalogToolsetJSON `json:"toolset"`
-	}{catalogEntry: &entry}
+// parseCatalogState validates the current persistence contract. Definition bytes
+// and retirement history are not read or copied by health/lifecycle operations.
+func parseCatalogState(name, body string) (catalogState, error) {
+	var entry catalogState
 	decoder := json.NewDecoder(strings.NewReader(body))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&envelope); err != nil {
-		return catalogEntry{}, fmt.Errorf("unmarshal toolset %q: %w", name, err)
+	if err := decoder.Decode(&entry); err != nil {
+		return catalogState{}, fmt.Errorf("unmarshal toolset %q: %w", name, err)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return catalogEntry{}, fmt.Errorf("unmarshal toolset %q: trailing JSON value", name)
+		return catalogState{}, fmt.Errorf("unmarshal toolset %q: trailing JSON value", name)
 	}
-	c.definitionsMu.Lock()
-	defer c.definitionsMu.Unlock()
-	definition := c.definitions[name]
-	if definition == nil || len(envelope.Toolset) != 1 || !bytes.Equal(definition.raw, envelope.Toolset[0]) {
-		var toolset *genregistry.Toolset
-		for _, raw := range envelope.Toolset {
-			if err := decodeCatalogToolset(raw, &toolset); err != nil {
-				return catalogEntry{}, fmt.Errorf("unmarshal toolset %q: %w", name, err)
-			}
-		}
-		if toolset == nil || toolset.Name != name {
-			return catalogEntry{}, fmt.Errorf("toolset %q has invalid toolset payload", name)
-		}
-		fingerprint, err := toolsetSchemaFingerprint(toolset)
-		if err != nil {
-			return catalogEntry{}, err
-		}
-		raw := envelope.Toolset[0]
-		if len(envelope.Toolset) > 1 {
-			// Preserve encoding/json's merge behavior for repeated objects, then
-			// save their complete definition as one toolset member.
-			raw, err = json.Marshal(toolset)
-			if err != nil {
-				return catalogEntry{}, fmt.Errorf("marshal toolset %q: %w", name, err)
-			}
-		}
-		definition = &catalogToolset{raw: raw, info: toolsetToInfo(toolset), fingerprint: fingerprint}
+	if entry.Info == nil || entry.Info.Name != name || entry.Info.ToolCount < 0 {
+		return catalogState{}, fmt.Errorf("toolset %q has invalid discovery metadata", name)
 	}
-	entry.Toolset = definition
-	if entry.RegisteredAt == "" || entry.Toolset.info.RegisteredAt != entry.RegisteredAt {
-		return catalogEntry{}, fmt.Errorf("toolset %q has invalid registered_at", name)
+	if entry.RegisteredAt == "" || entry.Info.RegisteredAt != entry.RegisteredAt {
+		return catalogState{}, fmt.Errorf("toolset %q has invalid registered_at", name)
 	}
 	if _, err := time.Parse(time.RFC3339Nano, entry.RegisteredAt); err != nil {
-		return catalogEntry{}, fmt.Errorf("toolset %q invalid registered_at: %w", name, err)
+		return catalogState{}, fmt.Errorf("toolset %q invalid registered_at: %w", name, err)
 	}
 	if err := toolregistry.ValidateAdmissionRevision(entry.AdmissionRevision); err != nil {
-		return catalogEntry{}, fmt.Errorf("toolset %q invalid admission revision: %w", name, err)
+		return catalogState{}, fmt.Errorf("toolset %q invalid admission revision: %w", name, err)
 	}
 	if err := toolregistry.ValidateWireProtocolVersion(entry.WireProtocolVersion); err != nil {
-		return catalogEntry{}, fmt.Errorf("toolset %q invalid wire protocol version: %w", name, err)
+		return catalogState{}, fmt.Errorf("toolset %q invalid wire protocol version: %w", name, err)
 	}
-	fingerprint := definition.fingerprint
-	if entry.SchemaFingerprint != fingerprint {
-		return catalogEntry{}, fmt.Errorf("toolset %q schema fingerprint does not match canonical schema", name)
+	if err := toolregistry.ValidateRegistrationToken(entry.SchemaFingerprint); err != nil {
+		return catalogState{}, fmt.Errorf("toolset %q invalid schema fingerprint: %w", name, err)
 	}
 	token, err := admissionRegistrationToken(
-		fingerprint,
+		entry.SchemaFingerprint,
 		entry.AdmissionRevision,
 		entry.WireProtocolVersion,
 	)
 	if err != nil {
-		return catalogEntry{}, fmt.Errorf("derive toolset %q admission token: %w", name, err)
+		return catalogState{}, fmt.Errorf("derive toolset %q admission token: %w", name, err)
 	}
 	if entry.RegistrationToken != token {
-		return catalogEntry{}, fmt.Errorf("toolset %q registration token does not match admission identity", name)
+		return catalogState{}, fmt.Errorf("toolset %q registration token does not match admission identity", name)
 	}
 	switch entry.State {
 	case catalogEntryActive, catalogEntryRetired:
 	default:
-		return catalogEntry{}, fmt.Errorf("toolset %q has invalid catalog state %q", name, entry.State)
+		return catalogState{}, fmt.Errorf("toolset %q has invalid catalog state %q", name, entry.State)
 	}
 	if entry.ProviderLeases == nil {
-		return catalogEntry{}, fmt.Errorf("toolset %q missing provider lease map", name)
+		return catalogState{}, fmt.Errorf("toolset %q missing provider lease map", name)
 	}
 	if entry.HealthEpoch == 0 {
-		return catalogEntry{}, fmt.Errorf("toolset %q has invalid health epoch", name)
+		return catalogState{}, fmt.Errorf("toolset %q has invalid health epoch", name)
 	}
 	if entry.LastPongUnixNano < 0 {
-		return catalogEntry{}, fmt.Errorf("toolset %q has invalid last pong timestamp", name)
+		return catalogState{}, fmt.Errorf("toolset %q has invalid last pong timestamp", name)
 	}
 	for leaseKey, lease := range entry.ProviderLeases {
 		if _, _, err := parseProviderLeaseKey(leaseKey); err != nil {
-			return catalogEntry{}, fmt.Errorf("toolset %q has invalid provider lease key: %w", name, err)
+			return catalogState{}, fmt.Errorf("toolset %q has invalid provider lease key: %w", name, err)
 		}
 		if lease.ExpiresAtUnixMilli <= 0 {
-			return catalogEntry{}, fmt.Errorf("toolset %q has invalid provider lease deadline", name)
+			return catalogState{}, fmt.Errorf("toolset %q has invalid provider lease deadline", name)
 		}
 	}
-	if entry.RetiredTokens == nil {
-		return catalogEntry{}, fmt.Errorf("toolset %q missing retired registration token set", name)
-	}
-	for retiredToken := range entry.RetiredTokens {
-		if err := toolregistry.ValidateRegistrationToken(retiredToken); err != nil {
-			return catalogEntry{}, fmt.Errorf("toolset %q invalid retired registration token: %w", name, err)
-		}
-	}
-	if entry.State == catalogEntryActive {
-		if _, retired := entry.RetiredTokens[entry.RegistrationToken]; retired {
-			return catalogEntry{}, fmt.Errorf("toolset %q active token is retired", name)
-		}
-	} else {
-		if _, retired := entry.RetiredTokens[entry.RegistrationToken]; !retired {
-			return catalogEntry{}, fmt.Errorf("toolset %q retired token is missing its tombstone", name)
-		}
-	}
-	c.definitions[name] = definition
 	return entry, nil
+}
+
+// snapshot reads state and its definition at one Redis instant. A replacement
+// cannot combine one registration's token with another registration's schemas.
+func (c *toolsetCatalog) snapshot(ctx context.Context, name string) (entry catalogEntry, err error) {
+	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.definition.load",
+		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
+	defer finishCatalogSpan(ctx, span, &err)
+	raw, definitionRaw, tokenRetired, exists, err := c.store.Snapshot(ctx, toolsetCatalogKey(name))
+	if err != nil {
+		return catalogEntry{}, err
+	}
+	if !exists {
+		return catalogEntry{}, errToolsetNotFound
+	}
+	span.SetAttributes(
+		attribute.Int("toolregistry.catalog.state_read_bytes", len(raw)),
+		attribute.Int("toolregistry.catalog.definition_read_bytes", len(definitionRaw)),
+	)
+	state, err := parseCatalogState(name, raw)
+	if err != nil {
+		return catalogEntry{}, err
+	}
+	if tokenRetired != (state.State == catalogEntryRetired) {
+		return catalogEntry{}, fmt.Errorf("toolset %q disagrees with permanent retirement history", name)
+	}
+	var toolset *genregistry.Toolset
+	if err := decodeCatalogToolset([]byte(definitionRaw), &toolset); err != nil {
+		return catalogEntry{}, fmt.Errorf("decode definition %q: %w", name, err)
+	}
+	if toolset == nil || toolset.Name != name || toolset.RegisteredAt != "" {
+		return catalogEntry{}, fmt.Errorf("toolset %q has invalid static definition", name)
+	}
+	if err := c.validator.ValidateToolSchemas(toolset.Tools); err != nil {
+		return catalogEntry{}, fmt.Errorf("toolset %q invalid persisted schemas: %w", name, err)
+	}
+	fingerprint, err := toolsetSchemaFingerprint(toolset)
+	if err != nil {
+		return catalogEntry{}, err
+	}
+	if fingerprint != state.SchemaFingerprint {
+		return catalogEntry{}, fmt.Errorf("toolset %q schema fingerprint does not match canonical schema", name)
+	}
+	definition, err := newCatalogToolset(toolset, fingerprint, c.validator)
+	if err != nil {
+		return catalogEntry{}, err
+	}
+	info := copyToolsetInfo(definition.info)
+	info.RegisteredAt = state.RegisteredAt
+	if !reflect.DeepEqual(info, state.Info) {
+		return catalogEntry{}, fmt.Errorf("toolset %q discovery metadata does not match definition", name)
+	}
+	c.definitionsMu.Lock()
+	if cached := c.definitions[name]; cached != nil && cached.fingerprint == fingerprint {
+		definition = cached
+	} else {
+		c.definitions[name] = definition
+	}
+	c.definitionsMu.Unlock()
+	return catalogEntry{catalogState: state, Toolset: definition}, nil
 }

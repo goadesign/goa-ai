@@ -139,9 +139,20 @@ func newTestServiceForServiceTests(pulseClient clientspulse.Client, streamManage
 }
 
 func saveTestToolset(ctx context.Context, catalog *toolsetCatalog, toolset *genregistry.Toolset) error {
-	_, err := catalog.Register(
+	if err := catalog.validator.ValidateToolSchemas(toolset.Tools); err != nil {
+		return err
+	}
+	fingerprint, err := toolsetSchemaFingerprint(toolset)
+	if err != nil {
+		return err
+	}
+	definition, err := newCatalogToolset(toolset, fingerprint, catalog.validator)
+	if err != nil {
+		return err
+	}
+	_, err = catalog.Register(
 		ctx,
-		toolset,
+		definition,
 		testAdmissionRevisionA,
 		"test-provider",
 		testIncarnationA,
@@ -375,48 +386,6 @@ func TestCallToolPayloadValidation(t *testing.T) {
 	properties.TestingRun(t)
 }
 
-func TestCallToolRejectsToolsetWithoutPayloadSchema(t *testing.T) {
-	ctx := context.Background()
-	pulseClient := mockpulse.NewClient(t)
-	resultStream := mockpulse.NewStream(t)
-	pulseClient.AddStream(func(name string, _ ...streamopts.Stream) (clientspulse.Stream, error) {
-		return resultStream, nil
-	})
-	resultStream.AddAdd(func(ctx context.Context, event string, payload []byte) (string, error) {
-		return "1-0", nil
-	})
-
-	toolset := &genregistry.Toolset{
-		Name: "toolset-1",
-		Tools: []*genregistry.ToolSchema{
-			{
-				Name:         "lookup",
-				ResultSchema: []byte(`{"type":"object"}`),
-			},
-		},
-		RegisteredAt: "2024-01-15T10:30:00Z",
-	}
-
-	svc, err := newTestServiceForServiceTests(pulseClient, newMockStreamManagerForService(), newMockHealthTracker(), toolset)
-	require.NoError(t, err)
-
-	_, err = svc.CallTool(ctx, &genregistry.CallToolPayload{
-		Toolset:             "toolset-1",
-		Tool:                "lookup",
-		PayloadJSON:         []byte(`{"query":"ok"}`),
-		WireProtocolVersion: toolregistry.WireProtocolVersion,
-		Meta: &genregistry.ToolCallMeta{
-			RunID:     "run-1",
-			SessionID: "session-1",
-		},
-	})
-	require.Error(t, err)
-
-	var svcErr *goa.ServiceError
-	require.ErrorAs(t, err, &svcErr)
-	require.Equal(t, "validation_error", svcErr.Name)
-}
-
 func TestCallToolDerivesGlobalTransportIdentity(t *testing.T) {
 	ctx := context.Background()
 	pulseClient := mockpulse.NewClient(t)
@@ -567,7 +536,7 @@ func TestRetryToolRejectsAdmissionRolloverBeforePublication(t *testing.T) {
 	))
 	replacement, err := svc.catalog.Register(
 		ctx,
-		toolset,
+		testCatalogDefinition(t, toolset),
 		testAdmissionRevisionB,
 		"replacement-provider",
 		testIncarnationB,
@@ -828,6 +797,7 @@ func genPayloadValidationTestCase() gopter.Gen {
 				Description:            &desc,
 				PayloadSchema:          schema,
 				ExecutionPayloadSchema: schema,
+				ResultSchema:           []byte(`{"type":"object"}`),
 			}
 
 			// Create the toolset.

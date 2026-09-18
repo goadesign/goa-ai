@@ -58,6 +58,27 @@ func NewRegisterResult(message *registrypb.RegisterResponse) *registry.RegisterR
 	return result
 }
 
+// NewProtoRenewProviderRequest builds *registrypb.RenewProviderRequest from
+// *registry.RenewProviderPayload.
+func NewProtoRenewProviderRequest(payload *registry.RenewProviderPayload) *registrypb.RenewProviderRequest {
+	message := &registrypb.RenewProviderRequest{
+		Name:                      &payload.Name,
+		ProviderId:                &payload.ProviderID,
+		ExpectedRegistrationToken: &payload.ExpectedRegistrationToken,
+		ProviderIncarnationId:     &payload.ProviderIncarnationID,
+	}
+	return message
+}
+
+// NewRenewProviderResult builds *registry.RenewProviderResult from
+// *registrypb.RenewProviderResponse.
+func NewRenewProviderResult(message *registrypb.RenewProviderResponse) *registry.RenewProviderResult {
+	result := &registry.RenewProviderResult{
+		LeaseDurationMs: *message.LeaseDurationMs,
+	}
+	return result
+}
+
 // NewProtoReleaseProviderRequest builds *registrypb.ReleaseProviderRequest
 // from *registry.ReleaseProviderPayload.
 func NewProtoReleaseProviderRequest(payload *registry.ReleaseProviderPayload) *registrypb.ReleaseProviderRequest {
@@ -839,6 +860,64 @@ func ValidateRegisterResponse(message *registrypb.RegisterResponse) (err error) 
 	}
 	if message.RegistrationToken != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", *message.RegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.LeaseDurationMs != nil {
+		if *message.LeaseDurationMs < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("message.lease_duration_ms", *message.LeaseDurationMs, 1, true))
+		}
+		if *message.LeaseDurationMs > 8.64e+07 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("message.lease_duration_ms", *message.LeaseDurationMs, 8.64e+07, false))
+		}
+	}
+	return
+}
+
+// ValidateRenewProviderRequest runs the validations defined on
+// RenewProviderRequest.
+func ValidateRenewProviderRequest(message *registrypb.RenewProviderRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
+	}
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
+	}
+	return
+}
+
+// ValidateRenewProviderResponse runs the validations defined on
+// RenewProviderResponse.
+func ValidateRenewProviderResponse(message *registrypb.RenewProviderResponse) (err error) {
+	if message.LeaseDurationMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("lease_duration_ms", "message"))
 	}
 	if message.LeaseDurationMs != nil {
 		if *message.LeaseDurationMs < 1 {

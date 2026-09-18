@@ -21,6 +21,7 @@ import (
 // Server implements the registrypb.RegistryServer interface.
 type Server struct {
 	RegisterH               goagrpc.UnaryHandler
+	RenewProviderH          goagrpc.UnaryHandler
 	ReleaseProviderH        goagrpc.UnaryHandler
 	DrainProviderH          goagrpc.UnaryHandler
 	UnregisterH             goagrpc.UnaryHandler
@@ -44,6 +45,7 @@ type Server struct {
 func New(e *registry.Endpoints, uh goagrpc.UnaryHandler) *Server {
 	return &Server{
 		RegisterH:               NewRegisterHandler(e.Register, uh),
+		RenewProviderH:          NewRenewProviderHandler(e.RenewProvider, uh),
 		ReleaseProviderH:        NewReleaseProviderHandler(e.ReleaseProvider, uh),
 		DrainProviderH:          NewDrainProviderHandler(e.DrainProvider, uh),
 		UnregisterH:             NewUnregisterHandler(e.Unregister, uh),
@@ -86,6 +88,8 @@ func (s *Server) Register(ctx context.Context, message *registrypb.RegisterReque
 				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
 			case "admission_retired":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "provider_lease_lost":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
 			case "service_unavailable":
@@ -95,6 +99,36 @@ func (s *Server) Register(ctx context.Context, message *registrypb.RegisterReque
 		return nil, goagrpc.EncodeError(err)
 	}
 	return resp.(*registrypb.RegisterResponse), nil
+}
+
+// NewRenewProviderHandler creates a gRPC handler which serves the "registry"
+// service "RenewProvider" endpoint.
+func NewRenewProviderHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeRenewProviderRequest, EncodeRenewProviderResponse)
+	}
+	return h
+}
+
+// RenewProvider implements the "RenewProvider" method in
+// registrypb.RegistryServer interface.
+func (s *Server) RenewProvider(ctx context.Context, message *registrypb.RenewProviderRequest) (*registrypb.RenewProviderResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "RenewProvider")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.RenewProviderH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "provider_lease_lost":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.RenewProviderResponse), nil
 }
 
 // NewReleaseProviderHandler creates a gRPC handler which serves the "registry"
