@@ -197,7 +197,7 @@ func (s *redisCatalogStore) Commit(ctx context.Context, key, previous string, ne
 // finishCatalogSpan reports storage failures without turning caller cancellation
 // into an infrastructure fault. It never records schemas, arguments, or results.
 func finishCatalogSpan(ctx context.Context, span trace.Span, err *error) {
-	if *err != nil && !(ctx.Err() != nil && catalogCancellationOnly(*err)) {
+	if *err != nil && (ctx.Err() == nil || !catalogCancellationOnly(*err)) {
 		span.RecordError(*err)
 		span.SetStatus(codes.Error, "catalog operation failed")
 	} else if *err == nil {

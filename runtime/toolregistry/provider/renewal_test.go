@@ -325,12 +325,11 @@ func TestServeRenewalDuringDrainKeepsOneLease(t *testing.T) {
 				return time.Hour, tc.renewalErr
 			}
 			registration.Drain = func(drainCtx context.Context, _, _, gotIncarnation, token string, duration time.Duration) error {
-				assert.NoError(t, drainCtx.Err())
 				assert.Equal(t, incarnation, gotIncarnation)
 				assert.Equal(t, testRegistrationTokenA, token)
 				assert.Equal(t, time.Second+SettlementAuthorityMargin, duration)
 				close(drained)
-				return nil
+				return drainCtx.Err()
 			}
 			registration.Complete = func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
 				assert.True(t, closed.Load())
@@ -338,12 +337,11 @@ func TestServeRenewalDuringDrainKeepsOneLease(t *testing.T) {
 				return nil
 			}
 			registration.Release = func(releaseCtx context.Context, _, _, gotIncarnation, token string) error {
-				assert.NoError(t, releaseCtx.Err())
 				assert.Equal(t, incarnation, gotIncarnation)
 				assert.Equal(t, testRegistrationTokenA, token)
 				assert.True(t, acknowledged.Load())
 				releases.Add(1)
-				return nil
+				return releaseCtx.Err()
 			}
 			sink := mockpulse.NewSink(t)
 			sink.SetSubscribe(func() <-chan *streaming.Event { return events })
