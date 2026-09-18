@@ -972,7 +972,14 @@ Generated `registry.go` files in agent packages are local runtime registration h
 Registry consumption and deferred loading are separate declarations. A named
 `Toolset(FromRegistry(...))` consumes one required registration; `Use(registry)`
 consumes its current toolsets. `Deferred()` inside either consuming `Use`, or a
-static `Use`, chooses native model tool search. No namespace concept is added.
+static `Use`, chooses native model tool search for every consumed tool.
+`Deferred("search", "analyze")` selects exact authored local names in a compiled
+toolset, leaving its other tools eager. The consuming expression owns this
+choice; shared definitions and exports do not. The generator resolves names
+against the complete tools, including Goa-backed MCP tools, and rejects unknown
+names. The DSL rejects empty, duplicate, and mixed all/named declarations.
+Named selection is rejected for registry sources because their tools are
+resolved at runtime. Repeated `Deferred()` remains valid.
 
 Generation emits each agent's direct registry reads and exact source/version
 permission predicates, including independent child-agent declarations. Static
@@ -1034,10 +1041,15 @@ Close, worker, result, or acknowledgement failure is explicit and suppresses
 release; lease expiry is the durable fallback. Before a worker dispatches
 locally queued work, `ClaimToolCall` authenticates its exact lease and request
 event at the global call record. The atomic result is `execute`, `terminal`,
-`claimed`, or `expired`; only `execute` invokes the handler. Dispatch ownership
-never transfers. One claim-operation ID is reused by transport retries, while a
-later event redelivery creates a new ID and receives `claimed`, so redelivery
-cannot repeat side effects.
+`claimed`, or `expired`; only `execute` invokes the handler. The claim uses the
+provider worker lifecycle context and its bounded claim timeout, so an old
+delivery can still receive the registry's expiration or retained-terminal
+decision. Only after `execute` does the provider apply the message's absolute
+execution deadline to the handler. A registry expiration decision is
+acknowledged without stopping the provider or running the handler.
+Dispatch ownership never transfers. One claim-operation ID is reused by
+transport retries, while a later event redelivery creates a new ID and receives
+`claimed`, so redelivery cannot repeat side effects.
 Claims enter global and exact-lease settlement indexes. At the call's absolute
 execution deadline, or earlier if the lease is released, the registry
 atomically commits `internal` / `outcome_unknown`, states that the effect may

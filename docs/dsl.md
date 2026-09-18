@@ -724,6 +724,14 @@ definitions without changing which tools the agent may call. Another consumer
 of the same toolset can load it immediately. Generated code owns each agent's
 loading choice and prepares search terms from canonical tool metadata.
 
+For a compiled toolset, use `Deferred("search", "analyze")` to defer only those
+exact authored local tool names; other tools remain immediately available.
+Named selection also supports declared external MCP and Goa-backed MCP tools.
+It is rejected for `FromRegistry` toolsets and whole registries, whose tools are
+resolved at runtime. Empty, duplicate, unknown, and mixed all/named selections
+are errors; repeated `Deferred()` remains valid. See
+[tool selection rules](tool_search.md#declare-what-the-agent-consumes) for details.
+
 Planners pass `input.Agent.AdvertisedToolDefinitions()` to model requests.
 The adapter handles native search; planners need no search executor. An adapter
 that cannot implement the requested discovery rejects it explicitly. See the

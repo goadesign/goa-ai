@@ -20,6 +20,33 @@ Agent("assistant", "Answer questions and perform requested work.", func() {
 consumer, so another agent can consume `Records` immediately. Put it inside
 `Use`, never on a shared `Toolset` definition or an `Export`.
 
+To keep frequently used tools immediately available within the same compiled
+toolset, name only the tools that should load through search:
+
+```go
+Use(Records, func() {
+    Deferred("search", "analyze")
+})
+```
+
+Here `Records` defines `lookup`, `search`, and `analyze`. The consumer advertises
+`lookup` immediately and loads the other two through search. Names must exactly
+match authored local tool names, such as `"search"`, not qualified runtime IDs
+such as `"records.search"` or generated Go names. This works for local tools,
+agent tools, external MCP tools with declared schemas, and Goa-backed MCP tools.
+Other consumers and shared tool definitions keep their own loading behavior.
+
+Empty or duplicate names are rejected, including duplicates across declarations.
+Multiple named declarations combine their selections. Repeated `Deferred()` is
+valid, but combining it with any named declaration is rejected. The generator
+rejects unknown names after collecting the complete tool list, including tools
+defined by a Goa MCP service.
+
+Dedicated pagination tools retain their existing runtime behavior: they are
+hidden until a query has another page, then the runtime advertises an immediately
+available continuation action. Deferring the query or its dedicated continuation
+tool does not defer that generated action.
+
 For changing provider tools, reuse a registry:
 
 ```go
@@ -44,6 +71,11 @@ every current toolset in that registry. Removing `Deferred()` makes the same
 catalog immediately visible to the model. No namespace resource is needed.
 A `Version("1.2.3")` inside the named toolset or its consuming `Use` requires
 that exact published version; it does not select an archived version.
+
+Named `Deferred` selections are rejected for both `FromRegistry` toolsets and
+whole registries because their tools are unknown during generation. Use
+`Deferred()` to load all their tools through search, or omit it to advertise
+them immediately.
 
 Within one agent, duplicate sources and overlapping named/whole-registry
 consumption are rejected during DSL evaluation. A registry reference cannot
@@ -213,6 +245,16 @@ static deferred IDs, direct source reads, and exact source/version permission
 checks. Runtime code handles only changing catalogs, model queries, returned
 data, and execution state. Neither applications nor generated agents interpret
 the DSL at runtime.
+
+Using named deferral requires regenerating the consumer. Existing `Deferred()`
+calls retain their whole-toolset or whole-registry behavior. Named choices emit
+the same static deferred-ID argument already consumed by the runtime; they add
+no provider API or persisted state.
+
+`Deferred` now has type `func(...string)`, which is not assignable to `func()`.
+Replace `Use(Records, Deferred)` with `Use(Records, func() { Deferred() })`,
+and wrap other `func()` callback assignments the same way. Calls to `Deferred()`
+remain valid.
 
 Regenerate providers and consumers with Goa v3.31.1. Replace generated
 startup `Discover` calls, `RegistryToolsets` inputs, and dynamic executor wiring
