@@ -297,7 +297,7 @@ func TestCheckAdmissionReturnsOneCatalogSnapshotDuringReplacement(t *testing.T) 
 	activeCatalog := newToolsetCatalog(activeMap, newTestTimeSource(now))
 	active, err := activeCatalog.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "active", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "active", nil)),
 		testAdmissionRevisionA,
 		"provider-a",
 		testIncarnationA,
@@ -309,7 +309,7 @@ func TestCheckAdmissionReturnsOneCatalogSnapshotDuringReplacement(t *testing.T) 
 	replacementCatalog := newToolsetCatalog(replacementMap, newTestTimeSource(now))
 	replacement, err := replacementCatalog.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "replacement", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "replacement", nil)),
 		testAdmissionRevisionB,
 		"provider-b",
 		testIncarnationB,
@@ -318,7 +318,7 @@ func TestCheckAdmissionReturnsOneCatalogSnapshotDuringReplacement(t *testing.T) 
 	require.NoError(t, err)
 	_, err = replacementCatalog.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "replacement", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "replacement", nil)),
 		testAdmissionRevisionB,
 		"provider-c",
 		testIncarnationA,
@@ -425,10 +425,12 @@ func TestCallToolEnsuresAdmissionWithActiveRegistrationToken(t *testing.T) {
 		}},
 	}
 	runtimePayload := []byte(`{"query":"status","cursor":"next-page"}`)
-	require.Error(t, newSchemaValidator().ValidatePayload(toolset.Tools[0].PayloadSchema, runtimePayload))
+	modelSchema, err := newSchemaValidator().compiledSchema(toolset.Tools[0].PayloadSchema)
+	require.NoError(t, err)
+	require.Error(t, validatePayload(modelSchema, runtimePayload))
 	registration, err := catalog.Register(
 		ctx,
-		toolset,
+		testCatalogDefinition(t, toolset),
 		testAdmissionRevisionA,
 		"provider-a",
 		testIncarnationA,

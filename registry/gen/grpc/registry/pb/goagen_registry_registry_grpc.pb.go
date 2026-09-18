@@ -27,6 +27,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	Registry_Register_FullMethodName               = "/goa_ai_registry.Registry/Register"
+	Registry_RenewProvider_FullMethodName          = "/goa_ai_registry.Registry/RenewProvider"
 	Registry_ReleaseProvider_FullMethodName        = "/goa_ai_registry.Registry/ReleaseProvider"
 	Registry_DrainProvider_FullMethodName          = "/goa_ai_registry.Registry/DrainProvider"
 	Registry_Unregister_FullMethodName             = "/goa_ai_registry.Registry/Unregister"
@@ -55,14 +56,23 @@ const (
 // discover and invoke only healthy admitted providers.
 type RegistryClient interface {
 	// Reject providers whose required runtime-owned wire protocol version differs
-	// from the registry, then atomically admit or renew one provider-incarnation
-	// lease in the catalog admission record. The same wire version, schema, and
-	// admission revision add or renew replicas under one token. A different token
-	// replaces the admission after Redis-time pruning proves every old lease
-	// expired and atomically tombstones the prior token; otherwise
-	// admission_blocked asks the provider to retry. Any candidate in the permanent
-	// retired-token set returns admission_retired and cannot resurrect.
+	// from the registry, then atomically admit one provider-incarnation lease in
+	// the catalog admission record. The same wire version, schema, and admission
+	// revision add or renew replicas under one token. A different token replaces
+	// the admission after Redis-time pruning proves every old lease expired and
+	// atomically tombstones the prior token; otherwise admission_blocked asks the
+	// provider to retry. Any candidate in the permanent retired-token set returns
+	// admission_retired and cannot resurrect. An already-draining incarnation
+	// returns provider_lease_lost; full registration cannot reopen it. Active
+	// providers use RenewProvider without resending definitions.
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
+	// Extend only the exact current unexpired provider-incarnation lease without
+	// reading or writing tool definitions. Preserve its registration token,
+	// health, draining status, and any longer settlement deadline. A missing,
+	// expired, replaced, or retired lease returns provider_lease_lost; renewal
+	// never creates admission authority. Infrastructure failures are retryable
+	// only within the provider's existing lease cutoff.
+	RenewProvider(ctx context.Context, in *RenewProviderRequest, opts ...grpc.CallOption) (*RenewProviderResponse, error)
 	// Release one exact provider-incarnation lease from the admission token after
 	// that Serve lifecycle has stopped claiming work and settled in-flight calls.
 	// Missing incarnations and stale tokens succeed without mutation;
@@ -178,6 +188,16 @@ func (c *registryClient) Register(ctx context.Context, in *RegisterRequest, opts
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RegisterResponse)
 	err := c.cc.Invoke(ctx, Registry_Register_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *registryClient) RenewProvider(ctx context.Context, in *RenewProviderRequest, opts ...grpc.CallOption) (*RenewProviderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RenewProviderResponse)
+	err := c.cc.Invoke(ctx, Registry_RenewProvider_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -354,14 +374,23 @@ func (c *registryClient) ClaimToolCall(ctx context.Context, in *ClaimToolCallReq
 // discover and invoke only healthy admitted providers.
 type RegistryServer interface {
 	// Reject providers whose required runtime-owned wire protocol version differs
-	// from the registry, then atomically admit or renew one provider-incarnation
-	// lease in the catalog admission record. The same wire version, schema, and
-	// admission revision add or renew replicas under one token. A different token
-	// replaces the admission after Redis-time pruning proves every old lease
-	// expired and atomically tombstones the prior token; otherwise
-	// admission_blocked asks the provider to retry. Any candidate in the permanent
-	// retired-token set returns admission_retired and cannot resurrect.
+	// from the registry, then atomically admit one provider-incarnation lease in
+	// the catalog admission record. The same wire version, schema, and admission
+	// revision add or renew replicas under one token. A different token replaces
+	// the admission after Redis-time pruning proves every old lease expired and
+	// atomically tombstones the prior token; otherwise admission_blocked asks the
+	// provider to retry. Any candidate in the permanent retired-token set returns
+	// admission_retired and cannot resurrect. An already-draining incarnation
+	// returns provider_lease_lost; full registration cannot reopen it. Active
+	// providers use RenewProvider without resending definitions.
 	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
+	// Extend only the exact current unexpired provider-incarnation lease without
+	// reading or writing tool definitions. Preserve its registration token,
+	// health, draining status, and any longer settlement deadline. A missing,
+	// expired, replaced, or retired lease returns provider_lease_lost; renewal
+	// never creates admission authority. Infrastructure failures are retryable
+	// only within the provider's existing lease cutoff.
+	RenewProvider(context.Context, *RenewProviderRequest) (*RenewProviderResponse, error)
 	// Release one exact provider-incarnation lease from the admission token after
 	// that Serve lifecycle has stopped claiming work and settled in-flight calls.
 	// Missing incarnations and stale tokens succeed without mutation;
@@ -476,6 +505,9 @@ type UnimplementedRegistryServer struct{}
 func (UnimplementedRegistryServer) Register(context.Context, *RegisterRequest) (*RegisterResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Register not implemented")
 }
+func (UnimplementedRegistryServer) RenewProvider(context.Context, *RenewProviderRequest) (*RenewProviderResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RenewProvider not implemented")
+}
 func (UnimplementedRegistryServer) ReleaseProvider(context.Context, *ReleaseProviderRequest) (*ReleaseProviderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReleaseProvider not implemented")
 }
@@ -559,6 +591,24 @@ func _Registry_Register_Handler(srv interface{}, ctx context.Context, dec func(i
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RegistryServer).Register(ctx, req.(*RegisterRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Registry_RenewProvider_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RenewProviderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).RenewProvider(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Registry_RenewProvider_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).RenewProvider(ctx, req.(*RenewProviderRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -861,6 +911,10 @@ var Registry_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Register",
 			Handler:    _Registry_Register_Handler,
+		},
+		{
+			MethodName: "RenewProvider",
+			Handler:    _Registry_RenewProvider_Handler,
 		},
 		{
 			MethodName: "ReleaseProvider",

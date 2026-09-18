@@ -207,7 +207,7 @@ if dispatch_provider_token ~= "" then
   end
   return 3
 end
-if lease.draining == true then
+if entry.state ~= "active" or lease.draining == true then
   return redis.error_reply("PROVIDERLEASECHANGED")
 end
 if ARGV[2] ~= ARGV[4] then
@@ -469,7 +469,7 @@ func newCallAdmissionStore(redisClient *redis.Client, registryName string) *call
 	return &callAdmissionStore{
 		redis:          redisClient,
 		prefix:         "registry:" + registryName + ":call:",
-		catalogHashKey: "map:" + registryName + ":toolsets:content",
+		catalogHashKey: catalogStateHashKey(registryName),
 		settlementKey:  "registry:" + registryName + ":claimed-call-settlement",
 		membershipKey:  "registry:" + registryName + ":claimed-call-membership",
 	}

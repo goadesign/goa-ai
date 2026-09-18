@@ -16,6 +16,7 @@ import (
 // Endpoints wraps the "registry" service endpoints.
 type Endpoints struct {
 	Register               goa.Endpoint
+	RenewProvider          goa.Endpoint
 	ReleaseProvider        goa.Endpoint
 	DrainProvider          goa.Endpoint
 	Unregister             goa.Endpoint
@@ -38,6 +39,7 @@ type Endpoints struct {
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
 		Register:               NewRegisterEndpoint(s),
+		RenewProvider:          NewRenewProviderEndpoint(s),
 		ReleaseProvider:        NewReleaseProviderEndpoint(s),
 		DrainProvider:          NewDrainProviderEndpoint(s),
 		Unregister:             NewUnregisterEndpoint(s),
@@ -60,6 +62,7 @@ func NewEndpoints(s Service) *Endpoints {
 // Use applies the given middleware to all the "registry" service endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Register = m(e.Register)
+	e.RenewProvider = m(e.RenewProvider)
 	e.ReleaseProvider = m(e.ReleaseProvider)
 	e.DrainProvider = m(e.DrainProvider)
 	e.Unregister = m(e.Unregister)
@@ -84,6 +87,15 @@ func NewRegisterEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*RegisterPayload)
 		return s.Register(ctx, p)
+	}
+}
+
+// NewRenewProviderEndpoint returns an endpoint function that calls the method
+// "RenewProvider" of service "registry".
+func NewRenewProviderEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*RenewProviderPayload)
+		return s.RenewProvider(ctx, p)
 	}
 }
 

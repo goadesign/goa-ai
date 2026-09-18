@@ -119,7 +119,23 @@ generated service client in `RegisterRegistry`.
 
 Generated toolset packages expose `ToolSchemas()`. Use that factory for
 `RegisterPayload.Tools`, together with the generated schema fingerprint and
-the existing provider registration lifecycle.
+the provider registration lifecycle. Register sends the definitions during
+startup. The required `Registration.Renew` callback then calls `RenewProvider`
+with the toolset, provider ID, incarnation ID, and original registration token;
+it returns only the granted duration. Renewal never uploads definitions or
+returns a new token. See the [complete provider example](runtime.md#registry-routed-provider-execution-service-side).
+
+The registry keeps current definitions separate from compact provider state
+and permanent retired tokens. Lifecycle and health operations read compact
+Redis state directly. Definition readers compare fingerprints before fetching
+bytes; tool calls reuse compiled execution schemas. This internal reuse does
+not change what dynamic consumers resolve or how long their catalog is valid.
+
+An active provider that loses its registration or exact lease stops with
+`provider_lease_lost`; it does not Register again. Temporary connection failures
+can retry within the existing lease cutoff, and stream/group or ping-lease loss
+can recover while durable catalog authority remains intact. The runtime guide
+owns [recovery and shutdown details](runtime.md#registry-routed-provider-execution-service-side).
 
 Each schema includes a generated `ConsumerContract`: title, search word counts,
 field and union metadata, labels, result handling, confirmation, pagination,
@@ -263,6 +279,15 @@ turning on dynamic consumers. Upgrade the registry to serve `ResolveToolset`
 and `CallResolvedTool`; older registry servers cannot serve this consumer path.
 Old registrations without `ConsumerContract` remain usable by their existing
 static integrations but are rejected by dynamic consumers.
+
+The [registry storage upgrade](runtime.md#registry-storage-upgrade) is separate
+from consumer loading and earlier wire-version migrations. It requires the
+new Renew callback and an offline conversion with all old writers stopped.
+Wire protocol 10, schema fingerprints, saved calls, absolute expiry, and
+permanent retirement history remain intact. Do not reset current catalog data
+to adopt the new layout. The preview guide lists source changes, including
+removed provider error symbols, and the prerequisites for the conversion
+artifact being prepared.
 
 Confirmation templates now read canonical JSON names: change `{{ .Key }}` to
 `{{ .key }}` and use `{{ json .value }}` when inserting JSON values.

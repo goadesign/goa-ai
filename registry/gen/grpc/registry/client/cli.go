@@ -61,6 +61,33 @@ func BuildRegisterPayload(registryRegisterMessage *string) (*registry.RegisterPa
 	return v, nil
 }
 
+// BuildRenewProviderPayload builds the payload for the registry RenewProvider
+// endpoint from CLI flags.
+func BuildRenewProviderPayload(registryRenewProviderMessage *string) (*registry.RenewProviderPayload, error) {
+	var err error
+	var message registrypb.RenewProviderRequest
+	{
+		if registryRenewProviderMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryRenewProviderMessage), &message)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"expected_registration_token\": \"1111111111111111111111111111111111111111111111111111111111111111\",\n      \"name\": \"data-tools\",\n      \"provider_id\": \"catalog-provider/catalog.lookup\",\n      \"provider_incarnation_id\": \"00000000-0000-4000-8000-000000000001\"\n   }'")
+			}
+		}
+	}
+	if err := ValidateRenewProviderRequest(&message); err != nil {
+		var zero *registry.RenewProviderPayload
+		return zero, err
+	}
+	v := &registry.RenewProviderPayload{
+		Name:                      *message.Name,
+		ProviderID:                *message.ProviderId,
+		ExpectedRegistrationToken: *message.ExpectedRegistrationToken,
+		ProviderIncarnationID:     *message.ProviderIncarnationId,
+	}
+
+	return v, nil
+}
+
 // BuildReleaseProviderPayload builds the payload for the registry
 // ReleaseProvider endpoint from CLI flags.
 func BuildReleaseProviderPayload(registryReleaseProviderMessage *string) (*registry.ReleaseProviderPayload, error) {

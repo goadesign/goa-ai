@@ -95,9 +95,8 @@ type (
 		// EnsureInterval is how often Serve recreates the toolset stream
 		// consumer group if Redis lost it. Pulse sinks silently retry on
 		// missing groups, so without this repair a provider whose group was
-		// lost would never receive pings or tool calls again. Registration
-		// recovery needs no equivalent: the required Registration supervision
-		// re-registers on every lease renewal.
+		// lost would never receive pings or tool calls again. Lease renewal is
+		// independent; loss of registry lease authority stops the provider.
 		//
 		// When 0, defaults to 30 seconds.
 		EnsureInterval time.Duration
@@ -720,43 +719,6 @@ func serve(
 		settlementCtx, settlementCancel := context.WithTimeout(context.WithoutCancel(ctx), shutdownTimeout)
 		defer settlementCancel()
 
-		type registrationStopResult struct {
-			err               error
-			changedToken      string
-			changedTokenDrain <-chan error
-		}
-		registrationStop := make(chan registrationStopResult, 1)
-		go func(stoppedErr error) {
-			if stoppedErr == nil {
-				stoppedErr = <-registrationResult
-			}
-			result := registrationStopResult{err: stoppedErr}
-			var changedTokenErr *registrationTokenChangedError
-			if errors.As(stoppedErr, &changedTokenErr) {
-				result.changedToken = changedTokenErr.receivedToken
-				changedTokenDrain := make(chan error, 1)
-				result.changedTokenDrain = changedTokenDrain
-				// Publish the known renewal error and token before draining it.
-				// The caller can then preserve both even if drain uses the rest
-				// of the shared settlement deadline.
-				registrationStop <- result
-				changedTokenDrain <- drainProvider(
-					settlementCtx,
-					toolset,
-					opts.ProviderID,
-					incarnationID,
-					result.changedToken,
-					shutdownTimeout+SettlementAuthorityMargin,
-					registrationConfig,
-					logger,
-					waitRegistrationDelay,
-				)
-				return
-			}
-			registrationStop <- result
-		}(renewalErr)
-
-		leaseTokens := []string{admittedToken}
 		drainErr := drainProvider(
 			settlementCtx,
 			toolset,
@@ -787,36 +749,19 @@ func serve(
 		cancelAcks()
 
 		var registrationWaitErr error
-		var registrationStopped registrationStopResult
-		registrationStoppedOK := false
-		select {
-		case registrationStopped = <-registrationStop:
-			registrationStoppedOK = true
-		default:
-		}
-		if !registrationStoppedOK {
+		// Read a completed renewal before checking the settlement deadline so
+		// a real callback failure remains visible even when shutdown times out.
+		if renewalErr == nil {
 			select {
-			case registrationStopped = <-registrationStop:
-				registrationStoppedOK = true
+			case renewalErr = <-registrationResult:
+			default:
+			}
+		}
+		if renewalErr == nil {
+			select {
+			case renewalErr = <-registrationResult:
 			case <-settlementCtx.Done():
 				registrationWaitErr = fmt.Errorf("wait for registration renewal: %w", settlementCtx.Err())
-			}
-		}
-		if registrationStoppedOK {
-			renewalErr = registrationStopped.err
-			if registrationStopped.changedToken != "" {
-				leaseTokens = append(leaseTokens, registrationStopped.changedToken)
-			}
-			if registrationStopped.changedTokenDrain != nil {
-				select {
-				case changedTokenDrainErr := <-registrationStopped.changedTokenDrain:
-					drainErr = errors.Join(drainErr, changedTokenDrainErr)
-				case <-settlementCtx.Done():
-					drainErr = errors.Join(
-						drainErr,
-						fmt.Errorf("drain changed registration token: %w", settlementCtx.Err()),
-					)
-				}
 			}
 		}
 		runErr = joinProviderStopErrors(runErr, renewalErr)
@@ -837,12 +782,12 @@ func serve(
 		if stopErr != nil {
 			return errors.Join(runErr, stopErr)
 		}
-		releaseErr := releaseProviderTokens(
-			ctx,
+		releaseErr := releaseProvider(
+			context.WithoutCancel(ctx),
 			toolset,
 			opts.ProviderID,
 			incarnationID,
-			leaseTokens,
+			admittedToken,
 			registrationConfig,
 			logger,
 			wait,
@@ -1025,10 +970,9 @@ func waitForDone(ctx context.Context, done <-chan struct{}, phase string) error 
 
 // runEnsureGroupLoop periodically recreates the toolset stream consumer group
 // when Redis lost it, so the subscription created by Serve resumes receiving
-// pings and tool calls after Redis state loss. Registration re-assertion is
-// owned by the registration supervision loop; group repair is the only
-// concern left here. Failures are logged and retried on the next interval and
-// never terminate the provider.
+// pings and tool calls while the registry lease remains valid. Lease renewal
+// runs independently. Group repair failures are logged and retried on the next
+// interval and never terminate the provider.
 func runEnsureGroupLoop(
 	ctx context.Context,
 	stream pulseclients.Stream,

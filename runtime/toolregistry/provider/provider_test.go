@@ -783,11 +783,11 @@ func TestServeCancellationWinsReadyEvent(t *testing.T) {
 	assert.Zero(t, acks.Load())
 }
 
-func TestServeRegistrationSupersessionCancelsEventCallback(t *testing.T) {
+func TestServeLeaseLossCancelsEventCallback(t *testing.T) {
 	t.Parallel()
 
 	events := make(chan *streaming.Event, 1)
-	events <- testPingEvent(t, "superseded")
+	events <- testPingEvent(t, "lease-lost")
 	pongStarted := make(chan struct{})
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
@@ -805,16 +805,12 @@ func TestServeRegistrationSupersessionCancelsEventCallback(t *testing.T) {
 	var registrations atomic.Int64
 	registration := successfulRegistration()
 	registration.Register = func(context.Context, string, string, string, string) (RegistrationLease, error) {
-		if registrations.Add(1) == 1 {
-			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: 60 * time.Millisecond}, nil
-		}
-		return RegistrationLease{}, goa.NewServiceError(
-			errors.New("replacement waiting"),
-			"admission_blocked",
-			false,
-			false,
-			false,
-		)
+		registrations.Add(1)
+		return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: 60 * time.Millisecond}, nil
+	}
+	leaseLost := goa.NewServiceError(errors.New("lease missing"), "provider_lease_lost", false, false, false)
+	registration.Renew = func(context.Context, string, string, string, string) (time.Duration, error) {
+		return 0, leaseLost
 	}
 	registration.AttemptTimeout = 20 * time.Millisecond
 	registration.ShutdownMargin = time.Millisecond
@@ -840,12 +836,13 @@ func TestServeRegistrationSupersessionCancelsEventCallback(t *testing.T) {
 		},
 	)
 
-	require.ErrorIs(t, err, ErrRegistrationSuperseded)
+	require.ErrorIs(t, err, leaseLost)
+	assert.Equal(t, int64(1), registrations.Load())
 	assert.Less(t, time.Since(startedAt), 500*time.Millisecond)
 	select {
 	case <-pongStarted:
 	default:
-		t.Fatal("pong callback did not start before registration supersession")
+		t.Fatal("pong callback did not start before lease loss")
 	}
 }
 
