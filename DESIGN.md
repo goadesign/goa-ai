@@ -1031,10 +1031,15 @@ Close, worker, result, or acknowledgement failure is explicit and suppresses
 release; lease expiry is the durable fallback. Before a worker dispatches
 locally queued work, `ClaimToolCall` authenticates its exact lease and request
 event at the global call record. The atomic result is `execute`, `terminal`,
-`claimed`, or `expired`; only `execute` invokes the handler. Dispatch ownership
-never transfers. One claim-operation ID is reused by transport retries, while a
-later event redelivery creates a new ID and receives `claimed`, so redelivery
-cannot repeat side effects.
+`claimed`, or `expired`; only `execute` invokes the handler. The claim uses the
+provider worker lifecycle context and its bounded claim timeout, so an old
+delivery can still receive the registry's expiration or retained-terminal
+decision. Only after `execute` does the provider apply the message's absolute
+execution deadline to the handler. A registry expiration decision is
+acknowledged without stopping the provider or running the handler.
+Dispatch ownership never transfers. One claim-operation ID is reused by
+transport retries, while a later event redelivery creates a new ID and receives
+`claimed`, so redelivery cannot repeat side effects.
 Claims enter global and exact-lease settlement indexes. At the call's absolute
 execution deadline, or earlier if the lease is released, the registry
 atomically commits `internal` / `outcome_unknown`, states that the effect may

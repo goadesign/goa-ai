@@ -456,10 +456,6 @@ func serve(
 					item.msg.TraceState,
 					item.msg.Baggage,
 				)
-				callCtx, cancelCall := context.WithDeadline(
-					callCtx,
-					time.UnixMilli(item.msg.ExecutionDeadlineUnixMilli),
-				)
 				callCtx, span := tracer.Start(
 					callCtx,
 					"toolregistry.handle",
@@ -477,6 +473,9 @@ func serve(
 						attribute.String("toolregistry.event_id", item.ev.ID),
 					),
 				)
+				// The registry must decide whether even an expired delivery may
+				// execute. Bound the claim by the worker lifecycle and claim
+				// timeout, then apply the message deadline only to execution.
 				disposition, claimErr := claimToolCall(
 					callCtx,
 					registrationConfig,
@@ -497,7 +496,6 @@ func serve(
 						item.msg.ToolUseID,
 						claimErr,
 					))
-					cancelCall()
 					continue
 				}
 				if disposition != ClaimExecute {
@@ -510,9 +508,12 @@ func serve(
 					case acks <- item.ev:
 					case <-handlerCtx.Done():
 					}
-					cancelCall()
 					continue
 				}
+				callCtx, cancelCall := context.WithDeadline(
+					callCtx,
+					time.UnixMilli(item.msg.ExecutionDeadlineUnixMilli),
+				)
 				resultStreamID := toolregistry.ResultStreamID(item.msg.ToolUseID)
 				callCtx = toolregistry.WithToolUseID(callCtx, item.msg.ToolUseID)
 				callCtx = toolregistry.WithOutputDeltaPublisher(callCtx, &registryOutputDeltaPublisher{
