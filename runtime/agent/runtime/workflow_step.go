@@ -965,7 +965,7 @@ func (l *workflowLoop) resumePlanner(
 		l.st.ResponseID = ""
 		l.st.ResponseCommitted = false
 		l.st.PendingCorrection = pendingModelInvocationRecovery{
-			recovery: *resOutput.ModelInvocationRecovery,
+			recovery: *cloneModelInvocationRecovery(resOutput.ModelInvocationRecovery),
 		}
 		return nil, nil
 	}

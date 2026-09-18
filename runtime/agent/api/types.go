@@ -479,17 +479,45 @@ type (
 		Correction string
 	}
 
-	// ModelInvocationRecovery contains exactly one bounded fact needed to
-	// replace a tool call rejected before a canonical response existed.
+	// ModelInvocationRecovery contains exactly one outcome needed to replace
+	// model output rejected before any of its calls could execute. This value
+	// is recorded in workflow activity history, never accepted conversation history.
 	ModelInvocationRecovery struct {
-		// Correction names only generated input constraints. It contains no
-		// rejected payload or submitted values.
-		Correction string
+		// ToolInput retains every call from a complete rejected response and
+		// the generated correction for its immediate replacement.
+		ToolInput *ModelToolInputRecovery
+
+		// NoCallBodyCorrection contains generated guidance only when the
+		// typed rejection has no complete retained response. Failed copying,
+		// encoding or budget checks must not produce this outcome.
+		NoCallBodyCorrection string
 
 		// UnadvertisedToolName is the exact provider-returned name that was absent
 		// from the tools advertised for the failed request. It contains no tool
 		// arguments, call identifier, response text, or copied catalog.
 		UnadvertisedToolName string
+	}
+
+	// ModelToolInputRecovery keeps submitted data separate from instructions.
+	// Every call in the rejected response is required, including valid siblings.
+	ModelToolInputRecovery struct {
+		// Calls contains all rejected response calls in their original order.
+		// None of these calls executed.
+		Calls []RejectedToolCall
+		// Correction contains only generated input constraints, without
+		// submitted values.
+		Correction string
+	}
+
+	// RejectedToolCall is the exact submitted call data shown to one replacement
+	// attempt. It is not an executable tool request or accepted history.
+	RejectedToolCall struct {
+		// Name is the name from the rejected model call, not a transport ID.
+		Name tools.Ident
+		// ArgumentsJSON preserves the original argument text, including
+		// whitespace, malformed JSON and empty text. It is quoted as untrusted
+		// data rather than decoded or repaired.
+		ArgumentsJSON string
 	}
 
 	// PlannerEventRecord is one accepted planner event awaiting workflow-owned

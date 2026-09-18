@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -720,17 +721,37 @@ func TestFinalizeWithPlannerRecoversRejectedModelOutput(t *testing.T) {
 		totalTokens int
 	}{
 		{
+			name: "complete rejected call",
+			first: func() *PlanActivityOutput {
+				return &PlanActivityOutput{
+					PublicationBatchID: testPublicationBatchID,
+					ModelInvocationRecovery: &ModelInvocationRecovery{ToolInput: &api.ModelToolInputRecovery{
+						Calls:      []api.RejectedToolCall{{Name: "catalog.finalize", ArgumentsJSON: `{"value":42}`}},
+						Correction: "Return a string value.",
+					}},
+					Usage: model.TokenUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12},
+				}
+			},
+			assertRetry: func(t *testing.T, input *PlanActivityInput) {
+				t.Helper()
+				require.NotNil(t, input.ModelInvocationRecovery.ToolInput)
+				assert.Equal(t, `{"value":42}`, input.ModelInvocationRecovery.ToolInput.Calls[0].ArgumentsJSON)
+				assert.Nil(t, input.ModelOutputRecovery)
+			},
+			totalTokens: 36,
+		},
+		{
 			name: "provider tool JSON",
 			first: func() *PlanActivityOutput {
 				return &PlanActivityOutput{
 					PublicationBatchID:      testPublicationBatchID,
-					ModelInvocationRecovery: &ModelInvocationRecovery{Correction: "Return valid tool JSON."},
+					ModelInvocationRecovery: &ModelInvocationRecovery{NoCallBodyCorrection: "Return valid tool JSON."},
 					Usage:                   model.TokenUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12},
 				}
 			},
 			assertRetry: func(t *testing.T, input *PlanActivityInput) {
 				t.Helper()
-				require.Equal(t, "Return valid tool JSON.", input.ModelInvocationRecovery.Correction)
+				require.Equal(t, "Return valid tool JSON.", input.ModelInvocationRecovery.NoCallBodyCorrection)
 				require.Nil(t, input.ModelOutputRecovery)
 			},
 			totalTokens: 36,
@@ -833,7 +854,7 @@ func TestFinalizeWithPlannerStopsWhenRecoveryBudgetIsExhausted(t *testing.T) {
 		return &PlanActivityOutput{
 			PublicationBatchID: testPublicationBatchID,
 			ModelInvocationRecovery: &ModelInvocationRecovery{
-				Correction: "Return valid tool JSON.",
+				NoCallBodyCorrection: "Return valid tool JSON.",
 			},
 		}, plannerErr
 	}

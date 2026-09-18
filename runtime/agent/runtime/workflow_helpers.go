@@ -368,8 +368,7 @@ func (r *Runtime) buildNextResumeRequest(
 		out.ModelOutputRecovery = &recoveryCopy
 	}
 	if invocationRecovery != nil {
-		recoveryCopy := *invocationRecovery
-		out.ModelInvocationRecovery = &recoveryCopy
+		out.ModelInvocationRecovery = cloneModelInvocationRecovery(invocationRecovery)
 	}
 	if err := enforcePlanActivityInputBudget(out); err != nil {
 		return PlanActivityInput{}, err

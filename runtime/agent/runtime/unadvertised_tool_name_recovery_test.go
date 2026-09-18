@@ -24,10 +24,11 @@ import (
 
 func TestModelInvocationRecoveryReminderEscapesRejectedName(t *testing.T) {
 	name := "catalog_list_\n\"items\""
-	got := modelInvocationRecoveryReminder(&ModelInvocationRecovery{
+	got, err := modelInvocationRecoveryReminder(&ModelInvocationRecovery{
 		UnadvertisedToolName: name,
 	})
 
+	require.NoError(t, err)
 	assert.Equal(
 		t,
 		`Your previous tool call used the unavailable name "catalog_list_\n\"items\"".`+"\n"+
@@ -52,7 +53,7 @@ func TestValidatePlanResumeRecoveryInputRequiresOneInvocationVariant(t *testing.
 		{
 			name: "both",
 			recovery: &ModelInvocationRecovery{
-				Correction:           "Use the required field.",
+				NoCallBodyCorrection: "Use the required field.",
 				UnadvertisedToolName: "catalog_list_nearby",
 			},
 			wantErr: "requires exactly one recovery variant",
@@ -60,7 +61,7 @@ func TestValidatePlanResumeRecoveryInputRequiresOneInvocationVariant(t *testing.
 		{
 			name: "correction",
 			recovery: &ModelInvocationRecovery{
-				Correction: "Use the required field.",
+				NoCallBodyCorrection: "Use the required field.",
 			},
 		},
 		{
@@ -102,7 +103,7 @@ func TestModelInvocationJournalExcludesNonOutputFailures(t *testing.T) {
 			require.NoError(t, err)
 			require.NoError(t, invocations.stageRejectedModelOutput(id, model.ResponseEvidence{}, test.err))
 
-			assert.Nil(t, invocations.recoverableModelInvocationRecovery())
+			assert.Nil(t, testInvocationRecovery(t, invocations))
 		})
 	}
 }
