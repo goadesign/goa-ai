@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"goa.design/goa-ai/eval/evidence"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -16,6 +18,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
@@ -28,7 +31,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	tool := newAnyJSONSpec(tools.Ident("assistant.ask_clarification"))
 	seedTestToolSpecs(rt, tool)
 
-	wfCtx := &testWorkflowContext{ctx: t.Context()}
+	wfCtx := &testWorkflowContext{ctx: t.Context(), hookRuntime: rt}
 
 	base := &workflowConversation{RunContext: run.Context{
 		RunID:     "run-1",
@@ -78,6 +81,33 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	require.Equal(t, "provider-clarification-call-1", await.ModelToolCallID)
 	require.NotEqual(t, await.ToolCallID, await.ModelToolCallID)
 
+	// Project the actual run-loop schedule and await hooks through the public
+	// Subscriber. The lifecycle fixtures model the workflow wrapper, which is
+	// outside this focused runLoop test.
+	firstSink := &recordingStreamSink{}
+	firstSubscriber, err := stream.NewSubscriber(firstSink, stream.RuntimeHostProfile())
+	require.NoError(t, err)
+	for _, event := range events.events {
+		require.NoError(t, firstSubscriber.HandleEvent(t.Context(), event))
+	}
+	require.NoError(t, firstSubscriber.HandleEvent(t.Context(), hooks.NewRunSuspendedEvent(
+		"run-1", input.AgentID, input.SessionID, "suspension-1", "v1", 1, nil,
+	)))
+	firstCollector := evidence.NewCollector()
+	sawAwait := false
+	for _, event := range firstSink.snapshot() {
+		require.NoError(t, firstCollector.Consume(event))
+		sawAwait = sawAwait || event.Type() == stream.EventAwaitClarification
+	}
+	require.True(t, sawAwait)
+	require.True(t, firstCollector.Done())
+	firstEvidence, err := firstCollector.Finish()
+	require.NoError(t, err)
+	require.Len(t, firstEvidence.ToolCalls, 1)
+	require.Equal(t, runtimeToolCallID, firstEvidence.ToolCalls[0].ToolCallID)
+	require.False(t, firstEvidence.ToolCalls[0].Completed)
+	firstEventCount := len(events.events)
+
 	checkpoint, err := decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(rt, "svc.agent"))
 	require.NoError(t, err)
 	continuedCtx := &testWorkflowContext{
@@ -124,6 +154,33 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	require.Equal(t, "run-1", hookResult.CallRunID)
 	require.Equal(t, "run-2", hookResult.RunID())
 	require.Equal(t, runtimeToolCallID, hookResult.ToolCallID)
+
+	secondSink := &recordingStreamSink{}
+	secondSubscriber, err := stream.NewSubscriber(secondSink, stream.RuntimeHostProfile())
+	require.NoError(t, err)
+	require.NoError(t, secondSubscriber.HandleEvent(t.Context(), hooks.NewRunPhaseChangedEvent(
+		"run-2", continuedInput.AgentID, continuedInput.SessionID, run.PhasePlanning,
+	)))
+	for _, event := range events.events[firstEventCount:] {
+		require.NoError(t, secondSubscriber.HandleEvent(t.Context(), event))
+	}
+	require.NoError(t, secondSubscriber.HandleEvent(t.Context(), hooks.NewRunCompletedEvent(
+		"run-2", continuedInput.AgentID, continuedInput.SessionID, "success", run.PhaseCompleted, nil, nil, nil,
+	)))
+	secondCollector, err := evidence.NewContinuationCollector(firstEvidence, "run-2")
+	require.NoError(t, err)
+	for _, event := range secondSink.snapshot() {
+		require.NoError(t, secondCollector.Consume(event))
+	}
+	require.True(t, secondCollector.Done())
+	secondEvidence, err := secondCollector.Finish()
+	require.NoError(t, err)
+	require.Empty(t, secondEvidence.ToolCalls)
+	require.Len(t, secondEvidence.ToolCompletions, 1)
+	require.Equal(t, "run-1", secondEvidence.ToolCompletions[0].InvocationRootRunID)
+	require.Equal(t, runtimeToolCallID, secondEvidence.ToolCompletions[0].Call.ToolCallID)
+	require.JSONEq(t, `{"answer":"Use record_group_1 over the past 24 hours."}`,
+		string(secondEvidence.ToolCompletions[0].Call.Result))
 
 	assistant := continuedCtx.lastPlannerCall.Input.Messages[0]
 	require.Equal(t, model.ConversationRoleAssistant, assistant.Role)

@@ -267,6 +267,37 @@ for !collector.Done() {
 ev, err := collector.Finish()
 ```
 
+`ToolCalls` contains only invocations started in the observed root run tree.
+`ToolCompletions` contains every result observed there, in stream order, including
+results for calls started before an accepted continuation. Each completion has
+the original `Call` and its `InvocationRootRunID`; the containing evidence's
+`RunID` identifies the root stream that delivered the result. These root scopes
+do not identify the native child workflow that executed a tool.
+
+For example, a clarification call may start in one root and receive its answer
+in the successor root. After the application successfully submits that answer
+through its real continuation operation, use the returned successor run ID:
+
+```go
+collector, err := evidence.NewContinuationCollector(previousEvidence, successorRunID)
+```
+
+The previous evidence must come from a collector that observed its root's
+`run_stream_end`. The constructor retains unresolved calls and their observed
+parents, binds the successor to the same logical session, and rejects changed
+root/session metadata. Pending calls can cross multiple accepted continuations.
+Their eventual results appear once in that successor's `ToolCompletions`;
+they do not become new `ToolCalls`. A new invocation of the same tool still
+counts normally. Consumers that build factual references or follow result
+cursors should process `ToolCompletions` in order.
+
+`Finish` returns independent snapshots. Editing public fields or serializing
+and decoding an `Evidence` cannot create continuation context. The application
+owns acceptance of the continuation; the collector neither submits an answer
+nor discovers a predecessor. Fresh conversations and unrelated Task runs use
+`NewCollector`. Transport adapters preserve the tool call ID, name, and parent
+ID exactly; unknown, duplicate, or mismatched results are errors.
+
 An `evidence.Expect` declares the deterministic expectations and converts the
 evidence into checks. Each generated toolset package exports one typed tool
 descriptor per tool (for example `helpers.AnswerTool`) pairing the tool
@@ -307,6 +338,8 @@ policies cover failure semantics: `evidence.ExpectFailure` declares a call
 that must fail with exactly one classification, `ForbidFailureKinds` rejects
 protected failure classes across every attempt, and
 `RequireAllAttemptsSuccessful` rejects any failed or missing result.
+All these policies apply to the current root tree's new invocations in
+`ToolCalls`, including retries; earlier calls completed here are not new attempts.
 `evidence.ExpectConfirmation` asserts the run stopped at a pending operator
 confirmation instead of completing. For tools without generated descriptors
 (registry-discovered toolsets), declare a bare `evidence.Tool` with the tool
