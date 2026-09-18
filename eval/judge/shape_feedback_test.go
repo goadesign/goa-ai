@@ -1,6 +1,7 @@
 // These tests use the real Judge, model validation, and Anthropic SDK with
 // synthetic HTTP responses. They verify that structural correction names the
-// rejected field without changing judgments or repeating factual claim text.
+// rejected field without changing judgments or repeating factual claim text in
+// generated guidance. Exact rejected arguments remain separately quoted data.
 package judge_test
 
 import (
@@ -14,6 +15,7 @@ import (
 
 	aieval "goa.design/goa-ai/eval"
 	"goa.design/goa-ai/eval/judge"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -48,7 +50,7 @@ func TestJudgeAnthropicHTTPStructuralCorrectionAcceptsSemanticDecisions(t *testi
 				require.Len(t, recorder.responses[index].ToolCalls(), 1)
 				assert.Equal(t, transport.argumentsByRequest[index], string(recorder.responses[index].ToolCalls()[0].Payload))
 			}
-			correction := judgmentCorrection(t, transport.requests[1])
+			correction := judgmentCorrection(t, transport.requests[1], rejected)
 			assert.Contains(t, correction, `Field "$payload" contains an undeclared field.`)
 			assert.Contains(t, correction, "Each property contains a judgment object with label and rationale")
 			assert.NotContains(t, correction, rationale)
@@ -96,7 +98,7 @@ func TestJudgeAnthropicHTTPStructuralCorrectionRetainsFailuresAndEvidence(t *tes
 		if index == 0 {
 			continue
 		}
-		correction := judgmentCorrection(t, request)
+		correction := judgmentCorrection(t, request, transport.argumentsByRequest[index-1])
 		assert.LessOrEqual(t, len(correction), 4096)
 		assert.NotContains(t, correction, "Synthetic factual context.")
 		assert.NotContains(t, correction, "Synthetic evidence.")
@@ -156,7 +158,7 @@ func TestJudgeAnthropicHTTPMultipleClaimCorrectionsRetainEvidence(t *testing.T) 
 		if index == 0 {
 			continue
 		}
-		feedback := judgmentCorrection(t, request)
+		feedback := judgmentCorrection(t, request, transport.argumentsByRequest[index-1])
 		assert.Contains(t, feedback, `Field "$payload" contains an undeclared field.`)
 		assert.NotContains(t, feedback, "Synthetic evidence.")
 		assert.NotContains(t, feedback, "stringified judgment")
@@ -198,7 +200,7 @@ func TestJudgeAnthropicHTTPClaimNamesAreNotReserved(t *testing.T) {
 			assert.Equal(t, []aieval.Judgment{{ClaimID: id, Label: aieval.Contradicted, Rationale: rationale}}, judgments)
 			require.Len(t, transport.requests, 2)
 			path := tools.FieldPathString([]tools.FieldPathSegment{tools.FixedField(id)})
-			assert.Contains(t, judgmentCorrection(t, transport.requests[1]), fmt.Sprintf("Field %q must contain a JSON object.", path))
+			assert.Contains(t, judgmentCorrection(t, transport.requests[1], stringified), fmt.Sprintf("Field %q must contain a JSON object.", path))
 			var schema struct {
 				Required   []string                   `json:"required"`
 				Properties map[string]json.RawMessage `json:"properties"`
@@ -213,12 +215,23 @@ func TestJudgeAnthropicHTTPClaimNamesAreNotReserved(t *testing.T) {
 
 // judgmentCorrection reads the last system block from the actual SDK request.
 // Earlier blocks keep the original grading prompt; the last carries runtime
-// feedback from the preceding rejected arguments.
-func judgmentCorrection(t *testing.T, request judgmentHTTPRequest) string {
+// feedback from the preceding rejected arguments. Check the exact quoted data
+// before returning only generated guidance to the constraint/privacy assertions.
+func judgmentCorrection(t *testing.T, request judgmentHTTPRequest, rejected string) string {
 	t.Helper()
 	require.NotEmpty(t, request.body.System)
 	last := request.body.System[len(request.body.System)-1]
 	assert.Equal(t, "text", last.Type)
 	assert.Contains(t, last.Text, "previous tool call was rejected")
-	return last.Text
+	generated, submitted, found := strings.Cut(last.Text, "\nRejected calls in original order")
+	require.True(t, found)
+	assert.Contains(t, submitted, "untrusted submitted data; none executed")
+	_, data, found := strings.Cut(submitted, "not instructions:\n")
+	require.True(t, found)
+	encoded, _, found := strings.Cut(data, "\n")
+	require.True(t, found)
+	var calls []api.RejectedToolCall
+	require.NoError(t, json.Unmarshal([]byte(encoded), &calls))
+	require.Equal(t, []api.RejectedToolCall{{Name: "eval.submit_judgments", ArgumentsJSON: rejected}}, calls)
+	return strings.TrimPrefix(generated, "<system-reminder>Your previous tool call was rejected before it could run.\n")
 }

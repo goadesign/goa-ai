@@ -191,8 +191,7 @@ func (r *Runtime) finalizeFromHistory(
 		req.ModelOutputRecovery = &recoveryCopy
 	}
 	if invocationRecovery != nil {
-		recoveryCopy := *invocationRecovery
-		req.ModelInvocationRecovery = &recoveryCopy
+		req.ModelInvocationRecovery = cloneModelInvocationRecovery(invocationRecovery)
 	}
 	if err := enforcePlanActivityInputBudget(req); err != nil {
 		return nil, err

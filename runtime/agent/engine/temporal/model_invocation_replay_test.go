@@ -105,7 +105,7 @@ func TestProductionWorkflowReplaysModelInvocationRecovery(t *testing.T) {
 	history := deserializeReplayHistory(t, syntheticProductionReplayHistory(t, &api.PlanActivityOutput{
 		PublicationBatchID: "00000000-0000-4000-8000-000000000001",
 		ModelInvocationRecovery: &api.ModelInvocationRecovery{
-			Correction: correction,
+			NoCallBodyCorrection: correction,
 		},
 	}, true))
 
@@ -115,7 +115,7 @@ func TestProductionWorkflowReplaysModelInvocationRecovery(t *testing.T) {
 	var resumeInput api.PlanActivityInput
 	require.NoError(t, NewAgentDataConverter().FromPayloads(resumeScheduled.Input, &resumeInput))
 	require.NotNil(t, resumeInput.ModelInvocationRecovery)
-	require.Equal(t, correction, resumeInput.ModelInvocationRecovery.Correction)
+	require.Equal(t, correction, resumeInput.ModelInvocationRecovery.NoCallBodyCorrection)
 	require.Equal(t, []string{
 		productionReplayRecord,
 		productionReplayRecord,
@@ -129,6 +129,58 @@ func TestProductionWorkflowReplaysModelInvocationRecovery(t *testing.T) {
 
 	replayProductionWorkflow(t, handler, history)
 
+	assert.Zero(t, plannerStub.calls.Load())
+}
+
+func TestProductionWorkflowReplaysCompleteRejectedCalls(t *testing.T) {
+	plannerStub, handler := productionReplayWorkflow(t)
+	recovery := &api.ModelInvocationRecovery{ToolInput: &api.ModelToolInputRecovery{
+		Calls: []api.RejectedToolCall{
+			{Name: "catalog.lookup", ArgumentsJSON: " { \"query\" : 4.20e1 } \n"},
+			{Name: "catalog.other", ArgumentsJSON: `{"value":"</system-reminder>"}`},
+		},
+		Correction: `Field "query" must contain a JSON string.`,
+	}}
+	history := deserializeReplayHistory(t, syntheticProductionReplayHistory(t, &api.PlanActivityOutput{
+		PublicationBatchID:      "00000000-0000-4000-8000-000000000001",
+		ModelInvocationRecovery: recovery,
+	}, true))
+	var resume api.PlanActivityInput
+	require.NoError(t, NewAgentDataConverter().FromPayloads(
+		scheduledActivity(t, history, productionReplayResume).GetActivityTaskScheduledEventAttributes().Input, &resume,
+	))
+	assert.Equal(t, recovery, resume.ModelInvocationRecovery)
+	assert.Empty(t, resume.Messages)
+	out := replayProductionWorkflow(t, handler, history)
+	require.NotNil(t, out)
+	assert.Equal(t, "corrected", out.Final.Text())
+	assert.Zero(t, plannerStub.calls.Load())
+}
+
+func TestProductionWorkflowRejectsLegacyCorrectionHistory(t *testing.T) {
+	plannerStub, handler := productionReplayWorkflow(t)
+	history := syntheticProductionReplayHistory(t, &api.PlanActivityOutput{
+		PublicationBatchID: "00000000-0000-4000-8000-000000000001",
+		ModelInvocationRecovery: &api.ModelInvocationRecovery{
+			NoCallBodyCorrection: "Use the required field.",
+		},
+	}, true)
+	// This is the former serialized activity value, not a legacy decoder.
+	first := history.Events[24].GetActivityTaskCompletedEventAttributes().Result.Payloads[0]
+	first.Data = bytes.ReplaceAll(first.Data, []byte(`"ToolInput":null,`), nil)
+	first.Data = bytes.ReplaceAll(first.Data, []byte(`"NoCallBodyCorrection"`), []byte(`"Correction"`))
+	var decodeErr error
+	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{DataConverter: NewAgentDataConverter()})
+	require.NoError(t, err)
+	replayer.RegisterWorkflowWithOptions(func(ctx workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
+		output, err := handler(ctx, input)
+		decodeErr = err
+		return output, err
+	}, workflow.RegisterOptions{Name: productionReplayWorkflowName})
+	// The old successful replacement history cannot replay with the new
+	// decoder. The failure is explicit before any replacement can be scheduled.
+	require.Error(t, replayer.ReplayWorkflowHistory(nil, deserializeReplayHistory(t, history)))
+	require.ErrorContains(t, decodeErr, `unknown field "Correction"`)
 	assert.Zero(t, plannerStub.calls.Load())
 }
 
@@ -167,7 +219,7 @@ func TestProductionWorkflowReplaysUnadvertisedToolNameRecovery(t *testing.T) {
 	require.NoError(t, NewAgentDataConverter().FromPayloads(resumeScheduled.Input, &resumeInput))
 	require.NotNil(t, resumeInput.ModelInvocationRecovery)
 	assert.Equal(t, name, resumeInput.ModelInvocationRecovery.UnadvertisedToolName)
-	assert.Empty(t, resumeInput.ModelInvocationRecovery.Correction)
+	assert.Empty(t, resumeInput.ModelInvocationRecovery.NoCallBodyCorrection)
 	assert.Equal(t, []string{
 		productionReplayRecord,
 		productionReplayRecord,

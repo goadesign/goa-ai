@@ -41,6 +41,6 @@ func TestModelInvocationRetainsFailedSearchUsage(t *testing.T) {
 			require.ErrorIs(t, err, context.Canceled)
 		}
 		assert.Equal(t, 12, invocations.exportUsage().TotalTokens)
-		assert.Nil(t, invocations.recoverableModelInvocationRecovery())
+		assert.Nil(t, testInvocationRecovery(t, invocations))
 	}
 }

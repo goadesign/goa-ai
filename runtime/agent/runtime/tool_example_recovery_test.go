@@ -6,6 +6,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -87,7 +88,9 @@ func TestRunLoopToolExampleSurvivesSuccessiveSchemaFailures(t *testing.T) {
 		if providerCalls > 1 {
 			assert.Contains(t, text, example)
 			assert.Contains(t, text, "use values and a valid variant appropriate to the request")
-			assert.NotContains(t, text, "submitted quantity")
+			generated, _, found := strings.Cut(text, "\nRejected calls in original order")
+			require.True(t, found)
+			assert.NotContains(t, generated, "submitted quantity")
 		}
 		switch providerCalls {
 		case 2:
@@ -95,6 +98,8 @@ func TestRunLoopToolExampleSurvivesSuccessiveSchemaFailures(t *testing.T) {
 			payload = rawjson.Message(`{"request":{"query":"submitted quantity"}}`)
 		case 3:
 			assert.Contains(t, text, `Field "window" is required.`)
+			assert.Contains(t, text, "submitted quantity")
+			assert.NotContains(t, text, `\"hours\":12`, "only the immediately preceding rejection is retained")
 			name, payload = alternative.Name, rawjson.Message(`{}`)
 		}
 		return testModelResponseWithUsage(nil, model.TokenUsage{InputTokens: 6, OutputTokens: 4, TotalTokens: 10}, model.ToolCall{

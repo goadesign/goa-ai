@@ -1,5 +1,5 @@
 // This file verifies the Temporal payload shape used to carry an exact rejected
-// tool name between planner activities while retaining old correction payloads.
+// tool name between planner activities while rejecting the removed correction-only shape.
 
 package temporal
 
@@ -31,33 +31,18 @@ func TestUnadvertisedToolNameRecoveryPayloadRoundTrip(t *testing.T) {
 		"$FUNCTIONS.catalog_list_nearby",
 		decoded.ModelInvocationRecovery.UnadvertisedToolName,
 	)
-	assert.Empty(t, decoded.ModelInvocationRecovery.Correction)
+	assert.Empty(t, decoded.ModelInvocationRecovery.NoCallBodyCorrection)
 }
 
-func TestOldModelInvocationCorrectionPayloadWithoutNameStillDecodes(t *testing.T) {
+// Removed correction-only records must be handled by their original worker.
+func TestLegacyModelInvocationCorrectionIsRejected(t *testing.T) {
 	converter := NewAgentDataConverter()
 	payloads, err := converter.ToPayloads(&api.PlanActivityOutput{
-		ModelInvocationRecovery: &api.ModelInvocationRecovery{
-			Correction: "Use the required field.",
-		},
+		ModelInvocationRecovery: &api.ModelInvocationRecovery{NoCallBodyCorrection: "Use the required field."},
 	})
 	require.NoError(t, err)
-	require.Len(t, payloads.Payloads, 1)
-	require.Contains(t, string(payloads.Payloads[0].Data), `"UnadvertisedToolName":""`)
-	payloads.Payloads[0].Data = bytes.Replace(
-		payloads.Payloads[0].Data,
-		[]byte(`,"UnadvertisedToolName":""`),
-		nil,
-		1,
-	)
-	assert.False(
-		t,
-		bytes.Contains(payloads.Payloads[0].Data, []byte("UnadvertisedToolName")),
-	)
-
+	payloads.Payloads[0].Data = bytes.ReplaceAll(payloads.Payloads[0].Data, []byte(`"ToolInput":null,`), nil)
+	payloads.Payloads[0].Data = bytes.ReplaceAll(payloads.Payloads[0].Data, []byte(`"NoCallBodyCorrection"`), []byte(`"Correction"`))
 	var decoded api.PlanActivityOutput
-	require.NoError(t, converter.FromPayloads(payloads, &decoded))
-	require.NotNil(t, decoded.ModelInvocationRecovery)
-	assert.Equal(t, "Use the required field.", decoded.ModelInvocationRecovery.Correction)
-	assert.Empty(t, decoded.ModelInvocationRecovery.UnadvertisedToolName)
+	require.ErrorContains(t, converter.FromPayloads(payloads, &decoded), `unknown field "Correction"`)
 }
