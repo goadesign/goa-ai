@@ -15,7 +15,12 @@ import (
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 )
 
-const mutatedDefinitionValue = "mutated"
+const (
+	mutatedDefinitionValue     = "mutated"
+	missingDefinitionCase      = "missing definition"
+	retirementMismatchMessage  = "disagrees with permanent retirement history"
+	replacementDefinitionTitle = "replacement"
+)
 
 func TestCatalogDefinitionCacheEvictsRemovedNames(t *testing.T) {
 	t.Parallel()
@@ -164,7 +169,7 @@ func TestCatalogStateRejectsInvalidPersistedData(t *testing.T) {
 func TestCatalogStartupRequiresCompleteConsistentStorage(t *testing.T) {
 	t.Parallel()
 	for _, name := range []string{
-		"missing definition", "orphan definition", "summary mismatch",
+		missingDefinitionCase, "orphan definition", "summary mismatch",
 		"fingerprint mismatch", "invalid retired token", "active token marked retired",
 		"retired token missing from history", "valid retired admission",
 	} {
@@ -177,7 +182,7 @@ func TestCatalogStartupRequiresCompleteConsistentStorage(t *testing.T) {
 			require.NoError(t, err)
 			wantErr := ""
 			switch name {
-			case "missing definition":
+			case missingDefinitionCase:
 				delete(store.definitions, key)
 				wantErr = "CATALOGINCOMPLETE"
 			case "orphan definition":
@@ -202,11 +207,11 @@ func TestCatalogStartupRequiresCompleteConsistentStorage(t *testing.T) {
 				wantErr = "registration token"
 			case "active token marked retired":
 				store.retiredTokens[current.RegistrationToken] = struct{}{}
-				wantErr = "disagrees with permanent retirement history"
+				wantErr = retirementMismatchMessage
 			case "retired token missing from history":
 				require.NoError(t, catalog.Retire(ctx, "tools", current.RegistrationToken))
 				clear(store.retiredTokens)
-				wantErr = "disagrees with permanent retirement history"
+				wantErr = retirementMismatchMessage
 			case "valid retired admission":
 				require.NoError(t, catalog.Retire(ctx, "tools", current.RegistrationToken))
 			}
@@ -231,7 +236,7 @@ func TestCatalogColdReadChecksCurrentRetirementMembership(t *testing.T) {
 			writer, store, clock := testDefinitionCatalog(t)
 			current, err := writer.activeState(ctx, "tools")
 			require.NoError(t, err)
-			wantErr := "disagrees with permanent retirement history"
+			wantErr := retirementMismatchMessage
 			switch name {
 			case "active token marked retired":
 				store.mu.Lock()
@@ -439,7 +444,7 @@ func TestCatalogDefinitionCacheReplacesDefinition(t *testing.T) {
 	require.NoError(t, catalog.ReleaseProvider(ctx, "tools", "provider", testIncarnationA, first.RegistrationToken))
 	clock.Set(time.Unix(1_700_000_010, 0))
 	next := testDefinitionToolset()
-	next.Tools[0].ConsumerContract.Title = "replacement"
+	next.Tools[0].ConsumerContract.Title = replacementDefinitionTitle
 	replacement, err := catalog.Register(ctx, testCatalogDefinition(t, next), testAdmissionRevisionB, "provider", testIncarnationB, time.Minute)
 	require.NoError(t, err)
 	current, err := catalog.ActiveRegistration(ctx, "tools")
@@ -454,7 +459,7 @@ func TestCatalogDefinitionCacheReplacesDefinition(t *testing.T) {
 	require.NoError(t, err)
 	firstDefinition, err := first.Toolset.decode(first.RegisteredAt)
 	require.NoError(t, err)
-	assert.Equal(t, "replacement", currentDefinition.Tools[0].ConsumerContract.Title)
+	assert.Equal(t, replacementDefinitionTitle, currentDefinition.Tools[0].ConsumerContract.Title)
 	assert.Equal(t, "original", firstDefinition.Tools[0].ConsumerContract.Title)
 	assert.Len(t, catalog.definitions, 1)
 	assert.Same(t, current.Toolset, catalog.definitions["tools"])
@@ -555,7 +560,7 @@ func TestCatalogColdReadPairsDefinitionWithReplacementState(t *testing.T) {
 	require.NoError(t, writer.ReleaseProvider(ctx, "tools", "provider", testIncarnationA, original.RegistrationToken))
 	cold := newToolsetCatalog(store, clock)
 	next := testDefinitionToolset()
-	next.Tools[0].ConsumerContract.Title = "replacement"
+	next.Tools[0].ConsumerContract.Title = replacementDefinitionTitle
 	definition := testCatalogDefinition(t, next)
 	var replacement catalogState
 	store.mu.Lock()
@@ -572,7 +577,7 @@ func TestCatalogColdReadPairsDefinitionWithReplacementState(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, original.RegistrationToken, resolved.RegistrationToken)
 	assert.Equal(t, replacement.RegistrationToken, resolved.RegistrationToken)
-	assert.Equal(t, "replacement", resolved.Toolset.Tools[0].ConsumerContract.Title)
+	assert.Equal(t, replacementDefinitionTitle, resolved.Toolset.Tools[0].ConsumerContract.Title)
 }
 
 func TestCatalogDefinitionResultsHaveIndependentOwnership(t *testing.T) {

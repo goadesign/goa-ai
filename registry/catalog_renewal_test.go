@@ -59,9 +59,9 @@ func TestCatalogRenewProviderRejectsLostAuthority(t *testing.T) {
 				delete(store.content, toolsetCatalogKey("tools"))
 				store.mu.Unlock()
 			case "missing toolset":
-				toolset = "missing"
+				toolset = "absent.toolset"
 			case "missing provider":
-				provider = "missing"
+				provider = "absent-provider"
 			case "different incarnation":
 				incarnation = testIncarnationB
 			case "expired lease":
@@ -391,7 +391,7 @@ func TestCatalogRenewProviderReportsFailuresWithoutMutation(t *testing.T) {
 			default:
 				require.ErrorIs(t, err, want)
 			}
-			assert.NotErrorIs(t, err, errProviderLeaseLost)
+			require.NotErrorIs(t, err, errProviderLeaseLost)
 			after, exists := store.Get(toolsetCatalogKey("tools"))
 			require.True(t, exists)
 			assert.Equal(t, before, after)
