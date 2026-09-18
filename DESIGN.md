@@ -165,8 +165,9 @@ Tool-input rejection keeps the original validator error available through
 copying limits remains available through `OutputValidationError.RejectedResponse`,
 including when the error supplies correction guidance. These private diagnostic
 values do not become successful output or add rejected bodies to automatic
-telemetry or transport data;
-the calling application owns their use and retention. The
+telemetry or the public model gateway transport. Complete calls selected for
+runtime recovery are separately retained in Temporal activity input/output,
+under the application's history access and retention policy. The
 [runtime tool-input contract](docs/runtime.md#model-visible-tool-arguments)
 separates diagnostic access from the correction sent to the model.
 Generated choice metadata also identifies a missing or invalid discriminator
@@ -392,6 +393,15 @@ the rejected call out of transcript history, and spends one recovery turn on a
 normal planner resume with executable tools available. It selects the rejected
 invocation by invocation start order, never by a model-supplied value or
 completion order.
+For a complete response, `ModelInvocationRecovery.ToolInput` requires every
+call's original name and argument text, in order, beside that generated
+guidance. The runtime quotes the data as untrusted and unexecuted in the one
+replacement reminder. Valid siblings do not execute. Acceptance clears the
+context; a later rejection replaces it rather than accumulating it. It never
+enters accepted messages, checkpoints or evaluation call/completion evidence.
+The existing response-copy, activity-output and activity-input limits apply
+without truncating calls or increasing budgets. Copy, encoding or budget
+failure is terminal, not a correction-only fallback.
 When a provider cannot represent a completed tool call because its arguments
 are not valid JSON, the adapter reads only the stream's terminal usage and
 completion evidence. The adapter attaches the canonical tool name already
@@ -399,13 +409,25 @@ resolved through its request map to the malformed-argument error. The receiving
 request contract supplies the fixed JSON instruction with that input contract's
 name only if it advertised the name. The name is a diagnostic identifier, not a
 callable provider name. Malformed bytes, call IDs and provider diagnostics stay
-private; an unknown name cannot authorize argument correction.
+private; an unknown name cannot authorize argument correction. Such a genuine
+absence of a complete retained body uses `NoCallBodyCorrection`, including
+trusted transported errors that do not retain a response.
 When a supported provider instead returns a valid tool name absent from the
 request's advertised catalog, the adapter rejects the complete response. The
 same invocation-recovery value carries only that untouched name, mutually
 exclusive with tool-input correction guidance. The replacement starts from the
 last accepted conversation with its current executable catalog. Unstructured
 validation failures remain terminal.
+
+The removed flat `ModelInvocationRecovery.Correction` shape is intentionally
+incompatible with the new activity input/output. Old histories require their
+matching old program; new histories require the new program. Use existing
+worker-build isolation or drain affected unversioned work before replacement,
+not a legacy decoder or a permanent workflow-version branch. Stopping new
+traffic, retiring worker processes, and deleting immutable old release
+artifacts have separate obligations. Retain matching binaries and source for
+every supported historical replay, query or reset, including retained exports.
+See [upgrade and retention requirements](docs/runtime.md#rejected-call-recovery-and-worker-upgrades).
 
 When a new run restores paging actions from earlier turns, saved result bodies
 remain evidence rather than typed inputs to current work. The runtime verifies

@@ -486,18 +486,83 @@ joining, or replacing the validation error returned by `Recv`.
 Each retry consumes one existing `MaxRecoveryTurns` entry. Repeated misses end
 through the normal recovery-cap path. Cancellation, deadlines, transport
 failures, malformed output that has no attributable terminal usage, and
-complete-answer corrections remain on their existing paths. A completed tool
-call whose arguments are not valid JSON uses fixed replacement guidance; its
-raw bytes, provider diagnostics, and tool identity do not enter workflow state.
+complete-answer corrections remain on their existing paths. A provider
+translation failure with no complete retained body uses fixed replacement
+guidance without inventing a call. Complete responses retain their call data
+under the contract below. Provider diagnostics and reasoning remain excluded.
 Provider usage from each rejected invocation is counted once.
 
-Temporal records the optional name in `ModelInvocationRecovery` on the planner
-activity result and its next input. Histories recorded before this field existed
-remain readable because the field is absent. Deploy the runtime and Temporal
-workers together. After a history records an unadvertised-name recovery,
-rolling that history back to an older worker is unsafe because the older worker
-does not understand the new field. This change requires no Goa regeneration,
-client regeneration, or public wire-client update.
+### Rejected-call recovery and worker upgrades
+
+`api.ModelInvocationRecovery` is recorded on a planner activity result and its
+next input. It requires exactly one outcome:
+
+- `ToolInput` contains nonempty `Calls` in original response order and the
+  generated `Correction`. Each `RejectedToolCall` contains its exact `Name`
+  and `ArgumentsJSON` string. Every call is required, including valid siblings;
+  none executed. Empty or malformed argument text remains exact submitted text.
+- `NoCallBodyCorrection` contains generated guidance only when the selected
+  typed rejection genuinely has no complete retained response. Provider
+  translation and trusted error-restoration paths can produce this outcome.
+  Copy failure, an empty retained call list, invalid UTF-8 and insufficient
+  budget cannot.
+- `UnadvertisedToolName` retains the existing exact unknown-name outcome,
+  without its arguments or a copied catalog.
+
+The invocation journal selects the exact eligible, finalized model operation
+by start order before copying its data. Generated correction remains free of
+submitted values. One runtime renderer JSON-encodes the calls with argument text
+as quoted strings and HTML escaping, explicitly labeling them untrusted,
+unexecuted data. This prevents argument text from closing the reminder's
+structure; it does not guarantee the model will interpret it correctly.
+Runtime correlation does not ask the model to reproduce transport call IDs.
+The replacement can choose a different authorized tool or value, ask a valid
+question, or answer under its existing completion requirements.
+
+One selected rejection owns this context through its immediate replacement.
+Acceptance clears it; a subsequent rejection replaces it with that attempt's
+own data. Copies isolate the recorded response, pending workflow state and
+activity inputs. The context stays outside accepted `Messages`, tool execution,
+run-log tool starts/results, reusable older-turn summaries, suspension
+checkpoints and eval `ToolCalls`/`ToolCompletions`.
+
+Decision lifetime does not imply ephemeral storage: submitted arguments now
+remain in Temporal activity history under normal access and retention controls.
+No automatic telemetry export or public model-gateway body field is added.
+The existing 4,096-byte generated-correction bound, bounded response copy,
+1 MiB whole-activity output/codec limit and 1,000,000-byte scheduled planner-input
+limit remain unchanged. Escaping counts toward those whole-value limits.
+Required calls are never truncated or dropped. Large complete-call recoveries
+that formerly fit as correction-only values can now fail explicitly.
+
+**Upgrade requirement:** the former flat `Correction` activity field is removed.
+Strict workflow decoding rejects it; old code likewise cannot decode the new
+complete-call shape. There is no legacy decoder, optional evidence fallback or
+workflow-version branch. Old recovery histories must run and replay with their
+matching old program. New histories must use the new program and must not be
+rolled back to an older decoder. Histories without this recovery value and
+ordinary accepted suspension checkpoints keep their existing contracts.
+No Goa or client generation is required.
+
+Use the application's verified worker-build routing to keep existing pinned
+work on its old build and start new work on the new build. Applications using
+unversioned workers must drain affected work before replacement or isolate the
+old queue until it closes. Treat these as three separate release decisions:
+
+1. Stop assigning **new** work to an old build only after verifying the routing
+   transition and exact-build routing for existing work.
+2. Retire old worker **processes** only after authoritative drain and after
+   accounting for supported closed-history queries or resets that execute old
+   workflow code. An empty running-work list alone does not prove this.
+3. Delete old **binaries, images, source and retention artifacts** only when no
+   retained history or supported replay/query/reset obligation still needs
+   them, including exported histories. Name the retention owner and concrete
+   expiry evidence; do not infer an expiry from worker scale-down.
+
+Keep immutable matching release artifacts while those obligations remain.
+They are release assets, not a second decoder in the new runtime. Fresh
+running-work, routing and retention evidence is required at application
+adoption; the framework change alone grants no production cutover.
 
 ### Tool input validation across model gateways
 
@@ -1241,11 +1306,11 @@ Workflow step boundary:
   of transcript history, and schedules one normal resume activity with the
   executable tool catalog still available; ordinary decoder and internal
   errors remain terminal,
-- Temporal histories written before this behavior replay unchanged. Once a
-  history contains a `ModelInvocationRecovery` planner activity result, every
-  worker that may process that history must run a runtime version that
-  understands this result. Do not mix older and newer workers on those
-  histories, and do not roll them back to an older worker,
+- complete rejected calls accompany guidance as quoted data for one replacement.
+  Their persisted activity value is intentionally incompatible with the former
+  flat correction-only shape. Follow the
+  [worker upgrade and retention contract](#rejected-call-recovery-and-worker-upgrades);
+  never replay old recovery values with the new decoder or roll new ones back,
 - a planner may return `NewRecoverableModelAnswerError` when it rejects a
   completed final answer and can state how the model should replace it; the
   workflow records the rejection and token usage, then schedules a
@@ -1780,9 +1845,11 @@ response, and streams still withhold invalid tool calls and return no successful
 final response. Stream observers can inspect an independent rejected response
 copy alongside the rejection error, as defined by `StreamObservation.Response`.
 The application decides whether and where to record private diagnostics and how
-long to retain them. The existing remote-error restoration contract, public
-summary, and built-in response capture remain unchanged. This change enables no
-logging or message-capture switch and adds no automatic rejected-body capture.
+long to retain diagnostic exports. Separately, complete calls selected for
+runtime recovery are recorded in Temporal activity history as described in
+[rejected-call recovery](#rejected-call-recovery-and-worker-upgrades). The
+remote-error restoration contract, public summary and built-in response capture
+remain unchanged. This enables no logging or message-capture switch.
 Applications already recording the underlying error now receive the original
 diagnostic in that error's text.
 
@@ -5537,9 +5604,12 @@ the call came from a model tool use and overwrites both fields from its retained
 
 The model-output checks described in
 [Model-Visible Tool Arguments](#model-visible-tool-arguments) happen before a
-tool is scheduled. A qualifying rejection produces limited-size guidance for a
-replacement model call without including rejected argument values; ordinary
-decoder and internal errors are terminal.
+tool is scheduled. A qualifying rejection produces limited-size generated
+guidance that does not include rejected argument values. The complete replacement
+context separately includes quoted, untrusted call data when a complete rejected
+response was retained, as defined by
+[Rejected-call recovery and worker upgrades](#rejected-call-recovery-and-worker-upgrades).
+Ordinary decoder and internal errors are terminal.
 
 A tool can separately fail after execution begins because a bound service
 method rejects a domain value. Generated providers convert supported Goa

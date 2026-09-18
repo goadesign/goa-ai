@@ -297,7 +297,7 @@ func TestModelInvocationStreamFingerprintsRejectedCompleteResponse(t *testing.T)
 	require.True(t, present)
 	require.Len(t, evidence.SHA256, 64)
 	require.Positive(t, evidence.Size)
-	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	require.Nil(t, testInvocationRecovery(t, invocations))
 	require.Equal(t, 7, invocations.exportUsage().TotalTokens)
 	closeErr := stream.Close()
 	require.NoError(t, closeErr)
@@ -306,17 +306,17 @@ func TestModelInvocationStreamFingerprintsRejectedCompleteResponse(t *testing.T)
 	require.True(t, present)
 	require.Len(t, evidence.SHA256, 64)
 	require.Positive(t, evidence.Size)
-	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	require.Nil(t, testInvocationRecovery(t, invocations))
 	require.True(t, invocations.commitModelInvocationRecovery(errors.Join(recvErr, closeErr)))
 	evidence, present = rejectedResponseEvidence(invocations)
 	require.True(t, present)
 	require.Len(t, evidence.SHA256, 64)
 	require.Positive(t, evidence.Size)
-	recovery := invocations.recoverableModelInvocationRecovery()
+	recovery := testInvocationRecovery(t, invocations)
 	require.NotNil(t, recovery)
 	require.Equal(t, "catalog.unknown", recovery.UnadvertisedToolName)
 	require.NoError(t, stream.Close())
-	require.Equal(t, recovery, invocations.recoverableModelInvocationRecovery())
+	require.Equal(t, recovery, testInvocationRecovery(t, invocations))
 	require.Equal(t, 7, invocations.exportUsage().TotalTokens)
 }
 
@@ -351,7 +351,7 @@ func TestModelInvocationStreamPreservesValidationAfterCloseFailure(t *testing.T)
 	require.Same(t, validationErr, err)
 	require.NotErrorIs(t, err, closeErr)
 	require.ErrorIs(t, stream.Close(), closeErr)
-	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	require.Nil(t, testInvocationRecovery(t, invocations))
 	_, err = invocations.beginModelInvocation(t.Context(), "", func() {})
 	require.ErrorAs(t, err, &outputValidationErr)
 	require.NotErrorIs(t, err, closeErr)
@@ -386,7 +386,7 @@ func TestModelInvocationStreamWaitsForLaterObserverFailure(t *testing.T) {
 	require.ErrorIs(t, recvErr, observerErr)
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, recvErr, &validationErr)
-	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	require.Nil(t, testInvocationRecovery(t, invocations))
 	require.Equal(t, 7, invocations.exportUsage().TotalTokens)
 
 	closeErr := stream.Close()
@@ -394,7 +394,7 @@ func TestModelInvocationStreamWaitsForLaterObserverFailure(t *testing.T) {
 	require.NoError(t, closeErr)
 	require.ErrorIs(t, invocations.outputContractError(), observerErr)
 	require.ErrorAs(t, invocations.outputContractError(), &validationErr)
-	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	require.Nil(t, testInvocationRecovery(t, invocations))
 	require.Equal(t, 7, invocations.exportUsage().TotalTokens)
 }
 
@@ -461,7 +461,7 @@ func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterCancellation(t *te
 	err = stream.Close()
 	require.ErrorIs(t, err, context.Canceled)
 	require.ErrorIs(t, invocations.outputContractError(), context.Canceled)
-	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	require.Nil(t, testInvocationRecovery(t, invocations))
 }
 
 func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterDeadline(t *testing.T) {
@@ -496,7 +496,7 @@ func TestModelInvocationStreamDoesNotCommitRejectedOutputAfterDeadline(t *testin
 
 	require.ErrorIs(t, stream.Close(), context.DeadlineExceeded)
 	require.ErrorIs(t, invocations.outputContractError(), context.DeadlineExceeded)
-	require.Nil(t, invocations.recoverableModelInvocationRecovery())
+	require.Nil(t, testInvocationRecovery(t, invocations))
 }
 
 func TestModelInvocationClientRejectsInvalidRequestBeforeProviderCall(t *testing.T) {
@@ -602,7 +602,7 @@ func TestModelInvocationRecoverySelectsEarliestConcurrentProductionCall(t *testi
 	firstErr := <-results
 
 	require.True(t, invocations.commitModelInvocationRecovery(errors.Join(firstErr, secondErr)))
-	recovery := invocations.recoverableModelInvocationRecovery()
+	recovery := testInvocationRecovery(t, invocations)
 	require.NotNil(t, recovery)
 	require.Equal(t, "catalog.first", recovery.UnadvertisedToolName)
 	require.Equal(t, int32(2), providerCalls.Load())
@@ -1865,4 +1865,12 @@ func rejectedResponseEvidence(journal *modelInvocationJournal) (model.ResponseEv
 		}
 	}
 	return model.ResponseEvidence{}, false
+}
+
+// testInvocationRecovery checks construction before tests inspect an outcome.
+func testInvocationRecovery(t *testing.T, journal *modelInvocationJournal) *ModelInvocationRecovery {
+	t.Helper()
+	recovery, err := journal.recoverableModelInvocationRecovery()
+	require.NoError(t, err)
+	return recovery
 }

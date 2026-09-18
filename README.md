@@ -170,6 +170,15 @@ The runtime schedules a replacement planning turn within `MaxRecoveryTurns`.
 The model can supply the missing SKU, choose another permitted action, or ask
 for information. A corrected call is validated again before execution.
 
+When validation rejected a complete response, the replacement also receives
+every submitted call in order, with its original argument text quoted as
+untrusted, unexecuted data. Generated instructions remain separate. An eligible
+typed input rejection with no complete retained response receives only its
+generated correction.
+Rejected calls never become accepted conversation or tool-execution evidence.
+This context is recorded in Temporal activity history; deployments must follow
+the [recovery upgrade and retention contract](docs/runtime.md#rejected-call-recovery-and-worker-upgrades).
+
 This works for more than missing fields: wrong JSON types, invalid enum values,
 and array-length errors can receive field-specific guidance. The complete
 example comes from your top-level `Example(...)` and is included when it fits

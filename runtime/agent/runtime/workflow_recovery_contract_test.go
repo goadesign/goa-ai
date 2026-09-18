@@ -1049,8 +1049,8 @@ func TestRunLoopRecoversGeneratedModelToolCallBeforeExecution(t *testing.T) {
 				input.Reminders[0].Text,
 				`Field "query" must contain a JSON string.`,
 			)
-			assert.NotContains(t, input.Reminders[0].Text, "privateSecret")
-			assert.NotContains(t, input.Reminders[0].Text, "submitted-secret")
+			assert.Contains(t, input.Reminders[0].Text, "privateSecret")
+			assert.Contains(t, input.Reminders[0].Text, "submitted-secret")
 			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{request}}, nil
 		},
 	)
@@ -1222,7 +1222,7 @@ func TestRunLoopConsumesRecordedModelInvocationRecoveryWithoutProviderCall(t *te
 			return &PlanActivityOutput{
 				PublicationBatchID: "00000000-0000-4000-8000-000000000001",
 				ModelInvocationRecovery: &ModelInvocationRecovery{
-					Correction: "Field \"query\" must contain a JSON string.",
+					NoCallBodyCorrection: "Field \"query\" must contain a JSON string.",
 				},
 			}, nil
 		}

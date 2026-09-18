@@ -836,7 +836,7 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 		{
 			name: "model invocation recovery",
 			input: &PlanActivityInput{
-				ModelInvocationRecovery: &ModelInvocationRecovery{Correction: "Use a string query."},
+				ModelInvocationRecovery: &ModelInvocationRecovery{NoCallBodyCorrection: "Use a string query."},
 			},
 		},
 		{name: "missing input", wantErr: "input is required"},
@@ -891,7 +891,7 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 		{
 			name: "model invocation recovery with finalization evidence",
 			input: &PlanActivityInput{
-				ModelInvocationRecovery: &ModelInvocationRecovery{Correction: "Replace the tool call."},
+				ModelInvocationRecovery: &ModelInvocationRecovery{NoCallBodyCorrection: "Replace the tool call."},
 				RecoveryToolCallIDs:     []string{"call-1"},
 				Finalize:                termination,
 			},
@@ -903,7 +903,7 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 					Kind:       planner.ModelOutputRecoveryAnswer,
 					Correction: "Replace the answer.",
 				},
-				ModelInvocationRecovery: &ModelInvocationRecovery{Correction: "Replace the tool call."},
+				ModelInvocationRecovery: &ModelInvocationRecovery{NoCallBodyCorrection: "Replace the tool call."},
 			},
 			wantErr: "cannot be combined",
 		},
@@ -918,7 +918,7 @@ func TestValidatePlanResumeRecoveryInput(t *testing.T) {
 		{
 			name: "model invocation recovery with synthesis",
 			input: &PlanActivityInput{
-				ModelInvocationRecovery: &ModelInvocationRecovery{Correction: "Replace the tool call."},
+				ModelInvocationRecovery: &ModelInvocationRecovery{NoCallBodyCorrection: "Replace the tool call."},
 				SynthesisOnly:           true,
 			},
 			wantErr: "cannot combine with synthesis-only",
@@ -1879,7 +1879,7 @@ func TestPlanStartActivityDoesNotPublishRejectedModelOutput(t *testing.T) {
 	require.NotNil(t, out)
 	require.NotNil(t, out.ModelInvocationRecovery)
 	require.Equal(t, "hidden", out.ModelInvocationRecovery.UnadvertisedToolName)
-	require.Empty(t, out.ModelInvocationRecovery.Correction)
+	require.Empty(t, out.ModelInvocationRecovery.NoCallBodyCorrection)
 	require.Nil(t, out.OutputContractFailure)
 	require.Empty(t, recorder.events)
 }

@@ -6,7 +6,9 @@ package runtime
 
 import (
 	"errors"
+	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -99,7 +101,19 @@ func modelInvocationRecovery(recovery pendingModelRecovery) *ModelInvocationReco
 	if !ok {
 		return nil
 	}
-	return &pending.recovery
+	return cloneModelInvocationRecovery(&pending.recovery)
+}
+
+// cloneModelInvocationRecovery isolates the complete call list when a workflow
+// records an activity result or schedules its replacement.
+func cloneModelInvocationRecovery(recovery *ModelInvocationRecovery) *ModelInvocationRecovery {
+	result := *recovery
+	if recovery.ToolInput != nil {
+		input := *recovery.ToolInput
+		input.Calls = slices.Clone(input.Calls)
+		result.ToolInput = &input
+	}
+	return &result
 }
 
 // validateModelOutputRecovery checks the activity value before a workflow
@@ -128,18 +142,47 @@ func validateModelInvocationRecovery(recovery *ModelInvocationRecovery) error {
 	if recovery == nil {
 		return errors.New("model-invocation recovery is required")
 	}
-	correctionPresent := recovery.Correction != ""
-	namePresent := recovery.UnadvertisedToolName != ""
-	if correctionPresent == namePresent {
+	var variants int
+	for _, present := range []bool{
+		recovery.ToolInput != nil,
+		recovery.NoCallBodyCorrection != "",
+		recovery.UnadvertisedToolName != "",
+	} {
+		if present {
+			variants++
+		}
+	}
+	if variants != 1 {
 		return errors.New("model-invocation recovery requires exactly one recovery variant")
 	}
-	if !correctionPresent {
+	if !utf8.ValidString(recovery.UnadvertisedToolName) {
+		return errors.New("model-invocation recovery name requires valid UTF-8")
+	}
+	if recovery.UnadvertisedToolName != "" {
 		return nil
 	}
-	if strings.TrimSpace(recovery.Correction) == "" {
+	correction := recovery.NoCallBodyCorrection
+	if input := recovery.ToolInput; input != nil {
+		if len(input.Calls) == 0 {
+			return errors.New("complete model-input recovery requires every rejected call")
+		}
+		for _, call := range input.Calls {
+			if call.Name == "" || !utf8.ValidString(string(call.Name)) {
+				return errors.New("rejected call requires a nonempty valid UTF-8 name")
+			}
+			if !utf8.ValidString(call.ArgumentsJSON) {
+				return errors.New("rejected call arguments require valid UTF-8")
+			}
+		}
+		correction = input.Correction
+	}
+	if !utf8.ValidString(correction) {
+		return errors.New("model-invocation correction requires valid UTF-8")
+	}
+	if strings.TrimSpace(correction) == "" {
 		return errors.New("model-invocation correction requires non-blank guidance")
 	}
-	if len(recovery.Correction) > outputcontract.MaxCorrectionBytes {
+	if len(correction) > outputcontract.MaxCorrectionBytes {
 		return errors.New("model-invocation correction exceeds workflow boundary limit")
 	}
 	return nil

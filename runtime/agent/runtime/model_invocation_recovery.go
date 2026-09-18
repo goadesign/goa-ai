@@ -1,7 +1,7 @@
 // Package runtime ties rejected model output to the exact model call started in
 // one planner activity. Completed-answer recovery verifies a response
 // fingerprint; pre-canonical tool-call recovery selects the invocation by start
-// order and carries only bounded generated guidance.
+// order and carries its complete call data separately from generated guidance.
 package runtime
 
 import (
@@ -369,7 +369,7 @@ func (j *modelInvocationJournal) rejectedModelResponseEvidence() model.ResponseE
 // from the exact earliest-started invocation selected as this activity's
 // rejection. A later completion cannot supply a name or correction for an
 // earlier failure. Missing or contradictory facts remain terminal.
-func (j *modelInvocationJournal) recoverableModelInvocationRecovery() *api.ModelInvocationRecovery {
+func (j *modelInvocationJournal) recoverableModelInvocationRecovery() (*api.ModelInvocationRecovery, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	for _, id := range j.order {
@@ -382,15 +382,45 @@ func (j *modelInvocationJournal) recoverableModelInvocationRecovery() *api.Model
 		}
 		correctionPresent := candidate.recoveryCorrection != ""
 		namePresent := candidate.unadvertisedToolName != ""
-		if correctionPresent == namePresent {
-			return nil
+		// The same journal selection also attributes terminal model failures
+		// and completed-answer corrections. Neither is invocation recovery.
+		if !correctionPresent && !namePresent {
+			return nil, nil
 		}
-		return &api.ModelInvocationRecovery{
-			Correction:           candidate.recoveryCorrection,
+		if correctionPresent && namePresent {
+			return nil, errors.New("selected model invocation requires exactly one recovery outcome")
+		}
+		recovery := &api.ModelInvocationRecovery{
 			UnadvertisedToolName: candidate.unadvertisedToolName,
 		}
+		if correctionPresent {
+			response, err := candidate.rejectedValidationErr.RejectedResponse()
+			if err != nil {
+				return nil, fmt.Errorf("copy rejected model calls: %w", err)
+			}
+			if response == nil {
+				recovery.NoCallBodyCorrection = candidate.recoveryCorrection
+			} else {
+				calls := response.ToolCalls()
+				input := &api.ModelToolInputRecovery{
+					Calls:      make([]api.RejectedToolCall, len(calls)),
+					Correction: candidate.recoveryCorrection,
+				}
+				for i, call := range calls {
+					input.Calls[i] = api.RejectedToolCall{
+						Name:          call.Name,
+						ArgumentsJSON: string(call.Payload),
+					}
+				}
+				recovery.ToolInput = input
+			}
+		}
+		if err := validateModelInvocationRecovery(recovery); err != nil {
+			return nil, err
+		}
+		return recovery, nil
 	}
-	return nil
+	return nil, nil
 }
 
 // selectRecoverableModelResponse verifies and selects the exact completed
