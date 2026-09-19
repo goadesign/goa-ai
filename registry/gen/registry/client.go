@@ -16,6 +16,7 @@ import (
 // Client is the "registry" service client.
 type Client struct {
 	RegisterEndpoint               goa.Endpoint
+	RenewProviderEndpoint          goa.Endpoint
 	ReleaseProviderEndpoint        goa.Endpoint
 	DrainProviderEndpoint          goa.Endpoint
 	UnregisterEndpoint             goa.Endpoint
@@ -35,9 +36,10 @@ type Client struct {
 }
 
 // NewClient initializes a "registry" service client given the endpoints.
-func NewClient(register, releaseProvider, drainProvider, unregister, pong, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
+func NewClient(register, renewProvider, releaseProvider, drainProvider, unregister, pong, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
 	return &Client{
 		RegisterEndpoint:               register,
+		RenewProviderEndpoint:          renewProvider,
 		ReleaseProviderEndpoint:        releaseProvider,
 		DrainProviderEndpoint:          drainProvider,
 		UnregisterEndpoint:             unregister,
@@ -61,6 +63,7 @@ func NewClient(register, releaseProvider, drainProvider, unregister, pong, listT
 // Register may return the following errors:
 //   - "admission_blocked" (type *goa.ServiceError): Another admission still has active provider leases
 //   - "admission_retired" (type *goa.ServiceError): The requested admission was intentionally retired
+//   - "provider_lease_lost" (type *goa.ServiceError): The exact provider incarnation no longer holds the admitted lease and must stop serving
 //   - "validation_error" (type *goa.ServiceError): Payload validation failed
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
@@ -71,6 +74,20 @@ func (c *Client) Register(ctx context.Context, p *RegisterPayload) (res *Registe
 		return
 	}
 	return ires.(*RegisterResult), nil
+}
+
+// RenewProvider calls the "RenewProvider" endpoint of the "registry" service.
+// RenewProvider may return the following errors:
+//   - "provider_lease_lost" (type *goa.ServiceError): The exact provider incarnation no longer holds the admitted lease and must stop serving
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) RenewProvider(ctx context.Context, p *RenewProviderPayload) (res *RenewProviderResult, err error) {
+	var ires any
+	ires, err = c.RenewProviderEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*RenewProviderResult), nil
 }
 
 // ReleaseProvider calls the "ReleaseProvider" endpoint of the "registry"

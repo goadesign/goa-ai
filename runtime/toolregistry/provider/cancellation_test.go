@@ -60,13 +60,14 @@ func TestServeGeneratedClientCancellation(t *testing.T) {
 			registration.RetryMaxInterval = 50 * time.Millisecond
 			registration.ShutdownMargin = 10 * time.Millisecond
 			registration.ReleaseTimeout = time.Second
-			registration.Register = func(ctx context.Context, _, _, _, _ string) (RegistrationLease, error) {
-				if registrations.Add(1) == 1 {
-					return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Second}, nil
-				}
+			registration.Register = func(context.Context, string, string, string, string) (RegistrationLease, error) {
+				registrations.Add(1)
+				return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Second}, nil
+			}
+			registration.Renew = func(ctx context.Context, _, _, _, _ string) (time.Duration, error) {
 				close(renewalStarted)
 				<-ctx.Done()
-				return RegistrationLease{}, goagrpc.ContextError(ctx, test.transportErr)
+				return 0, goagrpc.ContextError(ctx, test.transportErr)
 			}
 			registration.Drain = func(context.Context, string, string, string, string, time.Duration) error {
 				drains.Add(1)
@@ -106,6 +107,7 @@ func TestServeGeneratedClientCancellation(t *testing.T) {
 			case <-time.After(2 * time.Second):
 				t.Fatal("Serve did not finish registration cleanup")
 			}
+			assert.Equal(t, int64(1), registrations.Load())
 			assert.Equal(t, int64(1), drains.Load())
 			if test.releaseErr == nil {
 				assert.Equal(t, int64(1), releases.Load())

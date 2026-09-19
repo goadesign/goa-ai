@@ -28,6 +28,7 @@ var _ = API("registry", func() {
 	Error("admission_blocked", ErrorResult, "Another admission still has active provider leases")
 	Error("admission_retired", ErrorResult, "The requested admission was intentionally retired")
 	Error("admission_conflict", ErrorResult, "The expected admission token does not match the catalog record")
+	Error("provider_lease_lost", ErrorResult, "The exact provider incarnation no longer holds the admitted lease and must stop serving")
 
 	// gRPC transport configuration
 	GRPC(func() {
@@ -38,6 +39,7 @@ var _ = API("registry", func() {
 		Response("admission_blocked", CodeUnavailable)
 		Response("admission_retired", CodeFailedPrecondition)
 		Response("admission_conflict", CodeFailedPrecondition)
+		Response("provider_lease_lost", CodeFailedPrecondition)
 	})
 })
 
@@ -53,12 +55,22 @@ var _ = Service("registry", func() {
 	// ---- Provider Operations ----
 
 	Method("Register", func() {
-		Description("Reject providers whose required runtime-owned wire protocol version differs from the registry, then atomically admit or renew one provider-incarnation lease in the catalog admission record. The same wire version, schema, and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect.")
+		Description("Reject providers whose required runtime-owned wire protocol version differs from the registry, then atomically admit one provider-incarnation lease in the catalog admission record. The same wire version, schema, and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect. An already-draining incarnation returns provider_lease_lost; full registration cannot reopen it. Active providers use RenewProvider without resending definitions.")
 		Payload(RegisterPayload)
 		Result(RegisterResult)
 		Error("admission_blocked")
 		Error("admission_retired")
+		Error("provider_lease_lost")
 		Error("validation_error")
+		Error("service_unavailable")
+		GRPC(func() {})
+	})
+
+	Method("RenewProvider", func() {
+		Description("Extend only the exact current unexpired provider-incarnation lease without reading or writing tool definitions. Preserve its registration token, health, draining status, and any longer settlement deadline. A missing, expired, replaced, or retired lease returns provider_lease_lost; renewal never creates admission authority. Infrastructure failures are retryable only within the provider's existing lease cutoff.")
+		Payload(RenewProviderPayload)
+		Result(RenewProviderResult)
+		Error("provider_lease_lost")
 		Error("service_unavailable")
 		GRPC(func() {})
 	})
@@ -321,28 +333,24 @@ var UnregisterPayload = Type("UnregisterPayload", func() {
 	Required("name", "expected_registration_token")
 })
 
+var RenewProviderPayload = Type("RenewProviderPayload", func() {
+	Description("Exact existing provider lease to renew, without tool definitions.")
+	providerLeaseIdentityFields()
+})
+
+var RenewProviderResult = Type("RenewProviderResult", func() {
+	Description("Duration of the renewed lease; admission identity remains unchanged.")
+	Field(1, "lease_duration_ms", Int64, "Renewed provider lease duration in milliseconds", func() {
+		Minimum(1)
+		Maximum(toolregistry.MaxProviderLeaseDuration.Milliseconds())
+		Example(120000)
+	})
+	Required("lease_duration_ms")
+})
+
 var ReleaseProviderPayload = Type("ReleaseProviderPayload", func() {
 	Description("Exact provider lease release payload")
-	Field(1, "name", String, "Name of the toolset whose provider is leaving", func() {
-		MinLength(1)
-		MaxLength(256)
-		Example("data-tools")
-	})
-	Field(2, "provider_id", String, "Stable identity of the provider process releasing its lease", func() {
-		MinLength(1)
-		MaxLength(512)
-		Pattern(`^[^\x00]+$`)
-		Example("catalog-provider/catalog.lookup")
-	})
-	Field(3, "expected_registration_token", String, "Exact admission-generation token returned by Register", func() {
-		Pattern(toolregistry.RegistrationTokenPattern)
-		Example("1111111111111111111111111111111111111111111111111111111111111111")
-	})
-	Field(4, "provider_incarnation_id", String, "Runtime-generated UUID of the exact Serve lifecycle releasing its lease.", func() {
-		Format(FormatUUID)
-		Example("00000000-0000-4000-8000-000000000001")
-	})
-	Required("name", "provider_id", "expected_registration_token", "provider_incarnation_id")
+	providerLeaseIdentityFields()
 })
 
 var DrainProviderPayload = Type("DrainProviderPayload", func() {
@@ -748,3 +756,27 @@ var ToolError = Type("ToolError", func() {
 	})
 	Required("code", "message")
 })
+
+// providerLeaseIdentityFields keeps lease operations on the same exact identity.
+func providerLeaseIdentityFields() {
+	Field(1, "name", String, "Name of the registered toolset", func() {
+		MinLength(1)
+		MaxLength(256)
+		Example("data-tools")
+	})
+	Field(2, "provider_id", String, "Stable identity of the provider process", func() {
+		MinLength(1)
+		MaxLength(512)
+		Pattern(`^[^\x00]+$`)
+		Example("catalog-provider/catalog.lookup")
+	})
+	Field(3, "expected_registration_token", String, "Exact admission-generation token returned by Register", func() {
+		Pattern(toolregistry.RegistrationTokenPattern)
+		Example("1111111111111111111111111111111111111111111111111111111111111111")
+	})
+	Field(4, "provider_incarnation_id", String, "Runtime-generated UUID of the exact Serve lifecycle.", func() {
+		Format(FormatUUID)
+		Example("00000000-0000-4000-8000-000000000001")
+	})
+	Required("name", "provider_id", "expected_registration_token", "provider_incarnation_id")
+}

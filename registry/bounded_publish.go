@@ -4,8 +4,7 @@
 // operation, which is the only way an admitted call can never be silently
 // trimmed away.
 //
-// This file intentionally pins two Pulse internals, mirroring the documented
-// rmap pins: the stream data key ("pulse:stream:" + name) and the event field
+// This file intentionally pins two Pulse internals: the stream data key ("pulse:stream:" + name) and the event field
 // layout ("n" = event name, "p" = payload). Integration tests fail if a Pulse
 // upgrade changes either.
 package registry

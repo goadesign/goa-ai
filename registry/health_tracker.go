@@ -5,11 +5,8 @@
 // health. Ping scheduling is deliberately stateless in Redis: every registry
 // node runs one local scheduler and competes for a short-lived per-toolset
 // lease (SET NX PX), so exactly one node pings per interval and the next tick
-// simply re-acquires a lease Redis lost. This replaced Pulse distributed
-// tickers, whose replicated state could not be rebuilt after Redis lost it.
-// The scheduler also pins the catalog map's replicated revision counter above
-// the wall clock so surviving rmap replicas keep applying writes after Redis
-// state loss.
+// simply re-acquires a lost scheduling lease. Provider execution authority
+// remains in the durable catalog and is never reconstructed by this scheduler.
 package registry
 
 import (
@@ -69,19 +66,12 @@ type (
 	healthTracker struct {
 		streamManager      StreamManager
 		catalog            *toolsetCatalog
-		catalogMap         catalogMap
 		redis              *redis.Client
 		nodeID             string
 		leaseScope         string
-		revisionHashKey    string
 		pingInterval       time.Duration
 		stalenessThreshold time.Duration
 		expectedToolsets   []string
-
-		// revFloors remembers the highest revision this node pinned or
-		// observed per replicated-map hash key; a Redis counter below the
-		// floor proves state loss.
-		revFloors map[string]int64
 
 		schedulerCtx    context.Context
 		cancelScheduler context.CancelFunc
@@ -97,26 +87,7 @@ const (
 	DefaultMissedPingThreshold = 3
 	// HealthSweepSpanName is the root span for one periodic registry health check.
 	HealthSweepSpanName = "toolregistry.health.sweep"
-
-	// revFloorSlack guards revision repair against a wall clock that stepped
-	// backwards between two pins: a repair target is never below the last
-	// established floor plus this slack.
-	revFloorSlack = 1 << 20
 )
-
-// revisionPinScript atomically raises a replicated map's "=rev" counter to
-// the target when the counter is lower, so concurrent repairs from several
-// registry replicas converge on the highest target instead of summing
-// increments.
-var revisionPinScript = redis.NewScript(`
-local rev = tonumber(redis.call("HGET", KEYS[1], "=rev") or "0")
-local target = tonumber(ARGV[1])
-if rev < target then
-    redis.call("HSET", KEYS[1], "=rev", target)
-    return {1, target}
-end
-return {0, rev}
-`)
 
 // WithPingInterval sets the ping interval.
 func WithPingInterval(duration time.Duration) HealthTrackerOption {
@@ -141,13 +112,12 @@ func withExpectedToolsets(toolsets []string) HealthTrackerOption {
 }
 
 // newHealthTracker creates lease-scheduled ping coordination over the
-// canonical catalog. registryMapName scopes the ping leases and identifies
-// the replicated map whose revision counter the scheduler keeps repaired.
+// canonical catalog. leaseScope isolates ping scheduling across registries.
 func newHealthTracker(
 	streamManager StreamManager,
 	catalog *toolsetCatalog,
 	rdb *redis.Client,
-	registryMapName string,
+	leaseScope string,
 	opts ...HealthTrackerOption,
 ) (*healthTracker, error) {
 	if streamManager == nil {
@@ -159,8 +129,8 @@ func newHealthTracker(
 	if rdb == nil {
 		return nil, fmt.Errorf("redis client is required")
 	}
-	if registryMapName == "" {
-		return nil, fmt.Errorf("registry map name is required")
+	if leaseScope == "" {
+		return nil, fmt.Errorf("ping lease scope is required")
 	}
 	options := healthTrackerOptions{
 		pingInterval:        DefaultPingInterval,
@@ -173,15 +143,12 @@ func newHealthTracker(
 	tracker := &healthTracker{
 		streamManager:      streamManager,
 		catalog:            catalog,
-		catalogMap:         catalog.m,
 		redis:              rdb,
 		nodeID:             uuid.NewString(),
-		leaseScope:         registryMapName,
-		revisionHashKey:    "map:" + registryMapName + ":content",
+		leaseScope:         leaseScope,
 		pingInterval:       options.pingInterval,
 		stalenessThreshold: deriveStalenessThreshold(options.pingInterval, options.missedPingThreshold),
 		expectedToolsets:   options.expectedToolsets,
-		revFloors:          make(map[string]int64),
 		schedulerCtx:       schedulerCtx,
 		cancelScheduler:    cancelScheduler,
 		doneCh:             make(chan struct{}),
@@ -253,7 +220,7 @@ func (h *healthTracker) Close() error {
 
 // healthFromEntry derives routing health from the same catalog record and clock
 // instant used to select its revision and provider leases.
-func (h *healthTracker) healthFromEntry(entry catalogEntry, now time.Time) ToolsetHealth {
+func (h *healthTracker) healthFromEntry(entry catalogState, now time.Time) ToolsetHealth {
 	health := ToolsetHealth{
 		ProviderCount:      routableProviderCount(entry, now),
 		StalenessThreshold: h.stalenessThreshold,
@@ -286,8 +253,7 @@ func (h *healthTracker) run() {
 	}
 }
 
-// runHealthSweep records one scheduler attempt, repairs the catalog revision,
-// and samples every toolset whose lease this registry node wins. Failures before
+// runHealthSweep records one scheduler attempt and samples every toolset whose lease this registry node wins. Failures before
 // a toolset sample are recorded on this span because no readiness result exists
 // for that toolset.
 func (h *healthTracker) runHealthSweep(ctx context.Context) {
@@ -298,63 +264,7 @@ func (h *healthTracker) runHealthSweep(ctx context.Context) {
 	)
 	defer span.End()
 
-	if err := h.ensureMapRevision(ctx, h.revisionHashKey); err != nil {
-		if ctx.Err() != nil {
-			return
-		}
-		recordHealthSweepError(ctx, "repair_revision", "", err)
-	}
 	h.pingRegisteredToolsets(ctx)
-}
-
-// ensureMapRevision pins one replicated map's Redis revision counter above
-// the wall clock in milliseconds so replica-local revisions can never
-// outrank it. Revisions advance at most one per committed write while the
-// clock advances around a millisecond per write or faster, so a counter
-// seeded from time.Now().UnixMilli() strictly dominates every replica's
-// local revision — including revisions committed between two scheduler
-// ticks, which no sampling scheme can observe. On the first pass the counter
-// is silently raised to the current clock (genesis); afterwards a counter
-// below the established floor proves Redis lost the map, and the repair
-// re-pins it so post-loss writes propagate to all replicas again.
-//
-// Two contracts pin this to the goa.design/pulse version in go.mod: the hash
-// key and "=rev" field name (rmap does not expose its revision counter), and
-// the millisecond resolution — rmap's Lua scripts format revisions with
-// Lua's %.14g tostring, so counters must stay far below 1e14, which rules
-// out micro- or nanosecond clocks.
-func (h *healthTracker) ensureMapRevision(ctx context.Context, hashKey string) error {
-	rev, err := h.redis.HGet(ctx, hashKey, "=rev").Int64()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return fmt.Errorf("read revision of %q: %w", hashKey, err)
-	}
-	floor := h.revFloors[hashKey]
-	if floor > 0 && rev >= floor {
-		h.revFloors[hashKey] = rev
-		return nil
-	}
-	target := max(time.Now().UnixMilli(), floor+revFloorSlack)
-	res, err := revisionPinScript.Run(ctx, h.redis, []string{hashKey}, target).Int64Slice()
-	if err != nil {
-		return fmt.Errorf("pin revision of %q: %w", hashKey, err)
-	}
-	if len(res) != 2 {
-		return fmt.Errorf("pin revision of %q: unexpected script reply %v", hashKey, res)
-	}
-	raised, final := res[0] == 1, res[1]
-	h.revFloors[hashKey] = final
-	if !raised || floor == 0 {
-		return nil
-	}
-	trace.SpanFromContext(ctx).AddEvent(
-		"repaired catalog revision",
-		trace.WithAttributes(
-			attribute.String("toolregistry.registry", h.leaseScope),
-			attribute.Int64("toolregistry.previous_revision", rev),
-			attribute.Int64("toolregistry.restored_revision", final),
-		),
-	)
-	return nil
 }
 
 // pingRegisteredToolsets reads the active toolsets from the shared catalog.

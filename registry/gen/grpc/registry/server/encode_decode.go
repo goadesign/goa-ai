@@ -49,6 +49,39 @@ func DecodeRegisterRequest(ctx context.Context, v any, md metadata.MD) (any, err
 	return payload, nil
 }
 
+// EncodeRenewProviderResponse encodes responses from the "registry" service
+// "RenewProvider" endpoint.
+func EncodeRenewProviderResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.RenewProviderResult)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RenewProvider", "*registry.RenewProviderResult", v)
+	}
+	resp := NewProtoRenewProviderResponse(result)
+	return resp, nil
+}
+
+// DecodeRenewProviderRequest decodes requests sent to "registry" service
+// "RenewProvider" endpoint.
+func DecodeRenewProviderRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.RenewProviderRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.RenewProviderRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "RenewProvider", "*registrypb.RenewProviderRequest", v)
+		}
+		if err := ValidateRenewProviderRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.RenewProviderPayload
+	{
+		payload = NewRenewProviderPayload(message)
+	}
+	return payload, nil
+}
+
 // EncodeReleaseProviderResponse encodes responses from the "registry" service
 // "ReleaseProvider" endpoint.
 func EncodeReleaseProviderResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {

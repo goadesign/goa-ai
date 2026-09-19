@@ -83,6 +83,19 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 	}).Result()
 	require.NoError(t, err)
 
+	claimedOverloaded, err := svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
+		Toolset:                   toolset,
+		ProviderID:                providerA.ProviderID,
+		ProviderIncarnationID:     providerA.ProviderIncarnationID,
+		ProviderRegistrationToken: admissionA.RegistrationToken,
+		CallRegistrationToken:     admissionA.RegistrationToken,
+		ToolUseID:                 admittedOverloaded.ToolUseID,
+		RequestEventID:            overloadedCallEventID,
+		ClaimOperationID:          uuid.NewString(),
+	})
+	require.NoError(t, err)
+	require.Equal(t, string(callClaimExecute), claimedOverloaded.Disposition)
+
 	require.NoError(t, svc.Unregister(ctx, &genregistry.UnregisterPayload{
 		Name:                      toolset,
 		ExpectedRegistrationToken: admissionA.RegistrationToken,
@@ -137,18 +150,6 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 	)
 	overloadedResultJSON, err := json.Marshal(overloadedResult)
 	require.NoError(t, err)
-	claimedOverloaded, err := svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
-		Toolset:                   toolset,
-		ProviderID:                providerA.ProviderID,
-		ProviderIncarnationID:     providerA.ProviderIncarnationID,
-		ProviderRegistrationToken: admissionA.RegistrationToken,
-		CallRegistrationToken:     admissionA.RegistrationToken,
-		ToolUseID:                 admittedOverloaded.ToolUseID,
-		RequestEventID:            overloadedCallEventID,
-		ClaimOperationID:          uuid.NewString(),
-	})
-	require.NoError(t, err)
-	require.Equal(t, string(callClaimExecute), claimedOverloaded.Disposition)
 	require.NoError(t, svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                providerA.ProviderID,
@@ -200,10 +201,6 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 	admittedB, err := svc.CallTool(ctx, callB)
 	require.NoError(t, err)
 	require.Equal(t, admissionB.RegistrationToken, admittedB.RegistrationToken)
-	require.NoError(t, svc.Unregister(ctx, &genregistry.UnregisterPayload{
-		Name:                      toolset,
-		ExpectedRegistrationToken: admissionB.RegistrationToken,
-	}))
 
 	_, err = svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
 		Toolset:                   toolset,
@@ -217,7 +214,7 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 	})
 	require.Error(t, err)
 
-	// B's preserved retired lease may atomically settle the A-owned request.
+	// B's active lease may settle the stale A-owned request without executing it.
 	settled, err := svc.ClaimToolCall(ctx, &genregistry.ClaimToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                providerB.ProviderID,
@@ -230,6 +227,10 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, string(callClaimTerminal), settled.Disposition)
+	require.NoError(t, svc.Unregister(ctx, &genregistry.UnregisterPayload{
+		Name:                      toolset,
+		ExpectedRegistrationToken: admissionB.RegistrationToken,
+	}))
 	entries, err := rdb.XRange(
 		ctx,
 		pulseStreamKeyPrefix+toolregistry.ResultStreamID(admittedStale.ToolUseID),

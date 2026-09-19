@@ -19,14 +19,23 @@ import (
 // discover and invoke only healthy admitted providers.
 type Service interface {
 	// Reject providers whose required runtime-owned wire protocol version differs
-	// from the registry, then atomically admit or renew one provider-incarnation
-	// lease in the catalog admission record. The same wire version, schema, and
-	// admission revision add or renew replicas under one token. A different token
-	// replaces the admission after Redis-time pruning proves every old lease
-	// expired and atomically tombstones the prior token; otherwise
-	// admission_blocked asks the provider to retry. Any candidate in the permanent
-	// retired-token set returns admission_retired and cannot resurrect.
+	// from the registry, then atomically admit one provider-incarnation lease in
+	// the catalog admission record. The same wire version, schema, and admission
+	// revision add or renew replicas under one token. A different token replaces
+	// the admission after Redis-time pruning proves every old lease expired and
+	// atomically tombstones the prior token; otherwise admission_blocked asks the
+	// provider to retry. Any candidate in the permanent retired-token set returns
+	// admission_retired and cannot resurrect. An already-draining incarnation
+	// returns provider_lease_lost; full registration cannot reopen it. Active
+	// providers use RenewProvider without resending definitions.
 	Register(context.Context, *RegisterPayload) (res *RegisterResult, err error)
+	// Extend only the exact current unexpired provider-incarnation lease without
+	// reading or writing tool definitions. Preserve its registration token,
+	// health, draining status, and any longer settlement deadline. A missing,
+	// expired, replaced, or retired lease returns provider_lease_lost; renewal
+	// never creates admission authority. Infrastructure failures are retryable
+	// only within the provider's existing lease cutoff.
+	RenewProvider(context.Context, *RenewProviderPayload) (res *RenewProviderResult, err error)
 	// Release one exact provider-incarnation lease from the admission token after
 	// that Serve lifecycle has stopped claiming work and settled in-flight calls.
 	// Missing incarnations and stale tokens succeed without mutation;
@@ -144,7 +153,7 @@ const ServiceName = "registry"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [17]string{"Register", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "ResolveToolset", "CheckAdmission", "Search", "CallTool", "CallResolvedTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
+var MethodNames = [18]string{"Register", "RenewProvider", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "ResolveToolset", "CheckAdmission", "Search", "CallTool", "CallResolvedTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
 
 // AdmissionStatus is the result type of the registry service CheckAdmission
 // method.
@@ -306,13 +315,13 @@ type DrainProviderPayload struct {
 	// Full provider shutdown duration for which the draining lease must retain
 	// settlement authority.
 	SettlementDurationMs int64
-	// Name of the toolset whose provider is leaving
+	// Name of the registered toolset
 	Name string
-	// Stable identity of the provider process releasing its lease
+	// Stable identity of the provider process
 	ProviderID string
 	// Exact admission-generation token returned by Register
 	ExpectedRegistrationToken string
-	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
+	// Runtime-generated UUID of the exact Serve lifecycle.
 	ProviderIncarnationID string
 }
 
@@ -436,14 +445,34 @@ type RegisterResult struct {
 // ReleaseProviderPayload is the payload type of the registry service
 // ReleaseProvider method.
 type ReleaseProviderPayload struct {
-	// Name of the toolset whose provider is leaving
+	// Name of the registered toolset
 	Name string
-	// Stable identity of the provider process releasing its lease
+	// Stable identity of the provider process
 	ProviderID string
 	// Exact admission-generation token returned by Register
 	ExpectedRegistrationToken string
-	// Runtime-generated UUID of the exact Serve lifecycle releasing its lease.
+	// Runtime-generated UUID of the exact Serve lifecycle.
 	ProviderIncarnationID string
+}
+
+// RenewProviderPayload is the payload type of the registry service
+// RenewProvider method.
+type RenewProviderPayload struct {
+	// Name of the registered toolset
+	Name string
+	// Stable identity of the provider process
+	ProviderID string
+	// Exact admission-generation token returned by Register
+	ExpectedRegistrationToken string
+	// Runtime-generated UUID of the exact Serve lifecycle.
+	ProviderIncarnationID string
+}
+
+// RenewProviderResult is the result type of the registry service RenewProvider
+// method.
+type RenewProviderResult struct {
+	// Renewed provider lease duration in milliseconds
+	LeaseDurationMs int64
 }
 
 // ResolvedToolset is the result type of the registry service ResolveToolset
@@ -692,6 +721,11 @@ func MakeAdmissionBlocked(err error) *goa.ServiceError {
 // MakeAdmissionRetired builds a goa.ServiceError from an error.
 func MakeAdmissionRetired(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "admission_retired", false, false, false)
+}
+
+// MakeProviderLeaseLost builds a goa.ServiceError from an error.
+func MakeProviderLeaseLost(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "provider_lease_lost", false, false, false)
 }
 
 // MakeValidationError builds a goa.ServiceError from an error.

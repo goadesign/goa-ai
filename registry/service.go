@@ -107,7 +107,7 @@ type (
 		// execution deadline. Zero uses toolregistry.MaxToolCallWait.
 		ExecutionTimeout time.Duration
 		// ProviderLeaseDuration is the application-level provider membership
-		// lifetime renewed by identical registration.
+		// lifetime extended by exact renewal.
 		ProviderLeaseDuration time.Duration
 	}
 
@@ -210,7 +210,7 @@ func newService(opts serviceOptions) (*Service, error) {
 	}
 	return &Service{
 		catalog:               opts.catalog,
-		validator:             newSchemaValidator(),
+		validator:             opts.catalog.validator,
 		streamManager:         opts.StreamManager,
 		healthTracker:         opts.HealthTracker,
 		callAdmissions:        opts.CallAdmissions,
@@ -221,7 +221,7 @@ func newService(opts serviceOptions) (*Service, error) {
 	}, nil
 }
 
-// Register prepares routing and atomically creates, renews, or replaces the
+// Register prepares routing and atomically admits or replaces the
 // catalog-owned admission and provider lease.
 func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) (*genregistry.RegisterResult, error) {
 	if err := toolregistry.ValidateWireProtocolVersion(p.WireProtocolVersion); err != nil {
@@ -248,6 +248,11 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 		))
 	}
 
+	definition, err := newCatalogToolset(toolset, fingerprint, s.validator)
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(err)
+	}
+
 	// Ensure the Pulse request stream for this toolset exists.
 	_, _, err = s.streamManager.GetOrCreateStream(ctx, p.Name)
 	if err != nil {
@@ -256,7 +261,7 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 
 	admission, err := s.catalog.Register(
 		ctx,
-		toolset,
+		definition,
 		p.AdmissionRevision,
 		p.ProviderID,
 		p.ProviderIncarnationID,
@@ -268,6 +273,8 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 			return nil, genregistry.MakeAdmissionBlocked(err)
 		case errors.Is(err, errAdmissionRetired):
 			return nil, genregistry.MakeAdmissionRetired(err)
+		case errors.Is(err, errProviderLeaseLost):
+			return nil, genregistry.MakeProviderLeaseLost(err)
 		default:
 			return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("register toolset admission: %w", err))
 		}
@@ -281,6 +288,17 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 		RegistrationToken: admission.RegistrationToken,
 		LeaseDurationMs:   s.providerLeaseDuration.Milliseconds(),
 	}, nil
+}
+
+// RenewProvider extends the exact lease without transferring tool definitions.
+func (s *Service) RenewProvider(ctx context.Context, p *genregistry.RenewProviderPayload) (*genregistry.RenewProviderResult, error) {
+	if err := s.catalog.RenewProvider(ctx, p.Name, p.ProviderID, p.ProviderIncarnationID, p.ExpectedRegistrationToken, s.providerLeaseDuration); err != nil {
+		if errors.Is(err, errProviderLeaseLost) {
+			return nil, genregistry.MakeProviderLeaseLost(err)
+		}
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("renew provider lease: %w", err))
+	}
+	return &genregistry.RenewProviderResult{LeaseDurationMs: s.providerLeaseDuration.Milliseconds()}, nil
 }
 
 // ReleaseProvider removes one exact provider lease after its Serve lifecycle
@@ -1100,25 +1118,15 @@ func (s *Service) validatePreparedToolCall(
 			prepared.expectedRegistrationToken,
 		))
 	}
-	toolset, err := registration.Toolset.decode()
-	if err != nil {
-		return genregistry.MakeServiceUnavailable(err)
-	}
-	var schema *genregistry.ToolSchema
-	for _, candidate := range toolset.Tools {
-		if candidate.Name == prepared.tool.String() {
-			schema = candidate
-			break
-		}
-	}
-	if schema == nil {
+	schema, exists := registration.Toolset.executionSchemas[prepared.tool.String()]
+	if !exists {
 		return genregistry.MakeNotFound(fmt.Errorf(
 			"tool %q not found in toolset %q",
 			prepared.tool,
 			prepared.toolset,
 		))
 	}
-	if err := s.validator.ValidatePayload(schema.ExecutionPayloadSchema, prepared.payload); err != nil {
+	if err := validatePayload(schema, prepared.payload); err != nil {
 		return genregistry.MakeValidationError(fmt.Errorf(
 			"payload validation failed: %w",
 			err,

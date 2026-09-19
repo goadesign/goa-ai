@@ -53,6 +53,44 @@ func DecodeRegisterResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (
 	return res, nil
 }
 
+// BuildRenewProviderFunc builds the remote method to invoke for "registry"
+// service "RenewProvider" endpoint.
+func BuildRenewProviderFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.RenewProvider(ctx, reqpb.(*registrypb.RenewProviderRequest), opts...)
+		}
+		return grpccli.RenewProvider(ctx, &registrypb.RenewProviderRequest{}, opts...)
+	}
+}
+
+// EncodeRenewProviderRequest encodes requests sent to registry RenewProvider
+// endpoint.
+func EncodeRenewProviderRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.RenewProviderPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RenewProvider", "*registry.RenewProviderPayload", v)
+	}
+	return NewProtoRenewProviderRequest(payload), nil
+}
+
+// DecodeRenewProviderResponse decodes responses from the registry
+// RenewProvider endpoint.
+func DecodeRenewProviderResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.RenewProviderResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RenewProvider", "*registrypb.RenewProviderResponse", v)
+	}
+	if err := ValidateRenewProviderResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewRenewProviderResult(message)
+	return res, nil
+}
+
 // BuildReleaseProviderFunc builds the remote method to invoke for "registry"
 // service "ReleaseProvider" endpoint.
 func BuildReleaseProviderFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {

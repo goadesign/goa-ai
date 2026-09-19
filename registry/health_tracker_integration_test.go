@@ -28,7 +28,7 @@ func TestHealthTrackerReportsActiveCatalogWhenAnotherReplicaOwnsPingLease(t *tes
 	)
 	_, err := catalog.Register(
 		ctx,
-		testCatalogToolset("test.toolset", "test", nil),
+		testCatalogDefinition(t, testCatalogToolset("test.toolset", "test", nil)),
 		testAdmissionRevisionA,
 		"provider-a",
 		uuid.NewString(),

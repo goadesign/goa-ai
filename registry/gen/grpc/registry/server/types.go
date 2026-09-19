@@ -57,6 +57,27 @@ func NewProtoRegisterResponse(result *registry.RegisterResult) *registrypb.Regis
 	return message
 }
 
+// NewRenewProviderPayload builds *registry.RenewProviderPayload from
+// *registrypb.RenewProviderRequest.
+func NewRenewProviderPayload(message *registrypb.RenewProviderRequest) *registry.RenewProviderPayload {
+	v := &registry.RenewProviderPayload{
+		Name:                      *message.Name,
+		ProviderID:                *message.ProviderId,
+		ExpectedRegistrationToken: *message.ExpectedRegistrationToken,
+		ProviderIncarnationID:     *message.ProviderIncarnationId,
+	}
+	return v
+}
+
+// NewProtoRenewProviderResponse builds *registrypb.RenewProviderResponse from
+// *registry.RenewProviderResult.
+func NewProtoRenewProviderResponse(result *registry.RenewProviderResult) *registrypb.RenewProviderResponse {
+	message := &registrypb.RenewProviderResponse{
+		LeaseDurationMs: &result.LeaseDurationMs,
+	}
+	return message
+}
+
 // NewReleaseProviderPayload builds *registry.ReleaseProviderPayload from
 // *registrypb.ReleaseProviderRequest.
 func NewReleaseProviderPayload(message *registrypb.ReleaseProviderRequest) *registry.ReleaseProviderPayload {
@@ -862,6 +883,47 @@ func validateregistry_registry_ToolTypeMetadata_Target_type_5F__Context_type(typ
 				err = goa.MergeErrors(err, err2)
 			}
 		}
+	}
+	return
+}
+
+// ValidateRenewProviderRequest runs the validations defined on
+// RenewProviderRequest.
+func ValidateRenewProviderRequest(message *registrypb.RenewProviderRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
+	}
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	return
 }
