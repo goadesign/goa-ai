@@ -244,6 +244,11 @@ or a model gateway. Provider capabilities differ; the [runtime guide](docs/runti
 covers their supported options. Optional integrations include MongoDB for
 memory and prompt overrides, and Redis/Pulse for streams and registries.
 
+Vertex tool arguments require valid UTF-8 text and keys. Workflow writes reject
+map keys with custom JSON or text encoders; use plain strings or named string
+types without those encoders. Existing persisted JSON reads are unchanged.
+See the [JSON boundary contract](docs/runtime.md#json-boundary-contract).
+
 Application code owns planners, service behavior, authorization, side-effect
 idempotency, storage, and deployment. Deploy generated packages, callers, and
 workers as a coordinated release. Read the [production configuration](docs/runtime.md#production-configuration),

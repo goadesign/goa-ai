@@ -630,6 +630,26 @@ their target cannot be copied safely. Reference cycles, invalid UTF-8, and
 unsupported kinds fail explicitly. The runtime never truncates, coerces,
 repairs, or silently omits model output.
 
+### JSON boundary contract
+
+Vertex function-call arguments require valid UTF-8 string values and object
+keys, including nested values. Invalid byte sequences are rejected before the
+adapter allocates the encoded payload; they are not replaced with different
+text. Valid Unicode, including the replacement character U+FFFD itself, is
+preserved. The exact encoded argument limit remains 16 MiB, with the existing
+depth and value-count limits.
+
+The shared workflow codec checks map keys before encoding new workflow and
+activity payloads. Keys must have underlying kind string and must not implement
+custom JSON or text encoders. Plain strings and named string types without
+those encoders preserve their text. Custom key encoders are rejected before
+their methods can run or allocate unchecked output.
+
+Callers using a custom-encoded key type must supply plain string keys or a
+named string type without an encoder before writing a new workflow payload.
+Existing persisted JSON reads and stored-data formats are unchanged; this
+input restriction requires no stored-data migration.
+
 ---
 
 ## OpenAI Adapter Matrix

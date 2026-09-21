@@ -42,6 +42,9 @@ type (
 	// string because JSON preserves those keys without conversion.
 	workflowStringKey string
 
+	// workflowTextKey detects custom map-key encoding before it can run.
+	workflowTextKey string
+
 	// hidingWorkflowByteSlice proves a byte slice cannot hide its contents
 	// behind custom JSON.
 	hidingWorkflowByteSlice []byte
@@ -254,6 +257,24 @@ func TestWorkflowCodecRequiresStringMapKeys(t *testing.T) {
 	payload, err := codec.ToPayload(map[workflowStringKey]string{"one": "first"})
 	require.NoError(t, err)
 	require.JSONEq(t, `{"one":"first"}`, string(payload.Data))
+}
+
+func TestWorkflowCodecRejectsCustomMapKeyEncoding(t *testing.T) {
+	keyed := map[workflowTextKey]string{"one": "first"}
+	tests := []struct {
+		name  string
+		value any
+	}{
+		{name: "map", value: keyed},
+		{name: "nested map", value: map[string]any{"nested": keyed}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload, err := NewDataConverter().ToPayload(test.value)
+			require.ErrorContains(t, err, "map key contains unsupported custom text marshaler")
+			require.Nil(t, payload)
+		})
+	}
 }
 
 func TestBudgetRejectsInvalidUTF8TextAndMetadataKeys(t *testing.T) {
@@ -540,13 +561,9 @@ func (m hidingTextMarshaler) MarshalText() ([]byte, error) {
 	return []byte("hidden"), nil
 }
 
-// MarshalText proves JSON map encoding uses the underlying string key and does
-// not replace it with custom text.
-func (key workflowStringKey) MarshalText() ([]byte, error) {
-	if key == "" {
-		return nil, errors.New("key is required")
-	}
-	return []byte("replaced"), nil
+// MarshalText fails the test if workflow encoding invokes a custom key method.
+func (workflowTextKey) MarshalText() ([]byte, error) {
+	panic("workflow map key encoder must not run")
 }
 
 // MarshalJSON would hide a named byte slice if preflight let encoding/json call

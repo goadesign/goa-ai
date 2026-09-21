@@ -338,6 +338,13 @@ func (p *workflowJSONPreflight) walk(value reflect.Value, depth int) error {
 				value.Type().Key(),
 			)
 		}
+		if customKind, unsupported := unsupportedWorkflowJSONMarshaler(value.Type().Key()); unsupported {
+			return fmt.Errorf(
+				"workflow codec: workflow JSON map key contains unsupported custom %s marshaler %s",
+				customKind,
+				value.Type().Key(),
+			)
+		}
 		if p.visits+2*value.Len() > maxWorkflowJSONVisits {
 			return fmt.Errorf("workflow codec: workflow JSON value exceeds maximum visited values %d", maxWorkflowJSONVisits)
 		}
