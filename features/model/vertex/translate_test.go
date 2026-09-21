@@ -273,7 +273,8 @@ func TestMarshalArgsEnforcesExactEncodedSizeLimit(t *testing.T) {
 func TestMarshalArgsMatchesEncodingJSON(t *testing.T) {
 	tests := []map[string]any{
 		{"text": "<>&\u2028\u2029"},
-		{"text": string([]byte{0xff})},
+		{"text": "日本語 😀 \ufffd"},
+		{"café<>\u2028\ufffd": "value"},
 		{"numbers": []any{1e-7, -1e-7, math.Copysign(0, -1), 123.5}},
 		{"nested": map[string]any{"enabled": true, "missing": nil}},
 	}
@@ -284,6 +285,26 @@ func TestMarshalArgsMatchesEncodingJSON(t *testing.T) {
 		actual, err := marshalArgs(args)
 		require.NoError(t, err)
 		assert.Equal(t, string(expected), string(actual))
+	}
+}
+
+func TestMarshalArgsRejectsInvalidUTF8(t *testing.T) {
+	invalid := string([]byte{0xff})
+	tests := []struct {
+		name string
+		args map[string]any
+	}{
+		{name: "value", args: map[string]any{"text": invalid}},
+		{name: "key", args: map[string]any{invalid: "value"}},
+		{name: "nested value", args: map[string]any{"nested": []any{map[string]any{"text": invalid}}}},
+		{name: "nested key", args: map[string]any{"nested": map[string]any{invalid: "value"}}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			payload, err := marshalArgs(test.args)
+			require.ErrorContains(t, err, "invalid UTF-8")
+			assert.Nil(t, payload)
+		})
 	}
 }
 

@@ -7,7 +7,7 @@ never edit `gen/`.
 
 ## Prerequisites
 
-- Go 1.25.5+
+- Go 1.26.0+
 
 ## 1) Run the checked-in project
 

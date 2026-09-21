@@ -51,7 +51,7 @@ workflow, so a service method can also become an agent tool.
 
 ## Quick start
 
-With **Go 1.25.5 or newer**, run the checked-in example:
+With **Go 1.26.0 or newer**, run the checked-in example:
 
 ```bash
 git clone https://github.com/goadesign/goa-ai.git
@@ -59,7 +59,7 @@ cd goa-ai/quickstart
 go run ./cmd/orchestrator
 ```
 
-This checkout uses **Goa v3.31.1**. Run generation through
+This checkout uses **Goa v3.32.0**. Run generation through
 `go run goa.design/goa/v3/cmd/goa gen <design-package>` to use the version
 selected by your module.
 
@@ -243,6 +243,11 @@ Choose model adapters for OpenAI, Anthropic, Amazon Bedrock, Google Vertex AI,
 or a model gateway. Provider capabilities differ; the [runtime guide](docs/runtime.md)
 covers their supported options. Optional integrations include MongoDB for
 memory and prompt overrides, and Redis/Pulse for streams and registries.
+
+Vertex tool arguments require valid UTF-8 text and keys. Workflow writes reject
+map keys with custom JSON or text encoders; use plain strings or named string
+types without those encoders. Existing persisted JSON reads are unchanged.
+See the [JSON boundary contract](docs/runtime.md#json-boundary-contract).
 
 Application code owns planners, service behavior, authorization, side-effect
 idempotency, storage, and deployment. Deploy generated packages, callers, and

@@ -256,6 +256,13 @@ The boundary rejects invalid UTF-8, cycles, unknown typed parts, typed-nil
 streamers, and over-budget output without fallback, truncation, coercion,
 repair, or omission.
 
+Vertex validates argument strings and keys before allocating their exact-sized
+JSON payload. Workflow encoding rejects custom JSON and text encoders on map
+keys before invoking them, so checked key bytes remain the bytes being encoded.
+Plain and named string keys without custom encoders retain their values.
+These write checks do not alter persisted JSON decoding; see the
+[JSON boundary contract](docs/runtime.md#json-boundary-contract).
+
 ## Generated Evaluations
 
 Applications define stable evaluation scenarios with `eval/dsl` beside their

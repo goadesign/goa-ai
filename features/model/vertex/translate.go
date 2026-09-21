@@ -447,10 +447,7 @@ func measureJSONString(value string, encodedSize *int) error {
 		r, size := utf8.DecodeRuneInString(value[index:])
 		index += size
 		if r == utf8.RuneError && size == 1 {
-			if err := addVertexJSONBytes(encodedSize, 6); err != nil {
-				return err
-			}
-			continue
+			return errors.New("vertex: tool args contain invalid UTF-8")
 		}
 		if r == '\u2028' || r == '\u2029' {
 			if err := addVertexJSONBytes(encodedSize, 6); err != nil {
