@@ -51,7 +51,7 @@ workflow, so a service method can also become an agent tool.
 
 ## Quick start
 
-With **Go 1.25.5 or newer**, run the checked-in example:
+With **Go 1.26.0 or newer**, run the checked-in example:
 
 ```bash
 git clone https://github.com/goadesign/goa-ai.git
@@ -59,7 +59,7 @@ cd goa-ai/quickstart
 go run ./cmd/orchestrator
 ```
 
-This checkout uses **Goa v3.31.1**. Run generation through
+This checkout uses **Goa v3.32.0**. Run generation through
 `go run goa.design/goa/v3/cmd/goa gen <design-package>` to use the version
 selected by your module.
 

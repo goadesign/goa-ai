@@ -272,7 +272,7 @@ Replace `Use(Records, Deferred)` with `Use(Records, func() { Deferred() })`,
 and wrap other `func()` callback assignments the same way. Calls to `Deferred()`
 remain valid.
 
-Regenerate providers and consumers with Goa v3.31.1. Replace generated
+Regenerate providers and consumers with Goa v3.32.0. Replace generated
 startup `Discover` calls, `RegistryToolsets` inputs, and dynamic executor wiring
 with `RegisterRegistry`. Publish generated `ToolSchemas()` records before
 turning on dynamic consumers. Upgrade the registry to serve `ResolveToolset`

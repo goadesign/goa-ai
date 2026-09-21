@@ -3585,7 +3585,7 @@ For runtime storage and workflow adapters:
 Install the Goa revision required by this module before regenerating:
 
 ```bash
-go install goa.design/goa/v3/cmd/goa@v3.31.1
+go install goa.design/goa/v3/cmd/goa@v3.32.0
 ```
 
 For a release that changes generated or persisted runtime shapes:
