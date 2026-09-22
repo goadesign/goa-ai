@@ -129,7 +129,7 @@ var AgentToolTarget = Type("AgentToolTarget", func() {
 	Description("A native child Agent invocation. The worker is authorized at startup; the application owns the immutable configuration reference.")
 	Field(1, "executor", String, "Identifier of the preconfigured Agent worker that accepts this configuration.", func() {
 		MinLength(1)
-		Example("aura.chat")
+		Example("generic.agent")
 	})
 	Field(2, "configuration", String, "Immutable application configuration reference retained with each accepted tool call.", func() {
 		MinLength(1)
