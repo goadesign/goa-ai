@@ -237,7 +237,7 @@ func (scopedRegistrySources) Resolve(ctx context.Context, catalog *RegistryCatal
 }
 
 func (scopedRegistrySources) Allows(registry, toolset, _ string) bool {
-	return registry == "company" && (toolset == "project" || toolset == "intelligence")
+	return registry == "company" && (toolset == "support" || toolset == "operations")
 }
 
 func TestRegistryCatalogUsesRunScopeWithoutSharingLabels(t *testing.T) {
@@ -251,7 +251,7 @@ func TestRegistryCatalogUsesRunScopeWithoutSharingLabels(t *testing.T) {
 		return result, nil
 	}}
 	require.NoError(t, rt.RegisterRegistry("company", client, unusedRegistryPulse{}))
-	for _, namespace := range []string{"project", "intelligence"} {
+	for _, namespace := range []string{"support", "operations"} {
 		t.Run(namespace, func(t *testing.T) {
 			t.Parallel()
 			labels := map[string]string{"namespace": namespace}

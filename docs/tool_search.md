@@ -279,7 +279,7 @@ the sources that saved calls may continue consuming. Existing run policies
 still restrict the tools advertised and executed.
 
 For example, an application can use its own `namespace` label to select
-Intelligence tools for one session and installation tools for another. Goa-AI
+support tools for one session and operations tools for another. Goa-AI
 does not define namespaces or infer authorization from label names. Catalogs
 belong to individual planning activities, so concurrent sessions do not change
 one another's tool lists.
