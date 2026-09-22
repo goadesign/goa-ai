@@ -179,6 +179,56 @@ func (c *Client) Pong() goa.Endpoint {
 	}
 }
 
+// RegisterAgentToolset calls the "RegisterAgentToolset" function in
+// registrypb.RegistryClient interface.
+func (c *Client) RegisterAgentToolset() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildRegisterAgentToolsetFunc(c.grpccli, c.opts...),
+			EncodeRegisterAgentToolsetRequest,
+			DecodeRegisterAgentToolsetResponse)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+					return nil, ctxErr
+				}
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
+// ReplaceAgentToolset calls the "ReplaceAgentToolset" function in
+// registrypb.RegistryClient interface.
+func (c *Client) ReplaceAgentToolset() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildReplaceAgentToolsetFunc(c.grpccli, c.opts...),
+			EncodeReplaceAgentToolsetRequest,
+			DecodeReplaceAgentToolsetResponse)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+					return nil, ctxErr
+				}
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
 // ListToolsets calls the "ListToolsets" function in registrypb.RegistryClient
 // interface.
 func (c *Client) ListToolsets() goa.Endpoint {

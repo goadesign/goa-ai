@@ -566,6 +566,11 @@ type Termination struct {
 
 // PlanInput carries the initial messages and context into PlanStart.
 type PlanInput struct {
+	// ParentTool is the parent call's retained contract for a nested Agent run.
+	// Its result schema describes FinalToolResult; it is not an advertised tool.
+	// Top-level runs have no ParentTool.
+	ParentTool *tools.ToolSpec
+
 	// Messages is the complete saved conversation for this activity. Treat it
 	// as read-only. Runtime-managed clients apply the history policy separately
 	// to each actual Complete or Stream request, using its destination model.
@@ -588,6 +593,11 @@ type PlanInput struct {
 
 // PlanResumeInput carries messages plus execution history into PlanResume.
 type PlanResumeInput struct {
+	// ParentTool is the parent call's retained contract for a nested Agent run.
+	// Its result schema describes FinalToolResult; it is not an advertised tool.
+	// Top-level runs have no ParentTool.
+	ParentTool *tools.ToolSpec
+
 	// Messages is the complete saved conversation, including the latest tool
 	// calls and results. It has the same read-only contract as PlanInput.Messages.
 	Messages []*model.Message

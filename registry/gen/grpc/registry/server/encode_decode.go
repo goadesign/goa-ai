@@ -198,6 +198,72 @@ func DecodePongRequest(ctx context.Context, v any, md metadata.MD) (any, error) 
 	return payload, nil
 }
 
+// EncodeRegisterAgentToolsetResponse encodes responses from the "registry"
+// service "RegisterAgentToolset" endpoint.
+func EncodeRegisterAgentToolsetResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.ResolvedToolset)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RegisterAgentToolset", "*registry.ResolvedToolset", v)
+	}
+	resp := NewProtoRegisterAgentToolsetResponse(result)
+	return resp, nil
+}
+
+// DecodeRegisterAgentToolsetRequest decodes requests sent to "registry"
+// service "RegisterAgentToolset" endpoint.
+func DecodeRegisterAgentToolsetRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.RegisterAgentToolsetRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.RegisterAgentToolsetRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "RegisterAgentToolset", "*registrypb.RegisterAgentToolsetRequest", v)
+		}
+		if err := ValidateRegisterAgentToolsetRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.AgentToolsetDeclaration
+	{
+		payload = NewRegisterAgentToolsetPayload(message)
+	}
+	return payload, nil
+}
+
+// EncodeReplaceAgentToolsetResponse encodes responses from the "registry"
+// service "ReplaceAgentToolset" endpoint.
+func EncodeReplaceAgentToolsetResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.ResolvedToolset)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ReplaceAgentToolset", "*registry.ResolvedToolset", v)
+	}
+	resp := NewProtoReplaceAgentToolsetResponse(result)
+	return resp, nil
+}
+
+// DecodeReplaceAgentToolsetRequest decodes requests sent to "registry" service
+// "ReplaceAgentToolset" endpoint.
+func DecodeReplaceAgentToolsetRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.ReplaceAgentToolsetRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.ReplaceAgentToolsetRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "ReplaceAgentToolset", "*registrypb.ReplaceAgentToolsetRequest", v)
+		}
+		if err := ValidateReplaceAgentToolsetRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.ReplaceAgentToolsetPayload
+	{
+		payload = NewReplaceAgentToolsetPayload(message)
+	}
+	return payload, nil
+}
+
 // EncodeListToolsetsResponse encodes responses from the "registry" service
 // "ListToolsets" endpoint.
 func EncodeListToolsetsResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {

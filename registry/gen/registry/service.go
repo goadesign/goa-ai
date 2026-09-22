@@ -48,17 +48,27 @@ type Service interface {
 	// results, while new calls route only when another non-draining provider
 	// remains.
 	DrainProvider(context.Context, *DrainProviderPayload) (err error)
-	// Intentionally retire the exact active admission while preserving its
-	// provider leases until graceful release or expiry and atomically adding its
-	// token to the permanent retired-token set. Repeating the same-token
-	// retirement succeeds; a stale token returns admission_conflict. Retirement
-	// removes the toolset from discovery and routing and permanently prevents that
-	// exact token from registering again.
+	// Retire the exact current registration and remove it from discovery.
+	// Repeating the same-token retirement succeeds; a stale token returns
+	// admission_conflict. For service tools, preserve provider leases until
+	// graceful release or expiry and permanently prevent that token from
+	// registering again. Native Agent declarations have no provider leases and can
+	// be reactivated through ReplaceAgentToolset; already accepted child calls
+	// retain their selected declaration.
 	Unregister(context.Context, *UnregisterPayload) (err error)
 	// Atomically record shared consumer-group liveness for a
 	// token-and-membership-epoch health ping. The responding provider incarnation
 	// must hold an unexpired lease in that same catalog record.
 	Pong(context.Context, *PongPayload) (err error)
+	// Create a native Agent toolset without a Pulse provider lease. Repeating the
+	// same active declaration succeeds. A different existing declaration returns
+	// admission_conflict; use ReplaceAgentToolset with its current token.
+	RegisterAgentToolset(context.Context, *AgentToolsetDeclaration) (res *ResolvedToolset, err error)
+	// Replace or reactivate a native Agent toolset only when the current
+	// registration matches expected_registration_token. Already accepted child
+	// calls retain their original declarations. New discovery returns the
+	// replacement.
+	ReplaceAgentToolset(context.Context, *ReplaceAgentToolsetPayload) (res *ResolvedToolset, err error)
 	// List all registered toolsets with optional tag filtering
 	ListToolsets(context.Context, *ListToolsetsPayload) (res *ListToolsetsResult, err error)
 	// Get a specific toolset by name including all tool schemas
@@ -153,7 +163,7 @@ const ServiceName = "registry"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [18]string{"Register", "RenewProvider", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "ListToolsets", "GetToolset", "ResolveToolset", "CheckAdmission", "Search", "CallTool", "CallResolvedTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
+var MethodNames = [20]string{"Register", "RenewProvider", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "RegisterAgentToolset", "ReplaceAgentToolset", "ListToolsets", "GetToolset", "ResolveToolset", "CheckAdmission", "Search", "CallTool", "CallResolvedTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
 
 // AdmissionStatus is the result type of the registry service CheckAdmission
 // method.
@@ -161,6 +171,31 @@ type AdmissionStatus struct {
 	// True only when the expected registration token is active and has a routable
 	// provider plus a fresh authenticated pong.
 	Ready bool
+}
+
+// A native child Agent invocation. The worker is authorized at startup; the
+// application owns the immutable configuration reference.
+type AgentToolTarget struct {
+	// Identifier of the preconfigured Agent worker that accepts this configuration.
+	Executor string
+	// Immutable application configuration reference retained with each accepted
+	// tool call.
+	Configuration string
+}
+
+// AgentToolsetDeclaration is the payload type of the registry service
+// RegisterAgentToolset method.
+type AgentToolsetDeclaration struct {
+	// Unique toolset name.
+	Name string
+	// Description of this toolset.
+	Description *string
+	// Semantic version used by discovery filters.
+	Version *SemVer
+	// Application categories used by discovery filters.
+	Tags []string
+	// Complete Agent tool declarations.
+	Tools []*ToolSchema
 }
 
 // CallResolvedToolPayload is the payload type of the registry service
@@ -283,7 +318,8 @@ type CompleteToolCallPayload struct {
 // registry includes this complete value in the registration fingerprint.
 type ConsumerContract struct {
 	// Execution kind fixed by the provider design. Dynamic consumers support
-	// service tools; agent and control tools require compiled runtime integration.
+	// service tools and agent tools with a declared executor and configuration.
+	// Control tools require compiled runtime integration.
 	Kind string
 	// Human-readable title declared for the tool.
 	Title string
@@ -307,6 +343,9 @@ type ConsumerContract struct {
 	ServerData []*ToolServerData
 	// Model guidance emitted after this tool's result.
 	ResultReminder *string
+	// Worker and immutable application configuration used by a dynamically
+	// registered Agent tool.
+	Agent *AgentToolTarget `json:"Agent,omitempty"`
 }
 
 // DrainProviderPayload is the payload type of the registry service
@@ -475,8 +514,25 @@ type RenewProviderResult struct {
 	LeaseDurationMs int64
 }
 
-// ResolvedToolset is the result type of the registry service ResolveToolset
-// method.
+// ReplaceAgentToolsetPayload is the payload type of the registry service
+// ReplaceAgentToolset method.
+type ReplaceAgentToolsetPayload struct {
+	// Current native Agent registration being replaced.
+	ExpectedRegistrationToken string
+	// Unique toolset name.
+	Name string
+	// Description of this toolset.
+	Description *string
+	// Semantic version used by discovery filters.
+	Version *SemVer
+	// Application categories used by discovery filters.
+	Tags []string
+	// Complete Agent tool declarations.
+	Tools []*ToolSchema
+}
+
+// ResolvedToolset is the result type of the registry service
+// RegisterAgentToolset method.
 type ResolvedToolset struct {
 	// Complete toolset definition read from the active registration.
 	Toolset *Toolset
@@ -708,8 +764,8 @@ type ToolsetInfo struct {
 type UnregisterPayload struct {
 	// Name of the toolset to unregister
 	Name string
-	// Exact admission-generation token returned by Register for the stopped
-	// provider rollout
+	// Current token returned by Register, RegisterAgentToolset,
+	// ReplaceAgentToolset, or ResolveToolset.
 	ExpectedRegistrationToken string
 }
 

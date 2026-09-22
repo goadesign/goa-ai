@@ -26,6 +26,7 @@ import (
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
+	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 )
 
 var serviceTestSequence atomic.Uint64
@@ -142,7 +143,7 @@ func saveTestToolset(ctx context.Context, catalog *toolsetCatalog, toolset *genr
 	if err := catalog.validator.ValidateToolSchemas(toolset.Tools); err != nil {
 		return err
 	}
-	fingerprint, err := toolsetSchemaFingerprint(toolset)
+	fingerprint, err := toolcontract.Fingerprint(toolset)
 	if err != nil {
 		return err
 	}

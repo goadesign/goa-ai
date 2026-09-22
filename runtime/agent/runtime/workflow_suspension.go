@@ -52,6 +52,7 @@ type (
 		ParentAgentID    agent.Ident
 		Tool             tools.Ident
 		ToolArgs         rawjson.Message
+		ToolRegistry     *tools.RegistryBinding `json:",omitempty"` //nolint:tagliatelle // Checkpoints retain Go field names.
 		Attempt          int
 		Labels           map[string]string
 		Metadata         map[string]any
@@ -581,6 +582,7 @@ func restoreContinuationRunInput(input *RunInput, checkpoint *workflowCheckpoint
 	input.ParentToolCallID = checkpoint.Context.ParentToolCallID
 	input.Tool = checkpoint.Context.Tool
 	input.ToolArgs = append(rawjson.Message(nil), checkpoint.Context.ToolArgs...)
+	input.ToolRegistry = checkpoint.Context.ToolRegistry.Clone()
 	input.Labels = cloneLabels(checkpoint.Context.Labels)
 	input.Metadata = cloneMetadata(checkpoint.Context.Metadata)
 	input.Policy = clonePolicyOverrides(checkpoint.Policy)
@@ -614,6 +616,7 @@ func retargetRunContext(previous run.Context, input *RunInput) run.Context {
 	previous.ParentAgentID = input.ParentAgentID
 	previous.Tool = input.Tool
 	previous.ToolArgs = input.ToolArgs
+	previous.ToolRegistry = input.ToolRegistry.Clone()
 	previous.Labels = input.Labels
 	previous.Metadata = input.Metadata
 	return previous
@@ -628,6 +631,7 @@ func checkpointContextFromRun(context run.Context) checkpointRunContext {
 		ParentAgentID:    context.ParentAgentID,
 		Tool:             context.Tool,
 		ToolArgs:         append(rawjson.Message(nil), context.ToolArgs...),
+		ToolRegistry:     context.ToolRegistry.Clone(),
 		Attempt:          context.Attempt,
 		Labels:           cloneLabels(context.Labels),
 		Metadata:         cloneMetadata(context.Metadata),
@@ -647,6 +651,7 @@ func restoreCheckpointRunContext(saved checkpointRunContext, input *RunInput) ru
 		TurnID:           input.TurnID,
 		Tool:             saved.Tool,
 		ToolArgs:         append(rawjson.Message(nil), saved.ToolArgs...),
+		ToolRegistry:     saved.ToolRegistry.Clone(),
 		Attempt:          saved.Attempt,
 		Labels:           cloneLabels(saved.Labels),
 		Metadata:         cloneMetadata(saved.Metadata),
@@ -951,12 +956,10 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 		return nil, fmt.Errorf("child continuation does not match tool_call_id %s", pending.ToolCallID)
 	}
 
-	_, specOK := l.r.toolSpec(record.call.Name)
-	_, toolset, toolsetOK := l.r.toolsetForTool(record.call.Name)
-	if !specOK || !toolsetOK || toolset.AgentTool == nil {
-		return nil, fmt.Errorf("child continuation tool %q is not a registered agent tool", record.call.Name)
+	cfg, err := l.r.selectedAgentToolConfig(record.call)
+	if err != nil {
+		return nil, err
 	}
-	cfg := toolset.AgentTool
 
 	currentCall := retargetToolRequest(record.call, l.input, &l.base.RunContext)
 	nested := run.Context{
@@ -968,16 +971,15 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 		ParentRunID:      currentCall.RunID,
 		ParentAgentID:    currentCall.AgentID,
 		ToolArgs:         append(rawjson.Message(nil), currentCall.Payload...),
+		ToolRegistry:     currentCall.Registry.Clone(),
 		Labels:           cloneLabels(currentCall.Labels),
 	}
-	childInput, err := agentChildRunInput(cfg.Definition, agentChildRequest{runContext: nested})
-	if err != nil {
-		return nil, err
+	childInput := &RunInput{
+		AgentID: cfg.Definition.route.ID,
+		RunID:   nested.RunID, SessionID: nested.SessionID, TurnID: nested.TurnID,
+		Continuation: &api.RunContinuationInput{Suspension: pending.Suspension, Response: response},
 	}
-	childInput.Continuation = &api.RunContinuationInput{
-		Suspension: pending.Suspension,
-		Response:   response,
-	}
+
 	route := cfg.Definition.route
 	handle, err := l.wfCtx.StartChildWorkflow(l.wfCtx.Context(), engine.ChildWorkflowRequest{
 		ID:        childInput.RunID,

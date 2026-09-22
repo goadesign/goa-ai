@@ -19,6 +19,9 @@ const agentChildActivityName = "runtime.prepare_agent_child"
 // prepareAgentChildActivity decodes the parent tool payload, renders the child
 // prompt, and returns the exact values that workflow history must retain.
 func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error) {
+	if input.Call.Registry != nil {
+		return r.prepareRegistryAgentChild(ctx, input.Call)
+	}
 	cfg, err := r.agentToolConfig(input.Call.Name)
 	if err != nil {
 		return nil, engine.MarkActivityErrorNonRetryable(err)
@@ -63,9 +66,12 @@ func (r *Runtime) prepareAgentChild(wfCtx engine.WorkflowContext, call ToolCall,
 	}
 	switch {
 	case output.Success != nil && output.Failure == nil:
+		nested := agentChildRunContext(&call)
+		nested.Labels = mergeLabels(nested.Labels, output.Success.Labels)
 		return agentChildRequest{
+			policy:          clonePolicyOverrides(output.Success.Policy),
 			messages:        output.Success.Messages,
-			runContext:      agentChildRunContext(&call),
+			runContext:      nested,
 			renderedPrompts: output.Success.RenderedPrompts,
 		}, nil
 	case output.Success == nil && output.Failure != nil:

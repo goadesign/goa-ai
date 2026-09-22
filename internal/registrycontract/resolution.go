@@ -13,6 +13,7 @@ import (
 	genregistryserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 	"google.golang.org/protobuf/encoding/protojson"
 )
 
@@ -27,7 +28,7 @@ type (
 )
 
 // Resolve checks one catalog response and compiles its portable definitions.
-// Every tool must support dynamic service execution; partial catalogs are errors.
+// Every tool must support service or native Agent execution; partial catalogs are errors.
 func Resolve(registered *genregistry.ResolvedToolset) (*Resolution, error) {
 	if registered == nil {
 		return nil, errors.New("registry resolution is required")
@@ -50,7 +51,7 @@ func Resolve(registered *genregistry.ResolvedToolset) (*Resolution, error) {
 		if _, exists := result.Specs[name]; exists {
 			return nil, fmt.Errorf("registry resolution repeats tool %q", name)
 		}
-		spec, err := Compile(declaration)
+		spec, err := toolcontract.Compile(declaration)
 		if err != nil {
 			return nil, err
 		}

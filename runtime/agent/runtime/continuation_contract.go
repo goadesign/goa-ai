@@ -13,9 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"slices"
 
+	"goa.design/goa-ai/internal/registrycontract"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -79,10 +81,23 @@ func decodeWorkflowCheckpoint(suspension *api.RunSuspension, definition AgentDef
 	); err != nil {
 		return nil, fmt.Errorf("validate suspended completion plan: %w", err)
 	}
+	parentSpec, err := selectedParentTool(checkpoint.Context.Tool, checkpoint.Context.ToolRegistry, definition.route.ID, definition.spec)
+	if err != nil {
+		return nil, err
+	}
+	parentLookup := definition.spec
+	if parentSpec != nil {
+		parentLookup = func(name tools.Ident) (tools.ToolSpec, bool) {
+			if name == parentSpec.Name {
+				return *parentSpec, true
+			}
+			return definition.spec(name)
+		}
+	}
 	if err := validatePlannerResultPayloadsWithSpecs(
 		plannerResultValidationProjection(checkpoint.Batch.Result),
 		checkpoint.Context.Tool,
-		definition.spec,
+		parentLookup,
 	); err != nil {
 		return nil, fmt.Errorf("validate suspended planner result: %w", err)
 	}
@@ -171,6 +186,20 @@ func validateCheckpointChild(call ToolCall, suspension *api.RunSuspension, defin
 	if err != nil {
 		return err
 	}
+	if call.Registry != nil {
+		selected, err := registrycontract.Read(call.Registry)
+		if err != nil {
+			return err
+		}
+		saved, err := registrycontract.Read(checkpoint.Context.ToolRegistry)
+		if err != nil {
+			return err
+		}
+		if checkpoint.Context.Tool != call.Name || call.Registry.Registry != checkpoint.Context.ToolRegistry.Registry ||
+			!reflect.DeepEqual(selected.Registered, saved.Registered) {
+			return fmt.Errorf("child suspension changed the selected contract for %q", call.Name)
+		}
+	}
 	if checkpoint.AgentID != string(child.route.ID) {
 		return fmt.Errorf("child suspension agent %q does not match tool agent %q", checkpoint.AgentID, child.route.ID)
 	}
@@ -180,7 +209,15 @@ func validateCheckpointChild(call ToolCall, suspension *api.RunSuspension, defin
 // childDefinitionForCall returns the immutable generated definition selected
 // by one agent-tool call.
 func childDefinitionForCall(call ToolCall, definition AgentDefinition) (AgentDefinition, error) {
-	spec, ok := definition.spec(call.Name)
+	if call.Registry != nil {
+		if _, err := validateRegistrySource(definition, call); err != nil {
+			return AgentDefinition{}, err
+		}
+	}
+	spec, ok, err := lookupCallSpec(call, definition.spec)
+	if err != nil {
+		return AgentDefinition{}, err
+	}
 	if !ok {
 		return AgentDefinition{}, fmt.Errorf("child tool %q is not in the current agent definition", call.Name)
 	}
@@ -191,7 +228,13 @@ func childDefinitionForCall(call ToolCall, definition AgentDefinition) (AgentDef
 	if !ok {
 		return AgentDefinition{}, fmt.Errorf("child agent %q is not in the current definition graph", spec.AgentID)
 	}
-	child.agents = definition.agents
+	if call.Registry == nil {
+		child.agents = definition.agents
+	} else {
+		generated := maps.Clone(definition.agents)
+		maps.Copy(generated, child.agents)
+		child.agents = generated
+	}
 	return child, nil
 }
 
@@ -556,7 +599,7 @@ func validateWorkflowRunInput(input *RunInput) error {
 	if len(input.Messages) > 0 || len(input.Labels) > 0 || len(input.Metadata) > 0 ||
 		input.Policy != nil || input.ParentRunID != "" || input.ParentAgentID != "" ||
 		input.ParentToolCallID != "" || input.Tool != "" || len(input.ToolArgs) > 0 ||
-		len(input.RenderedPrompts) > 0 {
+		len(input.RenderedPrompts) > 0 || input.ToolRegistry != nil {
 		return errors.New("run continuation cannot include caller-supplied checkpoint state")
 	}
 	return nil

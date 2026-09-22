@@ -224,3 +224,44 @@ func testRuntimeRegistryResolution(name, token string) *genregistry.ResolvedTool
 		},
 	}
 }
+
+// scopedRegistrySources is application logic: namespace labels choose which
+// registered toolset this activity may advertise.
+type scopedRegistrySources struct{}
+
+func (scopedRegistrySources) Resolve(ctx context.Context, catalog *RegistryCatalog) error {
+	labels := catalog.RunLabels()
+	namespace := labels["namespace"]
+	labels["namespace"] = "local-copy"
+	return catalog.IncludeToolset(ctx, "company", namespace, "", false)
+}
+
+func (scopedRegistrySources) Allows(registry, toolset, _ string) bool {
+	return registry == "company" && (toolset == "project" || toolset == "intelligence")
+}
+
+func TestRegistryCatalogUsesRunScopeWithoutSharingLabels(t *testing.T) {
+	rt := New(newTestStore())
+	definition := testRegistryAgentDefinition(scopedRegistrySources{})
+	rt.agents[definition.route.ID] = AgentRegistration{Definition: definition}
+	client := &genregistry.Client{ResolveToolsetEndpoint: func(_ context.Context, value any) (any, error) {
+		payload := value.(*genregistry.GetToolsetPayload)
+		result := testRuntimeRegistryResolution(payload.Name+".find", strings.Repeat("a", 64))
+		result.Toolset.Name = payload.Name
+		return result, nil
+	}}
+	require.NoError(t, rt.RegisterRegistry("company", client, unusedRegistryPulse{}))
+	for _, namespace := range []string{"project", "intelligence"} {
+		t.Run(namespace, func(t *testing.T) {
+			t.Parallel()
+			labels := map[string]string{"namespace": namespace}
+			catalog, err := rt.planningCatalog(t.Context(), &PlanActivityInput{
+				AgentID: definition.route.ID, RunContext: run.Context{Labels: labels},
+			})
+			require.NoError(t, err)
+			assert.Len(t, catalog.selections, 1)
+			assert.Contains(t, catalog.selections, tools.Ident(namespace+".find"))
+			assert.Equal(t, namespace, labels["namespace"])
+		})
+	}
+}

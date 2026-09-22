@@ -1032,8 +1032,25 @@ with the existing registration token. Confirmation, decoding, and replay use
 that saved contract; `CallResolvedTool` rejects a replaced registration before
 publication. Catalog changes cannot silently redirect an accepted call. Static
 runtime registrations remain immutable, and history never grants permission
-for new calls. Dynamic service tools carry generated confirmation, pagination,
-field, and server-only data metadata; agent/control execution remains compiled.
+for new calls. Dynamic service and native Agent tools carry confirmation,
+pagination, field, and server-only data metadata. Planner control execution
+remains compiled.
+
+Native Agent declarations name a preconfigured executor and an immutable
+application configuration reference. The registry owns their create, conditional
+replace, and retire operations, independently of service-provider leases. Child
+preparation resolves the reference in an activity and records messages, labels,
+and policy. The existing child workflow path owns execution, progress,
+cancellation, and input continuations. The parent call's saved registry binding
+travels through child input and checkpoints, independently of live discovery.
+Planner inputs expose its result contract as `ParentTool`; completion validates
+against that contract, even after replacement. No shared application storage,
+per-configuration worker registration, or additional model loop is introduced.
+
+Generated `Toolset()` declarations and the public portable contract compiler
+support SDK integration. Applications can use `RegistryCatalog.RunLabels()` to
+select per-run sources; product namespaces and authorization remain application
+concerns.
 
 [Tool search and dynamic registries](docs/tool_search.md) describes consumer
 loading and execution. The [runtime provider guide](docs/runtime.md#registry-routed-provider-execution-service-side)

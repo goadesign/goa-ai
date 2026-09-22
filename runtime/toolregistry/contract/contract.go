@@ -1,14 +1,15 @@
-// Package registrycontract compiles generated registry declarations into local
-// JSON codecs. Callers supply declarations accepted by the generated registry
-// boundary. This package checks execution semantics and cross-field invariants;
+// Package contract compiles generated registry declarations into local
+// JSON codecs. Generated registry validation checks declaration structure. This package
+// checks execution semantics and cross-field invariants;
 // it does not reinterpret JSON schemas to recover design metadata.
-package registrycontract
+package contract
 
 import (
 	"fmt"
 	"maps"
 	"slices"
 
+	genregistryclient "goa.design/goa-ai/registry/gen/grpc/registry/client"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -27,16 +28,35 @@ type (
 	serverDataContracts map[string]serverDataContract
 )
 
-// Compile returns an owned tool specification for one portable service tool.
+const agentKind = "agent"
+
+// Compile returns an owned tool specification for one portable service or native Agent tool.
 // Schema-only declarations and execution kinds requiring compiled integration
 // are explicit errors; neither may lose policy metadata during discovery.
 func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
+	if declaration == nil {
+		return tools.ToolSpec{}, fmt.Errorf("tool declaration is required")
+	}
+	// This generated request validates the shared ToolSchema without requiring
+	// provider leases or a registration timestamp. Execution kind is checked below.
+	request := genregistryclient.NewProtoRegisterAgentToolsetRequest(&genregistry.AgentToolsetDeclaration{
+		Name: declaration.Name, Tools: []*genregistry.ToolSchema{declaration},
+	})
+	if err := genregistryclient.ValidateRegisterAgentToolsetRequest(request); err != nil {
+		return tools.ToolSpec{}, fmt.Errorf("tool %q declaration: %w", declaration.Name, err)
+	}
 	contract := declaration.ConsumerContract
 	if contract == nil {
 		return tools.ToolSpec{}, fmt.Errorf("tool %q has no generated consumer contract", declaration.Name)
 	}
-	if contract.Kind != "service" {
+	if contract.Kind != "service" && contract.Kind != agentKind {
 		return tools.ToolSpec{}, fmt.Errorf("tool %q requires compiled %s execution", declaration.Name, contract.Kind)
+	}
+	if contract.Kind == agentKind && (contract.Agent == nil || contract.Result == nil) {
+		return tools.ToolSpec{}, fmt.Errorf("agent tool %q requires an executor, immutable configuration, and result contract", declaration.Name)
+	}
+	if contract.Kind != agentKind && contract.Agent != nil {
+		return tools.ToolSpec{}, fmt.Errorf("tool %q declares an agent target for %s execution", declaration.Name, contract.Kind)
 	}
 	if len(declaration.SidecarSchema) != 0 {
 		return tools.ToolSpec{}, fmt.Errorf("tool %q must declare server data in its consumer contract", declaration.Name)
@@ -60,6 +80,10 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 		Payload:                payload,
 		ExecutionPayloadSchema: slices.Clone(declaration.ExecutionPayloadSchema),
 		ExecutionPayloadCodec:  executionCodec,
+	}
+	if contract.Agent != nil {
+		spec.IsAgentTool = true
+		spec.AgentID = contract.Agent.Executor
 	}
 	if declaration.Description != nil {
 		spec.Description = *declaration.Description

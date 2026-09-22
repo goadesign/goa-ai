@@ -21,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
+	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 )
 
 type (
@@ -135,6 +136,22 @@ func parseCatalogState(name, body string) (catalogState, error) {
 	if _, err := time.Parse(time.RFC3339Nano, entry.RegisteredAt); err != nil {
 		return catalogState{}, fmt.Errorf("toolset %q invalid registered_at: %w", name, err)
 	}
+	switch entry.State {
+	case catalogEntryActive, catalogEntryRetired:
+	default:
+		return catalogState{}, fmt.Errorf("toolset %q has invalid catalog state %q", name, entry.State)
+	}
+	if entry.NativeAgent {
+		if err := toolregistry.ValidateRegistrationToken(entry.SchemaFingerprint); err != nil {
+			return catalogState{}, err
+		}
+		if entry.RegistrationToken != nativeAgentToken(entry.SchemaFingerprint) ||
+			entry.AdmissionRevision != "" || entry.WireProtocolVersion != 0 ||
+			len(entry.ProviderLeases) != 0 || entry.HealthEpoch != 0 || entry.LastPongUnixNano != 0 {
+			return catalogState{}, fmt.Errorf("toolset %q has invalid native Agent state", name)
+		}
+		return entry, nil
+	}
 	if err := toolregistry.ValidateAdmissionRevision(entry.AdmissionRevision); err != nil {
 		return catalogState{}, fmt.Errorf("toolset %q invalid admission revision: %w", name, err)
 	}
@@ -154,11 +171,6 @@ func parseCatalogState(name, body string) (catalogState, error) {
 	}
 	if entry.RegistrationToken != token {
 		return catalogState{}, fmt.Errorf("toolset %q registration token does not match admission identity", name)
-	}
-	switch entry.State {
-	case catalogEntryActive, catalogEntryRetired:
-	default:
-		return catalogState{}, fmt.Errorf("toolset %q has invalid catalog state %q", name, entry.State)
 	}
 	if entry.ProviderLeases == nil {
 		return catalogState{}, fmt.Errorf("toolset %q missing provider lease map", name)
@@ -201,7 +213,7 @@ func (c *toolsetCatalog) snapshot(ctx context.Context, name string) (entry catal
 	if err != nil {
 		return catalogEntry{}, err
 	}
-	if tokenRetired != (state.State == catalogEntryRetired) {
+	if tokenRetired != (!state.NativeAgent && state.State == catalogEntryRetired) {
 		return catalogEntry{}, fmt.Errorf("toolset %q disagrees with permanent retirement history", name)
 	}
 	var toolset *genregistry.Toolset
@@ -214,7 +226,12 @@ func (c *toolsetCatalog) snapshot(ctx context.Context, name string) (entry catal
 	if err := c.validator.ValidateToolSchemas(toolset.Tools); err != nil {
 		return catalogEntry{}, fmt.Errorf("toolset %q invalid persisted schemas: %w", name, err)
 	}
-	fingerprint, err := toolsetSchemaFingerprint(toolset)
+	if state.NativeAgent {
+		if err := validateAgentTools(toolset.Tools); err != nil {
+			return catalogEntry{}, err
+		}
+	}
+	fingerprint, err := toolcontract.Fingerprint(toolset)
 	if err != nil {
 		return catalogEntry{}, err
 	}

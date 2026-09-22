@@ -46,17 +46,27 @@ service Registry {
 // results, while new calls route only when another non-draining provider
 // remains.
 	rpc DrainProvider (DrainProviderRequest) returns (DrainProviderResponse);
-	// Intentionally retire the exact active admission while preserving its
-// provider leases until graceful release or expiry and atomically adding its
-// token to the permanent retired-token set. Repeating the same-token
-// retirement succeeds; a stale token returns admission_conflict. Retirement
-// removes the toolset from discovery and routing and permanently prevents that
-// exact token from registering again.
+	// Retire the exact current registration and remove it from discovery.
+// Repeating the same-token retirement succeeds; a stale token returns
+// admission_conflict. For service tools, preserve provider leases until
+// graceful release or expiry and permanently prevent that token from
+// registering again. Native Agent declarations have no provider leases and can
+// be reactivated through ReplaceAgentToolset; already accepted child calls
+// retain their selected declaration.
 	rpc Unregister (UnregisterRequest) returns (UnregisterResponse);
 	// Atomically record shared consumer-group liveness for a
 // token-and-membership-epoch health ping. The responding provider incarnation
 // must hold an unexpired lease in that same catalog record.
 	rpc Pong (PongRequest) returns (PongResponse);
+	// Create a native Agent toolset without a Pulse provider lease. Repeating the
+// same active declaration succeeds. A different existing declaration returns
+// admission_conflict; use ReplaceAgentToolset with its current token.
+	rpc RegisterAgentToolset (RegisterAgentToolsetRequest) returns (RegisterAgentToolsetResponse);
+	// Replace or reactivate a native Agent toolset only when the current
+// registration matches expected_registration_token. Already accepted child
+// calls retain their original declarations. New discovery returns the
+// replacement.
+	rpc ReplaceAgentToolset (ReplaceAgentToolsetRequest) returns (ReplaceAgentToolsetResponse);
 	// List all registered toolsets with optional tag filtering
 	rpc ListToolsets (ListToolsetsRequest) returns (ListToolsetsResponse);
 	// Get a specific toolset by name including all tool schemas
@@ -194,7 +204,8 @@ message ToolSchema {
 // registry includes this complete value in the registration fingerprint.
 message ConsumerContract {
 	// Execution kind fixed by the provider design. Dynamic consumers support
-// service tools; agent and control tools require compiled runtime integration.
+// service tools and agent tools with a declared executor and configuration.
+// Control tools require compiled runtime integration.
 	optional string kind = 1;
 	// Human-readable title declared for the tool.
 	optional string title = 2;
@@ -218,6 +229,9 @@ message ConsumerContract {
 	repeated ToolServerData server_data = 10;
 	// Model guidance emitted after this tool's result.
 	optional string result_reminder = 11;
+	// Worker and immutable application configuration used by a dynamically
+// registered Agent tool.
+	AgentToolTarget agent = 12;
 }
 // Precomputed word frequencies for local tool retrieval.
 message ToolSearchDocument {
@@ -322,6 +336,15 @@ message ToolServerData {
 	// Generated examples and field details for the item data.
 	ToolTypeMetadata type = 5;
 }
+// A native child Agent invocation. The worker is authorized at startup; the
+// application owns the immutable configuration reference.
+message AgentToolTarget {
+	// Identifier of the preconfigured Agent worker that accepts this configuration.
+	optional string executor = 1;
+	// Immutable application configuration reference retained with each accepted
+// tool call.
+	optional string configuration = 2;
+}
 
 message RegisterResponse {
 	// ISO 8601 timestamp of registration
@@ -384,8 +407,8 @@ message DrainProviderResponse {
 message UnregisterRequest {
 	// Name of the toolset to unregister
 	optional string name = 1;
-	// Exact admission-generation token returned by Register for the stopped
-// provider rollout
+	// Current token returned by Register, RegisterAgentToolset,
+// ReplaceAgentToolset, or ResolveToolset.
 	optional string expected_registration_token = 2;
 }
 
@@ -404,6 +427,65 @@ message PongRequest {
 }
 
 message PongResponse {
+}
+
+message RegisterAgentToolsetRequest {
+	// Unique toolset name.
+	optional string name = 1;
+	// Description of this toolset.
+	optional string description = 2;
+	// Semantic version used by discovery filters.
+	optional string version = 3;
+	// Application categories used by discovery filters.
+	repeated string tags = 4;
+	// Complete Agent tool declarations.
+	repeated ToolSchema tools = 5;
+}
+
+message RegisterAgentToolsetResponse {
+	// Complete toolset definition read from the active registration.
+	Toolset toolset = 1;
+	// Exact registration required when executing a call selected from this
+// definition.
+	optional string registration_token = 2;
+}
+// Complete toolset definition with all tool schemas
+message Toolset {
+	// Unique name for the toolset
+	optional string name = 1;
+	// Human-readable description
+	optional string description = 2;
+	// Semantic version of the toolset.
+	optional string version = 3;
+	// Tags for categorization
+	repeated string tags = 4;
+	// Tool schemas included in the toolset.
+	repeated ToolSchema tools = 5;
+	// ISO 8601 registration timestamp
+	optional string registered_at = 6;
+}
+
+message ReplaceAgentToolsetRequest {
+	// Current native Agent registration being replaced.
+	optional string expected_registration_token = 100;
+	// Unique toolset name.
+	optional string name = 1;
+	// Description of this toolset.
+	optional string description = 2;
+	// Semantic version used by discovery filters.
+	optional string version = 3;
+	// Application categories used by discovery filters.
+	repeated string tags = 4;
+	// Complete Agent tool declarations.
+	repeated ToolSchema tools = 5;
+}
+
+message ReplaceAgentToolsetResponse {
+	// Complete toolset definition read from the active registration.
+	Toolset toolset = 1;
+	// Exact registration required when executing a call selected from this
+// definition.
+	optional string registration_token = 2;
 }
 
 message ListToolsetsRequest {
@@ -462,21 +544,6 @@ message ResolveToolsetResponse {
 	// Exact registration required when executing a call selected from this
 // definition.
 	optional string registration_token = 2;
-}
-// Complete toolset definition with all tool schemas
-message Toolset {
-	// Unique name for the toolset
-	optional string name = 1;
-	// Human-readable description
-	optional string description = 2;
-	// Semantic version of the toolset.
-	optional string version = 3;
-	// Tags for categorization
-	repeated string tags = 4;
-	// Tool schemas included in the toolset.
-	repeated ToolSchema tools = 5;
-	// ISO 8601 registration timestamp
-	optional string registered_at = 6;
 }
 
 message CheckAdmissionRequest {

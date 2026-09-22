@@ -109,10 +109,14 @@ import (
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	genregistryclient "goa.design/goa-ai/registry/gen/grpc/registry/client"
 	genregistryserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
+	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 )
 
 func TestRegistryDeclarations(t *testing.T) {
-	declarations := genlookup.ToolSchemas()
+	toolset := genlookup.Toolset()
+	assert.Equal(t, genscribe.LookupToolsetName, toolset.Name)
+	declarations := toolset.Tools
+	assert.Equal(t, genlookup.ToolSchemas(), declarations)
 	specs := genlookup.Specs()
 	require.Len(t, declarations, len(specs))
 	for i, declaration := range declarations {
@@ -155,6 +159,9 @@ func TestRegistryDeclarations(t *testing.T) {
 	assert.Equal(t, resolution, &restored)
 	fingerprint, err := genlookup.SchemaFingerprint(genscribe.LookupToolsetName)
 	require.NoError(t, err)
+	actualFingerprint, err := toolcontract.Fingerprint(toolset)
+	require.NoError(t, err)
+	assert.Equal(t, fingerprint, actualFingerprint)
 	fixture, err := json.Marshal(struct {
 		Declarations []*genregistry.ToolSchema
 		Fingerprint string
@@ -166,5 +173,6 @@ func TestRegistryDeclarations(t *testing.T) {
 	declarations[0].ConsumerContract.Search.Terms["changed"] = 100
 	assert.NotEqual(t, "changed", genlookup.ToolSchemas()[0].ConsumerContract.Title)
 	assert.NotContains(t, genlookup.ToolSchemas()[0].ConsumerContract.Search.Terms, "changed")
+	assert.NotEqual(t, "changed", genlookup.Toolset().Tools[0].ConsumerContract.Title)
 }
 `

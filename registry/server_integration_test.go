@@ -718,6 +718,8 @@ func startServiceAndClients(
 		grpcCli.DrainProvider(),
 		grpcCli.Unregister(),
 		grpcCli.Pong(),
+		grpcCli.RegisterAgentToolset(),
+		grpcCli.ReplaceAgentToolset(),
 		grpcCli.ListToolsets(),
 		grpcCli.GetToolset(),
 		grpcCli.ResolveToolset(),

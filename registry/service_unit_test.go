@@ -18,6 +18,7 @@ import (
 	genregistryserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
+	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 	goa "goa.design/goa/v3/pkg"
 	streamopts "goa.design/pulse/streaming/options"
 )
@@ -121,7 +122,7 @@ func registerPayloadWithSchemaFingerprint(payload *genregistry.RegisterPayload) 
 // schemaFingerprintForTest builds identities for known valid test declarations.
 // A malformed declaration is a test construction error, not a valid fingerprint.
 func schemaFingerprintForTest(toolset *genregistry.Toolset) string {
-	fingerprint, err := toolsetSchemaFingerprint(toolset)
+	fingerprint, err := toolcontract.Fingerprint(toolset)
 	if err != nil {
 		panic(err)
 	}

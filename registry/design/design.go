@@ -90,7 +90,7 @@ var _ = Service("registry", func() {
 	})
 
 	Method("Unregister", func() {
-		Description("Intentionally retire the exact active admission while preserving its provider leases until graceful release or expiry and atomically adding its token to the permanent retired-token set. Repeating the same-token retirement succeeds; a stale token returns admission_conflict. Retirement removes the toolset from discovery and routing and permanently prevents that exact token from registering again.")
+		Description("Retire the exact current registration and remove it from discovery. Repeating the same-token retirement succeeds; a stale token returns admission_conflict. For service tools, preserve provider leases until graceful release or expiry and permanently prevent that token from registering again. Native Agent declarations have no provider leases and can be reactivated through ReplaceAgentToolset; already accepted child calls retain their selected declaration.")
 		Payload(UnregisterPayload)
 		Error("admission_conflict")
 		Error("service_unavailable")
@@ -100,6 +100,32 @@ var _ = Service("registry", func() {
 	Method("Pong", func() {
 		Description("Atomically record shared consumer-group liveness for a token-and-membership-epoch health ping. The responding provider incarnation must hold an unexpired lease in that same catalog record.")
 		Payload(PongPayload)
+		GRPC(func() {})
+	})
+
+	Method("RegisterAgentToolset", func() {
+		Description("Create a native Agent toolset without a Pulse provider lease. Repeating the same active declaration succeeds. A different existing declaration returns admission_conflict; use ReplaceAgentToolset with its current token.")
+		Payload(AgentToolsetDeclaration)
+		Result(ResolvedToolset)
+		Error("admission_conflict")
+		Error("validation_error")
+		Error("service_unavailable")
+		GRPC(func() {})
+	})
+
+	Method("ReplaceAgentToolset", func() {
+		Description("Replace or reactivate a native Agent toolset only when the current registration matches expected_registration_token. Already accepted child calls retain their original declarations. New discovery returns the replacement.")
+		Payload(func() {
+			Extend(AgentToolsetDeclaration)
+			Field(100, "expected_registration_token", String, "Current native Agent registration being replaced.", func() {
+				Pattern(toolregistry.RegistrationTokenPattern)
+			})
+			Required("expected_registration_token")
+		})
+		Result(ResolvedToolset)
+		Error("admission_conflict")
+		Error("validation_error")
+		Error("service_unavailable")
 		GRPC(func() {})
 	})
 
@@ -321,12 +347,12 @@ var RegisterResult = Type("RegisterResult", func() {
 })
 
 var UnregisterPayload = Type("UnregisterPayload", func() {
-	Description("Generation-fenced payload for unregistering a toolset")
+	Description("Identify the exact current registration to retire.")
 	Field(1, "name", String, "Name of the toolset to unregister", func() {
 		MinLength(1)
 		Example("data-tools")
 	})
-	Field(2, "expected_registration_token", String, "Exact admission-generation token returned by Register for the stopped provider rollout", func() {
+	Field(2, "expected_registration_token", String, "Current token returned by Register, RegisterAgentToolset, ReplaceAgentToolset, or ResolveToolset.", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
 		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
@@ -780,3 +806,18 @@ func providerLeaseIdentityFields() {
 	})
 	Required("name", "provider_id", "expected_registration_token", "provider_incarnation_id")
 }
+
+// AgentToolsetDeclaration contains definitions only. The registry supplies the
+// registration timestamp and token after accepting the tools.
+var AgentToolsetDeclaration = Type("AgentToolsetDeclaration", func() {
+	Description("Named collection of native Agent tools and their immutable targets.")
+	Field(1, "name", String, "Unique toolset name.", func() {
+		MinLength(1)
+		Example("installation")
+	})
+	Field(2, "description", String, "Description of this toolset.")
+	Field(3, "version", SemVer, "Semantic version used by discovery filters.")
+	Field(4, "tags", ArrayOf(String), "Application categories used by discovery filters.")
+	Field(5, "tools", ArrayOf(ToolSchema), "Complete Agent tool declarations.", func() { MinLength(1) })
+	Required("name", "tools")
+})

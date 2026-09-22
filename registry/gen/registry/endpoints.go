@@ -21,6 +21,8 @@ type Endpoints struct {
 	DrainProvider          goa.Endpoint
 	Unregister             goa.Endpoint
 	Pong                   goa.Endpoint
+	RegisterAgentToolset   goa.Endpoint
+	ReplaceAgentToolset    goa.Endpoint
 	ListToolsets           goa.Endpoint
 	GetToolset             goa.Endpoint
 	ResolveToolset         goa.Endpoint
@@ -44,6 +46,8 @@ func NewEndpoints(s Service) *Endpoints {
 		DrainProvider:          NewDrainProviderEndpoint(s),
 		Unregister:             NewUnregisterEndpoint(s),
 		Pong:                   NewPongEndpoint(s),
+		RegisterAgentToolset:   NewRegisterAgentToolsetEndpoint(s),
+		ReplaceAgentToolset:    NewReplaceAgentToolsetEndpoint(s),
 		ListToolsets:           NewListToolsetsEndpoint(s),
 		GetToolset:             NewGetToolsetEndpoint(s),
 		ResolveToolset:         NewResolveToolsetEndpoint(s),
@@ -67,6 +71,8 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.DrainProvider = m(e.DrainProvider)
 	e.Unregister = m(e.Unregister)
 	e.Pong = m(e.Pong)
+	e.RegisterAgentToolset = m(e.RegisterAgentToolset)
+	e.ReplaceAgentToolset = m(e.ReplaceAgentToolset)
 	e.ListToolsets = m(e.ListToolsets)
 	e.GetToolset = m(e.GetToolset)
 	e.ResolveToolset = m(e.ResolveToolset)
@@ -132,6 +138,24 @@ func NewPongEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*PongPayload)
 		return nil, s.Pong(ctx, p)
+	}
+}
+
+// NewRegisterAgentToolsetEndpoint returns an endpoint function that calls the
+// method "RegisterAgentToolset" of service "registry".
+func NewRegisterAgentToolsetEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*AgentToolsetDeclaration)
+		return s.RegisterAgentToolset(ctx, p)
+	}
+}
+
+// NewReplaceAgentToolsetEndpoint returns an endpoint function that calls the
+// method "ReplaceAgentToolset" of service "registry".
+func NewReplaceAgentToolsetEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ReplaceAgentToolsetPayload)
+		return s.ReplaceAgentToolset(ctx, p)
 	}
 }
 

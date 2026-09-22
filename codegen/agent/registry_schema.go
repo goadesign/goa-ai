@@ -18,9 +18,12 @@ type (
 	// method owns only its optional strings, keeping compiler work bounded by
 	// one tool or field instead of the whole registry catalog.
 	registrySchemaFileData struct {
-		Schemas   []*registryLiteralFunction
-		Functions []*registryLiteralFunction
-		methods   map[any]string
+		Name        string
+		Description string
+		Tags        []string
+		Schemas     []*registryLiteralFunction
+		Functions   []*registryLiteralFunction
+		methods     map[any]string
 	}
 
 	registryLiteralFunction struct {
@@ -176,7 +179,11 @@ func registryOptionalString(value string) *string {
 // and individual fields. Smaller functions keep large catalogs practical to
 // compile without parsing schemas or interpreting metadata at provider startup.
 func toolRegistrySchemasFile(ts *ToolsetData, entries []*toolEntry) *codegen.File {
-	data := &registrySchemaFileData{methods: make(map[any]string)}
+	owner := ts.definition.Owner.Ref
+	data := &registrySchemaFileData{
+		Name: owner.QualifiedName, Description: owner.Description, Tags: owner.Tags,
+		methods: make(map[any]string),
+	}
 	for _, entry := range entries {
 		data.Schemas = append(data.Schemas, data.add("schema", entry.RegistrySchema))
 	}
@@ -189,6 +196,24 @@ func toolRegistrySchemasFile(ts *ToolsetData, entries []*toolEntry) *codegen.Fil
 			Name: "tool-registry-schemas",
 			Source: `// registryDeclarations groups private generated constructors. It holds no state.
  type registryDeclarations struct{}
+
+// Toolset returns the authored toolset declaration with fresh owned schemas.
+// The registry supplies RegisteredAt when accepting the declaration.
+func Toolset() *genregistry.Toolset {
+{{- if .Description }}
+    description := {{ printf "%q" .Description }}
+{{- end }}
+    return &genregistry.Toolset{
+        Name: {{ printf "%q" .Name }},
+{{- if .Description }}
+        Description: &description,
+{{- end }}
+{{- if .Tags }}
+        Tags: []string{ {{ range .Tags }}{{ printf "%q" . }},{{ end }} },
+{{- end }}
+        Tools: ToolSchemas(),
+    }
+}
 
 // ToolSchemas returns complete generated declarations with fresh owned values.
 func ToolSchemas() []*genregistry.ToolSchema {
