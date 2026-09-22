@@ -32,6 +32,8 @@ const (
 	Registry_DrainProvider_FullMethodName          = "/goa_ai_registry.Registry/DrainProvider"
 	Registry_Unregister_FullMethodName             = "/goa_ai_registry.Registry/Unregister"
 	Registry_Pong_FullMethodName                   = "/goa_ai_registry.Registry/Pong"
+	Registry_RegisterAgentToolset_FullMethodName   = "/goa_ai_registry.Registry/RegisterAgentToolset"
+	Registry_ReplaceAgentToolset_FullMethodName    = "/goa_ai_registry.Registry/ReplaceAgentToolset"
 	Registry_ListToolsets_FullMethodName           = "/goa_ai_registry.Registry/ListToolsets"
 	Registry_GetToolset_FullMethodName             = "/goa_ai_registry.Registry/GetToolset"
 	Registry_ResolveToolset_FullMethodName         = "/goa_ai_registry.Registry/ResolveToolset"
@@ -85,17 +87,27 @@ type RegistryClient interface {
 	// results, while new calls route only when another non-draining provider
 	// remains.
 	DrainProvider(ctx context.Context, in *DrainProviderRequest, opts ...grpc.CallOption) (*DrainProviderResponse, error)
-	// Intentionally retire the exact active admission while preserving its
-	// provider leases until graceful release or expiry and atomically adding its
-	// token to the permanent retired-token set. Repeating the same-token
-	// retirement succeeds; a stale token returns admission_conflict. Retirement
-	// removes the toolset from discovery and routing and permanently prevents that
-	// exact token from registering again.
+	// Retire the exact current registration and remove it from discovery.
+	// Repeating the same-token retirement succeeds; a stale token returns
+	// admission_conflict. For service tools, preserve provider leases until
+	// graceful release or expiry and permanently prevent that token from
+	// registering again. Native Agent declarations have no provider leases and can
+	// be reactivated through ReplaceAgentToolset; already accepted child calls
+	// retain their selected declaration.
 	Unregister(ctx context.Context, in *UnregisterRequest, opts ...grpc.CallOption) (*UnregisterResponse, error)
 	// Atomically record shared consumer-group liveness for a
 	// token-and-membership-epoch health ping. The responding provider incarnation
 	// must hold an unexpired lease in that same catalog record.
 	Pong(ctx context.Context, in *PongRequest, opts ...grpc.CallOption) (*PongResponse, error)
+	// Create a native Agent toolset without a Pulse provider lease. Repeating the
+	// same active declaration succeeds. A different existing declaration returns
+	// admission_conflict; use ReplaceAgentToolset with its current token.
+	RegisterAgentToolset(ctx context.Context, in *RegisterAgentToolsetRequest, opts ...grpc.CallOption) (*RegisterAgentToolsetResponse, error)
+	// Replace or reactivate a native Agent toolset only when the current
+	// registration matches expected_registration_token. Already accepted child
+	// calls retain their original declarations. New discovery returns the
+	// replacement.
+	ReplaceAgentToolset(ctx context.Context, in *ReplaceAgentToolsetRequest, opts ...grpc.CallOption) (*ReplaceAgentToolsetResponse, error)
 	// List all registered toolsets with optional tag filtering
 	ListToolsets(ctx context.Context, in *ListToolsetsRequest, opts ...grpc.CallOption) (*ListToolsetsResponse, error)
 	// Get a specific toolset by name including all tool schemas
@@ -238,6 +250,26 @@ func (c *registryClient) Pong(ctx context.Context, in *PongRequest, opts ...grpc
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(PongResponse)
 	err := c.cc.Invoke(ctx, Registry_Pong_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *registryClient) RegisterAgentToolset(ctx context.Context, in *RegisterAgentToolsetRequest, opts ...grpc.CallOption) (*RegisterAgentToolsetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterAgentToolsetResponse)
+	err := c.cc.Invoke(ctx, Registry_RegisterAgentToolset_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *registryClient) ReplaceAgentToolset(ctx context.Context, in *ReplaceAgentToolsetRequest, opts ...grpc.CallOption) (*ReplaceAgentToolsetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReplaceAgentToolsetResponse)
+	err := c.cc.Invoke(ctx, Registry_ReplaceAgentToolset_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -403,17 +435,27 @@ type RegistryServer interface {
 	// results, while new calls route only when another non-draining provider
 	// remains.
 	DrainProvider(context.Context, *DrainProviderRequest) (*DrainProviderResponse, error)
-	// Intentionally retire the exact active admission while preserving its
-	// provider leases until graceful release or expiry and atomically adding its
-	// token to the permanent retired-token set. Repeating the same-token
-	// retirement succeeds; a stale token returns admission_conflict. Retirement
-	// removes the toolset from discovery and routing and permanently prevents that
-	// exact token from registering again.
+	// Retire the exact current registration and remove it from discovery.
+	// Repeating the same-token retirement succeeds; a stale token returns
+	// admission_conflict. For service tools, preserve provider leases until
+	// graceful release or expiry and permanently prevent that token from
+	// registering again. Native Agent declarations have no provider leases and can
+	// be reactivated through ReplaceAgentToolset; already accepted child calls
+	// retain their selected declaration.
 	Unregister(context.Context, *UnregisterRequest) (*UnregisterResponse, error)
 	// Atomically record shared consumer-group liveness for a
 	// token-and-membership-epoch health ping. The responding provider incarnation
 	// must hold an unexpired lease in that same catalog record.
 	Pong(context.Context, *PongRequest) (*PongResponse, error)
+	// Create a native Agent toolset without a Pulse provider lease. Repeating the
+	// same active declaration succeeds. A different existing declaration returns
+	// admission_conflict; use ReplaceAgentToolset with its current token.
+	RegisterAgentToolset(context.Context, *RegisterAgentToolsetRequest) (*RegisterAgentToolsetResponse, error)
+	// Replace or reactivate a native Agent toolset only when the current
+	// registration matches expected_registration_token. Already accepted child
+	// calls retain their original declarations. New discovery returns the
+	// replacement.
+	ReplaceAgentToolset(context.Context, *ReplaceAgentToolsetRequest) (*ReplaceAgentToolsetResponse, error)
 	// List all registered toolsets with optional tag filtering
 	ListToolsets(context.Context, *ListToolsetsRequest) (*ListToolsetsResponse, error)
 	// Get a specific toolset by name including all tool schemas
@@ -519,6 +561,12 @@ func (UnimplementedRegistryServer) Unregister(context.Context, *UnregisterReques
 }
 func (UnimplementedRegistryServer) Pong(context.Context, *PongRequest) (*PongResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Pong not implemented")
+}
+func (UnimplementedRegistryServer) RegisterAgentToolset(context.Context, *RegisterAgentToolsetRequest) (*RegisterAgentToolsetResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RegisterAgentToolset not implemented")
+}
+func (UnimplementedRegistryServer) ReplaceAgentToolset(context.Context, *ReplaceAgentToolsetRequest) (*ReplaceAgentToolsetResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReplaceAgentToolset not implemented")
 }
 func (UnimplementedRegistryServer) ListToolsets(context.Context, *ListToolsetsRequest) (*ListToolsetsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListToolsets not implemented")
@@ -681,6 +729,42 @@ func _Registry_Pong_Handler(srv interface{}, ctx context.Context, dec func(inter
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RegistryServer).Pong(ctx, req.(*PongRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Registry_RegisterAgentToolset_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterAgentToolsetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).RegisterAgentToolset(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Registry_RegisterAgentToolset_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).RegisterAgentToolset(ctx, req.(*RegisterAgentToolsetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Registry_ReplaceAgentToolset_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplaceAgentToolsetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).ReplaceAgentToolset(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Registry_ReplaceAgentToolset_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).ReplaceAgentToolset(ctx, req.(*ReplaceAgentToolsetRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -931,6 +1015,14 @@ var Registry_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "Pong",
 			Handler:    _Registry_Pong_Handler,
+		},
+		{
+			MethodName: "RegisterAgentToolset",
+			Handler:    _Registry_RegisterAgentToolset_Handler,
+		},
+		{
+			MethodName: "ReplaceAgentToolset",
+			Handler:    _Registry_ReplaceAgentToolset_Handler,
 		},
 		{
 			MethodName: "ListToolsets",

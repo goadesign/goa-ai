@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
+	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 )
 
 const (
@@ -180,7 +181,7 @@ func TestCatalogReleasePrunesExpiredRoutableEpochOnce(t *testing.T) {
 func TestAdmissionTokenBindsWireProtocolVersion(t *testing.T) {
 	t.Parallel()
 
-	fingerprint, err := toolsetSchemaFingerprint(testCatalogToolset("test.toolset", "test", nil))
+	fingerprint, err := toolcontract.Fingerprint(testCatalogToolset("test.toolset", "test", nil))
 	require.NoError(t, err)
 	current, err := admissionRegistrationToken(
 		fingerprint,
@@ -222,9 +223,9 @@ func TestSchemaFingerprintBindsExecutionPayloadSchema(t *testing.T) {
 		}},
 	}
 
-	firstFingerprint, err := toolsetSchemaFingerprint(first)
+	firstFingerprint, err := toolcontract.Fingerprint(first)
 	require.NoError(t, err)
-	secondFingerprint, err := toolsetSchemaFingerprint(second)
+	secondFingerprint, err := toolcontract.Fingerprint(second)
 	require.NoError(t, err)
 	assert.NotEqual(t, firstFingerprint, secondFingerprint)
 }
@@ -712,7 +713,7 @@ func testCatalogDefinition(t testing.TB, toolset *genregistry.Toolset) *catalogT
 	t.Helper()
 	validator := newSchemaValidator()
 	require.NoError(t, validator.ValidateToolSchemas(toolset.Tools))
-	fingerprint, err := toolsetSchemaFingerprint(toolset)
+	fingerprint, err := toolcontract.Fingerprint(toolset)
 	require.NoError(t, err)
 	definition, err := newCatalogToolset(toolset, fingerprint, validator)
 	require.NoError(t, err)

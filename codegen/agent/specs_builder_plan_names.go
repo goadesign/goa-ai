@@ -19,7 +19,7 @@ func (p *toolSpecsPackagePlan) declareToolPackageNames() error {
 			"Specs", "Names", "Spec", "PayloadSchema", "ResultSchema", "Metadata", "MetadataByName",
 			"RequiredLabels", "PayloadCodec", "ResultCodec", "cloneStringMap", "newValidationError",
 			"generatedJSONChildPath", "dottedJSONPathPointer", "escapeJSONPointerToken", "decodedJSONType",
-			"generatedUnmarshalJSONType", "SchemaFingerprint", "RegistrationToken", "ToolSchemas",
+			"generatedUnmarshalJSONType", "SchemaFingerprint", "RegistrationToken", "ToolSchemas", "Toolset",
 			"invalidGeneratedFieldTypeError", "unknownJSONFieldError",
 		},
 	})

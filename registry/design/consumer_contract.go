@@ -7,7 +7,7 @@ import . "goa.design/goa/v3/dsl"
 
 var ConsumerContract = Type("ConsumerContract", func() {
 	Description("Generated execution and presentation facts for one registry tool. The registry includes this complete value in the registration fingerprint.")
-	Field(1, "kind", String, "Execution kind fixed by the provider design. Dynamic consumers support service tools; agent and control tools require compiled runtime integration.", func() {
+	Field(1, "kind", String, "Execution kind fixed by the provider design. Dynamic consumers support service tools and agent tools with a declared executor and configuration. Control tools require compiled runtime integration.", func() {
 		Enum("service", "agent", "control")
 		Example("service")
 	})
@@ -24,6 +24,9 @@ var ConsumerContract = Type("ConsumerContract", func() {
 	Field(9, "confirmation", ToolConfirmation, "Required user confirmation before this tool may execute.")
 	Field(10, "server_data", ArrayOf(ToolServerData), "Closed set of server-only result payloads emitted by this tool.")
 	Field(11, "result_reminder", String, "Model guidance emitted after this tool's result.")
+	Field(12, "agent", AgentToolTarget, "Worker and immutable application configuration used by a dynamically registered Agent tool.", func() {
+		Meta("struct:tag:json", "Agent,omitempty")
+	})
 	Required("kind", "title", "search", "payload")
 })
 
@@ -120,4 +123,17 @@ var ToolServerData = Type("ToolServerData", func() {
 	Field(4, "schema", Bytes, "Canonical JSON schema for the item data.", func() { MinLength(1) })
 	Field(5, "type", ToolTypeMetadata, "Generated examples and field details for the item data.")
 	Required("kind", "audience", "schema", "type")
+})
+
+var AgentToolTarget = Type("AgentToolTarget", func() {
+	Description("A native child Agent invocation. The worker is authorized at startup; the application owns the immutable configuration reference.")
+	Field(1, "executor", String, "Identifier of the preconfigured Agent worker that accepts this configuration.", func() {
+		MinLength(1)
+		Example("aura.chat")
+	})
+	Field(2, "configuration", String, "Immutable application configuration reference retained with each accepted tool call.", func() {
+		MinLength(1)
+		Example("installer/revisions/7")
+	})
+	Required("executor", "configuration")
 })

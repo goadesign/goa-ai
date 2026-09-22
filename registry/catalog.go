@@ -7,7 +7,6 @@ package registry
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -26,6 +25,7 @@ type (
 	// catalogState contains only the facts used by discovery, health, and
 	// provider lifecycle operations. Tool definitions never enter this JSON.
 	catalogState struct {
+		NativeAgent         bool                     `json:"native_agent,omitempty"`
 		State               catalogEntryState        `json:"state"`
 		Info                *genregistry.ToolsetInfo `json:"info"`
 		SchemaFingerprint   string                   `json:"schema_fingerprint"`
@@ -180,6 +180,9 @@ func (c *toolsetCatalog) Register(ctx context.Context, definition *catalogToolse
 			existing, err = parseCatalogState(name, raw)
 			if err != nil {
 				return catalogState{}, err
+			}
+			if existing.NativeAgent {
+				return catalogState{}, fmt.Errorf("%w: %q is a native Agent toolset", errAdmissionBlocked, name)
 			}
 			// Inspect draining before pruning: full registration must never
 			// reopen an incarnation whose accepted work is settling.
@@ -464,7 +467,11 @@ func (c *toolsetCatalog) Retire(ctx context.Context, name, expectedToken string)
 			return nil
 		}
 		entry.State = catalogEntryRetired
-		updated, err := c.commit(ctx, key, raw, entry, catalogWrite{RetireToken: entry.RegistrationToken})
+		write := catalogWrite{}
+		if !entry.NativeAgent {
+			write.RetireToken = entry.RegistrationToken
+		}
+		updated, err := c.commit(ctx, key, raw, entry, write)
 		if err != nil {
 			return err
 		}
@@ -683,7 +690,7 @@ func (c *toolsetCatalog) healthEntry(ctx context.Context, name string) (catalogS
 		if err != nil {
 			return catalogState{}, time.Time{}, err
 		}
-		if entry.State != catalogEntryActive {
+		if entry.State != catalogEntryActive || entry.NativeAgent {
 			return catalogState{}, time.Time{}, errToolsetNotFound
 		}
 		now, err := c.clock.Now(ctx)
@@ -902,43 +909,6 @@ func parseProviderLeaseKey(key string) (string, string, error) {
 		return "", "", fmt.Errorf("invalid provider incarnation ID: %w", err)
 	}
 	return providerID, incarnationID, nil
-}
-
-// toolsetSchemaFingerprint returns the canonical schema identity.
-func toolsetSchemaFingerprint(toolset *genregistry.Toolset) (string, error) {
-	tools := make([]internaladmission.ToolSchema, len(toolset.Tools))
-	for i, tool := range toolset.Tools {
-		var consumerContract []byte
-		if tool.ConsumerContract != nil {
-			var err error
-			consumerContract, err = json.Marshal(tool.ConsumerContract)
-			if err != nil {
-				return "", fmt.Errorf("encode tool %q consumer contract: %w", tool.Name, err)
-			}
-		}
-		tools[i] = internaladmission.ToolSchema{
-			Name:                   tool.Name,
-			Description:            tool.Description,
-			Tags:                   tool.Tags,
-			PayloadSchema:          tool.PayloadSchema,
-			ExecutionPayloadSchema: tool.ExecutionPayloadSchema,
-			ResultSchema:           tool.ResultSchema,
-			SidecarSchema:          tool.SidecarSchema,
-			ConsumerContract:       consumerContract,
-		}
-	}
-	var version *string
-	if toolset.Version != nil {
-		value := string(*toolset.Version)
-		version = &value
-	}
-	return internaladmission.SchemaFingerprint(internaladmission.Schema{
-		Name:        toolset.Name,
-		Description: toolset.Description,
-		Version:     version,
-		Tags:        toolset.Tags,
-		Tools:       tools,
-	}), nil
 }
 
 // admissionRegistrationToken derives the wire-visible execution fence from the

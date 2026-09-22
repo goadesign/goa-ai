@@ -21,6 +21,8 @@ type Client struct {
 	DrainProviderEndpoint          goa.Endpoint
 	UnregisterEndpoint             goa.Endpoint
 	PongEndpoint                   goa.Endpoint
+	RegisterAgentToolsetEndpoint   goa.Endpoint
+	ReplaceAgentToolsetEndpoint    goa.Endpoint
 	ListToolsetsEndpoint           goa.Endpoint
 	GetToolsetEndpoint             goa.Endpoint
 	ResolveToolsetEndpoint         goa.Endpoint
@@ -36,7 +38,7 @@ type Client struct {
 }
 
 // NewClient initializes a "registry" service client given the endpoints.
-func NewClient(register, renewProvider, releaseProvider, drainProvider, unregister, pong, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
+func NewClient(register, renewProvider, releaseProvider, drainProvider, unregister, pong, registerAgentToolset, replaceAgentToolset, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
 	return &Client{
 		RegisterEndpoint:               register,
 		RenewProviderEndpoint:          renewProvider,
@@ -44,6 +46,8 @@ func NewClient(register, renewProvider, releaseProvider, drainProvider, unregist
 		DrainProviderEndpoint:          drainProvider,
 		UnregisterEndpoint:             unregister,
 		PongEndpoint:                   pong,
+		RegisterAgentToolsetEndpoint:   registerAgentToolset,
+		ReplaceAgentToolsetEndpoint:    replaceAgentToolset,
 		ListToolsetsEndpoint:           listToolsets,
 		GetToolsetEndpoint:             getToolset,
 		ResolveToolsetEndpoint:         resolveToolset,
@@ -123,6 +127,38 @@ func (c *Client) Unregister(ctx context.Context, p *UnregisterPayload) (err erro
 func (c *Client) Pong(ctx context.Context, p *PongPayload) (err error) {
 	_, err = c.PongEndpoint(ctx, p)
 	return
+}
+
+// RegisterAgentToolset calls the "RegisterAgentToolset" endpoint of the
+// "registry" service.
+// RegisterAgentToolset may return the following errors:
+//   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) RegisterAgentToolset(ctx context.Context, p *AgentToolsetDeclaration) (res *ResolvedToolset, err error) {
+	var ires any
+	ires, err = c.RegisterAgentToolsetEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ResolvedToolset), nil
+}
+
+// ReplaceAgentToolset calls the "ReplaceAgentToolset" endpoint of the
+// "registry" service.
+// ReplaceAgentToolset may return the following errors:
+//   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) ReplaceAgentToolset(ctx context.Context, p *ReplaceAgentToolsetPayload) (res *ResolvedToolset, err error) {
+	var ires any
+	ires, err = c.ReplaceAgentToolsetEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ResolvedToolset), nil
 }
 
 // ListToolsets calls the "ListToolsets" endpoint of the "registry" service.

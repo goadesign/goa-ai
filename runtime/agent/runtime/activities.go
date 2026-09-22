@@ -42,6 +42,7 @@ type plannerActivityInvocation struct {
 	runContext           run.Context
 	publicationBatchID   string
 	catalog              *RegistryCatalog
+	parentTool           *tools.ToolSpec
 	// originalFailure remains available to the application tracer after a
 	// rejected planner result becomes a successful activity transport value.
 	originalFailure error
@@ -85,6 +86,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 		return nil, err
 	}
 	planInput := &planner.PlanInput{
+		ParentTool: cloneParentTool(act.parentTool),
 		Messages:   input.Messages,
 		RunContext: input.RunContext,
 		Agent:      act.agentCtx,
@@ -96,7 +98,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 	if err != nil {
 		return act.failureOutput(ctx, err)
 	}
-	if err := validatePlannerActivityResult(r, act.catalog.spec, result, input.RunContext.Tool, false); err != nil {
+	if err := validatePlannerActivityResult(r, act.catalog.spec, result, act.parentTool, false); err != nil {
 		return act.failureOutput(ctx, err)
 	}
 	if err := validatePlannerToolCatalogs(result, act.agentCtx.AdvertisedToolDefinitions(), act.plannerAuthoredTools); err != nil {
@@ -270,6 +272,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 		}
 	}
 	planInput := &planner.PlanResumeInput{
+		ParentTool:    cloneParentTool(act.parentTool),
 		Messages:      input.Messages,
 		RunContext:    input.RunContext,
 		Agent:         act.agentCtx,
@@ -284,7 +287,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	if err != nil {
 		return act.failureOutput(ctx, err)
 	}
-	if err := validatePlannerActivityResult(r, act.catalog.spec, result, input.RunContext.Tool, synthesisOnly); err != nil {
+	if err := validatePlannerActivityResult(r, act.catalog.spec, result, act.parentTool, synthesisOnly); err != nil {
 		return act.failureOutput(ctx, err)
 	}
 	if err := validatePlannerToolCatalogs(result, act.agentCtx.AdvertisedToolDefinitions(), act.plannerAuthoredTools); err != nil {
@@ -515,6 +518,10 @@ func (r *Runtime) preparePlannerActivity(
 	unavailableTools []tools.Ident,
 	advertisedSpecs []tools.ToolSpec,
 ) (*plannerActivityInvocation, error) {
+	parentTool, err := selectedParentTool(input.RunContext.Tool, input.RunContext.ToolRegistry, input.AgentID, r.toolSpec)
+	if err != nil {
+		return nil, err
+	}
 	if advertisedSpecs == nil {
 		advertisedSpecs = r.ToolSpecsForAgent(input.AgentID)
 	} else {
@@ -582,6 +589,7 @@ func (r *Runtime) preparePlannerActivity(
 		runContext:           input.RunContext,
 		publicationBatchID:   publicationBatchID,
 		catalog:              catalog,
+		parentTool:           parentTool,
 	}, nil
 }
 
@@ -595,7 +603,7 @@ func (a *plannerActivityInvocation) output(
 	synthesisOnly bool,
 	continuationActions []continuationAction,
 ) (*PlanActivityOutput, error) {
-	if err := validatePlannerActivityResult(r, a.catalog.spec, result, a.runContext.Tool, synthesisOnly); err != nil {
+	if err := validatePlannerActivityResult(r, a.catalog.spec, result, a.parentTool, synthesisOnly); err != nil {
 		return nil, err
 	}
 	transcript, err := a.invocations.exportModelInvocation(result)
@@ -963,8 +971,14 @@ func (a *plannerActivityInvocation) planningError(err error) error {
 // cannot execute or save. Live model text may already have reached the trusted
 // host, but this check prevents invalid tool calls or transcript messages from
 // changing durable state.
-func validatePlannerActivityResult(r *Runtime, lookup toolSpecLookup, result *planner.PlanResult, parentTool tools.Ident, synthesisOnly bool) error {
-	if err := r.validatePlannerResultPayloads(result, parentTool); err != nil {
+func validatePlannerActivityResult(r *Runtime, lookup toolSpecLookup, result *planner.PlanResult, parentTool *tools.ToolSpec, synthesisOnly bool) error {
+	var parentName tools.Ident
+	parentLookup := lookup
+	if parentTool != nil {
+		parentName = parentTool.Name
+		parentLookup = func(name tools.Ident) (tools.ToolSpec, bool) { return *parentTool, name == parentName }
+	}
+	if err := validatePlannerResultPayloadsWithSpecs(result, parentName, parentLookup); err != nil {
 		return planner.NewOutputContractError(err)
 	}
 	if err := validatePlannerToolCallIDs(result); err != nil {

@@ -186,6 +186,82 @@ func EncodePongRequest(ctx context.Context, v any, md *metadata.MD) (any, error)
 	return NewProtoPongRequest(payload), nil
 }
 
+// BuildRegisterAgentToolsetFunc builds the remote method to invoke for
+// "registry" service "RegisterAgentToolset" endpoint.
+func BuildRegisterAgentToolsetFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.RegisterAgentToolset(ctx, reqpb.(*registrypb.RegisterAgentToolsetRequest), opts...)
+		}
+		return grpccli.RegisterAgentToolset(ctx, &registrypb.RegisterAgentToolsetRequest{}, opts...)
+	}
+}
+
+// EncodeRegisterAgentToolsetRequest encodes requests sent to registry
+// RegisterAgentToolset endpoint.
+func EncodeRegisterAgentToolsetRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.AgentToolsetDeclaration)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RegisterAgentToolset", "*registry.AgentToolsetDeclaration", v)
+	}
+	return NewProtoRegisterAgentToolsetRequest(payload), nil
+}
+
+// DecodeRegisterAgentToolsetResponse decodes responses from the registry
+// RegisterAgentToolset endpoint.
+func DecodeRegisterAgentToolsetResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.RegisterAgentToolsetResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RegisterAgentToolset", "*registrypb.RegisterAgentToolsetResponse", v)
+	}
+	if err := ValidateRegisterAgentToolsetResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewRegisterAgentToolsetResult(message)
+	return res, nil
+}
+
+// BuildReplaceAgentToolsetFunc builds the remote method to invoke for
+// "registry" service "ReplaceAgentToolset" endpoint.
+func BuildReplaceAgentToolsetFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.ReplaceAgentToolset(ctx, reqpb.(*registrypb.ReplaceAgentToolsetRequest), opts...)
+		}
+		return grpccli.ReplaceAgentToolset(ctx, &registrypb.ReplaceAgentToolsetRequest{}, opts...)
+	}
+}
+
+// EncodeReplaceAgentToolsetRequest encodes requests sent to registry
+// ReplaceAgentToolset endpoint.
+func EncodeReplaceAgentToolsetRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.ReplaceAgentToolsetPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ReplaceAgentToolset", "*registry.ReplaceAgentToolsetPayload", v)
+	}
+	return NewProtoReplaceAgentToolsetRequest(payload), nil
+}
+
+// DecodeReplaceAgentToolsetResponse decodes responses from the registry
+// ReplaceAgentToolset endpoint.
+func DecodeReplaceAgentToolsetResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.ReplaceAgentToolsetResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ReplaceAgentToolset", "*registrypb.ReplaceAgentToolsetResponse", v)
+	}
+	if err := ValidateReplaceAgentToolsetResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewReplaceAgentToolsetResult(message)
+	return res, nil
+}
+
 // BuildListToolsetsFunc builds the remote method to invoke for "registry"
 // service "ListToolsets" endpoint.
 func BuildListToolsetsFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {

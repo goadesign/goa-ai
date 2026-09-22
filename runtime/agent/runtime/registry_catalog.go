@@ -16,14 +16,16 @@ import (
 	pulsec "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/internal/registrycontract"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
-	// RegistryTools is generated from an agent's registry consumption.
-	// Its methods contain the exact source reads and permission checks known
-	// at generation time. Applications supply registry connections separately.
+	// RegistryTools defines an agent's registry consumption.
+	// Generated implementations use sources known at generation time. Application
+	// implementations may use RegistryCatalog.RunLabels for per-run selection.
+	// Applications supply registry connections separately.
 	RegistryTools interface {
 		// Resolve adds the declared sources to one activity's catalog.
 		Resolve(context.Context, *RegistryCatalog) error
@@ -37,6 +39,8 @@ type (
 	// lifetime and applies run policy before exposing any definition.
 	RegistryCatalog struct {
 		runtime     *Runtime
+		definition  AgentDefinition
+		runLabels   map[string]string
 		sources     RegistryTools
 		specs       map[tools.Ident]tools.ToolSpec
 		definitions map[tools.Ident]*model.ToolDefinition
@@ -133,6 +137,11 @@ func (c *RegistryCatalog) IncludeToolset(ctx context.Context, registry, name, ve
 			return fmt.Errorf("registry %q toolset %q repeats tool %q already supplied to this agent", registry, name, tool)
 		}
 		spec := resolved.Specs[tool]
+		if spec.IsAgentTool {
+			if _, allowed := c.definition.agents[agent.Ident(spec.AgentID)]; !allowed {
+				return fmt.Errorf("registry tool %q targets unconfigured Agent executor %q", tool, spec.AgentID)
+			}
+		}
 		if IsGeneratedContinuationToolName(tool) {
 			return fmt.Errorf("registry tool %q uses a reserved continuation name", tool)
 		}
@@ -206,7 +215,14 @@ func (r *Runtime) planningCatalog(ctx context.Context, input *PlanActivityInput)
 	if input.Finalize != nil || input.SynthesisOnly {
 		return r.newRegistryCatalog(registration.Definition), nil
 	}
-	return r.resolveRegistryCatalog(ctx, registration.Definition)
+	catalog := r.newRegistryCatalog(registration.Definition)
+	catalog.runLabels = cloneLabels(input.RunContext.Labels)
+	if registration.Definition.registryTools != nil {
+		if err := registration.Definition.registryTools.Resolve(ctx, catalog); err != nil {
+			return nil, err
+		}
+	}
+	return catalog, nil
 }
 
 // newRegistryCatalog owns a copy of compiled model definitions for this
@@ -216,7 +232,7 @@ func (r *Runtime) newRegistryCatalog(definition AgentDefinition) *RegistryCatalo
 	definitions := maps.Clone(r.toolDefinitions)
 	r.mu.RUnlock()
 	return &RegistryCatalog{
-		runtime: r, sources: definition.registryTools,
+		runtime: r, sources: definition.registryTools, definition: definition,
 		specs:       maps.Clone(definition.specByName),
 		definitions: definitions,
 		selections:  make(map[tools.Ident]registrySelection),
@@ -231,4 +247,11 @@ func (c *RegistryCatalog) spec(name tools.Ident) (tools.ToolSpec, bool) {
 		return spec, true
 	}
 	return c.runtime.toolSpec(name)
+}
+
+// RunLabels returns a copy of the trusted labels for this planning activity.
+// Applications may use them to select product-specific registry sources; model
+// arguments do not provide these labels or authorize catalog membership.
+func (c *RegistryCatalog) RunLabels() map[string]string {
+	return cloneLabels(c.runLabels)
 }

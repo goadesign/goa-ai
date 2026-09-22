@@ -3065,6 +3065,14 @@ helpers separately.
 Agents can expose tools via `Export` blocks and consume them via `Use`. When invoked,
 nested agents execute as child workflows with their own run IDs and event streams.
 
+Applications can also [register native Agent tools dynamically](tool_search.md#register-agent-tools).
+These declarations select a preconfigured worker and immutable application
+configuration. They use the same child workflow lifecycle. The linked guide owns
+registration, configuration resolution, typed results, and upgrade requirements.
+A child continuation sends only its new run identity, saved suspension, and
+response; messages, labels, policy, and the selected parent contract come from
+that checkpoint.
+
 ### How It Works
 
 1. Parent planner requests tool (e.g., `"service.analysis.analyze"`)

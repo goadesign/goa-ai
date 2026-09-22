@@ -133,11 +133,12 @@ type (
 		// model spans when enabled via WithCaptureGenAIMessages.
 		captureGenAIMessages bool
 
-		mu         sync.RWMutex
-		agents     map[agent.Ident]AgentRegistration
-		toolsets   map[string]ToolsetRegistration
-		toolSpecs  map[tools.Ident]tools.ToolSpec
-		registries map[string]registryConnection
+		mu                 sync.RWMutex
+		agents             map[agent.Ident]AgentRegistration
+		toolsets           map[string]ToolsetRegistration
+		toolSpecs          map[tools.Ident]tools.ToolSpec
+		registries         map[string]registryConnection
+		agentToolResolvers map[agent.Ident]AgentToolResolver
 		// toolDefinitions stores the input schema validator compiled when each
 		// tool specification is first registered.
 		toolDefinitions map[tools.Ident]*model.ToolDefinition
@@ -1643,6 +1644,8 @@ func agentChildRunInput(definition AgentDefinition, request agentChildRequest) (
 		ParentAgentID:    nested.ParentAgentID,
 		Tool:             nested.Tool,
 		ToolArgs:         nested.ToolArgs,
+		ToolRegistry:     nested.ToolRegistry.Clone(),
+		Policy:           clonePolicyOverrides(request.policy),
 		Messages:         request.messages,
 		RenderedPrompts:  clonePromptRenderEvents(request.renderedPrompts),
 		Labels:           nested.Labels,

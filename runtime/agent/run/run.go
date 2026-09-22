@@ -96,6 +96,10 @@ type (
 		// reparsing free-form messages.
 		ToolArgs rawjson.Message
 
+		// ToolRegistry retains the parent call's selected registry declaration.
+		// It is absent for top-level runs and compiled Agent tools.
+		ToolRegistry *tools.RegistryBinding `json:",omitempty"` //nolint:tagliatelle // Persisted records retain Go field names.
+
 		// Attempt counts how many times the run has been attempted/resumed.
 		Attempt int
 

@@ -58,6 +58,7 @@ type (
 	// agentChildRequest contains the complete immutable input assembled before a
 	// child workflow starts, including prompt versions used in its messages.
 	agentChildRequest struct {
+		policy          *api.PolicyOverrides
 		messages        []*model.Message
 		runContext      run.Context
 		renderedPrompts []prompt.RenderEvent
@@ -505,6 +506,7 @@ func agentChildRunContext(call *ToolCall) run.Context {
 		ParentRunID:      call.RunID,
 		ParentAgentID:    call.AgentID,
 		ToolArgs:         append(rawjson.Message(nil), call.Payload...),
+		ToolRegistry:     call.Registry.Clone(),
 		Labels:           cloneLabels(call.Labels),
 	}
 }
@@ -598,6 +600,9 @@ func (r *Runtime) adaptAgentChildOutput(cfg *AgentToolConfig, call *ToolCall, ne
 		return tr, nil
 	}
 
+	if call.Registry != nil {
+		return nil, fmt.Errorf("native Agent tool %q completed without its typed result", call.Name)
+	}
 	result, err := ConvertRunOutputToToolResult(call.Name, outPtr)
 	if err != nil {
 		return nil, err
@@ -618,7 +623,10 @@ func (r *Runtime) decodeAgentChildFinalToolResult(call *ToolCall, event *api.Too
 	if event == nil {
 		return nil, fmt.Errorf("agent-tool final result for %s: event is nil", call.Name)
 	}
-	spec, ok := r.toolSpec(call.Name)
+	spec, ok, err := lookupCallSpec(*call, r.toolSpec)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, fmt.Errorf("agent-tool final result references unregistered tool %q", call.Name)
 	}

@@ -12,6 +12,15 @@ import genregistry "goa.design/goa-ai/registry/gen/registry"
 // registryDeclarations groups private generated constructors. It holds no state.
 type registryDeclarations struct{}
 
+// Toolset returns the authored toolset declaration with fresh owned schemas.
+// The registry supplies RegisteredAt when accepting the declaration.
+func Toolset() *genregistry.Toolset {
+	return &genregistry.Toolset{
+		Name:  "orchestrator.helpers",
+		Tools: ToolSchemas(),
+	}
+}
+
 // ToolSchemas returns complete generated declarations with fresh owned values.
 func ToolSchemas() []*genregistry.ToolSchema {
 	declarations := registryDeclarations{}

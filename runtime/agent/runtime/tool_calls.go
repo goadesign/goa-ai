@@ -436,7 +436,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		}
 
 		queue := ""
-		if call.Registry != nil || hasTS && !ts.Inline {
+		if !spec.IsAgentTool && (call.Registry != nil || hasTS && !ts.Inline) {
 			queue = e.toolActOptions.Queue
 			if queue == "" {
 				queue = ts.TaskQueue
@@ -454,62 +454,65 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		state.published = true
 		b.scheduleByID[call.ToolCallID] = state
 
-		// Inline toolsets execute within the workflow loop. Their generated codec
-		// validates the exact planner-authored payload before typed mapping.
-		if hasTS && ts.Inline {
-			// Agent-as-tool: start child workflows concurrently and fan in results later.
-			if spec.IsAgentTool {
-				request, err := e.r.prepareAgentChild(wfCtx, call, e.messages, *e.runCtx)
-				if err != nil {
-					tr, err := agentToolRequestFailureResult(call, err)
-					if err != nil {
-						executionErr = errors.Join(executionErr, err)
-						continue
-					}
-					if err := canonicalizeAndValidateWorkflowToolResult(spec, call, tr); err != nil {
-						executionErr = errors.Join(executionErr, err)
-						continue
-					}
-					result := Executed(tr)
-					b.inlineByID[call.ToolCallID] = result
-					result.resultRecord, err = e.publishToolResultReceived(ctx, call, tr, nil, 0)
-					if err != nil {
-						executionErr = errors.Join(executionErr, err)
-					} else {
-						b.inlineByID[call.ToolCallID].resultPublished = true
-					}
-					if e.parentTracker != nil {
-						b.discoveredIDs = append(b.discoveredIDs, call.ToolCallID)
-					}
-					continue
-				}
-				input, err := agentChildRunInput(ts.AgentTool.Definition, request)
+		if spec.IsAgentTool {
+			cfg, err := e.r.selectedAgentToolConfig(call)
+			if err != nil {
+				executionErr = errors.Join(executionErr, err)
+				continue
+			}
+			request, err := e.r.prepareAgentChild(wfCtx, call, e.messages, *e.runCtx)
+			if err != nil {
+				tr, err := agentToolRequestFailureResult(call, err)
 				if err != nil {
 					executionErr = errors.Join(executionErr, err)
 					continue
 				}
-				route := ts.AgentTool.Definition.route
-				handle, err := wfCtx.StartChildWorkflow(wfCtx.Context(), engine.ChildWorkflowRequest{ID: input.RunID, Workflow: route.WorkflowName, TaskQueue: route.DefaultTaskQueue, Input: input})
-				if err != nil {
-					executionErr = errors.Join(
-						executionErr,
-						fmt.Errorf("failed to start agent child workflow for %s: %w", call.Name, err),
-					)
+				if err := canonicalizeAndValidateWorkflowToolResult(spec, call, tr); err != nil {
+					executionErr = errors.Join(executionErr, err)
 					continue
 				}
-				b.childFutures = append(b.childFutures, agentChildFutureInfo{
-					handle:    handle,
-					call:      call,
-					cfg:       ts.AgentTool,
-					nestedRun: request.runContext,
-					startTime: wfCtx.Now(),
-				})
+				result := Executed(tr)
+				b.inlineByID[call.ToolCallID] = result
+				result.resultRecord, err = e.publishToolResultReceived(ctx, call, tr, nil, 0)
+				if err != nil {
+					executionErr = errors.Join(executionErr, err)
+				} else {
+					b.inlineByID[call.ToolCallID].resultPublished = true
+				}
 				if e.parentTracker != nil {
 					b.discoveredIDs = append(b.discoveredIDs, call.ToolCallID)
 				}
 				continue
 			}
+			input, err := agentChildRunInput(cfg.Definition, request)
+			if err != nil {
+				executionErr = errors.Join(executionErr, err)
+				continue
+			}
+			route := cfg.Definition.route
+			handle, err := wfCtx.StartChildWorkflow(wfCtx.Context(), engine.ChildWorkflowRequest{ID: input.RunID, Workflow: route.WorkflowName, TaskQueue: route.DefaultTaskQueue, Input: input})
+			if err != nil {
+				executionErr = errors.Join(
+					executionErr,
+					fmt.Errorf("failed to start agent child workflow for %s: %w", call.Name, err),
+				)
+				continue
+			}
+			b.childFutures = append(b.childFutures, agentChildFutureInfo{
+				handle:    handle,
+				call:      call,
+				cfg:       cfg,
+				nestedRun: request.runContext,
+				startTime: wfCtx.Now(),
+			})
+			if e.parentTracker != nil {
+				b.discoveredIDs = append(b.discoveredIDs, call.ToolCallID)
+			}
+			continue
+		}
 
+		// Inline service tools execute within the workflow loop.
+		if hasTS && ts.Inline {
 			start := wfCtx.Now()
 			ctxInline := engine.WithWorkflowContext(ctx, wfCtx)
 			executorCall := cloneToolCall(call)
@@ -803,17 +806,6 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 			result := Executed(tr)
 			result.duration = duration
 			out[info.call.ToolCallID] = result
-			_, ok := e.r.toolSpec(info.call.Name)
-			if !ok {
-				result, synthErr := e.synthesizeUnknownToolResult(ctx, info.call, duration)
-				if result != nil {
-					out[info.call.ToolCallID] = result
-				}
-				if synthErr != nil {
-					executionErr = errors.Join(executionErr, synthErr)
-				}
-				continue
-			}
 			resultJSON, err := e.r.materializeToolResult(ctx, info.call, tr)
 			if err != nil {
 				executionErr = errors.Join(executionErr, err)

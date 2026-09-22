@@ -26,6 +26,8 @@ type Server struct {
 	DrainProviderH          goagrpc.UnaryHandler
 	UnregisterH             goagrpc.UnaryHandler
 	PongH                   goagrpc.UnaryHandler
+	RegisterAgentToolsetH   goagrpc.UnaryHandler
+	ReplaceAgentToolsetH    goagrpc.UnaryHandler
 	ListToolsetsH           goagrpc.UnaryHandler
 	GetToolsetH             goagrpc.UnaryHandler
 	ResolveToolsetH         goagrpc.UnaryHandler
@@ -50,6 +52,8 @@ func New(e *registry.Endpoints, uh goagrpc.UnaryHandler) *Server {
 		DrainProviderH:          NewDrainProviderHandler(e.DrainProvider, uh),
 		UnregisterH:             NewUnregisterHandler(e.Unregister, uh),
 		PongH:                   NewPongHandler(e.Pong, uh),
+		RegisterAgentToolsetH:   NewRegisterAgentToolsetHandler(e.RegisterAgentToolset, uh),
+		ReplaceAgentToolsetH:    NewReplaceAgentToolsetHandler(e.ReplaceAgentToolset, uh),
 		ListToolsetsH:           NewListToolsetsHandler(e.ListToolsets, uh),
 		GetToolsetH:             NewGetToolsetHandler(e.GetToolset, uh),
 		ResolveToolsetH:         NewResolveToolsetHandler(e.ResolveToolset, uh),
@@ -235,6 +239,70 @@ func (s *Server) Pong(ctx context.Context, message *registrypb.PongRequest) (*re
 		return nil, goagrpc.EncodeError(err)
 	}
 	return resp.(*registrypb.PongResponse), nil
+}
+
+// NewRegisterAgentToolsetHandler creates a gRPC handler which serves the
+// "registry" service "RegisterAgentToolset" endpoint.
+func NewRegisterAgentToolsetHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeRegisterAgentToolsetRequest, EncodeRegisterAgentToolsetResponse)
+	}
+	return h
+}
+
+// RegisterAgentToolset implements the "RegisterAgentToolset" method in
+// registrypb.RegistryServer interface.
+func (s *Server) RegisterAgentToolset(ctx context.Context, message *registrypb.RegisterAgentToolsetRequest) (*registrypb.RegisterAgentToolsetResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "RegisterAgentToolset")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.RegisterAgentToolsetH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "admission_conflict":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.RegisterAgentToolsetResponse), nil
+}
+
+// NewReplaceAgentToolsetHandler creates a gRPC handler which serves the
+// "registry" service "ReplaceAgentToolset" endpoint.
+func NewReplaceAgentToolsetHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeReplaceAgentToolsetRequest, EncodeReplaceAgentToolsetResponse)
+	}
+	return h
+}
+
+// ReplaceAgentToolset implements the "ReplaceAgentToolset" method in
+// registrypb.RegistryServer interface.
+func (s *Server) ReplaceAgentToolset(ctx context.Context, message *registrypb.ReplaceAgentToolsetRequest) (*registrypb.ReplaceAgentToolsetResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "ReplaceAgentToolset")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.ReplaceAgentToolsetH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "admission_conflict":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.ReplaceAgentToolsetResponse), nil
 }
 
 // NewListToolsetsHandler creates a gRPC handler which serves the "registry"

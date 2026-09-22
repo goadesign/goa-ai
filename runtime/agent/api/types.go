@@ -64,6 +64,10 @@ type (
 		// reparsing free-form messages.
 		ToolArgs rawjson.Message
 
+		// ToolRegistry retains the parent call's selected registry declaration.
+		// It is absent for top-level runs and compiled Agent tools.
+		ToolRegistry *tools.RegistryBinding `json:",omitempty"` //nolint:tagliatelle // Persisted records retain Go field names.
+
 		// Messages carries the conversation history supplied by the caller.
 		Messages []*model.Message
 
@@ -926,6 +930,10 @@ type (
 
 		// RenderedPrompts identifies every stored prompt version used in Messages.
 		RenderedPrompts []prompt.RenderEvent
+		// Labels supplies the child configuration's execution labels.
+		Labels map[string]string `json:",omitempty"` //nolint:tagliatelle // Activity history retains Go field names.
+		// Policy supplies the child configuration's per-run tool and model policy.
+		Policy *PolicyOverrides `json:",omitempty"` //nolint:tagliatelle // Activity history retains Go field names.
 	}
 
 	// AgentChildActivityOutput contains exactly one preparation result. Workflow

@@ -97,6 +97,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		ParentAgentID:    input.ParentAgentID,
 		Tool:             input.Tool,
 		ToolArgs:         input.ToolArgs,
+		ToolRegistry:     input.ToolRegistry.Clone(),
 		Attempt:          1,
 		Labels:           input.Labels,
 		Metadata:         input.Metadata,

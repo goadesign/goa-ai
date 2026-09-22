@@ -19,6 +19,7 @@ import (
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
+	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 	goa "goa.design/goa/v3/pkg"
 	streamopts "goa.design/pulse/streaming/options"
 )
@@ -227,6 +228,11 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 	if err := toolregistry.ValidateWireProtocolVersion(p.WireProtocolVersion); err != nil {
 		return nil, genregistry.MakeValidationError(err)
 	}
+	for _, tool := range p.Tools {
+		if tool.ConsumerContract != nil && tool.ConsumerContract.Agent != nil {
+			return nil, genregistry.MakeValidationError(errors.New("native Agent tools require RegisterAgentToolset"))
+		}
+	}
 	// Validate tool schemas.
 	if err := s.validator.ValidateToolSchemas(p.Tools); err != nil {
 		return nil, genregistry.MakeValidationError(fmt.Errorf("invalid tool schema: %w", err))
@@ -238,7 +244,7 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 		Tags:        p.Tags,
 		Tools:       p.Tools,
 	}
-	fingerprint, err := toolsetSchemaFingerprint(toolset)
+	fingerprint, err := toolcontract.Fingerprint(toolset)
 	if err != nil {
 		return nil, genregistry.MakeValidationError(err)
 	}
@@ -1110,6 +1116,9 @@ func (s *Service) validatePreparedToolCall(
 	prepared preparedToolCall,
 	registration catalogEntry,
 ) error {
+	if registration.NativeAgent {
+		return genregistry.MakeValidationError(errors.New("native Agent tools execute as child workflows, not Pulse calls"))
+	}
 	if prepared.expectedRegistrationToken != "" &&
 		prepared.expectedRegistrationToken != registration.RegistrationToken {
 		return genregistry.MakeServiceUnavailable(fmt.Errorf(
