@@ -167,6 +167,30 @@ and generated fingerprints; the registration timestamp does not affect identity.
 The precomputed `SchemaFingerprint(name)` helper continues to describe the
 existing provider registration without optional toolset-level annotations.
 
+To accept these declarations through your own Goa API, import
+`goa.design/goa-ai/registry/design/types`. It exports the registry's existing
+schemas, including `ToolSchema`, `ConsumerContract`, `AgentToolsetDeclaration`,
+and `ToolCallMeta`, without registering the registry API or service:
+
+```go
+import (
+    registrytypes "goa.design/goa-ai/registry/design/types"
+    . "goa.design/goa/v3/dsl"
+)
+
+var _ = Service("catalog", func() {
+    Method("register_agent_tools", func() {
+        Payload(registrytypes.AgentToolsetDeclaration)
+        GRPC(func() {})
+    })
+})
+```
+
+Goa generates your API's transport validation from the same schemas used by
+the registry. Registration and execution still use the registry's generated
+client and runtime contracts. Existing imports from `registry/design` remain
+supported for designs that intend to include the registry service.
+
 ## Register Agent tools
 
 A native Agent tool describes a child workflow, not a Pulse service provider.
