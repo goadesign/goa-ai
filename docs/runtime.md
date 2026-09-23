@@ -656,8 +656,8 @@ input restriction requires no stored-data migration.
 
 The `features/model/openai` adapter uses the official `openai-go/v3` Responses
 API. The following matrix describes its direct OpenAI constructors (`New`,
-`NewProvider` and the API-key conveniences). Bedrock has the separate, fixed
-contract described below.
+`NewProvider` and the API-key conveniences). The strict Bedrock constructor
+uses the same tool-schema compiler; Bedrock transport restrictions are described below.
 
 | Capability | Status |
 |------------|--------|
@@ -704,7 +704,20 @@ original schema and generated decoder. This provides local rejection, **not**
 a claim that Bedrock enforces the schema during generation. Direct OpenAI
 constructors retain their existing `strict:true` projection.
 
-Both constructors share full ordered transcript encoding, text and tool-call
+`NewBedrockStrictProvider` explicitly selects that strict tool-schema contract
+with the same Bedrock transport. It returns a provider for middleware and
+`model.NewClient`, always sends function tools with `strict:true`, and returns
+compilation or provider errors without switching to complete-schema generation.
+It shares the existing strict compiler, including its documented subset limits;
+it does not extend support to arbitrary custom schemas. Required, disjoint
+string tags select each object union branch's own optional-null removal rules.
+Original response bytes remain available for provider replay while canonical
+arguments undergo the original schema and generated decoder validation.
+Bedrock's native structured-output restriction and local token estimate apply
+to this constructor too. Existing Bedrock constructors keep their complete-schema
+contract unchanged; strictness is never selected per tool or after a failure.
+
+These constructors share full ordered transcript encoding, text and tool-call
 streaming, provider-issued tool IDs, reversible tool names, encrypted reasoning
 replay and the existing logical model classes. Enabling thinking uses the
 configured `low`, `medium` or `high` effort, requests a reasoning summary,

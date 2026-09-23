@@ -55,6 +55,30 @@ func NewBedrock(ctx context.Context, region string, credentials aws.CredentialsP
 // rejects option.WithBaseURL and authentication overrides before HTTP.
 // SDK configuration and request errors preserve their original cause.
 func NewBedrockProvider(ctx context.Context, region string, credentials aws.CredentialsProvider, opts Options, requestOpts ...option.RequestOption) (model.Provider, error) {
+	return newBedrockProvider(ctx, region, credentials, opts, requestOpts...)
+}
+
+// NewBedrockStrictProvider constructs a Bedrock Responses provider that always
+// compiles function tools into OpenAI's strict schema subset. Compilation and
+// provider errors are returned without retrying with a different schema contract.
+// The existing NewBedrockProvider continues to send complete canonical schemas.
+//
+// This provider retains Bedrock's request settings, local token estimate, and
+// rejection of native StructuredOutput and cache-bearing requests. Original
+// provider arguments and canonical replay agreement remain separate. Wrap the
+// provider with model.NewClient, or the model gateway, for canonical validation.
+func NewBedrockStrictProvider(ctx context.Context, region string, credentials aws.CredentialsProvider, opts Options, requestOpts ...option.RequestOption) (model.Provider, error) {
+	provider, err := newBedrockProvider(ctx, region, credentials, opts, requestOpts...)
+	if err != nil {
+		return nil, err
+	}
+	provider.exactTools = false
+	return provider, nil
+}
+
+// newBedrockProvider shares authenticated transport and request restrictions.
+// Public constructors select their fixed tool-schema contract before returning.
+func newBedrockProvider(ctx context.Context, region string, credentials aws.CredentialsProvider, opts Options, requestOpts ...option.RequestOption) (*bedrockProvider, error) {
 	if region == "" {
 		return nil, errors.New("openai: Bedrock Responses requires an AWS region")
 	}

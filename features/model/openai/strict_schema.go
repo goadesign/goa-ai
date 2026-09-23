@@ -138,6 +138,13 @@ type (
 		dropNull   bool
 		properties map[string]*strictNullProjection
 		item       *strictNullProjection
+		unions     []strictTaggedProjection
+	}
+
+	// strictTaggedProjection selects omission rules using a required domain tag.
+	strictTaggedProjection struct {
+		property string
+		branches map[string]*strictNullProjection
 	}
 
 	// strictSchemaLoader rejects references outside the canonical schema
@@ -183,7 +190,7 @@ func compileStrictSchemaForModel(schema rawjson.Message, modelID string) (*stric
 	data := bytes.TrimSpace(schema)
 	if len(data) == 0 {
 		return &strictSchemaProjection{
-			schema: map[string]any{"type": strictSchemaTypeObject, "additionalProperties": false},
+			schema: map[string]any{"type": strictSchemaTypeObject, "additionalProperties": false, "required": []any{}},
 		}, nil
 	}
 	if !json.Valid(data) {
@@ -242,6 +249,13 @@ func strictProjectionDropsNulls(projection *strictNullProjection) bool {
 	}
 	if projection.dropNull || strictProjectionDropsNulls(projection.item) {
 		return true
+	}
+	for _, union := range projection.unions {
+		for _, child := range union.branches {
+			if strictProjectionDropsNulls(child) {
+				return true
+			}
+		}
 	}
 	for _, child := range projection.properties {
 		if strictProjectionDropsNulls(child) {
@@ -522,7 +536,7 @@ func projectStrictObject(node map[string]any, path string, compiler *jsonschema.
 	}
 	properties, ok := node["properties"].(map[string]any)
 	if !ok || len(properties) == 0 {
-		delete(node, "required")
+		node["required"] = []any{}
 		return nil
 	}
 	required := make(map[string]struct{})
@@ -819,6 +833,7 @@ func buildStrictNullProjection(
 				dropNull:   !isRequired && !acceptsNull,
 				properties: child.properties,
 				item:       child.item,
+				unions:     child.unions,
 			}
 		}
 	}
@@ -833,6 +848,12 @@ func buildStrictNullProjection(
 		branches, ok := node[keyword].([]any)
 		if !ok {
 			continue
+		}
+		tag, values := strictUnionTag(branches)
+		var tagged *strictTaggedProjection
+		if keyword != "allOf" && tag != "" {
+			projection.unions = append(projection.unions, strictTaggedProjection{property: tag, branches: make(map[string]*strictNullProjection)})
+			tagged = &projection.unions[len(projection.unions)-1]
 		}
 		for index, rawBranch := range branches {
 			branch, ok := rawBranch.(map[string]any)
@@ -849,6 +870,12 @@ func buildStrictNullProjection(
 			if err != nil {
 				return nil, err
 			}
+			if tagged != nil {
+				for value := range values[index] {
+					tagged.branches[value] = child
+				}
+				continue
+			}
 			if err := mergeStrictNullProjection(
 				projection,
 				child,
@@ -859,6 +886,60 @@ func buildStrictNullProjection(
 		}
 	}
 	return projection, nil
+}
+
+// strictUnionTag recognizes existing required string tags that uniquely select
+// every branch. Other schema compositions keep their existing omission contract.
+func strictUnionTag(branches []any) (string, []map[string]struct{}) {
+	if len(branches) < 2 {
+		return "", nil
+	}
+	first, ok := branches[0].(map[string]any)
+	if !ok {
+		return "", nil
+	}
+	names := make([]string, 0)
+	for name := range schemaRequiredNames(first) {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
+		values := make([]map[string]struct{}, len(branches))
+		seen := make(map[string]struct{})
+		valid := true
+		for index, raw := range branches {
+			branch, ok := raw.(map[string]any)
+			if !ok {
+				valid = false
+				break
+			}
+			if _, required := schemaRequiredNames(branch)[name]; !required {
+				valid = false
+				break
+			}
+			properties, _ := branch["properties"].(map[string]any)
+			allowed, ok := strictStringValues(properties[name])
+			if !ok {
+				valid = false
+				break
+			}
+			for value := range allowed {
+				if _, duplicate := seen[value]; duplicate {
+					valid = false
+					break
+				}
+				seen[value] = struct{}{}
+			}
+			if !valid {
+				break
+			}
+			values[index] = allowed
+		}
+		if valid {
+			return name, values
+		}
+	}
+	return "", nil
 }
 
 // schemaRequiredNames returns the object members required by the canonical
@@ -921,6 +1002,7 @@ func mergeStrictNullProjection(dst, src *strictNullProjection, path string) erro
 	if src == nil {
 		return nil
 	}
+	dst.unions = append(dst.unions, src.unions...)
 	if src.item != nil {
 		if dst.item == nil {
 			dst.item = src.item
@@ -1006,6 +1088,14 @@ func removeStrictProjectionNulls(value any, projection *strictNullProjection, de
 			changed = changed || itemChanged
 		}
 	case map[string]any:
+		for _, union := range projection.unions {
+			tag, _ := actual[union.property].(string)
+			branchChanged, err := removeStrictProjectionNulls(actual, union.branches[tag], depth+1)
+			if err != nil {
+				return false, err
+			}
+			changed = changed || branchChanged
+		}
 		for name, child := range projection.properties {
 			member, present := actual[name]
 			if !present {
