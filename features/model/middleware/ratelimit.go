@@ -339,15 +339,6 @@ func (s *limitedStreamer) Response() *model.Response {
 	return s.next.Response()
 }
 
-func (l *AdaptiveRateLimiter) wait(
-	ctx context.Context,
-	counter model.TokenCounter,
-	req *model.Request,
-) error {
-	_, err := l.waitWithReservation(ctx, counter, req)
-	return err
-}
-
 // waitWithReservation charges a request before it reaches the provider and
 // returns that charge so reported usage can replace it at completion.
 func (l *AdaptiveRateLimiter) waitWithReservation(

@@ -130,7 +130,7 @@ func (f *fakeCountingClient) CountTokens(context.Context, *model.Request) (model
 
 func TestAdaptiveRateLimiterRequiresExactTokenCount(t *testing.T) {
 	limiter := newAdaptiveRateLimiter(60_000, 60_000)
-	err := limiter.wait(t.Context(), &fakeCountingClient{
+	_, err := limiter.waitWithReservation(t.Context(), &fakeCountingClient{
 		count: model.TokenCount{InputTokens: 10, Exact: false},
 	}, &model.Request{})
 	require.ErrorContains(t, err, "requires an exact provider token count")
