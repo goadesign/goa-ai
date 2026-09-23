@@ -106,7 +106,7 @@ var _ = Service("registry", func() {
 
 	Method("RegisterAgentToolset", func() {
 		Description("Create a native Agent toolset without a Pulse provider lease. Repeating the same active declaration succeeds. A different existing declaration returns admission_conflict; use ReplaceAgentToolset with its current token.")
-		Payload(AgentToolsetDeclaration)
+		Payload(registrytypes.AgentToolsetDeclaration)
 		Result(ResolvedToolset)
 		Error("admission_conflict")
 		Error("validation_error")
@@ -117,7 +117,7 @@ var _ = Service("registry", func() {
 	Method("ReplaceAgentToolset", func() {
 		Description("Replace or reactivate a native Agent toolset only when the current registration matches expected_registration_token. Already accepted child calls retain their original declarations. New discovery returns the replacement.")
 		Payload(func() {
-			Extend(AgentToolsetDeclaration)
+			Extend(registrytypes.AgentToolsetDeclaration)
 			Field(100, "expected_registration_token", String, "Current native Agent registration being replaced.", func() {
 				Pattern(toolregistry.RegistrationTokenPattern)
 			})
@@ -217,7 +217,7 @@ var _ = Service("registry", func() {
 
 	Method("PublishToolOutputDelta", func() {
 		Description("Publish one best-effort output fragment for a claimed live call. The registry verifies the exact provider lease and request-event claim, then atomically appends the delta only while the authoritative call record remains nonterminal.")
-		Payload(PublishToolOutputDeltaPayload)
+		Payload(registrytypes.PublishToolOutputDeltaPayload)
 		Error("validation_error")
 		Error("service_unavailable")
 		GRPC(func() {})
@@ -225,7 +225,7 @@ var _ = Service("registry", func() {
 
 	Method("ReportToolCallOverload", func() {
 		Description("Report that an exact provider claim could not enter its bounded worker queue. The registry verifies the provider lease and request-event claim, then atomically appends retry control only while the authoritative call record remains nonterminal.")
-		Payload(ProviderToolCallClaimPayload)
+		Payload(registrytypes.ProviderToolCallClaimPayload)
 		Error("validation_error")
 		Error("service_unavailable")
 		GRPC(func() {})
@@ -244,10 +244,6 @@ var _ = Service("registry", func() {
 
 // ---- Payload and Result Types ----
 
-var SemVer = registrytypes.SemVer
-
-var ToolCallMeta = registrytypes.ToolCallMeta
-
 var RegisterPayload = Type("RegisterPayload", func() {
 	Description("Payload for registering a toolset with the registry")
 	Field(1, "name", String, "Unique name for the toolset", func() {
@@ -259,11 +255,11 @@ var RegisterPayload = Type("RegisterPayload", func() {
 		MaxLength(4096)
 		Example("Tools for data processing and analysis")
 	})
-	Field(3, "version", SemVer, "Semantic version of the toolset.")
+	Field(3, "version", registrytypes.SemVer, "Semantic version of the toolset.")
 	Field(4, "tags", ArrayOf(String), "Tags for categorization and filtering", func() {
 		Example([]string{"data", "etl", "analytics"})
 	})
-	Field(5, "tools", ArrayOf(ToolSchema), "Tool definitions with their schemas")
+	Field(5, "tools", ArrayOf(registrytypes.ToolSchema), "Tool definitions with their schemas")
 	Field(6, "provider_id", String, "Stable identity of the provider process registering this toolset.", func() {
 		MinLength(1)
 		MaxLength(512)
@@ -458,7 +454,7 @@ var CallToolPayload = Type("CallToolPayload", func() {
 		MinLength(1)
 		Example([]byte(`{"query":"recent orders"}`))
 	})
-	Field(4, "meta", ToolCallMeta, "Execution metadata propagated alongside the tool call.")
+	Field(4, "meta", registrytypes.ToolCallMeta, "Execution metadata propagated alongside the tool call.")
 	Field(5, "wire_protocol_version", Int, "Required runtime-owned version of the consumer message envelope. The registry accepts only its exact canonical version.", func() {
 		Enum(toolregistry.WireProtocolVersion)
 		Example(toolregistry.WireProtocolVersion)
@@ -548,19 +544,15 @@ var CompleteToolCallPayload = Type("CompleteToolCallPayload", func() {
 	Required("toolset", "provider_id", "provider_incarnation_id", "registration_token", "tool_use_id", "result_json", "request_event_id", "provider_registration_token")
 })
 
-var ProviderToolCallClaimPayload = registrytypes.ProviderToolCallClaimPayload
-
 var ClaimToolCallPayload = Type("ClaimToolCallPayload", func() {
 	Description("Exact provider claim operation for one request event. Transport retries reuse the operation ID; a later Pulse redelivery uses a new ID.")
-	Extend(ProviderToolCallClaimPayload)
+	Extend(registrytypes.ProviderToolCallClaimPayload)
 	Field(100, "claim_operation_id", String, "Runtime UUID created once for this claim operation and reused by its transport retries.", func() {
 		Format(FormatUUID)
 		Example("00000000-0000-4000-8000-000000000002")
 	})
 	Required("claim_operation_id")
 })
-
-var PublishToolOutputDeltaPayload = registrytypes.PublishToolOutputDeltaPayload
 
 var ClaimToolCallResult = Type("ClaimToolCallResult", func() {
 	Description("Authoritative pre-dispatch disposition for one queued tool call.")
@@ -583,11 +575,11 @@ var Toolset = Type("Toolset", func() {
 	Field(2, "description", String, "Human-readable description", func() {
 		Example("Tools for data processing and analysis")
 	})
-	Field(3, "version", SemVer, "Semantic version of the toolset.")
+	Field(3, "version", registrytypes.SemVer, "Semantic version of the toolset.")
 	Field(4, "tags", ArrayOf(String), "Tags for categorization", func() {
 		Example([]string{"data", "etl"})
 	})
-	Field(5, "tools", ArrayOf(ToolSchema), "Tool schemas included in the toolset.")
+	Field(5, "tools", ArrayOf(registrytypes.ToolSchema), "Tool schemas included in the toolset.")
 	Field(6, "registered_at", String, "ISO 8601 registration timestamp", func() {
 		Format(FormatDateTime)
 		Example("2024-01-15T10:30:00Z")
@@ -605,7 +597,7 @@ var ToolsetInfo = Type("ToolsetInfo", func() {
 	Field(2, "description", String, "Human-readable description", func() {
 		Example("Tools for data processing and analysis")
 	})
-	Field(3, "version", SemVer, "Semantic version of the toolset.")
+	Field(3, "version", registrytypes.SemVer, "Semantic version of the toolset.")
 	Field(4, "tags", ArrayOf(String), "Tags for categorization", func() {
 		Example([]string{"data", "etl"})
 	})
@@ -639,8 +631,6 @@ var Tool = Type("Tool", func() {
 	})
 	Required("name", "input_schema")
 })
-
-var ToolSchema = registrytypes.ToolSchema
 
 var ToolError = Type("ToolError", func() {
 	Description("Error details from tool execution")
@@ -680,7 +670,3 @@ func providerLeaseIdentityFields() {
 	})
 	Required("name", "provider_id", "expected_registration_token", "provider_incarnation_id")
 }
-
-// AgentToolsetDeclaration contains definitions only. The registry supplies the
-// registration timestamp and token after accepting the tools.
-var AgentToolsetDeclaration = registrytypes.AgentToolsetDeclaration

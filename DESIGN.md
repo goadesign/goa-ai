@@ -968,9 +968,10 @@ that field unset.
 
 Applications that expose tool registration through their own Goa services reuse
 `registry/design/types`. That package declares the registry schemas without
-registering an API or service. `registry/design` uses those same schema objects
-and retains its existing exports, so this separation does not change generated
-wire contracts. See [tool contract reuse](docs/tool_search.md#publish-complete-provider-contracts).
+registering an API or service. `registry/design` references those schema objects
+directly; generated clients and wire contracts do not change. Designs importing
+the moved declarations use the `registry/design/types` path.
+See [tool contract reuse](docs/tool_search.md#publish-complete-provider-contracts).
 
 Declare centralized registry sources for dynamic tool discovery and agent publication:
 

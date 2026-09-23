@@ -188,8 +188,9 @@ var _ = Service("catalog", func() {
 
 Goa generates your API's transport validation from the same schemas used by
 the registry. Registration and execution still use the registry's generated
-client and runtime contracts. Existing imports from `registry/design` remain
-supported for designs that intend to include the registry service.
+client and runtime contracts. If your design imported these declarations from
+`registry/design`, update that import to `registry/design/types`. Generated
+registry client types keep their existing package and names.
 
 ## Register Agent tools
 
