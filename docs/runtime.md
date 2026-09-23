@@ -4919,7 +4919,8 @@ The existing policy fingerprint invalidates summaries made under different
 instructions. Original history, output admission, exact token-count requirements,
 whole-turn retention, and the zero-or-one summary-call bound remain unchanged.
 A longer summary can require a shorter eligible exact tail or fail the existing
-size check; the runtime neither drops identifiers itself nor retries summarization.
+size check; the runtime does not trim identifiers from the generated summary or
+retry summarization.
 
 `WithSummaryPrompt` still inserts the complete quoted textual transcript at its
 `%s` placeholder, preserving the caller's surrounding text and ordinary Go format
