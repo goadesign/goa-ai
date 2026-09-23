@@ -110,7 +110,7 @@ func (r *Runtime) executeGroupedToolCalls(
 		if timeouts[i] > 0 {
 			opt.StartToCloseTimeout = timeouts[i]
 		}
-		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.Messages, grouped[i], expectedChildren, parentTracker, finishBy)
+		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.HistoryEndID, grouped[i], expectedChildren, parentTracker, finishBy)
 		out = append(out, sub...)
 		if timedOut {
 			timedOutAny = true
@@ -355,7 +355,7 @@ func (r *Runtime) buildNextResumeRequest(
 	out := PlanActivityInput{
 		AgentID:             agentID,
 		RunID:               base.RunContext.RunID,
-		Messages:            plannerMsgs,
+		HistoryEndID:        base.HistoryEndID,
 		HistoryContext:      historyContext,
 		RunContext:          resumeCtx,
 		Policy:              clonePolicyOverrides(runPolicy),

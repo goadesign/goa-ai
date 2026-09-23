@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -41,21 +42,20 @@ func TestRequestHistoryActivityCarry(t *testing.T) {
 	rt := newRequestHistoryRuntime(pl, policy)
 	messages := requestHistoryMessages()
 	original := canonicalHistory(t, messages)
-	input := &PlanActivityInput{AgentID: "service.agent", RunID: "history-run", RunContext: run.Context{RunID: "history-run"}, Messages: messages}
-	out, err := rt.PlanStartActivity(t.Context(), input)
+	input := seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "history-run", RunContext: run.Context{RunID: "history-run"}}, messages)
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 	require.NoError(t, err)
 	require.NotNil(t, out.HistoryContext)
-	assert.Equal(t, original, canonicalHistory(t, input.Messages))
+	assert.Equal(t, original, canonicalHistory(t, testActivityMessages(t, rt, input)))
 	assert.Equal(t, "answer", out.Transcript[0].Parts[0].(model.TextPart).Text)
-	input.Messages = append(input.Messages, out.Transcript...)
-	input.Messages = append(input.Messages, userMsg("follow-up"))
+	input.HistoryEndID = appendTestActivityHistory(t, rt, input, append(out.Transcript, userMsg("follow-up")))
 	input.HistoryContext = out.HistoryContext
-	out, err = rt.PlanResumeActivity(t.Context(), input)
+	out, err = rt.PlanResumeActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 	require.NoError(t, err)
 	require.NotNil(t, out.HistoryContext)
 	assert.Equal(t, 1, fresh)
 	assert.Equal(t, 1, reused)
-	assert.Equal(t, original, canonicalHistory(t, input.Messages[:len(messages)]))
+	assert.Equal(t, original, canonicalHistory(t, testActivityMessages(t, rt, input)[:len(messages)]))
 }
 
 func TestRequestHistoryCompressCarriesContextAndReplacesOldFingerprint(t *testing.T) {
@@ -74,8 +74,8 @@ func TestRequestHistoryCompressCarriesContextAndReplacesOldFingerprint(t *testin
 				messages = messages[1:]
 			}
 			before := canonicalHistory(t, messages)
-			input := &PlanActivityInput{AgentID: "service.agent", RunID: "history-run", Messages: messages}
-			out, err := rt.PlanStartActivity(t.Context(), input)
+			input := seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "history-run"}, messages)
+			out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 			require.NoError(t, err)
 			require.NotNil(t, out.HistoryContext)
 			input.HistoryContext = out.HistoryContext
@@ -83,7 +83,7 @@ func TestRequestHistoryCompressCarriesContextAndReplacesOldFingerprint(t *testin
 			require.NoError(t, err)
 			var restored PlanActivityInput
 			require.NoError(t, json.Unmarshal(encoded, &restored))
-			out, err = rt.PlanResumeActivity(t.Context(), &restored)
+			out, err = rt.PlanResumeActivity(t.Context(), seedTestPlanInput(t, rt, restored, nil))
 			require.NoError(t, err)
 			assert.Equal(t, 1, provider.completeCalls)
 			assert.Equal(t, input.HistoryContext, out.HistoryContext)
@@ -91,16 +91,16 @@ func TestRequestHistoryCompressCarriesContextAndReplacesOldFingerprint(t *testin
 			// Recorded old summary state remains valid durable data. A new
 			// activity regenerates its content once under the current policy.
 			restored.HistoryContext.Summary.PolicyFingerprint = "earlier-summary-content-contract"
-			require.NoError(t, validateHistoryContext(restored.Messages, restored.HistoryContext))
-			out, err = rt.PlanResumeActivity(t.Context(), &restored)
+			require.NoError(t, validateHistoryContext(testActivityMessages(t, rt, &restored), restored.HistoryContext))
+			out, err = rt.PlanResumeActivity(t.Context(), seedTestPlanInput(t, rt, restored, nil))
 			require.NoError(t, err)
 			require.NotNil(t, out.HistoryContext)
 			assert.Equal(t, 2, provider.completeCalls)
 			restored.HistoryContext = out.HistoryContext
-			_, err = rt.PlanResumeActivity(t.Context(), &restored)
+			_, err = rt.PlanResumeActivity(t.Context(), seedTestPlanInput(t, rt, restored, nil))
 			require.NoError(t, err)
 			assert.Equal(t, 2, provider.completeCalls)
-			assert.Equal(t, before, canonicalHistory(t, restored.Messages))
+			assert.Equal(t, before, canonicalHistory(t, testActivityMessages(t, rt, &restored)))
 		})
 	}
 }
@@ -129,7 +129,7 @@ func TestRequestHistoryOnlySelectedConcurrentInvocationIsPromoted(t *testing.T) 
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &responses[0].Content[0]}}, nil
 	}}
 	rt := newRequestHistoryRuntime(pl, policy)
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{AgentID: "service.agent", RunID: "history-run", Messages: requestHistoryMessages()})
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "history-run"}, requestHistoryMessages()))
 	require.NoError(t, err)
 	require.NotNil(t, out.HistoryContext)
 	assert.Equal(t, "selected", out.HistoryContext.Summary.Message.Parts[0].(model.TextPart).Text)
@@ -159,7 +159,7 @@ func TestRequestHistoryStreamPromotesItsOwnSummary(t *testing.T) {
 			response: response,
 		}, nil
 	}})
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{AgentID: "service.agent", RunID: "history-run", Messages: requestHistoryMessages()})
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "history-run"}, requestHistoryMessages()))
 	require.NoError(t, err)
 	require.NotNil(t, out.HistoryContext)
 	assert.Equal(t, "stream history", out.HistoryContext.Summary.Message.Parts[0].(model.TextPart).Text)
@@ -185,7 +185,7 @@ func TestRequestHistoryCodeOnlyDoesNotPromoteHelper(t *testing.T) {
 				return finalPlannerResult("finished without selecting a model response"), nil
 			}}
 			rt := newRequestHistoryRuntime(pl, policy)
-			out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{AgentID: "service.agent", RunID: "history-run", Messages: requestHistoryMessages()})
+			out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "history-run"}, requestHistoryMessages()))
 			require.NoError(t, err)
 			assert.Nil(t, out.HistoryContext)
 			if helper {
@@ -221,7 +221,7 @@ func TestRequestHistoryRecoveryPromotesExactInvocation(t *testing.T) {
 					return testModelResponse([]model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID: "unknown-call", Name: "catalog.unknown", Input: rawjson.Message(`{}`)}}}}), nil
 				}})
 			}
-			out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{AgentID: "service.agent", RunID: "history-run", Messages: requestHistoryMessages()})
+			out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "history-run"}, requestHistoryMessages()))
 			require.NoError(t, err)
 			require.NotNil(t, out)
 			if kind == "tool validation" {
@@ -363,8 +363,8 @@ func TestRequestHistoryRichSourceHashesSurviveActivityJSON(t *testing.T) {
 		},
 	}
 	rt := newRequestHistoryRuntime(pl, policy)
-	input := &PlanActivityInput{AgentID: "service.agent", RunID: "rich-history-run", Messages: messages}
-	first, err := rt.PlanStartActivity(t.Context(), input)
+	input := seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "rich-history-run"}, messages)
+	first, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 	require.NoError(t, err)
 	require.NotNil(t, first.HistoryContext)
 	input.HistoryContext = first.HistoryContext
@@ -372,25 +372,27 @@ func TestRequestHistoryRichSourceHashesSurviveActivityJSON(t *testing.T) {
 	require.NoError(t, err)
 	var restored PlanActivityInput
 	require.NoError(t, json.Unmarshal(encoded, &restored))
-	assert.Equal(t, original, canonicalHistory(t, restored.Messages))
-	assert.Equal(t, document, restored.Messages[1].Parts[1])
-	assert.Equal(t, exchanges[0][0].Parts[0], restored.Messages[2].Parts[0], "reasoning signature survives")
-	assert.Equal(t, cited, restored.Messages[3].Parts[1], "citation coordinates and source text survive")
-	assert.Equal(t, exchanges[0][2].Parts[0], restored.Messages[4].Parts[0], "raw tool input and thought signature survive")
-	assert.Contains(t, string(encoded), "9007199254740993", "tool result integers remain exact")
-	source, positions, complete, err := historySourceHashes(restored.Messages, sourceCount)
+	restoredMessages := testActivityMessages(t, rt, &restored)
+	assert.Equal(t, original, canonicalHistory(t, restoredMessages))
+	assert.Equal(t, document, restoredMessages[1].Parts[1])
+	assert.Equal(t, exchanges[0][0].Parts[0], restoredMessages[2].Parts[0], "reasoning signature survives")
+	assert.Equal(t, cited, restoredMessages[3].Parts[1], "citation coordinates and source text survive")
+	assert.Equal(t, exchanges[0][2].Parts[0], restoredMessages[4].Parts[0], "raw tool input and thought signature survive")
+	assert.Contains(t, strings.Join(canonicalHistory(t, restoredMessages), "\n"), "9007199254740993", "tool result integers remain exact in stored history")
+	assert.NotContains(t, string(encoded), "9007199254740993", "the activity command does not repeat saved tool results")
+	source, positions, complete, err := historySourceHashes(restoredMessages, sourceCount)
 	require.NoError(t, err)
 	require.True(t, complete)
 	assert.Equal(t, first.HistoryContext.SourceSHA256, source)
 	assert.Equal(t, first.HistoryContext.SourcePositionsSHA256, positions)
-	second, err := rt.PlanResumeActivity(t.Context(), &restored)
+	second, err := rt.PlanResumeActivity(t.Context(), seedTestPlanInput(t, rt, restored, nil))
 	require.NoError(t, err)
 	require.NotNil(t, second.HistoryContext, "the restored source is eligible for promotion again")
 	assert.Equal(t, first.HistoryContext, second.HistoryContext)
 	assert.Equal(t, 1, fresh)
 	assert.Equal(t, 1, reused)
 	assert.Equal(t, original, canonicalHistory(t, messages))
-	assert.Equal(t, original, canonicalHistory(t, restored.Messages))
+	assert.Equal(t, original, canonicalHistory(t, testActivityMessages(t, rt, &restored)))
 }
 
 func requestHistoryMessages() []*model.Message {

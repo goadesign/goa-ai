@@ -74,7 +74,7 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 		StartToCloseTimeout:    30 * time.Second,
 		RetryPolicy:            engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Second, BackoffCoefficient: 2},
 	}
-	_, err := rt.runPlanActivity(wf, "calc.agent.plan", opts, PlanActivityInput{}, time.Time{})
+	_, err := rt.runPlanActivity(wf, "calc.agent.plan", opts, PlanActivityInput{}, &workflowConversation{}, time.Time{})
 	require.NoError(t, err)
 	require.Equal(t, opts.Queue, wf.lastPlannerCall.Options.Queue)
 	require.Equal(t, opts.ScheduleToStartTimeout, wf.lastPlannerCall.Options.ScheduleToStartTimeout)
@@ -141,7 +141,7 @@ func TestRunPlanActivityBoundsTotalLifetimeToRemainingDeadline(t *testing.T) {
 				"calc.agent.plan",
 				test.opts,
 				PlanActivityInput{},
-				wf.Now().Add(10*time.Second),
+				&workflowConversation{}, wf.Now().Add(10*time.Second),
 			)
 
 			require.NoError(t, err)
@@ -164,7 +164,7 @@ func TestRunPlanActivityRejectsExpiredDeadline(t *testing.T) {
 		ctx: context.Background(),
 	}
 
-	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, time.Unix(-1, 0))
+	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, &workflowConversation{}, time.Unix(-1, 0))
 
 	require.ErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -191,7 +191,7 @@ func TestRunPlanActivityAcceptsTerminalFinalToolResult(t *testing.T) {
 
 	out, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{
 		RunContext: run.Context{Tool: "svc.tools.do"},
-	}, time.Time{})
+	}, &workflowConversation{}, time.Time{})
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.Result)
@@ -210,7 +210,7 @@ func TestRunPlanActivityRejectsNilPlanResultWithoutCriticalPrefix(t *testing.T) 
 		ctx: context.Background(),
 	}
 
-	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, time.Time{})
+	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, &workflowConversation{}, time.Time{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "nil PlanResult")
 	require.NotContains(t, err.Error(), "CRITICAL:")
@@ -229,8 +229,8 @@ func TestPlanStartActivityInvokesPlanner(t *testing.T) {
 		return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, nil
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	input := PlanActivityInput{AgentID: "service.agent", RunID: "run-123", Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}}, RunContext: run.Context{RunID: "run-123"}}
-	out, err := rt.PlanStartActivity(context.Background(), &input)
+	input := *seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "run-123", RunContext: run.Context{RunID: "run-123"}}, []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}})
+	out, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, input, nil))
 	require.NoError(t, err)
 	require.True(t, called)
 	require.NotNil(t, out.Result.FinalResponse)
@@ -258,11 +258,11 @@ func TestPlanStartActivityCannotHideMalformedModelOutput(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(context.Background(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, 1, providerCalls)
@@ -309,11 +309,11 @@ func TestPlanStartActivityPreservesValidationOverProviderCloseFailure(t *testing
 				},
 			})
 
-			out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+			out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 				AgentID:    "service.agent",
 				RunID:      "run-123",
 				RunContext: run.Context{RunID: "run-123"},
-			})
+			}, nil))
 
 			requirePlannerOutputContractFailure(t, out, err)
 			require.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
@@ -358,11 +358,11 @@ func TestPlanStartActivityKeepsLaterStreamObserverFailureAsActivityError(t *test
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	require.Nil(t, out)
 	require.ErrorIs(t, err, observerErr)
@@ -417,11 +417,11 @@ func TestPlanStartActivityKeepsEarlierStreamObserverFailureAsActivityError(t *te
 			require.NoError(t, err)
 			rt.models["test"] = observed
 
-			out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+			out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 				AgentID:    "service.agent",
 				RunID:      "run-123",
 				RunContext: run.Context{RunID: "run-123"},
-			})
+			}, nil))
 
 			require.Nil(t, out)
 			require.ErrorIs(t, err, test.err)
@@ -483,11 +483,11 @@ func TestPlanStartActivityKeepsCloseObserverFailureInEveryOrder(t *testing.T) {
 			}
 			rt.models["test"] = client
 
-			out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+			out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 				AgentID:    "service.agent",
 				RunID:      "run-123",
 				RunContext: run.Context{RunID: "run-123"},
-			})
+			}, nil))
 
 			require.Nil(t, out)
 			require.ErrorIs(t, err, observerErr)
@@ -514,11 +514,11 @@ func TestPlanStartActivityCorrelatesRecoverableModelOutput(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	rt.models["test"] = newRecoveryTestModel(t)
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -561,11 +561,11 @@ func TestPlanStartActivityAcceptsPlannerSelectedOutputLimitedFinalResponse(t *te
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -623,11 +623,11 @@ func TestPlanStartActivityRejectsOutputLimitedToolBatch(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123", SessionID: "session-123"},
-	})
+	}, nil))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -676,11 +676,11 @@ func TestPlanStartActivityKeepsPlannerRejectionOfOutputLimitedFinalResponse(t *t
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123", SessionID: "session-123"},
-	})
+	}, nil))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -710,11 +710,11 @@ func TestPlanStartActivityRejectsAlteredRecoverableModelOutput(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	rt.models["test"] = newRecoveryTestModel(t)
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -756,11 +756,11 @@ func TestPlanStartActivityCorrelatesRecoverableStreamedAnswer(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	require.NoError(t, err)
 	require.NotNil(t, out.OutputContractFailure)
@@ -796,11 +796,11 @@ func TestPlanStartActivityRejectsRecoverableOutputForForeignResponse(t *testing.
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -998,11 +998,11 @@ func TestPlanStartActivityRejectsModelToolPayloadBeforeRecovery(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(context.Background(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, 1, providerCalls)
@@ -1063,11 +1063,11 @@ func TestPlanStartActivityRejectsStreamedToolPayloadBeforePlannerExposure(t *tes
 		},
 	})
 
-	out, err := rt.PlanStartActivity(context.Background(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, 1, providerCalls)
@@ -1118,11 +1118,11 @@ func TestPlanStartActivityCannotHideTypedCompletionFailure(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, 5, out.Usage.TotalTokens)
@@ -1178,11 +1178,11 @@ func TestPlanStartActivityCannotHideConflictingStreamOutput(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, 1, providerCalls)
@@ -1219,11 +1219,11 @@ func TestPlanStartActivitySelectsIdenticalStreamMessageByOrigin(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	require.NoError(t, err)
 	require.NotNil(t, out.Result)
@@ -1292,11 +1292,11 @@ func TestPlanStartActivityCannotHideTypedStreamFailure(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, 1, providerCalls)
@@ -1333,11 +1333,11 @@ func TestPlanStartActivityBoundsOversizedUnaryUsageModel(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	encoded, err := json.Marshal(out)
@@ -1379,11 +1379,11 @@ func TestPlanStartActivityBoundsOversizedStreamUsageModel(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, model.TokenUsage{
@@ -1433,11 +1433,11 @@ func TestPlanStartActivityAggregatesUsageAcrossManyRejectedInvocations(t *testin
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, probeCount, out.Usage.TotalTokens)
@@ -1494,11 +1494,11 @@ func TestPlanStartActivityPublishesAttributedUsagePerInvocationOnFailure(t *test
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-attributed-usage",
 		RunContext: run.Context{RunID: "run-attributed-usage"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, 10, out.Usage.TotalTokens)
@@ -1558,11 +1558,11 @@ func TestPlanStartActivityRejectsUnaryUsageOverflow(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, maxInt, out.Usage.TotalTokens)
@@ -1598,11 +1598,11 @@ func TestPlanStartActivityKeepsStreamUsageOverflowAsActivityError(t *testing.T) 
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	require.Nil(t, out)
 	var outputErr *planner.OutputContractError
@@ -1660,11 +1660,11 @@ func TestPlanStartActivityRequiresExactBytesForStreamReconciliation(t *testing.T
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.NotNil(t, out)
@@ -1739,11 +1739,11 @@ func TestPlanStartActivityAcceptsPlannerAuthoredDedicatedContinuation(t *testing
 		"service.agent": {continuation},
 	}
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	require.NoError(t, err)
 	require.Len(t, out.Result.ToolCalls, 1)
@@ -1820,12 +1820,12 @@ func TestPreparePlannerActivityFiltersPlannerExecutableCatalog(t *testing.T) {
 
 			act, err := rt.preparePlannerActivity(
 				t.Context(),
-				&PlanActivityInput{
+				testResolvedPlanInput(t, rt, &PlanActivityInput{
 					AgentID:    "service.agent",
 					RunID:      "run-123",
 					RunContext: run.Context{RunID: "run-123"},
 					Policy:     test.policy,
-				},
+				}),
 				rt.newRegistryCatalog(AgentDefinition{}),
 				nil,
 				test.unavailable,
@@ -1869,11 +1869,11 @@ func TestPlanStartActivityDoesNotPublishRejectedModelOutput(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(context.Background(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
-	})
+	}, nil))
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -1924,9 +1924,9 @@ func TestPlanStartActivityReturnsEventsForWorkflowPublication(t *testing.T) {
 		},
 	}
 
-	first, err := rt.PlanStartActivity(context.Background(), input)
+	first, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, *(input), nil))
 	require.NoError(t, err)
-	second, err := rt.PlanStartActivity(context.Background(), input)
+	second, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, *(input), nil))
 	require.NoError(t, err)
 
 	require.Equal(t, 2, providerCalls)
@@ -1978,7 +1978,7 @@ func TestRunPlanActivityPublishesUsageAndRejectedResponseBeforeOutputContractFai
 		RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
 	}
 
-	out, err := rt.runPlanActivity(wfCtx, "plan", engine.ActivityOptions{}, input, time.Time{})
+	out, err := rt.runPlanActivity(wfCtx, "plan", engine.ActivityOptions{}, *seedTestPlanInput(t, rt, input, nil), &workflowConversation{}, time.Time{})
 
 	require.NotNil(t, out)
 	var outputErr *planner.OutputContractError
@@ -2017,12 +2017,12 @@ func TestRunPlanActivityDoesNotPublishModelRejectionForPlannerFailure(t *testing
 		wfCtx,
 		"plan",
 		engine.ActivityOptions{},
-		PlanActivityInput{
+		*seedTestPlanInput(t, rt, PlanActivityInput{
 			AgentID:    "service.agent",
 			RunID:      "run-123",
 			RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
-		},
-		time.Time{},
+		}, nil),
+		&workflowConversation{}, time.Time{},
 	)
 
 	require.NotNil(t, out)
@@ -2068,7 +2068,7 @@ func TestRunPlanActivityCommitsPublishedTextBeforeReturningPlanningFailure(t *te
 			RunID:      "run-123",
 			RunContext: run.Context{RunID: "run-123", SessionID: "session-1", TurnID: "turn-1"},
 		},
-		time.Time{},
+		&workflowConversation{}, time.Time{},
 	)
 
 	require.Same(t, wfCtx.plannerOutput, out)
@@ -2101,12 +2101,12 @@ func TestRunPlanActivityPublishesEmptyPlannerRejectionReason(t *testing.T) {
 		wfCtx,
 		"plan",
 		engine.ActivityOptions{},
-		PlanActivityInput{
+		*seedTestPlanInput(t, rt, PlanActivityInput{
 			AgentID:    "service.agent",
 			RunID:      "run-123",
 			RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
-		},
-		time.Time{},
+		}, nil),
+		&workflowConversation{}, time.Time{},
 	)
 
 	require.NotNil(t, out)
@@ -2168,12 +2168,12 @@ func TestRunPlanActivityPublishesTypedModelRejectionReason(t *testing.T) {
 		wfCtx,
 		"plan",
 		engine.ActivityOptions{},
-		PlanActivityInput{
+		*seedTestPlanInput(t, rt, PlanActivityInput{
 			AgentID:    "service.agent",
 			RunID:      "run-123",
 			RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
-		},
-		time.Time{},
+		}, nil),
+		&workflowConversation{}, time.Time{},
 	)
 
 	require.NotNil(t, out)
@@ -2238,6 +2238,7 @@ func TestRunPlanActivityRetriesPublicationBeforeOutputFailure(t *testing.T) {
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	store := &replayPublicationStore{
+		Store:    newTestStore(),
 		failCall: 2,
 		stored:   make(map[string]*runlog.Event),
 	}
@@ -2259,12 +2260,12 @@ func TestRunPlanActivityRetriesPublicationBeforeOutputFailure(t *testing.T) {
 		wfCtx,
 		"plan",
 		engine.ActivityOptions{},
-		PlanActivityInput{
+		*seedTestPlanInput(t, rt, PlanActivityInput{
 			AgentID:    "service.agent",
 			RunID:      "run-123",
 			RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
-		},
-		time.Time{},
+		}, nil),
+		&workflowConversation{}, time.Time{},
 	)
 
 	require.NotNil(t, out)
@@ -2308,7 +2309,7 @@ func TestRunPlanActivityBoundsOversizedRejectedResponseFingerprint(t *testing.T)
 		RunContext: run.Context{RunID: "run-oversized", TurnID: "turn-1"},
 	}
 
-	out, err := rt.runPlanActivity(wfCtx, "plan", engine.ActivityOptions{}, input, time.Time{})
+	out, err := rt.runPlanActivity(wfCtx, "plan", engine.ActivityOptions{}, *seedTestPlanInput(t, rt, input, nil), &workflowConversation{}, time.Time{})
 
 	require.NotNil(t, out)
 	var outputErr *planner.OutputContractError
@@ -2359,11 +2360,11 @@ func TestPlanStartActivityRejectsOverBudgetRawToolPayloadWithoutFingerprint(t *t
 		},
 	})
 
-	out, err := rt.PlanStartActivity(context.Background(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Empty(t, out.OutputContractFailure.ModelResponseSHA256)
@@ -2444,11 +2445,11 @@ func TestPlanStartActivityFingerprintsCompleteResponseBeforeCloneValidation(t *t
 				},
 			})
 
-			out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+			out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 				AgentID:    "service.agent",
 				RunID:      "run-123",
 				RunContext: run.Context{RunID: "run-123"},
-			})
+			}, nil))
 
 			requirePlannerOutputContractFailure(t, out, err)
 			require.Truef(
@@ -2544,11 +2545,11 @@ func TestPlanStartActivityFingerprintsStreamResponseBeforeCloneValidation(t *tes
 				},
 			})
 
-			out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+			out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 				AgentID:    "service.agent",
 				RunID:      "run-123",
 				RunContext: run.Context{RunID: "run-123"},
-			})
+			}, nil))
 
 			requirePlannerOutputContractFailure(t, out, err)
 			require.Truef(
@@ -2643,27 +2644,22 @@ func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 		nil,
 	), "source-result", 2)
 
-	input := &PlanActivityInput{
-		AgentID: "service.agent",
-		RunID:   "run-2",
-		Messages: []*model.Message{
-			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Search alarms."}}},
-			{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{
-				ID: "source-1", Name: search.Name.String(), Input: rawjson.Message(`{"query":"alarms"}`),
-			}}},
-			{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{
-				ToolUseID: "source-1", Content: map[string]any{"items": []any{"page-1"}},
-			}}},
-			{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "First page."}}},
-			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Show the next page."}}},
-		},
-		RunContext: run.Context{
-			RunID:     "run-2",
-			SessionID: "session-1",
-		},
-	}
+	input := seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "run-2", RunContext: run.Context{
+		RunID:     "run-2",
+		SessionID: "session-1",
+	}}, []*model.Message{
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Search alarms."}}},
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{
+			ID: "source-1", Name: search.Name.String(), Input: rawjson.Message(`{"query":"alarms"}`),
+		}}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{
+			ToolUseID: "source-1", Content: map[string]any{"items": []any{"page-1"}},
+		}}},
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "First page."}}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Show the next page."}}},
+	})
 
-	out, err := rt.PlanStartActivity(t.Context(), input)
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 
 	require.NoError(t, err)
 	require.Len(t, out.Result.ToolCalls, 1)
@@ -2765,27 +2761,21 @@ func TestPlanResumeActivityBindsModelSelectedContinuation(t *testing.T) {
 		"",
 	))
 
-	out, err := rt.PlanResumeActivity(t.Context(), &PlanActivityInput{
-		AgentID: "service.agent",
-		RunID:   "run-123",
-		Messages: []*model.Message{
-			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Search alarms."}}},
-			{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{
-				ID: "source-1", Name: search.Name.String(), Input: rawjson.Message(`{"query":"alarms"}`),
-			}}},
-			{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{
-				ToolUseID: "source-1", Content: map[string]any{"items": []any{"page-1"}},
-			}}},
-			{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "First page."}}},
-			{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Show the next page."}}},
-		},
-		RunContext: run.Context{RunID: "run-123"},
-		ToolOutputs: []*api.ToolOutputRef{{
-			CallRunID:   "run-123",
-			ResultRunID: "run-123",
-			ToolCallID:  "source-1",
-		}},
-	})
+	out, err := rt.PlanResumeActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "run-123", RunContext: run.Context{RunID: "run-123"}, ToolOutputs: []*api.ToolOutputRef{{
+		CallRunID:   "run-123",
+		ResultRunID: "run-123",
+		ToolCallID:  "source-1",
+	}}}, []*model.Message{
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Search alarms."}}},
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{
+			ID: "source-1", Name: search.Name.String(), Input: rawjson.Message(`{"query":"alarms"}`),
+		}}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{
+			ToolUseID: "source-1", Content: map[string]any{"items": []any{"page-1"}},
+		}}},
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "First page."}}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Show the next page."}}},
+	}))
 
 	require.NoError(t, err)
 	require.NotNil(t, out.Result)
@@ -2814,12 +2804,7 @@ func TestPlanStartActivityReturnsNativeProviderError(t *testing.T) {
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 
-	out, err := rt.PlanStartActivity(context.Background(), &PlanActivityInput{
-		AgentID:    "service.agent",
-		RunID:      "run-123",
-		Messages:   []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}},
-		RunContext: run.Context{RunID: "run-123"},
-	})
+	out, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "run-123", RunContext: run.Context{RunID: "run-123"}}, []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}}))
 
 	require.Nil(t, out)
 	require.ErrorIs(t, err, providerErr)
@@ -2847,11 +2832,11 @@ func TestPlanStartActivityCancelsAndJoinsPendingUnaryInvocation(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(context.Background(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-pending-unary",
 		RunContext: run.Context{RunID: "run-pending-unary"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, planner.OutputContractOriginPlanner, out.OutputContractFailure.Origin)
@@ -2885,11 +2870,11 @@ func TestPlanStartActivityCancelsClosesAndJoinsPendingStream(t *testing.T) {
 		},
 	})
 
-	out, err := rt.PlanStartActivity(context.Background(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-pending-stream",
 		RunContext: run.Context{RunID: "run-pending-stream"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, planner.OutputContractOriginPlanner, out.OutputContractFailure.Origin)
@@ -2922,11 +2907,11 @@ func TestPlanStartActivityPersistsPlannerOriginForPrematureStreamClose(t *testin
 		},
 	})
 
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-closed-stream",
 		RunContext: run.Context{RunID: "run-closed-stream"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 	require.Equal(t, planner.OutputContractOriginPlanner, out.OutputContractFailure.Origin)
@@ -2947,12 +2932,7 @@ func TestPlanActivitiesReturnPlannerOutputFailureEvidence(t *testing.T) {
 				},
 			},
 			run: func(rt *Runtime) (*PlanActivityOutput, error) {
-				return rt.PlanStartActivity(context.Background(), &PlanActivityInput{
-					AgentID:    "service.agent",
-					RunID:      "run-start",
-					Messages:   []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}},
-					RunContext: run.Context{RunID: "run-start"},
-				})
+				return rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "run-start", RunContext: run.Context{RunID: "run-start"}}, []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}}))
 			},
 		},
 		{
@@ -2963,12 +2943,7 @@ func TestPlanActivitiesReturnPlannerOutputFailureEvidence(t *testing.T) {
 				},
 			},
 			run: func(rt *Runtime) (*PlanActivityOutput, error) {
-				return rt.PlanResumeActivity(context.Background(), &PlanActivityInput{
-					AgentID:    "service.agent",
-					RunID:      "run-resume",
-					Messages:   []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}},
-					RunContext: run.Context{RunID: "run-resume"},
-				})
+				return rt.PlanResumeActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "run-resume", RunContext: run.Context{RunID: "run-resume"}}, []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}}))
 			},
 		},
 	}
@@ -3014,18 +2989,12 @@ func TestPlanStartActivityAdvertisesPolicyFilteredTools(t *testing.T) {
 		"service.agent": {visible, blocked},
 	}
 	seedTestToolDefinitions(rt, visible, blocked)
-	input := PlanActivityInput{
-		AgentID:  "service.agent",
-		RunID:    "run-123",
-		Messages: []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}},
-		RunContext: run.Context{
-			RunID: "run-123",
-		},
-		Policy: &PolicyOverrides{
-			TagClauses: []TagPolicyClause{{AllowedAny: []string{"profile"}}},
-		},
-	}
-	out, err := rt.PlanStartActivity(context.Background(), &input)
+	input := *seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "run-123", RunContext: run.Context{
+		RunID: "run-123",
+	}, Policy: &PolicyOverrides{
+		TagClauses: []TagPolicyClause{{AllowedAny: []string{"profile"}}},
+	}}, []*model.Message{{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}}})
+	out, err := rt.PlanStartActivity(context.Background(), seedTestPlanInput(t, rt, input, nil))
 	require.NoError(t, err)
 	require.True(t, called)
 	require.NotNil(t, out.Result.FinalResponse)
@@ -3122,7 +3091,7 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		ToolOutputs:   toolOutputs,
 		SynthesisOnly: true,
 	}
-	out, err := rt.PlanResumeActivity(context.Background(), &input)
+	out, err := rt.PlanResumeActivity(context.Background(), seedTestPlanInput(t, rt, input, nil))
 	require.NoError(t, err)
 	require.True(t, called)
 	require.NotNil(t, out.Result.FinalResponse)
@@ -3193,24 +3162,16 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 		"",
 	))
 
-	out, err := rt.PlanResumeActivity(context.Background(), &PlanActivityInput{
-		AgentID:    "service.agent",
-		RunID:      "run-123",
-		RunContext: run.Context{RunID: "run-123"},
-		// The counting provider charges 10 tokens per message, so this history
-		// exceeds the 30-token threshold if preparation is mistakenly requested.
-		Messages: []*model.Message{
-			userMsg("Find prior results."),
-			assistantTextMsg("Prior results."),
-			userMsg("Search the next period."),
-			assistantTextMsg("Checking the next page."),
-		},
-		ToolOutputs: []*api.ToolOutputRef{{
-			CallRunID:   "run-123",
-			ResultRunID: "run-123",
-			ToolCallID:  "source-1",
-		}},
-	})
+	out, err := rt.PlanResumeActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "run-123", RunContext: run.Context{RunID: "run-123"}, ToolOutputs: []*api.ToolOutputRef{{
+		CallRunID:   "run-123",
+		ResultRunID: "run-123",
+		ToolCallID:  "source-1",
+	}}}, []*model.Message{
+		userMsg("Find prior results."),
+		assistantTextMsg("Prior results."),
+		userMsg("Search the next period."),
+		assistantTextMsg("Checking the next page."),
+	}))
 	require.NoError(t, err)
 	require.False(t, plannerCalled)
 	require.Zero(t, historyCalls)
@@ -3287,7 +3248,7 @@ func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) 
 		))
 	}
 
-	out, err := rt.PlanResumeActivity(context.Background(), &PlanActivityInput{
+	out, err := rt.PlanResumeActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123", Attempt: 2},
@@ -3296,7 +3257,7 @@ func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) 
 			{CallRunID: "run-123", ResultRunID: "run-123", ToolCallID: "call-1"},
 			{CallRunID: "run-123", ResultRunID: "run-123", ToolCallID: "call-2"},
 		},
-	})
+	}, nil))
 	require.NoError(t, err)
 	require.Nil(t, out.OutputContractFailure)
 	require.Len(t, out.Result.ToolCalls, 1)
@@ -3314,12 +3275,12 @@ func TestPlanResumeActivityEnforcesSynthesisOnly(t *testing.T) {
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 
-	out, err := rt.PlanResumeActivity(context.Background(), &PlanActivityInput{
+	out, err := rt.PlanResumeActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:       "service.agent",
 		RunID:         "run-123",
 		RunContext:    run.Context{RunID: "run-123", Attempt: 3},
 		SynthesisOnly: true,
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 }
@@ -3352,7 +3313,7 @@ func TestPlanResumeActivityFailsWhenCanonicalToolResultIsMissing(t *testing.T) {
 		ToolOutputs: []*api.ToolOutputRef{{CallRunID: "run-123", ResultRunID: "run-123", ToolCallID: "call-1"}},
 	}
 
-	_, err := rt.PlanResumeActivity(context.Background(), &input)
+	_, err := rt.PlanResumeActivity(context.Background(), seedTestPlanInput(t, rt, input, nil))
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "missing canonical tool result in run log")
 }
@@ -3423,7 +3384,7 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 		ToolOutputs: []*api.ToolOutputRef{{CallRunID: "run-123", ResultRunID: "run-123", ToolCallID: "call-1"}},
 	}
 
-	_, err := rt.PlanResumeActivity(context.Background(), &input)
+	_, err := rt.PlanResumeActivity(context.Background(), seedTestPlanInput(t, rt, input, nil))
 	require.NoError(t, err)
 	require.True(t, called)
 }
@@ -3656,7 +3617,7 @@ func TestPlanResumeActivityRejectsEmptyRawJSONPayloads(t *testing.T) {
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
 	}
-	out, err := rt.PlanResumeActivity(context.Background(), &input)
+	out, err := rt.PlanResumeActivity(context.Background(), seedTestPlanInput(t, rt, input, nil))
 	requirePlannerOutputContractFailure(t, out, err)
 }
 
@@ -3668,11 +3629,11 @@ func TestPlanResumeActivityRejectsMissingFinalResponseMessage(t *testing.T) {
 	}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 
-	out, err := rt.PlanResumeActivity(context.Background(), &PlanActivityInput{
+	out, err := rt.PlanResumeActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, out, err)
 }
@@ -3694,11 +3655,11 @@ func TestPlanResumeActivityRejectsPlannerAuthoredToolUseInFinalResponse(t *testi
 	}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 
-	out, err := rt.PlanResumeActivity(context.Background(), &PlanActivityInput{
+	out, err := rt.PlanResumeActivity(context.Background(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-123",
 		RunContext: run.Context{RunID: "run-123"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(
 		t,

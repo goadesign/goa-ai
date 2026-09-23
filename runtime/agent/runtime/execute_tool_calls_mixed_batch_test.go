@@ -62,7 +62,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 			},
 		},
 	}
-	reg := NewAgentToolsetRegistration(rt, cfg)
+	reg := NewAgentToolsetRegistration(cfg)
 	rt.toolsets[reg.Name] = reg
 	seedTestToolset(rt, reg.Name, agentToolSpec)
 
@@ -91,8 +91,9 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 		err      error
 	}
 	done := make(chan out, 1)
+	historyEndID := testToolHistory(t, rt, agent.Ident("parent.agent"), *(runCtx), nil)
 	go func() {
-		results, timedOut, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, nil, calls, 0, nil, time.Time{})
+		results, timedOut, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, historyEndID, calls, 0, nil, time.Time{})
 		done <- out{results: results, timedOut: timedOut, err: err}
 	}()
 
@@ -156,13 +157,14 @@ func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 		ToolCallID: "inline-cancel-call",
 	}
 
+	historyEndID := testToolHistory(t, rt, agent.Ident("parent.agent"), *runCtx, nil)
 	results, _, err := rt.executeToolCalls(
 		&testWorkflowContext{ctx: context.Background(), hookRuntime: rt},
 		"execute",
 		engine.ActivityOptions{},
 		agent.Ident("parent.agent"),
 		runCtx,
-		nil,
+		historyEndID,
 		[]ToolCall{call},
 		0,
 		nil,
@@ -192,7 +194,7 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 		Store:    newTestStore(),
 		Bus:      recorder,
 	}
-	registration := NewAgentToolsetRegistration(rt, AgentToolConfig{
+	registration := NewAgentToolsetRegistration(AgentToolConfig{
 		Definition: testAgentDefinition(agent.Ident("nested.cancel"), "nested.cancel.workflow", "nested.cancel.queue", nil, nil),
 		Name:       "agent.cancel",
 
@@ -224,6 +226,7 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 		err     error
 	}
 	done := make(chan result, 1)
+	historyEndID := testToolHistory(t, rt, agent.Ident("parent.agent"), *(runCtx), nil)
 	go func() {
 		results, _, err := rt.executeToolCalls(
 			wfCtx,
@@ -231,7 +234,7 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 			engine.ActivityOptions{},
 			agent.Ident("parent.agent"),
 			runCtx,
-			nil,
+			historyEndID,
 			[]ToolCall{call},
 			0,
 			nil,

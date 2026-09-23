@@ -475,9 +475,9 @@ func (r *Runtime) publishHook(ctx context.Context, evt hooks.Event, turnID strin
 	return r.publishHookErr(ctx, evt, turnID)
 }
 
-// publishTranscriptMessagesErr persists canonical transcript messages as a
-// durable run-log record with the specified transcript record type.
-func (r *Runtime) publishTranscriptMessagesErr(
+// publishTranscriptMessages persists the exact message delta and returns its
+// committed record identifier. Failed writes never advance the selected history.
+func (r *Runtime) publishTranscriptMessages(
 	ctx context.Context,
 	recordType runlog.Type,
 	runID string,
@@ -486,13 +486,13 @@ func (r *Runtime) publishTranscriptMessagesErr(
 	turnID string,
 	responseID string,
 	messages []*model.Message,
-) error {
+) (string, error) {
 	payload, err := transcript.EncodeRunLogDelta(messages)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if len(payload) > maxHookPayloadBytes {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"runtime: transcript delta payload exceeds budget (%d > %d bytes, run_id=%s)",
 			len(payload),
 			maxHookPayloadBytes,
@@ -515,22 +515,25 @@ func (r *Runtime) publishTranscriptMessagesErr(
 		TimestampMS: meta.TimestampMS,
 		Payload:     payload,
 	}
-	_, err = r.executeStorage(ctx, appendStorageCommand(input), engine.ActivityOptions{})
-	return err
+	result, err := r.executeStorage(ctx, appendStorageCommand(input), engine.ActivityOptions{})
+	if err != nil {
+		return "", err
+	}
+	return result.Append.Records[0].ID, nil
 }
 
-// publishTranscriptSeedErr persists canonical transcript seed messages for a
+// publishTranscriptSeed persists canonical transcript seed messages for a
 // run. Seeded transcript messages rebuild run snapshots but must not fan out as
 // newly committed assistant turns.
-func (r *Runtime) publishTranscriptSeedErr(
+func (r *Runtime) publishTranscriptSeed(
 	ctx context.Context,
 	runID string,
 	agentID agent.Ident,
 	sessionID string,
 	turnID string,
 	messages []*model.Message,
-) error {
-	return r.publishTranscriptMessagesErr(
+) (string, error) {
+	return r.publishTranscriptMessages(
 		ctx,
 		transcript.RunLogMessagesSeeded,
 		runID,
@@ -542,18 +545,18 @@ func (r *Runtime) publishTranscriptSeedErr(
 	)
 }
 
-// publishTranscriptDeltaErr persists canonical transcript messages appended
+// publishTranscriptDelta persists canonical transcript messages appended
 // during the run. Appended assistant messages are eligible for committed
 // assistant-turn fanout.
-func (r *Runtime) publishTranscriptDeltaErr(
+func (r *Runtime) publishTranscriptDelta(
 	ctx context.Context,
 	runID string,
 	agentID agent.Ident,
 	sessionID string,
 	turnID string,
 	messages []*model.Message,
-) error {
-	return r.publishTranscriptMessagesErr(
+) (string, error) {
+	return r.publishTranscriptMessages(
 		ctx,
 		transcript.RunLogMessagesAppended,
 		runID,
@@ -577,8 +580,8 @@ func (r *Runtime) publishAssistantTranscriptDelta(
 	turnID string,
 	responseID string,
 	messages []*model.Message,
-) error {
-	return r.publishTranscriptMessagesErr(
+) (string, error) {
+	return r.publishTranscriptMessages(
 		ctx,
 		transcript.RunLogMessagesAppended,
 		runID,
@@ -588,32 +591,6 @@ func (r *Runtime) publishAssistantTranscriptDelta(
 		responseID,
 		messages,
 	)
-}
-
-// publishTranscriptDelta is the panic-free wrapper used by workflow/runtime code
-// when transcript persistence failures must stop the run.
-func (r *Runtime) publishTranscriptDelta(
-	ctx context.Context,
-	runID string,
-	agentID agent.Ident,
-	sessionID string,
-	turnID string,
-	messages []*model.Message,
-) error {
-	return r.publishTranscriptDeltaErr(ctx, runID, agentID, sessionID, turnID, messages)
-}
-
-// publishTranscriptSeed is the panic-free wrapper used by workflow/runtime code
-// for run-start transcript seed persistence.
-func (r *Runtime) publishTranscriptSeed(
-	ctx context.Context,
-	runID string,
-	agentID agent.Ident,
-	sessionID string,
-	turnID string,
-	messages []*model.Message,
-) error {
-	return r.publishTranscriptSeedErr(ctx, runID, agentID, sessionID, turnID, messages)
 }
 
 type recordDispatchMetadata struct {

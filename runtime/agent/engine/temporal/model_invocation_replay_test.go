@@ -35,6 +35,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	agentruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
 	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
@@ -150,7 +151,7 @@ func TestProductionWorkflowReplaysCompleteRejectedCalls(t *testing.T) {
 		scheduledActivity(t, history, productionReplayResume).GetActivityTaskScheduledEventAttributes().Input, &resume,
 	))
 	assert.Equal(t, recovery, resume.ModelInvocationRecovery)
-	assert.Empty(t, resume.Messages)
+	assert.Equal(t, "start-record", resume.HistoryEndID)
 	out := replayProductionWorkflow(t, handler, history)
 	require.NotNil(t, out)
 	assert.Equal(t, "corrected", out.Final.Text())
@@ -346,11 +347,14 @@ func syntheticProductionReplayHistory(
 	firstResult, err := dataConverter.ToPayloads(first)
 	require.NoError(t, err)
 	rootStartResult, err := dataConverter.ToPayloads(&api.StorageActivityResult{
-		RootStart: &api.StartRunResult{Outcome: session.RunStartProceed},
+		RootStart: &api.StartRunResult{
+			Outcome: session.RunStartProceed,
+			Records: []storage.AppendResult{{ID: "start-record", Inserted: true}},
+		},
 	})
 	require.NoError(t, err)
 	appendResult, err := dataConverter.ToPayloads(&api.StorageActivityResult{
-		Append: &api.AppendRecordsResult{},
+		Append: &api.AppendRecordsResult{Records: []storage.AppendResult{{ID: "append-record", Inserted: true}}},
 	})
 	require.NoError(t, err)
 	terminalResult, err := dataConverter.ToPayloads(&api.StorageActivityResult{
@@ -412,8 +416,9 @@ func syntheticProductionReplayHistory(
 			workflowTaskCompletedEvent(nextID+5, nextID+3, nextID+4),
 		)
 		resumeRequest := &api.PlanActivityInput{
-			AgentID: productionReplayAgentID,
-			RunID:   productionReplayRunID,
+			AgentID:      productionReplayAgentID,
+			RunID:        productionReplayRunID,
+			HistoryEndID: "start-record",
 			RunContext: run.Context{
 				RunID:     productionReplayRunID,
 				SessionID: productionReplaySessionID,

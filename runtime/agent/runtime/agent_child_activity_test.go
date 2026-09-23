@@ -46,6 +46,7 @@ func TestPrepareAgentChildUsesRecordedActivityOutputWithoutRendering(t *testing.
 		toolSpecs:      make(map[tools.Ident]tools.ToolSpec),
 		PromptRegistry: registry,
 		logger:         telemetry.NoopLogger{},
+		Store:          newTestStore(),
 	}
 	toolName := tools.Ident("svc.agents.inspect")
 	cfg := AgentToolConfig{
@@ -72,9 +73,11 @@ func TestPrepareAgentChildUsesRecordedActivityOutputWithoutRendering(t *testing.
 		TurnID:    call.TurnID,
 	}
 
+	historyEndID := testToolHistory(t, rt, call.AgentID, parentRun, nil)
 	activityOutput, err := rt.prepareAgentChildActivity(t.Context(), &api.AgentChildActivityInput{
-		Call:      call,
-		ParentRun: parentRun,
+		Call:         call,
+		ParentRun:    parentRun,
+		HistoryEndID: historyEndID,
 	})
 	require.NoError(t, err)
 	require.EqualValues(t, 1, store.resolveCalls.Load())
@@ -86,7 +89,7 @@ func TestPrepareAgentChildUsesRecordedActivityOutputWithoutRendering(t *testing.
 		ctx:              context.Background(),
 		agentChildOutput: activityOutput,
 	}
-	request, err := rt.prepareAgentChild(wfCtx, call, nil, parentRun)
+	request, err := rt.prepareAgentChild(wfCtx, call, historyEndID, parentRun)
 	require.NoError(t, err)
 	require.Equal(t, 1, wfCtx.agentChildCalls)
 	require.Equal(t, agentChildActivityName, wfCtx.lastAgentChildCall.Name)
@@ -114,7 +117,7 @@ func TestPrepareAgentChildRejectsAmbiguousActivityOutput(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			wfCtx := &testWorkflowContext{ctx: t.Context(), agentChildOutput: test.output}
-			_, err := (&Runtime{}).prepareAgentChild(wfCtx, call, nil, run.Context{})
+			_, err := (&Runtime{}).prepareAgentChild(wfCtx, call, "", run.Context{})
 			require.ErrorContains(t, err, "exactly one of success or failure")
 		})
 	}

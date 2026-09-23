@@ -1,4 +1,4 @@
-package transcript
+package transcript_test
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
 	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func TestBuildMessagesFromRunLogReplaysCanonicalTranscriptOrder(t *testing.T) {
@@ -24,11 +25,11 @@ func TestBuildMessagesFromRunLogReplaysCanonicalTranscriptOrder(t *testing.T) {
 	ctx := context.Background()
 	store := newTranscriptTestStore(t, ctx)
 
-	appendTranscriptDelta(t, ctx, store, "run-1", "turn-1", []*model.Message{{
+	appendTranscriptDelta(t, ctx, store, "turn-1", []*model.Message{{
 		Role:  model.ConversationRoleUser,
 		Parts: []model.Part{model.TextPart{Text: "Summarize sales"}},
 	}})
-	appendTranscriptDelta(t, ctx, store, "run-1", "turn-1", []*model.Message{{
+	appendTranscriptDelta(t, ctx, store, "turn-1", []*model.Message{{
 		Role: model.ConversationRoleAssistant,
 		Parts: []model.Part{
 			model.ThinkingPart{Text: "Need the sales data first.", Signature: "sig-1", Index: 0, Final: true},
@@ -40,7 +41,7 @@ func TestBuildMessagesFromRunLogReplaysCanonicalTranscriptOrder(t *testing.T) {
 			},
 		},
 	}})
-	appendTranscriptDelta(t, ctx, store, "run-1", "turn-1", []*model.Message{{
+	appendTranscriptDelta(t, ctx, store, "turn-1", []*model.Message{{
 		Role: model.ConversationRoleUser,
 		Parts: []model.Part{model.ToolResultPart{
 			ToolUseID: "call_1",
@@ -48,7 +49,7 @@ func TestBuildMessagesFromRunLogReplaysCanonicalTranscriptOrder(t *testing.T) {
 		}},
 	}})
 
-	messages, err := BuildMessagesFromRunLog(ctx, store, "run-1")
+	messages, err := transcript.BuildMessagesFromRunLog(ctx, store, "run-1")
 	require.NoError(t, err)
 	require.Len(t, messages, 3)
 
@@ -76,16 +77,16 @@ func TestBuildMessagesFromRunLogReplaysSeededAndAppendedTranscriptMessages(t *te
 	ctx := context.Background()
 	store := newTranscriptTestStore(t, ctx)
 
-	appendTranscriptMessages(t, ctx, store, "run-1", "turn-1", RunLogMessagesSeeded, []*model.Message{{
+	appendTranscriptMessages(t, ctx, store, "run-1", "turn-1", transcript.RunLogMessagesSeeded, []*model.Message{{
 		Role:  model.ConversationRoleUser,
 		Parts: []model.Part{model.TextPart{Text: "hello"}},
 	}})
-	appendTranscriptMessages(t, ctx, store, "run-1", "turn-1", RunLogMessagesAppended, []*model.Message{{
+	appendTranscriptMessages(t, ctx, store, "run-1", "turn-1", transcript.RunLogMessagesAppended, []*model.Message{{
 		Role:  model.ConversationRoleAssistant,
 		Parts: []model.Part{model.TextPart{Text: "world"}},
 	}})
 
-	messages, err := BuildMessagesFromRunLog(ctx, store, "run-1")
+	messages, err := transcript.BuildMessagesFromRunLog(ctx, store, "run-1")
 	require.NoError(t, err)
 	require.Len(t, messages, 2)
 	require.Equal(t, model.ConversationRoleUser, messages[0].Role)
@@ -98,19 +99,19 @@ func TestBuildMessagesFromRunLogRequiresTranscriptDeltaEvents(t *testing.T) {
 	ctx := context.Background()
 	store := newTranscriptTestStore(t, ctx)
 
-	_, err := BuildMessagesFromRunLog(ctx, store, "run-1")
+	_, err := transcript.BuildMessagesFromRunLog(ctx, store, "run-1")
 	require.ErrorContains(t, err, "has no transcript message events")
 }
 
-func appendTranscriptDelta(t *testing.T, ctx context.Context, store storage.Store, runID, turnID string, messages []*model.Message) {
+func appendTranscriptDelta(t *testing.T, ctx context.Context, store storage.Store, turnID string, messages []*model.Message) {
 	t.Helper()
-	appendTranscriptMessages(t, ctx, store, runID, turnID, RunLogMessagesAppended, messages)
+	appendTranscriptMessages(t, ctx, store, "run-1", turnID, transcript.RunLogMessagesAppended, messages)
 }
 
 func appendTranscriptMessages(t *testing.T, ctx context.Context, store storage.Store, runID, turnID string, typ runlog.Type, messages []*model.Message) {
 	t.Helper()
 
-	payload, err := EncodeRunLogDelta(messages)
+	payload, err := transcript.EncodeRunLogDelta(messages)
 	require.NoError(t, err)
 
 	_, err = store.AppendRunRecord(ctx, &runlog.Event{

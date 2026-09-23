@@ -383,7 +383,7 @@ func TestCorrectCallRecoveryRejectsUnregisteredToolBeforePlanner(t *testing.T) {
 		h.runtime.mu.Lock()
 		delete(h.runtime.toolSpecs, tool.Name)
 		h.runtime.mu.Unlock()
-		return h.runtime.PlanResumeActivity(ctx, input)
+		return h.runtime.PlanResumeActivity(ctx, seedTestPlanInput(t, h.runtime, *(input), nil))
 	}
 
 	_, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
@@ -420,6 +420,26 @@ func TestAgentRegistrationSpecDoesNotGrantCorrectCallRecovery(t *testing.T) {
 		err,
 		`correct-call recovery tool "catalog.lookup" has no executable toolset registration`,
 	)
+}
+
+func TestCorrectCallRecoveryAcceptsAgentToolConfiguration(t *testing.T) {
+	rt := New(newTestStore())
+	spec := newAnyJSONSpec("catalog.lookup")
+	spec.IsAgentTool = true
+	spec.AgentID = "catalog.provider"
+	registration := NewAgentToolsetRegistration(AgentToolConfig{
+		Name:       "catalog",
+		Definition: testAgentDefinition("catalog.provider", "catalog.workflow", "catalog.queue", nil, nil),
+	})
+	registration.Specs = []tools.ToolSpec{spec}
+	require.NoError(t, rt.RegisterToolset(registration))
+	require.Nil(t, registration.Execute)
+	specs, err := rt.correctCallSpecs([]*planner.ToolOutput{
+		recoveryOutput(spec.Name, "saved-call", planner.RecoveryCorrectCall),
+	}, rt.newRegistryCatalog(AgentDefinition{}))
+	require.NoError(t, err)
+	require.Len(t, specs, 1)
+	require.Equal(t, spec.Name, specs[0].Name)
 }
 
 func TestCorrectCallRecoveryRequiresOwningExecutableRegistration(t *testing.T) {
@@ -511,7 +531,7 @@ func TestCorrectCallRecoveryRequiresOwningExecutableRegistration(t *testing.T) {
 				_, specRemains := h.runtime.toolSpecs[tool.Name]
 				h.runtime.mu.Unlock()
 				require.True(t, specRemains)
-				return h.runtime.PlanResumeActivity(ctx, input)
+				return h.runtime.PlanResumeActivity(ctx, seedTestPlanInput(t, h.runtime, *(input), nil))
 			}
 
 			_, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
@@ -548,7 +568,7 @@ func TestCorrectCallRecoveryPreservesCurrentPolicyAndAuthorization(t *testing.T)
 			input *PlanActivityInput,
 		) (*PlanActivityOutput, error) {
 			input.Policy = &PolicyOverrides{RestrictToTool: current.Name}
-			return h.runtime.PlanResumeActivity(ctx, input)
+			return h.runtime.PlanResumeActivity(ctx, seedTestPlanInput(t, h.runtime, *(input), nil))
 		}
 
 		_, err := h.run(&PlanResult{ToolCalls: []ToolCall{{

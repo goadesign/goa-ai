@@ -1518,10 +1518,10 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	}
 	plannerRoutes := map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
 		"nested.plan": func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
-			return rt.PlanStartActivity(ctx, input)
+			return rt.PlanStartActivity(ctx, seedTestPlanInput(t, rt, *(input), nil))
 		},
 		"nested.resume": func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
-			return rt.PlanResumeActivity(ctx, input)
+			return rt.PlanResumeActivity(ctx, seedTestPlanInput(t, rt, *(input), nil))
 		},
 		//nolint:unparam // error return is part of map type signature; test stub always succeeds
 		"resume": func(_ context.Context, _ *PlanActivityInput) (*PlanActivityOutput, error) {
@@ -1710,7 +1710,7 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 		ParentAgentID:    "agent-parent",
 		ParentToolCallID: "parent-123",
 	}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "agent-1", childCtx, nil, calls, 0, tracker, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "agent-1", childCtx, testToolHistory(t, rt, "agent-1", *(childCtx), nil), calls, 0, tracker, time.Time{})
 	require.NoError(t, err)
 
 	var update *hooks.ToolCallUpdatedEvent

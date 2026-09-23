@@ -55,14 +55,13 @@ type FetchResult = runtimespecs.FetchResult
 // generated registration also includes the labels and previews declared for
 // tool calls and results.
 func NewSourceToolsetRegistration(
-	rt *runtime.Runtime,
 	definition runtime.AgentDefinition,
 ) runtime.ToolsetRegistration {
 	cfg := runtime.AgentToolConfig{
 		Definition: definition,
 		Name:       ToolsetName,
 	}
-	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
+	reg := runtime.NewAgentToolsetRegistration(cfg)
 	reg.Specs = agentToolSpecs()
 	reg.ToolMetadataLookup = runtimespecs.MetadataByName
 	return reg
@@ -72,7 +71,6 @@ func NewSourceToolsetRegistration(
 // system prompt and content for individual tools. Callers can mix text and
 // templates, but each tool must use exactly one form.
 func NewRegistration(
-	rt *runtime.Runtime,
 	definition runtime.AgentDefinition,
 	systemPrompt string,
 	opts ...runtime.AgentToolOption,
@@ -95,7 +93,7 @@ func NewRegistration(
 			return runtime.ToolsetRegistration{}, err
 		}
 	}
-	reg := runtime.NewAgentToolsetRegistration(rt, cfg)
+	reg := runtime.NewAgentToolsetRegistration(cfg)
 	reg.Specs = agentToolSpecs()
 	reg.ToolMetadataLookup = runtimespecs.MetadataByName
 	return reg, nil

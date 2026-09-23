@@ -317,29 +317,28 @@ func TestCompleteToolInputRecoveryStaysOutOfReusableHistory(t *testing.T) {
 		require.NoError(t, err)
 		return call(ctx, input.Agent, messages)
 	}
-	input := &PlanActivityInput{AgentID: "service.agent", RunID: "history-run", Messages: requestHistoryMessages()}
-	out, err := rt.PlanStartActivity(t.Context(), input)
+	input := seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "history-run"}, requestHistoryMessages())
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 	require.NoError(t, err)
 	require.NotNil(t, out.ModelInvocationRecovery.ToolInput)
 	require.NotNil(t, out.HistoryContext)
 	input.ModelInvocationRecovery = out.ModelInvocationRecovery
 	input.HistoryContext = out.HistoryContext
-	out, err = rt.PlanResumeActivity(t.Context(), input)
+	out, err = rt.PlanResumeActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 	require.NoError(t, err)
 	require.NotNil(t, out.Result.FinalResponse)
 	require.Len(t, requests, 2)
 	assert.Contains(t, strings.Join(canonicalHistory(t, requests[1].Messages), "\n"), "privateSecret")
 	assert.NotContains(t, strings.Join(canonicalHistory(t, summaryProvider.request.Messages), "\n"), "privateSecret")
-	assert.NotContains(t, strings.Join(canonicalHistory(t, input.Messages), "\n"), "privateSecret")
+	assert.NotContains(t, strings.Join(canonicalHistory(t, testActivityMessages(t, rt, input)), "\n"), "privateSecret")
 	require.NotNil(t, out.HistoryContext)
 	assert.NotContains(t, strings.Join(canonicalHistory(t, []*model.Message{&out.HistoryContext.Summary.Message}), "\n"), "privateSecret")
 	assert.Equal(t, 1, summaryProvider.completeCalls, "replacement reuses only the old-turn summary")
 
 	input.ModelInvocationRecovery = nil
 	input.HistoryContext = out.HistoryContext
-	input.Messages = append(input.Messages, out.Transcript...)
-	input.Messages = append(input.Messages, userMsg("Choose something else now."))
-	out, err = rt.PlanStartActivity(t.Context(), input)
+	input.HistoryEndID = appendTestActivityHistory(t, rt, input, append(out.Transcript, userMsg("Choose something else now.")))
+	out, err = rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 	require.NoError(t, err)
 	require.NotNil(t, out.Result.FinalResponse)
 	require.Len(t, requests, 3)
@@ -384,7 +383,7 @@ func TestModelInputRecoveryDoesNotDowngradeIncompleteOrOversizedCalls(t *testing
 					}
 				},
 			})
-			out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{AgentID: "service.agent", RunID: "bounded-recovery"})
+			out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "bounded-recovery"}, nil))
 			require.NoError(t, err)
 			require.NotNil(t, out)
 			assert.Equal(t, 7, out.Usage.TotalTokens)

@@ -157,12 +157,6 @@ func (r *Runtime) finalizeFromHistory(
 		return nil, fmt.Errorf("cannot finalize invalid planner transcript: %w", err)
 	}
 
-	if hint != "" {
-		messages = append(messages, &model.Message{
-			Role:  model.ConversationRoleSystem,
-			Parts: []model.Part{model.TextPart{Text: hint}},
-		})
-	}
 	resumeCtx := base.RunContext
 	resumeCtx.Attempt = nextAttempt
 	// Signal zero remaining duration for any prompt engineering that uses MaxDuration.
@@ -178,7 +172,7 @@ func (r *Runtime) finalizeFromHistory(
 	req := PlanActivityInput{
 		AgentID:             input.AgentID,
 		RunID:               base.RunContext.RunID,
-		Messages:            messages,
+		HistoryEndID:        base.HistoryEndID,
 		HistoryContext:      historyContext,
 		RunContext:          resumeCtx,
 		Policy:              clonePolicyOverrides(input.Policy),
@@ -217,7 +211,7 @@ func (r *Runtime) finalizeFromHistory(
 	if input.Policy != nil && input.Policy.PlanTimeout > 0 {
 		resumeOpts.StartToCloseTimeout = input.Policy.PlanTimeout
 	}
-	output, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, req, hardDeadline)
+	output, err := r.runPlanActivity(wfCtx, reg.ResumeActivityName, resumeOpts, req, base, hardDeadline)
 	if err != nil {
 		// Surface the termination reason prominently; include underlying error for observability.
 		return nil, fmt.Errorf("%s: %w", reasonText, err)
@@ -431,6 +425,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	// caller retains ownership of the canonical transcript.
 	defer func() {
 		base.Messages = execBase.Messages
+		base.HistoryEndID = execBase.HistoryEndID
 	}()
 	execBase.RunContext = base.RunContext
 	execBase.RunContext.Attempt = nextAttempt
@@ -743,6 +738,7 @@ func (r *Runtime) runPlanActivity(
 	activityName string,
 	options engine.ActivityOptions,
 	input PlanActivityInput,
+	base *workflowConversation,
 	deadline time.Time,
 ) (*PlanActivityOutput, error) {
 	if activityName == "" {
@@ -826,7 +822,7 @@ func (r *Runtime) runPlanActivity(
 		if out.PlanningFailure != nil || (out.OutputContractFailure != nil && out.OutputContractFailure.ModelOutputRecovery == nil) {
 			return nil, errors.New("terminal planner failure cannot select a history summary")
 		}
-		if err := validateHistoryContext(input.Messages, out.HistoryContext); err != nil {
+		if err := validateHistoryContext(base.Messages, out.HistoryContext); err != nil {
 			return nil, err
 		}
 	}
@@ -839,7 +835,7 @@ func (r *Runtime) runPlanActivity(
 	}
 	if out.PublishedAssistantText != "" {
 		message := newTextAgentMessage(model.ConversationRoleAssistant, out.PublishedAssistantText)
-		if err := r.publishAssistantTranscriptDelta(
+		endID, err := r.publishAssistantTranscriptDelta(
 			wfCtx.Context(),
 			input.RunID,
 			input.AgentID,
@@ -847,9 +843,11 @@ func (r *Runtime) runPlanActivity(
 			input.RunContext.TurnID,
 			out.PublicationBatchID,
 			[]*model.Message{message},
-		); err != nil {
+		)
+		if err != nil {
 			return nil, fmt.Errorf("commit published assistant text: %w", err)
 		}
+		base.HistoryEndID = endID
 	}
 	if out.OutputContractFailure != nil {
 		if out.OutputContractFailure.ModelOutputRecovery != nil {

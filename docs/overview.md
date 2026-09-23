@@ -1127,9 +1127,9 @@ as child workflows, enabling linked streams and run links.
 ### Generated Provider Helpers
 
 - **Tool IDs** (fully qualified) and type aliases for codecs
-- **`New<Agent>ToolsetRegistration(rt, definition)`** — creates a provider
+- **`New<Agent>ToolsetRegistration(definition)`** — creates a provider
   registration from that agent's generated definition
-- **`NewRegistration(rt, definition, systemPrompt, ...runtime.AgentToolOption)`**
+- **`NewRegistration(definition, systemPrompt, ...runtime.AgentToolOption)`**
   — configures per-tool text or templates while keeping the generated
   definition as the only route and contract owner
 - **Typed call builders** like `New<Tool>Call(args)`. The runtime assigns the

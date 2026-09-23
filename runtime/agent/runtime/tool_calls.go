@@ -10,7 +10,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -82,12 +81,12 @@ type (
 		activityName   string
 		toolActOptions engine.ActivityOptions
 
-		runID     string
-		agentID   agent.Ident
-		sessionID string
-		turnID    string
-		runCtx    *run.Context
-		messages  []*model.Message
+		runID        string
+		agentID      agent.Ident
+		sessionID    string
+		turnID       string
+		runCtx       *run.Context
+		historyEndID string
 
 		expectedChildren int
 		parentTracker    *childTracker
@@ -460,7 +459,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 				executionErr = errors.Join(executionErr, err)
 				continue
 			}
-			request, err := e.r.prepareAgentChild(wfCtx, call, e.messages, *e.runCtx)
+			request, err := e.r.prepareAgentChild(wfCtx, call, e.historyEndID, *e.runCtx)
 			if err != nil {
 				tr, err := agentToolRequestFailureResult(call, err)
 				if err != nil {
@@ -867,7 +866,7 @@ func availableToolExecutionsInCallOrder(calls []ToolCall, activityByID, inlineBy
 //
 // expectedChildren indicates how many child tools are expected to be discovered dynamically
 // by the tools in this batch (0 if not tracked).
-func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName string, toolActOptions engine.ActivityOptions, agentID agent.Ident, runCtx *run.Context, messages []*model.Message, calls []ToolCall, expectedChildren int, parentTracker *childTracker, finishBy time.Time) ([]*ToolExecutionResult, bool, error) {
+func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName string, toolActOptions engine.ActivityOptions, agentID agent.Ident, runCtx *run.Context, historyEndID string, calls []ToolCall, expectedChildren int, parentTracker *childTracker, finishBy time.Time) ([]*ToolExecutionResult, bool, error) {
 	if runCtx == nil {
 		return nil, false, fmt.Errorf("missing run context")
 	}
@@ -887,7 +886,7 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 		sessionID:        runCtx.SessionID,
 		turnID:           runCtx.TurnID,
 		runCtx:           runCtx,
-		messages:         messages,
+		historyEndID:     historyEndID,
 		expectedChildren: expectedChildren,
 		parentTracker:    parentTracker,
 		finishBy:         finishBy,

@@ -80,7 +80,7 @@ func TestAgentTimeoutRecoveryKeepsFailureAndOtherWork(t *testing.T) {
 				}},
 				PlanActivityName: "lookup.plan", ResumeActivityName: "lookup.resume", ExecuteToolActivity: "lookup.execute",
 			}))
-			registration := NewAgentToolsetRegistration(h.runtime, AgentToolConfig{
+			registration := NewAgentToolsetRegistration(AgentToolConfig{
 				Definition: childDefinition, Name: "lookup",
 			})
 			registration.Specs = []tools.ToolSpec{lookup}

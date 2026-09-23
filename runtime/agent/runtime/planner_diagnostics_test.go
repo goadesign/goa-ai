@@ -38,9 +38,9 @@ func TestPlannerActivitiesOfferOriginalRejectionToTracer(t *testing.T) {
 			var output *PlanActivityOutput
 			var err error
 			if resume {
-				output, err = rt.PlanResumeActivity(t.Context(), input)
+				output, err = rt.PlanResumeActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 			} else {
-				output, err = rt.PlanStartActivity(t.Context(), input)
+				output, err = rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 			}
 			require.NoError(t, err)
 			require.NotNil(t, output.OutputContractFailure)
@@ -63,7 +63,7 @@ func TestPlannerFullReasonRespectsCompleteResultBudget(t *testing.T) {
 		}})
 		tracer := &recordingTelemetryTracer{}
 		rt.tracer = tracer
-		out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{AgentID: "service.agent", RunID: "run", RunContext: run.Context{RunID: "run", TurnID: "turn"}})
+		out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "run", RunContext: run.Context{RunID: "run", TurnID: "turn"}}, nil))
 		require.NoError(t, err)
 		require.NotNil(t, out.OutputContractFailure)
 		assert.Empty(t, out.OutputContractFailure.ReasonOmitted)
@@ -87,7 +87,7 @@ func TestPlannerSpanIncludesRuntimeAcceptance(t *testing.T) {
 	}})
 	tracer := &recordingTelemetryTracer{}
 	rt.tracer = tracer
-	output, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{AgentID: "service.agent", RunID: "run", RunContext: run.Context{RunID: "run", TurnID: "turn"}})
+	output, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "run", RunContext: run.Context{RunID: "run", TurnID: "turn"}}, nil))
 	require.NoError(t, err)
 	require.NotNil(t, output.OutputContractFailure)
 	require.Len(t, tracer.spans, 1)

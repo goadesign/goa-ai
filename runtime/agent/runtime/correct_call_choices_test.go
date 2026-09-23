@@ -50,7 +50,7 @@ func TestCorrectCallChoicesRespectRunPolicy(t *testing.T) {
 			h.runtime.agentToolSpecs[h.input.AgentID] = []tools.ToolSpec{failed, other}
 			h.workflow.plannerRoutes["resume"] = func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
 				input.Policy = test.policy
-				return h.runtime.PlanResumeActivity(ctx, input)
+				return h.runtime.PlanResumeActivity(ctx, seedTestPlanInput(t, h.runtime, *(input), nil))
 			}
 			_, err := h.run(&PlanResult{ToolCalls: []ToolCall{{Name: failed.Name, ToolCallID: "failed", Payload: rawjson.Message(`{}`)}}}, initialCaps(RunPolicy{MaxToolCalls: 2}))
 			if test.wantError {
@@ -125,7 +125,7 @@ func TestCorrectCallChoicesFinalizationRetainsOnlyFailedTerminal(t *testing.T) {
 		})
 	h.workflow.plannerRoutes["resume"] = func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
 		input.Finalize = &planner.Termination{Reason: planner.TerminationReasonToolCap}
-		return h.runtime.PlanResumeActivity(ctx, input)
+		return h.runtime.PlanResumeActivity(ctx, seedTestPlanInput(t, h.runtime, *(input), nil))
 	}
 	_, err := h.run(&PlanResult{ToolCalls: []ToolCall{{Name: terminal.Name, ToolCallID: "failed-finish", Payload: rawjson.Message(`{}`)}}}, initialCaps(RunPolicy{MaxToolCalls: 2}))
 	require.NoError(t, err)

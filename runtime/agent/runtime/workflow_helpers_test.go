@@ -241,7 +241,7 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 			"plan": rt.PlanStartActivity,
 			"resume": func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
 				resumeInput = input
-				return rt.PlanResumeActivity(ctx, input)
+				return rt.PlanResumeActivity(ctx, seedTestPlanInput(t, rt, *(input), nil))
 			},
 		},
 		toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
@@ -270,12 +270,12 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 	require.NotNil(t, resumeInput)
 	require.Len(t, resumeInput.ToolOutputs, 1)
 	require.Equal(t, executionToolCallID, resumeInput.ToolOutputs[0].ToolCallID)
-	require.NoError(t, transcript.ValidatePlannerTranscript(resumeInput.Messages))
+	require.NoError(t, transcript.ValidatePlannerTranscript(testActivityMessages(t, rt, resumeInput)))
 
-	require.Len(t, resumeInput.Messages, 3)
-	toolUse, ok := resumeInput.Messages[1].Parts[0].(model.ToolUsePart)
+	require.Len(t, testActivityMessages(t, rt, resumeInput), 3)
+	toolUse, ok := testActivityMessages(t, rt, resumeInput)[1].Parts[0].(model.ToolUsePart)
 	require.True(t, ok)
-	toolResult, ok := resumeInput.Messages[2].Parts[0].(model.ToolResultPart)
+	toolResult, ok := testActivityMessages(t, rt, resumeInput)[2].Parts[0].(model.ToolResultPart)
 	require.True(t, ok)
 	require.Equal(t, providerToolCallID, toolUse.ID)
 	require.Equal(t, providerToolCallID, toolResult.ToolUseID)

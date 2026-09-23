@@ -187,7 +187,7 @@ response. Streaming never restarts after exposing output.
 When agent A "uses" a toolset exported by agent B, Goa‑AI wires composition automatically:
 
 - The exporter (agent B) package includes a generated `agenttools` package with typed tool IDs and
-`NewRegistration(rt, systemPrompt, ...runtime.AgentToolOption)` helpers.
+`NewRegistration(definition, systemPrompt, ...runtime.AgentToolOption)` helpers.
 - The consumer registers the returned `runtime.ToolsetRegistration` with its runtime. The consumer
 does not need the exporter’s planner locally; it only needs routing metadata.
 - At runtime, invoking an exported tool starts the exporter agent as a **child workflow** using the

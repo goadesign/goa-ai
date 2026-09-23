@@ -106,7 +106,7 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 		secondContext,
 		AgentRegistration{ExecuteToolActivity: "execute"},
 		secondInput,
-		checkpoint,
+		checkpoint, seedTestContinuationHistory(t, runtime, secondInput, checkpoint),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, second)
@@ -193,7 +193,7 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 		&testWorkflowContext{ctx: t.Context(), runtime: runtime},
 		registration,
 		secondInput,
-		checkpoint,
+		checkpoint, seedTestContinuationHistory(t, runtime, secondInput, checkpoint),
 	)
 
 	require.Nil(t, second)

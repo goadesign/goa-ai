@@ -25,6 +25,15 @@ func TestRegisterToolsetValidatesAgentToolExecution(t *testing.T) {
 			name: "valid generated registration",
 		},
 		{
+			name: "duplicate ordinary executor",
+			mutate: func(registration *ToolsetRegistration) {
+				registration.Execute = wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+					return successfulToolResult(call), nil
+				})
+			},
+			wantErr: "must not define an execute function",
+		},
+		{
 			name: "missing execution configuration",
 			mutate: func(registration *ToolsetRegistration) {
 				registration.AgentTool = nil
@@ -71,7 +80,7 @@ func TestRegisterToolsetValidatesAgentToolExecution(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			runtime := New(newTestStore())
-			registration := agentToolRegistrationFixture(runtime)
+			registration := agentToolRegistrationFixture()
 			if test.mutate != nil {
 				test.mutate(&registration)
 			}
@@ -79,6 +88,7 @@ func TestRegisterToolsetValidatesAgentToolExecution(t *testing.T) {
 			err := runtime.RegisterToolset(registration)
 			if test.wantErr == "" {
 				require.NoError(t, err)
+				require.Nil(t, registration.Execute)
 				require.Contains(t, runtime.ListToolsets(), registration.Name)
 				return
 			}
@@ -107,9 +117,18 @@ func TestRegisterToolsetLeavesNonAgentToolsUnchanged(t *testing.T) {
 	require.Contains(t, runtime.ListToolsets(), "service.tools")
 }
 
+func TestRegisterToolsetRequiresOrdinaryExecutor(t *testing.T) {
+	rt := New(newTestStore())
+	err := rt.RegisterToolset(ToolsetRegistration{
+		Name: "service.tools", Specs: []tools.ToolSpec{newAnyJSONSpec("service.tools.lookup")},
+	})
+	require.ErrorContains(t, err, "execute function is required")
+	require.NotContains(t, rt.ListToolsets(), "service.tools")
+}
+
 func TestRegisterToolsetRejectsInvalidAgentToolAtomically(t *testing.T) {
 	runtime := New(newTestStore())
-	registration := agentToolRegistrationFixture(runtime)
+	registration := agentToolRegistrationFixture()
 	invalid := registration.Specs[0]
 	invalid.Name = "service.tools.invalid"
 	invalid.IsAgentTool = false
@@ -132,12 +151,12 @@ func TestRegisterToolsetRejectsInvalidAgentToolAtomically(t *testing.T) {
 	}
 }
 
-func agentToolRegistrationFixture(runtime *Runtime) ToolsetRegistration {
+func agentToolRegistrationFixture() ToolsetRegistration {
 	const agentID = agent.Ident("service.worker")
 	spec := newAnyJSONSpec("service.tools.run")
 	spec.IsAgentTool = true
 	spec.AgentID = string(agentID)
-	registration := NewAgentToolsetRegistration(runtime, AgentToolConfig{
+	registration := NewAgentToolsetRegistration(AgentToolConfig{
 		Definition: testAgentDefinition(agentID, "service.worker.workflow", "service.worker.queue", nil, nil),
 		Name:       "service.tools",
 	})

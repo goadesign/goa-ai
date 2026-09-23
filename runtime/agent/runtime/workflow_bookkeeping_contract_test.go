@@ -283,7 +283,8 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 	}))
 
 	wfCtx := &testWorkflowContext{
-		ctx: context.Background(),
+		hookRuntime: rt,
+		ctx:         context.Background(),
 		asyncResult: ToolOutput{
 			Failure: testToolFailure(planner.FailureInvalidCall, planner.RecoveryReplan, "report.summary length must be <= 600"),
 		},
@@ -320,6 +321,7 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 		}},
 	}
 
+	base.HistoryEndID = testToolHistory(t, rt, input.AgentID, base.RunContext, nil)
 	out, err := rt.runLoop(
 		wfCtx,
 		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
@@ -337,9 +339,9 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 	require.Equal(t, "resume", wfCtx.lastPlannerCall.Name)
 	require.Len(t, wfCtx.lastPlannerCall.Input.ToolOutputs, 1)
 	require.Equal(t, "terminal-call", wfCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
-	require.Len(t, wfCtx.lastPlannerCall.Input.Messages, 2)
-	require.Equal(t, model.ConversationRoleAssistant, wfCtx.lastPlannerCall.Input.Messages[0].Role)
-	require.Equal(t, model.ConversationRoleUser, wfCtx.lastPlannerCall.Input.Messages[1].Role)
+	require.Len(t, testActivityMessages(t, rt, wfCtx.lastPlannerCall.Input), 2)
+	require.Equal(t, model.ConversationRoleAssistant, testActivityMessages(t, rt, wfCtx.lastPlannerCall.Input)[0].Role)
+	require.Equal(t, model.ConversationRoleUser, testActivityMessages(t, rt, wfCtx.lastPlannerCall.Input)[1].Role)
 }
 
 func TestRunLoopRejectsProviderToolCallWithoutID(t *testing.T) {

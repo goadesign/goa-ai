@@ -289,7 +289,14 @@ func TestNamedRegistryConsumerRequiresDeclaredVersion(t *testing.T) {
     require.NoError(t, genassistant.RegisterAssistantAgent(t.Context(), rt, genassistant.AssistantAgentConfig{
         Planner: registryPlanner{tool: "analytics.search", inspect: true},
     }))
-    _, err := rt.PlanStartActivity(t.Context(), &runtime.PlanActivityInput{AgentID: genassistant.AgentID, RunID: "test"})
+    require.NoError(t, rt.RegisterToolset(runtime.ToolsetRegistration{
+        Name: "local", Specs: rt.ToolSpecsForAgent(genassistant.AgentID),
+        Execute: func(context.Context, *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
+            t.Error("version rejection must precede local tool execution")
+            return nil, fmt.Errorf("unexpected local tool execution")
+        },
+    }))
+    _, err := genassistant.NewClient(rt).OneShotRun(t.Context(), []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Inspect the catalog."}}}})
     require.ErrorContains(t, err, "requires version")
 }
 
@@ -302,7 +309,7 @@ func TestParentAndChildDefinitionsNeedNoCatalogAtStartup(t *testing.T) {
     require.NoError(t, genworker.RegisterWorkerAgent(t.Context(), rt, genworker.WorkerAgentConfig{
         Planner: registryPlanner{tool: "analytics.search", inspect: true},
     }))
-    _, err := rt.PlanStartActivity(t.Context(), &runtime.PlanActivityInput{AgentID: genworker.AgentID, RunID: "test"})
+    _, err := genworker.NewClient(rt).OneShotRun(t.Context(), []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Inspect the catalog."}}}})
     require.ErrorContains(t, err, "registry \"corp\" is not registered")
 }
 

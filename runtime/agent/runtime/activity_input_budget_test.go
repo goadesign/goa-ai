@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -89,13 +90,8 @@ func TestToolResultContentTruncatesOversizedResults(t *testing.T) {
 
 func TestEnforcePlanActivityInputBudgetFailsFast(t *testing.T) {
 	in := PlanActivityInput{
-		RunID: "run-1",
-		Messages: []*model.Message{
-			{
-				Role:  model.ConversationRoleUser,
-				Parts: []model.Part{model.TextPart{Text: strings.Repeat("x", maxPlanActivityInputBytes+1024)}},
-			},
-		},
+		RunID:          "run-1",
+		HistoryContext: &api.HistoryContext{Summary: api.HistorySummary{Message: *userMsg(strings.Repeat("x", maxPlanActivityInputBytes+1024))}},
 	}
 	require.Error(t, enforcePlanActivityInputBudget(in))
 }

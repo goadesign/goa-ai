@@ -25,7 +25,7 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 		Store:    newTestStore(),
 	}
 
-	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
+	reg := NewAgentToolsetRegistration(AgentToolConfig{
 		Definition: testAgentDefinition(agent.Ident("svc.agent"), "wf", "default", nil, nil),
 		PreChildValidator: func(context.Context, *AgentToolValidationInput) *tools.ValidationError {
 			return tools.NewValidationError(
@@ -69,7 +69,11 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 			SessionID: "session-1",
 			TurnID:    "turn-1",
 		},
-		nil,
+		testToolHistory(t, rt, "agent-1", run.Context{
+			RunID:     "run-1",
+			SessionID: "session-1",
+			TurnID:    "turn-1",
+		}, nil),
 		[]ToolCall{call},
 		0,
 		nil,

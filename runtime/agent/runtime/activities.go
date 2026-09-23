@@ -59,14 +59,18 @@ type plannerActivityInvocation struct {
 // beginning of a run to produce the initial plan. The activity creates an
 // agent context with memory access and delegates to the planner's PlanStart
 // implementation.
-func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInput) (activityOutput *PlanActivityOutput, activityErr error) {
+func (r *Runtime) PlanStartActivity(ctx context.Context, wireInput *PlanActivityInput) (activityOutput *PlanActivityOutput, activityErr error) {
 	ctx, span := r.tracer.Start(ctx, "planner.plan_start")
 	var act *plannerActivityInvocation
 	defer func() { finishPlannerActivitySpan(ctx, span, act, activityErr) }()
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
-	catalog, err := r.planningCatalog(ctx, input)
+	input, err := r.resolvePlanActivityInput(ctx, wireInput)
+	if err != nil {
+		return nil, err
+	}
+	catalog, err := r.planningCatalog(ctx, input.PlanActivityInput)
 	if err != nil {
 		return nil, err
 	}
@@ -126,14 +130,18 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, input *PlanActivityInpu
 // execution to produce the next plan. The activity creates an agent context,
 // loads canonical tool outputs from the run log, and delegates to the planner's
 // PlanResume implementation.
-func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInput) (activityOutput *PlanActivityOutput, activityErr error) {
+func (r *Runtime) PlanResumeActivity(ctx context.Context, wireInput *PlanActivityInput) (activityOutput *PlanActivityOutput, activityErr error) {
 	ctx, span := r.tracer.Start(ctx, "planner.plan_resume")
 	var act *plannerActivityInvocation
 	defer func() { finishPlannerActivitySpan(ctx, span, act, activityErr) }()
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
-	if err := validatePlanResumeRecoveryInput(input); err != nil {
+	if err := validatePlanResumeRecoveryInput(wireInput); err != nil {
+		return nil, err
+	}
+	input, err := r.resolvePlanActivityInput(ctx, wireInput)
+	if err != nil {
 		return nil, err
 	}
 	toolOutputs, err := r.loadPlannerToolOutputs(ctx, input.ToolOutputs)
@@ -155,10 +163,12 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, input *PlanActivityInp
 	synthesisOnly := input.SynthesisOnly || input.ModelOutputRecovery != nil &&
 		input.ModelOutputRecovery.Kind == planner.ModelOutputRecoveryAnswer && finalize == nil
 	effectiveInput := *input
+	effectiveWireInput := *input.PlanActivityInput
+	effectiveInput.PlanActivityInput = &effectiveWireInput
 	effectiveInput.SynthesisOnly = synthesisOnly
 	// A finish failure still permits existing pages; only explicit finalization
 	// removes registry reads. New domain tools are excluded below.
-	catalog, err := r.planningCatalog(ctx, &effectiveInput)
+	catalog, err := r.planningCatalog(ctx, effectiveInput.PlanActivityInput)
 	if err != nil {
 		return nil, err
 	}
@@ -350,7 +360,7 @@ func (r *Runtime) correctCallSpecs(outputs []*planner.ToolOutput, catalog *Regis
 			)
 		}
 		registration, registered := r.toolsets[toolsetName]
-		if !registered || registration.Execute == nil {
+		if !registered || (registration.Execute == nil && registration.AgentTool == nil) {
 			return nil, fmt.Errorf(
 				"correct-call recovery tool %q has no executable toolset registration",
 				name,
@@ -512,7 +522,7 @@ func validatePlannerToolCatalogs(
 // specs. Both paths apply the same run policy and unavailable-tool exclusions.
 func (r *Runtime) preparePlannerActivity(
 	ctx context.Context,
-	input *PlanActivityInput,
+	input *resolvedPlanActivityInput,
 	catalog *RegistryCatalog,
 	continuationActions []continuationAction,
 	unavailableTools []tools.Ident,
@@ -1543,7 +1553,7 @@ func buildToolFailureFromAgentToolRequestError(err error) *planner.ToolFailure {
 // plannerContext constructs the agent registration and context needed for planner execution.
 func (r *Runtime) plannerContext(
 	ctx context.Context,
-	input *PlanActivityInput,
+	input *resolvedPlanActivityInput,
 	runPolicy compiledToolPolicy,
 	events planner.PlannerEvents,
 	invocations modelInvocationSink,

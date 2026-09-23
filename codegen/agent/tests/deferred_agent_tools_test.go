@@ -99,7 +99,7 @@ func TestEmbeddedChildKeepsOwnDeferral(t *testing.T) {
 		return nil, fmt.Errorf("catalog inspection must not execute a tool")
 	})
 	require.NoError(t, genparent.RegisterUsedToolsets(t.Context(), rt, genparent.WithRecordsExecutor(executor)))
-	actions, err := genactions.NewRegistration(rt, child, "")
+	actions, err := genactions.NewRegistration(child, "")
 	require.NoError(t, err)
 	require.NoError(t, rt.RegisterToolset(actions))
 	for _, id := range []agent.Ident{genparent.AgentID, genspecialist.AgentID} {

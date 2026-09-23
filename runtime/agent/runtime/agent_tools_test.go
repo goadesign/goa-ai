@@ -184,7 +184,7 @@ func TestAgentToolTerminalFailureSkipsParentResume(t *testing.T) {
 				ResumeActivityName:  childResume,
 				ExecuteToolActivity: childExecute,
 			}))
-			childToolset := NewAgentToolsetRegistration(rt, AgentToolConfig{
+			childToolset := NewAgentToolsetRegistration(AgentToolConfig{
 				Definition: testAgentDefinition(childID, childWorkflowName, "child.queue", nil, nil),
 				Name:       "child.tools",
 				AgentToolContent: AgentToolContent{
@@ -350,7 +350,7 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 	}))
 
 	// Build registration with no per-tool content.
-	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
+	reg := NewAgentToolsetRegistration(AgentToolConfig{
 		Definition: testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 	})
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
@@ -366,7 +366,7 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
-	tr, err := reg.Execute(ctx, &call)
+	tr, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
 	require.Len(t, pl.msgs, 1)
@@ -424,7 +424,7 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 	}
 	spec.ExecutionPayloadCodec = spec.Payload.Codec
 	spec.ExecutionPayloadCodec.ToJSON = json.Marshal
-	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
+	reg := NewAgentToolsetRegistration(AgentToolConfig{
 		Definition: testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
 			Prompt: func(_ tools.Ident, payload any) string {
@@ -448,14 +448,14 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
-	tr, err := reg.Execute(ctx, &call)
+	tr, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
 	require.NotNil(t, tr.ToolResult)
 	require.NotNil(t, tr.ToolResult.Failure)
 	require.Equal(t, planner.FailureInvalidCall, tr.ToolResult.Failure.Kind)
 	require.Equal(t, planner.RecoveryCorrectCall, tr.ToolResult.Failure.Recovery.Action)
-	require.Empty(t, tr.ToolResult.Failure.Recovery.PriorInput)
+	require.Equal(t, call.Payload, tr.ToolResult.Failure.Recovery.PriorInput)
 	require.Empty(t, tr.ToolResult.Failure.Recovery.ExampleJSON)
 	require.Empty(t, pl.msgs)
 	require.Empty(t, wf.childRequests)
@@ -475,7 +475,7 @@ func TestAgentTool_TextContent(t *testing.T) {
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
 	}))
-	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
+	reg := NewAgentToolsetRegistration(AgentToolConfig{
 		Definition: testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
 			Texts: map[tools.Ident]string{
@@ -495,7 +495,7 @@ func TestAgentTool_TextContent(t *testing.T) {
 	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
-	tr, err := reg.Execute(ctx, &call)
+	tr, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
 	require.NotNil(t, tr.ToolResult)
@@ -519,7 +519,7 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
 	}))
-	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
+	reg := NewAgentToolsetRegistration(AgentToolConfig{
 		Definition: testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 		AgentToolContent: AgentToolContent{
 			Prompt: func(_ tools.Ident, payload any) string {
@@ -541,7 +541,7 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
-	tr, err := reg.Execute(ctx, &call)
+	tr, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
 	require.NotNil(t, tr)
 	require.NotNil(t, tr.ToolResult)
@@ -570,7 +570,7 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
 	}))
-	reg := NewAgentToolsetRegistration(rt, AgentToolConfig{
+	reg := NewAgentToolsetRegistration(AgentToolConfig{
 		Definition:   testAgentDefinition(agent.Ident(agentID), "wf", "default", nil, nil),
 		SystemPrompt: "SYS",
 		AgentToolContent: AgentToolContent{
@@ -592,7 +592,7 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
-	_, err := reg.Execute(ctx, &call)
+	_, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
 	require.Len(t, pl.msgs, 2)
 	require.Equal(t, model.ConversationRoleSystem, pl.msgs[0].Role)

@@ -866,16 +866,16 @@ func testStorageResult(command *api.StorageActivityCommand) *api.StorageActivity
 	switch {
 	case command.Append != nil:
 		return &api.StorageActivityResult{Append: &api.AppendRecordsResult{
-			Records: make([]storage.AppendResult, len(command.Append.Records)),
+			Records: testRecordResults(command.Append.Records...),
 		}}
 	case command.RootStart != nil:
-		return &api.StorageActivityResult{RootStart: &api.StartRunResult{Outcome: session.RunStartProceed}}
+		return &api.StorageActivityResult{RootStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: testRecordResults(command.RootStart.Started)}}
 	case command.ChildStart != nil:
-		return &api.StorageActivityResult{ChildStart: &api.StartRunResult{Outcome: session.RunStartProceed}}
+		return &api.StorageActivityResult{ChildStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: testRecordResults(command.ChildStart.ParentLinked, command.ChildStart.Started)}}
 	case command.OneShotStart != nil:
-		return &api.StorageActivityResult{OneShotStart: &api.StartRunResult{Outcome: session.RunStartProceed}}
+		return &api.StorageActivityResult{OneShotStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: testRecordResults(command.OneShotStart.Started)}}
 	case command.OneShotChildStart != nil:
-		return &api.StorageActivityResult{OneShotChildStart: &api.StartRunResult{Outcome: session.RunStartProceed}}
+		return &api.StorageActivityResult{OneShotChildStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: testRecordResults(command.OneShotChildStart.ParentLinked, command.OneShotChildStart.Started)}}
 	case command.Cancellation != nil:
 		return &api.StorageActivityResult{Cancellation: &api.RunCancellationResult{Outcome: api.RunCancellationAccepted}}
 	case command.Suspension != nil:
@@ -883,6 +883,16 @@ func testStorageResult(command *api.StorageActivityCommand) *api.StorageActivity
 	default:
 		return &api.StorageActivityResult{Terminal: &api.RecordWriteResult{}}
 	}
+}
+
+// testRecordResults gives each mock write its stable event key as the record ID.
+// Tests that read stored history must use hookRuntime to execute actual writes.
+func testRecordResults(records ...*RecordActivityInput) []storage.AppendResult {
+	results := make([]storage.AppendResult, len(records))
+	for i, record := range records {
+		results[i].ID = record.EventKey
+	}
+	return results
 }
 
 func (t *testWorkflowContext) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.PlanActivityOutput, error) {

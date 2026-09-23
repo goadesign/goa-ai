@@ -123,7 +123,7 @@ func TestRegistryPlanningAdvertisesCurrentToolsAndSavesOnlySelections(t *testing
 	input := &PlanActivityInput{
 		AgentID: definition.route.ID, RunID: "run-1", RunContext: run.Context{RunID: "run-1"},
 	}
-	output, err := rt.PlanStartActivity(t.Context(), input)
+	output, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 	require.NoError(t, err)
 	require.Nil(t, output.OutputContractFailure)
 	require.NotNil(t, output.Result)
@@ -143,7 +143,7 @@ func TestRegistryPlanningAdvertisesCurrentToolsAndSavesOnlySelections(t *testing
 		}}}, nil
 	}
 	input.SynthesisOnly = true
-	output, err = rt.PlanStartActivity(t.Context(), input)
+	output, err = rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *(input), nil))
 	require.NoError(t, err)
 	require.NotNil(t, output.Result.FinalResponse)
 	assert.Equal(t, 1, reads, "a tool-free final answer must not read the registry")

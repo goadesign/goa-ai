@@ -24,7 +24,6 @@ import (
 	"text/template"
 
 	"goa.design/goa-ai/runtime/agent/api"
-	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
@@ -209,12 +208,11 @@ func WithTemplateAll(ids []tools.Ident, t *template.Template) AgentToolOption {
 //
 // Callers should set Name, Description, and Specs on the returned registration
 // before registering it with the runtime.
-func NewAgentToolsetRegistration(rt *Runtime, cfg AgentToolConfig) ToolsetRegistration {
+func NewAgentToolsetRegistration(cfg AgentToolConfig) ToolsetRegistration {
 	return ToolsetRegistration{
 		Name:        cfg.Name,
 		Description: cfg.Description,
 		Inline:      true,
-		Execute:     defaultAgentToolExecute(rt, cfg),
 		AgentTool:   &cfg,
 	}
 }
@@ -319,50 +317,6 @@ func PayloadToString(payload any) (string, error) {
 		return "", fmt.Errorf("marshal payload as JSON: %w", err)
 	}
 	return string(b), nil
-}
-
-// defaultAgentToolExecute returns the standard Execute function for agent-as-tool
-// registrations. It converts the tool payload to messages (respecting per-tool
-// prompts), constructs a nested run context from the current tool call, starts
-// the provider agent as a child workflow, and adapts the result to a ToolResult.
-func defaultAgentToolExecute(rt *Runtime, cfg AgentToolConfig) func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
-	return func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
-		wfCtx := engine.WorkflowContextFromContext(ctx)
-		if wfCtx == nil {
-			return nil, fmt.Errorf("workflow context not found")
-		}
-		if !cfg.Definition.valid() {
-			return nil, fmt.Errorf("agent tool definition is required")
-		}
-		parentRun := &run.Context{
-			RunID:     call.RunID,
-			SessionID: call.SessionID,
-			TurnID:    call.TurnID,
-		}
-		request, err := rt.prepareAgentChild(wfCtx, *call, nil, *parentRun)
-		if err != nil {
-			result, err := agentToolRequestFailureResult(*call, err)
-			if err != nil {
-				return nil, err
-			}
-			return Executed(result), nil
-		}
-		outPtr, err := rt.executeAgentChild(wfCtx, cfg.Definition, request)
-		if err != nil {
-			return nil, fmt.Errorf("execute agent: %w", err)
-		}
-		if outPtr != nil && outPtr.Suspension != nil {
-			return &ToolExecutionResult{
-				ToolResult:      &planner.ToolResult{Name: call.Name, ToolCallID: call.ToolCallID},
-				childSuspension: outPtr.Suspension,
-			}, nil
-		}
-		result, err := rt.adaptAgentChildOutput(&cfg, call, request.runContext, outPtr)
-		if err != nil {
-			return nil, err
-		}
-		return Executed(result), nil
-	}
 }
 
 // agentToolRequestFailureResult converts a generated payload-validation error

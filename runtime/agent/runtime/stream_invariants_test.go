@@ -98,7 +98,7 @@ func TestRunStreamEnd_ParentAfterChild(t *testing.T) {
 	require.Equal(t, sessionID, sess.ID)
 	require.Equal(t, session.StatusActive, sess.Status)
 
-	agentTools := NewAgentToolsetRegistration(rt, AgentToolConfig{
+	agentTools := NewAgentToolsetRegistration(AgentToolConfig{
 		Definition: testAgentDefinition(agent.Ident("child.agent"), "child.workflow", "default", nil, nil),
 		Name:       toolsetName,
 		AgentToolContent: AgentToolContent{

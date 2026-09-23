@@ -34,17 +34,19 @@ func (r *Runtime) appendTranscriptMessages(
 	if err != nil {
 		return err
 	}
-	if err := r.publishTranscriptDelta(
+	endID, err := r.publishTranscriptDelta(
 		ctx,
 		base.RunContext.RunID,
 		agentID,
 		base.RunContext.SessionID,
 		turnID,
 		owned,
-	); err != nil {
+	)
+	if err != nil {
 		return err
 	}
 	base.Messages = append(base.Messages, owned...)
+	base.HistoryEndID = endID
 	return nil
 }
 
@@ -79,7 +81,7 @@ func (r *Runtime) appendSelectedModelResponse(
 	if err != nil {
 		return err
 	}
-	if err := r.publishAssistantTranscriptDelta(
+	endID, err := r.publishAssistantTranscriptDelta(
 		ctx,
 		base.RunContext.RunID,
 		agentID,
@@ -87,10 +89,12 @@ func (r *Runtime) appendSelectedModelResponse(
 		turnID,
 		responseID,
 		owned,
-	); err != nil {
+	)
+	if err != nil {
 		return err
 	}
 	base.Messages = append(base.Messages, owned...)
+	base.HistoryEndID = endID
 	return nil
 }
 

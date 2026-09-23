@@ -161,7 +161,7 @@ func TestPlanActivitiesPrepareCompleteResponseExchanges(t *testing.T) {
 			provider := newExchangeHistoryProvider(t, nil)
 			modelCalls := 0
 			plan := func(ctx context.Context, full []*model.Message, agentCtx planner.PlannerContext) (*planner.PlanResult, error) {
-				assertExactHistory(t, messages, full)
+				assert.Equal(t, canonicalHistory(t, messages), canonicalHistory(t, full))
 				client, ok := agentCtx.PlannerModelClient("test")
 				require.True(t, ok)
 				response, err := client.Complete(ctx, &model.Request{Model: "test", Messages: full, Tools: fitTools()})
@@ -186,8 +186,8 @@ func TestPlanActivitiesPrepareCompleteResponseExchanges(t *testing.T) {
 				complete: func(_ context.Context, request *model.Request) (*model.Response, error) {
 					modelCalls++
 					require.NoError(t, transcript.ValidatePlannerTranscript(request.Messages))
-					// Model request admission clones messages; history preparation
-					// preserves pointers, while the provider receives equal values.
+					// Loading history and admitting a model request preserve the
+					// encoded content across both copies.
 					want := make([]*model.Message, 0, 2+len(exchanges[2])+len(exchanges[3]))
 					want = append(want, exchanges[0][len(exchanges[0])-1], exchanges[1][len(exchanges[1])-1])
 					want = append(want, exchanges[2]...)
@@ -200,9 +200,7 @@ func TestPlanActivitiesPrepareCompleteResponseExchanges(t *testing.T) {
 			if resume {
 				call = rt.PlanResumeActivity
 			}
-			out, err := call(t.Context(), &PlanActivityInput{
-				AgentID: "service.agent", RunID: "synthetic-run", RunContext: run.Context{RunID: "synthetic-run"}, Messages: messages,
-			})
+			out, err := call(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "synthetic-run", RunContext: run.Context{RunID: "synthetic-run"}}, messages))
 			require.NoError(t, err)
 			require.NotNil(t, out.Result.FinalResponse)
 			assert.Equal(t, 1, modelCalls)
