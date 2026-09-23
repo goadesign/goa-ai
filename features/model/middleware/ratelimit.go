@@ -6,13 +6,12 @@ package middleware
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"strconv"
 	"sync"
 	"time"
-
-	"golang.org/x/time/rate"
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/pulse/rmap"
@@ -33,14 +32,16 @@ type (
 	AdaptiveRateLimiter struct {
 		mu sync.Mutex
 
-		limiter *rate.Limiter
-
 		currentTPM float64
 		minTPM     float64
 		maxTPM     float64
 
-		recoveryRate  float64
-		reserveOutput bool
+		recoveryRate   float64
+		reserveOutput  bool
+		reconcileUsage bool
+		balance        float64
+		balanceAt      time.Time
+		balanceChanged chan struct{}
 
 		onBackoff func(newTPM float64)
 		onProbe   func(newTPM float64)
@@ -56,9 +57,12 @@ type (
 	// Opening a stream is not success because the provider can return a rate
 	// limit after earlier chunks have already arrived.
 	limitedStreamer struct {
-		next    model.Streamer
-		limiter *AdaptiveRateLimiter
-		once    sync.Once
+		next      model.Streamer
+		limiter   *AdaptiveRateLimiter
+		reserved  int
+		usage     model.TokenUsage
+		settleErr error
+		once      sync.Once
 	}
 
 	// clusterMap is the subset of rmap.Map used by the cluster-aware limiter.
@@ -75,12 +79,13 @@ type (
 )
 
 const outputReservationClusterKeySuffix = ".input-plus-max-output.v1"
+const reconciledUsageClusterKeySuffix = ".provider-usage.v1"
 
 // NewAdaptiveRateLimiter constructs an AdaptiveRateLimiter with a token-capacity
 // budget per minute. When m and key are set, it coordinates capacity across
 // processes using a Pulse replicated map; otherwise it operates as a
 // process-local limiter.
-func NewAdaptiveRateLimiter(ctx context.Context, m *rmap.Map, key string, initialTPM, maxTPM float64) *AdaptiveRateLimiter {
+func NewAdaptiveRateLimiter(ctx context.Context, m *rmap.Map, key string, initialTPM, maxTPM float64) (*AdaptiveRateLimiter, error) {
 	return newPublicAdaptiveRateLimiter(ctx, m, key, initialTPM, maxTPM, false)
 }
 
@@ -93,9 +98,30 @@ func NewOutputReservationAdaptiveRateLimiter(
 	m *rmap.Map,
 	key string,
 	initialTPM, maxTPM float64,
-) *AdaptiveRateLimiter {
+) (*AdaptiveRateLimiter, error) {
 	key = outputReservationClusterKey(key)
 	return newPublicAdaptiveRateLimiter(ctx, m, key, initialTPM, maxTPM, true)
+}
+
+// NewUsageReconciledAdaptiveRateLimiter reserves estimated input plus maximum
+// output before a model call. Once the provider reports usage, the local token
+// balance replaces that reservation with the reported total. The capacity is
+// coordinated across processes; token balances remain local to each process.
+func NewUsageReconciledAdaptiveRateLimiter(
+	ctx context.Context,
+	m *rmap.Map,
+	key string,
+	initialTPM, maxTPM float64,
+) (*AdaptiveRateLimiter, error) {
+	if key != "" {
+		key += reconciledUsageClusterKeySuffix
+	}
+	l, err := newPublicAdaptiveRateLimiter(ctx, m, key, initialTPM, maxTPM, true)
+	if err != nil {
+		return nil, err
+	}
+	l.reconcileUsage = true
+	return l, nil
 }
 
 // outputReservationClusterKey isolates combined input-and-output accounting
@@ -115,14 +141,23 @@ func newPublicAdaptiveRateLimiter(
 	key string,
 	initialTPM, maxTPM float64,
 	reserveOutput bool,
-) *AdaptiveRateLimiter {
+) (*AdaptiveRateLimiter, error) {
+	if initialTPM < 1 || maxTPM < initialTPM || math.IsNaN(initialTPM) || math.IsNaN(maxTPM) || math.IsInf(initialTPM, 0) || math.IsInf(maxTPM, 0) {
+		return nil, errors.New("adaptive rate limiting requires finite token capacities of at least one, with maximum at least initial")
+	}
+	if (m == nil) != (key == "") {
+		return nil, errors.New("adaptive rate limiting requires a map and key together")
+	}
 	var cm clusterMap
 	if m != nil {
 		cm = &rmapClusterMap{m: m}
 	}
-	limiter := newClusterAdaptiveRateLimiter(ctx, cm, key, initialTPM, maxTPM)
+	limiter, err := newClusterAdaptiveRateLimiter(ctx, cm, key, initialTPM, maxTPM)
+	if err != nil {
+		return nil, err
+	}
 	limiter.reserveOutput = reserveOutput
-	return limiter
+	return limiter, nil
 }
 
 // newAdaptiveRateLimiter constructs an AdaptiveRateLimiter configured with an
@@ -131,15 +166,7 @@ func newPublicAdaptiveRateLimiter(
 // constructor.
 //
 // initialTPM and maxTPM use the token-cost units selected by the middleware.
-// When maxTPM is zero or less than initialTPM, it is clamped to initialTPM.
 func newAdaptiveRateLimiter(initialTPM, maxTPM float64) *AdaptiveRateLimiter {
-	if initialTPM <= 0 {
-		// Default to a conservative budget when callers do not provide one.
-		initialTPM = 60000
-	}
-	if maxTPM <= 0 || maxTPM < initialTPM {
-		maxTPM = initialTPM
-	}
 	minTPM := initialTPM * 0.1
 	if minTPM < 1 {
 		minTPM = 1
@@ -148,14 +175,14 @@ func newAdaptiveRateLimiter(initialTPM, maxTPM float64) *AdaptiveRateLimiter {
 	if recoveryRate < 1 {
 		recoveryRate = 1
 	}
-	lim := rate.NewLimiter(rate.Limit(initialTPM/60.0), int(initialTPM))
-
 	return &AdaptiveRateLimiter{
-		limiter:      lim,
-		currentTPM:   initialTPM,
-		minTPM:       minTPM,
-		maxTPM:       maxTPM,
-		recoveryRate: recoveryRate,
+		currentTPM:     initialTPM,
+		minTPM:         minTPM,
+		maxTPM:         maxTPM,
+		recoveryRate:   recoveryRate,
+		balance:        initialTPM,
+		balanceAt:      time.Now(),
+		balanceChanged: make(chan struct{}),
 	}
 }
 
@@ -195,10 +222,20 @@ func (l *AdaptiveRateLimiter) WrapProvider(next model.Provider) (model.Provider,
 
 // Complete enforces the limiter before delegating to the underlying client.
 func (c *limitedProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	if err := c.limiter.wait(ctx, c.counter, req); err != nil {
+	reserved, err := c.limiter.waitWithReservation(ctx, c.counter, req)
+	if err != nil {
 		return nil, err
 	}
 	resp, err := c.next.Complete(ctx, req)
+	if c.limiter.reconcileUsage {
+		if err != nil {
+			if settleErr := c.limiter.settle(reserved, model.UsageFromError(err)); settleErr != nil {
+				err = errors.Join(err, settleErr)
+			}
+		} else {
+			err = c.limiter.settle(reserved, &resp.Usage)
+		}
+	}
 	c.limiter.observe(err)
 	if err != nil {
 		return nil, err
@@ -208,18 +245,24 @@ func (c *limitedProvider) Complete(ctx context.Context, req *model.Request) (*mo
 
 // Stream enforces the limiter before delegating to the underlying client.
 func (c *limitedProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
-	if err := c.limiter.wait(ctx, c.counter, req); err != nil {
+	reserved, err := c.limiter.waitWithReservation(ctx, c.counter, req)
+	if err != nil {
 		return nil, err
 	}
 	stream, err := c.next.Stream(ctx, req)
 	if err != nil {
+		if c.limiter.reconcileUsage {
+			if settleErr := c.limiter.settle(reserved, model.UsageFromError(err)); settleErr != nil {
+				err = errors.Join(err, settleErr)
+			}
+		}
 		c.limiter.observe(err)
 		if stream != nil {
 			err = errors.Join(err, stream.Close())
 		}
 		return nil, err
 	}
-	return &limitedStreamer{next: stream, limiter: c.limiter}, nil
+	return &limitedStreamer{next: stream, limiter: c.limiter, reserved: reserved}, nil
 }
 
 // CountTokens preserves the optional token-counting capability through the
@@ -233,8 +276,20 @@ func (c *limitedProvider) CountTokens(ctx context.Context, req *model.Request) (
 // result. Clean EOF increases capacity; a streamed rate limit reduces it.
 func (s *limitedStreamer) Recv() (model.Chunk, error) {
 	chunk, err := s.next.Recv()
+	if s.limiter.reconcileUsage {
+		if delta, ok := chunk.(model.UsageChunk); ok {
+			usage, usageErr := model.AddTokenUsage(s.usage, delta.Usage)
+			if usageErr != nil {
+				return nil, usageErr
+			}
+			s.usage = usage
+		}
+	}
 	if err != nil {
 		s.once.Do(func() {
+			if s.limiter.reconcileUsage {
+				s.settleErr = s.settle(err)
+			}
 			// Only literal EOF proves successful model capacity. A wrapped EOF
 			// reports the provider failure that added the wrapper.
 			//nolint:errorlint // Exact equality is required by the model stream contract.
@@ -244,6 +299,9 @@ func (s *limitedStreamer) Recv() (model.Chunk, error) {
 			}
 			s.limiter.observe(err)
 		})
+		if s.settleErr != nil {
+			return nil, s.settleErr
+		}
 	}
 	return chunk, err
 }
@@ -251,7 +309,29 @@ func (s *limitedStreamer) Recv() (model.Chunk, error) {
 // Close releases the provider stream without guessing whether an unread
 // stream would have succeeded or failed.
 func (s *limitedStreamer) Close() error {
-	return s.next.Close()
+	err := s.next.Close()
+	if s.limiter.reconcileUsage {
+		s.once.Do(func() { s.settleErr = s.settle(err) })
+	}
+	if s.settleErr != nil {
+		return errors.Join(err, s.settleErr)
+	}
+	return err
+}
+
+// settle uses the complete provider response when available. A failed or
+// unfinished stream uses retained usage or the usage chunks already received.
+func (s *limitedStreamer) settle(err error) error {
+	if usage := model.UsageFromError(err); usage != nil {
+		return s.limiter.settle(s.reserved, usage)
+	}
+	//nolint:errorlint // Only literal EOF proves a complete provider response.
+	if err == io.EOF {
+		if response := s.next.Response(); response != nil {
+			return s.limiter.settle(s.reserved, &response.Usage)
+		}
+	}
+	return s.limiter.settle(s.reserved, &s.usage)
 }
 
 // Response returns the provider's response after clean stream completion.
@@ -259,28 +339,108 @@ func (s *limitedStreamer) Response() *model.Response {
 	return s.next.Response()
 }
 
-func (l *AdaptiveRateLimiter) wait(
+// waitWithReservation charges a request before it reaches the provider and
+// returns that charge so reported usage can replace it at completion.
+func (l *AdaptiveRateLimiter) waitWithReservation(
 	ctx context.Context,
 	counter model.TokenCounter,
 	req *model.Request,
-) error {
+) (int, error) {
 	if l.reserveOutput && req.MaxTokens <= 0 {
-		return errors.New("adaptive rate limiting with output reservation requires positive max tokens")
+		return 0, errors.New("adaptive rate limiting with output reservation requires positive max tokens")
 	}
 	count, err := counter.CountTokens(ctx, req)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	if !count.Exact {
-		return errors.New("adaptive rate limiting requires an exact provider token count")
+	if count.InputTokens < 0 {
+		return 0, errors.New("adaptive rate limiting requires a nonnegative provider token count")
 	}
-	if !l.reserveOutput {
-		return l.limiter.WaitN(ctx, count.InputTokens)
+	if !count.Exact && !l.reconcileUsage {
+		return 0, errors.New("adaptive rate limiting requires an exact provider token count")
 	}
-	if req.MaxTokens > math.MaxInt-count.InputTokens {
-		return errors.New("adaptive rate limiting token cost exceeds integer range")
+	cost := count.InputTokens
+	if l.reserveOutput {
+		if req.MaxTokens > math.MaxInt-cost {
+			return 0, errors.New("adaptive rate limiting token cost exceeds integer range")
+		}
+		cost += req.MaxTokens
 	}
-	return l.limiter.WaitN(ctx, count.InputTokens+req.MaxTokens)
+	return cost, l.waitForBalance(ctx, cost)
+}
+
+// waitForBalance spends a provisional request charge from the process-local
+// token balance. Completed provider usage corrects this balance later.
+func (l *AdaptiveRateLimiter) waitForBalance(ctx context.Context, cost int) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		l.mu.Lock()
+		l.advanceBalance(time.Now())
+		if float64(cost) > l.currentTPM {
+			l.mu.Unlock()
+			return errors.New("adaptive rate limiting token cost exceeds configured capacity")
+		}
+		if l.balance >= float64(cost) {
+			l.balance -= float64(cost)
+			l.mu.Unlock()
+			return nil
+		}
+		wait := time.Duration(min((float64(cost)-l.balance)/l.currentTPM*float64(time.Minute), float64(time.Minute)))
+		changed := l.balanceChanged
+		l.mu.Unlock()
+		timer := time.NewTimer(max(wait, time.Millisecond))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-changed:
+			timer.Stop()
+		case <-timer.C:
+		}
+	}
+}
+
+// settle replaces a request's estimated charge with the provider's reported
+// token total. Unknown usage retains the provisional charge in the limiter.
+func (l *AdaptiveRateLimiter) settle(reserved int, usage *model.TokenUsage) error {
+	if usage == nil || usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 {
+		return nil
+	}
+	if _, err := model.AddTokenUsage(model.TokenUsage{}, *usage); err != nil {
+		return fmt.Errorf("adaptive rate limiting received invalid provider usage: %w", err)
+	}
+	actual := float64(usage.TotalTokens)
+	if actual == 0 {
+		actual = float64(usage.InputTokens) + float64(usage.OutputTokens)
+	}
+	l.mu.Lock()
+	l.advanceBalance(time.Now())
+	l.balance += float64(reserved) - actual
+	if l.balance > l.currentTPM {
+		l.balance = l.currentTPM
+	}
+	l.signalBalanceChange()
+	l.mu.Unlock()
+	return nil
+}
+
+// signalBalanceChange wakes requests that were waiting for a prior model call
+// to finish. The caller holds l.mu while replacing the notification channel.
+func (l *AdaptiveRateLimiter) signalBalanceChange() {
+	close(l.balanceChanged)
+	l.balanceChanged = make(chan struct{})
+}
+
+// advanceBalance adds tokens earned since the last request or provider report.
+// The caller holds l.mu so concurrent requests share one local balance.
+func (l *AdaptiveRateLimiter) advanceBalance(now time.Time) {
+	l.balance += now.Sub(l.balanceAt).Seconds() * l.currentTPM / 60
+	if l.balance > l.currentTPM {
+		l.balance = l.currentTPM
+	}
+	l.balanceAt = now
 }
 
 func (l *AdaptiveRateLimiter) observe(err error) {
@@ -295,6 +455,7 @@ func (l *AdaptiveRateLimiter) observe(err error) {
 
 func (l *AdaptiveRateLimiter) backoff() {
 	l.mu.Lock()
+	l.advanceBalance(time.Now())
 
 	newTPM := l.currentTPM * 0.5
 	if newTPM < l.minTPM {
@@ -305,8 +466,10 @@ func (l *AdaptiveRateLimiter) backoff() {
 		return
 	}
 	l.currentTPM = newTPM
-	l.limiter.SetLimit(rate.Limit(newTPM / 60.0))
-	l.limiter.SetBurst(int(newTPM))
+	if l.balance > newTPM {
+		l.balance = newTPM
+	}
+	l.signalBalanceChange()
 
 	cb := l.onBackoff
 
@@ -319,6 +482,7 @@ func (l *AdaptiveRateLimiter) backoff() {
 
 func (l *AdaptiveRateLimiter) probe() {
 	l.mu.Lock()
+	l.advanceBalance(time.Now())
 
 	newTPM := l.currentTPM + l.recoveryRate
 	if newTPM > l.maxTPM {
@@ -329,8 +493,7 @@ func (l *AdaptiveRateLimiter) probe() {
 		return
 	}
 	l.currentTPM = newTPM
-	l.limiter.SetLimit(rate.Limit(newTPM / 60.0))
-	l.limiter.SetBurst(int(newTPM))
+	l.signalBalanceChange()
 
 	cb := l.onProbe
 
@@ -345,6 +508,7 @@ func (l *AdaptiveRateLimiter) probe() {
 // clamped to the configured [minTPM, maxTPM] range.
 func (l *AdaptiveRateLimiter) replaceTPM(tpm float64) {
 	l.mu.Lock()
+	l.advanceBalance(time.Now())
 	if tpm < l.minTPM {
 		tpm = l.minTPM
 	}
@@ -356,8 +520,10 @@ func (l *AdaptiveRateLimiter) replaceTPM(tpm float64) {
 		return
 	}
 	l.currentTPM = tpm
-	l.limiter.SetLimit(rate.Limit(tpm / 60.0))
-	l.limiter.SetBurst(int(tpm))
+	if l.balance > tpm {
+		l.balance = tpm
+	}
+	l.signalBalanceChange()
 	l.mu.Unlock()
 }
 
@@ -384,27 +550,25 @@ func (m *rmapClusterMap) Subscribe() <-chan rmap.EventKind {
 	return m.m.Subscribe()
 }
 
-func newClusterAdaptiveRateLimiter(ctx context.Context, m clusterMap, key string, initialTPM, maxTPM float64) *AdaptiveRateLimiter {
+func newClusterAdaptiveRateLimiter(ctx context.Context, m clusterMap, key string, initialTPM, maxTPM float64) (*AdaptiveRateLimiter, error) {
 	if key == "" || m == nil {
-		return newAdaptiveRateLimiter(initialTPM, maxTPM)
+		return newAdaptiveRateLimiter(initialTPM, maxTPM), nil
 	}
 
-	// Best-effort initialization: if the key does not exist yet, seed it with
-	// the initial value. A concurrent writer may still win; we refresh below.
+	// A concurrent writer may seed the key first; read the value after seeding.
 	if _, ok := m.Get(key); !ok {
-		if _, err := m.SetIfNotExists(ctx, key, strconv.Itoa(int(initialTPM))); err != nil {
-			// When seeding the shared budget fails, fall back to a process-local
-			// limiter so callers still make progress instead of treating the
-			// cluster map as partially initialized.
-			return newAdaptiveRateLimiter(initialTPM, maxTPM)
+		if _, err := m.SetIfNotExists(ctx, key, strconv.FormatFloat(initialTPM, 'f', -1, 64)); err != nil {
+			return nil, fmt.Errorf("initialize shared token capacity: %w", err)
 		}
 	}
 
-	sharedTPM := initialTPM
-	if cur, ok := m.Get(key); ok {
-		if v, err := strconv.ParseFloat(cur, 64); err == nil && v > 0 {
-			sharedTPM = v
-		}
+	cur, ok := m.Get(key)
+	if !ok {
+		return nil, errors.New("shared token capacity is missing after initialization")
+	}
+	sharedTPM, err := strconv.ParseFloat(cur, 64)
+	if err != nil || sharedTPM <= 0 || sharedTPM > maxTPM || math.IsNaN(sharedTPM) || math.IsInf(sharedTPM, 0) {
+		return nil, fmt.Errorf("invalid shared token capacity %q", cur)
 	}
 
 	l := newAdaptiveRateLimiter(sharedTPM, maxTPM)
@@ -439,7 +603,7 @@ func newClusterAdaptiveRateLimiter(ctx context.Context, m clusterMap, key string
 		}
 	}()
 
-	return l
+	return l, nil
 }
 
 func globalBackoff(ctx context.Context, m clusterMap, key string, floor float64) {
@@ -461,7 +625,7 @@ func globalBackoff(ctx context.Context, m clusterMap, key string, floor float64)
 		if next < floor {
 			next = floor
 		}
-		nextStr := strconv.Itoa(int(next))
+		nextStr := strconv.FormatFloat(next, 'f', -1, 64)
 		prev, err := m.TestAndSet(ctx, key, curStr, nextStr)
 		if err != nil {
 			return
@@ -494,7 +658,7 @@ func globalProbe(ctx context.Context, m clusterMap, key string, step, ceiling fl
 		if next > ceiling {
 			next = ceiling
 		}
-		nextStr := strconv.Itoa(int(next))
+		nextStr := strconv.FormatFloat(next, 'f', -1, 64)
 		prev, err := m.TestAndSet(ctx, key, curStr, nextStr)
 		if err != nil {
 			return

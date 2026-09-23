@@ -1419,11 +1419,14 @@ The OpenAI Responses adapter has distinct constructors for direct OpenAI and
 Amazon Bedrock. They share transcript encoding, streaming, provider-issued tool
 identity and encrypted reasoning replay. The constructor, not a per-request
 fallback, selects the tool-schema contract: direct OpenAI projects to
-`strict:true`; Bedrock sends the complete schema with `strict:false` and
-preserves returned arguments. The validated model client remains responsible
-for checking the original schema and generated decoder in both cases.
+`strict:true`; `NewBedrock` and `NewBedrockProvider` send the complete schema
+with `strict:false` and preserve returned arguments. `NewBedrockStrictProvider`
+uses the shared strict compiler with Bedrock transport and never changes schema
+contracts after an error. Required disjoint string tags select each object union
+branch's own optional-null removal rules. The validated model client remains responsible
+for checking the original schema and generated decoder in every case.
 
-Both constructors send `store:false` and explicitly include
+All constructors send `store:false` and explicitly include
 `reasoning.encrypted_content` on every request. Requesting replay data belongs
 to stateless transcript ownership, not to the optional reasoning-effort setting:
 provider-default reasoning can also return items that the next request must
@@ -1583,8 +1586,16 @@ for details and the SDK source-compatibility change.
   `HistoryCompressionConfig.AllowEstimatedTokens` explicitly permits estimates
   declared by that counter; counter errors remain errors, never fallback
   triggers. Estimated budgets do not prove provider context-window fit or
-  billing usage. Original messages and the exact-count requirement for adaptive
-  rate limiting remain unchanged. A gateway
+  billing usage. Original messages and the exact-count requirement for the
+  preflight adaptive rate limiters remain unchanged. The usage-reconciled
+  limiter admits a request using the destination provider's declared estimate
+  plus its maximum output budget. It then replaces that provisional charge
+  with the provider's final token total, or with reported partial usage when a
+  stream ends early. If the provider reports no usage, the charge remains a
+  provisional estimate; it is never labeled as measured usage. The token
+  balance is local to each process while adaptive capacity is shared across
+  processes. Construction fails if the shared capacity cannot be initialized;
+  it does not silently switch to local capacity. A gateway
   preserves exact counting only when its transport supplies the separate
   count operation through `NewCountingRemoteClient`; otherwise counting
   returns `model.ErrTokenCountingUnsupported`.
