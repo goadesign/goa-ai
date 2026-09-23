@@ -200,7 +200,7 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 		nextWorkflow,
 		h.registration,
 		nextInput,
-		checkpoint,
+		checkpoint, seedTestContinuationHistory(t, h.runtime, nextInput, checkpoint),
 	)
 	require.NoError(t, err)
 	require.NotNil(t, out)

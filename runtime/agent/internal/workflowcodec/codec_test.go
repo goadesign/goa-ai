@@ -459,16 +459,9 @@ func TestNewDataConverterRoundTripsPlanActivityInputToolOutputs(t *testing.T) {
 
 	dc := NewDataConverter()
 	p, err := dc.ToPayload(&api.PlanActivityInput{
-		AgentID: "test.agent",
-		RunID:   "run-123",
-		Messages: []*model.Message{
-			{
-				Role: model.ConversationRoleUser,
-				Parts: []model.Part{
-					model.TextPart{Text: "hello"},
-				},
-			},
-		},
+		AgentID:      "test.agent",
+		RunID:        "run-123",
+		HistoryEndID: "17",
 		RunContext: run.Context{
 			RunID:   "run-123",
 			Attempt: 2,
@@ -486,6 +479,23 @@ func TestNewDataConverterRoundTripsPlanActivityInputToolOutputs(t *testing.T) {
 	require.NotNil(t, decoded)
 	require.Len(t, decoded.ToolOutputs, 1)
 	require.Equal(t, "call-1", decoded.ToolOutputs[0].ToolCallID)
+	require.Equal(t, "17", decoded.HistoryEndID)
+}
+
+func TestActivityHistoryWireRejectsInlineLegacyMessages(t *testing.T) {
+	dc := NewDataConverter()
+	payload := &commonpb.Payload{
+		Metadata: map[string][]byte{"encoding": []byte("json/plain")},
+		Data:     []byte(`{"HistoryEndID":"17","Messages":[]}`),
+	}
+	var plan api.PlanActivityInput
+	require.Error(t, dc.FromPayload(payload, &plan))
+	var child api.AgentChildActivityInput
+	require.Error(t, dc.FromPayload(payload, &child))
+	childPayload, err := dc.ToPayload(&api.AgentChildActivityInput{HistoryEndID: "17"})
+	require.NoError(t, err)
+	require.NoError(t, dc.FromPayload(childPayload, &child))
+	require.Equal(t, "17", child.HistoryEndID)
 }
 
 func TestNewDataConverterRoundTripsOutputContractFailure(t *testing.T) {

@@ -139,12 +139,13 @@ func TestPlanStartActivityWaitsForCanceledStreamReceiveCleanup(t *testing.T) {
 	})
 
 	returned := make(chan planActivityTestResult, 1)
+	input := seedTestPlanInput(t, rt, PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-pending-stream-recv",
+		RunContext: run.Context{RunID: "run-pending-stream-recv"},
+	}, nil)
 	go func() {
-		output, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
-			AgentID:    "service.agent",
-			RunID:      "run-pending-stream-recv",
-			RunContext: run.Context{RunID: "run-pending-stream-recv"},
-		})
+		output, err := rt.PlanStartActivity(t.Context(), input)
 		returned <- planActivityTestResult{output: output, err: err}
 	}()
 
@@ -213,12 +214,13 @@ func TestPlanStartActivityPreservesModelRejectionWhileJoiningPendingCall(t *test
 	})
 
 	returned := make(chan planActivityTestResult, 1)
+	input := seedTestPlanInput(t, rt, PlanActivityInput{
+		AgentID:    "service.agent",
+		RunID:      "run-model-rejection-with-pending",
+		RunContext: run.Context{RunID: "run-model-rejection-with-pending"},
+	}, nil)
 	go func() {
-		output, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
-			AgentID:    "service.agent",
-			RunID:      "run-model-rejection-with-pending",
-			RunContext: run.Context{RunID: "run-model-rejection-with-pending"},
-		})
+		output, err := rt.PlanStartActivity(t.Context(), input)
 		returned <- planActivityTestResult{output: output, err: err}
 	}()
 
@@ -272,11 +274,11 @@ func TestPlanStartActivityRejectsOversizedResultBranches(t *testing.T) {
 				seedTestToolSpecs(rt, newAnyJSONSpec(test.tool))
 			}
 
-			output, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+			output, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 				AgentID:    "service.agent",
 				RunID:      "run-oversized-result",
 				RunContext: run.Context{RunID: "run-oversized-result", Tool: test.tool},
-			})
+			}, nil))
 
 			requirePlannerOutputContractFailure(t, output, err)
 			require.Equal(
@@ -306,11 +308,11 @@ func TestPlanStartActivityRejectsManyIndividuallyBoundedEvents(t *testing.T) {
 		},
 	})
 
-	output, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	output, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-many-events",
 		RunContext: run.Context{RunID: "run-many-events"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, output, err)
 	require.Equal(t, planner.OutputContractOriginPlanner, output.OutputContractFailure.Origin)
@@ -332,11 +334,11 @@ func TestPlanStartActivityRejectsExcessiveVisitedValues(t *testing.T) {
 		},
 	})
 
-	output, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	output, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID:    "service.agent",
 		RunID:      "run-many-values",
 		RunContext: run.Context{RunID: "run-many-values"},
-	})
+	}, nil))
 
 	requirePlannerOutputContractFailure(t, output, err)
 	require.Equal(t, planner.OutputContractOriginPlanner, output.OutputContractFailure.Origin)
@@ -485,6 +487,7 @@ func TestSuccessfulOutputReturnsExhaustedPublicationErrorWithoutReplanning(t *te
 		},
 	})
 	store := &replayPublicationStore{
+		Store:    newTestStore(),
 		failCall: 1,
 		stored:   make(map[string]*runlog.Event),
 	}
@@ -499,12 +502,12 @@ func TestSuccessfulOutputReturnsExhaustedPublicationErrorWithoutReplanning(t *te
 		wfCtx,
 		"plan",
 		engine.ActivityOptions{},
-		PlanActivityInput{
+		*seedTestPlanInput(t, rt, PlanActivityInput{
 			AgentID:    "service.agent",
 			RunID:      "run-success-publication-failure",
 			RunContext: run.Context{RunID: "run-success-publication-failure"},
-		},
-		time.Time{},
+		}, nil),
+		&workflowConversation{}, time.Time{},
 	)
 
 	require.ErrorContains(t, err, "record backend unavailable")
@@ -628,7 +631,7 @@ func TestInvalidPlannerActivityResultPublishesNoRecords(t *testing.T) {
 					RunID:      "run-invalid-result",
 					RunContext: run.Context{RunID: "run-invalid-result"},
 				},
-				time.Time{},
+				&workflowConversation{}, time.Time{},
 			)
 
 			require.Nil(t, got)
@@ -651,6 +654,7 @@ func TestOutputFailureReturnsExhaustedPublicationErrorWithoutReplanning(t *testi
 	}}
 	rt := newTestRuntimeWithPlanner("service.agent", pl)
 	store := &replayPublicationStore{
+		Store:    newTestStore(),
 		failCall: 2,
 		stored:   make(map[string]*runlog.Event),
 	}
@@ -678,8 +682,8 @@ func TestOutputFailureReturnsExhaustedPublicationErrorWithoutReplanning(t *testi
 		wfCtx,
 		"plan",
 		engine.ActivityOptions{},
-		input,
-		time.Time{},
+		*seedTestPlanInput(t, rt, input, nil),
+		&workflowConversation{}, time.Time{},
 	)
 
 	require.Nil(t, output)
@@ -720,12 +724,12 @@ func TestOutputFailurePublicationDoesNotMaskActivityErrorAfterCancellation(t *te
 		wfCtx,
 		"plan",
 		engine.ActivityOptions{},
-		PlanActivityInput{
+		*seedTestPlanInput(t, rt, PlanActivityInput{
 			AgentID:    "service.agent",
 			RunID:      "run-canceled-publication",
 			RunContext: run.Context{RunID: "run-canceled-publication"},
-		},
-		time.Time{},
+		}, nil),
+		&workflowConversation{}, time.Time{},
 	)
 
 	require.Nil(t, output)

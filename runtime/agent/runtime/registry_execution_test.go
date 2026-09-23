@@ -139,11 +139,11 @@ func TestRegistryCorrectionUsesNewlyResolvedContract(t *testing.T) {
 			}}}, nil
 		},
 	}}
-	output, err := rt.PlanResumeActivity(t.Context(), &PlanActivityInput{
+	output, err := rt.PlanResumeActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID: definition.route.ID, RunID: "run", RunContext: run.Context{RunID: "run", SessionID: "session"},
 		ToolOutputs:         []*api.ToolOutputRef{{CallRunID: "run", ResultRunID: "run", ToolCallID: "failed"}},
 		RecoveryToolCallIDs: []string{"failed"},
-	})
+	}, nil))
 	require.NoError(t, err)
 	require.Nil(t, output.OutputContractFailure)
 	require.NotNil(t, output.Result)

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"testing"
 	"text/template"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	agent "goa.design/goa-ai/runtime/agent"
@@ -16,6 +17,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -61,13 +63,31 @@ func registerAgentToolTestConfig(rt *Runtime, cfg AgentToolConfig, toolset strin
 	}
 	spec.IsAgentTool = true
 	spec.AgentID = string(cfg.Definition.route.ID)
-	registration := NewAgentToolsetRegistration(rt, cfg)
+	registration := NewAgentToolsetRegistration(cfg)
 	registration.Name = toolset
 	registration.Specs = []tools.ToolSpec{spec}
 	rt.addToolsetLocked(registration, mustToolDefinitions(registration.Specs))
 }
 
-func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
+// dispatchTestAgentTool passes a saved parent history through the workflow's
+// normal tool dispatch and returns its single child result.
+func dispatchTestAgentTool(t *testing.T, rt *Runtime, ctx context.Context, call ToolCall) (*ToolExecutionResult, error) {
+	t.Helper()
+	parent := run.Context{RunID: call.RunID, SessionID: call.SessionID, TurnID: call.TurnID}
+	position := testToolHistory(t, rt, call.AgentID, parent, nil)
+	results, timedOut, err := rt.executeToolCalls(
+		engine.WorkflowContextFromContext(ctx), "execute", engine.ActivityOptions{},
+		call.AgentID, &parent, position, []ToolCall{call}, 0, nil, time.Time{},
+	)
+	if err != nil {
+		return nil, err
+	}
+	require.False(t, timedOut)
+	require.Len(t, results, 1)
+	return results[0], nil
+}
+
+func TestAgentToolDispatch_TemplatePreferredOverText(t *testing.T) {
 	var got []*model.Message
 	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input == nil {
@@ -88,7 +108,6 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 		},
 	}
 
-	exec := defaultAgentToolExecute(rt, cfg)
 	call := ToolCall{
 		ToolCallID: "call-1",
 		Name:       tools.Ident("tool"),
@@ -99,7 +118,7 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
-	res, err := exec(ctx, &call)
+	res, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.ToolResult)
@@ -125,7 +144,7 @@ func TestDefaultAgentToolExecute_TemplatePreferredOverText(t *testing.T) {
 	}
 }
 
-func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
+func TestAgentToolDispatch_UsesTextWhenNoTemplate(t *testing.T) {
 	var got []*model.Message
 	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input == nil {
@@ -143,7 +162,6 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 		},
 	}
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec("tool"))
-	exec := defaultAgentToolExecute(rt, cfg)
 	call := ToolCall{
 		ToolCallID: "call-1",
 		Name:       tools.Ident("tool"),
@@ -152,7 +170,7 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 	}
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
-	res, err := exec(ctx, &call)
+	res, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.ToolResult)
@@ -166,7 +184,7 @@ func TestDefaultAgentToolExecute_UsesTextWhenNoTemplate(t *testing.T) {
 	}
 }
 
-func TestDefaultAgentToolExecute_DefaultContentFromPayload(t *testing.T) {
+func TestAgentToolDispatch_DefaultContentFromPayload(t *testing.T) {
 	var got []*model.Message
 	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input != nil {
@@ -178,7 +196,6 @@ func TestDefaultAgentToolExecute_DefaultContentFromPayload(t *testing.T) {
 	cfg := AgentToolConfig{
 		Definition: testAgentDefinition(agent.Ident("svc.agent"), "wf", "default", nil, nil),
 	}
-	exec := defaultAgentToolExecute(rt, cfg)
 	call := ToolCall{
 		ToolCallID: "call-1",
 		Name:       tools.Ident("tool"),
@@ -189,7 +206,7 @@ func TestDefaultAgentToolExecute_DefaultContentFromPayload(t *testing.T) {
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
-	res, err := exec(ctx, &call)
+	res, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.ToolResult)
@@ -199,7 +216,7 @@ func TestDefaultAgentToolExecute_DefaultContentFromPayload(t *testing.T) {
 	require.JSONEq(t, `{"x":"world"}`, firstText(got[0]))
 }
 
-func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T) {
+func TestAgentToolDispatch_PreChildValidatorReturnsToolResult(t *testing.T) {
 	rt, ctx := setupTestAgentWithPlanner(func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
 		t.Fatal("planner must not run when pre-child validation fails")
 		return nil, nil
@@ -221,7 +238,6 @@ func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T
 			)
 		},
 	}
-	exec := defaultAgentToolExecute(rt, cfg)
 	call := ToolCall{
 		ToolCallID:      "call-1",
 		ModelToolCallID: "call-1",
@@ -234,7 +250,7 @@ func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 
-	result, err := exec(ctx, &call)
+	result, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotNil(t, result.ToolResult)
@@ -244,7 +260,7 @@ func TestDefaultAgentToolExecute_PreChildValidatorReturnsToolResult(t *testing.T
 	require.Equal(t, "sources", result.ToolResult.Failure.Recovery.Issues[0].Field)
 }
 
-func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilder(t *testing.T) {
+func TestAgentToolDispatch_PromptSpecPreferredOverTemplateTextPromptBuilder(t *testing.T) {
 	var got []*model.Message
 	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		if input == nil {
@@ -294,7 +310,6 @@ func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilde
 			},
 		},
 	}
-	exec := defaultAgentToolExecute(rt, cfg)
 	call := ToolCall{
 		ToolCallID: "call-1",
 		Name:       tools.Ident("tool"),
@@ -306,7 +321,7 @@ func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilde
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 
-	res, err := exec(ctx, &call)
+	res, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
 	require.NotNil(t, res)
 	require.NotNil(t, res.ToolResult)
@@ -319,7 +334,7 @@ func TestDefaultAgentToolExecute_PromptSpecPreferredOverTemplateTextPromptBuilde
 	}
 }
 
-func TestDefaultAgentToolExecute_PromptSpecMissingReturnsError(t *testing.T) {
+func TestAgentToolDispatch_PromptSpecMissingReturnsError(t *testing.T) {
 	rt, ctx := setupTestAgentWithPlanner(func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		return &planner.PlanResult{
 			FinalResponse: &planner.FinalResponse{
@@ -339,7 +354,6 @@ func TestDefaultAgentToolExecute_PromptSpecMissingReturnsError(t *testing.T) {
 			},
 		},
 	}
-	exec := defaultAgentToolExecute(rt, cfg)
 	call := ToolCall{
 		ToolCallID: "call-1",
 		Name:       tools.Ident("tool"),
@@ -350,12 +364,12 @@ func TestDefaultAgentToolExecute_PromptSpecMissingReturnsError(t *testing.T) {
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 
-	_, err := exec(ctx, &call)
+	_, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "render prompt")
 }
 
-func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
+func TestAgentToolDispatch_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 	type payload struct {
 		TimeContext string `json:"time_context"`
 	}
@@ -420,8 +434,7 @@ func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", spec)
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
-	exec := defaultAgentToolExecute(rt, cfg)
-	_, err := exec(ctx, &call)
+	_, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	text, ok := got[0].Parts[0].(model.TextPart)
@@ -429,7 +442,7 @@ func TestDefaultAgentToolExecute_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 	require.Equal(t, "from-spec last 48h", text.Text)
 }
 
-func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testing.T) {
+func TestAgentToolDispatch_PromptSpecRejectsNonObjectPayloadShape(t *testing.T) {
 	rt, ctx := setupTestAgentWithPlanner(func(_ context.Context, _ *planner.PlanInput) (*planner.PlanResult, error) {
 		return &planner.PlanResult{
 			FinalResponse: &planner.FinalResponse{
@@ -486,8 +499,7 @@ func TestDefaultAgentToolExecute_PromptSpecRejectsNonObjectPayloadShape(t *testi
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", spec)
 	call.AgentID = parentAgentID
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
-	exec := defaultAgentToolExecute(rt, cfg)
-	_, err := exec(ctx, &call)
+	_, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "prompt payload must render from a JSON object")
 }

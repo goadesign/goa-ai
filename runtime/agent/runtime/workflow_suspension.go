@@ -511,10 +511,11 @@ func decodeCheckpointToolEvent(event *api.ToolEvent, call ToolCall, lookup toolS
 
 // resumeSuspendedWorkflow consumes one exact pending response after
 // ExecuteWorkflow has restored and validated the checkpoint-owned input.
-func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg AgentRegistration, input *RunInput, checkpoint *workflowCheckpoint) (*RunOutput, error) {
+func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg AgentRegistration, input *RunInput, checkpoint *workflowCheckpoint, historyEndID string) (*RunOutput, error) {
 	base := &workflowConversation{
-		Messages:   checkpoint.BaseMessages,
-		RunContext: restoreCheckpointRunContext(checkpoint.Context, input),
+		Messages:     checkpoint.BaseMessages,
+		HistoryEndID: historyEndID,
+		RunContext:   restoreCheckpointRunContext(checkpoint.Context, input),
 	}
 	state, err := r.restoreCheckpointState(checkpoint.State)
 	if err != nil {

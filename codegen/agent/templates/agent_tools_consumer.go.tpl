@@ -8,7 +8,6 @@
 // Example:
 //
 //	reg, err := {{ .Toolset.AgentToolsRegistrationConstructor }}(
-//	    rt,
 //	    systemPrompt,
 //	    opts...,
 //	)
@@ -19,7 +18,6 @@
 //	    return err
 //	}
 func {{ .Toolset.AgentToolsRegistrationConstructor }}(
-    rt *{{ .RuntimeAlias }}.Runtime,
     systemPrompt string,
     opts ...{{ .RuntimeAlias }}.AgentToolOption,
 ) ({{ .RuntimeAlias }}.ToolsetRegistration, error) {
@@ -27,5 +25,5 @@ func {{ .Toolset.AgentToolsRegistrationConstructor }}(
     if !ok {
         panic("generated agent definition is missing its child agent")
     }
-    return {{ .ProviderAlias }}.{{ .ProviderRegistrationConstructor }}(rt, definition, systemPrompt, opts...)
+    return {{ .ProviderAlias }}.{{ .ProviderRegistrationConstructor }}(definition, systemPrompt, opts...)
 }

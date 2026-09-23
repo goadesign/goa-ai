@@ -9,7 +9,6 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -19,6 +18,16 @@ const agentChildActivityName = "runtime.prepare_agent_child"
 // prepareAgentChildActivity decodes the parent tool payload, renders the child
 // prompt, and returns the exact values that workflow history must retain.
 func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error) {
+	stopHeartbeat := startActivityHeartbeat(ctx)
+	defer stopHeartbeat()
+
+	if input.Call.RunID != input.ParentRun.RunID || input.Call.SessionID != input.ParentRun.SessionID {
+		return nil, engine.MarkActivityErrorNonRetryable(errors.New("child call does not belong to the parent run"))
+	}
+	messages, err := r.loadActivityHistory(ctx, input.Call.AgentID, input.ParentRun.RunID, input.ParentRun.SessionID, input.HistoryEndID)
+	if err != nil {
+		return nil, err
+	}
 	if input.Call.Registry != nil {
 		return r.prepareRegistryAgentChild(ctx, input.Call)
 	}
@@ -30,7 +39,7 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 		ctx,
 		cfg,
 		&input.Call,
-		input.Messages,
+		messages,
 		&input.ParentRun,
 	)
 	if err != nil {
@@ -49,13 +58,13 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 
 // prepareAgentChild schedules prompt rendering outside workflow code and
 // converts the recorded result into the runtime's private child request.
-func (r *Runtime) prepareAgentChild(wfCtx engine.WorkflowContext, call ToolCall, messages []*model.Message, parentRun run.Context) (agentChildRequest, error) {
+func (r *Runtime) prepareAgentChild(wfCtx engine.WorkflowContext, call ToolCall, historyEndID string, parentRun run.Context) (agentChildRequest, error) {
 	output, err := wfCtx.ExecuteAgentChildActivity(engine.AgentChildActivityCall{
 		Name: agentChildActivityName,
 		Input: &api.AgentChildActivityInput{
-			Call:      call,
-			Messages:  messages,
-			ParentRun: parentRun,
+			Call:         call,
+			HistoryEndID: historyEndID,
+			ParentRun:    parentRun,
 		},
 	})
 	if err != nil {

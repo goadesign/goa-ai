@@ -36,7 +36,7 @@ func TestChildContinuationWaitsAfterParentCancellation(t *testing.T) {
 		Name:             "svc.agent",
 		AgentToolContent: AgentToolContent{Prompt: func(tools.Ident, any) string { return "work" }},
 	}
-	registration := NewAgentToolsetRegistration(runtime, cfg)
+	registration := NewAgentToolsetRegistration(cfg)
 	runtime.toolsets[registration.Name] = registration
 	seedTestToolset(runtime, registration.Name, tool)
 
@@ -128,7 +128,7 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 		Name:             "svc.agent",
 		AgentToolContent: AgentToolContent{Prompt: func(tools.Ident, any) string { return "work" }},
 	}
-	registration := NewAgentToolsetRegistration(runtime, cfg)
+	registration := NewAgentToolsetRegistration(cfg)
 	if !dynamic {
 		runtime.toolsets[registration.Name] = registration
 		seedTestToolset(runtime, registration.Name, tool)
@@ -227,12 +227,13 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 		out *RunOutput
 		err error
 	}, 1)
+	historyEndID := seedTestContinuationHistory(t, runtime, secondInput, checkpoint)
 	go func() {
 		out, err := runtime.resumeSuspendedWorkflow(
 			secondContext,
 			parentRegistration,
 			secondInput,
-			checkpoint,
+			checkpoint, historyEndID,
 		)
 		secondDone <- struct {
 			out *RunOutput

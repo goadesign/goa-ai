@@ -45,7 +45,7 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 			},
 		},
 	}
-	reg := NewAgentToolsetRegistration(rt, cfg)
+	reg := NewAgentToolsetRegistration(cfg)
 	rt.toolsets[reg.Name] = reg
 
 	tool1 := tools.Ident("svc.agenttools.tool1")
@@ -90,7 +90,7 @@ func TestExecuteToolCalls_AgentToolsFanOut(t *testing.T) {
 		},
 	}
 
-	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, nil, calls, 0, nil, time.Time{})
+	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, testToolHistory(t, rt, agent.Ident("parent.agent"), *(runCtx), nil), calls, 0, nil, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, results, 2)
 

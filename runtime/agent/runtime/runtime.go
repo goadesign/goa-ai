@@ -278,9 +278,9 @@ type (
 	}
 
 	// ToolsetRegistration holds the metadata and execution logic for a toolset.
-	// Users register toolsets by providing an Execute function that handles all
-	// tools in the toolset. Codegen auto-generates registrations for service-based
-	// tools and agent-tools; users provide registrations for custom/server-side tools.
+	// Ordinary toolsets provide Execute for every tool in the set. Agent toolsets
+	// provide AgentTool instead, so the workflow can prepare and start child runs
+	// with its exact saved history. Codegen generates both kinds of registration.
 	//
 	// The Execute function is the core dispatch mechanism for toolsets that run
 	// inside activities or other non-workflow contexts. For inline toolsets, the
@@ -304,7 +304,8 @@ type (
 		// For service-based tools, codegen generates this function to call service clients.
 		// For agent-tools (Exports), generated registrations set Inline=true and
 		// populate AgentTool so the workflow runtime can start nested agents as child
-		// workflows and adapt their RunOutput into a ToolResult.
+		// workflows and adapt their RunOutput into a ToolResult. Execute must be nil
+		// for those registrations.
 		// For custom/server-side tools, users provide their own implementation.
 		Execute func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error)
 
@@ -316,8 +317,8 @@ type (
 		TaskQueue string
 
 		// Inline indicates that tools in this toolset execute inside the workflow
-		// context (not as activities). For agent-as-tool, the executor needs a
-		// WorkflowContext to start the provider as a child workflow. Service-backed
+		// context (not as activities). For agent-as-tool, the workflow starts the
+		// provider as a child workflow. Service-backed
 		// toolsets should leave this false so calls run as activities (isolation/retries).
 		Inline bool
 
@@ -349,8 +350,8 @@ type (
 
 		// AgentTool, when non-nil, carries configuration for agent-as-tool toolsets.
 		// It is populated by NewAgentToolsetRegistration so the workflow runtime can
-		// start nested agent runs directly (fan-out/fan-in) without relying on the
-		// synchronous Execute callback.
+		// start nested agent runs with the exact parent history. Registrations with
+		// AgentTool must not also set Execute.
 		AgentTool *AgentToolConfig
 	}
 
@@ -1216,11 +1217,14 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	if ts.Name == "" {
 		return errors.New("toolset name is required")
 	}
-	if ts.Execute == nil {
-		return errors.New("toolset execute function is required")
-	}
 	if err := validateToolsetSpecs(ts); err != nil {
 		return err
+	}
+	if ts.AgentTool == nil && ts.Execute == nil {
+		return errors.New("toolset execute function is required")
+	}
+	if ts.AgentTool != nil && ts.Execute != nil {
+		return fmt.Errorf("%w: agent toolset %q must not define an execute function", ErrInvalidConfig, ts.Name)
 	}
 	r.mu.RLock()
 	_, exists := r.toolsets[ts.Name]

@@ -54,7 +54,7 @@ func TestPlanActivitiesSkipUnusedCompression(t *testing.T) {
 			if resume {
 				call = rt.PlanResumeActivity
 			}
-			out, err := call(t.Context(), &PlanActivityInput{AgentID: "service.agent", RunID: "test-run", RunContext: run.Context{RunID: "test-run"}, Messages: []*model.Message{userMsg("one"), assistantTextMsg("first"), userMsg("two"), assistantTextMsg("second")}})
+			out, err := call(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "test-run", RunContext: run.Context{RunID: "test-run"}}, []*model.Message{userMsg("one"), assistantTextMsg("first"), userMsg("two"), assistantTextMsg("second")}))
 			require.NoError(t, err)
 			require.NotNil(t, out.Result.FinalResponse)
 			assert.False(t, provider.tokenCounted, "retrieval does not count")
@@ -102,7 +102,7 @@ func TestPlannerHistoryCountsActualDestinationRequests(t *testing.T) {
 			reg.Policy.Cache = CachePolicy{AfterSystem: true}
 			reg.Policy.History = Compress(historyTestClient(t, summary), HistoryCompressionConfig{CompressAtMaxInputTokens: 1000, KeepMaxTurns: 1})
 			rt.agents["service.agent"] = reg
-			_, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{AgentID: "service.agent", RunID: "test-run", RunContext: run.Context{RunID: "test-run"}, Messages: messages})
+			_, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "test-run", RunContext: run.Context{RunID: "test-run"}}, messages))
 			require.NoError(t, err)
 			for index, provider := range []*requestHistoryProvider{first, second} {
 				require.Len(t, provider.counts, 1)
@@ -145,7 +145,7 @@ func TestPlannerHistoryFailurePreventsDestinationCall(t *testing.T) {
 	reg := rt.agents["service.agent"]
 	reg.Policy.History = Compress(historyTestClient(t, summary), HistoryCompressionConfig{CompressAtMaxInputTokens: 1, KeepMaxTurns: 1})
 	rt.agents["service.agent"] = reg
-	out, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{AgentID: "service.agent", RunID: "test-run", RunContext: run.Context{RunID: "test-run"}, Messages: []*model.Message{userMsg("question")}})
+	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "test-run", RunContext: run.Context{RunID: "test-run"}}, []*model.Message{userMsg("question")}))
 	require.ErrorIs(t, err, countErr)
 	assert.Nil(t, out)
 	assert.Len(t, destination.counts, 1)

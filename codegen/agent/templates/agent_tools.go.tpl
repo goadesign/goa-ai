@@ -83,14 +83,13 @@ func {{ .HintsInstaller }}(reg *{{ .RuntimeAlias }}.ToolsetRegistration) error {
 // generated registration also includes the labels and previews declared for
 // tool calls and results.
 func {{ .ProviderConstructor }}(
-    rt *{{ .RuntimeAlias }}.Runtime,
     definition {{ .RuntimeAlias }}.AgentDefinition,
 ) {{ .RuntimeAlias }}.ToolsetRegistration {
     cfg := {{ .RuntimeAlias }}.AgentToolConfig{
         Definition: definition,
         Name:       {{ .ToolsetName }},
     }
-    reg := {{ .RuntimeAlias }}.NewAgentToolsetRegistration(rt, cfg)
+    reg := {{ .RuntimeAlias }}.NewAgentToolsetRegistration(cfg)
     reg.Specs = {{ .SpecsFunc }}()
     reg.ToolMetadataLookup = {{ .SpecsAlias }}.MetadataByName
     {{- if or $hasCallHints $hasResultHints }}
@@ -105,7 +104,6 @@ func {{ .ProviderConstructor }}(
 // system prompt and content for individual tools. Callers can mix text and
 // templates, but each tool must use exactly one form.
 func {{ .RegistrationConstructor }}(
-    rt *{{ .RuntimeAlias }}.Runtime,
     definition {{ .RuntimeAlias }}.AgentDefinition,
     systemPrompt string,
     opts ...{{ .RuntimeAlias }}.AgentToolOption,
@@ -128,7 +126,7 @@ func {{ .RegistrationConstructor }}(
             return {{ .RuntimeAlias }}.ToolsetRegistration{}, err
         }
     }
-    reg := {{ .RuntimeAlias }}.NewAgentToolsetRegistration(rt, cfg)
+    reg := {{ .RuntimeAlias }}.NewAgentToolsetRegistration(cfg)
     reg.Specs = {{ .SpecsFunc }}()
     reg.ToolMetadataLookup = {{ .SpecsAlias }}.MetadataByName
     {{- if or $hasCallHints $hasResultHints }}

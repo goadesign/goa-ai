@@ -236,9 +236,11 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if err != nil {
 		return nil, err
 	}
-	if runStartStorageResult(input, startOutput).Outcome == session.RunStartStop {
+	startResult := runStartStorageResult(input, startOutput)
+	if startResult.Outcome == session.RunStartStop {
 		return nil, context.Canceled
 	}
+	historyEndID := startResult.Records[len(startResult.Records)-1].ID
 	recordTerminalResult = true
 	if len(promptRecords) > 0 {
 		if _, err := r.executeStorageWithRetry(wfCtx.Detached().Context(), appendStorageCommand(promptRecords...)); err != nil {
@@ -259,14 +261,15 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			// transcript restored from the predecessor checkpoint. Record that
 			// transcript as this run's seed before appending the external
 			// response so the successor remains independently replayable.
-			if err := r.publishTranscriptSeed(
+			historyEndID, err = r.publishTranscriptSeed(
 				wfCtx.Context(),
 				input.RunID,
 				input.AgentID,
 				input.SessionID,
 				turnID,
 				checkpoint.BaseMessages,
-			); err != nil {
+			)
+			if err != nil {
 				finalErr = err
 				finalStatus = terminalRunStatusForError(err)
 				return nil, err
@@ -281,7 +284,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			finalStatus = terminalRunStatusForError(err)
 			return nil, err
 		}
-		out, err := r.resumeSuspendedWorkflow(wfCtx, reg, input, checkpoint)
+		out, err := r.resumeSuspendedWorkflow(wfCtx, reg, input, checkpoint, historyEndID)
 		if err != nil {
 			finalErr = err
 			finalStatus = terminalRunStatusForError(err)
@@ -291,21 +294,23 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 
 	planInput := &workflowConversation{
-		Messages:   input.Messages,
-		RunContext: runCtx,
+		Messages:     input.Messages,
+		RunContext:   runCtx,
+		HistoryEndID: historyEndID,
 	}
 	if len(input.Messages) > 0 {
 		// Seed the run transcript with the exact planner input. These messages are
 		// durable for replay/snapshots but are not newly committed conversation
 		// output for this run, so they must not be published as appended deltas.
-		if err := r.publishTranscriptSeed(
+		planInput.HistoryEndID, err = r.publishTranscriptSeed(
 			wfCtx.Context(),
 			input.RunID,
 			input.AgentID,
 			input.SessionID,
 			turnID,
 			input.Messages,
-		); err != nil {
+		)
+		if err != nil {
 			finalErr = err
 			finalStatus = terminalRunStatusForError(err)
 			return nil, err
@@ -338,11 +343,11 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		hardDeadline = budgetDeadline.Add(grace)
 	}
 	startReq := PlanActivityInput{
-		AgentID:    input.AgentID,
-		RunID:      input.RunID,
-		Messages:   input.Messages,
-		RunContext: runCtx,
-		Policy:     clonePolicyOverrides(input.Policy),
+		AgentID:      input.AgentID,
+		RunID:        input.RunID,
+		HistoryEndID: planInput.HistoryEndID,
+		RunContext:   runCtx,
+		Policy:       clonePolicyOverrides(input.Policy),
 	}
 	if err := enforcePlanActivityInputBudget(startReq); err != nil {
 		finalErr = err
@@ -385,7 +390,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		finalStatus = terminalRunStatusForError(err)
 		return nil, err
 	}
-	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, budgetDeadline)
+	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, planInput, budgetDeadline)
 	if err != nil {
 		if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) &&
 			!budgetDeadline.IsZero() {

@@ -60,7 +60,9 @@ func TestRegistryAgentPreparationRetainsSelectedConfiguration(t *testing.T) {
 		return nil, errors.New("unused")
 	}), ErrRegistrationClosed)
 
-	output, err := rt.prepareAgentChildActivity(t.Context(), &api.AgentChildActivityInput{Call: call})
+	parentRun := run.Context{RunID: call.RunID, SessionID: call.SessionID, TurnID: call.TurnID}
+	position := testToolHistory(t, rt, call.AgentID, parentRun, nil)
+	output, err := rt.prepareAgentChildActivity(t.Context(), &api.AgentChildActivityInput{Call: call, ParentRun: parentRun, HistoryEndID: position})
 	require.NoError(t, err)
 	assert.Equal(t, "facility-1", output.Success.Labels["facility"])
 	assert.NotContains(t, config.Labels, "facility")
@@ -73,7 +75,7 @@ func TestRegistryAgentPreparationRetainsSelectedConfiguration(t *testing.T) {
 		return nil, nil
 	}
 	wf := &testWorkflowContext{ctx: t.Context(), hookRuntime: rt, agentChildOutput: output}
-	request, err := rt.prepareAgentChild(wf, call, nil, run.Context{})
+	request, err := rt.prepareAgentChild(wf, call, position, parentRun)
 	require.NoError(t, err)
 	input, err := agentChildRunInput(child, request)
 	require.NoError(t, err)
@@ -109,9 +111,9 @@ func TestRegistryAgentPlannerReceivesOriginalResultContract(t *testing.T) {
 		},
 	}}
 	nested := agentChildRunContext(&call)
-	output, err := rt.PlanStartActivity(t.Context(), &PlanActivityInput{
+	output, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID: child.route.ID, RunID: nested.RunID, RunContext: nested,
-	})
+	}, nil))
 	require.NoError(t, err)
 	require.Nil(t, output.OutputContractFailure)
 	require.NotNil(t, output.Result)
@@ -195,8 +197,9 @@ func TestRegistryAgentConcurrentChildrenKeepIndependentConfigurations(t *testing
 		err     error
 	}
 	done := make(chan outcome, 1)
+	historyEndID := testToolHistory(t, rt, parent.route.ID, *(parentRun), nil)
 	go func() {
-		results, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, parent.route.ID, parentRun, nil, calls, 0, nil, time.Time{})
+		results, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, parent.route.ID, parentRun, historyEndID, calls, 0, nil, time.Time{})
 		done <- outcome{results, err}
 	}()
 	first := waitForChildHandle(t, children, "first native child")
@@ -236,8 +239,9 @@ func TestRegistryAgentCancellationWaitsForChild(t *testing.T) {
 	children := make(chan *controlledChildHandle, 1)
 	wf := &testWorkflowContext{ctx: ctx, hookRuntime: rt, controlledChildHandles: children}
 	done := make(chan error, 1)
+	historyEndID := testToolHistory(t, rt, parent.route.ID, *parentRun, nil)
 	go func() {
-		_, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, parent.route.ID, parentRun, nil, []ToolCall{call}, 0, nil, time.Time{})
+		_, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, parent.route.ID, parentRun, historyEndID, []ToolCall{call}, 0, nil, time.Time{})
 		done <- err
 	}()
 	handle := waitForChildHandle(t, children, "native child")

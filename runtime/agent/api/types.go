@@ -415,8 +415,9 @@ type (
 		// RunID identifies the run being planned.
 		RunID string
 
-		// Messages is the current conversation transcript provided to the planner.
-		Messages []*model.Message
+		// HistoryEndID identifies the committed end record of this run's exact
+		// transcript. The activity loads those messages from the runtime store.
+		HistoryEndID string
 
 		// HistoryContext is the last selected invocation's reusable summary, if any.
 		HistoryContext *HistoryContext `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
@@ -915,8 +916,9 @@ type (
 		// Call is the validated agent-tool invocation that starts the child.
 		Call ToolCall
 
-		// Messages is the parent transcript visible to the child-call validator.
-		Messages []*model.Message
+		// HistoryEndID identifies the committed end record of the parent
+		// transcript that the child-call validator must receive.
+		HistoryEndID string
 
 		// ParentRun identifies the run that issued Call.
 		ParentRun run.Context

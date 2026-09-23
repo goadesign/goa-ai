@@ -73,6 +73,12 @@ type (
 		LoadRunSuspension(context.Context, string) (session.RunSuspension, error)
 		// ListRunRecords returns one ordered page for a run.
 		ListRunRecords(context.Context, string, string, int) (runlog.Page, error)
+		// ListRunTranscriptRecords returns only transcript seed and append records
+		// through an exact committed record belonging to the run. The end record
+		// may be RunStarted for an empty history. A nonempty cursor must identify
+		// a transcript record within that prefix. Missing owners and invalid
+		// positions are errors; later appends never change an earlier page.
+		ListRunTranscriptRecords(ctx context.Context, runID, throughRecordID, afterRecordID string, limit int) (runlog.Page, error)
 		// ListSessionRunRecords returns one ordered page across a session.
 		ListSessionRunRecords(context.Context, string, string, int) (runlog.Page, error)
 	}
@@ -238,6 +244,9 @@ var (
 	// ErrRunRecordOwnerMismatch means a record names a different agent or
 	// session than the stored run.
 	ErrRunRecordOwnerMismatch = errors.New("run record owner does not match stored run")
+	// ErrInvalidTranscriptPosition means an end record or page cursor does not
+	// identify the requested run's committed transcript prefix.
+	ErrInvalidTranscriptPosition = errors.New("invalid transcript position")
 )
 
 // NewContractError marks cause as a permanent Store contract rejection.

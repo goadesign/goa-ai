@@ -134,13 +134,13 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 		continuedCtx,
 		AgentRegistration{ResumeActivityName: "resume"},
 		continuedInput,
-		checkpoint,
+		checkpoint, seedTestContinuationHistory(t, rt, continuedInput, checkpoint),
 	)
 	require.NoError(t, err)
 	require.Equal(t, "done", out.Final.Text())
 	require.Equal(t, "resume", continuedCtx.lastPlannerCall.Name)
-	require.NoError(t, transcript.ValidatePlannerTranscript(continuedCtx.lastPlannerCall.Input.Messages))
-	require.Len(t, continuedCtx.lastPlannerCall.Input.Messages, 2)
+	require.NoError(t, transcript.ValidatePlannerTranscript(testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input)))
+	require.Len(t, testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input), 2)
 	require.Len(t, continuedCtx.lastPlannerCall.Input.ToolOutputs, 1)
 	require.Equal(t, "run-1", continuedCtx.lastPlannerCall.Input.ToolOutputs[0].CallRunID)
 	require.Equal(t, "run-2", continuedCtx.lastPlannerCall.Input.ToolOutputs[0].ResultRunID)
@@ -182,13 +182,13 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	require.JSONEq(t, `{"answer":"Use record_group_1 over the past 24 hours."}`,
 		string(secondEvidence.ToolCompletions[0].Call.Result))
 
-	assistant := continuedCtx.lastPlannerCall.Input.Messages[0]
+	assistant := testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input)[0]
 	require.Equal(t, model.ConversationRoleAssistant, assistant.Role)
 	toolUse, ok := assistant.Parts[0].(model.ToolUsePart)
 	require.True(t, ok)
 	require.Equal(t, "provider-clarification-call-1", toolUse.ID)
 
-	user := continuedCtx.lastPlannerCall.Input.Messages[1]
+	user := testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input)[1]
 	require.Equal(t, model.ConversationRoleUser, user.Role)
 	toolResult, ok := user.Parts[0].(model.ToolResultPart)
 	require.True(t, ok)
@@ -272,16 +272,16 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 		continuedCtx,
 		AgentRegistration{ResumeActivityName: "resume"},
 		continuedInput,
-		checkpoint,
+		checkpoint, seedTestContinuationHistory(t, rt, continuedInput, checkpoint),
 	)
 	require.NoError(t, err)
 	require.Equal(t, "done", out.Final.Text())
 	require.Len(t, continuedCtx.lastPlannerCall.Input.ToolOutputs, 1)
 	require.Equal(t, runtimeToolCallID, continuedCtx.lastPlannerCall.Input.ToolOutputs[0].ToolCallID)
-	require.NoError(t, transcript.ValidatePlannerTranscript(continuedCtx.lastPlannerCall.Input.Messages))
-	require.Len(t, continuedCtx.lastPlannerCall.Input.Messages, 2)
-	toolUse := continuedCtx.lastPlannerCall.Input.Messages[0].Parts[0].(model.ToolUsePart)
-	toolResult := continuedCtx.lastPlannerCall.Input.Messages[1].Parts[0].(model.ToolResultPart)
+	require.NoError(t, transcript.ValidatePlannerTranscript(testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input)))
+	require.Len(t, testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input), 2)
+	toolUse := testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input)[0].Parts[0].(model.ToolUsePart)
+	toolResult := testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input)[1].Parts[0].(model.ToolResultPart)
 	require.Equal(t, "provider-question-call-1", toolUse.ID)
 	require.Equal(t, tool.Name.String(), toolUse.Name)
 	require.JSONEq(t, `{"title":"Choose a record group"}`, string(toolUse.Input))
@@ -398,7 +398,7 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 		continuedCtx,
 		AgentRegistration{ResumeActivityName: "resume"},
 		continuedInput,
-		checkpoint,
+		checkpoint, seedTestContinuationHistory(t, rt, continuedInput, checkpoint),
 	)
 	require.NoError(t, err)
 	require.Equal(t, "done", out.Final.Text())
@@ -408,10 +408,10 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 	require.Equal(t, secondRuntimeID, outputs[1].ToolCallID)
 	require.Equal(t, []string{secondRuntimeID}, continuedCtx.lastPlannerCall.Input.RecoveryToolCallIDs)
 
-	require.NoError(t, transcript.ValidatePlannerTranscript(continuedCtx.lastPlannerCall.Input.Messages))
-	require.Len(t, continuedCtx.lastPlannerCall.Input.Messages, 2)
-	assistant := continuedCtx.lastPlannerCall.Input.Messages[0]
-	user := continuedCtx.lastPlannerCall.Input.Messages[1]
+	require.NoError(t, transcript.ValidatePlannerTranscript(testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input)))
+	require.Len(t, testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input), 2)
+	assistant := testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input)[0]
+	user := testActivityMessages(t, rt, continuedCtx.lastPlannerCall.Input)[1]
 	require.Len(t, assistant.Parts, 2)
 	require.Len(t, user.Parts, 2)
 	firstUse := assistant.Parts[0].(model.ToolUsePart)

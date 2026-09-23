@@ -2793,7 +2793,7 @@ rt.RegisterToolset(reg)
 **Agent-as-tool** — Nested agent execution:
 
 ```go
-reg := runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
+reg := runtime.NewAgentToolsetRegistration(runtime.AgentToolConfig{
     Definition: nestedagent.Definition(),
     // Optional per-tool prompts/templates
 })
@@ -3086,8 +3086,22 @@ that checkpoint.
 
 ### Configuration
 
+Agent-tool registrations contain `AgentTool` and no `Execute` function.
+Ordinary toolsets contain `Execute` and no `AgentTool`; registration rejects
+neither or both. The workflow owns child preparation because it knows the exact
+saved parent history. It uses the same generated route, prompt configuration,
+validation, child suspension, metadata, and result adaptation for every call.
+
+**Source upgrade:** regenerate provider and consumer agent-tool packages.
+Remove the Runtime argument from `NewAgentToolsetRegistration` and generated
+agent-tool registration constructors. Provider constructors still require the
+generated `AgentDefinition`; consumer constructors derive it from their own
+generated definition. Replace direct calls to an agent-tool `Execute` callback
+with normal agent workflow execution. This registration change requires no
+stored-data migration; running old workers retain their compiled routes.
+
 ```go
-reg := runtime.NewAgentToolsetRegistration(rt, runtime.AgentToolConfig{
+reg := runtime.NewAgentToolsetRegistration(runtime.AgentToolConfig{
     Definition:   dataanalystagent.Definition(),
     SystemPrompt: "You are a data analysis expert.",
     AgentToolContent: runtime.AgentToolContent{
@@ -4367,6 +4381,33 @@ not part of the worker-facing `storage.Store` interface. A host may put that
 repository behind a Session service and give agent workers a `storage.Store`
 adapter built on the service's generated typed client. Agent workers must not
 open or share the Session service's database.
+
+Planner and child-preparation activity inputs carry `HistoryEndID`, the exact
+committed end record for their source run. They do not carry `Messages`.
+Implement `ListRunTranscriptRecords(ctx, runID, throughRecordID, afterRecordID,
+limit)` to check that the run and end record exist, validate any nonempty cursor
+as a transcript record within that prefix, and return only transcript seed and
+append records in commit order. Apply the end bound and record types in the
+storage query before paging. Bound each response by count and bytes and reject
+a read whose owner was purged. Never substitute a newer position.
+
+The in-memory provider returns at most 512 records and an inclusive 1 MiB sum
+of record payload bytes per page, checking both limits before copying records.
+A single larger host-written record returns a permanent `storage.ContractError`;
+ordinary runtime transcript records are capped at 1,000,000 bytes and fit.
+The selected history can span any number of pages.
+
+The workflow advances its position only after an existing transcript write
+succeeds. Activities load all messages through that position, including native
+provider metadata, before calling the planner or child validator. A retry uses
+the same position even if later messages now exist. Finalization adds its
+instruction inside the activity; it does not append that instruction to saved
+history. Full-history memory remains proportional to the selected transcript.
+
+This activity-input change requires old running workflows to finish on their
+original workers. It does not change initial workflow inputs, prepared-request
+bytes, stored transcript records, or suspension checkpoint formats. It does
+not make closed old histories replayable on the new worker.
 
 Lifecycle commands store the state change and matching records together:
 

@@ -29,7 +29,7 @@ type historicalToolEvents struct {
 // through model-visible messages.
 func (r *Runtime) loadHistoricalContinuationOutputs(
 	ctx context.Context,
-	input *PlanActivityInput,
+	input *resolvedPlanActivityInput,
 	specs map[tools.Ident]tools.ToolSpec,
 ) ([]*planner.ToolOutput, error) {
 	names := historicalContinuationToolNames(specs)

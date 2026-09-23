@@ -679,6 +679,22 @@ same pure request construction. It does not create the optional stored form.
 submits the prepared engine request. The convenience methods never serialize
 the stored form.
 
+Planner and child-preparation activity commands identify the exact committed
+end of the current run's transcript instead of carrying its message array.
+`storage.Store.ListRunTranscriptRecords` checks record ownership and returns
+bounded ordered pages through that position. The activity reconstructs the
+original messages before calling the planner or child validator. Later appends
+cannot change an earlier activity's input, and summaries do not replace durable
+messages. This changes activity wire inputs; old workflows require their original
+workers. Prepared requests, initial workflow input, and stored continuation
+checkpoints retain their existing formats.
+
+Agent-tool registrations carry only child configuration, while ordinary toolsets
+carry only their execution function. The workflow starts all configured children
+with its exact saved history position. Registration rejects missing or competing
+execution routes. Generated registration constructors no longer take a Runtime;
+applications regenerate and update callers together.
+
 Prepared bytes remain private application data because they can contain the
 complete transcript and continuation checkpoint. The application atomically
 stores those bytes with initial-run admission or continuation-answer acceptance.
@@ -1491,7 +1507,8 @@ for details and the SDK source-compatibility change.
   separate turns; individual reasoning or parallel-call messages do not.
   `KeepRecentTurns` uses the same grouping. No messages, parts, order, signatures,
   or validation rules are changed. See [complete history turns](docs/runtime.md#complete-history-turns).
-  Each planner activity supplies saved `Messages`. The runtime applies history
+  Each planner activity loads saved `Messages` through its committed history
+  position. The runtime applies history
   policy only when a runtime model client receives an actual `Complete` or
   `Stream` request, after cache defaults and original request validation and
   before final validation and observers. Inspecting messages, choosing a

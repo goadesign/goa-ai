@@ -70,14 +70,12 @@ func TestPlanStartPreservesHistoricalResultAfterContractChange(t *testing.T) {
 				search.Name, "source-1", "", oldResult, nil, "Recorded evidence", tc.bounds, time.Second, nil, nil)
 			appendHistoricalHookEvent(t, store, call, "source-call", 1)
 			appendHistoricalHookEvent(t, store, result, "source-result", 2)
+			input := seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "svc.agent", RunID: "run-2", RunContext: run.Context{RunID: "run-2", SessionID: "session-1"}}, messages)
 			before, err := store.ListSessionRunRecords(t.Context(), "session-1", "", 100)
 			require.NoError(t, err)
 			recordBytes, err := json.Marshal(before)
 			require.NoError(t, err)
-			_, err = rt.PlanStartActivity(t.Context(), &PlanActivityInput{
-				AgentID: "svc.agent", RunID: "run-2", Messages: messages,
-				RunContext: run.Context{RunID: "run-2", SessionID: "session-1"},
-			})
+			_, err = rt.PlanStartActivity(t.Context(), input)
 			require.NoError(t, err)
 			assert.True(t, called)
 			after, err := store.ListSessionRunRecords(t.Context(), "session-1", "", 100)
@@ -120,13 +118,10 @@ func TestHistoricalContinuationRetiresCompletedChainAfterContractChange(t *testi
 			name, callID, "", rawjson.Message(`{"old_items":["evidence"]}`), nil, "Page", bounds, time.Second, nil, nil)
 		appendHistoricalHookEvent(t, store, result, callID+"-result", int64(index*2+2))
 	}
-	outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), &PlanActivityInput{
-		AgentID: "svc.agent", RunContext: run.Context{SessionID: "session-1"},
-		Messages: []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{
-			model.ToolUsePart{ID: "source-1", Name: search.Name.String()},
-			model.ToolUsePart{ID: "last-page", Name: continuationActionName(continuation.Name, "source-1").String()},
-		}}},
-	}, rt.toolSpecs)
+	outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), testResolvedPlanInput(t, rt, seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "svc.agent", RunContext: run.Context{SessionID: "session-1"}}, []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+		model.ToolUsePart{ID: "source-1", Name: search.Name.String(), Input: rawjson.Message(`{}`)},
+		model.ToolUsePart{ID: "last-page", Name: continuationActionName(continuation.Name, "source-1").String(), Input: rawjson.Message(`{}`)},
+	}}})), rt.toolSpecs)
 	require.NoError(t, err)
 	require.Len(t, outputs, 2)
 	actions, err := rt.availableContinuationActions("svc.agent", outputs)
@@ -171,12 +166,9 @@ func TestHistoricalContinuationRejectsDamagedMetadata(t *testing.T) {
 			tc.mutate(result)
 			appendHistoricalHookEvent(t, store, call, "source-call", 1)
 			appendHistoricalHookEvent(t, store, result, "source-result", 2)
-			_, err := rt.loadHistoricalContinuationOutputs(t.Context(), &PlanActivityInput{
-				AgentID: "svc.agent", RunContext: run.Context{SessionID: "session-1"},
-				Messages: []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{
-					model.ToolUsePart{ID: "source-1", Name: search.Name.String()},
-				}}},
-			}, rt.toolSpecs)
+			_, err := rt.loadHistoricalContinuationOutputs(t.Context(), testResolvedPlanInput(t, rt, seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "svc.agent", RunContext: run.Context{SessionID: "session-1"}}, []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+				model.ToolUsePart{ID: "source-1", Name: search.Name.String(), Input: rawjson.Message(`{}`)},
+			}}})), rt.toolSpecs)
 			assert.ErrorContains(t, err, tc.wantErr)
 		})
 	}

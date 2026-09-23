@@ -25,6 +25,7 @@ import (
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -62,6 +63,18 @@ func testTemporalAgentDefinition(
 }
 
 const runSuspensionType = "runtime.run_suspension"
+
+// storageCaptureEngine exposes the runtime-registered storage activity to the
+// Temporal test environment so recorded writes also create the history it reads.
+type storageCaptureEngine struct {
+	engine.Engine
+	store func(context.Context, *api.StorageActivityCommand) (*api.StorageActivityResult, error)
+}
+
+func (e *storageCaptureEngine) RegisterStorageActivity(ctx context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.StorageActivityCommand) (*api.StorageActivityResult, error)) error {
+	e.store = fn
+	return e.Engine.RegisterStorageActivity(ctx, name, opts, fn)
+}
 
 func TestPlannerOutputActivityFailureIsNotRetried(t *testing.T) {
 	var calls atomic.Int32
@@ -135,7 +148,8 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 	agentID := agent.Ident("publication.agent")
 	plannerStub := &publicationRetryPlanner{}
 	store := storageinmem.New()
-	runtime := agentruntime.New(store)
+	storageEngine := &storageCaptureEngine{Engine: engineinmem.New()}
+	runtime := agentruntime.New(store, agentruntime.WithEngine(storageEngine))
 	_, err := store.CreateSession(context.Background(), sessionID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
@@ -164,7 +178,12 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 	}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.store"})
+	env.RegisterActivityWithOptions(func(ctx context.Context, command *api.StorageActivityCommand) (*api.StorageActivityResult, error) {
+		if _, err := recorder.Record(ctx, command); err != nil {
+			return nil, err
+		}
+		return storageEngine.store(ctx, command)
+	}, activity.RegisterOptions{Name: "runtime.store"})
 	env.RegisterActivityWithOptions(runtime.PlanStartActivity, activity.RegisterOptions{Name: planActivityName})
 	env.RegisterActivityWithOptions(runtime.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
 	env.ExecuteWorkflow(func(ctx workflow.Context) (*api.RunOutput, error) {
@@ -208,7 +227,8 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	questionTool := tools.Ident("assistant.ask_question")
 	plannerStub := &awaitQuestionsPlanner{awaitID: awaitID, toolName: questionTool, toolCallID: modelToolCallID}
 	store := storageinmem.New()
-	runtime := agentruntime.New(store)
+	storageEngine := &storageCaptureEngine{Engine: engineinmem.New()}
+	runtime := agentruntime.New(store, agentruntime.WithEngine(storageEngine))
 	_, err := store.CreateSession(context.Background(), sessionID, time.Now().UTC())
 	require.NoError(t, err)
 	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
@@ -226,7 +246,12 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	eng := &Engine{defaultQueue: taskQueue, activityOptions: make(map[string]engine.ActivityOptions)}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	env.RegisterActivityWithOptions(recorder.Record, activity.RegisterOptions{Name: "runtime.store"})
+	env.RegisterActivityWithOptions(func(ctx context.Context, command *api.StorageActivityCommand) (*api.StorageActivityResult, error) {
+		if _, err := recorder.Record(ctx, command); err != nil {
+			return nil, err
+		}
+		return storageEngine.store(ctx, command)
+	}, activity.RegisterOptions{Name: "runtime.store"})
 	env.RegisterActivityWithOptions(runtime.PlanStartActivity, activity.RegisterOptions{Name: planActivityName})
 	env.RegisterActivityWithOptions(runtime.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
 	env.ExecuteWorkflow(func(ctx workflow.Context) (*api.RunOutput, error) {

@@ -1794,6 +1794,7 @@ func TestPreparePlannerActivityWiresSignatureCaptureIntoModelClients(t *testing.
 		}),
 	}
 	rt := &Runtime{
+		Store: newTestStore(),
 		agents: map[agent.Ident]AgentRegistration{
 			"svc.agent": {Definition: testAgentDefinition("svc.agent", "svc.agent.workflow", "test", nil, nil)},
 		},
@@ -1810,11 +1811,11 @@ func TestPreparePlannerActivityWiresSignatureCaptureIntoModelClients(t *testing.
 		Bus:     noopHooks{},
 	}
 
-	act, err := rt.preparePlannerActivity(context.Background(), &PlanActivityInput{
+	act, err := rt.preparePlannerActivity(context.Background(), testResolvedPlanInput(t, rt, &PlanActivityInput{
 		AgentID:    "svc.agent",
 		RunID:      "run-1",
 		RunContext: run.Context{SessionID: "sess-1", TurnID: "turn-1"},
-	}, rt.newRegistryCatalog(AgentDefinition{}), nil, nil, nil)
+	}), rt.newRegistryCatalog(AgentDefinition{}), nil, nil, nil)
 	require.NoError(t, err)
 
 	cli, ok := act.agentCtx.ModelClient("primary")

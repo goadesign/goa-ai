@@ -67,7 +67,7 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 		&testWorkflowContext{ctx: t.Context(), runtime: runtime},
 		registration,
 		secondInput,
-		firstCheckpoint,
+		firstCheckpoint, seedTestContinuationHistory(t, runtime, secondInput, firstCheckpoint),
 	)
 	require.NoError(t, err)
 	require.Len(t, second.Suspension.Pending, 1)
@@ -90,7 +90,7 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 	require.NoError(t, restoreContinuationRunInput(thirdInput, secondCheckpoint))
 	seedRunMeta(t, runtime, thirdInput)
 	thirdContext := &testWorkflowContext{
-		ctx: t.Context(), hasPlanResult: true,
+		ctx: t.Context(), hookRuntime: runtime, hasPlanResult: true,
 		planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: "done"}},
@@ -100,10 +100,10 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 		thirdContext,
 		registration,
 		thirdInput,
-		secondCheckpoint,
+		secondCheckpoint, seedTestContinuationHistory(t, runtime, thirdInput, secondCheckpoint),
 	)
 	require.NoError(t, err)
 	require.Nil(t, third.Suspension)
 	require.Equal(t, "done", third.Final.Text())
-	require.Len(t, thirdContext.lastPlannerCall.Input.Messages, 2)
+	require.Len(t, testActivityMessages(t, runtime, thirdContext.lastPlannerCall.Input), 2)
 }

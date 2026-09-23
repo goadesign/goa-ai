@@ -22,7 +22,6 @@ import (
 // Example:
 //
 //	reg, err := NewWorkerRuntimeAgentToolsetRegistration(
-//	    rt,
 //	    systemPrompt,
 //	    opts...,
 //	)
@@ -33,7 +32,6 @@ import (
 //	    return err
 //	}
 func NewWorkerRuntimeAgentToolsetRegistration(
-	rt *runtime.Runtime,
 	systemPrompt string,
 	opts ...runtime.AgentToolOption,
 ) (runtime.ToolsetRegistration, error) {
@@ -41,5 +39,5 @@ func NewWorkerRuntimeAgentToolsetRegistration(
 	if !ok {
 		panic("generated agent definition is missing its child agent")
 	}
-	return runtime2.NewRegistration(rt, definition, systemPrompt, opts...)
+	return runtime2.NewRegistration(definition, systemPrompt, opts...)
 }

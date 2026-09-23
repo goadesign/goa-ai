@@ -65,15 +65,15 @@ func TestExecuteToolCalls_ChildTrackerUpdateEmittedOnIncrease(t *testing.T) {
 	}
 
 	// First batch discovers 2 child IDs => one update event with total=2.
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, nil, []ToolCall{call("c1"), call("c2")}, 0, parentTracker, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, testToolHistory(t, rt, agent.Ident("agent-1"), *(runCtx), nil), []ToolCall{call("c1"), call("c2")}, 0, parentTracker, time.Time{})
 	require.NoError(t, err)
 
 	// Second batch discovers no new IDs => no additional update event.
-	_, _, err = rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, nil, []ToolCall{call("c1"), call("c2")}, 0, parentTracker, time.Time{})
+	_, _, err = rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, testToolHistory(t, rt, agent.Ident("agent-1"), *(runCtx), nil), []ToolCall{call("c1"), call("c2")}, 0, parentTracker, time.Time{})
 	require.NoError(t, err)
 
 	// Third batch discovers a new ID => second update event with total=3.
-	_, _, err = rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, nil, []ToolCall{call("c1"), call("c2"), call("c3")}, 0, parentTracker, time.Time{})
+	_, _, err = rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("agent-1"), runCtx, testToolHistory(t, rt, agent.Ident("agent-1"), *(runCtx), nil), []ToolCall{call("c1"), call("c2"), call("c3")}, 0, parentTracker, time.Time{})
 	require.NoError(t, err)
 
 	var updates []*hooks.ToolCallUpdatedEvent

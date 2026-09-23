@@ -11,7 +11,7 @@ package runtime
 //   - The budget is measured using JSON encoding to match Temporal's default JSON
 //     payload converter (see engine/temporal/data_converter.go).
 //   - The runtime enforces this budget deterministically before scheduling the activity,
-//     so oversized transcripts fail fast with a clear error instead of terminating the run.
+//     so oversized remaining command fields fail fast with a clear error instead of terminating the run.
 
 import (
 	"encoding/json"
@@ -29,11 +29,11 @@ func enforcePlanActivityInputBudget(input PlanActivityInput) error {
 		return nil
 	}
 	return fmt.Errorf(
-		"runtime: plan activity input exceeds budget (%d > %d bytes, run_id=%s, messages=%d, tool_outputs=%d)",
+		"runtime: plan activity input exceeds budget (%d > %d bytes, run_id=%s, history_end_id=%s, tool_outputs=%d)",
 		len(b),
 		maxPlanActivityInputBytes,
 		input.RunID,
-		len(input.Messages),
+		input.HistoryEndID,
 		len(input.ToolOutputs),
 	)
 }

@@ -136,29 +136,25 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 		nil,
 	), "continue-result", 4)
 
-	input := &PlanActivityInput{
-		AgentID: agentID,
-		Messages: []*model.Message{{
-			Role: model.ConversationRoleAssistant,
-			Parts: []model.Part{
-				model.ToolUsePart{
-					ID:    sourceID,
-					Name:  search.Name.String(),
-					Input: rawjson.Message(`{"query":"alarms"}`),
-				},
-				model.ToolUsePart{
-					ID:    continueID,
-					Name:  continuationActionName(continuation.Name, sourceID).String(),
-					Input: rawjson.Message(`{}`),
-				},
+	input := seedTestPlanInput(t, rt, PlanActivityInput{AgentID: agentID, RunContext: run.Context{
+		SessionID: sessionID,
+	}}, []*model.Message{{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{
+			model.ToolUsePart{
+				ID:    sourceID,
+				Name:  search.Name.String(),
+				Input: rawjson.Message(`{"query":"alarms"}`),
 			},
-		}},
-		RunContext: run.Context{
-			SessionID: sessionID,
+			model.ToolUsePart{
+				ID:    continueID,
+				Name:  continuationActionName(continuation.Name, sourceID).String(),
+				Input: rawjson.Message(`{}`),
+			},
 		},
-	}
+	}})
 
-	outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), input, rt.toolSpecs)
+	outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), testResolvedPlanInput(t, rt, input), rt.toolSpecs)
 	require.NoError(t, err)
 	require.Len(t, outputs, 2)
 	actions, err := rt.availableContinuationActions(agentID, outputs)

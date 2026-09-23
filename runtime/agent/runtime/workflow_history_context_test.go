@@ -50,6 +50,7 @@ func TestWorkflowHistoryContextSurvivesSerializedRecovery(t *testing.T) {
 						return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &response.Content[0]}}, nil
 					})
 				h.base.Messages = requestHistoryMessages()
+				h.base.HistoryEndID = testToolHistory(t, h.runtime, h.input.AgentID, h.base.RunContext, h.base.Messages)
 				original := canonicalHistory(t, h.base.Messages)
 				h.runtime.models["test"] = mustTestModelClient(stubModelClient{complete: func(context.Context, *model.Request) (*model.Response, error) {
 					return testModelResponse([]model.Message{*assistantTextMsg("supported answer")}), nil
@@ -135,6 +136,7 @@ func TestWorkflowHistoryContextCodeOnlyStepRetainsPrior(t *testing.T) {
 			return finalPlannerResult("finished without a model"), nil
 		})
 	h.base.Messages = requestHistoryMessages()
+	h.base.HistoryEndID = testToolHistory(t, h.runtime, h.input.AgentID, h.base.RunContext, h.base.Messages)
 	result, err := requestHistoryResult(h.base.Messages, "existing summary", nil)
 	require.NoError(t, err)
 	source, positions, _, err := historySourceHashes(h.base.Messages, 2)

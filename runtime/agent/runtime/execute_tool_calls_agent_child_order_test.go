@@ -41,7 +41,7 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 			},
 		},
 	}
-	reg := NewAgentToolsetRegistration(rt, cfg)
+	reg := NewAgentToolsetRegistration(cfg)
 	rt.toolsets[reg.Name] = reg
 
 	tool1 := tools.Ident("svc.agenttools.tool1")
@@ -89,8 +89,9 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 		err     error
 	}
 	done := make(chan out, 1)
+	historyEndID := testToolHistory(t, rt, agent.Ident("parent.agent"), *(runCtx), nil)
 	go func() {
-		results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, nil, calls, 0, nil, time.Time{})
+		results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, historyEndID, calls, 0, nil, time.Time{})
 		done <- out{results: results, err: err}
 	}()
 
@@ -143,7 +144,7 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 			},
 		},
 	}
-	reg := NewAgentToolsetRegistration(rt, cfg)
+	reg := NewAgentToolsetRegistration(cfg)
 	rt.toolsets[reg.Name] = reg
 	tool := tools.Ident("svc.agenttools.slow")
 	spec := newAnyJSONSpec(tool)
@@ -179,6 +180,7 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 		err      error
 	}
 	done := make(chan executionResult, 1)
+	historyEndID := testToolHistory(t, rt, agent.Ident("parent.agent"), *(runCtx), nil)
 	go func() {
 		results, timedOut, err := rt.executeToolCalls(
 			wfCtx,
@@ -186,7 +188,7 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 			engine.ActivityOptions{},
 			agent.Ident("parent.agent"),
 			runCtx,
-			nil,
+			historyEndID,
 			calls,
 			0,
 			nil,
@@ -234,7 +236,7 @@ func TestExecuteToolCalls_WaitsForAgentChildAfterParentCancellation(t *testing.T
 			},
 		},
 	}
-	reg := NewAgentToolsetRegistration(rt, cfg)
+	reg := NewAgentToolsetRegistration(cfg)
 	rt.toolsets[reg.Name] = reg
 	tool := tools.Ident("svc.agenttools.cancel")
 	spec := newAnyJSONSpec(tool)
@@ -264,6 +266,7 @@ func TestExecuteToolCalls_WaitsForAgentChildAfterParentCancellation(t *testing.T
 	}}
 
 	done := make(chan error, 1)
+	historyEndID := testToolHistory(t, rt, agent.Ident("parent.agent"), *(runCtx), nil)
 	go func() {
 		_, _, err := rt.executeToolCalls(
 			wfCtx,
@@ -271,7 +274,7 @@ func TestExecuteToolCalls_WaitsForAgentChildAfterParentCancellation(t *testing.T
 			engine.ActivityOptions{},
 			agent.Ident("parent.agent"),
 			runCtx,
-			nil,
+			historyEndID,
 			calls,
 			0,
 			nil,

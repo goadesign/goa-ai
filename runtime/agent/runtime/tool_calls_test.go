@@ -133,7 +133,7 @@ func TestExecuteToolCallsRetainsModelPayloadInWorkflow(t *testing.T) {
 		engine.ActivityOptions{},
 		"svc.agent",
 		&run.Context{RunID: "run-1", SessionID: "session-1"},
-		nil,
+		testToolHistory(t, rt, "svc.agent", run.Context{RunID: "run-1", SessionID: "session-1"}, nil),
 		[]ToolCall{call},
 		0,
 		nil,
