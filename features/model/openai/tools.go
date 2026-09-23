@@ -1,8 +1,8 @@
 // Package openai handles provider-visible OpenAI Responses API tool and
 // structured-output configuration. Canonical tool IDs stay inside goa-ai; only
-// sanitized names cross the provider boundary. Direct OpenAI projects schemas
-// into strict form (see strict_schema.go); Bedrock preserves the exact schema
-// with strict:false and relies on the validated client to reject invalid output.
+// sanitized names cross the provider boundary. Direct OpenAI and the strict Bedrock constructor project schemas into strict
+// form (see strict_schema.go). The complete-schema Bedrock constructor retains
+// strict:false. Validated clients always reject invalid canonical output.
 package openai
 
 import (

@@ -1386,11 +1386,14 @@ The OpenAI Responses adapter has distinct constructors for direct OpenAI and
 Amazon Bedrock. They share transcript encoding, streaming, provider-issued tool
 identity and encrypted reasoning replay. The constructor, not a per-request
 fallback, selects the tool-schema contract: direct OpenAI projects to
-`strict:true`; Bedrock sends the complete schema with `strict:false` and
-preserves returned arguments. The validated model client remains responsible
-for checking the original schema and generated decoder in both cases.
+`strict:true`; `NewBedrock` and `NewBedrockProvider` send the complete schema
+with `strict:false` and preserve returned arguments. `NewBedrockStrictProvider`
+uses the shared strict compiler with Bedrock transport and never changes schema
+contracts after an error. Required disjoint string tags select each object union
+branch's own optional-null removal rules. The validated model client remains responsible
+for checking the original schema and generated decoder in every case.
 
-Both constructors send `store:false` and explicitly include
+All constructors send `store:false` and explicitly include
 `reasoning.encrypted_content` on every request. Requesting replay data belongs
 to stateless transcript ownership, not to the optional reasoning-effort setting:
 provider-default reasoning can also return items that the next request must

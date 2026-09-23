@@ -73,7 +73,8 @@ type (
 
 	// provider translates canonical model requests to the OpenAI Responses API.
 	provider struct {
-		transport transport
+		transport  transport
+		exactTools bool
 
 		defaultModel string
 		highModel    string
@@ -83,8 +84,8 @@ type (
 		temperature            float32
 		thinkingEffort         string
 		disabledThinkingEffort string
-		// bedrock selects the fixed Bedrock Responses contract: exact tool
-		// schemas, no native structured output, and no implicit cache writes.
+		// bedrock selects Bedrock's request and capability restrictions.
+		// The constructor separately selects the fixed tool-schema encoder.
 		bedrock bool
 	}
 
@@ -279,6 +280,7 @@ func newProvider(opts Options, bedrock bool) (*provider, error) {
 	}
 	return &provider{
 		transport:              tr,
+		exactTools:             bedrock,
 		defaultModel:           opts.DefaultModel,
 		highModel:              opts.HighModel,
 		smallModel:             opts.SmallModel,
@@ -310,7 +312,7 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 	if modelID == "" {
 		return nil, errors.New("openai: model identifier is required")
 	}
-	toolDefs, codec, err := encodeTools(req.Tools, modelID, c.bedrock)
+	toolDefs, codec, err := encodeTools(req.Tools, modelID, c.exactTools)
 	if err != nil {
 		return nil, err
 	}

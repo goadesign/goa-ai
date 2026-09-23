@@ -21,7 +21,7 @@ func TestProjectStrictSchema(t *testing.T) {
 		{
 			name:   "empty schema projects to closed empty object",
 			schema: "",
-			want:   `{"type":"object","additionalProperties":false}`,
+			want:   `{"type":"object","additionalProperties":false,"required":[]}`,
 		},
 		{
 			name: "closes objects and strips schema annotations",
