@@ -612,26 +612,6 @@ var ToolsetInfo = Type("ToolsetInfo", func() {
 	Required("name", "tool_count", "registered_at")
 })
 
-var Tool = Type("Tool", func() {
-	Description("DEPRECATED: Tool definitions are represented via ToolSchema in this API.")
-	Field(1, "name", String, "Tool identifier.", func() {
-		MinLength(1)
-		MaxLength(256)
-		Example("analyze")
-	})
-	Field(2, "description", String, "Human-readable description.", func() {
-		Example("Analyze data and return insights")
-	})
-	Field(3, "input_schema", Bytes, "JSON Schema for tool input parameters.", func() {
-		MinLength(1)
-		Example([]byte(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"]}`))
-	})
-	Field(4, "output_schema", Bytes, "JSON Schema for tool output (optional).", func() {
-		Example([]byte(`{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}`))
-	})
-	Required("name", "input_schema")
-})
-
 var ToolError = Type("ToolError", func() {
 	Description("Error details from tool execution")
 	Field(1, "code", String, "Error code", func() {
