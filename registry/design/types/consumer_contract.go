@@ -1,10 +1,11 @@
 // This file defines the generated metadata needed by consumers that discover
 // tools after compilation. JSON schemas remain on ToolSchema; this contract
 // carries the additional facts that schemas do not describe.
-package design
+package types
 
 import . "goa.design/goa/v3/dsl"
 
+// ConsumerContract supplies the execution facts needed by dynamically discovered tools.
 var ConsumerContract = Type("ConsumerContract", func() {
 	Description("Generated execution and presentation facts for one registry tool. The registry includes this complete value in the registration fingerprint.")
 	Field(1, "kind", String, "Execution kind fixed by the provider design. Dynamic consumers support service tools and agent tools with a declared executor and configuration. Control tools require compiled runtime integration.", func() {
@@ -30,6 +31,7 @@ var ConsumerContract = Type("ConsumerContract", func() {
 	Required("kind", "title", "search", "payload")
 })
 
+// ToolSearchDocument describes the word frequencies used to find relevant tools.
 var ToolSearchDocument = Type("ToolSearchDocument", func() {
 	Description("Precomputed word frequencies for local tool retrieval.")
 	Field(1, "length", Int, "Total number of words in this document, including repeats.", func() {
@@ -43,6 +45,7 @@ var ToolSearchDocument = Type("ToolSearchDocument", func() {
 	Required("length", "terms")
 })
 
+// ToolTypeMetadata supplies generated schema variants, examples, and field descriptions.
 var ToolTypeMetadata = Type("ToolTypeMetadata", func() {
 	Description("Precomputed schema variants, examples, and field details for one tool value.")
 	Field(1, "name", String, "Generated type name used in diagnostics.")
@@ -54,6 +57,7 @@ var ToolTypeMetadata = Type("ToolTypeMetadata", func() {
 	Required("schema_without_root_example")
 })
 
+// ToolFieldMetadata describes one tool field and the branches in which it exists.
 var ToolFieldMetadata = Type("ToolFieldMetadata", func() {
 	Description("One generated field description, including the union branches in which it exists.")
 	Field(1, "path", ArrayOf(ToolFieldPathSegment), "Path to this field. An omitted path identifies the root value.")
@@ -65,6 +69,7 @@ var ToolFieldMetadata = Type("ToolFieldMetadata", func() {
 	Field(5, "discriminator_values", ArrayOf(String), "Allowed branch names when this field selects a union branch.")
 })
 
+// ToolFieldPathSegment identifies a property or caller-selected collection element.
 var ToolFieldPathSegment = Type("ToolFieldPathSegment", func() {
 	Description("One fixed JSON property or one caller-selected array index or map key.")
 	OneOf("segment", "Exactly one path segment kind.", func() {
@@ -75,10 +80,12 @@ var ToolFieldPathSegment = Type("ToolFieldPathSegment", func() {
 	Required("segment")
 })
 
+// ToolCollectionElement marks an array index or map key in a field path.
 var ToolCollectionElement = Type("ToolCollectionElement", func() {
 	Description("Marks one array index or map key without prescribing its value.")
 })
 
+// ToolUnionBranch identifies the branch required for a field to apply.
 var ToolUnionBranch = Type("ToolUnionBranch", func() {
 	Description("One discriminator value that makes a generated field applicable.")
 	Field(1, "discriminator", ArrayOf(ToolFieldPathSegment), "Path to the union's discriminator property.", func() {
@@ -90,11 +97,13 @@ var ToolUnionBranch = Type("ToolUnionBranch", func() {
 	Required("discriminator", "value")
 })
 
+// ToolBounds declares result limits and the associated continuation contract.
 var ToolBounds = Type("ToolBounds", func() {
 	Description("Declares that successful results include the runtime's canonical result bounds.")
 	Field(1, "paging", ToolPaging, "Cursor-based continuation contract, when supported.")
 })
 
+// ToolPaging relates a query tool to the tool that reads its next result page.
 var ToolPaging = Type("ToolPaging", func() {
 	Description("Generated relationship between a query tool and its continuation.")
 	Field(1, "continue_tool", String, "Qualified tool that advances this result; omitted when the tool advances itself.")
@@ -105,6 +114,7 @@ var ToolPaging = Type("ToolPaging", func() {
 	Required("replay_payload", "cursor_field", "next_cursor_field")
 })
 
+// ToolConfirmation describes the approval required before executing a tool.
 var ToolConfirmation = Type("ToolConfirmation", func() {
 	Description("Templates rendered against canonical JSON arguments before execution.")
 	Field(1, "title", String, "Optional title displayed with the confirmation prompt.")
@@ -113,6 +123,7 @@ var ToolConfirmation = Type("ToolConfirmation", func() {
 	Required("prompt_template", "denied_result_template")
 })
 
+// ToolServerData declares result data retained for a specified application audience.
 var ToolServerData = Type("ToolServerData", func() {
 	Description("One server-only result kind, its audience, and complete payload contract.")
 	Field(1, "kind", String, "Unique kind emitted by this tool.", func() { MinLength(1) })
@@ -125,6 +136,7 @@ var ToolServerData = Type("ToolServerData", func() {
 	Required("kind", "audience", "schema", "type")
 })
 
+// AgentToolTarget identifies the configured worker and immutable child Agent configuration.
 var AgentToolTarget = Type("AgentToolTarget", func() {
 	Description("A native child Agent invocation. The worker is authorized at startup; the application owns the immutable configuration reference.")
 	Field(1, "executor", String, "Identifier of the preconfigured Agent worker that accepts this configuration.", func() {
