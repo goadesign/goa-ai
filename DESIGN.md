@@ -1535,7 +1535,13 @@ for details and the SDK source-compatibility change.
   positions; historical tools are not advertised for execution. Cited summary
   sentences retain their supplied attribution as quoted text. Provider replay
   metadata and reasoning stay in exact history rather than entering a new
-  summary call. This improves evidence delivery, not guaranteed model relevance
+  summary call. The shared summary instruction asks for verbatim identifiers and
+  their meaning when needed for unfinished work or retained findings, without
+  merging separate selections or treating past resolution as current validity.
+  The model may omit completed or irrelevant identifiers. This changes semantic
+  guidance, not retention budgets or a guarantee of lossless prose; the existing
+  policy fingerprint prevents reuse under different instructions.
+  This improves evidence delivery, not guaranteed model relevance
   or provider admission; [the runtime contract](docs/runtime.md#history-policies)
   defines custom prompts, citation coordinates, and explicit failure behavior.
   With a positive total ceiling, one summary receives every turn older than

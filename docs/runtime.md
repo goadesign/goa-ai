@@ -4902,6 +4902,25 @@ work; the runtime does not predict relevance.
 
 A runtime-owned system instruction treats the recorded conversation as evidence,
 not current instructions or actions. The summary request advertises no tools.
+The same instruction asks the model to retain identifiers needed for unfinished
+work or a retained finding verbatim, paired with their meaning and purpose.
+For example, a source returned as `line_1.HMI_TrackingActive` must not become its
+display label or a reconstructed `line_1.HMITrackingActive` when an unfinished
+comparison still needs it. Separately resolved groups stay distinct, and guesses,
+rejected IDs, and superseded choices are identified as such. Completed or
+unrelated identifiers may be omitted when no longer needed; relevance remains
+model judgment rather than a runtime-maintained identifier catalog. Prior
+resolution records past availability and never replaces validation when a later
+tool uses the identifier.
+
+This instruction applies with custom summary prompts too. It improves the
+summary's selection of useful evidence, not a lossless retention guarantee.
+The existing policy fingerprint invalidates summaries made under different
+instructions. Original history, output admission, exact token-count requirements,
+whole-turn retention, and the zero-or-one summary-call bound remain unchanged.
+A longer summary can require a shorter eligible exact tail or fail the existing
+size check; the runtime neither drops identifiers itself nor retries summarization.
+
 `WithSummaryPrompt` still inserts the complete quoted textual transcript at its
 `%s` placeholder, preserving the caller's surrounding text and ordinary Go format
 string behavior. Source references in that transcript identify native images and
