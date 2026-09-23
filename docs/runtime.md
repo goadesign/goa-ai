@@ -5133,13 +5133,16 @@ Apply adaptive rate limiting:
 ```go
 import mdlmw "goa.design/goa-ai/features/model/middleware"
 
-rl := mdlmw.NewOutputReservationAdaptiveRateLimiter(
+rl, err := mdlmw.NewOutputReservationAdaptiveRateLimiter(
     ctx,
     throughputMap,     // *rmap.Map for cluster-wide state (nil for local)
     "bedrock:sonnet",  // Model family key
     80_000,            // Initial quota-token capacity per minute
     1_000_000,         // Maximum quota-token capacity per minute
 )
+if err != nil {
+    return err
+}
 
 limitedClient, err := rl.Middleware()(modelClient)
 if err != nil {
@@ -5158,6 +5161,17 @@ before generation. Its versioned cluster key keeps the two accounting modes
 separate during rolling upgrades. For streams, the limiter increases capacity
 only after clean end-of-stream and reduces capacity when a terminal stream error
 is rate limited.
+
+`NewUsageReconciledAdaptiveRateLimiter` also reserves estimated input plus
+`Request.MaxTokens` before a call. It accepts a provider count with
+`Exact=false`, then corrects the local token balance with the provider's
+reported total. A completed stream uses its final response total; an early
+close uses only usage chunks already received; a failure uses any total
+retained in the error. If no usage was reported, the reservation remains an
+estimate and is never exposed as measured usage. Capacity adjustments are
+shared through the map, while each process keeps its own token balance.
+Constructors return an error if configured token capacities are invalid or a
+shared map cannot initialize its capacity; they never substitute a local map.
 
 ---
 
@@ -5748,13 +5762,16 @@ Apply adaptive rate limiting to handle provider throttling:
 ```go
 import mdlmw "goa.design/goa-ai/features/model/middleware"
 
-rl := mdlmw.NewOutputReservationAdaptiveRateLimiter(
+rl, err := mdlmw.NewOutputReservationAdaptiveRateLimiter(
     ctx,
     throughputMap,     // *rmap.Map for cluster-wide state (nil for local)
     "bedrock:sonnet",  // Model family key
     80_000,            // Initial quota-token capacity per minute
     1_000_000,         // Maximum quota-token capacity per minute
 )
+if err != nil {
+    return err
+}
 
 limitedClient, err := rl.Middleware()(modelClient)
 if err != nil {

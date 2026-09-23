@@ -247,6 +247,9 @@ Choose model adapters for OpenAI, Anthropic, Amazon Bedrock, Google Vertex AI,
 or a model gateway. Provider capabilities differ; the [runtime guide](docs/runtime.md)
 covers their supported options. Optional integrations include MongoDB for
 memory and prompt overrides, and Redis/Pulse for streams and registries.
+For models that estimate tokens before a call, the usage-reconciled adaptive
+limiter admits work from that estimate and corrects its local balance with
+tokens reported in the response. Missing usage stays unknown.
 
 Vertex tool arguments require valid UTF-8 text and keys. Workflow writes reject
 map keys with custom JSON or text encoders; use plain strings or named string
