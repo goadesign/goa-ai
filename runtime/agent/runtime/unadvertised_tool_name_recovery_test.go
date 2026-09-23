@@ -219,11 +219,8 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 		RunID:     "run-unadvertised-tool",
 		SessionID: sessionID,
 		TurnID:    "turn-unadvertised-tool",
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "List the items."}},
-		}},
 	}
+	publishTestRunInput(t, rt, runInput, []*model.Message{userMsg("List the items.")})
 	wfCtx := &routeWorkflowContext{
 		ctx:         t.Context(),
 		runID:       runInput.RunID,
@@ -312,6 +309,7 @@ func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
 		SessionID: sessionID,
 		TurnID:    "turn-repeated-unadvertised-tool",
 	}
+	publishTestRunInput(t, rt, runInput, []*model.Message{userMsg("List the items.")})
 	wfCtx := &routeWorkflowContext{
 		ctx:         t.Context(),
 		runID:       runInput.RunID,

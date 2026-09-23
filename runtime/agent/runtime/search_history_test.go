@@ -78,10 +78,10 @@ func TestNativeSearchThroughNewTurnPreparationAndHistoryTrimming(t *testing.T) {
 	require.NoError(t, transcript.ValidatePlannerTranscript(history))
 	start, err := buildOneShotRunStart("svc.agent", history, []RunOption{WithoutPriorReasoning()})
 	require.NoError(t, err)
-	for _, message := range start.input.Messages {
+	for _, message := range start.messages {
 		require.NotEmpty(t, message.Parts)
 	}
-	request.Messages = start.input.Messages
+	request.Messages = start.messages
 	_, err = client.Complete(t.Context(), request)
 	require.NoError(t, err)
 	body := <-bodies

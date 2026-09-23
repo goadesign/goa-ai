@@ -7,6 +7,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -36,6 +37,12 @@ type (
 		err    error
 	}
 
+	childPublicationFailure struct {
+		storage.Store
+		err      error
+		attempts int
+	}
+
 	// cancelingChildHeartbeat delivers cancellation on a heartbeat, as an
 	// engine can do when it learns that the activity has been canceled.
 	cancelingChildHeartbeat struct {
@@ -43,6 +50,68 @@ type (
 		cancel context.CancelFunc
 	}
 )
+
+func TestChildActivityClassifiesPublicationFailures(t *testing.T) {
+	cause := errors.New("publication rejected")
+	for _, test := range []struct {
+		name      string
+		err       error
+		permanent bool
+	}{
+		{"wrapped permanent", fmt.Errorf("store: %w", storage.NewContractError(cause)), true},
+		{"transient", cause, false},
+		{"canceled", context.Canceled, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rt, input := childHeartbeatFixture(t)
+			rt.Store = &childPublicationFailure{Store: rt.Store, err: test.err}
+			output, err := rt.prepareAgentChildActivity(t.Context(), input)
+			require.Nil(t, output)
+			require.ErrorIs(t, err, test.err)
+			require.Equal(t, test.permanent, engine.IsActivityErrorNonRetryable(err))
+		})
+	}
+}
+
+func TestChildPublicationFailureEngineRetry(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		err      error
+		attempts int
+	}{
+		{"permanent", storage.NewContractError(storage.ErrSeedConflict), 1},
+		{"transient", errors.New("publication unavailable"), 3},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rt, input := childHeartbeatFixture(t)
+			store := &childPublicationFailure{Store: rt.Store, err: test.err}
+			rt.Store = store
+			require.NoError(t, rt.Engine.RegisterAgentChildActivity(t.Context(), "test.prepare", engine.ActivityOptions{
+				RetryPolicy: engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Millisecond, BackoffCoefficient: 2},
+			}, rt.prepareAgentChildActivity))
+			require.NoError(t, rt.Engine.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
+				Name: "test.workflow",
+				Handler: func(wf engine.WorkflowContext, _ *api.RunInput) (*api.RunOutput, error) {
+					_, err := wf.ExecuteAgentChildActivity(engine.AgentChildActivityCall{Name: "test.prepare", Input: input})
+					return nil, err
+				},
+			}))
+			handle, err := rt.Engine.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
+				ID: "test-parent", Workflow: "test.workflow", TaskQueue: "test.queue",
+				Input: &api.RunInput{RunID: "test-parent"},
+			})
+			require.NoError(t, err)
+			_, err = handle.Wait(t.Context())
+			require.Error(t, err)
+			require.Equal(t, test.attempts, store.attempts)
+		})
+	}
+}
+
+func (s *childPublicationFailure) PublishRunSeed(context.Context, storage.SeedPublication) error {
+	s.attempts++
+	return s.err
+}
 
 func TestChildActivityHeartbeatsAcrossPagedHistoryAndStopsOnSuccess(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {

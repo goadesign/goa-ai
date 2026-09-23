@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 	"time"
 
@@ -77,16 +78,44 @@ type (
 )
 
 const (
-	preparedRequestVersion = "goa-ai-prepared-run-v1"
-
-	// maxPreparedRequestBytes bounds storage input before JSON decoding. It is
-	// eight times the engine request limit, which is larger than the six-byte
-	// JSON escape or four-byte base64 form of one input byte. The writer checks
-	// the complete record, including JSON field syntax, against this limit too.
-	maxPreparedRequestBytes = 8 * engine.MaxPayloadBytes
+	preparedRequestVersion = "goa-ai-prepared-run-v2"
 
 	searchAttributeTypeMetadata = "type"
 )
+
+// PreparedRequestByteLimit bounds the canonical stored request without
+// rejecting a request accepted by the engine byte budget. It includes JSON
+// framing for many tiny named values, not only string/base64 expansion.
+func PreparedRequestByteLimit() int { return preparedRequestByteLimit }
+
+var preparedRequestByteLimit = derivePreparedRequestByteLimit()
+
+// derivePreparedRequestByteLimit measures the codec's fixed framing. Every
+// memo/search entry has a nonempty name counted by the engine; charge its full
+// empty-entry framing plus six-byte JSON escaping to one such byte. Additional
+// metadata entries cost less per counted byte, and each payload can contain at
+// most one empty metadata key (included below). AgentID and queue override repeat
+// text already counted by the engine, adding at most two six-byte copies.
+func derivePreparedRequestByteLimit() int {
+	payload := preparedPayload{Metadata: map[string][]byte{"": nil}}
+	entry, err := json.Marshal(preparedValue{Payload: payload})
+	if err != nil {
+		panic(err)
+	}
+	fixed, err := json.Marshal(preparedRequestWire{
+		Version: preparedRequestVersion, Input: payload, TaskQueueOverride: "x",
+		RunTimeout:  time.Duration(math.MinInt64),
+		RetryPolicy: engine.RetryPolicy{MaxAttempts: -int(^uint(0)>>1) - 1, InitialInterval: time.Duration(math.MinInt64), BackoffCoefficient: -math.MaxFloat64},
+	})
+	if err != nil {
+		panic(err)
+	}
+	const maxJSONBytesPerTextByte = 6
+	const repeatedTextCopies = 2
+	// One separator is charged per entry. Remove the single placeholder byte
+	// whose only purpose is to include the optional queue field's framing.
+	return len(fixed) - 1 + (len(entry)+1+maxJSONBytesPerTextByte+repeatedTextCopies*maxJSONBytesPerTextByte)*engine.MaxPayloadBytes
+}
 
 // NewPreparedRequest validates and snapshots one complete engine request. The
 // returned value owns the values submitted to the engine. It does not create
@@ -115,10 +144,10 @@ func NewPreparedRequest(
 // ParsePreparedRequest parses one stored prepared run. It rebuilds the bytes
 // from the decoded request and rejects every alternate JSON representation.
 func ParsePreparedRequest(data []byte) (PreparedRequest, error) {
-	if len(data) > maxPreparedRequestBytes {
+	if len(data) > PreparedRequestByteLimit() {
 		return PreparedRequest{}, fmt.Errorf(
 			"decode prepared run: stored value exceeds maximum size %d bytes",
-			maxPreparedRequestBytes,
+			PreparedRequestByteLimit(),
 		)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -194,10 +223,10 @@ func (p PreparedRequest) MarshalBinary() ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("marshal prepared run: %w", err)
 	}
-	if len(data) > maxPreparedRequestBytes {
+	if len(data) > PreparedRequestByteLimit() {
 		return nil, fmt.Errorf(
 			"prepared run exceeds maximum stored size %d bytes",
-			maxPreparedRequestBytes,
+			PreparedRequestByteLimit(),
 		)
 	}
 	return data, nil

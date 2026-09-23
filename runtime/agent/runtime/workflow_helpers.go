@@ -337,13 +337,8 @@ func (r *Runtime) buildNextResumeRequest(
 	attempt := *nextAttempt
 	resumeCtx := base.RunContext
 	resumeCtx.Attempt = attempt
-	plannerMsgs, err := model.CloneMessages(base.Messages)
-	if err != nil {
-		return PlanActivityInput{}, err
-	}
-	if err := transcript.ValidatePlannerTranscript(plannerMsgs); err != nil {
-		return PlanActivityInput{}, fmt.Errorf("invalid resume transcript for run %s: %w", base.RunContext.RunID, err)
-	}
+	// The planner activity loads and validates the complete saved prefix. The
+	// workflow holds only new deltas, which can begin inside a tool exchange.
 	encodedToolOutputs, err := encodePlannerToolOutputs(toolOutputs)
 	if err != nil {
 		return PlanActivityInput{}, err

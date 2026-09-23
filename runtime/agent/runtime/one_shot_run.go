@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -12,6 +13,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/storage"
 )
 
 type (
@@ -123,9 +125,23 @@ func (r *Runtime) recordOneShotEvent(ctx context.Context, event hooks.Event, tur
 	var command *api.StorageActivityCommand
 	switch event.Type() {
 	case hooks.RunStarted:
-		command = &api.StorageActivityCommand{
-			OneShotStart: &api.OneShotRunStartCommand{Started: record},
+		// Callback runs have no initial messages. Publish that explicit empty
+		// history before accepting the run, just as prepared workflows do.
+		writer, err := stageLiteralHistory(ctx, r.Store, storage.SeedDeclaration{
+			AgentID: event.AgentID(), RunID: event.RunID(), CommandID: event.RunID(), AttemptID: event.RunID(), Kind: storage.SeedLiteral,
+		}, nil)
+		if err != nil {
+			return err
 		}
+		command = &api.StorageActivityCommand{OneShotStart: &api.OneShotRunStartCommand{SeedEndID: writer.endID, Started: record}}
+		compiled, err := json.Marshal(command)
+		if err != nil {
+			return err
+		}
+		if err := writer.publish(ctx, compiled); err != nil {
+			return err
+		}
+
 	case hooks.RunCompleted:
 		command = &api.StorageActivityCommand{
 			Terminal: &api.RunTerminalCommand{Record: record},

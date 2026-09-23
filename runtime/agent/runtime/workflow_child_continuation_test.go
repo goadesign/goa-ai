@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -31,8 +33,9 @@ func TestChildContinuationWaitsAfterParentCancellation(t *testing.T) {
 	tool := newAnyJSONSpec("svc.agent.child")
 	tool.IsAgentTool = true
 	tool.AgentID = continuationChildAgentID
+	childTool := newAnyJSONSpec("child.lookup")
 	cfg := AgentToolConfig{
-		Definition:       testAgentDefinition(continuationChildAgentID, "nested.workflow", "nested.queue", nil, nil),
+		Definition:       testAgentDefinition(continuationChildAgentID, "nested.workflow", "nested.queue", []tools.ToolSpec{childTool}, nil),
 		Name:             "svc.agent",
 		AgentToolContent: AgentToolContent{Prompt: func(tools.Ident, any) string { return "work" }},
 	}
@@ -53,7 +56,16 @@ func TestChildContinuationWaitsAfterParentCancellation(t *testing.T) {
 	base := &workflowConversation{RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID,
 	}}
-	suspension := &api.RunSuspension{ID: "child-suspension"}
+	suspension := suspensionContractFixtureWithContext(t, childTool.Name, continuationChildAgentID, "previous-child", nil, nil)
+	admitRunForTest(t, runtime.Store, session.RunMeta{
+		AgentID: continuationChildAgentID, RunID: "previous-child", SessionID: "session-1",
+		Status: session.RunStatusRunning,
+	})
+	suspensionData, err := json.Marshal(suspension)
+	require.NoError(t, err)
+	require.NoError(t, storeSuspensionForTest(t.Context(), runtime.Store, "previous-child", session.RunSuspension{
+		ID: suspension.ID, Data: suspensionData,
+	}))
 	batch := stepBatch{records: []stepToolRecord{{
 		call: ToolCall{
 			Name: tool.Name, ToolCallID: "call-child", Payload: rawjson.Message(`{}`),
@@ -161,8 +173,11 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 			err error
 		}{out: out, err: err}
 	}()
-	firstChild := <-firstChildren
-	childRuntime := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
+	firstChild := waitForChildHandle(t, firstChildren, "first child")
+	require.NotNil(t, firstChild)
+	childRuntime := New(runtime.Store, WithLogger(telemetry.NoopLogger{}))
+	childInput := firstContext.childRequests[0].Input
+	seedRunMeta(t, childRuntime, childInput)
 	seedTestToolSpecs(childRuntime, childTool)
 	childSuspension := suspensionContractFixtureWithContext(
 		t,
@@ -179,6 +194,11 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 			checkpoint.Context = checkpointContextFromRun(nested)
 		})
 	}
+	suspensionData, err := json.Marshal(childSuspension)
+	require.NoError(t, err)
+	require.NoError(t, storeSuspensionForTest(t.Context(), runtime.Store, childInput.RunID, session.RunSuspension{
+		ID: childSuspension.ID, Data: suspensionData,
+	}))
 	firstChild.out = &api.RunOutput{
 		AgentID:    childDefinition.route.ID,
 		RunID:      firstContext.childRequests[0].Input.RunID,
@@ -240,7 +260,14 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 			err error
 		}{out: out, err: err}
 	}()
-	secondChild := <-secondChildren
+	var secondChild *controlledChildHandle
+	select {
+	case secondChild = <-secondChildren:
+	case early := <-secondDone:
+		t.Fatalf("continuation returned before starting its child: %v", early.err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("continuation did not start its child within the fixture deadline")
+	}
 	require.Equal(t, childSuspension.ID, secondContext.childRequests[0].Input.Continuation.Suspension.ID)
 	require.Equal(t, "Unit 7", secondContext.childRequests[0].Input.Continuation.Response.Clarification.Answer)
 	require.NoError(t, validateWorkflowRunInput(secondContext.childRequests[0].Input))

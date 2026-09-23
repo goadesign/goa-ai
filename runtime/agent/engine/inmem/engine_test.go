@@ -21,7 +21,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/storage"
 )
@@ -745,14 +744,10 @@ func TestStartWorkflowSnapshotsCallerInput(t *testing.T) {
 	})
 	require.NoError(t, err)
 	input := &api.RunInput{
-		RunID:  "run-1",
-		Labels: map[string]string{"tenant": "accepted"},
-		Messages: []*model.Message{{
-			Role: model.ConversationRoleUser,
-			Parts: []model.Part{
-				model.TextPart{Text: "accepted"},
-			},
-		}},
+		RunID:     "run-1",
+		SeedEndID: "published",
+		Labels:    map[string]string{"tenant": "accepted"},
+		ToolArgs:  rawjson.Message(`{"input":"accepted"}`),
 	}
 	handle, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "test_workflow", TaskQueue: "test.queue", Input: input,
@@ -760,11 +755,12 @@ func TestStartWorkflowSnapshotsCallerInput(t *testing.T) {
 	require.NoError(t, err)
 
 	input.Labels["tenant"] = mutatedInputValue
-	input.Messages[0].Parts[0] = model.TextPart{Text: mutatedInputValue}
+	input.ToolArgs[10] = 'x'
 	close(readInput)
 	snapshot := <-observed
 	require.Equal(t, "accepted", snapshot.Labels["tenant"])
-	require.Equal(t, model.TextPart{Text: "accepted"}, snapshot.Messages[0].Parts[0])
+	require.Equal(t, rawjson.Message(`{"input":"accepted"}`), snapshot.ToolArgs)
+	require.Equal(t, "published", snapshot.SeedEndID)
 	_, err = handle.Wait(t.Context())
 	require.NoError(t, err)
 }
@@ -790,12 +786,10 @@ func TestStartChildWorkflowSnapshotsCallerInput(t *testing.T) {
 		startedChildren: make(map[string]struct{}),
 	}
 	input := &api.RunInput{
-		RunID:  "child",
-		Labels: map[string]string{"tenant": "accepted"},
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "accepted"}},
-		}},
+		RunID:     "child",
+		SeedEndID: "published",
+		Labels:    map[string]string{"tenant": "accepted"},
+		ToolArgs:  rawjson.Message(`{"input":"accepted"}`),
 	}
 	handle, err := parent.StartChildWorkflow(t.Context(), engine.ChildWorkflowRequest{
 		ID: "child", Workflow: "child", TaskQueue: "test.queue", Input: input,
@@ -803,11 +797,12 @@ func TestStartChildWorkflowSnapshotsCallerInput(t *testing.T) {
 	require.NoError(t, err)
 
 	input.Labels["tenant"] = mutatedInputValue
-	input.Messages[0].Parts[0] = model.TextPart{Text: mutatedInputValue}
+	input.ToolArgs[10] = 'x'
 	close(readInput)
 	snapshot := <-observed
 	require.Equal(t, "accepted", snapshot.Labels["tenant"])
-	require.Equal(t, model.TextPart{Text: "accepted"}, snapshot.Messages[0].Parts[0])
+	require.Equal(t, rawjson.Message(`{"input":"accepted"}`), snapshot.ToolArgs)
+	require.Equal(t, "published", snapshot.SeedEndID)
 	_, err = handle.Get(t.Context())
 	require.NoError(t, err)
 }
@@ -1426,10 +1421,7 @@ func TestAgentChildActivityTypedExecution(t *testing.T) {
 	eng := New()
 	recorded := &api.AgentChildActivityOutput{
 		Success: &api.AgentChildActivitySuccess{
-			RenderedPrompts: []prompt.RenderEvent{{
-				PromptID: "child.prompt",
-				Version:  "v1",
-			}},
+			SeedEndID: "published-child",
 		},
 	}
 	require.NoError(t, eng.RegisterAgentChildActivity(
@@ -1450,8 +1442,7 @@ func TestAgentChildActivityTypedExecution(t *testing.T) {
 			if err != nil {
 				return nil, err
 			}
-			if output.Success.RenderedPrompts[0].PromptID != recorded.Success.RenderedPrompts[0].PromptID ||
-				output.Success.RenderedPrompts[0].Version != recorded.Success.RenderedPrompts[0].Version {
+			if output.Success.SeedEndID != recorded.Success.SeedEndID {
 				return nil, errors.New("agent child activity changed its recorded output")
 			}
 			return &api.RunOutput{}, nil
@@ -1585,9 +1576,7 @@ func TestAgentChildActivityRejectsOversizedRecordedValues(t *testing.T) {
 			t.Context(), "prepare_child", engine.ActivityOptions{},
 			func(context.Context, *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error) {
 				return &api.AgentChildActivityOutput{Success: &api.AgentChildActivitySuccess{
-					RenderedPrompts: []prompt.RenderEvent{{
-						PromptID: prompt.Ident(strings.Repeat("x", engine.MaxPayloadBytes)),
-					}},
+					SeedEndID: strings.Repeat("x", engine.MaxPayloadBytes),
 				}}, nil
 			},
 		))

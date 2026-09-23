@@ -82,8 +82,11 @@ func TestPrepareAgentChildUsesRecordedActivityOutputWithoutRendering(t *testing.
 	require.NoError(t, err)
 	require.EqualValues(t, 1, store.resolveCalls.Load())
 	require.NotNil(t, activityOutput.Success)
-	require.Len(t, activityOutput.Success.RenderedPrompts, 1)
-	require.Equal(t, "v1", activityOutput.Success.RenderedPrompts[0].Version)
+	childRun := agentChildRunContext(&call)
+	seed, err := rt.Store.LoadRunSeed(t.Context(), childRun.RunID, activityOutput.Success.SeedEndID)
+	require.NoError(t, err)
+	require.Len(t, seed.Declaration.RenderedPrompts, 1)
+	require.Equal(t, "v1", seed.Declaration.RenderedPrompts[0].Version)
 
 	wfCtx := &testWorkflowContext{
 		ctx:              context.Background(),
@@ -94,9 +97,10 @@ func TestPrepareAgentChildUsesRecordedActivityOutputWithoutRendering(t *testing.
 	require.Equal(t, 1, wfCtx.agentChildCalls)
 	require.Equal(t, agentChildActivityName, wfCtx.lastAgentChildCall.Name)
 	require.EqualValues(t, 1, store.resolveCalls.Load())
-	require.Equal(t, activityOutput.Success.Messages, request.messages)
+	require.Equal(t, activityOutput.Success.SeedEndID, request.seedEndID)
+	require.Empty(t, request.messages)
 	require.Equal(t, agentChildRunContext(&call), request.runContext)
-	require.Equal(t, activityOutput.Success.RenderedPrompts, request.renderedPrompts)
+	require.Empty(t, request.renderedPrompts)
 }
 
 func TestPrepareAgentChildRejectsAmbiguousActivityOutput(t *testing.T) {

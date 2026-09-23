@@ -1,11 +1,11 @@
-package runtime
+package transcript
 
 import (
 	"goa.design/goa-ai/internal/modelmetadata"
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
-// completedTurnMessages copies completed conversation history for a new user
+// WithoutCompletedReasoning copies completed conversation history for a new user
 // turn without carrying earlier private reasoning into that turn. It removes
 // ThinkingParts, native reasoning metadata, and opaque tool thought signatures.
 // All other parts, tool identities and arguments, citations, and metadata are
@@ -17,7 +17,7 @@ import (
 // suspended turn: those must replay their native continuation data unchanged.
 // This is an explicit context policy, not a repair for unsupported provider
 // input. It does not make other unsupported parts representable by a provider.
-func completedTurnMessages(messages []*model.Message) ([]*model.Message, error) {
+func WithoutCompletedReasoning(messages []*model.Message) ([]*model.Message, error) {
 	cloned, err := model.CloneMessages(messages)
 	if err != nil {
 		return nil, err

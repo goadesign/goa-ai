@@ -58,7 +58,6 @@ func TestRunLoopStopsAfterTerminalTool(t *testing.T) {
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
-		Messages:  nil,
 	}
 	initial := &PlanResult{
 		ToolCalls: []ToolCall{

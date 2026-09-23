@@ -28,7 +28,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 type (
@@ -149,14 +148,6 @@ func (r *Runtime) finalizeFromHistory(
 	if err != nil {
 		return nil, err
 	}
-	messages, err := model.CloneMessages(base.Messages)
-	if err != nil {
-		return nil, err
-	}
-	if err := transcript.ValidatePlannerTranscript(messages); err != nil {
-		return nil, fmt.Errorf("cannot finalize invalid planner transcript: %w", err)
-	}
-
 	resumeCtx := base.RunContext
 	resumeCtx.Attempt = nextAttempt
 	// Signal zero remaining duration for any prompt engineering that uses MaxDuration.
@@ -822,9 +813,9 @@ func (r *Runtime) runPlanActivity(
 		if out.PlanningFailure != nil || (out.OutputContractFailure != nil && out.OutputContractFailure.ModelOutputRecovery == nil) {
 			return nil, errors.New("terminal planner failure cannot select a history summary")
 		}
-		if err := validateHistoryContext(base.Messages, out.HistoryContext); err != nil {
-			return nil, err
-		}
+		// The activity verifies the summary against its exact saved history
+		// before returning it and again before reuse. Workflow memory holds
+		// only this run's additions, so it cannot repeat that source check.
 	}
 	batch, err := preparePlannerPublicationBatch(wfCtx, input, out)
 	if err != nil {

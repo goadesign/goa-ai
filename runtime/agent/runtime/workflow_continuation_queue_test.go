@@ -30,7 +30,10 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 		firstContext,
 		registration,
 		firstInput,
-		&workflowConversation{RunContext: run.Context{
+		&workflowConversation{HistoryEndID: seedTestPlanInput(t, runtime, PlanActivityInput{
+			AgentID: firstInput.AgentID, RunID: firstInput.RunID,
+			RunContext: run.Context{RunID: firstInput.RunID, SessionID: firstInput.SessionID},
+		}, nil).HistoryEndID, RunContext: run.Context{
 			RunID: "run-1", SessionID: "session-1", TurnID: "turn-1", Attempt: 1,
 		}},
 		&PlanResult{Await: planner.NewAwait(

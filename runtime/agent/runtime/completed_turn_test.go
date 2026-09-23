@@ -8,6 +8,7 @@ import (
 	"goa.design/goa-ai/internal/modelmetadata"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func TestCompletedTurnMessagesPreservesConversationAndOriginals(t *testing.T) {
@@ -37,7 +38,7 @@ func TestCompletedTurnMessagesPreservesConversationAndOriginals(t *testing.T) {
 	original, err := model.CloneMessages(messages)
 	require.NoError(t, err)
 
-	got, err := completedTurnMessages(messages)
+	got, err := transcript.WithoutCompletedReasoning(messages)
 	require.NoError(t, err)
 	require.Len(t, got, 4)
 	assert.Equal(t, original, messages)
@@ -67,7 +68,7 @@ func TestCompletedTurnMessagesHandlesReasoningOnlyAndMetadataOnly(t *testing.T) 
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "Done."}},
 			Meta: map[string]any{modelmetadata.OpenAIReasoningItems: []string{"opaque"}}},
 	}
-	got, err := completedTurnMessages(messages)
+	got, err := transcript.WithoutCompletedReasoning(messages)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	assert.Empty(t, got[0].Parts)
@@ -79,11 +80,11 @@ func TestCompletedTurnMessagesHandlesReasoningOnlyAndMetadataOnly(t *testing.T) 
 }
 
 func TestCompletedTurnMessagesKeepsCanonicalBoundaryValidation(t *testing.T) {
-	_, err := completedTurnMessages([]*model.Message{nil})
+	_, err := transcript.WithoutCompletedReasoning([]*model.Message{nil})
 	require.ErrorContains(t, err, "message is nil")
-	_, err = completedTurnMessages([]*model.Message{{Meta: map[string]any{"invalid": make(chan int)}}})
+	_, err = transcript.WithoutCompletedReasoning([]*model.Message{{Meta: map[string]any{"invalid": make(chan int)}}})
 	require.Error(t, err)
-	got, err := completedTurnMessages(nil)
+	got, err := transcript.WithoutCompletedReasoning(nil)
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }

@@ -140,7 +140,7 @@ func TestValidateWorkflowRunInputRejectsMixedContinuationState(t *testing.T) {
 
 	err := validateWorkflowRunInput(&RunInput{
 		AgentID: "svc.agent", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
-		Messages:     []*model.Message{{Role: model.ConversationRoleUser}},
+		Labels:       map[string]string{"caller": "cannot replace saved labels"},
 		Continuation: &api.RunContinuationInput{Response: response},
 	})
 	require.ErrorContains(t, err, "caller-supplied checkpoint state")

@@ -221,7 +221,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 	}))}
 
 	out, err := rt.runLoop(
-		&testWorkflowContext{ctx: t.Context()},
+		&testWorkflowContext{ctx: t.Context(), hookRuntime: rt},
 		AgentRegistration{ResumeActivityName: "resume"},
 		input,
 		base,
@@ -329,7 +329,7 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 	}))}
 
 	out, err := rt.runLoop(
-		&testWorkflowContext{ctx: t.Context()},
+		&testWorkflowContext{ctx: t.Context(), hookRuntime: rt},
 		AgentRegistration{ResumeActivityName: "resume"},
 		input,
 		base,

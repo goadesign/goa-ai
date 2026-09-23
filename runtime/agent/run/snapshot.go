@@ -40,8 +40,8 @@ type (
 		// LastAssistantMessage is the most recent assistant message emitted by the run.
 		LastAssistantMessage string
 
-		// Transcript is the canonical provider-ready transcript derived from durable
-		// transcript delta records when they are present in the run log.
+		// Transcript contains the exact published initial history followed by this
+		// run's saved message deltas through the snapshot's final record.
 		Transcript []*model.Message
 
 		// Await describes the input request that ended a suspended run.

@@ -419,19 +419,20 @@ func TestEnsureRunCompletionRejectsMismatchedConcurrentWinnerStatus(t *testing.T
 	require.ErrorContains(t, err, `stored winner has status "failed", store reported "completed"`)
 }
 
-func TestEnsureRunCompletionRejectsDifferentTerminalForClosedRun(t *testing.T) {
+func TestEnsureRunCompletionDoesNotRepairClosedRun(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
 		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusCompleted,
 	})
 	runtime := &Runtime{
-		Store:  differentTerminalRepairStore{Store: stored},
-		Bus:    hooks.NewBus(),
-		Engine: completionQueryEngine{completionErr: errors.New("engine history must not be queried")},
+		Store:            differentTerminalRepairStore{Store: stored},
+		Bus:              hooks.NewBus(),
+		Engine:           completionQueryEngine{completionErr: errors.New("engine history must not be queried")},
+		streamSubscriber: newCompletionSubscriber(t),
 	}
 
 	err := runtime.EnsureRunCompletion(t.Context(), "run")
-	require.ErrorIs(t, err, ErrRunCompletionCorrupt)
+	require.NoError(t, err)
 }
 
 func TestEnsureRunCompletionDoesNotStoreRetrievalFailure(t *testing.T) {

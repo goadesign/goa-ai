@@ -67,7 +67,11 @@ func TestRegistryAgentPreparationRetainsSelectedConfiguration(t *testing.T) {
 	assert.Equal(t, "facility-1", output.Success.Labels["facility"])
 	assert.NotContains(t, config.Labels, "facility")
 	config.Messages[0].Parts[0] = model.TextPart{Text: "changed"}
-	assert.Equal(t, "Installer revision 1", output.Success.Messages[0].Text())
+	page, err := rt.Store.ListRunSeedRecords(t.Context(), agentChildRunContext(&call).RunID, output.Success.SeedEndID, "", 512)
+	require.NoError(t, err)
+	require.Len(t, page.Records, 1)
+	assert.Contains(t, string(page.Records[0].Messages), "Installer revision 1")
+	assert.NotContains(t, string(page.Records[0].Messages), "changed")
 
 	// A replay uses the recorded activity value even when storage is unavailable.
 	rt.agentToolResolvers[child.route.ID] = func(context.Context, string, *ToolCall) (*AgentToolConfiguration, error) {

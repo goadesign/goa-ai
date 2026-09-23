@@ -22,7 +22,6 @@ import (
 	"go.temporal.io/sdk/workflow"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/prompt"
 )
 
 func TestApplyActivityDefaultsUsesTemporalPlannerDefaults(t *testing.T) {
@@ -615,10 +614,7 @@ func TestExecuteAgentChildActivityReturnsRecordedOutput(t *testing.T) {
 			calls++
 			return &api.AgentChildActivityOutput{
 				Success: &api.AgentChildActivitySuccess{
-					RenderedPrompts: []prompt.RenderEvent{{
-						PromptID: "child.prompt",
-						Version:  "v1",
-					}},
+					SeedEndID: "published-child",
 				},
 			}, nil
 		},
@@ -639,7 +635,7 @@ func TestExecuteAgentChildActivityReturnsRecordedOutput(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if output.Success.RenderedPrompts[0].Version != "v1" {
+		if output.Success.SeedEndID != "published-child" {
 			return errors.New("agent child activity changed its recorded output")
 		}
 		return nil

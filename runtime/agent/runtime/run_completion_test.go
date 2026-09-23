@@ -4,6 +4,8 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"testing"
@@ -61,8 +63,7 @@ type (
 		endSession        bool
 	}
 
-	// differentTerminalRepairStore reports that another terminal record owns a
-	// run even when repair supplies the stored record.
+	// differentTerminalRepairStore rejects unexpected writes during redelivery.
 	differentTerminalRepairStore struct {
 		storage.Store
 	}
@@ -161,10 +162,7 @@ func (s workflowSuspensionWinsStore) RepairRunSuspension(ctx context.Context, co
 }
 
 func (s differentTerminalRepairStore) RepairRunTerminal(context.Context, storage.RunTerminal) (storage.RunRepairResult, error) {
-	return storage.RunRepairResult{
-		Outcome: storage.RunRepairDifferentTerminal,
-		Status:  session.RunStatusCompleted,
-	}, nil
+	panic("closed-run redelivery must not repair its terminal record")
 }
 
 func (s *countingTerminalRepairStore) RepairRunTerminal(ctx context.Context, command storage.RunTerminal) (storage.RunRepairResult, error) {
@@ -323,10 +321,12 @@ func TestEnsureRunCompletionReplaysStoredTerminalExactly(t *testing.T) {
 	}
 
 	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), meta.RunID))
-	require.NotNil(t, store.terminalCommand)
-	require.Equal(t, record.EventKey, store.terminalCommand.Record.EventKey)
-	require.Equal(t, record.Timestamp, store.terminalCommand.Record.Timestamp)
-	require.Equal(t, []byte(record.Payload), []byte(store.terminalCommand.Record.Payload))
+	require.Nil(t, store.terminalCommand)
+	storedRecord, err := runtime.loadStoredRunCompletionRecord(t.Context(), meta.RunID)
+	require.NoError(t, err)
+	require.Equal(t, record.EventKey, storedRecord.EventKey)
+	require.Equal(t, record.Timestamp, storedRecord.Timestamp)
+	require.Equal(t, record.Payload, storedRecord.Payload)
 	require.Zero(t, busCalls)
 	require.Equal(t, 2, sink.callCount())
 }
@@ -362,7 +362,7 @@ func TestEnsureRunCompletionRequiresStreamForActiveSession(t *testing.T) {
 	err = runtime.EnsureRunCompletion(t.Context(), meta.RunID)
 
 	require.ErrorContains(t, err, `active Session "session" requires Runtime.WithStream`)
-	require.NotNil(t, store.terminalCommand)
+	require.Nil(t, store.terminalCommand)
 	require.Nil(t, store.suspensionCommand)
 }
 
@@ -464,12 +464,48 @@ func TestEnsureRunCompletionReplaysStoredSuspensionExactly(t *testing.T) {
 	}
 
 	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), meta.RunID))
-	require.NotNil(t, store.suspensionCommand)
-	require.Equal(t, suspension, store.suspensionCommand.Suspension)
-	require.Equal(t, record.EventKey, store.suspensionCommand.Record.EventKey)
-	require.Equal(t, record.Timestamp, store.suspensionCommand.Record.Timestamp)
-	require.Equal(t, []byte(record.Payload), []byte(store.suspensionCommand.Record.Payload))
+	require.Nil(t, store.suspensionCommand)
+	unchanged, err := store.LoadRunSuspension(t.Context(), meta.RunID)
+	require.NoError(t, err)
+	require.Equal(t, suspension, unchanged)
 	require.Equal(t, 2, sink.callCount())
+}
+
+func TestEnsureRunCompletionReportsOpaqueHistoryWithoutExecutingIt(t *testing.T) {
+	stored := newTestStore()
+	meta := session.RunMeta{
+		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Status: session.RunStatusRunning,
+	}
+	admitRunForTest(t, stored, meta)
+	suspension := suspensionContractFixture(t, "svc.lookup")
+	// The public result remains reportable after the executable schema has
+	// retired. No private field in these bytes is interpreted by redelivery.
+	suspension.Version = "retired-schema"
+	suspension.Checkpoint = []byte(`{"retiredPrivateState":"opaque"}`)
+	digest := sha256.Sum256(suspension.Checkpoint)
+	suspension.ID = hex.EncodeToString(digest[:16])
+	data, err := json.Marshal(suspension)
+	require.NoError(t, err)
+	record := testHookRecord(t, hooks.NewRunSuspendedEvent(
+		meta.RunID, agent.Ident(meta.AgentID), meta.SessionID, suspension.ID,
+		suspension.Version, len(suspension.Pending), suspension.RequiredTools,
+	), "stored-suspension", ensuredCompletionTime)
+	_, err = stored.RecordRunSuspension(t.Context(), storage.RunSuspension{
+		RunID: meta.RunID, Suspension: session.RunSuspension{ID: suspension.ID, Data: data}, Record: record,
+	})
+	require.NoError(t, err)
+	observed := &completionReplayStore{Store: stored}
+	runtime := &Runtime{
+		Store: observed, Bus: hooks.NewBus(), streamSubscriber: newCompletionSubscriber(t),
+		Engine: completionQueryEngine{completionErr: errors.New("historical delivery cannot query the engine")},
+	}
+	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), meta.RunID))
+	require.Nil(t, observed.suspensionCommand)
+	require.Nil(t, observed.terminalCommand)
+	_, err = runtime.LoadRunSuspension(t.Context(), meta.RunID)
+	require.ErrorIs(t, err, ErrRunSuspensionCorrupt)
+	require.ErrorContains(t, err, "unsupported run suspension version")
 }
 
 func TestEnsureRunCompletionRejectsSuspensionEventMismatch(t *testing.T) {
@@ -574,7 +610,7 @@ func TestEnsureRunCompletionDoesNotReplayStoredCompletionForEndedSession(t *test
 	}
 
 	require.NoError(t, runtime.EnsureRunCompletion(t.Context(), meta.RunID))
-	require.NotNil(t, store.terminalCommand)
+	require.Nil(t, store.terminalCommand)
 }
 
 func TestEnsureChildRunLinkRequiresStreamForActiveSession(t *testing.T) {
@@ -653,8 +689,10 @@ func TestEnsureRunCompletionRedeliversStoredChildLinkBeforeCompletion(t *testing
 	startRuntime := &Runtime{
 		Store: stored, Bus: hooks.NewBus(), streamSubscriber: failedSubscriber,
 	}
+	childInput := &RunInput{AgentID: "child.agent", RunID: "child", SessionID: "session"}
+	publishTestRunInput(t, startRuntime, childInput, nil)
 	_, err = startRuntime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
-		ChildStart: &api.ChildRunStartCommand{ParentLinked: linkedInput, Started: started},
+		ChildStart: &api.ChildRunStartCommand{SeedEndID: childInput.SeedEndID, ParentLinked: linkedInput, Started: started},
 	})
 	require.ErrorContains(t, err, "child link delivery failed")
 	completed := testHookRecord(t, hooks.NewRunCompletedEvent(

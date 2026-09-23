@@ -231,11 +231,13 @@ func TestAcceptedCancellationReplacesSuccessfulWorkflowReturn(t *testing.T) {
 		hookRuntime: runtime,
 	}
 
-	output, err := runtime.ExecuteWorkflow(wfCtx, &RunInput{
+	input := &RunInput{
 		AgentID:   "agent",
 		RunID:     "run",
 		SessionID: "session",
-	})
+	}
+	publishTestRunInput(t, runtime, input, nil)
+	output, err := runtime.ExecuteWorkflow(wfCtx, input)
 
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, output)
@@ -276,11 +278,13 @@ func TestAcceptedCancellationReplacesWorkflowSuspension(t *testing.T) {
 		hookRuntime: runtime,
 	}
 
-	output, err := runtime.ExecuteWorkflow(wfCtx, &RunInput{
+	input := &RunInput{
 		AgentID:   "agent",
 		RunID:     "run",
 		SessionID: "session",
-	})
+	}
+	publishTestRunInput(t, runtime, input, nil)
+	output, err := runtime.ExecuteWorkflow(wfCtx, input)
 
 	require.ErrorIs(t, err, context.Canceled)
 	require.Nil(t, output)
@@ -328,12 +332,10 @@ func TestWorkflowSuspensionRejectsCancellationAfterPersistenceStarts(t *testing.
 		err    error
 	}
 	workflowDone := make(chan workflowResult, 1)
+	input := &RunInput{AgentID: "agent", RunID: "run", SessionID: "session"}
+	publishTestRunInput(t, runtime, input, nil)
 	go func() {
-		output, executeErr := runtime.ExecuteWorkflow(wfCtx, &RunInput{
-			AgentID:   "agent",
-			RunID:     "run",
-			SessionID: "session",
-		})
+		output, executeErr := runtime.ExecuteWorkflow(wfCtx, input)
 		workflowDone <- workflowResult{output: output, err: executeErr}
 	}()
 	<-controls.suspensionStarted

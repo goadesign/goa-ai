@@ -64,12 +64,16 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 	originalMessages, err := transcript.EncodeRunLogDelta(nativeMessages)
 	require.NoError(t, err)
 	seedRunMeta(t, runtime, firstInput)
+	firstHistory := seedTestPlanInput(t, runtime, PlanActivityInput{
+		AgentID: firstInput.AgentID, RunID: firstInput.RunID,
+		RunContext: run.Context{RunID: firstInput.RunID, SessionID: firstInput.SessionID},
+	}, nativeMessages).HistoryEndID
 	firstContext := &testWorkflowContext{ctx: t.Context(), runtime: runtime}
 	first, err := runtime.runLoop(
 		firstContext,
 		AgentRegistration{ExecuteToolActivity: "execute"},
 		firstInput,
-		&workflowConversation{Messages: nativeMessages, RunContext: run.Context{
+		&workflowConversation{HistoryEndID: firstHistory, RunContext: run.Context{
 			RunID: firstInput.RunID, SessionID: firstInput.SessionID, TurnID: firstInput.TurnID, Attempt: 1,
 		}},
 		&PlanResult{ToolCalls: []ToolCall{{
@@ -84,11 +88,13 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 
 	checkpoint, err := decodeWorkflowCheckpoint(first.Suspension, testRuntimeDefinition(runtime, "agent-1"))
 	require.NoError(t, err)
-	require.Len(t, checkpoint.BaseMessages, len(nativeMessages)+1)
-	checkpointMessages, err := transcript.EncodeRunLogDelta(checkpoint.BaseMessages[:len(nativeMessages)])
+	savedMessages, err := transcript.BuildMessagesFromRunLogPrefix(t.Context(), runtime.Store, firstInput.RunID, checkpoint.HistoryEndID)
+	require.NoError(t, err)
+	require.Len(t, savedMessages, len(nativeMessages)+1)
+	checkpointMessages, err := transcript.EncodeRunLogDelta(savedMessages[:len(nativeMessages)])
 	require.NoError(t, err)
 	require.Equal(t, originalMessages, checkpointMessages)
-	require.IsType(t, model.ThinkingPart{}, checkpoint.BaseMessages[1].Parts[0])
+	require.IsType(t, model.ThinkingPart{}, savedMessages[1].Parts[0])
 	confirmation := first.Suspension.Pending[0].Confirmation
 	secondInput := &RunInput{
 		AgentID: "agent-1", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
@@ -113,7 +119,9 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 	require.Nil(t, second.Suspension)
 	require.Equal(t, 1, executions)
 	require.Equal(t, 1, second.ToolCount)
-	unchangedMessages, err := transcript.EncodeRunLogDelta(checkpoint.BaseMessages[:len(nativeMessages)])
+	restoredMessages, err := transcript.BuildMessagesFromRunLogPrefix(t.Context(), runtime.Store, firstInput.RunID, checkpoint.HistoryEndID)
+	require.NoError(t, err)
+	unchangedMessages, err := transcript.EncodeRunLogDelta(restoredMessages[:len(nativeMessages)])
 	require.NoError(t, err)
 	require.Equal(t, originalMessages, unchangedMessages)
 }

@@ -3545,37 +3545,23 @@ func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 	require.Contains(t, err.Error(), "nil tool output")
 }
 
-func TestBuildNextResumeRequestUsesProviderNeutralTranscriptValidation(t *testing.T) {
+func TestPlanResumeActivityUsesProviderNeutralTranscriptValidation(t *testing.T) {
 	t.Parallel()
 
-	rt := &Runtime{}
-	base := &workflowConversation{
-		Messages: []*model.Message{{
-			Role: model.ConversationRoleAssistant,
-			Parts: []model.Part{
-				model.ToolUsePart{ID: "call-1", Name: "svc.tool"},
-			},
-		}},
+	rt := newTestRuntimeWithPlanner("svc.agent", &stubPlanner{})
+	input := seedTestPlanInput(t, rt, PlanActivityInput{
+		AgentID: "svc.agent", RunID: "run-123",
 		RunContext: run.Context{
 			RunID:     "run-123",
 			SessionID: "sess-1",
 		},
-	}
-	nextAttempt := 1
-
-	_, err := rt.buildNextResumeRequest(
-		"svc.agent",
-		base,
-		nil,
-		nil,
-		nil,
-		false,
-		nil,
-		nil,
-		&nextAttempt,
-	)
+	}, []*model.Message{{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{model.ToolUsePart{ID: "call-1", Name: "svc.tool", Input: rawjson.Message(`{}`)}},
+	}})
+	_, err := rt.PlanResumeActivity(t.Context(), input)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid resume transcript")
+	require.Contains(t, err.Error(), "must be followed by user tool_result")
 	require.NotContains(t, err.Error(), "Bedrock")
 }
 

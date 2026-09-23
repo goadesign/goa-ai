@@ -38,6 +38,31 @@ type (
 	// it from record order or timestamps.
 	// Temporary database and network failures remain unwrapped.
 	Store interface {
+		// BeginRunSeed freezes one destination's owner and exact source. It does
+		// not create a run. Exact retries return the same declaration and source.
+		BeginRunSeed(context.Context, SeedDeclaration) (RunSeed, error)
+		// AppendRunSeed appends one bounded record after its exact predecessor.
+		// An exact retry returns the original position even after publication.
+		AppendRunSeed(context.Context, SeedAppend) (string, error)
+		// PublishRunSeed makes the complete accepted chain immutable and usable.
+		// The supplied end must equal the current end; prefixes cannot publish.
+		PublishRunSeed(context.Context, SeedPublication) error
+		// FindRunPreparation returns the original command's accepted value.
+		// False is expected absence, not permission to abandon an uploader.
+		FindRunPreparation(context.Context, PreparationOperation) (RunPreparation, bool, error)
+		// SettleRunPreparation returns an accepted value or permanently closes
+		// the exact attempt, even when its first begin has not arrived yet.
+		// False with no error proves that this attempt cannot publish.
+		SettleRunPreparation(context.Context, PreparationAttempt) (RunPreparation, bool, error)
+		// ListRunPreparationRecords reads bounded compiled-start parts from the
+		// accepted body. These records are never exposed as transcript history.
+		ListRunPreparationRecords(ctx context.Context, runID, endID, afterID string, limit int) (SeedPage, error)
+		// LoadRunSeed loads the exact published history while its owner exists.
+		// Unpublished data is unavailable to execution and transcript readers.
+		LoadRunSeed(ctx context.Context, runID, endID string) (RunSeed, error)
+		// ListRunSeedRecords returns bounded records from one exact publication.
+		// Cursors belong to that publication; each nonterminal page advances.
+		ListRunSeedRecords(ctx context.Context, runID, endID, afterID string, limit int) (SeedPage, error)
 		// StartRootRun records the first state and record for a session root run.
 		StartRootRun(context.Context, RootRunStart) (RootRunStartResult, error)
 		// StartChildRun records the parent link and first child state together. A

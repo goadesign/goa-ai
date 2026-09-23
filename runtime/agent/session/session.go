@@ -31,6 +31,9 @@ type (
 
 	// RunMeta captures persistent lifecycle facts for a run execution.
 	RunMeta struct {
+		// SeedEndID identifies the initial history attached at start. A run whose
+		// history consists entirely of ordinary literal records leaves it empty.
+		SeedEndID string
 		// AgentID identifies which agent processed the run.
 		AgentID string
 		// RunID is the durable workflow run identifier.
@@ -59,6 +62,9 @@ type (
 	// RunStart contains the immutable identity, start time, and labels written
 	// by the first activity of a workflow that the engine has accepted.
 	RunStart struct {
+		// SeedEndID is the required published initial-history position. Starting
+		// the workflow attaches these records without copying them.
+		SeedEndID string
 		// AgentID identifies the agent executing the workflow.
 		AgentID string
 		// RunID is the caller-supplied workflow identifier.

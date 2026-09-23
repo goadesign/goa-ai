@@ -29,11 +29,14 @@ type (
 	Store struct {
 		mu sync.RWMutex
 
-		sessions    map[string]session.Session
-		runs        map[string]session.RunMeta
-		suspensions map[string]session.RunSuspension
-		lifecycle   map[string]lifecycleRecords
-		purged      map[string]struct{}
+		sessions              map[string]session.Session
+		runs                  map[string]session.RunMeta
+		suspensions           map[string]session.RunSuspension
+		lifecycle             map[string]lifecycleRecords
+		purged                map[string]struct{}
+		seeds                 map[string]*seedState
+		preparations          map[preparationKey]*seedState
+		preparationOperations map[string]storage.PreparationOperation
 
 		nextSequence   map[string]int64
 		records        map[string][]*runlog.Event
@@ -66,15 +69,18 @@ var _ storage.Store = (*Store)(nil)
 // New returns an empty integrated store.
 func New() *Store {
 	return &Store{
-		sessions:       make(map[string]session.Session),
-		runs:           make(map[string]session.RunMeta),
-		suspensions:    make(map[string]session.RunSuspension),
-		lifecycle:      make(map[string]lifecycleRecords),
-		purged:         make(map[string]struct{}),
-		nextSequence:   make(map[string]int64),
-		records:        make(map[string][]*runlog.Event),
-		recordsByKey:   make(map[string]map[string]*runlog.Event),
-		sessionRecords: make(map[string][]*runlog.Event),
+		sessions:              make(map[string]session.Session),
+		runs:                  make(map[string]session.RunMeta),
+		suspensions:           make(map[string]session.RunSuspension),
+		lifecycle:             make(map[string]lifecycleRecords),
+		purged:                make(map[string]struct{}),
+		seeds:                 make(map[string]*seedState),
+		preparations:          make(map[preparationKey]*seedState),
+		preparationOperations: make(map[string]storage.PreparationOperation),
+		nextSequence:          make(map[string]int64),
+		records:               make(map[string][]*runlog.Event),
+		recordsByKey:          make(map[string]map[string]*runlog.Event),
+		sessionRecords:        make(map[string][]*runlog.Event),
 	}
 }
 
@@ -178,6 +184,21 @@ func (s *Store) PurgeSession(_ context.Context, sessionID string) error {
 	s.purged[sessionID] = struct{}{}
 	delete(s.sessions, sessionID)
 	delete(s.sessionRecords, sessionID)
+	for runID, seed := range s.seeds {
+		if seed.seed.Declaration.SessionID == sessionID {
+			delete(s.seeds, runID)
+		}
+	}
+	for runID, operation := range s.preparationOperations {
+		if operation.SessionID == sessionID {
+			delete(s.preparationOperations, runID)
+		}
+	}
+	for key, attempt := range s.preparations {
+		if attempt.seed.Declaration.SessionID == sessionID {
+			delete(s.preparations, key)
+		}
+	}
 	for runID, meta := range s.runs {
 		if meta.SessionID != sessionID {
 			continue
@@ -269,6 +290,9 @@ func (s *Store) startOneShotRun(command storage.OneShotRunStart) (storage.OneSho
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.validateStartSeedLocked(command.Run); err != nil {
+		return storage.OneShotRunStartResult{}, err
+	}
 	if existing, ok := s.runs[command.Run.RunID]; ok {
 		if !sameRunStart(existing, command.Run) || existing.StartOutcome != session.RunStartProceed {
 			return storage.OneShotRunStartResult{}, session.ErrRunConflict
@@ -296,6 +320,9 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.validateStartSeedLocked(command.Run); err != nil {
+		return storage.OneShotChildRunStartResult{}, err
+	}
 	if existing, ok := s.runs[command.Run.RunID]; ok {
 		keys := s.lifecycle[command.Run.RunID]
 		if !sameRunStart(existing, command.Run) || existing.StartOutcome != session.RunStartProceed ||
@@ -648,6 +675,9 @@ func (s *Store) startSessionRun(start session.RunStart, child bool, parent, star
 	if _, purged := s.purged[start.SessionID]; purged {
 		return sessionRunStartResult{}, session.ErrSessionPurged
 	}
+	if err := s.validateStartSeedLocked(start); err != nil {
+		return sessionRunStartResult{}, err
+	}
 	if err := s.validatePredecessorLocked(start); err != nil {
 		return sessionRunStartResult{}, err
 	}
@@ -916,7 +946,8 @@ func newRunMeta(start session.RunStart, outcome session.RunStartOutcome, status 
 		cancellationReason = run.CancellationReasonSessionEnded
 	}
 	return session.RunMeta{
-		AgentID: start.AgentID, RunID: start.RunID, SessionID: start.SessionID,
+		SeedEndID: start.SeedEndID,
+		AgentID:   start.AgentID, RunID: start.RunID, SessionID: start.SessionID,
 		ParentRunID: start.ParentRunID, Status: status, StartOutcome: outcome,
 		StartedAt: start.StartedAt.UTC(), UpdatedAt: time.Now().UTC(), Labels: maps.Clone(start.Labels),
 		CancellationReason: cancellationReason,
@@ -951,7 +982,8 @@ func pageRecords(all []*runlog.Event, after, limit int) runlog.Page {
 }
 
 func sameRunStart(stored session.RunMeta, requested session.RunStart) bool {
-	return stored.RunID == requested.RunID && stored.AgentID == requested.AgentID &&
+	return stored.SeedEndID == requested.SeedEndID &&
+		stored.RunID == requested.RunID && stored.AgentID == requested.AgentID &&
 		stored.SessionID == requested.SessionID && stored.ParentRunID == requested.ParentRunID &&
 		stored.StartedAt.Equal(requested.StartedAt.UTC()) && maps.Equal(stored.Labels, requested.Labels)
 }

@@ -16,6 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
@@ -84,8 +85,44 @@ func testToolHistory(t testing.TB, rt *Runtime, agentID agent.Ident, parent run.
 
 func seedTestContinuationHistory(t testing.TB, rt *Runtime, input *RunInput, checkpoint *workflowCheckpoint) string {
 	t.Helper()
+	require.NotEmpty(t, checkpoint.HistoryEndID)
+	if _, err := rt.Store.LoadRun(t.Context(), input.RunID); errors.Is(err, session.ErrRunNotFound) {
+		seedRunMeta(t, rt, input)
+	} else {
+		require.NoError(t, err)
+	}
 	return seedTestPlanInput(t, rt, PlanActivityInput{
 		AgentID: input.AgentID, RunID: input.RunID,
 		RunContext: restoreCheckpointRunContext(checkpoint.Context, input),
-	}, checkpoint.BaseMessages).HistoryEndID
+	}, nil).HistoryEndID
+}
+
+// publishTestRunInput prepares literal history before the test accepts a workflow.
+func publishTestRunInput(t testing.TB, rt *Runtime, input *RunInput, messages []*model.Message) {
+	t.Helper()
+	if input.SessionID != "" {
+		_, err := createSessionForTest(t.Context(), rt.Store, input.SessionID)
+		if !errors.Is(err, session.ErrSessionEnded) {
+			require.NoError(t, err)
+		}
+	}
+	endID, err := publishLiteralHistory(t.Context(), rt.Store, storage.SeedDeclaration{
+		AgentID: string(input.AgentID), RunID: input.RunID, SessionID: input.SessionID,
+		Kind: storage.SeedLiteral,
+	}, messages)
+	require.NoError(t, err)
+	input.SeedEndID = endID
+}
+
+// testInitialMessages attaches a prepared seed, then reads it using the same
+// history reader used by planner activities.
+func testInitialMessages(t testing.TB, store storage.Store, input *RunInput) []*model.Message {
+	t.Helper()
+	admitRunForTest(t, store, session.RunMeta{
+		AgentID: string(input.AgentID), RunID: input.RunID, SessionID: input.SessionID,
+		SeedEndID: input.SeedEndID, Status: session.RunStatusRunning,
+	})
+	messages, err := transcript.BuildMessagesFromRunLog(t.Context(), store, input.RunID)
+	require.NoError(t, err)
+	return messages
 }

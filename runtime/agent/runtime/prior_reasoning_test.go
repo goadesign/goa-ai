@@ -41,9 +41,9 @@ func TestWithoutPriorReasoningPreparesExactInitialContext(t *testing.T) {
 				}
 				var prepared *PreparedRun
 				if oneShot {
-					prepared, err = client.PrepareOneShot(messages, opts...)
+					prepared, err = client.PrepareOneShot(t.Context(), messages, opts...)
 				} else {
-					prepared, err = client.Prepare("session-1", messages, opts...)
+					prepared, err = client.Prepare(t.Context(), "session-1", messages, opts...)
 				}
 				require.NoError(t, err)
 				require.Equal(t, original, messages)
@@ -57,12 +57,12 @@ func TestWithoutPriorReasoningPreparesExactInitialContext(t *testing.T) {
 				require.NoError(t, err)
 				expected := original
 				if exclude {
-					expected, err = completedTurnMessages(original)
+					expected, err = transcript.WithoutCompletedReasoning(original)
 					require.NoError(t, err)
 				}
 				wantJSON, err := transcript.EncodeRunLogDelta(expected)
 				require.NoError(t, err)
-				gotJSON, err := transcript.EncodeRunLogDelta(eng.last.Input.Messages)
+				gotJSON, err := transcript.EncodeRunLogDelta(testInitialMessages(t, store, eng.last.Input))
 				require.NoError(t, err)
 				require.Equal(t, wantJSON, gotJSON)
 				// This policy is consumed before serialization, not a flag that
@@ -99,12 +99,12 @@ func TestWithoutPriorReasoningAllowsForeignThinkingAtResponsesBoundary(t *testin
 	require.Empty(t, requests)
 	start, err := buildOneShotRunStart("svc.agent", messages, []RunOption{WithoutPriorReasoning()})
 	require.NoError(t, err)
-	_, err = client.Complete(t.Context(), &model.Request{Messages: start.input.Messages})
+	_, err = client.Complete(t.Context(), &model.Request{Messages: start.messages})
 	require.NoError(t, err)
 	require.Len(t, requests, 1)
 	// Preserving unrelated metadata does not relax the canonical requirement
 	// that a model-request message contain content.
-	metadataOnly, err := completedTurnMessages([]*model.Message{{
+	metadataOnly, err := transcript.WithoutCompletedReasoning([]*model.Message{{
 		Role:  model.ConversationRoleAssistant,
 		Parts: []model.Part{model.ThinkingPart{Text: "private", Signature: "signed", Final: true}},
 		Meta:  map[string]any{"application": "keep"},
@@ -120,9 +120,9 @@ func TestWithoutPriorReasoningAllowsForeignThinkingAtResponsesBoundary(t *testin
 	require.Contains(t, string(encoded), "Found the report.")
 	require.NotContains(t, string(encoded), "private reasoning")
 	// A provider's unsupported citation format is not erased by the option.
-	start.input.Messages = append(start.input.Messages, &model.Message{Role: model.ConversationRoleAssistant,
+	start.messages = append(start.messages, &model.Message{Role: model.ConversationRoleAssistant,
 		Parts: []model.Part{model.CitationsPart{Text: "Cited answer"}}})
-	_, err = client.Complete(t.Context(), &model.Request{Messages: start.input.Messages})
+	_, err = client.Complete(t.Context(), &model.Request{Messages: start.messages})
 	require.ErrorContains(t, err, "canonical citations requires provider output metadata")
 	require.Len(t, requests, 1)
 }

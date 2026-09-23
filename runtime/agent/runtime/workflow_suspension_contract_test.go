@@ -613,6 +613,7 @@ func suspensionContractFixtureWithContext(t *testing.T, tool tools.Ident, agentI
 		SessionID:      sessionID,
 		PreviousRunID:  runID,
 		PreviousTurnID: "turn-1",
+		HistoryEndID:   "1",
 		Context: checkpointRunContext{
 			Labels:   cloneLabels(labels),
 			Metadata: cloneMetadata(metadata),
