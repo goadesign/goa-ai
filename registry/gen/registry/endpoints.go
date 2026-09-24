@@ -15,6 +15,8 @@ import (
 
 // Endpoints wraps the "registry" service endpoints.
 type Endpoints struct {
+	DeclareServiceToolset  goa.Endpoint
+	AttachProvider         goa.Endpoint
 	Register               goa.Endpoint
 	RenewProvider          goa.Endpoint
 	ReleaseProvider        goa.Endpoint
@@ -40,6 +42,8 @@ type Endpoints struct {
 // NewEndpoints wraps the methods of the "registry" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
+		DeclareServiceToolset:  NewDeclareServiceToolsetEndpoint(s),
+		AttachProvider:         NewAttachProviderEndpoint(s),
 		Register:               NewRegisterEndpoint(s),
 		RenewProvider:          NewRenewProviderEndpoint(s),
 		ReleaseProvider:        NewReleaseProviderEndpoint(s),
@@ -65,6 +69,8 @@ func NewEndpoints(s Service) *Endpoints {
 
 // Use applies the given middleware to all the "registry" service endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
+	e.DeclareServiceToolset = m(e.DeclareServiceToolset)
+	e.AttachProvider = m(e.AttachProvider)
 	e.Register = m(e.Register)
 	e.RenewProvider = m(e.RenewProvider)
 	e.ReleaseProvider = m(e.ReleaseProvider)
@@ -85,6 +91,24 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.PublishToolOutputDelta = m(e.PublishToolOutputDelta)
 	e.ReportToolCallOverload = m(e.ReportToolCallOverload)
 	e.ClaimToolCall = m(e.ClaimToolCall)
+}
+
+// NewDeclareServiceToolsetEndpoint returns an endpoint function that calls the
+// method "DeclareServiceToolset" of service "registry".
+func NewDeclareServiceToolsetEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ServiceToolsetDeclaration)
+		return s.DeclareServiceToolset(ctx, p)
+	}
+}
+
+// NewAttachProviderEndpoint returns an endpoint function that calls the method
+// "AttachProvider" of service "registry".
+func NewAttachProviderEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*AttachProviderPayload)
+		return s.AttachProvider(ctx, p)
+	}
 }
 
 // NewRegisterEndpoint returns an endpoint function that calls the method

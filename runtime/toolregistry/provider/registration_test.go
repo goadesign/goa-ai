@@ -39,8 +39,7 @@ func successfulRegistration(
 		completeResult = complete[0]
 	}
 	return Registration{
-		AdmissionRevision: testAdmissionRevision,
-		Register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+		Register: func(context.Context, string, string, string) (RegistrationLease, error) {
 			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Hour}, nil
 		},
 		Renew: func(context.Context, string, string, string, string) (time.Duration, error) {
@@ -99,29 +98,6 @@ func TestServeRequiresRegistration(t *testing.T) {
 	require.ErrorContains(t, err, "registration callback is required")
 }
 
-func TestServeRequiresValidAdmissionRevision(t *testing.T) {
-	t.Parallel()
-
-	for _, revision := range []string{"", "contains whitespace", ".starts-with-punctuation"} {
-		registration := successfulRegistration()
-		registration.AdmissionRevision = revision
-		err := Serve(
-			context.Background(),
-			mockpulse.NewClient(t),
-			"test.toolset",
-			&blockingHandler{},
-			registration,
-			Options{
-				ProviderID: testProviderID,
-				Pong: func(context.Context, string, string, string) error {
-					return nil
-				},
-			},
-		)
-		require.ErrorContains(t, err, "admission revision must match")
-	}
-}
-
 func TestRegisterProviderRejectsNoncanonicalRegistrationToken(t *testing.T) {
 	t.Parallel()
 
@@ -132,8 +108,7 @@ func TestRegisterProviderRejectsNoncanonicalRegistrationToken(t *testing.T) {
 		testProviderID,
 		testProviderIncarnationID,
 		registrationConfig{
-			admissionRevision: testAdmissionRevision,
-			register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+			register: func(context.Context, string, string, string) (RegistrationLease, error) {
 				return RegistrationLease{RegistrationToken: "ABC123", Duration: time.Minute}, nil
 			},
 			attemptTimeout: time.Second,
@@ -198,15 +173,14 @@ func TestServeOpensStreamRegistersThenCreatesSink(t *testing.T) {
 	errc := make(chan error, 1)
 	go func() {
 		errc <- Serve(ctx, client, toolset, handler, Registration{
-			AdmissionRevision: testAdmissionRevision,
 			Register: func(
 				_ context.Context,
-				gotToolset, providerID, incarnationID, admissionRevision string,
+				gotToolset, providerID, incarnationID string,
 			) (RegistrationLease, error) {
 				assert.Equal(t, toolset, gotToolset)
 				assert.Equal(t, testProviderID, providerID)
 				assert.NotEmpty(t, incarnationID)
-				assert.Equal(t, testAdmissionRevision, admissionRevision)
+
 				close(registrationStarted)
 				<-allowRegistration
 				return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Hour}, nil
@@ -350,8 +324,7 @@ func TestServeSetupFailurePrecedesRegistration(t *testing.T) {
 		return nil, errors.New("pulse unavailable")
 	})
 	err := Serve(context.Background(), client, "test.toolset", &blockingHandler{}, Registration{
-		AdmissionRevision: testAdmissionRevision,
-		Register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+		Register: func(context.Context, string, string, string) (RegistrationLease, error) {
 			registrations.Add(1)
 			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Hour}, nil
 		},
@@ -402,8 +375,7 @@ func TestServeClosesConsumptionBeforeLeaseExpiry(t *testing.T) {
 	var registrations atomic.Int64
 
 	err := Serve(context.Background(), client, "test.toolset", &blockingHandler{}, Registration{
-		AdmissionRevision: testAdmissionRevision,
-		Register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+		Register: func(context.Context, string, string, string) (RegistrationLease, error) {
 			registrations.Add(1)
 			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: leaseDuration}, nil
 		},
@@ -441,15 +413,14 @@ func TestRegisterUntilSuccessRetriesTransientFailure(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	var attempts atomic.Int64
 	registration := registrationConfig{
-		admissionRevision: testAdmissionRevision,
 		register: func(
 			_ context.Context,
-			toolset, providerID, incarnationID, admissionRevision string,
+			toolset, providerID, incarnationID string,
 		) (RegistrationLease, error) {
 			assert.Equal(t, "test.toolset", toolset)
 			assert.Equal(t, testProviderID, providerID)
 			assert.Equal(t, testProviderIncarnationID, incarnationID)
-			assert.Equal(t, testAdmissionRevision, admissionRevision)
+
 			if attempts.Add(1) == 1 {
 				return RegistrationLease{}, errors.New("registry unavailable")
 			}
@@ -522,6 +493,7 @@ func TestRegisterUntilSuccessReturnsPermanentAdmissionError(t *testing.T) {
 		message   string
 	}{
 		{name: "retired", errorName: "admission_retired", message: "retired admission"},
+		{name: "conflict", errorName: "admission_conflict", message: "different declaration"},
 		{name: "validation", errorName: "validation_error", message: "invalid registration"},
 		{name: "lease lost", errorName: "provider_lease_lost", message: "incarnation is draining"},
 	} {
@@ -529,8 +501,7 @@ func TestRegisterUntilSuccessReturnsPermanentAdmissionError(t *testing.T) {
 			t.Parallel()
 			var attempts atomic.Int64
 			registration := registrationConfig{
-				admissionRevision: testAdmissionRevision,
-				register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+				register: func(context.Context, string, string, string) (RegistrationLease, error) {
 					attempts.Add(1)
 					return RegistrationLease{}, goa.NewServiceError(
 						errors.New(tc.message),
@@ -572,8 +543,7 @@ func TestRegisterUntilSuccessPreservesFailureThatRacesCancellation(t *testing.T)
 	ctx, cancel := context.WithCancel(context.Background())
 	registrationFailure := errors.New("registration rejected")
 	registration := registrationConfig{
-		admissionRevision: testAdmissionRevision,
-		register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+		register: func(context.Context, string, string, string) (RegistrationLease, error) {
 			cancel()
 			return RegistrationLease{}, registrationFailure
 		},
@@ -601,8 +571,7 @@ func TestRegistrationCallbackReceivesAttemptDeadline(t *testing.T) {
 	t.Parallel()
 
 	registration := registrationConfig{
-		admissionRevision: testAdmissionRevision,
-		register: func(ctx context.Context, _, _, _, _ string) (RegistrationLease, error) {
+		register: func(ctx context.Context, _, _, _ string) (RegistrationLease, error) {
 			_, hasDeadline := ctx.Deadline()
 			assert.True(t, hasDeadline)
 			<-ctx.Done()
@@ -621,8 +590,7 @@ func TestRegisterProviderDerivesDeadlineFromAttemptStart(t *testing.T) {
 	attemptStarted := time.Unix(1_700_000_000, 0)
 	now := attemptStarted
 	registration := registrationConfig{
-		admissionRevision: testAdmissionRevision,
-		register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+		register: func(context.Context, string, string, string) (RegistrationLease, error) {
 			now = now.Add(4 * time.Second)
 			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: 10 * time.Second}, nil
 		},
@@ -645,8 +613,7 @@ func TestRegisterProviderDeadlineIgnoresWallClockEpochSkew(t *testing.T) {
 	} {
 		now := attemptStarted
 		registration := registrationConfig{
-			admissionRevision: testAdmissionRevision,
-			register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+			register: func(context.Context, string, string, string) (RegistrationLease, error) {
 				now = now.Add(250 * time.Millisecond)
 				return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: 31 * time.Second}, nil
 			},
@@ -671,8 +638,7 @@ func TestRegisterProviderRejectsExcessiveLeaseDuration(t *testing.T) {
 	t.Parallel()
 
 	registration := registrationConfig{
-		admissionRevision: testAdmissionRevision,
-		register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+		register: func(context.Context, string, string, string) (RegistrationLease, error) {
 			return RegistrationLease{
 				RegistrationToken: testRegistrationTokenA,
 				Duration:          toolregistry.MaxProviderLeaseDuration + time.Nanosecond,
@@ -696,8 +662,7 @@ func TestRegisterProviderRejectsLeaseInsideShutdownRetryBudget(t *testing.T) {
 	t.Parallel()
 
 	registration := registrationConfig{
-		admissionRevision: testAdmissionRevision,
-		register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+		register: func(context.Context, string, string, string) (RegistrationLease, error) {
 			return RegistrationLease{
 				RegistrationToken: testRegistrationTokenA,
 				Duration:          31 * time.Second,
@@ -741,8 +706,7 @@ func TestServePreservesRenewalFailureDuringCancellation(t *testing.T) {
 	var registrations atomic.Int64
 	renewalErr := errors.New("renewal response failed")
 	registration := Registration{
-		AdmissionRevision: testAdmissionRevision,
-		Register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+		Register: func(context.Context, string, string, string) (RegistrationLease, error) {
 			registrations.Add(1)
 			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: 60 * time.Millisecond}, nil
 		},
@@ -848,8 +812,7 @@ func TestServeReturnsAtSettlementDeadlineWhenRenewalIgnoresCancellation(t *testi
 	var registrations atomic.Int64
 	var releases atomic.Int64
 	registration := Registration{
-		AdmissionRevision: testAdmissionRevision,
-		Register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+		Register: func(context.Context, string, string, string) (RegistrationLease, error) {
 			registrations.Add(1)
 			return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: 60 * time.Millisecond}, nil
 		},
@@ -1121,8 +1084,7 @@ func TestRegisterUntilSuccessWaitsForCanceledAttempt(t *testing.T) {
 	started := make(chan struct{})
 	returned := make(chan struct{})
 	registration := registrationConfig{
-		admissionRevision: testAdmissionRevision,
-		register: func(ctx context.Context, _, _, _, _ string) (RegistrationLease, error) {
+		register: func(ctx context.Context, _, _, _ string) (RegistrationLease, error) {
 			close(started)
 			<-ctx.Done()
 			close(returned)

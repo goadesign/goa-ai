@@ -15,6 +15,70 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
+// NewProtoDeclareServiceToolsetRequest builds
+// *registrypb.DeclareServiceToolsetRequest from
+// *registry.ServiceToolsetDeclaration.
+func NewProtoDeclareServiceToolsetRequest(payload *registry.ServiceToolsetDeclaration) *registrypb.DeclareServiceToolsetRequest {
+	message := &registrypb.DeclareServiceToolsetRequest{
+		Name:        &payload.Name,
+		Description: payload.Description,
+	}
+	if payload.Version != nil {
+		version := string(*payload.Version)
+		message.Version = &version
+	}
+	if payload.Tags != nil {
+		message.Tags = make([]string, len(payload.Tags))
+		for i, val := range payload.Tags {
+			message.Tags[i] = val
+		}
+	}
+	if payload.Tools != nil {
+		message.Tools = make([]*registrypb.ToolSchema, len(payload.Tools))
+		for i, val := range payload.Tools {
+			message.Tools[i] = transformToolSchemaToProtoToolSchema(val)
+		}
+	}
+	return message
+}
+
+// NewDeclareServiceToolsetResult builds *registry.ResolvedToolset from
+// *registrypb.DeclareServiceToolsetResponse.
+func NewDeclareServiceToolsetResult(message *registrypb.DeclareServiceToolsetResponse) *registry.ResolvedToolset {
+	result := &registry.ResolvedToolset{
+		RegistrationToken: *message.RegistrationToken,
+	}
+	if message.Toolset != nil {
+		result.Toolset = transformProtoToolsetToToolset(message.Toolset)
+	}
+	return result
+}
+
+// NewProtoAttachProviderRequest builds *registrypb.AttachProviderRequest from
+// *registry.AttachProviderPayload.
+func NewProtoAttachProviderRequest(payload *registry.AttachProviderPayload) *registrypb.AttachProviderRequest {
+	message := &registrypb.AttachProviderRequest{
+		Name:                      &payload.Name,
+		ProviderId:                &payload.ProviderID,
+		ExpectedRegistrationToken: &payload.ExpectedRegistrationToken,
+		ProviderIncarnationId:     &payload.ProviderIncarnationID,
+	}
+	wireProtocolVersion := int32(payload.WireProtocolVersion)
+	message.WireProtocolVersion = &wireProtocolVersion
+	return message
+}
+
+// NewAttachProviderResult builds *registry.RegisterResult from
+// *registrypb.AttachProviderResponse.
+func NewAttachProviderResult(message *registrypb.AttachProviderResponse) *registry.RegisterResult {
+	result := &registry.RegisterResult{
+		RegisteredAt:      *message.RegisteredAt,
+		RegistrationToken: *message.RegistrationToken,
+		LeaseDurationMs:   *message.LeaseDurationMs,
+	}
+	return result
+}
+
 // NewProtoRegisterRequest builds *registrypb.RegisterRequest from
 // *registry.RegisterPayload.
 func NewProtoRegisterRequest(payload *registry.RegisterPayload) *registrypb.RegisterRequest {
@@ -490,25 +554,11 @@ func NewClaimToolCallResult(message *registrypb.ClaimToolCallResponse) *registry
 	return result
 }
 
-// ValidateRegisterRequest runs the validations defined on RegisterRequest.
-func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
+// ValidateDeclareServiceToolsetRequest runs the validations defined on
+// DeclareServiceToolsetRequest.
+func ValidateDeclareServiceToolsetRequest(message *registrypb.DeclareServiceToolsetRequest) (err error) {
 	if message.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
-	}
-	if message.ProviderId == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
-	}
-	if message.AdmissionRevision == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("admission_revision", "message"))
-	}
-	if message.ProviderIncarnationId == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
-	}
-	if message.WireProtocolVersion == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("wire_protocol_version", "message"))
-	}
-	if message.SchemaFingerprint == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("schema_fingerprint", "message"))
 	}
 	if message.Name != nil {
 		if utf8.RuneCountInString(*message.Name) < 1 {
@@ -526,35 +576,15 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 	if message.Version != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("message.version", string(*message.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
 	}
+	if len(message.Tools) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.tools", message.Tools, len(message.Tools), 1, true))
+	}
 	for _, e := range message.Tools {
 		if e != nil {
 			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
-	}
-	if message.ProviderId != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
-		if utf8.RuneCountInString(*message.ProviderId) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
-		}
-		if utf8.RuneCountInString(*message.ProviderId) > 512 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
-		}
-	}
-	if message.AdmissionRevision != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("message.admission_revision", *message.AdmissionRevision, "^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,255}$"))
-	}
-	if message.ProviderIncarnationId != nil {
-		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
-	}
-	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 10) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
-		}
-	}
-	if message.SchemaFingerprint != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("message.schema_fingerprint", *message.SchemaFingerprint, "^[0-9a-f]{64}$"))
 	}
 	return
 }
@@ -950,6 +980,206 @@ func validateregistry_registry_AgentToolTarget_At_agent(agent *registrypb.AgentT
 	return
 }
 
+// ValidateDeclareServiceToolsetResponse runs the validations defined on
+// DeclareServiceToolsetResponse.
+func ValidateDeclareServiceToolsetResponse(message *registrypb.DeclareServiceToolsetResponse) (err error) {
+	if message.Toolset == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
+	}
+	if message.RegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registration_token", "message"))
+	}
+	if message.Toolset != nil {
+		if err2 := validateregistry_registry_Toolset_At_toolset(message.Toolset); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if message.RegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", *message.RegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	return
+}
+
+// validateregistry_registry_Toolset_At_toolset runs the validations defined on
+// Toolset.
+func validateregistry_registry_Toolset_At_toolset(toolset *registrypb.Toolset) (err error) {
+	if toolset.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "toolset"))
+	}
+	if toolset.RegisteredAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registered_at", "toolset"))
+	}
+	if toolset.Name != nil {
+		if utf8.RuneCountInString(*toolset.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("toolset.name", *toolset.Name, utf8.RuneCountInString(*toolset.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*toolset.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("toolset.name", *toolset.Name, utf8.RuneCountInString(*toolset.Name), 256, false))
+		}
+	}
+	if toolset.Version != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("toolset.version", string(*toolset.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
+	}
+	for _, e := range toolset.Tools {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if toolset.RegisteredAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("toolset.registered_at", *toolset.RegisteredAt, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateAttachProviderRequest runs the validations defined on
+// AttachProviderRequest.
+func ValidateAttachProviderRequest(message *registrypb.AttachProviderRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
+	}
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.WireProtocolVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("wire_protocol_version", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
+	}
+	if message.WireProtocolVersion != nil {
+		if !(*message.WireProtocolVersion == 10) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		}
+	}
+	return
+}
+
+// ValidateAttachProviderResponse runs the validations defined on
+// AttachProviderResponse.
+func ValidateAttachProviderResponse(message *registrypb.AttachProviderResponse) (err error) {
+	if message.RegisteredAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registered_at", "message"))
+	}
+	if message.RegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registration_token", "message"))
+	}
+	if message.LeaseDurationMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("lease_duration_ms", "message"))
+	}
+	if message.RegisteredAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.registered_at", *message.RegisteredAt, goa.FormatDateTime))
+	}
+	if message.RegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", *message.RegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.LeaseDurationMs != nil {
+		if *message.LeaseDurationMs < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("message.lease_duration_ms", *message.LeaseDurationMs, 1, true))
+		}
+		if *message.LeaseDurationMs > 8.64e+07 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("message.lease_duration_ms", *message.LeaseDurationMs, 8.64e+07, false))
+		}
+	}
+	return
+}
+
+// ValidateRegisterRequest runs the validations defined on RegisterRequest.
+func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.ProviderId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_id", "message"))
+	}
+	if message.AdmissionRevision == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("admission_revision", "message"))
+	}
+	if message.ProviderIncarnationId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("provider_incarnation_id", "message"))
+	}
+	if message.WireProtocolVersion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("wire_protocol_version", "message"))
+	}
+	if message.SchemaFingerprint == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("schema_fingerprint", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.Description != nil {
+		if utf8.RuneCountInString(*message.Description) > 4096 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.description", *message.Description, utf8.RuneCountInString(*message.Description), 4096, false))
+		}
+	}
+	if message.Version != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.version", string(*message.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
+	}
+	for _, e := range message.Tools {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if message.ProviderId != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_id", *message.ProviderId, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*message.ProviderId) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 1, true))
+		}
+		if utf8.RuneCountInString(*message.ProviderId) > 512 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.provider_id", *message.ProviderId, utf8.RuneCountInString(*message.ProviderId), 512, false))
+		}
+	}
+	if message.AdmissionRevision != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.admission_revision", *message.AdmissionRevision, "^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,255}$"))
+	}
+	if message.ProviderIncarnationId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
+	}
+	if message.WireProtocolVersion != nil {
+		if !(*message.WireProtocolVersion == 10) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		}
+	}
+	if message.SchemaFingerprint != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.schema_fingerprint", *message.SchemaFingerprint, "^[0-9a-f]{64}$"))
+	}
+	return
+}
+
 // ValidateRegisterResponse runs the validations defined on RegisterResponse.
 func ValidateRegisterResponse(message *registrypb.RegisterResponse) (err error) {
 	if message.RegisteredAt == nil {
@@ -1236,39 +1466,6 @@ func ValidateRegisterAgentToolsetResponse(message *registrypb.RegisterAgentTools
 	}
 	if message.RegistrationToken != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", *message.RegistrationToken, "^[0-9a-f]{64}$"))
-	}
-	return
-}
-
-// validateregistry_registry_Toolset_At_toolset runs the validations defined on
-// Toolset.
-func validateregistry_registry_Toolset_At_toolset(toolset *registrypb.Toolset) (err error) {
-	if toolset.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", "toolset"))
-	}
-	if toolset.RegisteredAt == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("registered_at", "toolset"))
-	}
-	if toolset.Name != nil {
-		if utf8.RuneCountInString(*toolset.Name) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("toolset.name", *toolset.Name, utf8.RuneCountInString(*toolset.Name), 1, true))
-		}
-		if utf8.RuneCountInString(*toolset.Name) > 256 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("toolset.name", *toolset.Name, utf8.RuneCountInString(*toolset.Name), 256, false))
-		}
-	}
-	if toolset.Version != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("toolset.version", string(*toolset.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
-	}
-	for _, e := range toolset.Tools {
-		if e != nil {
-			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-	if toolset.RegisteredAt != nil {
-		err = goa.MergeErrors(err, goa.ValidateFormat("toolset.registered_at", *toolset.RegisteredAt, goa.FormatDateTime))
 	}
 	return
 }

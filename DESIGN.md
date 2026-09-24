@@ -1103,15 +1103,40 @@ concerns.
 loading and execution. The [runtime provider guide](docs/runtime.md#registry-routed-provider-execution-service-side)
 owns callback wiring, recovery, and the storage upgrade procedure.
 
+`DeclareServiceToolset` accepts a complete portable service declaration before
+providers connect. It validates each tool and the complete collection's qualified
+identities and pagination relationships, then creates a service admission with a
+registry-issued UUID revision, Redis registration time, an empty lease map,
+positive health epoch, and no pong. The existing state format represents this
+condition without a new storage variant. An identical active fingerprint returns
+the saved definition, original token, and original time, including the winner's
+tool and tag order. A different or native declaration conflicts; retired service
+occupancy cannot be recreated by declaration. The declaration RPC requires no
+provider contact or health tracker and creates no provider lease, stream, or
+ping. The existing catalog scheduler still observes its presence and may report
+it unavailable under the normal sampling lease.
+
+`AttachProvider` requires the exact existing name and token, a stable provider ID,
+a lifecycle incarnation, and the current wire version. Its conditional write
+changes only leases and health. It preserves longer deadlines, rejects draining
+incarnations, and cannot replace declarations after the last provider leaves.
+The first routable member advances the health epoch and needs a new pong.
+`Register` retains its deployment-managed replacement behavior, including
+permanent retirement of old tokens. Native Agent operations are unchanged.
+Applications own who may declare, attach, or perform deployment registration;
+a registration token identifies a contract and is not a credential.
+
 Provider admission is owned by the clustered registry. `Serve` generates one
 UUID incarnation per lifecycle; leases are keyed by stable provider ID plus
 incarnation, so delayed old-process release cannot remove a replacement.
 The health epoch (which identifies the routable provider set) and pong freshness
-live beside those leases in one compact current-state record. The active `toolprovider.Serve` lifecycle owns an
-immutable, required `AdmissionRevision`, opens the Pulse stream, invokes a typed
-context-compliant registration callback that sends the runtime-owned
-`toolregistry.WireProtocolVersion` with that revision, and creates the shared
-sink only after admission. `Register` is used only during startup; it may retry
+live beside those leases in one compact current-state record. The active
+`toolprovider.Serve` lifecycle opens the Pulse stream, invokes a typed,
+context-compliant registration callback, and creates the shared sink only after
+admission. Deployment callbacks capture validated schemas and their required
+admission revision for `Register`. Attachment callbacks capture an existing
+registration token for `AttachProvider`. Both send the runtime-owned
+`toolregistry.WireProtocolVersion`; the generic lifecycle owns neither selection. `Register` is used only during startup; it may retry
 until admission succeeds. The required `Registration.Renew` callback calls
 `RenewProvider` with the toolset, provider ID, incarnation, and original token.
 It receives only a duration, so renewal cannot change the admission identity.
@@ -1159,7 +1184,9 @@ call-record retention deadline. The same transition publishes stale-generation
 terminal history before acknowledgement.
 
 Provider processes supply one stable `ProviderID` per process/toolset pair and
-one deployment-issued `AdmissionRevision` per fenced admission to `Serve`.
+deployment callbacks capture one validated, deployment-issued `AdmissionRevision`
+per admission before calling `Serve`. Attachment callbacks instead capture the
+registry-issued token returned by declaration or resolution.
 Provider registration wiring must also send the single
 `runtime/toolregistry.WireProtocolVersion`; it is not deployment configuration
 or capability negotiation. Consumers never register, but every `CallTool` and
@@ -1213,18 +1240,23 @@ fields, old combined records, missing pairs, invalid schemas or wire versions,
 inconsistent fingerprints or summaries, and disagreement with retirement
 history. Startup reports invalid data without rewriting or reconstructing it.
 
-Each registry replica caches one current definition per toolset name. It reads
-compact current state and compares its fingerprint with the cached fingerprint
-before fetching definition bytes. A miss reads state and definition together,
-validates the pair, and prepares a tool-name map of compiled execution schemas.
-That map uses the existing schema validator's digest-keyed compilation cache;
-ordinary calls decode and validate only their dynamic arguments. They do not
-reparse or rehash tool schemas or decode the full consumer metadata graph.
-`GetToolset` and `ResolveToolset` still decode independent full definitions for
-callers. Registration timestamps and tokens come from the selected state, so
-reuse of the same static definition cannot supply stale admission metadata.
-Every consequential call operation still checks current authority; a cached
-definition alone never grants execution permission.
+Definition-dependent reads fetch current state, definition and retirement
+membership in one Redis snapshot and validate the complete pair. Semantic
+fingerprints ignore ordering, and native replacements can reuse their token;
+no per-name definition cache may substitute earlier saved bytes. Each caller
+receives an independently owned definition with the selected state's time and
+token. The schema validator's digest-keyed cache still reuses compiled execution
+schemas. Full definition transfer, decoding and fingerprinting occur for each
+resolution or call-preparation read, including availability retries. Lease and
+health operations retain compact-only reads. Every consequential call operation
+still checks current authority.
+
+Attachment and same-token Register may preserve a pong only while a previous
+routable provider remains live at the atomic write. The commit checks Redis time
+against the latest expiry among those previous routable leases. An expired
+premise retries with fresh state; a real membership gap advances the existing
+health epoch and requires a new pong. Uninterrupted joins preserve health and
+longer lease deadlines.
 
 The wire-visible `RegistrationToken` is not a secret. It is the lowercase
 SHA-256 digest of the domain `goa-ai/tool-registry-admission/v2\0`, the uint32

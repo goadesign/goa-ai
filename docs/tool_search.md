@@ -129,9 +129,11 @@ returns a new token. See the [complete provider example](runtime.md#registry-rou
 
 The registry keeps current definitions separate from compact provider state
 and permanent retired tokens. Lifecycle and health operations read compact
-Redis state directly. Definition readers compare fingerprints before fetching
-bytes; tool calls reuse compiled execution schemas. This internal reuse does
-not change what dynamic consumers resolve or how long their catalog is valid.
+Redis state directly. Definition readers fetch and validate an atomic snapshot
+of the current definition and state; tool calls reuse digest-keyed compiled
+execution schemas. No per-name definition cache substitutes earlier ordering
+when equivalent content is replaced. These reads do not change what dynamic
+consumers resolve or how long their catalog is valid.
 
 An active provider that loses its registration or exact lease stops with
 `provider_lease_lost`; it does not Register again. Temporary connection failures

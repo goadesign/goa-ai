@@ -50,7 +50,6 @@ type invalidResultHandler struct{}
 
 const pulseAddEventID = "0-0"
 const (
-	testAdmissionRevision     = "rollout-2026.07.23.1"
 	testProviderID            = "pod-a/test.toolset"
 	testProviderIncarnationID = "11111111-1111-4111-8111-111111111111"
 	testRegistrationTokenA    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -804,7 +803,7 @@ func TestServeLeaseLossCancelsEventCallback(t *testing.T) {
 
 	var registrations atomic.Int64
 	registration := successfulRegistration()
-	registration.Register = func(context.Context, string, string, string, string) (RegistrationLease, error) {
+	registration.Register = func(context.Context, string, string, string) (RegistrationLease, error) {
 		registrations.Add(1)
 		return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: 60 * time.Millisecond}, nil
 	}

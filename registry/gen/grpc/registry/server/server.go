@@ -20,6 +20,8 @@ import (
 
 // Server implements the registrypb.RegistryServer interface.
 type Server struct {
+	DeclareServiceToolsetH  goagrpc.UnaryHandler
+	AttachProviderH         goagrpc.UnaryHandler
 	RegisterH               goagrpc.UnaryHandler
 	RenewProviderH          goagrpc.UnaryHandler
 	ReleaseProviderH        goagrpc.UnaryHandler
@@ -46,6 +48,8 @@ type Server struct {
 // New instantiates the server struct with the registry service endpoints.
 func New(e *registry.Endpoints, uh goagrpc.UnaryHandler) *Server {
 	return &Server{
+		DeclareServiceToolsetH:  NewDeclareServiceToolsetHandler(e.DeclareServiceToolset, uh),
+		AttachProviderH:         NewAttachProviderHandler(e.AttachProvider, uh),
 		RegisterH:               NewRegisterHandler(e.Register, uh),
 		RenewProviderH:          NewRenewProviderHandler(e.RenewProvider, uh),
 		ReleaseProviderH:        NewReleaseProviderHandler(e.ReleaseProvider, uh),
@@ -67,6 +71,76 @@ func New(e *registry.Endpoints, uh goagrpc.UnaryHandler) *Server {
 		ReportToolCallOverloadH: NewReportToolCallOverloadHandler(e.ReportToolCallOverload, uh),
 		ClaimToolCallH:          NewClaimToolCallHandler(e.ClaimToolCall, uh),
 	}
+}
+
+// NewDeclareServiceToolsetHandler creates a gRPC handler which serves the
+// "registry" service "DeclareServiceToolset" endpoint.
+func NewDeclareServiceToolsetHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeDeclareServiceToolsetRequest, EncodeDeclareServiceToolsetResponse)
+	}
+	return h
+}
+
+// DeclareServiceToolset implements the "DeclareServiceToolset" method in
+// registrypb.RegistryServer interface.
+func (s *Server) DeclareServiceToolset(ctx context.Context, message *registrypb.DeclareServiceToolsetRequest) (*registrypb.DeclareServiceToolsetResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "DeclareServiceToolset")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.DeclareServiceToolsetH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "admission_conflict":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "admission_retired":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.DeclareServiceToolsetResponse), nil
+}
+
+// NewAttachProviderHandler creates a gRPC handler which serves the "registry"
+// service "AttachProvider" endpoint.
+func NewAttachProviderHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeAttachProviderRequest, EncodeAttachProviderResponse)
+	}
+	return h
+}
+
+// AttachProvider implements the "AttachProvider" method in
+// registrypb.RegistryServer interface.
+func (s *Server) AttachProvider(ctx context.Context, message *registrypb.AttachProviderRequest) (*registrypb.AttachProviderResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "AttachProvider")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.AttachProviderH.Handle(ctx, message)
+	if err != nil {
+		var en goa.GoaErrorNamer
+		if errors.As(err, &en) {
+			switch en.GoaErrorName() {
+			case "admission_conflict":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "admission_retired":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "provider_lease_lost":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.AttachProviderResponse), nil
 }
 
 // NewRegisterHandler creates a gRPC handler which serves the "registry"

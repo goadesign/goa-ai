@@ -17,6 +17,82 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// BuildDeclareServiceToolsetFunc builds the remote method to invoke for
+// "registry" service "DeclareServiceToolset" endpoint.
+func BuildDeclareServiceToolsetFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.DeclareServiceToolset(ctx, reqpb.(*registrypb.DeclareServiceToolsetRequest), opts...)
+		}
+		return grpccli.DeclareServiceToolset(ctx, &registrypb.DeclareServiceToolsetRequest{}, opts...)
+	}
+}
+
+// EncodeDeclareServiceToolsetRequest encodes requests sent to registry
+// DeclareServiceToolset endpoint.
+func EncodeDeclareServiceToolsetRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.ServiceToolsetDeclaration)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "DeclareServiceToolset", "*registry.ServiceToolsetDeclaration", v)
+	}
+	return NewProtoDeclareServiceToolsetRequest(payload), nil
+}
+
+// DecodeDeclareServiceToolsetResponse decodes responses from the registry
+// DeclareServiceToolset endpoint.
+func DecodeDeclareServiceToolsetResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.DeclareServiceToolsetResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "DeclareServiceToolset", "*registrypb.DeclareServiceToolsetResponse", v)
+	}
+	if err := ValidateDeclareServiceToolsetResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewDeclareServiceToolsetResult(message)
+	return res, nil
+}
+
+// BuildAttachProviderFunc builds the remote method to invoke for "registry"
+// service "AttachProvider" endpoint.
+func BuildAttachProviderFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.AttachProvider(ctx, reqpb.(*registrypb.AttachProviderRequest), opts...)
+		}
+		return grpccli.AttachProvider(ctx, &registrypb.AttachProviderRequest{}, opts...)
+	}
+}
+
+// EncodeAttachProviderRequest encodes requests sent to registry AttachProvider
+// endpoint.
+func EncodeAttachProviderRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.AttachProviderPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "AttachProvider", "*registry.AttachProviderPayload", v)
+	}
+	return NewProtoAttachProviderRequest(payload), nil
+}
+
+// DecodeAttachProviderResponse decodes responses from the registry
+// AttachProvider endpoint.
+func DecodeAttachProviderResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.AttachProviderResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "AttachProvider", "*registrypb.AttachProviderResponse", v)
+	}
+	if err := ValidateAttachProviderResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewAttachProviderResult(message)
+	return res, nil
+}
+
 // BuildRegisterFunc builds the remote method to invoke for "registry" service
 // "Register" endpoint.
 func BuildRegisterFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {

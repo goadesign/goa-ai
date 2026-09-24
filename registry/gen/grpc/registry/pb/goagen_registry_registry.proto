@@ -16,6 +16,22 @@ option go_package = "/goa_ai_registrypb";
 // renew leases for the one active schema and admission revision; consumers
 // discover and invoke only healthy admitted providers.
 service Registry {
+	// Create a complete immutable service toolset before any provider connects.
+// The registry assigns its admission revision and registration time. An
+// identical active declaration returns the original saved definition, token,
+// and time; a different declaration or native Agent occupancy returns
+// admission_conflict. A retired service declaration returns admission_retired.
+// Declaration does not create a provider lease or establish health.
+	rpc DeclareServiceToolset (DeclareServiceToolsetRequest) returns (DeclareServiceToolsetResponse);
+	// Attach one provider incarnation to the exact existing service registration
+// without sending or changing its definition. The expected token and current
+// wire protocol are required. Missing, different, or native Agent
+// registrations return admission_conflict; permanently retired tokens return
+// admission_retired. Repeating attachment preserves the original registration
+// time and any longer lease deadline. An already-draining incarnation returns
+// provider_lease_lost. After startup, use RenewProvider; attachment is not a
+// renewal recovery operation.
+	rpc AttachProvider (AttachProviderRequest) returns (AttachProviderResponse);
 	// Reject providers whose required runtime-owned wire protocol version differs
 // from the registry, then atomically admit one provider-incarnation lease in
 // the catalog admission record. The same wire version, schema, and admission
@@ -149,33 +165,18 @@ service Registry {
 	}
 }
 
-message RegisterRequest {
-	// Unique name for the toolset
+message DeclareServiceToolsetRequest {
+	// Unique toolset route name.
 	optional string name = 1;
-	// Human-readable description of the toolset
+	// Human-readable description of the toolset.
 	optional string description = 2;
 	// Semantic version of the toolset.
 	optional string version = 3;
-	// Tags for categorization and filtering
+	// Categories used by discovery filters.
 	repeated string tags = 4;
-	// Tool definitions with their schemas
+	// Complete portable service tool declarations, including consumer contracts
+// and matching pagination partners.
 	repeated ToolSchema tools = 5;
-	// Stable identity of the provider process registering this toolset.
-	optional string provider_id = 6;
-	// Deployment-issued revision shared by every replica of one fenced admission.
-// Reuse it for same-contract scaling and rolling updates; change it only to
-// create a new fenced admission.
-	optional string admission_revision = 7;
-	// Runtime-generated UUID identifying one Serve lifecycle. The provider runtime
-// generates it once and reuses it for every renewal.
-	optional string provider_incarnation_id = 8;
-	// Required runtime-owned version of the provider message envelope. The
-// registry admits only its exact canonical version.
-	optional sint32 wire_protocol_version = 9;
-	// Generated lowercase SHA-256 identity of the exact tool schemas sent by this
-// provider. The registry independently derives the identity and rejects
-// mismatches before admission.
-	optional string schema_fingerprint = 10;
 }
 // Tool schema declaration for registration with the tool registry gateway.
 message ToolSchema {
@@ -346,12 +347,90 @@ message AgentToolTarget {
 	optional string configuration = 2;
 }
 
+message DeclareServiceToolsetResponse {
+	// Complete toolset definition read from the active registration.
+	Toolset toolset = 1;
+	// Exact registration required when executing a call selected from this
+// definition.
+	optional string registration_token = 2;
+}
+// Complete toolset definition with all tool schemas
+message Toolset {
+	// Unique name for the toolset
+	optional string name = 1;
+	// Human-readable description
+	optional string description = 2;
+	// Semantic version of the toolset.
+	optional string version = 3;
+	// Tags for categorization
+	repeated string tags = 4;
+	// Tool schemas included in the toolset.
+	repeated ToolSchema tools = 5;
+	// ISO 8601 registration timestamp
+	optional string registered_at = 6;
+}
+
+message AttachProviderRequest {
+	// Name of the registered toolset
+	optional string name = 1;
+	// Stable identity of the provider process
+	optional string provider_id = 2;
+	// Exact admission token returned by declaration, registration, or resolution.
+	optional string expected_registration_token = 3;
+	// Runtime-generated UUID of the exact Serve lifecycle.
+	optional string provider_incarnation_id = 4;
+	// Required runtime-owned provider message version.
+	optional sint32 wire_protocol_version = 5;
+}
+
+message AttachProviderResponse {
+	// ISO 8601 timestamp of registration
+	optional string registered_at = 1;
+	// Deterministic admission token derived from the wire protocol version,
+// canonical schema fingerprint, and admission revision. Register uses a
+// deployment-issued revision; DeclareServiceToolset assigns a registry-issued
+// revision.
+	optional string registration_token = 2;
+	// Duration of the admitted provider lease in milliseconds
+	optional sint64 lease_duration_ms = 3;
+}
+
+message RegisterRequest {
+	// Unique name for the toolset
+	optional string name = 1;
+	// Human-readable description of the toolset
+	optional string description = 2;
+	// Semantic version of the toolset.
+	optional string version = 3;
+	// Tags for categorization and filtering
+	repeated string tags = 4;
+	// Tool definitions with their schemas
+	repeated ToolSchema tools = 5;
+	// Stable identity of the provider process registering this toolset.
+	optional string provider_id = 6;
+	// Deployment-issued revision shared by every replica of one fenced admission.
+// Reuse it for same-contract scaling and rolling updates; change it only to
+// create a new fenced admission.
+	optional string admission_revision = 7;
+	// Runtime-generated UUID identifying one Serve lifecycle. The provider runtime
+// generates it once and reuses it for every renewal.
+	optional string provider_incarnation_id = 8;
+	// Required runtime-owned version of the provider message envelope. The
+// registry admits only its exact canonical version.
+	optional sint32 wire_protocol_version = 9;
+	// Generated lowercase SHA-256 identity of the exact tool schemas sent by this
+// provider. The registry independently derives the identity and rejects
+// mismatches before admission.
+	optional string schema_fingerprint = 10;
+}
+
 message RegisterResponse {
 	// ISO 8601 timestamp of registration
 	optional string registered_at = 1;
-	// Deterministic admission-generation token derived from the wire protocol
-// version, canonical schema fingerprint, and deployment-issued admission
-// revision
+	// Deterministic admission token derived from the wire protocol version,
+// canonical schema fingerprint, and admission revision. Register uses a
+// deployment-issued revision; DeclareServiceToolset assigns a registry-issued
+// revision.
 	optional string registration_token = 2;
 	// Duration of the admitted provider lease in milliseconds
 	optional sint64 lease_duration_ms = 3;
@@ -362,7 +441,7 @@ message RenewProviderRequest {
 	optional string name = 1;
 	// Stable identity of the provider process
 	optional string provider_id = 2;
-	// Exact admission-generation token returned by Register
+	// Exact admission token returned by declaration, registration, or resolution.
 	optional string expected_registration_token = 3;
 	// Runtime-generated UUID of the exact Serve lifecycle.
 	optional string provider_incarnation_id = 4;
@@ -378,7 +457,7 @@ message ReleaseProviderRequest {
 	optional string name = 1;
 	// Stable identity of the provider process
 	optional string provider_id = 2;
-	// Exact admission-generation token returned by Register
+	// Exact admission token returned by declaration, registration, or resolution.
 	optional string expected_registration_token = 3;
 	// Runtime-generated UUID of the exact Serve lifecycle.
 	optional string provider_incarnation_id = 4;
@@ -395,7 +474,7 @@ message DrainProviderRequest {
 	optional string name = 1;
 	// Stable identity of the provider process
 	optional string provider_id = 2;
-	// Exact admission-generation token returned by Register
+	// Exact admission token returned by declaration, registration, or resolution.
 	optional string expected_registration_token = 3;
 	// Runtime-generated UUID of the exact Serve lifecycle.
 	optional string provider_incarnation_id = 4;
@@ -407,8 +486,8 @@ message DrainProviderResponse {
 message UnregisterRequest {
 	// Name of the toolset to unregister
 	optional string name = 1;
-	// Current token returned by Register, RegisterAgentToolset,
-// ReplaceAgentToolset, or ResolveToolset.
+	// Current token returned by Register, DeclareServiceToolset,
+// RegisterAgentToolset, ReplaceAgentToolset, or ResolveToolset.
 	optional string expected_registration_token = 2;
 }
 
@@ -448,21 +527,6 @@ message RegisterAgentToolsetResponse {
 	// Exact registration required when executing a call selected from this
 // definition.
 	optional string registration_token = 2;
-}
-// Complete toolset definition with all tool schemas
-message Toolset {
-	// Unique name for the toolset
-	optional string name = 1;
-	// Human-readable description
-	optional string description = 2;
-	// Semantic version of the toolset.
-	optional string version = 3;
-	// Tags for categorization
-	repeated string tags = 4;
-	// Tool schemas included in the toolset.
-	repeated ToolSchema tools = 5;
-	// ISO 8601 registration timestamp
-	optional string registered_at = 6;
 }
 
 message ReplaceAgentToolsetRequest {
