@@ -120,9 +120,11 @@ type (
 		// respond to health pings.
 		MaxQueuedToolCalls int
 
-		// ShutdownTimeout bounds sink closure, worker/result settlement, and
-		// acknowledgement drain under one shared deadline after Serve stops
-		// claiming new calls. Zero uses DefaultShutdownTimeout.
+		// ShutdownTimeout bounds waiting for sink closure, worker/result settlement,
+		// and acknowledgement drain under one shared deadline after Serve stops
+		// claiming new calls. A transport that outlives the deadline is reported as
+		// incomplete settlement; its lease is not released. Close may return later,
+		// but transport cleanup can remain incomplete. Zero uses DefaultShutdownTimeout.
 		ShutdownTimeout time.Duration
 
 		// Logger is used for provider internal logging. When nil, defaults to a noop logger.
@@ -946,16 +948,35 @@ func reportOverload(
 	return nil
 }
 
-// closeSinkBounded stops consumer-group claiming and proves Close returned
-// before the lifecycle shutdown deadline.
+// closeSinkBounded waits for one Close call within the settlement deadline.
+// A transport may not interrupt its I/O when ctx expires. Report incomplete
+// closure without releasing its lease; the one Close call may finish later.
 func closeSinkBounded(ctx context.Context, sink pulseclients.Sink) error {
-	if err := sink.Close(ctx); err != nil {
-		return fmt.Errorf("close toolset sink: %w", err)
+	closed := make(chan error, 1)
+	go func() {
+		closed <- sink.Close(ctx)
+	}()
+	return waitForSinkClose(ctx, closed)
+}
+
+// waitForSinkClose preserves a completed Close error alongside cancellation.
+// If no result is available when ctx expires, it reports incomplete closure
+// without waiting for the transport.
+func waitForSinkClose(ctx context.Context, closed <-chan error) error {
+	select {
+	case err := <-closed:
+		if err := errors.Join(err, ctx.Err()); err != nil {
+			return fmt.Errorf("close toolset sink: %w", err)
+		}
+		return nil
+	case <-ctx.Done():
+		select {
+		case err := <-closed:
+			return fmt.Errorf("close toolset sink: %w", errors.Join(err, ctx.Err()))
+		default:
+			return fmt.Errorf("close toolset sink incomplete: %w", ctx.Err())
+		}
 	}
-	if err := ctx.Err(); err != nil {
-		return fmt.Errorf("close toolset sink: %w", err)
-	}
-	return nil
 }
 
 // waitForDone reports when a shutdown phase cannot prove completion.
