@@ -3300,7 +3300,7 @@ per-entry syntax even for empty values. The canonical codec derives its parser
 ceiling from its actual empty-entry and fixed-envelope shapes: currently
 391 + 75 × 1,048,576 = 78,643,591 bytes. This is a conservative bound for every
 engine-valid request, not an increased engine budget. The body is uploaded and
-read in bounded records; no Mongo document or generated request contains it all.
+read through bounded store records; the preparation record contains its compact reference.
 For example, a valid 99,000-entry memo occupies 8,604,745 stored bytes but returns
 a 332-byte prepared reference. The reference parser separately bounds identity
 text by the owning declaration budget plus its fixed publication framing.
