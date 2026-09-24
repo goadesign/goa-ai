@@ -4,6 +4,7 @@ package openai
 // adapter. Error metadata must not replay requests or publish incomplete tools.
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -76,6 +77,76 @@ func TestNestedStreamErrorMetadata(t *testing.T) {
 			assert.Equal(t, tc.payload+"\n", string(original.Event.Data))
 			require.NoError(t, stream.Close())
 			assert.EqualValues(t, 1, requests.Load())
+		})
+	}
+}
+
+func TestNestedStreamErrorKnownFieldTypes(t *testing.T) {
+	for _, field := range []string{"type", "code", "message", "param"} {
+		for _, raw := range []string{`123`, `true`, `{"unexpected":"object"}`, `["array"]`} {
+			t.Run(field+"/"+raw, func(t *testing.T) {
+				fields := map[string]json.RawMessage{
+					"type":    json.RawMessage(`"server_error"`),
+					"code":    json.RawMessage(`"internal_server_error"`),
+					"message": json.RawMessage(`"Synthetic failure."`),
+				}
+				fields[field] = json.RawMessage(raw)
+				payload, err := json.Marshal(map[string]any{"error": fields})
+				require.NoError(t, err)
+				failure := receiveSyntheticStreamError(t, string(payload))
+				var pe *model.ProviderError
+				require.ErrorAs(t, failure, &pe)
+				assert.Equal(t, model.ProviderErrorKindUnknown, pe.Kind())
+				assert.False(t, pe.Retryable())
+				assert.Empty(t, pe.Code())
+				var original *ssestream.StreamError
+				require.ErrorAs(t, failure, &original)
+				assert.Equal(t, original.Error(), pe.Message())
+			})
+		}
+	}
+}
+
+func TestNestedStreamErrorAbsenceAndStrictStrings(t *testing.T) {
+	for _, tc := range []struct {
+		name, fields, code, message string
+		retryable                   bool
+	}{
+		{"message_missing", `"type":"server_error","code":"internal_server_error"`, "internal_server_error", "", true},
+		{"message_null", `"type":"server_error","code":"internal_server_error","message":null`, "internal_server_error", "", true},
+		{"message_empty", `"type":"server_error","code":"internal_server_error","message":""`, "internal_server_error", "", true},
+		{"type_missing", `"code":"internal_server_error","message":"Failure."`, "internal_server_error", "Failure.", false},
+		{"type_null", `"type":null,"code":"internal_server_error","message":"Failure."`, "internal_server_error", "Failure.", false},
+		{"type_empty", `"type":"","code":"internal_server_error","message":"Failure."`, "internal_server_error", "Failure.", false},
+		{"code_missing", `"type":"server_error","message":"Failure."`, "", "Failure.", false},
+		{"code_null", `"type":"server_error","code":null,"message":"Failure."`, "", "Failure.", false},
+		{"code_empty", `"type":"server_error","code":"","message":"Failure."`, "", "Failure.", false},
+		{"param_null", `"type":"server_error","code":"internal_server_error","message":"Failure.","param":null`, "internal_server_error", "Failure.", true},
+		{"param_empty", `"type":"server_error","code":"internal_server_error","message":"Failure.","param":""`, "internal_server_error", "Failure.", true},
+		{"escaped", `"type":"server\u005ferror","code":"internal\u005fserver_error","message":"A \"quoted\" message\nwith a newline.","param":"a\"b"`, "internal_server_error", "A \"quoted\" message\nwith a newline.", true},
+		{"extra", `"type":"server_error","code":"internal_server_error","message":"Failure.","future":{"anything":123}`, "internal_server_error", "Failure.", true},
+		{"no_existing_rule_fallthrough", `"type":"server_error","code":"server_error","message":123`, "", "", false},
+		{"no_rate_rule_fallthrough", `"type":"server_error","code":"rate_limit_exceeded","message":"Failure.","param":false`, "", "", false},
+		{"absent_type_existing_rule", `"code":"server_error","message":"Failure."`, "server_error", "Failure.", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			failure := receiveSyntheticStreamError(t, `{"error":{`+tc.fields+`}}`)
+			var pe *model.ProviderError
+			require.ErrorAs(t, failure, &pe)
+			assert.Equal(t, tc.retryable, pe.Retryable())
+			wantKind := model.ProviderErrorKindUnknown
+			if tc.retryable {
+				wantKind = model.ProviderErrorKindUnavailable
+			}
+			assert.Equal(t, wantKind, pe.Kind())
+			assert.Equal(t, tc.code, pe.Code())
+			if tc.message == "" {
+				var original *ssestream.StreamError
+				require.ErrorAs(t, failure, &original)
+				assert.Equal(t, original.Error(), pe.Message())
+			} else {
+				assert.Equal(t, tc.message, pe.Message())
+			}
 		})
 	}
 }
@@ -206,4 +277,34 @@ func TestNestedStreamErrorPreservesCloseFailure(t *testing.T) {
 
 func (b *failingCloseBody) Close() error {
 	return b.err
+}
+
+// receiveSyntheticStreamError uses the official HTTP decoder and validated
+// adapter, then checks that failure preserves its cause and closes without retry.
+func receiveSyntheticStreamError(t *testing.T, payload string) error {
+	t.Helper()
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, err := fmt.Fprintf(w, "data: %s\n\n", payload)
+		assert.NoError(t, err)
+	}))
+	defer server.Close()
+	sdk := openaisdk.NewClient(option.WithAPIKey("synthetic"), option.WithBaseURL(server.URL), option.WithMaxRetries(0))
+	client, err := New(Options{Client: &sdk.Responses, DefaultModel: "synthetic-model"})
+	require.NoError(t, err)
+	stream, err := client.Stream(t.Context(), replayTestRequest(""))
+	require.NoError(t, err)
+	_, failure := stream.Recv()
+	var original *ssestream.StreamError
+	require.ErrorAs(t, failure, &original)
+	assert.Equal(t, payload+"\n", string(original.Event.Data))
+	var pe *model.ProviderError
+	require.ErrorAs(t, failure, &pe)
+	assert.Zero(t, pe.HTTPStatus())
+	assert.Empty(t, pe.RequestID())
+	require.NoError(t, stream.Close())
+	assert.EqualValues(t, 1, requests.Load())
+	return failure
 }

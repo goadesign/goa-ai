@@ -1751,6 +1751,16 @@ gain retryability from this rule; existing HTTP and flat-event rules still apply
 Temporal serialization preserves the existing provider error fields, not the
 native SDK error object.
 
+The adapter checks the raw JSON types of `type`, `code`, `message`, and `param`
+because the official SDK's response decoder can stringify non-string values.
+A present, non-null known field must be a JSON string; otherwise the whole
+structured classification is discarded and the original diagnostic remains
+unknown and nonretryable. Missing and null fields remain absent, and unknown
+extra fields are ignored. Missing, null, or empty messages use the original
+error diagnostic, not a provider-supplied message; an otherwise valid exact
+type/code pair still qualifies. Missing, null, or empty type/code values cannot
+match the new pair rule. An absent or null `param` is allowed.
+
 Retryability means another attempt may succeed; it does not authorize replay of
 an operation that already published text or tool effects. The adapter does not
 retry a failed stream. Consumers that implement retries must independently enforce
