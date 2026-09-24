@@ -43,6 +43,9 @@ func (r *Runtime) validateToolSpecRegistrations(
 
 	for _, registration := range registrations {
 		for _, spec := range registration.specs {
+			if err := r.validateImageSourceProducer(spec); err != nil {
+				return nil, err
+			}
 			if spec.ReplanOnTimeout && !spec.IsAgentTool {
 				return nil, fmt.Errorf("%w: tool %q ReplanOnTimeout requires an agent-as-tool registration", ErrInvalidConfig, spec.Name)
 			}

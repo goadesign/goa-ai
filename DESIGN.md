@@ -192,6 +192,21 @@ request to an ordinary tool backed only by local validation. The same
 Anthropic adapter encodes user-message `ImagePart` bytes as base64 image blocks
 for PNG, JPEG, GIF, and WebP, so direct Anthropic, Claude-on-Vertex, and
 Claude-on-Bedrock clients share one multimodal message contract.
+
+Retained images use the request-only `ImageSourcePart{SourceKind, Data}` in saved
+messages. Generated `NativeImage` evidence metadata identifies admitted producers;
+source-only generated manifests keep historical kind codecs independent of
+current tool visibility. New results use only their selected tool's item markers.
+Producer declarations match exactly; historical kind equality ignores only the
+top-level producer-specific Go alias. Each model client has one reader binding,
+preserved by wrappers; current runs and summaries bind from unbound bases.
+Actual count, summary and final request preparation
+checks current access through the host reader and replaces each descriptor with
+the existing byte-bearing `ImagePart`. Recording and replay perform no image
+I/O. No result-record lookup, new blob store, cached access grant or provider wire
+variant is introduced. See [native image contracts](docs/native_images.md) for
+the full path, per-candidate and total-work accounting, errors and compatibility.
+
 Adapters with provider-native structured-output examples receive the generated
 root example separately from the schema. Unary helpers ask the model once for a
 structured value. If the generated codec rejects the response, the helper

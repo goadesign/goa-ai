@@ -11,10 +11,15 @@ import (
 // preflightRequest checks every mutable request field before cloneRequest
 // allocates its framework-owned copy.
 func preflightRequest(request *Request) error {
+	return preflightRequestWithWalk(request, &dynamicValueWalk{})
+}
+
+// preflightRequestWithWalk also exposes the existing aggregate charge to image
+// expansion, so replacing descriptors cannot create a second input allowance.
+func preflightRequestWithWalk(request *Request, walk *dynamicValueWalk) error {
 	if request == nil {
 		return fmt.Errorf("model request is required")
 	}
-	walk := &dynamicValueWalk{}
 	if err := walk.visit(); err != nil {
 		return err
 	}
@@ -209,6 +214,11 @@ func preflightRequestPart(part Part, walk *dynamicValueWalk) error {
 			return err
 		}
 		return walk.addBytes(len(actual.Bytes))
+	case ImageSourcePart:
+		if err := chargeString(walk, actual.SourceKind); err != nil {
+			return err
+		}
+		return chargeJSON(walk, actual.Data)
 	case DocumentPart:
 		return preflightDocumentPart(actual, walk)
 	case CitationsPart:

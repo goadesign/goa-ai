@@ -1,0 +1,172 @@
+{
+  "tools": [
+    {
+      "id": "pictures.inspect",
+      "service": "images",
+      "toolset": "images.pictures",
+      "title": "Inspect",
+      "description": "Inspect selected image.",
+      "payload": {
+        "name": "InspectPayload",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "description": "Selected image.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      },
+      "result": {
+        "name": "InspectResult",
+        "schema": {
+          "$defs": {
+            "RetainedImage": {
+              "additionalProperties": false,
+              "description": "Exact retained image descriptor.",
+              "properties": {
+                "id": {
+                  "description": "Exact retained image.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "title": "RetainedImage",
+              "type": "object"
+            }
+          },
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "$ref": "#/$defs/RetainedImage"
+            }
+          },
+          "required": [
+            "source"
+          ],
+          "type": "object"
+        }
+      },
+      "server_data": [
+        {
+          "kind": "fixture.shared.v1",
+          "audience": "evidence",
+          "native_image": true,
+          "description": "Exact retained image descriptor.",
+          "type": {
+            "name": "InspectFixtureSharedV1ServerData",
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "description": "Exact retained image.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "pictures.view",
+      "service": "images",
+      "toolset": "images.pictures",
+      "title": "View",
+      "description": "View selected image.",
+      "payload": {
+        "name": "ViewPayload",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "description": "Selected image.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      },
+      "result": {
+        "name": "ViewResult",
+        "schema": {
+          "$defs": {
+            "RetainedImage": {
+              "additionalProperties": false,
+              "description": "Exact retained image descriptor.",
+              "properties": {
+                "id": {
+                  "description": "Exact retained image.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "title": "RetainedImage",
+              "type": "object"
+            }
+          },
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "$ref": "#/$defs/RetainedImage"
+            }
+          },
+          "required": [
+            "source"
+          ],
+          "type": "object"
+        }
+      },
+      "server_data": [
+        {
+          "kind": "fixture.shared.v1",
+          "audience": "evidence",
+          "native_image": true,
+          "description": "Exact retained image descriptor.",
+          "type": {
+            "name": "ViewFixtureSharedV1ServerData",
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "description": "Exact retained image.",
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

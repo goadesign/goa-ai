@@ -81,6 +81,9 @@ func (r *Runtime) materializeToolResultData(
 	if result.Failure != nil {
 		return nil, nil
 	}
+	if err := r.validateImageSourceProducer(spec); err != nil {
+		return nil, err
+	}
 	if result.Result == nil && spec.Result.Codec.ToJSON != nil {
 		setMalformedToolResult(result, call, errors.New("registered tool result is required"))
 		return nil, nil

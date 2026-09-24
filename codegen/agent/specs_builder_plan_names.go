@@ -58,6 +58,16 @@ func declareExactNames(pkg *goacodegen.GeneratedPackage, records map[string]*goa
 // declareToolNames records every constant, variable, and function written for
 // one tool.
 func (p *toolSpecsPackagePlan) declareToolNames(toolset string, tool *agent.ToolExpr) error {
+	for _, source := range tool.ServerData {
+		if source.NativeImage {
+			if err := declareExactNames(p.public, p.publicFixed, map[goacodegen.PackageNameKind][]string{
+				goacodegen.NameFunction: {"NativeImageSources"},
+			}); err != nil {
+				return err
+			}
+			break
+		}
+	}
 	qualified := toolset + "." + tool.Name
 	constant := goacodegen.NewPreferredName(
 		goacodegen.NameConstant,

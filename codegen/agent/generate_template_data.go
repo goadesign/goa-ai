@@ -9,7 +9,9 @@ type (
 		PackageName        string
 		SchemaFingerprints []*toolsetSchemaFingerprintData
 		Tools              []*toolEntry
-		Types              []*typeData
+		// NativeImageTools contains only tools emitted in the source-only factory.
+		NativeImageTools []*toolEntry
+		Types            []*typeData
 		// RequiredLabels lists, sorted and deduplicated, the run label keys
 		// this toolset's label-backed Inject() fields require.
 		RequiredLabels []string

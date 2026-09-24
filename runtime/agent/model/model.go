@@ -63,6 +63,16 @@ type (
 		Bytes []byte `json:"bytes"`
 	}
 
+	// ImageSourcePart saves an application-owned image descriptor in a user
+	// message. The host's registered reader supplies ImagePart bytes when a
+	// concrete request uses it. Providers never receive this part.
+	ImageSourcePart struct {
+		// SourceKind selects the retained generated descriptor contract.
+		SourceKind string `json:"source_kind"`
+		// Data contains that contract's canonical JSON, not image bytes.
+		Data rawjson.Message `json:"data"`
+	}
+
 	// DocumentPart carries document content attached to a user message.
 	//
 	// Documents are intended for models that support document inputs and citation
@@ -1465,6 +1475,8 @@ func partCharacterCount(part Part) int {
 		return len(v.Text)
 	case ImagePart:
 		return len(v.Bytes) + len(v.Format)
+	case ImageSourcePart:
+		return len(v.SourceKind) + len(v.Data)
 	case DocumentPart:
 		count := len(v.Name) + len(v.Format) + len(v.Bytes) + len(v.Text) + len(v.URI) + len(v.Context)
 		for _, chunk := range v.Chunks {
@@ -1516,7 +1528,8 @@ func encodedCharacterCount(value any) int {
 
 func (TextPart) isPart() {}
 
-func (ImagePart) isPart() {}
+func (ImagePart) isPart()       {}
+func (ImageSourcePart) isPart() {}
 
 func (DocumentPart) isPart() {}
 

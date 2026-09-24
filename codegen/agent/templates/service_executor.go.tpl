@@ -2,9 +2,8 @@
 // It decodes each tool request, fills server-owned fields, calls the service,
 // and returns the service result as a tool result.
 //
-// Example:
+// Example, using a constructed Goa service client:
 //
-//   client := atlasdata.NewClient(...)
 //   exec := {{ .Toolset.PackageName }}.{{ .Constructor }}({{ .Toolset.PackageName }}.{{ .Names.WithClient }}(client))
 
 type (

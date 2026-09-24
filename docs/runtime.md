@@ -18,6 +18,10 @@ Read this guide when you need to:
 For design-time DSL concepts, see [`docs/dsl.md`](dsl.md). For a high-level system
 overview, see [`docs/overview.md`](overview.md).
 
+For tools that retain images, [native image sources](native_images.md) describes
+the generated producer manifest, current-run reader, saved-message compatibility
+and total work across history counting, summarization and final inference.
+
 ---
 
 ## Mental Model

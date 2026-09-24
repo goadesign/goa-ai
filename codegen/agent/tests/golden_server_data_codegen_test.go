@@ -26,6 +26,8 @@ func TestGolden_ServerData_UsesGeneratedCodec(t *testing.T) {
 	require.Contains(t, specs, "byIDRecordsEvidenceServerDataCodec.ToJSON(value)")
 	require.NotContains(t, specs, "spec.ServerData")
 	require.NotContains(t, specs, "tools.ServerDataItem")
+	require.NotContains(t, specs, "NativeImageSources")
+	require.NotContains(t, specs, "NativeImage:")
 
 	executor := generatedContentBySuffix(t, files, "agents/scribe/lookup/service_executor.go")
 	require.Contains(t, executor, "ByIDRecordsEvidenceServerDataCodec().ToJSON")

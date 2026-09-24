@@ -289,6 +289,9 @@ func clonePart(part Part) (Part, error) {
 	case ImagePart:
 		actual.Bytes = slices.Clone(actual.Bytes)
 		return actual, nil
+	case ImageSourcePart:
+		actual.Data = slices.Clone(actual.Data)
+		return actual, nil
 	case DocumentPart:
 		actual.Bytes = slices.Clone(actual.Bytes)
 		actual.Chunks = slices.Clone(actual.Chunks)

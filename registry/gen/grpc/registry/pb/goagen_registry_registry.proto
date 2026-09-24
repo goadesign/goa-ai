@@ -336,6 +336,9 @@ message ToolServerData {
 	optional bytes schema = 4;
 	// Generated examples and field details for the item data.
 	ToolTypeMetadata type = 5;
+	// Whether this evidence kind declares a typed image source requiring an
+// explicitly admitted host reader.
+	optional bool native_image = 6;
 }
 // A native child Agent invocation. The worker is authorized at startup; the
 // application owns the immutable configuration reference.

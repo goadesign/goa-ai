@@ -277,6 +277,14 @@ startup waits for Redis capacity to reach the local replicated map and fails if
 that wait is cancelled or the map stops. Bedrock Responses also estimates GPT-6 Sol
 image inputs from dimensions, while response usage remains the accounting total.
 
+Tools can mark typed evidence with `NativeImage()` to retain exact image sources
+in conversation history. An explicitly admitted host reader checks current access
+and supplies native bytes only for actual count, summary and inference inputs.
+Each current tool declaration chooses its image items; retaining an old decoder
+does not mark new ordinary evidence. Model clients reject a second reader binding.
+See [retained native images](docs/native_images.md) for registration, bounded read
+work and the required historical-decoder upgrade before writing new records.
+
 Vertex tool arguments require valid UTF-8 text and keys. Workflow writes reject
 map keys with custom JSON or text encoders; use plain strings or named string
 types without those encoders. Strict lifecycle and rejection record reads

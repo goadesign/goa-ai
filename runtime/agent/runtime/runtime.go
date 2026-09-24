@@ -138,6 +138,7 @@ type (
 		agents             map[agent.Ident]AgentRegistration
 		toolsets           map[string]ToolsetRegistration
 		toolSpecs          map[tools.Ident]tools.ToolSpec
+		imageSources       *imageSourceRegistry
 		registries         map[string]registryConnection
 		agentToolResolvers map[agent.Ident]AgentToolResolver
 		// toolDefinitions stores the input schema validator compiled when each
@@ -204,6 +205,7 @@ type (
 	// for production deployments. Noop implementations are substituted for nil Logger,
 	// Metrics, and Tracer. A default in-memory event bus is created if Hooks is nil.
 	Options struct {
+		imageSources *imageSourceRegistry
 		// Engine is the workflow backend adapter (Temporal by default).
 		Engine engine.Engine
 		// MemoryStore persists run transcripts and annotations.
@@ -789,6 +791,7 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 		agents:               make(map[agent.Ident]AgentRegistration),
 		toolsets:             make(map[string]ToolsetRegistration),
 		toolSpecs:            make(map[tools.Ident]tools.ToolSpec),
+		imageSources:         opts.imageSources,
 		toolDefinitions:      make(map[tools.Ident]*model.ToolDefinition),
 		toolsetNames:         make(map[tools.Ident]string),
 		policyToolMetadata:   make(map[tools.Ident]policy.ToolMetadata),

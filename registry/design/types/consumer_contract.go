@@ -133,6 +133,11 @@ var ToolServerData = Type("ToolServerData", func() {
 	Field(3, "description", String, "Description of the data carried by this kind.")
 	Field(4, "schema", Bytes, "Canonical JSON schema for the item data.", func() { MinLength(1) })
 	Field(5, "type", ToolTypeMetadata, "Generated examples and field details for the item data.")
+	Field(6, "native_image", Boolean, "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.", func() {
+		Default(false)
+		Meta("struct:tag:json", "NativeImage,omitempty")
+		Example(true)
+	})
 	Required("kind", "audience", "schema", "type")
 })
 

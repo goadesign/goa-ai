@@ -2560,6 +2560,7 @@ func transformToolServerDataToProtoToolServerData(v *registry.ToolServerData) *r
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
+		NativeImage: &v.NativeImage,
 	}
 	if v.Type != nil {
 		res.Type = transformToolTypeMetadataToProtoToolTypeMetadata(v.Type)
@@ -2822,8 +2823,14 @@ func transformProtoToolServerDataToToolServerData(v *registrypb.ToolServerData) 
 		Description: v.Description,
 		Schema:      v.Schema,
 	}
+	if v.NativeImage != nil {
+		res.NativeImage = *v.NativeImage
+	}
 	if v.Type != nil {
 		res.Type = transformProtoToolTypeMetadataToToolTypeMetadata(v.Type)
+	}
+	if v.NativeImage == nil {
+		res.NativeImage = false
 	}
 
 	return res

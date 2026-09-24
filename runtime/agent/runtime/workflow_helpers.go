@@ -141,6 +141,7 @@ func (r *Runtime) appendUserToolRecordResults(
 	}
 
 	parts := make([]model.Part, 0, len(records))
+	var imageParts []model.Part
 	var reminders []string
 	for _, record := range records {
 		call := record.call
@@ -158,6 +159,18 @@ func (r *Runtime) appendUserToolRecordResults(
 			Content:   content,
 			IsError:   tr.Failure != nil,
 		})
+		if hasSpec && tr.Failure == nil {
+			sources, err := r.toolImageSources(spec, tr.ServerData)
+			if err != nil {
+				return err
+			}
+			if len(sources) > 0 {
+				imageParts = append(imageParts, model.TextPart{
+					Text: fmt.Sprintf("Image for tool result %q.", transcriptToolCallID(call)),
+				})
+				imageParts = append(imageParts, sources...)
+			}
+		}
 		if hasSpec && spec.ResultReminder != "" && tr.Failure == nil {
 			reminders = append(reminders, spec.ResultReminder)
 		}
@@ -198,7 +211,7 @@ func (r *Runtime) appendUserToolRecordResults(
 
 	messages := []*model.Message{{
 		Role:  model.ConversationRoleUser,
-		Parts: parts,
+		Parts: append(parts, imageParts...),
 	}}
 
 	if len(reminders) > 0 {

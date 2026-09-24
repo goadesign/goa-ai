@@ -39,7 +39,7 @@ func historySummaryRequest(messages []*model.Message, cfg *compressConfig) (*mod
 			reference := fmt.Sprintf("History message %d, part %d", messageIndex, j)
 			fmt.Fprintf(&transcript, "%s: ", reference)
 			switch value := part.(type) {
-			case model.ImagePart, model.DocumentPart:
+			case model.ImagePart, model.ImageSourcePart, model.DocumentPart:
 				if message.Role != model.ConversationRoleUser {
 					return nil, "", fmt.Errorf("runtime: history message %d part %d: native media requires user role, got %q", messageIndex, j, message.Role)
 				}
