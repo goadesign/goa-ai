@@ -372,7 +372,14 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 			return original, err
 		}
 
-		resp, err := client.Complete(ctx, req)
+		summaryClient := client
+		if resolve, ok := ctx.Value(imageSourceReaderKey{}).(model.ImageSourceResolver); ok {
+			summaryClient, err = model.WithImageSourceResolver(client, resolve)
+			if err != nil {
+				return original, err
+			}
+		}
+		resp, err := summaryClient.Complete(ctx, req)
 		if err != nil {
 			return original, err
 		}
@@ -429,6 +436,9 @@ func fitHistorySummary(ctx context.Context, cfg HistoryCompressionConfig, counte
 		}
 		count, err := countMessages(ctx, cfg, counter, request, messages)
 		if err != nil {
+			if errors.Is(err, model.ErrImageSourceCapacity) && keepStart < len(turns)-1 {
+				continue
+			}
 			return HistoryResult{}, false, err
 		}
 		if count.InputTokens <= cfg.CompressAtMaxInputTokens {
@@ -490,6 +500,9 @@ func shouldCompress(
 	}
 	count, err := countMessages(ctx, cfg, counter, request, request.Messages)
 	if err != nil {
+		if errors.Is(err, model.ErrImageSourceCapacity) {
+			return true, nil
+		}
 		return false, err
 	}
 	return count.InputTokens > cfg.CompressAtMaxInputTokens, nil
@@ -547,6 +560,9 @@ func exactTailStart(
 		if cfg.KeepMaxInputTokens > 0 || cfg.CompressAtMaxInputTokens > 0 {
 			count, err := countMessages(ctx, cfg, counter, request, requestShape(system, turns, i))
 			if err != nil {
+				if errors.Is(err, model.ErrImageSourceCapacity) {
+					break
+				}
 				return 0, err
 			}
 			if cfg.KeepMaxInputTokens > 0 &&

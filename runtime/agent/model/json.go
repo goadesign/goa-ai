@@ -147,6 +147,14 @@ func encodeMessagePart(p Part) (any, error) {
 			Kind:      "image",
 			ImagePart: v,
 		}, nil
+	case ImageSourcePart:
+		if err := validateImageSource(v); err != nil {
+			return nil, err
+		}
+		return struct {
+			Kind string `json:"kind"`
+			ImageSourcePart
+		}{Kind: "image_source", ImageSourcePart: v}, nil
 	case DocumentPart:
 		if err := validateDocumentPart(v); err != nil {
 			return nil, err
@@ -219,6 +227,18 @@ func decodeMessagePart(raw json.RawMessage) (Part, error) {
 		return nil, errors.New("message part requires kind")
 	}
 	switch kind {
+	case "image_source":
+		var encoded struct {
+			Kind string `json:"kind"`
+			ImageSourcePart
+		}
+		if err := decodeCanonicalPartJSON(raw, &encoded, "kind", "source_kind", "data"); err != nil {
+			return nil, fmt.Errorf("decode ImageSourcePart: %w", err)
+		}
+		if err := validateImageSource(encoded.ImageSourcePart); err != nil {
+			return nil, err
+		}
+		return encoded.ImageSourcePart, nil
 	case "thinking":
 		var encoded struct {
 			Kind string `json:"kind"`

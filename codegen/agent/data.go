@@ -481,6 +481,8 @@ type (
 		Kind string
 		// Audience declares who this payload is intended for ("timeline", "internal", "evidence").
 		Audience string
+		// NativeImage marks an explicitly declared native image source.
+		NativeImage bool
 		// Schema is the typed schema for the server-data payload.
 		Schema *goaexpr.AttributeExpr
 		// Description describes the observer-facing rendering contract.

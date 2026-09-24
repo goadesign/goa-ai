@@ -27,6 +27,38 @@ func Specs() []tools.ToolSpec {
     }
 }
 
+{{- if .NativeImageTools }}
+// NativeImageSources returns fresh source-only contracts for explicit host
+// admission. It registers no executable tools. Keep these generated codecs
+// available while retained messages use their kinds, even after hiding tools.
+func NativeImageSources() map[tools.Ident][]tools.ServerDataSpec {
+    return map[tools.Ident][]tools.ServerDataSpec{
+    {{- range .NativeImageTools }}
+        {{ .ConstName }}: {
+        {{- range .ServerData }}
+            {{- if .NativeImage }}
+            {
+                Kind: {{ printf "%q" .Kind }},
+                Audience: tools.ServerDataAudience({{ printf "%q" .Audience }}),
+                NativeImage: true,
+                Description: {{ printf "%q" .Description }},
+                Type: tools.TypeSpec{
+                    Name: {{ printf "%q" .Type.TypeName }},
+                    Schema: tools.RawJSON({{ printf "%q" .Type.SchemaJSON }}),
+                    SchemaWithoutRootExample: tools.RawJSON({{ printf "%q" .Type.SchemaWithoutRootExampleJSON }}),
+                    ExampleJSON: {{ if .Type.ExampleJSON }}tools.RawJSON({{ printf "%q" .Type.ExampleJSON }}){{ else }}nil{{ end }},
+                    Fields: {{ if .Type.Fields }}tools.CloneFieldMetadata({{ .Type.FieldsVar }}){{ else }}nil{{ end }},
+                    Codec: {{ .Type.GenericCodec }},
+                },
+            },
+            {{- end }}
+        {{- end }}
+        },
+    {{- end }}
+    }
+}
+{{- end }}
+
 // RegistrationToken returns the exact registry admission token for toolset
 // and admissionRevision.
 func RegistrationToken(toolset, admissionRevision string) (string, error) {
@@ -96,6 +128,9 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
             {
                 Kind: {{ printf "%q" .Kind }},
                 Audience: tools.ServerDataAudience({{ printf "%q" .Audience }}),
+                {{- if .NativeImage }}
+                NativeImage: true,
+                {{- end }}
                 Description: {{ printf "%q" .Description }},
                 Type: tools.TypeSpec{
                     Name: {{ if .Type }}{{ printf "%q" .Type.TypeName }}{{ else }}""{{ end }},

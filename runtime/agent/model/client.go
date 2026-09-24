@@ -18,10 +18,11 @@ type (
 	// validatedClient applies the canonical request and output contract around
 	// one raw provider.
 	validatedClient struct {
-		provider     Provider
-		counter      TokenCounter
-		observers    []ProviderCallObserver
-		preparations []func(context.Context, *Request) (context.Context, *Request, error)
+		provider      Provider
+		counter       TokenCounter
+		observers     []ProviderCallObserver
+		preparations  []func(context.Context, *Request) (context.Context, *Request, error)
+		imageResolver ImageSourceResolver
 	}
 
 	// clientCore identifies package-owned Client implementations and gives
@@ -31,6 +32,7 @@ type (
 		rawProvider() Provider
 		callObservers() []ProviderCallObserver
 		requestPreparations() []func(context.Context, *Request) (context.Context, *Request, error)
+		imageSourceResolver() ImageSourceResolver
 	}
 
 	// ProviderCallObserver lets provider-side middleware prepare call-scoped
@@ -131,7 +133,12 @@ func WrapClient(client Client, wrap func(Provider) Provider) (Client, error) {
 		observers = append(observers, observer)
 	}
 	counter, _ := provider.(TokenCounter)
-	return newValidatedClient(provider, counter, observers, slices.Clone(core.requestPreparations())...)
+	client, err = newValidatedClient(provider, counter, observers, slices.Clone(core.requestPreparations())...)
+	if err != nil {
+		return nil, err
+	}
+	client.(*validatedClient).imageResolver = core.imageSourceResolver()
+	return client, nil
 }
 
 // WithRequestPreparation returns a client that prepares each Complete or Stream
@@ -152,7 +159,12 @@ func WithRequestPreparation(client Client, prepare func(context.Context, *Reques
 	}
 	preparations := append(slices.Clone(core.requestPreparations()), prepare)
 	counter, _ := core.rawProvider().(TokenCounter)
-	return newValidatedClient(core.rawProvider(), counter, slices.Clone(core.callObservers()), preparations...)
+	client, err = newValidatedClient(core.rawProvider(), counter, slices.Clone(core.callObservers()), preparations...)
+	if err != nil {
+		return nil, err
+	}
+	client.(*validatedClient).imageResolver = core.imageSourceResolver()
+	return client, nil
 }
 
 // ValidateClient rejects nil, typed-nil, or forged Client implementations.
@@ -285,6 +297,9 @@ func (c *validatedClient) CountTokens(ctx context.Context, req *Request) (TokenC
 	if isNilInterface(c.counter) {
 		return TokenCount{}, ErrTokenCountingUnsupported
 	}
+	if err := resolveImageSources(ctx, request, c.imageResolver); err != nil {
+		return TokenCount{}, err
+	}
 	request = preparedRequest(request, contract)
 	count, err := c.counter.CountTokens(ctx, request)
 	if err != nil {
@@ -324,6 +339,10 @@ func (c *validatedClient) requestPreparations() []func(context.Context, *Request
 	return c.preparations
 }
 
+func (c *validatedClient) imageSourceResolver() ImageSourceResolver {
+	return c.imageResolver
+}
+
 // prepareInferenceRequest validates before and after each transformation so a
 // history policy cannot hide malformed input by removing it. Copies isolate both
 // the caller's input and any request retained by a preparation callback from
@@ -360,6 +379,11 @@ func (c *validatedClient) prepareInferenceRequest(ctx context.Context, req *Requ
 			return ctx, nil, nil, err
 		}
 	}
+	if err := resolveImageSources(ctx, request, c.imageResolver); err != nil {
+		return ctx, nil, nil, err
+	}
+	// Expansion changes only validated image parts. It cannot change the tool,
+	// structured-output or stream constraints already owned by this contract.
 	return ctx, request, contract, nil
 }
 

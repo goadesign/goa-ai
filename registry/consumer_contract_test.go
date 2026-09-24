@@ -4,6 +4,7 @@ package registry
 // when both versions accept exactly the same model arguments.
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,6 +12,39 @@ import (
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 )
+
+func TestNativeImageMarkerPreservesUnmarkedContractEncoding(t *testing.T) {
+	source := &genregistry.ToolServerData{
+		Kind: "fixture.image.v1", Audience: "evidence",
+		Schema: []byte(`{"type":"object"}`), Type: &genregistry.ToolTypeMetadata{},
+	}
+	// This is the previously persisted shape, before native image support.
+	legacy := struct {
+		Kind        string
+		Audience    string
+		Description *string
+		Schema      []byte
+		Type        *genregistry.ToolTypeMetadata
+	}{source.Kind, source.Audience, source.Description, source.Schema, source.Type}
+	want, err := json.Marshal(legacy)
+	require.NoError(t, err)
+	got, err := json.Marshal(source)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+	toolset := testCatalogToolset("images", "Images", nil)
+	toolset.Tools = validRegisterPayloadForSchemaAdmission("images").Tools
+	toolset.Tools[0].ConsumerContract = &genregistry.ConsumerContract{ServerData: []*genregistry.ToolServerData{source}}
+	unmarked, err := toolcontract.Fingerprint(toolset)
+	require.NoError(t, err)
+	source.NativeImage = true
+	marked, err := toolcontract.Fingerprint(toolset)
+	require.NoError(t, err)
+	assert.NotEqual(t, unmarked, marked)
+	source.NativeImage = false
+	restored, err := toolcontract.Fingerprint(toolset)
+	require.NoError(t, err)
+	assert.Equal(t, unmarked, restored)
+}
 
 func TestSchemaFingerprintBindsConsumerContract(t *testing.T) {
 	toolset := testCatalogToolset("records", "Records", nil)

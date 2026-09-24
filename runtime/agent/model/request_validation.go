@@ -86,6 +86,9 @@ func NewRequestContract(request *Request) (*RequestContract, error) {
 	if err := preflightRequest(request); err != nil {
 		return nil, err
 	}
+	if err := rejectImageSources(request); err != nil {
+		return nil, err
+	}
 	return newRequestContract(request)
 }
 
@@ -551,6 +554,11 @@ func validateRequestMessage(message *Message) error {
 	}
 	if len(message.Parts) == 0 {
 		return errors.New("message has no parts")
+	}
+	for _, part := range message.Parts {
+		if _, source := part.(ImageSourcePart); source && message.Role != ConversationRoleUser {
+			return errors.New("image source requires user role")
+		}
 	}
 	if _, err := message.MarshalJSON(); err != nil {
 		return fmt.Errorf("message is not canonical: %w", err)

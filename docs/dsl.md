@@ -294,6 +294,17 @@ in the final tool payload type.
 See `[docs/tool_payload_defaults.md](tool_payload_defaults.md)` for the complete contract and the
 generator invariants.
 
+### Native image evidence
+
+Inside `ServerData`, `NativeImage()` requires `AudienceEvidence()`. It marks the
+generated typed data as a retained image descriptor, without exposing that data
+in semantic result JSON. Generation emits `NativeImageSources()` for explicit
+host producer/kind admission and preserves the marker in registry contracts.
+The host verifies current access and immutable content on each actual read.
+See [retained native images](native_images.md) before enabling the marker:
+canonical-message consumers and historical kind decoders must be ready before
+new source parts are saved.
+
 ### Bounded results (returned / total / truncated / refinement_hint)
 
 `BoundedResult` exists so tools can return a bounded view (caps, window clamping,

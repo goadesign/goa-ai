@@ -752,6 +752,9 @@ type ToolServerData struct {
 	Schema []byte
 	// Generated examples and field details for the item data.
 	Type *ToolTypeMetadata
+	// Whether this evidence kind declares a typed image source requiring an
+	// explicitly admitted host reader.
+	NativeImage bool `json:"NativeImage,omitempty"`
 }
 
 // Precomputed schema variants, examples, and field details for one tool value.

@@ -63,10 +63,15 @@ func agentFiles(agent *AgentData, aggregates *aggregateSpecsPackagesPlan) ([]*co
 //	        "name": "ResultType",
 //	        "schema": { /* JSON Schema */ }
 //	      },
-//	      "server_data": {
-//	        "name": "ServerDataType",
-//	        "schema": { /* JSON Schema */ }
-//	      }
+//	      "server_data": [{
+//	        "kind": "images.retained.v1",
+//	        "audience": "evidence",
+//	        "native_image": true,
+//	        "type": {
+//	          "name": "ServerDataType",
+//	          "schema": { /* JSON Schema */ }
+//	        }
+//	      }]
 //	    }
 //	  ]
 //	}
@@ -88,6 +93,7 @@ func agentSpecsJSONFile(agent *AgentData) (*codegen.File, error) {
 	type serverDataSchema struct {
 		Kind        string     `json:"kind"`
 		Audience    string     `json:"audience"`
+		NativeImage bool       `json:"native_image,omitempty"`
 		Description string     `json:"description,omitempty"`
 		Type        typeSchema `json:"type"`
 	}
@@ -201,6 +207,7 @@ func agentSpecsJSONFile(agent *AgentData) (*codegen.File, error) {
 					schemas = append(schemas, serverDataSchema{
 						Kind:        sd.Kind,
 						Audience:    sd.Audience,
+						NativeImage: sd.NativeImage,
 						Description: sd.Description,
 						Type:        ts,
 					})

@@ -13,12 +13,14 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/reminder"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // agentContextOptions configures construction of a planner.PlannerContext.
 type agentContextOptions struct {
+	runContext          run.Context
 	runtime             *Runtime
 	agentID             agent.Ident
 	runID               string
@@ -41,6 +43,7 @@ type agentContextOptions struct {
 
 // simplePlannerContext is a minimal implementation of planner.PlannerContext.
 type simplePlannerContext struct {
+	runContext          run.Context
 	rt                  *Runtime
 	agent               agent.Ident
 	runID               string
@@ -67,6 +70,7 @@ func newAgentContext(opts agentContextOptions) planner.PlannerContext {
 		advertisedSpecs = cloneToolSpecs(opts.advertisedSpecs)
 	}
 	return &simplePlannerContext{
+		runContext:          opts.runContext,
 		rt:                  opts.runtime,
 		agent:               opts.agentID,
 		runID:               opts.runID,
@@ -179,6 +183,7 @@ func (c *simplePlannerContext) configuredModelClient(id string, designated bool)
 	// Cache defaults and history selection must use the same complete request
 	// that the destination provider receives. Client retrieval does no counting
 	// or summarization; preparation runs only on Complete or Stream.
+	m = c.rt.imageSourceClient(m, c.runContext)
 	cli := newRequestConfiguredClient(m, c.cache, c.history, c.agent, c.historyMessages, c.historyContext)
 	// Check and save each provider response before tracing or planner code can
 	// read it. This also keeps concurrent model calls separate.

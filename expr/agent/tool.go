@@ -125,6 +125,10 @@ type (
 		// defaults to "timeline".
 		Audience string
 
+		// NativeImage marks evidence whose typed data locates an image. Hosts
+		// explicitly admit its producer and reader before requests can use it.
+		NativeImage bool
+
 		// Description is the observer-facing description of this server-data payload.
 		// It is typically used by UIs and sinks to explain rendering behavior.
 		Description string
@@ -576,6 +580,9 @@ func validateServerDataShapes(t *ToolExpr, verr *eval.ValidationErrors, check fu
 			continue
 		}
 		seen[sd.Kind] = struct{}{}
+		if sd.NativeImage && sd.Audience != "evidence" {
+			verr.Add(t, "ServerData(%q) NativeImage requires AudienceEvidence", sd.Kind)
+		}
 		check("ServerData", sd.Schema)
 		if sd.Schema == nil || sd.Schema.Type == nil || sd.Schema.Type == goaexpr.Empty {
 			verr.Add(t, "ServerData(%q) must declare a schema type", sd.Kind)

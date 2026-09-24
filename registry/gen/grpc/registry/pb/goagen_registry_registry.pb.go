@@ -1018,7 +1018,10 @@ type ToolServerData struct {
 	// Canonical JSON schema for the item data.
 	Schema []byte `protobuf:"bytes,4,opt,name=schema,proto3,oneof" json:"schema,omitempty"`
 	// Generated examples and field details for the item data.
-	Type          *ToolTypeMetadata `protobuf:"bytes,5,opt,name=type,proto3" json:"type,omitempty"`
+	Type *ToolTypeMetadata `protobuf:"bytes,5,opt,name=type,proto3" json:"type,omitempty"`
+	// Whether this evidence kind declares a typed image source requiring an
+	// explicitly admitted host reader.
+	NativeImage   *bool `protobuf:"varint,6,opt,name=native_image,json=nativeImage,proto3,oneof" json:"native_image,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1086,6 +1089,13 @@ func (x *ToolServerData) GetType() *ToolTypeMetadata {
 		return x.Type
 	}
 	return nil
+}
+
+func (x *ToolServerData) GetNativeImage() bool {
+	if x != nil && x.NativeImage != nil {
+		return *x.NativeImage
+	}
+	return false
 }
 
 // A native child Agent invocation. The worker is authorized at startup; the
@@ -4353,17 +4363,19 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\x16denied_result_template\x18\x03 \x01(\tH\x02R\x14deniedResultTemplate\x88\x01\x01B\b\n" +
 	"\x06_titleB\x12\n" +
 	"\x10_prompt_templateB\x19\n" +
-	"\x17_denied_result_template\"\xf6\x01\n" +
+	"\x17_denied_result_template\"\xaf\x02\n" +
 	"\x0eToolServerData\x12\x17\n" +
 	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12\x1f\n" +
 	"\baudience\x18\x02 \x01(\tH\x01R\baudience\x88\x01\x01\x12%\n" +
 	"\vdescription\x18\x03 \x01(\tH\x02R\vdescription\x88\x01\x01\x12\x1b\n" +
 	"\x06schema\x18\x04 \x01(\fH\x03R\x06schema\x88\x01\x01\x125\n" +
-	"\x04type\x18\x05 \x01(\v2!.goa_ai_registry.ToolTypeMetadataR\x04typeB\a\n" +
+	"\x04type\x18\x05 \x01(\v2!.goa_ai_registry.ToolTypeMetadataR\x04type\x12&\n" +
+	"\fnative_image\x18\x06 \x01(\bH\x04R\vnativeImage\x88\x01\x01B\a\n" +
 	"\x05_kindB\v\n" +
 	"\t_audienceB\x0e\n" +
 	"\f_descriptionB\t\n" +
-	"\a_schema\"|\n" +
+	"\a_schemaB\x0f\n" +
+	"\r_native_image\"|\n" +
 	"\x0fAgentToolTarget\x12\x1f\n" +
 	"\bexecutor\x18\x01 \x01(\tH\x00R\bexecutor\x88\x01\x01\x12)\n" +
 	"\rconfiguration\x18\x02 \x01(\tH\x01R\rconfiguration\x88\x01\x01B\v\n" +

@@ -137,6 +137,7 @@ type (
 	serverDataEntry struct {
 		Kind        string
 		Audience    string
+		NativeImage bool
 		Description string
 		Type        *typeData
 		// Transform names the function that builds this server result from the

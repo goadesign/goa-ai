@@ -153,6 +153,9 @@ type (
 		//   - "internal": tool-composition attachment; not persisted or rendered
 		//   - "evidence": provenance references; persisted separately from timeline cards
 		Audience ServerDataAudience
+		// NativeImage marks a typed image source. Its descriptor remains
+		// server-owned; an admitted reader supplies native bytes for requests.
+		NativeImage bool
 		// Description describes what an observer sees when this payload is rendered.
 		Description string
 		// Type describes the schema and JSON codec for this server-data payload.

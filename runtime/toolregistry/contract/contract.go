@@ -131,6 +131,9 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 	if len(contract.ServerData) > 0 {
 		contracts := make(serverDataContracts, len(contract.ServerData))
 		for _, item := range contract.ServerData {
+			if item.NativeImage && item.Audience != "evidence" {
+				return tools.ToolSpec{}, fmt.Errorf("tool %q native image %q requires evidence audience", declaration.Name, item.Kind)
+			}
 			if _, exists := contracts[item.Kind]; exists {
 				return tools.ToolSpec{}, fmt.Errorf("tool %q repeats server data kind %q", declaration.Name, item.Kind)
 			}
@@ -140,9 +143,10 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 			}
 			contracts[item.Kind] = serverDataContract{audience: item.Audience, codec: dataType.Codec}
 			specItem := &tools.ServerDataSpec{
-				Kind:     item.Kind,
-				Audience: tools.ServerDataAudience(item.Audience),
-				Type:     dataType,
+				Kind:        item.Kind,
+				Audience:    tools.ServerDataAudience(item.Audience),
+				NativeImage: item.NativeImage,
+				Type:        dataType,
 			}
 			if item.Description != nil {
 				specItem.Description = *item.Description

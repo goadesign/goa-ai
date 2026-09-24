@@ -424,6 +424,19 @@ func AudienceEvidence() {
 	Audience(ServerDataAudienceEvidence)
 }
 
+// NativeImage marks the current evidence ServerData as an image source.
+// The generated descriptor is saved with conversation messages. An explicitly
+// registered host reader supplies its bytes only when a model request uses it.
+// NativeImage must appear inside ServerData with AudienceEvidence.
+func NativeImage() {
+	sd, ok := eval.Current().(*agentsexpr.ServerDataExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	sd.NativeImage = true
+}
+
 // Tags attaches metadata labels for categorization and filtering. Tags on
 // tools and toolsets let agents, planners, and monitoring systems organize and
 // discover tools. Tags on evaluation scenarios drive explicit runner selection.

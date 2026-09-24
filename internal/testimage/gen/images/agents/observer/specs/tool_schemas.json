@@ -1,0 +1,93 @@
+{
+  "tools": [
+    {
+      "id": "pictures.view",
+      "service": "images",
+      "toolset": "images.pictures",
+      "title": "View",
+      "description": "Inspect one selected retained image.",
+      "payload": {
+        "name": "ViewPayload",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "description": "Exact image selected for inspection.",
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      },
+      "result": {
+        "name": "ViewResult",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "description": "Exact selected image identity.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id"
+          ],
+          "type": "object"
+        }
+      },
+      "server_data": [
+        {
+          "kind": "fixture.image.v1",
+          "audience": "evidence",
+          "native_image": true,
+          "description": "Immutable image identity supplied by the fixture's retained owner.",
+          "type": {
+            "name": "ViewFixtureImageV1ServerData",
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "additionalProperties": false,
+              "properties": {
+                "format": {
+                  "description": "Accepted image encoding.",
+                  "enum": [
+                    "png"
+                  ],
+                  "type": "string"
+                },
+                "id": {
+                  "description": "Exact retained image identity.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "sha256": {
+                  "description": "SHA-256 of the accepted bytes.",
+                  "pattern": "^[a-f0-9]{64}$",
+                  "type": "string"
+                },
+                "size": {
+                  "description": "Accepted image byte length.",
+                  "format": "int64",
+                  "minimum": 1,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "id",
+                "format",
+                "size",
+                "sha256"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

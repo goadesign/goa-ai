@@ -78,6 +78,9 @@ func ({{ if or (eq .Kind "schema") (and (eq .Kind "metadata") .Value.Fields) }}d
         {
             Kind: {{ printf "%q" .Kind }},
             Audience: {{ printf "%q" .Audience }},
+            {{- if .NativeImage }}
+            NativeImage: true,
+            {{- end }}
             {{- if .Description }}
             Description: {{ pointer .Description }},
             {{- end }}

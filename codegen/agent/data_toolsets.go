@@ -485,9 +485,10 @@ func serverDataData(exprs []*agentsExpr.ServerDataExpr) []*ServerDataData {
 	out := make([]*ServerDataData, 0, len(exprs))
 	for _, sd := range exprs {
 		item := &ServerDataData{
-			Kind:     sd.Kind,
-			Audience: sd.Audience,
-			Schema:   sd.Schema,
+			Kind:        sd.Kind,
+			Audience:    sd.Audience,
+			NativeImage: sd.NativeImage,
+			Schema:      sd.Schema,
 		}
 		item.Description = strings.TrimSpace(sd.Description)
 		if item.Description == "" {

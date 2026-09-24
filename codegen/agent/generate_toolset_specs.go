@@ -148,6 +148,15 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "codecs.go"), SectionTemplates: codecsSections})
 			// specs.go
+			var nativeImageTools []*toolEntry
+			for _, tool := range specsData.tools {
+				for _, source := range tool.ServerData {
+					if source.NativeImage {
+						nativeImageTools = append(nativeImageTools, tool)
+						break
+					}
+				}
+			}
 			specImports := packagePlan.fileImports.publicSpecs.Imports()
 			specSections := []*codegen.SectionTemplate{
 				codegen.Header(ts.Name+" tool specs", ts.SpecsPackageName, specImports),
@@ -158,6 +167,7 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 						PackageName:        ts.SpecsPackageName,
 						SchemaFingerprints: generatedToolsetSchemaFingerprints(packagePlan.registrationRoutes, specsData.tools),
 						Tools:              specsData.tools,
+						NativeImageTools:   nativeImageTools,
 						Types:              specsData.typesList(),
 						RequiredLabels:     ts.RequiredLabels,
 					},

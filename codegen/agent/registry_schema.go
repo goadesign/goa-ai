@@ -88,6 +88,7 @@ func prepareRegistrySchema(tool *ToolData, entry *toolEntry) error {
 		contract.ServerData = append(contract.ServerData, &genregistry.ToolServerData{
 			Kind:        item.Kind,
 			Audience:    item.Audience,
+			NativeImage: item.NativeImage,
 			Description: registryOptionalString(item.Description),
 			Schema:      item.Type.SchemaJSON,
 			Type:        registryTypeMetadata(item.Type),

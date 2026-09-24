@@ -1577,6 +1577,9 @@ func (r *Runtime) plannerContext(
 	if err != nil {
 		return nil, nil, err
 	}
+	if err := r.validateHistoricalImageSources(historyMessages); err != nil {
+		return nil, nil, err
+	}
 	if err := validateHistoryContext(historyMessages, input.HistoryContext); err != nil {
 		return nil, nil, err
 	}
@@ -1585,6 +1588,7 @@ func (r *Runtime) plannerContext(
 		return nil, nil, err
 	}
 	agentCtx := newAgentContext(agentContextOptions{
+		runContext:          input.RunContext,
 		runtime:             r,
 		agentID:             input.AgentID,
 		runID:               input.RunID,
