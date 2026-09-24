@@ -651,8 +651,23 @@ their methods can run or allocate unchecked output.
 
 Callers using a custom-encoded key type must supply plain string keys or a
 named string type without an encoder before writing a new workflow payload.
-Existing persisted JSON reads and stored-data formats are unchanged; this
-input restriction requires no stored-data migration.
+These map-key write restrictions do not change persisted JSON reads or
+stored-data formats and require no stored-data migration.
+
+`hooks.DecodeFromRecordInput` and `hooks.DecodeRunlogEvent` use strict payload
+decoding for `RunStarted`, `RunSuspended`, `RunCompleted`, `ChildRunLinked`,
+`ModelOutputRejected`, and `PlannerOutputRejected`. Their raw JSON must be valid
+UTF-8: malformed byte sequences return an error before JSON decoding can replace
+them with U+FFFD. Each payload must still be one non-null object with no unknown
+fields or trailing values. Valid non-ASCII text, Unicode and control escapes,
+and literal or escaped U+FFFD retain their existing decoding behavior.
+
+Lifecycle validators use this decoder before the store appends records or
+changes run state. Previously saved records containing invalid raw UTF-8 now
+fail decoding too; the runtime does not normalize, truncate, or rewrite them.
+Valid record formats and schema versions are unchanged, and no regeneration or
+stored-data migration is required for valid records. This check adds no byte
+cap and does not broaden validation of other hook kinds.
 
 ---
 

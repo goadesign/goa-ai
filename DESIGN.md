@@ -835,6 +835,14 @@ run metadata and store their matching record in one transaction. The hook bus
 receives successfully stored records afterward and does not write lifecycle
 state.
 
+The hooks codec owns strict JSON decoding for lifecycle and rejection records.
+It rejects invalid raw UTF-8 before the JSON decoder can replace bytes with
+different text. Lifecycle validators use this same decoder before the store
+changes run state or appends its matching record. Valid text and record shapes
+are unchanged; malformed stored records return errors rather than being
+rewritten. See the [JSON boundary contract](docs/runtime.md#json-boundary-contract)
+for the exact record kinds and compatibility behavior.
+
 Prompt rendering has no storage side effect. When its context contains a
 `prompt.RenderRecorder`, every successful render records the same resolved
 prompt ID, version, and scope value. A caller that renders text before starting
