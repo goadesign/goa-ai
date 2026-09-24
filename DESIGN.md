@@ -964,16 +964,19 @@ writers must not overlap. How the host reaches that state depends on its
 database and deployment environment.
 
 Continuation preparation accepts only the current suspension schema,
-`goa-ai.run-suspension.v8`. Every accepted recovery plan that waits for input
-retains its actual advertised catalog, including authorized alternatives to a
-failed tool. Earlier versions are rejected; their omitted correction catalogs
+`goa-ai.run-suspension.v9`, which references an exact saved history position.
+Every accepted recovery plan that waits for input retains its actual advertised
+catalog, including authorized alternatives to a
+failed tool, preserving the catalog contract introduced in version eight.
+Earlier versions are rejected; catalogs omitted by versions before eight
 are not reconstructed from today's registrations. Hosts must finish old-format
 saved work before upgrading, or separately decide how to preserve it. No saved
 work is automatically deleted, canceled, or rewritten. Every model-authored
 await item preserves the runtime `ToolCallID` separately from the provider
 `ModelToolCallID`, so execution records and provider transcript reconstruction
 never substitute one identity for the other. Any other checkpoint shape fails
-validation.
+validation. See [Runtime Store](docs/runtime.md#runtime-store-storagestore) for
+the current preparation and checkpoint upgrade requirements.
 
 Coordinated generated-code deployment does not own ordinary service
 availability. Services called by activities must keep a ready endpoint
@@ -1666,7 +1669,7 @@ for details and the SDK source-compatibility change.
   error instead of fabricating success after the required side effect did not
   occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
   because they assign different outcomes to the same exhausted limits.
-  Completion-aware suspensions use `goa-ai.run-suspension.v8`. The saved policy
+  Completion-aware suspensions use `goa-ai.run-suspension.v9`. The saved policy
   is required, and a checkpoint with another version fails at that typed
   boundary.
 - **Provider reasoning stream contract**: when a caller enables thinking

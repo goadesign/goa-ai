@@ -1442,9 +1442,12 @@ directly:
   `codegen.CapsData.MaxRecoveryTurns`.
 
 These names and their serialized field names are intentionally breaking.
-Suspensions written by this runtime use `goa-ai.run-suspension.v8`. Earlier
-versions cannot resume. Version eight stores the advertised catalog for every
-accepted recovery plan that waits for input. Failed tool names cannot derive
+Suspensions written by this runtime use `goa-ai.run-suspension.v9`. Earlier
+versions cannot resume on this runtime. Version nine references an exact saved
+history position; see [Runtime Store](#runtime-store-storagestore) for preparation
+and checkpoint upgrade requirements. It retains the recovery contract introduced
+in version eight: the advertised catalog is stored for every accepted recovery
+plan that waits for input. Failed tool names cannot derive
 the other authorized choices shown during that turn. It
 also requires complete successful tool results: a result-bearing tool stores
 JSON accepted by its generated codec, while a successful tool without a result
@@ -3660,7 +3663,7 @@ For runtime storage and workflow adapters:
 - Stop setting `policy.CapsState.ExpiresAt`. The workflow owns its budget and
   hard deadlines directly.
 - Treat saved suspensions from versions before
-  `goa-ai.run-suspension.v8` as incompatible. They cannot be resumed by this
+  `goa-ai.run-suspension.v9` as incompatible. They cannot be resumed by this
   runtime.
 
 Install the Goa revision required by this module before regenerating:
@@ -3681,8 +3684,10 @@ For a release that changes generated or persisted runtime shapes:
 5. Verify every deployed component reports the same revision before accepting
    new work.
 
-Completed run history keeps the same meaning. Saved suspensions must use the
-current `goa-ai.run-suspension.v8` contract. A host may still need to convert
+Completed run history keeps the same meaning. Suspensions restored for
+continuation must use the current `goa-ai.run-suspension.v9` contract. Historical
+reporting does not restore private checkpoint state; see
+[Runtime Store](#runtime-store-storagestore). A host may still need to convert
 its physical records or collections so the new store can read them. That
 conversion must preserve every recorded outcome and event.
 
@@ -3696,8 +3701,9 @@ workflow still requires attachment by exact ID. Deploy every workflow starter
 together before admission resumes. A queryable execution without the reserved
 recipe memo is a conflict; the runtime never infers its original start request.
 
-`goa-ai.run-suspension.v8` is the only accepted suspension schema. Version seven
-and earlier are rejected without an omission fallback. Before coordinated
+`goa-ai.run-suspension.v9` is the only accepted suspension schema for
+continuation restoration. Version eight and earlier are rejected without an
+omission fallback. Before coordinated
 worker upgrade, finish old-format saved work under its owning runtime; if any
 must remain unfinished, obtain a separate host-owned preservation decision.
 This change supplies no migration command and never deletes, cancels, or

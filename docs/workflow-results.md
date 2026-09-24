@@ -49,12 +49,12 @@ Callers that previously inspected `RunOutput.ToolEvents` must change source:
   records; use the recorded predecessor relationships when inspecting a chain.
 
 No new history store, history API, automatic full-history read, or model-visible
-field is introduced by the result encoding. Suspension checkpoints use the
-current `goa-ai.run-suspension.v8` contract and retain their existing tool history.
-The separate recovery-catalog change requires the version upgrade described in
-[runtime.md](runtime.md#coordinated-generated-system-releases).
-The result encoding does not solve a potential
-cumulative suspension-checkpoint size problem.
+field is introduced by the result encoding. This change did not change the
+suspension schema. Current continuation restoration requires
+`goa-ai.run-suspension.v9`, which references saved history while retaining active tool and recovery state. The separate
+preparation and checkpoint upgrade requirements are described in
+[Runtime Store](runtime.md#runtime-store-storagestore).
+The result encoding itself does not change suspension-checkpoint size limits.
 
 ## Strict saved formats
 
