@@ -207,7 +207,7 @@ func TestClientCompleteUsesExplicitToolLoopTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "reports.summarize",
 			Description: "Run an analysis.",
-			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -252,7 +252,7 @@ func TestClientCompleteRejectsUnrepresentableExplicitTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "reports.summarize",
 			Description: "Run an analysis.",
-			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`)),
 		}},
 	})
 	require.Error(t, err)
@@ -321,7 +321,7 @@ func TestClientCompleteLowersRunlogReplayedTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "reports.summarize",
 			Description: "Run an analysis.",
-			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -403,7 +403,7 @@ func TestClientCompleteEncodesToolLoopTranscript(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "reports.summarize",
 			Description: "Run an analysis.",
-			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`)),
 		}},
 	}
 	resp, err := client.Complete(context.Background(), modelRequest)
@@ -469,7 +469,7 @@ func TestClientCompleteProjectsHistoryOnlyToolName(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        tools.ToolUnavailable.String(),
 			Description: "Report that a previously used tool is unavailable.",
-			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object","additionalProperties":false}`)),
 		}},
 	}
 	_, err = client.Complete(context.Background(), modelRequest)
@@ -687,7 +687,7 @@ func TestClientCompleteEncodesToolResultErrorsExplicitly(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "reports.summarize",
 			Description: "Run an analysis.",
-			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`)),
 		}},
 	})
 	require.NoError(t, err)
@@ -722,7 +722,7 @@ func TestClientCompleteRejectsAssistantTextAfterToolUse(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "reports.summarize",
 			Description: "Run an analysis.",
-			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`)),
 		}},
 	})
 	require.Error(t, err)
@@ -749,7 +749,7 @@ func TestClientCompleteRoutesModelsAndToolChoice(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "reports.summarize",
 			Description: "Run an analysis.",
-			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`)),
 		}},
 		ToolChoice: &model.ToolChoice{Mode: model.ToolChoiceModeAny},
 	})
@@ -802,6 +802,7 @@ func TestClientCompleteProjectsStrictToolSchemasAndPreservesArguments(t *testing
 					"style": {"type": "string"}
 				},
 				"example": {"question": "What is the capital of Japan?"},
+				"additionalProperties": false,
 				"required": ["question"]
 			}`)),
 		}},
@@ -1094,11 +1095,11 @@ func TestClientCompleteRejectsStructuredOutputWithTools(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "reports.summarize",
 			Description: "Run an analysis.",
-			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`)),
 		}},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
-			Schema: tools.RawJSON(`{"type":"object"}`),
+			Schema: tools.RawJSON(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}`),
 		},
 	}
 	require.NoError(t, model.SetCompletionValidator(
@@ -1168,7 +1169,7 @@ func TestClientCompleteRejectsStructuredOutputWithoutNameBeforeProviderCall(t *t
 			Parts: []model.Part{model.TextPart{Text: "Ping"}},
 		}},
 		StructuredOutput: &model.StructuredOutput{
-			Schema: tools.RawJSON(`{"type":"object"}`),
+			Schema: tools.RawJSON(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}`),
 		},
 	}
 
@@ -1355,7 +1356,7 @@ func TestOpenAIStreamerEmitsTextToolCallsUsageAndStop(t *testing.T) {
 		Tools: []*model.ToolDefinition{{
 			Name:        "reports.summarize",
 			Description: "Run an analysis.",
-			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"query":{"type":"string"}},"required":["query"],"additionalProperties":false}`)),
 		}},
 	}
 	streamer, err := client.Stream(context.Background(), modelRequest)
@@ -1402,6 +1403,7 @@ func TestOpenAIChunkProcessorDefersDeltasThatNeedCanonicalization(t *testing.T) 
 				"question":{"type":"string"},
 				"style":{"type":"string"}
 			},
+			"additionalProperties":false,
 			"required":["question"]
 		}`)),
 	}}, "gpt-5.6", false)
@@ -1613,7 +1615,7 @@ func TestOpenAIStreamerStructuredOutput(t *testing.T) {
 		}},
 		StructuredOutput: &model.StructuredOutput{
 			Name:   "draft_from_transcript",
-			Schema: tools.RawJSON(`{"type":"object"}`),
+			Schema: tools.RawJSON(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}`),
 		},
 	}
 	require.NoError(t, model.SetCompletionValidator(
@@ -1678,7 +1680,7 @@ func TestOpenAIStreamerRejectsSchemaInvalidStructuredOutput(t *testing.T) {
 		StructuredOutput: &model.StructuredOutput{
 			Name: "answer",
 			Schema: tools.RawJSON(
-				`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"]}`,
+				`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}`,
 			),
 		},
 	})
@@ -1812,7 +1814,7 @@ func openAIToolRequest() *model.Request {
 		Tools: []*model.ToolDefinition{{
 			Name:        "lookup",
 			Description: "Look up a value.",
-			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object"}`)),
+			Input:       mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}`)),
 		}},
 	}
 }

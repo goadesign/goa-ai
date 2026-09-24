@@ -675,9 +675,86 @@ uses the same tool-schema compiler; Bedrock transport restrictions are described
 | Streaming usage and stop chunks | Supported |
 | Model-class routing (`default`, `high-reasoning`, `small`) | Supported |
 | Structured output (`completion_delta` + final `completion`) | Supported via OpenAI `json_schema` response format, but not in combination with tools |
-| Strict schemas | Tool and structured-output schemas are always sent with `strict:true`; the adapter projects canonical schemas onto the strict subset (closed objects, all members required, optionals nullable) and canonicalizes returned payloads by dropping the null members the projection introduced. Root unions, unsupported composition and validation keywords, open objects or schema-valued `additionalProperties`, more than 5,000 properties, more than 1,000 enum values, more than 120,000 characters across property names, definition names, enum strings, and string constants, or nesting beyond 10 levels are rejected before the provider call. An enum with more than 250 string values may contain at most 15,000 characters. Fine-tuned model IDs beginning with `ft:` additionally reject unsupported string, numeric, array, and `patternProperties` constraints |
+| Strict schemas | Tool and structured-output schemas are sent with `strict:true`; supported optional non-nullable members become required and nullable on the wire, and the adapter removes those null members before original-schema validation. Unsupported presence and object-membership contracts listed below fail before transport. Root unions, unsupported composition and validation keywords, schema-valued `additionalProperties`, more than 5,000 properties, more than 1,000 enum values, more than 120,000 characters across property names, definition names, enum strings, and string constants, or nesting beyond 10 levels are also rejected before the provider call. An enum with more than 250 string values may contain at most 15,000 characters. Fine-tuned model IDs beginning with `ft:` additionally reject unsupported string, numeric, array, and `patternProperties` constraints |
 | Cache options / cache checkpoints | Rejected explicitly |
 | Thinking | Enabled thinking uses `ThinkingEffort`; optional `DisabledThinkingEffort` maps explicit disabled thinking to `none`. Absent thinking leaves provider defaults unchanged. Enabled budgeted or interleaved requests and explicit enabled-thinking temperature fail fast; a configured default temperature is omitted when thinking is enabled |
+
+The strict compiler preserves two states for optional non-nullable fields:
+absence and a value. For example, an optional string accepts `{}` or
+`{"label":"ready"}` in the original contract. The strict schema requires
+`{"label":null}` or `{"label":"ready"}`; decoding restores `{}` for the first
+case. Explicit `false`, `0`, empty strings, empty arrays, and empty objects are
+values and are never treated as omission. Required nullable fields keep their
+meaningful nulls, including nullability supplied through a reference. Nullable
+array elements also remain values.
+
+Strict compilation rejects these contracts before making a provider request:
+
+- An originally optional member that also accepts null. Absence, null, and a
+  value are three distinct states; making the member required would lose
+  absence. Null acceptance is determined by the compiled original schema,
+  including references and enum constraints.
+- A concrete object without explicit `additionalProperties:false`. The
+  compiler does not infer closure from other constraints, even when a constant
+  or composition would imply it. A plain reference or branch-only union
+  wrapper relies on its complete, explicitly closed targets or branches.
+- A union combined with local `properties`, `patternProperties`,
+  `additionalProperties`, or `required`. Shared object rules must be expressed
+  in each complete branch; the compiler does not merge separate object
+  definitions.
+- Reachable reference cycles, or a reference combined with structural siblings
+  such as local properties, additional-property rules, required members, items,
+  or union branches. This restriction includes redundant structural siblings;
+  it describes the compiler's supported subset, not a claim that every such
+  composition is impossible to represent. Plain acyclic references, including
+  reuse at different optional sites, are supported.
+- A `patternProperties` value whose descendants need optional-member null
+  removal, or a pattern that forbids the null needed to omit a matching named
+  member. Patterns without either conflict remain supported by the local
+  compiler. This does not establish acceptance by any particular provider.
+- A `const` or `enum` constraint on a value whose own schema needs
+  optional-member null removal. This includes constraints beside a reference
+  and inside its target. The compiler checks the schema's structure, not each
+  fixed value: even populated object literals and fixed empty arrays are
+  rejected when their schemas contain descendants that need omission
+  conversion. These compositions are outside the supported subset; the
+  compiler does not rewrite their literals or compare equivalent constraints.
+
+Scalar constants, required meaningful nulls, and closed object or array
+literals whose member schemas require no omission conversion remain supported,
+including through references. Making the entire containing field optional is
+also supported: a complete constant object can be omitted with an outer null
+without changing any member of the constant.
+
+Optional membership follows each object's own `required` list. The pattern
+overlap restriction also applies when other constraints, such as an object
+constant, would make that locally optional member effectively required. Declare
+that requirement explicitly when it is part of the intended object contract.
+
+Closed object unions with required, disjoint string tags preserve each branch's
+own omission rules. These checks apply only to strict provider compilation,
+including structured output; they do not restrict internal runtime tools or
+change complete-schema Bedrock generation.
+
+For function tools that need optional-member removal, the adapter appends:
+“In the strict tool schema, an optional field that should be omitted is
+represented by null. Use null when the tool instructions say to omit a field.”
+The caller's description, schema, examples, and runtime correction guidance
+remain in their original form. Those examples describe decoded arguments;
+they may omit fields that strict wire arguments must supply as null. The note
+explains how to follow an instruction to omit a field. It does not change
+domain rules or repair an explicit value chosen by the model.
+
+Before upgrading a strict client, check custom tool and structured-output
+schemas against these restrictions. If null has no distinct domain meaning,
+remove it from an optional member's original allowed values. If absence, clear,
+and set are all meaningful, use explicit domain actions or a closed tagged
+union that represents them separately. Close objects only when undeclared
+members are invalid by design; otherwise redesign their representation before
+using strict generation. Put complete object definitions in reference targets
+and union branches, and remove redundant structural rules from their wrappers.
+There is no automatic fallback or public schema mode.
+Supported schemas need no generated-code or stored-data migration.
 
 This adapter boundary lets an inference backend change providers without
 changing its planners or runtime flow.

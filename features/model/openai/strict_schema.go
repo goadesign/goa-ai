@@ -21,13 +21,11 @@ import (
 // in that mode: every object must set additionalProperties:false and list all
 // of its properties as required, with optionality expressed as a null type
 // union, and unions expressed only as anyOf. The canonical generated schema
-// stays provider-neutral and remains the source of truth for local decoding;
-// this file either produces a generation-equivalent strict schema — one that
-// accepts every instance the canonical schema accepts, folding provably
-// exclusive oneOf branches into anyOf and dropping constraints strict mode
-// rejects — or rejects the contract explicitly when OpenAI cannot represent it
-// (overlapping oneOf branches, open objects, and map-style
-// additionalProperties).
+// stays provider-neutral and owns local decoding. This file represents optional
+// non-nullable members using null and restores their absence after generation.
+// It rejects schemas whose absence, null, or object membership rules cannot be
+// preserved by that conversion, including optional nullable members, open
+// objects, recursive references, and pattern-selected omission.
 //
 // The projection can make canonically optional members nullable because strict
 // mode requires every object member. The same compiled projection removes only
@@ -444,15 +442,23 @@ func projectStrictNode(node map[string]any, path string, compiler *jsonschema.Co
 	for _, keyword := range strictUnsupportedKeywords {
 		delete(node, keyword)
 	}
+	for _, union := range []string{"anyOf", "oneOf"} {
+		if _, present := node[union]; !present {
+			continue
+		}
+		for _, keyword := range []string{"properties", "patternProperties", "additionalProperties", "required"} {
+			if _, present := node[keyword]; present {
+				return fmt.Errorf("schema at %s combines %s with object keyword %q; OpenAI strict conversion does not support mixed object definitions", path, union, keyword)
+			}
+		}
+	}
 	projectStrictFormat(node)
 	if err := projectStrictUnion(node, path); err != nil {
 		return err
 	}
 	if isBranchOnlyObjectUnion(node) {
 		delete(node, "type")
-		delete(node, "additionalProperties")
-		delete(node, "required")
-	} else if includesSchemaType(node, strictSchemaTypeObject) {
+	} else if _, reference := node["$ref"]; !reference && includesSchemaType(node, strictSchemaTypeObject) {
 		if err := projectStrictObject(node, path, compiler, location); err != nil {
 			return err
 		}
@@ -519,14 +525,13 @@ func isBranchOnlyObjectUnion(node map[string]any) bool {
 	return hasUnion
 }
 
-// projectStrictObject enforces the strict closed-object contract: objects
-// declare additionalProperties:false and every property is required, with
-// canonically optional properties made nullable so the model can still omit
-// them by emitting null.
+// projectStrictObject requires concrete objects to declare their closure, then
+// makes every property required. Originally optional properties become nullable
+// so the model can represent their absence with null.
 func projectStrictObject(node map[string]any, path string, compiler *jsonschema.Compiler, location string) error {
 	switch additional := node["additionalProperties"].(type) {
 	case nil:
-		node["additionalProperties"] = false
+		return fmt.Errorf("schema at %s must explicitly declare additionalProperties:false; OpenAI strict conversion does not infer concrete object closure", path)
 	case bool:
 		if additional {
 			return fmt.Errorf("schema at %s declares an open object; OpenAI strict mode requires closed objects", path)
@@ -793,25 +798,36 @@ func buildStrictNullProjection(
 	refs map[string]*strictNullProjection,
 ) (*strictNullProjection, error) {
 	if ref, ok := node["$ref"].(string); ok {
-		if cached := refs[ref]; cached != nil {
-			return cached, nil
+		for _, keyword := range []string{"properties", "patternProperties", "additionalProperties", "items", "required", "anyOf", "oneOf", "allOf"} {
+			if _, present := node[keyword]; present {
+				return nil, fmt.Errorf("schema at %s combines $ref with structural sibling %q; OpenAI strict conversion does not support reference structural siblings", location, keyword)
+			}
+		}
+		if cached, visited := refs[ref]; visited {
+			if cached == nil {
+				return nil, fmt.Errorf("schema at %s contains a reference cycle through %q; OpenAI strict conversion requires acyclic references", location, ref)
+			}
+			return validateStrictLiteralProjection(node, cached, location)
 		}
 		target, err := resolveLocalSchemaRef(root, ref)
 		if err != nil {
 			return nil, err
 		}
-		placeholder := &strictNullProjection{}
-		refs[ref] = placeholder
+		refs[ref] = nil
 		resolved, err := buildStrictNullProjection(target, root, compiler, strictSchemaResource+ref, refs)
 		if err != nil {
 			return nil, err
 		}
-		*placeholder = *resolved
-		return placeholder, nil
+		refs[ref] = resolved
+		return validateStrictLiteralProjection(node, resolved, location)
 	}
 
 	projection := &strictNullProjection{}
 	if properties, ok := node["properties"].(map[string]any); ok {
+		canonical, err := compiler.Compile(location)
+		if err != nil {
+			return nil, fmt.Errorf("compile canonical object schema %q: %w", location, err)
+		}
 		required := schemaRequiredNames(node)
 		projection.properties = make(map[string]*strictNullProjection, len(properties))
 		for name, rawProperty := range properties {
@@ -829,6 +845,16 @@ func buildStrictNullProjection(
 			if err != nil {
 				return nil, err
 			}
+			if !isRequired && acceptsNull {
+				return nil, fmt.Errorf("schema at %s is optional and accepts null; OpenAI strict conversion cannot preserve both absence and null", childLocation)
+			}
+			if !isRequired {
+				for pattern, constraint := range canonical.PatternProperties {
+					if pattern.MatchString(name) && constraint.Validate(nil) != nil {
+						return nil, fmt.Errorf("schema at %s matches patternProperties that forbid null; OpenAI strict conversion does not support this optional-member pattern overlap", childLocation)
+					}
+				}
+			}
 			projection.properties[name] = &strictNullProjection{
 				dropNull:   !isRequired && !acceptsNull,
 				properties: child.properties,
@@ -843,6 +869,22 @@ func buildStrictNullProjection(
 			return nil, err
 		}
 		projection.item = child
+	}
+	if patterns, ok := node["patternProperties"].(map[string]any); ok {
+		for pattern, rawPattern := range patterns {
+			child, ok := rawPattern.(map[string]any)
+			if !ok {
+				continue
+			}
+			childLocation := location + "/patternProperties/" + escapeJSONPointerToken(pattern)
+			patternProjection, err := buildStrictNullProjection(child, root, compiler, childLocation, refs)
+			if err != nil {
+				return nil, err
+			}
+			if strictProjectionDropsNulls(patternProjection) {
+				return nil, fmt.Errorf("schema at %s requires optional-member omission inside patternProperties; OpenAI strict conversion cannot restore those members", childLocation)
+			}
+		}
 	}
 	for _, keyword := range []string{"anyOf", "oneOf", "allOf"} {
 		branches, ok := node[keyword].([]any)
@@ -883,6 +925,22 @@ func buildStrictNullProjection(
 			); err != nil {
 				return nil, err
 			}
+		}
+	}
+	return validateStrictLiteralProjection(node, projection, location)
+}
+
+// validateStrictLiteralProjection rejects const or enum when this value's
+// structure needs optional-member null removal, including through a reference.
+// The caller has not yet marked the entire value optional in its parent.
+func validateStrictLiteralProjection(
+	node map[string]any,
+	projection *strictNullProjection,
+	location string,
+) (*strictNullProjection, error) {
+	for _, keyword := range []string{"const", "enum"} {
+		if _, present := node[keyword]; present && strictProjectionDropsNulls(projection) {
+			return nil, fmt.Errorf("schema at %s combines %s with optional-member null removal; OpenAI strict conversion does not support this literal and omission composition", location, keyword)
 		}
 	}
 	return projection, nil

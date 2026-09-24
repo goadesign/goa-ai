@@ -24,10 +24,11 @@ func TestProjectStrictSchema(t *testing.T) {
 			want:   `{"type":"object","additionalProperties":false,"required":[]}`,
 		},
 		{
-			name: "closes objects and strips schema annotations",
+			name: "preserves closed objects and strips schema annotations",
 			schema: `{
 				"$schema": "https://json-schema.org/draft/2020-12/schema",
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"question": {"type": "string", "description": "User question", "example": "What?"}
 				},
@@ -47,6 +48,7 @@ func TestProjectStrictSchema(t *testing.T) {
 			name: "optional properties become required and nullable",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"query": {"type": "string"},
 					"limit": {"type": "integer", "default": 10},
@@ -66,14 +68,42 @@ func TestProjectStrictSchema(t *testing.T) {
 			}`,
 		},
 		{
-			name: "closes nested objects and array items recursively",
+			name: "optional values preserve required null descriptions",
 			schema: `{
 				"type": "object",
+				"properties": {
+					"priority": {"type": "string", "enum": ["low", "high"]},
+					"label": {"type": ["string", "null"], "description": "Null clears the label."},
+					"marker": {"type": "null", "description": "The required marker."}
+				},
+				"required": ["label", "marker"],
+				"additionalProperties": false
+			}`,
+			want: `{
+				"type": "object",
+				"properties": {
+					"priority": {"anyOf": [
+						{"type": "string", "enum": ["low", "high"]},
+						{"type": "null"}
+					]},
+					"label": {"type": ["string", "null"], "description": "Null clears the label."},
+					"marker": {"type": "null", "description": "The required marker."}
+				},
+				"required": ["label", "marker", "priority"],
+				"additionalProperties": false
+			}`,
+		},
+		{
+			name: "preserves closed nested objects and array items recursively",
+			schema: `{
+				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"filters": {
 						"type": "array",
 						"items": {
 							"type": "object",
+							"additionalProperties": false,
 							"properties": {"field": {"type": "string"}},
 							"required": ["field"]
 						}
@@ -102,6 +132,7 @@ func TestProjectStrictSchema(t *testing.T) {
 			name: "keeps supported constraints and drops unsupported formats",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"id": {"type": "string", "format": "uuid", "pattern": ".+"},
 					"count": {"type": "integer", "format": "int64", "minimum": 0},
@@ -124,12 +155,14 @@ func TestProjectStrictSchema(t *testing.T) {
 			name: "optional reference properties become nullable unions",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"draft": {"$ref": "#/$defs/Draft"}
 				},
 				"$defs": {
 					"Draft": {
 						"type": "object",
+						"additionalProperties": false,
 						"properties": {"title": {"type": "string"}},
 						"required": ["title"]
 					}
@@ -156,6 +189,7 @@ func TestProjectStrictSchema(t *testing.T) {
 			name: "optional union properties gain a null branch",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"value": {"anyOf": [{"type": "string"}, {"type": "integer"}]}
 				}
@@ -176,6 +210,7 @@ func TestProjectStrictSchema(t *testing.T) {
 			name: "disjoint oneOf types fold into anyOf and optionals gain a null branch",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"choice": {"oneOf": [{"type": "string"}, {"type": "integer"}]},
 					"pick": {"oneOf": [{"type": "string"}, {"type": "boolean"}]}
@@ -199,11 +234,13 @@ func TestProjectStrictSchema(t *testing.T) {
 			name: "generated discriminator union folds into anyOf",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"choice": {
 						"oneOf": [
 							{
 								"type": "object",
+								"additionalProperties": false,
 								"properties": {
 									"type": {"type": "string", "enum": ["left"]},
 									"value": {"type": "string"}
@@ -212,6 +249,7 @@ func TestProjectStrictSchema(t *testing.T) {
 							},
 							{
 								"type": "object",
+								"additionalProperties": false,
 								"properties": {
 									"type": {"type": "string", "enum": ["right"]},
 									"value": {"type": "integer"}
@@ -257,6 +295,7 @@ func TestProjectStrictSchema(t *testing.T) {
 			name: "optional constrained properties preserve their complete constraint",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"constant": {"type": "string", "const": "fixed"}
 				}
@@ -274,6 +313,7 @@ func TestProjectStrictSchema(t *testing.T) {
 			name: "property names that look like keywords stay untouched",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"default": {"type": "string"},
 					"example": {"type": "string"}
@@ -305,6 +345,7 @@ func TestProjectStrictSchema(t *testing.T) {
 func TestProjectStrictSchemaPreservesLargeIntegers(t *testing.T) {
 	projected, err := projectStrictSchema(rawjson.Message(`{
 		"type":"object",
+		"additionalProperties": false,
 		"properties":{"reading":{"type":"integer","const":9007199254740993}},
 		"required":["reading"]
 	}`))
@@ -330,6 +371,7 @@ func TestProjectStrictSchemaRejectsUnrepresentableContracts(t *testing.T) {
 			name: "map-style additionalProperties",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"labels": {"type": "object", "additionalProperties": {"type": "string"}}
 				},
@@ -347,8 +389,8 @@ func TestProjectStrictSchemaRejectsUnrepresentableContracts(t *testing.T) {
 			schema: `{
 				"type": "object",
 				"oneOf": [
-					{"type": "object", "properties": {"left": {"type": "string"}}, "required": ["left"]},
-					{"type": "object", "properties": {"right": {"type": "integer"}}, "required": ["right"]}
+					{"type": "object","additionalProperties":false, "properties": {"left": {"type": "string"}}, "required": ["left"]},
+					{"type": "object","additionalProperties":false, "properties": {"right": {"type": "integer"}}, "required": ["right"]}
 				]
 			}`,
 			wantErr: "oneOf branches that may overlap",
@@ -357,6 +399,7 @@ func TestProjectStrictSchemaRejectsUnrepresentableContracts(t *testing.T) {
 			name: "unsupported composition",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {"value": {"type": "string", "allOf": [{"pattern": ".+"}]}},
 				"required": ["value"]
 			}`,
@@ -366,6 +409,7 @@ func TestProjectStrictSchemaRejectsUnrepresentableContracts(t *testing.T) {
 			name: "overlapping oneOf",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"value": {
 						"oneOf": [
@@ -382,6 +426,7 @@ func TestProjectStrictSchemaRejectsUnrepresentableContracts(t *testing.T) {
 			name: "integer overlaps number",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"value": {
 						"oneOf": [
@@ -398,6 +443,7 @@ func TestProjectStrictSchemaRejectsUnrepresentableContracts(t *testing.T) {
 			name: "combined oneOf and anyOf",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {
 					"value": {
 						"oneOf": [{"type": "string"}, {"type": "integer"}],
@@ -412,6 +458,7 @@ func TestProjectStrictSchemaRejectsUnrepresentableContracts(t *testing.T) {
 			name: "unsupported string keyword",
 			schema: `{
 				"type": "object",
+				"additionalProperties": false,
 				"properties": {"value": {"type": "string", "contentEncoding": "base64"}},
 				"required": ["value"]
 			}`,
@@ -429,10 +476,12 @@ func TestProjectStrictSchemaRejectsUnrepresentableContracts(t *testing.T) {
 				"anyOf": [
 					{
 						"type": "object",
+						"additionalProperties": false,
 						"properties": {"value": {"type": "string"}}
 					},
 					{
 						"type": "object",
+						"additionalProperties": false,
 						"properties": {"value": {"type": ["string", "null"]}},
 						"required": ["value"]
 					}
@@ -457,8 +506,9 @@ func TestProjectStrictSchemaEnforcesOpenAIResourceLimits(t *testing.T) {
 			properties[fmt.Sprintf("field_%d", index)] = map[string]any{"type": "string"}
 		}
 		schema, err := json.Marshal(map[string]any{
-			"type":       "object",
-			"properties": properties,
+			"type":                 "object",
+			"additionalProperties": false,
+			"properties":           properties,
 		})
 		require.NoError(t, err)
 
@@ -473,7 +523,8 @@ func TestProjectStrictSchemaEnforcesOpenAIResourceLimits(t *testing.T) {
 			values[index] = fmt.Sprintf("value_%d", index)
 		}
 		schema, err := json.Marshal(map[string]any{
-			"type": "object",
+			"type":                 "object",
+			"additionalProperties": false,
 			"properties": map[string]any{
 				"value": map[string]any{"type": "string", "enum": values},
 			},
@@ -491,7 +542,8 @@ func TestProjectStrictSchemaEnforcesOpenAIResourceLimits(t *testing.T) {
 			values[index] = strings.Repeat("界", 50) + fmt.Sprintf("_%d", index)
 		}
 		schema, err := json.Marshal(map[string]any{
-			"type": "object",
+			"type":                 "object",
+			"additionalProperties": false,
 			"properties": map[string]any{
 				"value": map[string]any{"type": "string", "enum": values},
 			},
@@ -508,8 +560,9 @@ func TestProjectStrictSchemaEnforcesOpenAIResourceLimits(t *testing.T) {
 		nested := map[string]any{"type": "string"}
 		for depth := 0; depth < strictSchemaMaxDepth; depth++ {
 			nested = map[string]any{
-				"type":       "object",
-				"properties": map[string]any{"child": nested},
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties":           map[string]any{"child": nested},
 			}
 		}
 		schema, err := json.Marshal(nested)
@@ -565,13 +618,13 @@ func TestCompileStrictSchemaSpecializesFineTunedModels(t *testing.T) {
 		{
 			name:     "object pattern properties",
 			property: "patternProperties",
-			schema:   `{"type":"object","patternProperties":{"^item_":{"type":"string"}}}`,
+			schema:   `{"type":"object","additionalProperties":false,"patternProperties":{"^item_":{"type":"string"}}}`,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			schema := rawjson.Message(fmt.Sprintf(
-				`{"type":"object","properties":{"value":%s},"required":["value"]}`,
+				`{"type":"object","additionalProperties":false,"properties":{"value":%s},"required":["value"]}`,
 				test.schema,
 			))
 

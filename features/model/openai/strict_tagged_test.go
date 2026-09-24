@@ -108,14 +108,16 @@ func TestStrictEmptyObjectsRequireEmptyArray(t *testing.T) {
 	}
 }
 
-// Pattern-selected explicit null remains a domain value for both published
-// constructors. Tagged-union support does not replace their pattern handling.
-func TestPublishedPatternNullPreserved(t *testing.T) {
+// A pattern whose alternatives disagree on null cannot preserve omission in
+// strict mode. Complete-schema generation keeps its original null meaning.
+func TestPublishedPatternOmissionContract(t *testing.T) {
 	const schema = `{"type":"object","additionalProperties":false,"patternProperties":{"^v$":{"anyOf":[{"type":"object","additionalProperties":false,"properties":{"x":{"type":"string"}}},{"type":"object","additionalProperties":false,"properties":{"x":{"type":["string","null"]}},"required":["x"]}]}}}`
 	const arguments = `{"v":{"x":null}}`
 	for _, bedrock := range []bool{false, true} {
 		t.Run(fmt.Sprintf("bedrock=%t", bedrock), func(t *testing.T) {
+			calls := 0
 			client := newReplayTestClient(t, bedrock, Options{}, bedrockRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+				calls++
 				body, err := io.ReadAll(req.Body)
 				require.NoError(t, err)
 				assert.Contains(t, string(body), fmt.Sprintf(`"strict":%t`, !bedrock))
@@ -123,7 +125,13 @@ func TestPublishedPatternNullPreserved(t *testing.T) {
 			}))
 			request := &model.Request{Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Inspect records."}}}}, Tools: []*model.ToolDefinition{{Name: "records.inspect", Description: "Inspect records.", Input: mustOpenAIToolInput(rawjson.Message(schema))}}}
 			response, err := client.Complete(t.Context(), request)
+			if !bedrock {
+				require.ErrorContains(t, err, "conflicting null handling")
+				assert.Zero(t, calls)
+				return
+			}
 			require.NoError(t, err)
+			assert.Equal(t, 1, calls)
 			assert.True(t, bytes.Equal([]byte(arguments), response.ToolCalls()[0].Payload), "preserve original argument bytes")
 		})
 	}
