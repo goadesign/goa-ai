@@ -4904,8 +4904,8 @@ A runtime-owned system instruction treats the recorded conversation as evidence,
 not current instructions or actions. The summary request advertises no tools.
 The same instruction asks the model to retain identifiers needed for unfinished
 work or a retained finding verbatim, paired with their meaning and purpose.
-For example, a source returned as `line_1.HMI_TrackingActive` must not become its
-display label or a reconstructed `line_1.HMITrackingActive` when an unfinished
+For example, a document returned as `drafts/Intro_Notes` must not become its
+display label or a reconstructed `drafts/IntroNotes` when an unfinished
 comparison still needs it. Separately resolved groups stay distinct, and guesses,
 rejected IDs, and superseded choices are identified as such. Completed or
 unrelated identifiers may be omitted when no longer needed; relevance remains

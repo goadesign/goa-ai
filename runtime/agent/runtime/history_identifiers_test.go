@@ -15,7 +15,7 @@ import (
 func TestCompressIdentifierEvidenceKeepsIndependentGroups(t *testing.T) {
 	messages := identifierSummaryHistory()
 	before := canonicalHistory(t, messages)
-	provider := evidenceSummaryProvider(model.TextPart{Text: `The unfinished north comparison uses line_1.HMI_TrackingActive (tracking exposure) with line_1.Run_Status (stops). The unfinished south comparison uses line_2.HMITrackingActive (tracking exposure) with line_2.RunStatus (stops). These were resolved in separate groups and describe past availability. line_1.HMITrackingActive was rejected, not resolved.`})
+	provider := evidenceSummaryProvider(model.TextPart{Text: `The unfinished draft comparison uses drafts/Intro_Notes (introductory context) with drafts/Review_Log (review history). The unfinished reference comparison uses reference/IntroNotes (introductory context) with reference/ReviewLog (review history). These were resolved in separate groups and describe past availability. drafts/IntroNotes was rejected, not resolved.`})
 	result, err := Compress(historyTestClient(t, provider), HistoryCompressionConfig{
 		CompressAtTurns: 3, KeepMaxTurns: 1,
 	})(t.Context(), &model.Request{Messages: messages}, provider, nil)
@@ -27,39 +27,39 @@ func TestCompressIdentifierEvidenceKeepsIndependentGroups(t *testing.T) {
 	assert.Equal(t, historySummaryInstruction, textPart(t, provider.request.Messages[0]))
 	evidence := textPart(t, provider.request.Messages[1])
 	for _, literal := range []string{
-		"line_1.HMI_TrackingActive", "line_1.Run_Status",
-		"line_2.HMITrackingActive", "line_2.RunStatus",
-		"north-sources", "south-sources", "line_1.HMITrackingActive",
-		"completed_1.Average", "retired_1.Tracking",
+		"drafts/Intro_Notes", "drafts/Review_Log",
+		"reference/IntroNotes", "reference/ReviewLog",
+		"draft-documents", "reference-documents", "drafts/IntroNotes",
+		"archive/Finished_Outline", "archive/Withdrawn_Draft",
 	} {
 		assert.Contains(t, evidence, literal)
 	}
-	assert.Contains(t, evidence, `"tool_use_id":"north-sources"`)
-	assert.Contains(t, evidence, `"tool_use_id":"south-sources"`)
+	assert.Contains(t, evidence, `"tool_use_id":"draft-documents"`)
+	assert.Contains(t, evidence, `"tool_use_id":"reference-documents"`)
 	assert.NotContains(t, evidence, "Newest exact continuation")
 	require.NotNil(t, result.Summary)
 	assert.Equal(t, "[Conversation Summary]\n"+textPart(t, &provider.response.Content[0]), textPart(t, &result.Summary.Message))
-	assert.NotContains(t, textPart(t, &result.Summary.Message), "completed_1.Average")
-	assert.NotContains(t, textPart(t, &result.Summary.Message), "retired_1.Tracking")
+	assert.NotContains(t, textPart(t, &result.Summary.Message), "archive/Finished_Outline")
+	assert.NotContains(t, textPart(t, &result.Summary.Message), "archive/Withdrawn_Draft")
 	assert.Same(t, messages[len(messages)-1], result.Messages[len(result.Messages)-1])
 }
 
-// identifierSummaryHistory keeps exact source spellings, separately resolved
+// identifierSummaryHistory uses synthetic document spellings, separately resolved
 // groups, a rejected guess, and irrelevant completed work in the same evidence.
 func identifierSummaryHistory() []*model.Message {
 	return []*model.Message{
-		{Role: model.ConversationRoleSystem, Parts: []model.Part{model.TextPart{Text: "Finish two independent comparisons: north and south stops during tracking-active exposure. The baseline check is complete. The retired line investigation was withdrawn. Keep the two comparisons separate."}}},
-		userMsg("The baseline is complete using completed_1.Average. Do not continue the retired_1.Tracking investigation. Next resolve sources for the two pending comparisons."),
+		{Role: model.ConversationRoleSystem, Parts: []model.Part{model.TextPart{Text: "Finish two independent comparisons: draft and reference review history using introductory notes. The baseline check is complete. The archived draft review was withdrawn. Keep the two comparisons separate."}}},
+		userMsg("The baseline is complete using archive/Finished_Outline. Do not continue the archive/Withdrawn_Draft investigation. Next resolve documents for the two pending comparisons."),
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{
-			model.ToolUsePart{ID: "north-sources", Name: "resolve_sources", Input: rawjson.Message(`{"group":"north","aliases":["line_1"]}`)},
-			model.ToolUsePart{ID: "south-sources", Name: "resolve_sources", Input: rawjson.Message(`{"group":"south","aliases":["line_2"]}`)},
+			model.ToolUsePart{ID: "draft-documents", Name: "find_documents", Input: rawjson.Message(`{"group":"draft","collection":"drafts"}`)},
+			model.ToolUsePart{ID: "reference-documents", Name: "find_documents", Input: rawjson.Message(`{"group":"reference","collection":"reference"}`)},
 		}},
 		{Role: model.ConversationRoleUser, Parts: []model.Part{
-			model.ToolResultPart{ToolUseID: "south-sources", Content: rawjson.Message(`{"group":"south","sources":[{"id":"line_2.HMITrackingActive","label":"Tracking Active","meaning":"tracking exposure"},{"id":"line_2.RunStatus","label":"Run Status","meaning":"stops"}]}`)},
-			model.ToolResultPart{ToolUseID: "north-sources", Content: rawjson.Message(`{"group":"north","sources":[{"id":"line_1.HMI_TrackingActive","label":"Tracking Active","meaning":"tracking exposure"},{"id":"line_1.Run_Status","label":"Run Status","meaning":"stops"}]}`)},
+			model.ToolResultPart{ToolUseID: "reference-documents", Content: rawjson.Message(`{"group":"reference","documents":[{"id":"reference/IntroNotes","label":"Introductory Notes","meaning":"introductory context"},{"id":"reference/ReviewLog","label":"Review Log","meaning":"review history"}]}`)},
+			model.ToolResultPart{ToolUseID: "draft-documents", Content: rawjson.Message(`{"group":"draft","documents":[{"id":"drafts/Intro_Notes","label":"Introductory Notes","meaning":"introductory context"},{"id":"drafts/Review_Log","label":"Review Log","meaning":"review history"}]}`)},
 		}},
-		assistantTextMsg("Both comparisons remain unfinished. The north guess line_1.HMITrackingActive was previously rejected; use the observed sources, not that guess. Source availability must be checked again when reading."),
-		userMsg("Continue the two comparisons; do not merge their source groups."),
+		assistantTextMsg("Both comparisons remain unfinished. The draft guess drafts/IntroNotes was previously rejected; use the observed documents, not that guess. Document availability must be checked again before opening."),
+		userMsg("Continue the two comparisons; do not merge their document groups."),
 		assistantTextMsg("Newest exact continuation"),
 	}
 }
