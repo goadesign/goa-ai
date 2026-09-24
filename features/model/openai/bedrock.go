@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	sdkbedrock "github.com/openai/openai-go/v3/bedrock"
@@ -108,8 +109,8 @@ func newBedrockProvider(ctx context.Context, region string, credentials aws.Cred
 // including encrypted reasoning and tool schemas, without sending HTTP. Its
 // estimate is serialized non-image bytes divided by three (rounded up), plus
 // image tokens derived from dimensions and 500 tokens for framing. Image counting
-// requires a documented model rule. This is not billing data or a hard context
-// guarantee; text and opaque reasoning still use a byte-size approximation.
+// supports explicit model families; it is not billing data or a hard context
+// guarantee. Text and opaque reasoning use a byte-size approximation.
 func (c *bedrockProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
 	if err := ctx.Err(); err != nil {
 		return model.TokenCount{}, err
@@ -132,10 +133,14 @@ func (c *bedrockProvider) CountTokens(ctx context.Context, req *model.Request) (
 	if err := ctx.Err(); err != nil {
 		return model.TokenCount{}, err
 	}
+	textTokens := (len(body)+2)/3 + 500
+	if imageTokens > math.MaxInt-textTokens {
+		return model.TokenCount{}, fmt.Errorf("openai: token estimate exceeds supported integer range")
+	}
 	return model.TokenCount{
 		Model:       prepared.resolvedModelID,
 		ModelClass:  prepared.resolvedModelClass,
-		InputTokens: (len(body)+2)/3 + imageTokens + 500,
+		InputTokens: textTokens + imageTokens,
 		Exact:       false,
 	}, nil
 }

@@ -256,7 +256,10 @@ schemas. Existing `NewBedrock` and `NewBedrockProvider` retain complete schemas
 with local output validation; constructor choice is fixed, with no fallback.
 For models that estimate tokens before a call, the usage-reconciled adaptive
 limiter admits work from that estimate and corrects its local balance with
-tokens reported in the response. Missing usage stays unknown.
+tokens reported in the response. Missing usage stays unknown. Shared limiter
+startup waits for Redis capacity to reach the local replicated map and fails if
+that wait is cancelled or the map stops. Bedrock Responses also estimates GPT-6 Sol
+image inputs from dimensions, while response usage remains the accounting total.
 
 Vertex tool arguments require valid UTF-8 text and keys. Workflow writes reject
 map keys with custom JSON or text encoders; use plain strings or named string

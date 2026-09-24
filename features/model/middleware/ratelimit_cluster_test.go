@@ -1,3 +1,6 @@
+// These tests control replicated-map delivery separately from Redis writes.
+// Limiter startup must wait for the stored capacity, including another writer's
+// value, and release its subscription on failure or shutdown.
 package middleware
 
 import (
@@ -6,17 +9,146 @@ import (
 	"strconv"
 	"sync"
 	"testing"
-	"time"
+	"testing/synctest"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/pulse/rmap"
 )
 
 type fakeClusterMap struct {
-	mu      sync.Mutex
-	values  map[string]string
-	ch      chan rmap.EventKind
-	seedErr error
+	mu         sync.Mutex
+	values     map[string]string
+	ch         chan rmap.EventKind
+	seed       func(string, string) (bool, error)
+	subscribed bool
+}
+
+func TestClusterLimiterWaitsForReplicatedCapacity(t *testing.T) {
+	for _, inserted := range []bool{true, false} {
+		t.Run(strconv.FormatBool(inserted), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				m := newFakeClusterMap()
+				m.seed = func(key, value string) (bool, error) {
+					assert.True(t, m.subscribed, "subscribe before writing")
+					assert.Equal(t, "model", key)
+					assert.Equal(t, "100", value)
+					return inserted, nil
+				}
+				done := make(chan *AdaptiveRateLimiter, 1)
+				go func() {
+					limiter, err := newClusterAdaptiveRateLimiter(ctx, m, "model", 100, 100)
+					assert.NoError(t, err)
+					done <- limiter
+				}()
+				synctest.Wait()
+				require.Empty(t, done, "Redis acceptance is not local replication")
+				m.publish("unrelated", "1")
+				synctest.Wait()
+				require.Empty(t, done, "unrelated updates must not complete startup")
+				m.publish("model", "75")
+				limiter := <-done
+				require.NotNil(t, limiter)
+				assert.InDelta(t, 75, limiter.currentTPM, 0)
+				m.publish("model", "60")
+				synctest.Wait()
+				assert.InDelta(t, 60, limiter.currentTPM, 0)
+				cancel()
+				synctest.Wait()
+				assert.False(t, m.subscribed)
+			})
+		})
+	}
+}
+
+func TestClusterLimiterRejectsUnavailableOrInvalidCapacity(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		seed  func(string, string) (bool, error)
+		value string
+	}{
+		{name: "write failure", seed: func(string, string) (bool, error) { return false, errors.New("shared map unavailable") }},
+		{name: "invalid value", value: "invalid"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			m := newFakeClusterMap()
+			m.seed = test.seed
+			if test.value != "" {
+				m.values["model"] = test.value
+			}
+			limiter, err := newClusterAdaptiveRateLimiter(t.Context(), m, "model", 100, 100)
+			assert.Nil(t, limiter)
+			require.Error(t, err)
+			assert.False(t, m.subscribed)
+		})
+	}
+}
+
+func TestClusterLimiterStopsWaitingForReplication(t *testing.T) {
+	for _, stopMap := range []bool{false, true} {
+		t.Run(strconv.FormatBool(stopMap), func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				m := newFakeClusterMap()
+				m.seed = func(string, string) (bool, error) { return true, nil }
+				done := make(chan error, 1)
+				go func() {
+					limiter, err := newClusterAdaptiveRateLimiter(ctx, m, "model", 100, 100)
+					assert.Nil(t, limiter)
+					done <- err
+				}()
+				synctest.Wait()
+				if stopMap {
+					m.Unsubscribe(m.ch)
+				} else {
+					cancel()
+				}
+				err := <-done
+				if stopMap {
+					require.ErrorContains(t, err, "map stopped during initialization")
+				} else {
+					require.ErrorIs(t, err, context.Canceled)
+				}
+				assert.False(t, m.subscribed)
+			})
+		})
+	}
+}
+
+func TestClusterLimiterRejectsStoppedMap(t *testing.T) {
+	m := newFakeClusterMap()
+	m.ch = nil
+	limiter, err := newClusterAdaptiveRateLimiter(t.Context(), m, "model", 100, 100)
+	assert.Nil(t, limiter)
+	assert.ErrorContains(t, err, "map is stopped")
+}
+
+func TestClusterLimiterBackoffUpdatesSharedMap(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := newFakeClusterMap()
+		m.values["model"] = "80000"
+		lim, err := newClusterAdaptiveRateLimiter(t.Context(), m, "model", 80000, 80000)
+		require.NoError(t, err)
+		client := &fakeClient{completeErr: model.ErrRateLimited}
+		wrapped := limitedTestClient(t, lim, client)
+		req := model.Request{
+			Messages: []*model.Message{{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: "hello"}},
+			}},
+			MaxTokens: 10,
+		}
+		_, err = wrapped.Complete(t.Context(), &req)
+		require.ErrorIs(t, err, model.ErrRateLimited)
+		synctest.Wait()
+		v, ok := m.Get("model")
+		require.True(t, ok)
+		assert.Equal(t, "40000", v)
+	})
 }
 
 func newFakeClusterMap() *fakeClusterMap {
@@ -34,35 +166,16 @@ func (m *fakeClusterMap) Get(key string) (string, bool) {
 }
 
 func (m *fakeClusterMap) SetIfNotExists(_ context.Context, key, value string) (bool, error) {
-	if m.seedErr != nil {
-		return false, m.seedErr
+	if m.seed != nil {
+		return m.seed(key, value)
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.values[key]; ok {
 		return false, nil
 	}
-	m.values[key] = value
-	select {
-	case m.ch <- rmap.EventChange:
-	default:
-	}
+	m.publishLocked(key, value)
 	return true, nil
-}
-
-func TestClusterLimiterRejectsUnavailableOrInvalidCapacity(t *testing.T) {
-	m := newFakeClusterMap()
-	m.seedErr = errors.New("shared map unavailable")
-	limiter, err := newClusterAdaptiveRateLimiter(t.Context(), m, "model", 100, 100)
-	if limiter != nil || !errors.Is(err, m.seedErr) {
-		t.Fatalf("expected shared map error, got limiter=%v error=%v", limiter, err)
-	}
-	m.seedErr = nil
-	m.values["model"] = "invalid"
-	limiter, err = newClusterAdaptiveRateLimiter(t.Context(), m, "model", 100, 100)
-	if limiter != nil || err == nil {
-		t.Fatalf("expected invalid shared capacity error, got limiter=%v error=%v", limiter, err)
-	}
 }
 
 func (m *fakeClusterMap) TestAndSet(_ context.Context, key, test, value string) (string, error) {
@@ -72,64 +185,38 @@ func (m *fakeClusterMap) TestAndSet(_ context.Context, key, test, value string) 
 	if !ok || cur != test {
 		return cur, nil
 	}
-	m.values[key] = value
-	select {
-	case m.ch <- rmap.EventChange:
-	default:
-	}
+	m.publishLocked(key, value)
 	return cur, nil
 }
 
 func (m *fakeClusterMap) Subscribe() <-chan rmap.EventKind {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.subscribed = m.ch != nil
 	return m.ch
 }
 
-func TestClusterLimiter_BackoffUpdatesSharedMap(t *testing.T) {
-	t.Helper()
-
-	ctx := context.Background()
-	m := newFakeClusterMap()
-	const key = "model"
-
-	// Seed map with initial value.
-	m.values[key] = strconv.Itoa(80000)
-
-	lim, err := newClusterAdaptiveRateLimiter(ctx, m, key, 80000, 80000)
-	if err != nil {
-		t.Fatal(err)
+func (m *fakeClusterMap) Unsubscribe(ch <-chan rmap.EventKind) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.subscribed && m.ch == ch {
+		m.subscribed = false
+		close(m.ch)
 	}
+}
 
-	client := &fakeClient{
-		completeErr: model.ErrRateLimited,
-	}
-	wrapped := limitedTestClient(t, lim, client)
+func (m *fakeClusterMap) publish(key, value string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.publishLocked(key, value)
+}
 
-	req := model.Request{
-		Messages: []*model.Message{
-			{
-				Role: model.ConversationRoleUser,
-				Parts: []model.Part{
-					model.TextPart{Text: "hello"},
-				},
-			},
-		},
-		MaxTokens: 10,
-	}
-
-	_, _ = wrapped.Complete(context.Background(), &req)
-
-	// Allow background callback to run.
-	time.Sleep(10 * time.Millisecond)
-
-	v, ok := m.Get(key)
-	if !ok {
-		t.Fatal("expected key to exist in cluster map")
-	}
-	cur, err := strconv.Atoi(v)
-	if err != nil {
-		t.Fatalf("invalid value in cluster map: %v", err)
-	}
-	if cur >= 80000 {
-		t.Fatalf("expected shared TPM to decrease, got %d", cur)
+func (m *fakeClusterMap) publishLocked(key, value string) {
+	m.values[key] = value
+	if m.subscribed {
+		select {
+		case m.ch <- rmap.EventChange:
+		default:
+		}
 	}
 }
