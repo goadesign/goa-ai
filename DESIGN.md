@@ -1447,9 +1447,11 @@ disable storage, background execution, input truncation and implicit prompt
 cache writes. Unsupported structured output and cache-bearing requests fail
 before transport. Bedrock Responses exposes a declared local token estimate;
 direct OpenAI counting remains unsupported. The Bedrock estimator counts
-GPT-5.6 images from dimensions rather than their base64 transfer size, retaining
-the byte approximation for text, tools, and opaque reasoning. Image counting
-requires a documented model rule; it does not change inference capabilities.
+GPT-5.6 and GPT-6 Sol images from dimensions rather than their base64 transfer
+size, retaining the byte approximation for text, tools, and opaque reasoning.
+GPT-6 Sol uses an explicit local patch estimate; it does not claim the GPT-5.6
+billing rule or impose its provider limits. Provider usage remains the measured
+accounting total. Unknown image model families fail counting.
 Consumers requiring exact counts must resolve that requirement separately.
 See the [runtime provider contract](docs/runtime.md#openai-responses-on-amazon-bedrock)
 for details and the SDK source-compatibility change.
@@ -1600,8 +1602,11 @@ for details and the SDK source-compatibility change.
   stream ends early. If the provider reports no usage, the charge remains a
   provisional estimate; it is never labeled as measured usage. The token
   balance is local to each process while adaptive capacity is shared across
-  processes. Construction fails if the shared capacity cannot be initialized;
-  it does not silently switch to local capacity. A gateway
+  processes. Construction subscribes before initializing shared capacity and
+  waits for local replication under the caller context. It releases the subscription on
+  initialization failure or context cancellation. Construction fails if the
+  shared capacity cannot be initialized; it does not silently switch to local
+  capacity. A gateway
   preserves exact counting only when its transport supplies the separate
   count operation through `NewCountingRemoteClient`; otherwise counting
   returns `model.ErrTokenCountingUnsupported`.

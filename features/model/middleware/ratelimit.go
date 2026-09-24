@@ -71,10 +71,7 @@ type (
 		SetIfNotExists(ctx context.Context, key, value string) (bool, error)
 		TestAndSet(ctx context.Context, key, test, value string) (string, error)
 		Subscribe() <-chan rmap.EventKind
-	}
-
-	rmapClusterMap struct {
-		m *rmap.Map
+		Unsubscribe(<-chan rmap.EventKind)
 	}
 )
 
@@ -84,7 +81,8 @@ const reconciledUsageClusterKeySuffix = ".provider-usage.v1"
 // NewAdaptiveRateLimiter constructs an AdaptiveRateLimiter with a token-capacity
 // budget per minute. When m and key are set, it coordinates capacity across
 // processes using a Pulse replicated map; otherwise it operates as a
-// process-local limiter.
+// process-local limiter. The context owns shared capacity updates for the
+// limiter lifetime; cancellation releases its map subscription.
 func NewAdaptiveRateLimiter(ctx context.Context, m *rmap.Map, key string, initialTPM, maxTPM float64) (*AdaptiveRateLimiter, error) {
 	return newPublicAdaptiveRateLimiter(ctx, m, key, initialTPM, maxTPM, false)
 }
@@ -150,7 +148,7 @@ func newPublicAdaptiveRateLimiter(
 	}
 	var cm clusterMap
 	if m != nil {
-		cm = &rmapClusterMap{m: m}
+		cm = m
 	}
 	limiter, err := newClusterAdaptiveRateLimiter(ctx, cm, key, initialTPM, maxTPM)
 	if err != nil {
@@ -534,28 +532,22 @@ func (l *AdaptiveRateLimiter) setClusterCallbacks(onBackoff, onProbe func(newTPM
 	l.mu.Unlock()
 }
 
-func (m *rmapClusterMap) Get(key string) (string, bool) {
-	return m.m.Get(key)
-}
-
-func (m *rmapClusterMap) SetIfNotExists(ctx context.Context, key, value string) (bool, error) {
-	return m.m.SetIfNotExists(ctx, key, value)
-}
-
-func (m *rmapClusterMap) TestAndSet(ctx context.Context, key, test, value string) (string, error) {
-	return m.m.TestAndSet(ctx, key, test, value)
-}
-
-func (m *rmapClusterMap) Subscribe() <-chan rmap.EventKind {
-	return m.m.Subscribe()
-}
-
-func newClusterAdaptiveRateLimiter(ctx context.Context, m clusterMap, key string, initialTPM, maxTPM float64) (*AdaptiveRateLimiter, error) {
+func newClusterAdaptiveRateLimiter(ctx context.Context, m clusterMap, key string, initialTPM, maxTPM float64) (l *AdaptiveRateLimiter, err error) {
 	if key == "" || m == nil {
 		return newAdaptiveRateLimiter(initialTPM, maxTPM), nil
 	}
 
-	// A concurrent writer may seed the key first; read the value after seeding.
+	// Subscribe before seeding so a Redis write that reaches the local map
+	// during initialization cannot leave startup waiting for a missed update.
+	ch := m.Subscribe()
+	if ch == nil {
+		return nil, errors.New("shared token capacity map is stopped")
+	}
+	defer func() {
+		if err != nil {
+			m.Unsubscribe(ch)
+		}
+	}()
 	if _, ok := m.Get(key); !ok {
 		if _, err := m.SetIfNotExists(ctx, key, strconv.FormatFloat(initialTPM, 'f', -1, 64)); err != nil {
 			return nil, fmt.Errorf("initialize shared token capacity: %w", err)
@@ -563,15 +555,23 @@ func newClusterAdaptiveRateLimiter(ctx context.Context, m clusterMap, key string
 	}
 
 	cur, ok := m.Get(key)
-	if !ok {
-		return nil, errors.New("shared token capacity is missing after initialization")
+	for !ok {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("wait for shared token capacity: %w", ctx.Err())
+		case _, open := <-ch:
+			if !open {
+				return nil, errors.New("shared token capacity map stopped during initialization")
+			}
+			cur, ok = m.Get(key)
+		}
 	}
 	sharedTPM, err := strconv.ParseFloat(cur, 64)
 	if err != nil || sharedTPM <= 0 || sharedTPM > maxTPM || math.IsNaN(sharedTPM) || math.IsInf(sharedTPM, 0) {
 		return nil, fmt.Errorf("invalid shared token capacity %q", cur)
 	}
 
-	l := newAdaptiveRateLimiter(sharedTPM, maxTPM)
+	l = newAdaptiveRateLimiter(sharedTPM, maxTPM)
 
 	min := l.minTPM
 	max := l.maxTPM
@@ -586,22 +586,7 @@ func newClusterAdaptiveRateLimiter(ctx context.Context, m clusterMap, key string
 		},
 	)
 
-	// Watch for external changes to the shared budget and reconcile the local
-	// limiter when they occur.
-	ch := m.Subscribe()
-	go func() {
-		for range ch {
-			cur, ok := m.Get(key)
-			if !ok {
-				continue
-			}
-			v, err := strconv.ParseFloat(cur, 64)
-			if err != nil || v <= 0 {
-				continue
-			}
-			l.replaceTPM(v)
-		}
-	}()
+	go l.watchSharedCapacity(ctx, m, key, ch)
 
 	return l, nil
 }
@@ -666,5 +651,30 @@ func globalProbe(ctx context.Context, m clusterMap, key string, step, ceiling fl
 		if prev == curStr {
 			return
 		}
+	}
+}
+
+// watchSharedCapacity applies replicated capacity changes until the caller or
+// map stops, then releases the subscription acquired during construction.
+func (l *AdaptiveRateLimiter) watchSharedCapacity(ctx context.Context, m clusterMap, key string, ch <-chan rmap.EventKind) {
+	defer m.Unsubscribe(ch)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case _, open := <-ch:
+			if !open {
+				return
+			}
+		}
+		cur, ok := m.Get(key)
+		if !ok {
+			continue
+		}
+		v, err := strconv.ParseFloat(cur, 64)
+		if err != nil || v <= 0 {
+			continue
+		}
+		l.replaceTPM(v)
 	}
 }
