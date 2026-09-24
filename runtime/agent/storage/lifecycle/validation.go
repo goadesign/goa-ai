@@ -49,6 +49,9 @@ func ValidateOrdinaryRunRecord(record *runlog.Event) error {
 // ValidateRootRunStart checks that both possible root-run records describe the
 // immutable run identity and the outcome each record would store.
 func ValidateRootRunStart(command storage.RootRunStart) error {
+	if command.RequestDigest == ([32]byte{}) {
+		return errors.New("accepted request digest is required")
+	}
 	if err := session.ValidateRunStart(command.Run, false); err != nil {
 		return err
 	}
@@ -67,6 +70,9 @@ func ValidateRootRunStart(command storage.RootRunStart) error {
 // ValidateChildRunStart checks that the parent link and both possible child
 // records describe the same child identity.
 func ValidateChildRunStart(command storage.ChildRunStart) error {
+	if command.RequestDigest == ([32]byte{}) {
+		return errors.New("accepted request digest is required")
+	}
 	if err := session.ValidateRunStart(command.Run, true); err != nil {
 		return err
 	}
@@ -88,46 +94,26 @@ func ValidateChildRunStart(command storage.ChildRunStart) error {
 // ValidateOneShotRunStart checks that a sessionless run and its first record
 // carry the same immutable identity.
 func ValidateOneShotRunStart(command storage.OneShotRunStart) error {
-	switch {
-	case command.Run.RunID == "":
-		return errors.New("run id is required")
-	case command.Run.AgentID == "":
-		return errors.New("agent id is required")
-	case command.Run.SessionID != "":
-		return errors.New("one-shot run cannot have session id")
-	case command.Run.ParentRunID != "":
-		return errors.New("one-shot run cannot have parent run id")
-	case command.Run.PredecessorRunID != "":
-		return errors.New("one-shot run cannot have predecessor run id")
-	case command.Run.StartedAt.IsZero():
-		return errors.New("started_at is required")
-	case !command.Run.StartedAt.Equal(command.Run.StartedAt.Truncate(time.Millisecond)):
-		return errors.New("started_at must use millisecond precision")
+	if command.RequestDigest == ([32]byte{}) {
+		return errors.New("accepted request digest is required")
 	}
-	if err := validateRunStartedRecord(command.Started, command.Run); err != nil {
-		return fmt.Errorf("started record: %w", err)
-	}
-	return nil
+	return validateSessionlessRootStart(command.Run, command.Started)
+}
+
+// ValidateSynchronousRunStart checks the immutable sessionless identity and
+// complete first record. A callback has no engine-accepted request digest.
+func ValidateSynchronousRunStart(command storage.SynchronousRunStart) error {
+	return validateSessionlessRootStart(command.Run, command.Started)
 }
 
 // ValidateOneShotChildRunStart checks that a sessionless child and both
 // relationship records carry the same immutable identity.
 func ValidateOneShotChildRunStart(command storage.OneShotChildRunStart) error {
-	switch {
-	case command.Run.RunID == "":
-		return errors.New("run id is required")
-	case command.Run.AgentID == "":
-		return errors.New("agent id is required")
-	case command.Run.SessionID != "":
-		return errors.New("one-shot child cannot have session id")
-	case command.Run.ParentRunID == "":
-		return session.ErrParentRunIDRequired
-	case command.Run.PredecessorRunID != "":
-		return errors.New("one-shot child cannot have predecessor run id")
-	case command.Run.StartedAt.IsZero():
-		return errors.New("started_at is required")
-	case !command.Run.StartedAt.Equal(command.Run.StartedAt.Truncate(time.Millisecond)):
-		return errors.New("started_at must use millisecond precision")
+	if command.RequestDigest == ([32]byte{}) {
+		return errors.New("accepted request digest is required")
+	}
+	if err := validateOneShotStart(command.Run, true); err != nil {
+		return err
 	}
 	if err := validateChildLinkRecord(command.ParentLinked, command.Run); err != nil {
 		return fmt.Errorf("parent link record: %w", err)
@@ -243,7 +229,11 @@ func ValidateStoredRunStart(record *runlog.Event, meta session.RunMeta) error {
 		StartedAt:        meta.StartedAt,
 		Labels:           meta.Labels,
 	}
-	if err := session.ValidateRunStart(start, meta.ParentRunID != ""); err != nil {
+	if start.SessionID == "" {
+		if err := validateOneShotStart(start, meta.ParentRunID != ""); err != nil {
+			return err
+		}
+	} else if err := session.ValidateRunStart(start, meta.ParentRunID != ""); err != nil {
 		return err
 	}
 	return validateRunStartedEvent(record, event, start)
@@ -415,5 +405,42 @@ func terminalState(status string) (session.RunStatus, run.Phase) {
 		return session.RunStatusCanceled, run.PhaseCanceled
 	default:
 		return "", ""
+	}
+}
+
+// validateSessionlessRootStart owns the identity and record rules shared by
+// synchronous callbacks and engine-owned sessionless root workflows.
+func validateSessionlessRootStart(start session.RunStart, record *runlog.Event) error {
+	if err := validateOneShotStart(start, false); err != nil {
+		return err
+	}
+	if err := validateRunStartedRecord(record, start); err != nil {
+		return fmt.Errorf("started record: %w", err)
+	}
+	return nil
+}
+
+// validateOneShotStart checks the immutable fields shared by sessionless
+// commands and by saved sessionless start records.
+func validateOneShotStart(start session.RunStart, child bool) error {
+	switch {
+	case start.RunID == "":
+		return errors.New("run id is required")
+	case start.AgentID == "":
+		return errors.New("agent id is required")
+	case start.SessionID != "":
+		return errors.New("one-shot run cannot have session id")
+	case child && start.ParentRunID == "":
+		return session.ErrParentRunIDRequired
+	case !child && start.ParentRunID != "":
+		return errors.New("one-shot run cannot have parent run id")
+	case start.PredecessorRunID != "":
+		return errors.New("one-shot run cannot have predecessor run id")
+	case start.StartedAt.IsZero():
+		return errors.New("started_at is required")
+	case !start.StartedAt.Equal(start.StartedAt.Truncate(time.Millisecond)):
+		return errors.New("started_at must use millisecond precision")
+	default:
+		return nil
 	}
 }

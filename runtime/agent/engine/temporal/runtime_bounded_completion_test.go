@@ -216,6 +216,7 @@ func boundedCompletionRuntime(t *testing.T, backend string, pages int, modelName
 	input.SeedEndID = publishTemporalTestSeed(t, store, input.AgentID, input.RunID, input.SessionID)
 	return rt, store, func() (*api.RunOutput, error) {
 		if env != nil {
+			input = prepareAcceptedTestWorkflow(t, env, "completion.workflow", "default.queue", input)
 			env.ExecuteWorkflow("completion.workflow", input)
 			if err := env.GetWorkflowError(); err != nil {
 				return nil, err

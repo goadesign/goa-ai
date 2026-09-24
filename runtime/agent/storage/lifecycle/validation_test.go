@@ -72,7 +72,7 @@ func TestValidateRunStartsRequireMatchingTimestamps(t *testing.T) {
 		context.Canceled,
 		&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
 	), startedAt)
-	root := storage.RootRunStart{Run: start, Started: started, Canceled: canceled}
+	root := storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started, Canceled: canceled}
 	require.NoError(t, ValidateRootRunStart(root))
 
 	root.Started = cloneLifecycleRecord(started)
@@ -113,7 +113,7 @@ func TestValidateRunStartsRequireMatchingTimestamps(t *testing.T) {
 		childStart.RunID,
 		agent.Ident(childStart.AgentID),
 	), startedAt.Add(time.Millisecond))
-	require.NoError(t, ValidateChildRunStart(storage.ChildRunStart{
+	require.NoError(t, ValidateChildRunStart(storage.ChildRunStart{RequestDigest: [32]byte{1},
 		Run: childStart, ParentLinked: linked, Started: childStarted, Canceled: childCanceled,
 	}))
 }
@@ -134,7 +134,7 @@ func TestValidateOneShotRunStartRequiresMillisecondPrecision(t *testing.T) {
 
 	require.EqualError(
 		t,
-		ValidateOneShotRunStart(storage.OneShotRunStart{Run: start, Started: started}),
+		ValidateOneShotRunStart(storage.OneShotRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started}),
 		"started_at must use millisecond precision",
 	)
 }
@@ -145,7 +145,7 @@ func TestValidateOneShotChildRunStart(t *testing.T) {
 	child := session.RunStart{
 		AgentID: "child.agent", RunID: "child", ParentRunID: parent.RunID, StartedAt: startedAt,
 	}
-	command := storage.OneShotChildRunStart{
+	command := storage.OneShotChildRunStart{RequestDigest: [32]byte{1},
 		Run: child,
 		ParentLinked: lifecycleRecord(t, hooks.NewChildRunLinkedEvent(
 			parent.RunID,
@@ -224,7 +224,7 @@ func TestValidateChildRunStartRequiresParentToolIdentity(t *testing.T) {
 				agent.Ident(child.AgentID),
 			), startedAt)
 
-			err := ValidateChildRunStart(storage.ChildRunStart{
+			err := ValidateChildRunStart(storage.ChildRunStart{RequestDigest: [32]byte{1},
 				Run: child, ParentLinked: linked, Started: started, Canceled: canceled,
 			})
 			require.ErrorContains(t, err, "parent tool name and call id are required")
@@ -281,7 +281,7 @@ func TestValidateSessionRunStartRejectsStartedAndCanceledKeyCollision(t *testing
 	), startedAt)
 	canceled.EventKey = started.EventKey
 
-	require.ErrorContains(t, ValidateRootRunStart(storage.RootRunStart{
+	require.ErrorContains(t, ValidateRootRunStart(storage.RootRunStart{RequestDigest: [32]byte{1},
 		Run: start, Started: started, Canceled: canceled,
 	}), "require different event keys")
 	child := start
@@ -301,7 +301,7 @@ func TestValidateSessionRunStartRejectsStartedAndCanceledKeyCollision(t *testing
 		&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
 	), startedAt)
 	childCanceled.EventKey = childStarted.EventKey
-	require.ErrorContains(t, ValidateChildRunStart(storage.ChildRunStart{
+	require.ErrorContains(t, ValidateChildRunStart(storage.ChildRunStart{RequestDigest: [32]byte{1},
 		Run: child,
 		ParentLinked: lifecycleRecord(t, hooks.NewChildRunLinkedEvent(
 			start.RunID,
@@ -346,7 +346,7 @@ func TestValidateRunStartPredecessor(t *testing.T) {
 		"predecessor",
 		nil,
 	), startedAt)
-	require.NoError(t, ValidateRootRunStart(storage.RootRunStart{
+	require.NoError(t, ValidateRootRunStart(storage.RootRunStart{RequestDigest: [32]byte{1},
 		Run: start, Started: continued, Canceled: canceled,
 	}))
 	mismatched := lifecycleRecord(t, hooks.NewRunStartedEvent(
@@ -357,7 +357,7 @@ func TestValidateRunStartPredecessor(t *testing.T) {
 		"another-predecessor",
 		nil,
 	), startedAt)
-	require.ErrorContains(t, ValidateRootRunStart(storage.RootRunStart{
+	require.ErrorContains(t, ValidateRootRunStart(storage.RootRunStart{RequestDigest: [32]byte{1},
 		Run: start, Started: mismatched, Canceled: canceled,
 	}), "predecessor run id does not match run")
 
@@ -371,7 +371,7 @@ func TestValidateRunStartPredecessor(t *testing.T) {
 		start.RunID,
 		nil,
 	), startedAt)
-	require.ErrorContains(t, ValidateRootRunStart(storage.RootRunStart{
+	require.ErrorContains(t, ValidateRootRunStart(storage.RootRunStart{RequestDigest: [32]byte{1},
 		Run: selfStart, Started: self, Canceled: canceled,
 	}), "predecessor run id must differ from run id")
 
@@ -386,7 +386,7 @@ func TestValidateRunStartPredecessor(t *testing.T) {
 		"predecessor",
 		nil,
 	), startedAt)
-	require.ErrorContains(t, ValidateOneShotRunStart(storage.OneShotRunStart{
+	require.ErrorContains(t, ValidateOneShotRunStart(storage.OneShotRunStart{RequestDigest: [32]byte{1},
 		Run: oneShot, Started: oneShotStarted,
 	}), "one-shot run cannot have predecessor run id")
 }

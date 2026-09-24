@@ -1807,7 +1807,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	require.NoError(t, err)
 	publishTestRunInput(t, rt, &input, nil)
 	_, err = rt.executeStorageCommand(context.Background(), &api.StorageActivityCommand{
-		RootStart: &api.RootRunStartCommand{SeedEndID: input.SeedEndID, Started: started},
+		RootStart: &api.RootRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: input.SeedEndID, Started: started},
 	})
 	require.NoError(t, err)
 

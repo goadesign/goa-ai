@@ -49,17 +49,21 @@ workflow, so a service method can also become an agent tool.
   explicit types and a predictable directory structure, with compiler feedback
   when implementation code no longer matches.
 - **Runs reference history in its owning store.** Preparation publishes bounded
-  history and the exact compiled request before submission. Lost replies recover
+  history and the exact compiled request before submission. Large inline
+  messages use ordered literal byte parts without changing message or image
+  content; complete literals keep their existing encoding. Lost replies recover
   the accepted prompt and policy; application rows retain compact references.
   New turns reference one exact completed
   run; workflows, planner commands, and checkpoints carry saved positions.
   Activities reconstruct original messages through bounded store reads. See the
   [runtime store contract](docs/runtime.md#runtime-store-storagestore) for store
   implementation and the required persisted-format cutover.
-- **Closed runs stay closed on an exact start replay.** All four start operations
-  return current run status alongside their original records. A replay of a
-  closed run stops before start hooks or agent work. Existing hosts must update
-  their Store results and follow the [start-result upgrade requirements](docs/runtime.md#start-result-history-upgrade).
+- **Closed runs retain their original start and outcome.** The four engine start
+  operations bind the complete accepted request to its first stored start.
+  A new execution of the same closed request returns the original records and
+  stops before hooks or agent work. Synchronous callbacks use a separate exact
+  command operation. Hosts must adopt all five Store methods and follow the
+  [start-result upgrade requirements](docs/runtime.md#start-result-history-upgrade).
 
 The Responses adapter preserves typed nested stream failures, including transient
 server-error metadata. Retry owners must still protect already-published output;

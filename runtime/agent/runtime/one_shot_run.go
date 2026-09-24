@@ -91,7 +91,7 @@ func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute
 	if err != nil {
 		return err
 	}
-	if session.IsTerminalRunStatus(startResult.OneShotStart.RunStatus) {
+	if session.IsTerminalRunStatus(startResult.SynchronousStart.RunStatus) {
 		return engine.ErrWorkflowCompleted
 	}
 	promptRenders := prompt.NewRenderRecorder()
@@ -135,13 +135,13 @@ func (r *Runtime) recordOneShotEvent(ctx context.Context, event hooks.Event, tur
 	case hooks.RunStarted:
 		// Callback runs have no initial messages. Publish that explicit empty
 		// history before accepting the run, just as prepared workflows do.
-		writer, err := stageLiteralHistory(ctx, r.Store, storage.SeedDeclaration{
+		writer, err := stageLiteralHistory(ctx, synchronousSeedWriter{r: r}, storage.SeedDeclaration{
 			AgentID: event.AgentID(), RunID: event.RunID(), CommandID: event.RunID(), AttemptID: event.RunID(), Kind: storage.SeedLiteral,
 		}, nil)
 		if err != nil {
 			return nil, err
 		}
-		command = &api.StorageActivityCommand{OneShotStart: &api.OneShotRunStartCommand{SeedEndID: writer.endID, Started: record}}
+		command = &api.StorageActivityCommand{SynchronousStart: &api.SynchronousRunStartCommand{SeedEndID: writer.endID, Started: record}}
 		compiled, err := json.Marshal(command)
 		if err != nil {
 			return nil, err

@@ -95,7 +95,7 @@ func (s *testStore) AppendRunRecord(ctx context.Context, record *runlog.Event) (
 	}
 	start.SeedEndID = storage.EmptySeedEndID
 	if record.SessionID == "" {
-		_, startErr := s.StartOneShotRun(ctx, storage.OneShotRunStart{Run: start, Started: started})
+		_, startErr := s.StartOneShotRun(ctx, storage.OneShotRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started})
 		if startErr != nil {
 			return storage.AppendResult{}, startErr
 		}
@@ -113,7 +113,7 @@ func (s *testStore) AppendRunRecord(ctx context.Context, record *runlog.Event) (
 		if canceledErr != nil {
 			return storage.AppendResult{}, canceledErr
 		}
-		_, startErr := s.StartRootRun(ctx, storage.RootRunStart{Run: start, Started: started, Canceled: canceled})
+		_, startErr := s.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started, Canceled: canceled})
 		if startErr != nil {
 			return storage.AppendResult{}, startErr
 		}
@@ -260,9 +260,9 @@ func admitRunWithPredecessorForTest(
 	var err error
 	switch {
 	case run.SessionID == "":
-		_, err = store.StartOneShotRun(context.Background(), storage.OneShotRunStart{Run: start, Started: started})
+		_, err = store.StartOneShotRun(context.Background(), storage.OneShotRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started})
 	case start.ParentRunID == "":
-		_, err = store.StartRootRun(context.Background(), storage.RootRunStart{Run: start, Started: started, Canceled: canceled})
+		_, err = store.StartRootRun(context.Background(), storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started, Canceled: canceled})
 	default:
 		parent, loadErr := store.LoadRun(context.Background(), run.ParentRunID)
 		require.NoError(t, loadErr)
@@ -275,7 +275,7 @@ func admitRunWithPredecessorForTest(
 			run.RunID,
 			agent.Ident(run.AgentID),
 		), "child-link-"+run.RunID, run.StartedAt)
-		_, err = store.StartChildRun(context.Background(), storage.ChildRunStart{Run: start, ParentLinked: linked, Started: started, Canceled: canceled})
+		_, err = store.StartChildRun(context.Background(), storage.ChildRunStart{RequestDigest: [32]byte{1}, Run: start, ParentLinked: linked, Started: started, Canceled: canceled})
 	}
 	require.NoError(t, err)
 	switch target {
@@ -1384,4 +1384,9 @@ func newAnyJSONSpec(name tools.Ident) tools.ToolSpec {
 		},
 		Result: tools.TypeSpec{Name: string(name + "_result"), Codec: codec},
 	}
+}
+
+// StartRequestDigest supplies the fixed accepted request for this workflow fixture.
+func (t *testWorkflowContext) StartRequestDigest() ([32]byte, error) {
+	return [32]byte{1}, nil
 }

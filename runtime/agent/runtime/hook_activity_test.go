@@ -98,7 +98,7 @@ func TestRecordActivityStoresRootStartDecision(t *testing.T) {
 
 			publishTestRunInput(t, runtime, &RunInput{AgentID: "svc.agent", RunID: "run", SessionID: "session"}, nil)
 			output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
-				RootStart: &api.RootRunStartCommand{SeedEndID: "0", Started: record},
+				RootStart: &api.RootRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: "0", Started: record},
 			})
 			require.NoError(t, err)
 			start := output.RootStart
@@ -166,7 +166,7 @@ func TestRecordActivityStoresRenderedPromptsOnlyForStartedRun(t *testing.T) {
 
 			publishTestRunInput(t, runtime, &RunInput{AgentID: "svc.agent", RunID: "run", SessionID: "session"}, nil)
 			output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
-				RootStart: &api.RootRunStartCommand{SeedEndID: "0", Started: started},
+				RootStart: &api.RootRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: "0", Started: started},
 			})
 			require.NoError(t, err)
 			wantStartRecords := 1
@@ -199,7 +199,7 @@ func TestRecordActivityStartsOneShotRun(t *testing.T) {
 
 	publishTestRunInput(t, runtime, &RunInput{AgentID: "svc.agent", RunID: "run"}, nil)
 	output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
-		OneShotStart: &api.OneShotRunStartCommand{SeedEndID: "0", Started: record},
+		OneShotStart: &api.OneShotRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: "0", Started: record},
 	})
 	require.NoError(t, err)
 	require.Equal(t, session.RunStartProceed, output.OneShotStart.Outcome)
@@ -216,7 +216,7 @@ func TestRecordActivityStartsOneShotChildRun(t *testing.T) {
 	require.NoError(t, err)
 	publishTestRunInput(t, runtime, &RunInput{AgentID: "parent.agent", RunID: "parent"}, nil)
 	_, err = runtime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
-		OneShotStart: &api.OneShotRunStartCommand{SeedEndID: "0", Started: parentRecord},
+		OneShotStart: &api.OneShotRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: "0", Started: parentRecord},
 	})
 	require.NoError(t, err)
 	childEvent := hooks.NewRunStartedEvent(
@@ -237,7 +237,7 @@ func TestRecordActivityStartsOneShotChildRun(t *testing.T) {
 
 	publishTestRunInput(t, runtime, &RunInput{AgentID: "child.agent", RunID: "child"}, nil)
 	output, err := runtime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
-		OneShotChildStart: &api.OneShotChildRunStartCommand{
+		OneShotChildStart: &api.OneShotChildRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...),
 			SeedEndID:    "0",
 			ParentLinked: linkedRecord,
 			Started:      childRecord,
@@ -362,7 +362,7 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			}
 			runtime := &Runtime{Store: test.store, Bus: hooks.NewBus()}
 
-			_, err = runtime.storeRunStart(t.Context(), test.kind, "0", startedInput, linkedInput)
+			_, err = runtime.storeRunStart(t.Context(), test.kind, append([]byte{1}, make([]byte, 31)...), "0", startedInput, linkedInput)
 
 			require.ErrorContains(t, err, test.want)
 			require.True(t, engine.IsActivityErrorNonRetryable(err))
@@ -382,7 +382,7 @@ func TestRecordActivityAcceptsProceedRetryAfterSessionEnds(t *testing.T) {
 	input := &RunInput{AgentID: "svc.agent", RunID: "run", SessionID: "session"}
 	publishTestRunInput(t, runtime, input, nil)
 	command := &api.StorageActivityCommand{
-		RootStart: &api.RootRunStartCommand{SeedEndID: input.SeedEndID, Started: started},
+		RootStart: &api.RootRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: input.SeedEndID, Started: started},
 	}
 
 	first, err := runtime.executeStorageCommand(t.Context(), command)

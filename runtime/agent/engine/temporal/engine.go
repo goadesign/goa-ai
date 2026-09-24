@@ -317,6 +317,10 @@ func (e *Engine) temporalWorkflowHandler(
 				engine.ErrWorkflowCompleted.Error(), cancellationCompletedErrorType, nil,
 			)
 		}
+		var conflict *engine.WorkflowStartConflictError
+		if errors.As(err, &conflict) {
+			return out, startConflictApplicationError(conflict)
+		}
 		if temporalerrors.CancellationOnly(err) {
 			return out, temporal.NewCanceledError("workflow canceled")
 		}
@@ -334,6 +338,10 @@ func (e *Engine) RegisterStorageActivity(_ context.Context, name string, opts en
 	wrapped := func(ctx context.Context, in *api.StorageActivityCommand) (*api.StorageActivityResult, error) {
 		out, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
 		e.recordActivityError(ctx, err)
+		var conflict *engine.WorkflowStartConflictError
+		if errors.As(err, &conflict) {
+			return out, startConflictApplicationError(conflict)
+		}
 		if engine.IsActivityErrorNonRetryable(err) {
 			return out, temporal.NewNonRetryableApplicationError(
 				err.Error(),

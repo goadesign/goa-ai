@@ -162,7 +162,7 @@ func newTranscriptTestStore(t *testing.T, ctx context.Context) *storageinmem.Sto
 		context.Canceled,
 		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
 	), "run-canceled", now)
-	_, err = store.StartRootRun(ctx, storage.RootRunStart{
+	_, err = store.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte{1},
 		Run:      session.RunStart{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", SeedEndID: storage.EmptySeedEndID, StartedAt: now},
 		Started:  started,
 		Canceled: canceled,

@@ -71,9 +71,9 @@ type (
 		EndID string
 	}
 
-	// SeedRecord contains exactly one bounded literal message encoding or one
-	// reference matching the declaration. The store assigns ID; callers supply
-	// a stable Key and exact PreviousID for retry and ordering checks.
+	// SeedRecord contains one complete literal, literal fragment, declared
+	// history reference or compiled-start part. The store assigns ID; callers
+	// supply a stable Key and exact PreviousID for retry and ordering checks.
 	SeedRecord struct {
 		// ID is the store-assigned position; append requests leave it empty.
 		ID string
@@ -83,6 +83,9 @@ type (
 		PreviousID string
 		// Messages uses the canonical literal transcript encoding.
 		Messages rawjson.Message
+		// LiteralPart continues one literal whose encoded bytes span records.
+		// It is omitted for complete literals so their encoding stays unchanged.
+		LiteralPart *LiteralPart `json:"literal_part,omitempty"`
 		// Prefix replaces a literal with the declaration's exact source.
 		Prefix *HistoryPrefix
 		// Prepared holds the next bytes of the complete compiled start. These
@@ -185,8 +188,14 @@ func ValidateSeedAppend(command SeedAppend) error {
 	if len(r.Prepared) > 0 {
 		variants++
 	}
+	if r.LiteralPart != nil {
+		variants++
+		if err := r.LiteralPart.validate(); err != nil {
+			return err
+		}
+	}
 	if variants != 1 {
-		return errors.New("preparation record requires exactly one literal, history prefix or compiled-start part")
+		return errors.New("preparation record requires exactly one complete literal, literal fragment, history prefix or compiled-start part")
 	}
 	if len(r.Messages) > 0 && !json.Valid(r.Messages) {
 		return errors.New("seed literal is not valid JSON")

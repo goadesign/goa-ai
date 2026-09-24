@@ -322,6 +322,10 @@ type (
 		// WorkflowID returns the unique identifier for this workflow execution.
 		WorkflowID() string
 
+		// StartRequestDigest returns the complete request digest accepted by the
+		// engine for this execution. Missing or malformed proof is an error.
+		StartRequestDigest() ([32]byte, error)
+
 		// RunID returns the engine-assigned run identifier, used for observability
 		// and run-level correlation.
 		RunID() string

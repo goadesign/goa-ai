@@ -837,7 +837,7 @@ func TestWorkflowStartsShareExactPayloadLimit(t *testing.T) {
 	_, err = root.Wait(t.Context())
 	require.NoError(t, err)
 
-	exactChild := inputAtWorkflowBudget(t, childID, 0, 0)
+	exactChild := inputAtWorkflowBudget(t, childID, rootReservedBytes, 0)
 	child, err := parent.StartChildWorkflow(t.Context(), engine.ChildWorkflowRequest{
 		ID: childID, Workflow: "workflow", TaskQueue: queue, Input: exactChild,
 	})
@@ -851,7 +851,7 @@ func TestWorkflowStartsShareExactPayloadLimit(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "payloads exceed maximum aggregate size")
 
-	oversizedChild := inputAtWorkflowBudget(t, "child2", 0, 1)
+	oversizedChild := inputAtWorkflowBudget(t, "child2", rootReservedBytes, 1)
 	_, err = parent.StartChildWorkflow(t.Context(), engine.ChildWorkflowRequest{
 		ID: "child2", Workflow: "workflow", TaskQueue: queue, Input: oversizedChild,
 	})

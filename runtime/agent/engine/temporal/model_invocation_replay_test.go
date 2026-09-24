@@ -74,7 +74,7 @@ func (p *replayPlanner) PlanResume(context.Context, *planner.PlanResumeInput) (*
 
 func TestProductionWorkflowReplaysPreRecoveryHistory(t *testing.T) {
 	plannerStub, handler := productionReplayWorkflow(t)
-	history := deserializeReplayHistory(t, syntheticProductionReplayHistory(t, &api.PlanActivityOutput{
+	history := deserializeReplayHistory(t, syntheticAcceptedProductionHistory(t, &api.PlanActivityOutput{
 		PublicationBatchID: "00000000-0000-4000-8000-000000000001",
 		Result: &api.PlanResult{
 			FinalResponse: &planner.FinalResponse{
@@ -103,7 +103,7 @@ func TestProductionWorkflowReplaysPreRecoveryHistory(t *testing.T) {
 func TestProductionWorkflowReplaysModelInvocationRecovery(t *testing.T) {
 	plannerStub, handler := productionReplayWorkflow(t)
 	correction := `Field "query" must contain a JSON string.`
-	history := deserializeReplayHistory(t, syntheticProductionReplayHistory(t, &api.PlanActivityOutput{
+	history := deserializeReplayHistory(t, syntheticAcceptedProductionHistory(t, &api.PlanActivityOutput{
 		PublicationBatchID: "00000000-0000-4000-8000-000000000001",
 		ModelInvocationRecovery: &api.ModelInvocationRecovery{
 			NoCallBodyCorrection: correction,
@@ -141,7 +141,7 @@ func TestProductionWorkflowReplaysCompleteRejectedCalls(t *testing.T) {
 		},
 		Correction: `Field "query" must contain a JSON string.`,
 	}}
-	history := deserializeReplayHistory(t, syntheticProductionReplayHistory(t, &api.PlanActivityOutput{
+	history := deserializeReplayHistory(t, syntheticAcceptedProductionHistory(t, &api.PlanActivityOutput{
 		PublicationBatchID:      "00000000-0000-4000-8000-000000000001",
 		ModelInvocationRecovery: recovery,
 	}, true))
@@ -159,7 +159,7 @@ func TestProductionWorkflowReplaysCompleteRejectedCalls(t *testing.T) {
 
 func TestProductionWorkflowRejectsLegacyCorrectionHistory(t *testing.T) {
 	plannerStub, handler := productionReplayWorkflow(t)
-	history := syntheticProductionReplayHistory(t, &api.PlanActivityOutput{
+	history := syntheticAcceptedProductionHistory(t, &api.PlanActivityOutput{
 		PublicationBatchID: "00000000-0000-4000-8000-000000000001",
 		ModelInvocationRecovery: &api.ModelInvocationRecovery{
 			NoCallBodyCorrection: "Use the required field.",
@@ -200,7 +200,7 @@ func TestProductionWorkflowReplaysUnadvertisedToolNameRecovery(t *testing.T) {
 		usage,
 	))
 	require.NoError(t, err)
-	history := deserializeReplayHistory(t, syntheticProductionReplayHistory(t, &api.PlanActivityOutput{
+	history := deserializeReplayHistory(t, syntheticAcceptedProductionHistory(t, &api.PlanActivityOutput{
 		PublicationBatchID: "00000000-0000-4000-8000-000000000001",
 		Usage:              usage,
 		PlannerEvents: []*api.PlannerEventRecord{{
@@ -323,18 +323,15 @@ func replayProductionWorkflow(
 	return replayed.Load()
 }
 
-// syntheticProductionReplayHistory records the complete command sequence from
-// one production workflow run. The old form contains the PlanActivityOutput
-// shape used before model-invocation recovery existed. The recovery form records
-// one replacement planner turn. These histories are synthetic fixtures, not
-// histories captured from a deployed Temporal service.
-func syntheticProductionReplayHistory(
+// syntheticAcceptedProductionHistory constructs a new history with the exact
+// input and memo submitted by the current engine. The planner values may use
+// older supported shapes, but this is not a converted or deployed old history.
+func syntheticAcceptedProductionHistory(
 	t *testing.T,
 	first *api.PlanActivityOutput,
 	recovery bool,
 ) *historypb.History {
 	t.Helper()
-	dataConverter := NewAgentDataConverter()
 	runInput := &api.RunInput{
 		AgentID:   productionReplayAgentID,
 		RunID:     productionReplayRunID,
@@ -342,8 +339,18 @@ func syntheticProductionReplayHistory(
 		SeedEndID: "published",
 		TurnID:    productionReplayTurnID,
 	}
-	startInput, err := dataConverter.ToPayloads(runInput)
-	require.NoError(t, err)
+	accepted := acceptedStartForTest(t, productionReplayWorkflowName, productionReplayTaskQueue, runInput)
+	started := workflowExecutionStartedEvent(1, productionReplayWorkflowName, productionReplayTaskQueue, accepted.Input)
+	started.GetWorkflowExecutionStartedEventAttributes().Memo = accepted.Memo
+	return syntheticProductionHistory(t, first, recovery, started)
+}
+
+// syntheticProductionHistory assembles activity history after the supplied
+// immutable start event. Callers choose an old start or a new accepted start
+// before constructing the history; this helper never backfills engine proof.
+func syntheticProductionHistory(t *testing.T, first *api.PlanActivityOutput, recovery bool, started *historypb.HistoryEvent) *historypb.History {
+	t.Helper()
+	dataConverter := NewAgentDataConverter()
 	firstResult, err := dataConverter.ToPayloads(first)
 	require.NoError(t, err)
 	rootStartResult, err := dataConverter.ToPayloads(&api.StorageActivityResult{
@@ -364,7 +371,7 @@ func syntheticProductionReplayHistory(
 	require.NoError(t, err)
 
 	events := []*historypb.HistoryEvent{
-		workflowExecutionStartedEvent(1, productionReplayWorkflowName, productionReplayTaskQueue, startInput),
+		started,
 		workflowTaskScheduledEvent(2),
 		workflowTaskStartedEvent(3),
 		workflowTaskCompletedEvent(4, 2, 3),

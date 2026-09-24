@@ -56,6 +56,7 @@ type (
 		ctx             context.Context
 		id              string
 		runID           string
+		requestDigest   [32]byte
 		eng             *eng
 		seq             *sequenceCounter
 		cancellations   *cancellationState
@@ -317,7 +318,7 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 	e.recipes[req.ID] = snapshot.Digest
 	e.mu.Unlock()
 
-	e.executeWorkflow(executionCtx, req.ID, req.RunTimeout, req.RetryPolicy, def, snapshot.InputPayload, h)
+	e.executeWorkflow(executionCtx, req.ID, req.RunTimeout, req.RetryPolicy, def, snapshot.InputPayload, snapshot.Digest, h)
 	return h, nil
 }
 
@@ -346,12 +347,13 @@ func (e *eng) executeWorkflow(
 	retryPolicy engine.RetryPolicy,
 	def engine.WorkflowDefinition,
 	inputPayload *commonpb.Payload,
+	requestDigest [32]byte,
 	h *handle,
 ) {
 	go func() {
 		defer h.cancel()
 		defer close(h.done)
-		res, err := e.runWorkflow(executionCtx, id, runTimeout, retryPolicy, def, inputPayload, h.cancellations)
+		res, err := e.runWorkflow(executionCtx, id, runTimeout, retryPolicy, def, inputPayload, requestDigest, h.cancellations)
 		h.cancellations.finish()
 		h.mu.Lock()
 		h.result = res
@@ -383,6 +385,7 @@ func (e *eng) runWorkflow(
 	retryPolicy engine.RetryPolicy,
 	def engine.WorkflowDefinition,
 	inputPayload *commonpb.Payload,
+	requestDigest [32]byte,
 	cancellations *cancellationState,
 ) (*api.RunOutput, error) {
 	dataConverter := workflowcodec.NewDataConverter()
@@ -408,6 +411,7 @@ func (e *eng) runWorkflow(
 			id:  id,
 			// In-memory assigns workflow ID as run ID.
 			runID:           id,
+			requestDigest:   requestDigest,
 			eng:             e,
 			seq:             &sequenceCounter{},
 			cancellations:   cancellations,
@@ -426,7 +430,7 @@ func (e *eng) runWorkflow(
 			}
 			return copied, nil
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, engine.ErrWorkflowCompleted) ||
+		if errors.Is(err, context.Canceled) || errors.Is(err, engine.ErrWorkflowCompleted) || errors.Is(err, engine.ErrWorkflowStartConflict) ||
 			temporalerrors.IsRequestValidation(err) || !workflowRetryAllowed(retryPolicy, attempt) {
 			return result, err
 		}
@@ -745,6 +749,14 @@ func (w *wfCtx) RunID() string {
 	return w.runID
 }
 
+// StartRequestDigest returns the snapshot retained when the engine accepted this execution.
+func (w *wfCtx) StartRequestDigest() ([32]byte, error) {
+	if w.requestDigest == ([32]byte{}) {
+		return [32]byte{}, errors.New("workflow accepted request digest is missing")
+	}
+	return w.requestDigest, nil
+}
+
 func (w *wfCtx) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
 	if err := engine.ValidateChildWorkflowRequest(req); err != nil {
 		return nil, err
@@ -777,7 +789,7 @@ func (w *wfCtx) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRe
 	h, executionCtx := w.eng.reserveWorkflowLocked(w.ctx, req.ID)
 	w.eng.mu.Unlock()
 
-	w.eng.executeWorkflow(executionCtx, req.ID, req.RunTimeout, req.RetryPolicy, def, snapshot.InputPayload, h)
+	w.eng.executeWorkflow(executionCtx, req.ID, req.RunTimeout, req.RetryPolicy, def, snapshot.InputPayload, snapshot.Digest, h)
 	return &childHandle{h: h}, nil
 }
 

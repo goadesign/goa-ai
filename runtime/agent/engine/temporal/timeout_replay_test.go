@@ -32,7 +32,7 @@ func TestProductionWorkflowReplaysCompletedNativeTimeout(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			plannerStub, handler := productionReplayWorkflow(t)
-			history := syntheticProductionReplayHistory(t, &api.PlanActivityOutput{}, false)
+			history := syntheticAcceptedProductionHistory(t, &api.PlanActivityOutput{}, false)
 			history.Events = history.Events[:28]
 			history.Events[24] = &historypb.HistoryEvent{
 				EventId: 25, EventType: enumspb.EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT,

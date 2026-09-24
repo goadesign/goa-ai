@@ -15,6 +15,7 @@ import (
 )
 
 const (
+	startConflictErrorType         = "goa_ai_workflow_start_conflict"
 	cancellationUpdateName         = "goa_ai_request_cancellation"
 	cancellationUpdateID           = "goa_ai_cancellation"
 	cancellationConflictErrorType  = "goa_ai_cancellation_conflict"
@@ -29,7 +30,7 @@ type workflowHandle struct {
 func (h *workflowHandle) Wait(ctx context.Context) (*api.RunOutput, error) {
 	var out *api.RunOutput
 	if err := h.run.Get(ctx, &out); err != nil {
-		return nil, err
+		return nil, mapStartConflictError(err)
 	}
 	return out, nil
 }
@@ -115,3 +116,26 @@ var (
 	_ engine.WorkflowHandle        = (*workflowHandle)(nil)
 	_ engine.CancellationRequester = (*Engine)(nil)
 )
+
+// startConflictApplicationError preserves a rejected start through both the
+// activity and workflow failure payloads. It never changes other storage errors.
+func startConflictApplicationError(conflict *engine.WorkflowStartConflictError) error {
+	return temporal.NewNonRetryableApplicationError(conflict.Error(), startConflictErrorType, nil, conflict.ID)
+}
+
+// mapStartConflictError restores the typed start rejection from engine-owned
+// Temporal details; malformed details remain errors instead of guessed identities.
+func mapStartConflictError(err error) error {
+	var applicationErr *temporal.ApplicationError
+	if !errors.As(err, &applicationErr) || applicationErr.Type() != startConflictErrorType {
+		return err
+	}
+	var id string
+	if decodeErr := applicationErr.Details(&id); decodeErr != nil {
+		return fmt.Errorf("decode workflow start conflict: %w", decodeErr)
+	}
+	if id == "" {
+		return errors.New("workflow start conflict has no workflow id")
+	}
+	return &engine.WorkflowStartConflictError{ID: id}
+}

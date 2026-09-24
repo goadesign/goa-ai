@@ -31,6 +31,12 @@ type (
 	// Every start result includes the current RunStatus observed in that same
 	// atomic operation. Exact retries preserve the original decision and
 	// record IDs, even when the run has since closed.
+	// The four engine starts atomically bind RequestDigest to the first actual
+	// start. A matching closed request selects its original validated records
+	// despite a newly proposed time. Running starts still require exact time and
+	// record equality. Missing proof is an error, never permission to restart.
+	// StartSynchronousRun has separate lifetime identity and requires the exact
+	// original command at every retry; it cannot recover a new execution.
 	//
 	// StartRootRun and StartChildRun accept a continuation when
 	// Run.PredecessorRunID is set. Before either method writes the successor run,
@@ -76,6 +82,10 @@ type (
 		StartOneShotRun(context.Context, OneShotRunStart) (OneShotRunStartResult, error)
 		// StartOneShotChildRun records a sessionless parent link and child start together.
 		StartOneShotChildRun(context.Context, OneShotChildRunStart) (OneShotChildRunStartResult, error)
+		// StartSynchronousRun stores a callback's sessionless start. Retries must
+		// preserve the complete original command, including its timestamp.
+		// Synchronous and engine starts cannot share a Run ID.
+		StartSynchronousRun(context.Context, SynchronousRunStart) (OneShotRunStartResult, error)
 		// AppendRunRecord stores an ordinary record without changing run state.
 		AppendRunRecord(context.Context, *runlog.Event) (AppendResult, error)
 		// RecordRunCancellation stores the first cancellation reason and record.
@@ -113,6 +123,8 @@ type (
 
 	// RootRunStart contains the records stored for a session root run.
 	RootRunStart struct {
+		// RequestDigest binds this start to the complete request accepted by the engine.
+		RequestDigest [32]byte
 		// Run is the immutable identity of the accepted workflow.
 		Run session.RunStart
 		// Started is stored for every accepted workflow.
@@ -123,6 +135,8 @@ type (
 
 	// ChildRunStart contains the parent link and child lifecycle records.
 	ChildRunStart struct {
+		// RequestDigest binds this start to the complete request accepted by the engine.
+		RequestDigest [32]byte
 		// Run is the immutable identity of the accepted child workflow.
 		Run session.RunStart
 		// ParentLinked records which parent accepted the child.
@@ -136,6 +150,8 @@ type (
 	// OneShotRunStart contains the identity and first record for a sessionless
 	// workflow.
 	OneShotRunStart struct {
+		// RequestDigest binds this start to the complete request accepted by the engine.
+		RequestDigest [32]byte
 		// Run is the immutable identity of the accepted workflow. SessionID and
 		// ParentRunID must be empty.
 		Run session.RunStart
@@ -146,12 +162,26 @@ type (
 	// OneShotChildRunStart contains the relationship and start records for a
 	// sessionless child workflow.
 	OneShotChildRunStart struct {
+		// RequestDigest binds this start to the complete request accepted by the engine.
+		RequestDigest [32]byte
 		// Run is the immutable child identity. SessionID and PredecessorRunID must
 		// be empty, and ParentRunID must name an existing sessionless run.
 		Run session.RunStart
 		// ParentLinked records which parent tool call accepted the child.
 		ParentLinked *runlog.Event
 		// Started is stored on the child after ParentLinked.
+		Started *runlog.Event
+	}
+
+	// SynchronousRunStart contains a callback's immutable sessionless start.
+	// It supports exact command retries, not recovery by another execution.
+	// The Store permanently distinguishes this start from an engine start for
+	// the lifetime of the Run, even when every other command field matches.
+	SynchronousRunStart struct {
+		// Run is the callback's identity. SessionID, ParentRunID and
+		// PredecessorRunID must be empty.
+		Run session.RunStart
+		// Started is prepared once before the callback and reused on retries.
 		Started *runlog.Event
 	}
 

@@ -21,13 +21,13 @@ func TestStorageResultStartVariants(t *testing.T) {
 		result  func(*api.StorageActivityResult) *api.StartRunResult
 		ids     []string
 	}{
-		{"root", &api.StorageActivityCommand{RootStart: &api.RootRunStartCommand{Started: started}},
+		{"root", &api.StorageActivityCommand{RootStart: &api.RootRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), Started: started}},
 			func(out *api.StorageActivityResult) *api.StartRunResult { return out.RootStart }, []string{"started"}},
-		{"child", &api.StorageActivityCommand{ChildStart: &api.ChildRunStartCommand{ParentLinked: linked, Started: started}},
+		{"child", &api.StorageActivityCommand{ChildStart: &api.ChildRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), ParentLinked: linked, Started: started}},
 			func(out *api.StorageActivityResult) *api.StartRunResult { return out.ChildStart }, []string{"linked", "started"}},
-		{"one shot", &api.StorageActivityCommand{OneShotStart: &api.OneShotRunStartCommand{Started: started}},
+		{"one shot", &api.StorageActivityCommand{OneShotStart: &api.OneShotRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), Started: started}},
 			func(out *api.StorageActivityResult) *api.StartRunResult { return out.OneShotStart }, []string{"started"}},
-		{"one shot child", &api.StorageActivityCommand{OneShotChildStart: &api.OneShotChildRunStartCommand{ParentLinked: linked, Started: started}},
+		{"one shot child", &api.StorageActivityCommand{OneShotChildStart: &api.OneShotChildRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), ParentLinked: linked, Started: started}},
 			func(out *api.StorageActivityResult) *api.StartRunResult { return out.OneShotChildStart }, []string{"linked", "started"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

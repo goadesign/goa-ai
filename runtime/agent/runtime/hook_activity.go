@@ -44,6 +44,7 @@ const (
 	storageCommandSeedBegin
 	storageCommandSeedAppend
 	storageCommandSeedPublish
+	storageCommandSynchronousStart
 )
 
 // executeStorageCommand applies one explicitly selected storage operation
@@ -90,13 +91,15 @@ func (r *Runtime) executeStorageCommand(ctx context.Context, command *api.Storag
 	case storageCommandAppend:
 		result, err = r.appendRecords(ctx, command.Append.Records)
 	case storageCommandRootStart:
-		result, err = r.storeRunStart(ctx, kind, command.RootStart.SeedEndID, command.RootStart.Started, nil)
+		result, err = r.storeRunStart(ctx, kind, command.RootStart.RequestDigest, command.RootStart.SeedEndID, command.RootStart.Started, nil)
 	case storageCommandChildStart:
-		result, err = r.storeRunStart(ctx, kind, command.ChildStart.SeedEndID, command.ChildStart.Started, command.ChildStart.ParentLinked)
+		result, err = r.storeRunStart(ctx, kind, command.ChildStart.RequestDigest, command.ChildStart.SeedEndID, command.ChildStart.Started, command.ChildStart.ParentLinked)
 	case storageCommandOneShotStart:
-		result, err = r.storeRunStart(ctx, kind, command.OneShotStart.SeedEndID, command.OneShotStart.Started, nil)
+		result, err = r.storeRunStart(ctx, kind, command.OneShotStart.RequestDigest, command.OneShotStart.SeedEndID, command.OneShotStart.Started, nil)
 	case storageCommandOneShotChildStart:
-		result, err = r.storeRunStart(ctx, kind, command.OneShotChildStart.SeedEndID, command.OneShotChildStart.Started, command.OneShotChildStart.ParentLinked)
+		result, err = r.storeRunStart(ctx, kind, command.OneShotChildStart.RequestDigest, command.OneShotChildStart.SeedEndID, command.OneShotChildStart.Started, command.OneShotChildStart.ParentLinked)
+	case storageCommandSynchronousStart:
+		result, err = r.storeRunStart(ctx, kind, nil, command.SynchronousStart.SeedEndID, command.SynchronousStart.Started, nil)
 	case storageCommandCancellation:
 		result, err = r.cancelRun(ctx, command.Cancellation.Record)
 	case storageCommandSuspension:
@@ -223,9 +226,12 @@ func (r *Runtime) recordResult(ctx context.Context, input *RecordActivityInput) 
 	return result, nil
 }
 
-// storeRunStart stores the selected root or child start, with or without a
-// Session, and validates its result before publishing hooks.
-func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, seedEndID string, startedInput, linkedInput *RecordActivityInput) (*api.StorageActivityResult, error) {
+// storeRunStart decodes and stores one explicit start operation, then validates
+// its result before publishing hooks. Only engine operations carry a digest.
+func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, requestDigest []byte, seedEndID string, startedInput, linkedInput *RecordActivityInput) (*api.StorageActivityResult, error) {
+	if kind != storageCommandSynchronousStart && len(requestDigest) != 32 {
+		return nil, malformedStorageCommand(errors.New("runtime: accepted request digest must contain 32 bytes"))
+	}
 	if startedInput == nil || startedInput.Type != hooks.RunStarted {
 		return nil, malformedStorageCommand(errors.New("runtime: start command requires a run-started record"))
 	}
@@ -246,7 +252,7 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, se
 		if started.SessionID() == "" || linkedInput == nil {
 			return nil, malformedStorageCommand(errors.New("runtime: child start requires a session and parent link"))
 		}
-	case storageCommandOneShotStart:
+	case storageCommandOneShotStart, storageCommandSynchronousStart:
 		if started.SessionID() != "" || linkedInput != nil {
 			return nil, malformedStorageCommand(errors.New("runtime: one-shot start cannot have a session or parent link"))
 		}
@@ -274,9 +280,13 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, se
 	var records []storage.AppendResult
 	var selectedEvents []hooks.Event
 	switch kind {
-	case storageCommandOneShotStart:
-		result, startErr := r.Store.StartOneShotRun(ctx, storage.OneShotRunStart{Run: start, Started: startedRecord})
-		err = startErr
+	case storageCommandOneShotStart, storageCommandSynchronousStart:
+		var result storage.OneShotRunStartResult
+		if kind == storageCommandSynchronousStart {
+			result, err = r.Store.StartSynchronousRun(ctx, storage.SynchronousRunStart{Run: start, Started: startedRecord})
+		} else {
+			result, err = r.Store.StartOneShotRun(ctx, storage.OneShotRunStart{RequestDigest: [32]byte(requestDigest), Run: start, Started: startedRecord})
+		}
 		runStatus = result.RunStatus
 		outcome = session.RunStartProceed
 		records = []storage.AppendResult{result.Record}
@@ -290,7 +300,7 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, se
 		if !linkedOK || linked.ChildRunID != start.RunID || linked.RunID() != start.ParentRunID {
 			return nil, malformedStorageCommand(errors.New("runtime: child link does not match child start"))
 		}
-		result, startErr := r.Store.StartOneShotChildRun(ctx, storage.OneShotChildRunStart{
+		result, startErr := r.Store.StartOneShotChildRun(ctx, storage.OneShotChildRunStart{RequestDigest: [32]byte(requestDigest),
 			Run: start, ParentLinked: runLogEvent(linkedInput, linkedInput.Payload, linked.Timestamp()), Started: startedRecord,
 		})
 		err = startErr
@@ -305,7 +315,7 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, se
 		}
 		canceledRecord := runLogEvent(canceledInput, canceledInput.Payload, canceledEvent.Timestamp())
 		if kind == storageCommandRootStart {
-			result, startErr := r.Store.StartRootRun(ctx, storage.RootRunStart{
+			result, startErr := r.Store.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte(requestDigest),
 				Run: start, Started: startedRecord, Canceled: canceledRecord,
 			})
 			err = startErr
@@ -327,7 +337,7 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, se
 				return nil, malformedStorageCommand(errors.New("runtime: child link does not match child start"))
 			}
 			linkedRecord := runLogEvent(linkedInput, linkedInput.Payload, linked.Timestamp())
-			result, startErr := r.Store.StartChildRun(ctx, storage.ChildRunStart{
+			result, startErr := r.Store.StartChildRun(ctx, storage.ChildRunStart{RequestDigest: [32]byte(requestDigest),
 				Run: start, ParentLinked: linkedRecord, Started: startedRecord, Canceled: canceledRecord,
 			})
 			err = startErr
@@ -345,6 +355,9 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, se
 		return nil, malformedStorageCommand(errors.New("runtime: start command has wrong operation"))
 	}
 	if err != nil {
+		if kind != storageCommandSynchronousStart && errors.Is(err, session.ErrRunConflict) {
+			return nil, engine.MarkActivityErrorNonRetryable(&engine.WorkflowStartConflictError{ID: start.RunID})
+		}
 		return nil, err
 	}
 	startResult := &api.StartRunResult{
@@ -366,6 +379,8 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, se
 		result.OneShotStart = startResult
 	case storageCommandOneShotChildStart:
 		result.OneShotChildStart = startResult
+	case storageCommandSynchronousStart:
+		result.SynchronousStart = startResult
 	case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal,
 		storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish:
 		return nil, malformedStorageCommand(errors.New("runtime: start command has wrong operation"))
@@ -375,7 +390,7 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, se
 	}
 	// A closed run may replay its original start records, but those records
 	// must not restart observers or live streams.
-	if outcome == session.RunStartProceed && session.IsTerminalRunStatus(runStatus) {
+	if session.IsTerminalRunStatus(runStatus) && !records[0].Inserted {
 		return result, nil
 	}
 	for index, event := range selectedEvents {
@@ -402,7 +417,7 @@ func validateStartRecordSessionStatus(kind storageCommandKind, outcome session.R
 			)
 		}
 	}
-	if kind == storageCommandOneShotStart || kind == storageCommandOneShotChildStart {
+	if kind == storageCommandOneShotStart || kind == storageCommandOneShotChildStart || kind == storageCommandSynchronousStart {
 		if want != "" {
 			return fmt.Errorf("runtime: one-shot start has session status %q, want empty", want)
 		}
@@ -596,6 +611,7 @@ func selectedStorageCommandKind(command *api.StorageActivityCommand) (storageCom
 	selected, count = includeStorageKind(selected, count, storageCommandChildStart, command.ChildStart != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandOneShotStart, command.OneShotStart != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandOneShotChildStart, command.OneShotChildStart != nil)
+	selected, count = includeStorageKind(selected, count, storageCommandSynchronousStart, command.SynchronousStart != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandCancellation, command.Cancellation != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandSuspension, command.Suspension != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandTerminal, command.Terminal != nil)
@@ -621,6 +637,7 @@ func validateStorageResult(kind storageCommandKind, result *api.StorageActivityR
 	selected, count = includeStorageKind(selected, count, storageCommandChildStart, result.ChildStart != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandOneShotStart, result.OneShotStart != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandOneShotChildStart, result.OneShotChildStart != nil)
+	selected, count = includeStorageKind(selected, count, storageCommandSynchronousStart, result.SynchronousStart != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandCancellation, result.Cancellation != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandSuspension, result.Suspension != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandTerminal, result.Terminal != nil)
@@ -643,7 +660,7 @@ func validateStorageResult(kind storageCommandKind, result *api.StorageActivityR
 		if result.SeedPublish.EndID == "" {
 			return errors.New("runtime: seed publication returned no position")
 		}
-	case storageCommandRootStart, storageCommandChildStart, storageCommandOneShotStart, storageCommandOneShotChildStart:
+	case storageCommandRootStart, storageCommandChildStart, storageCommandOneShotStart, storageCommandOneShotChildStart, storageCommandSynchronousStart:
 		start := result.RootStart
 		if kind == storageCommandChildStart {
 			start = result.ChildStart
@@ -653,6 +670,9 @@ func validateStorageResult(kind storageCommandKind, result *api.StorageActivityR
 		}
 		if kind == storageCommandOneShotChildStart {
 			start = result.OneShotChildStart
+		}
+		if kind == storageCommandSynchronousStart {
+			start = result.SynchronousStart
 		}
 		if start.Outcome != session.RunStartProceed && start.Outcome != session.RunStartStop {
 			return fmt.Errorf("runtime: storage result has unknown start outcome %q", start.Outcome)
@@ -670,7 +690,7 @@ func validateStorageResult(kind storageCommandKind, result *api.StorageActivityR
 			(start.RunStatus != session.RunStatusCanceled || start.CancellationReason != run.CancellationReasonSessionEnded) {
 			return errors.New("runtime: stopped start result requires canceled status and session_ended reason")
 		}
-		if (kind == storageCommandOneShotStart || kind == storageCommandOneShotChildStart) && start.Outcome != session.RunStartProceed {
+		if (kind == storageCommandOneShotStart || kind == storageCommandOneShotChildStart || kind == storageCommandSynchronousStart) && start.Outcome != session.RunStartProceed {
 			return errors.New("runtime: one-shot start result must proceed")
 		}
 		recordCount := 1

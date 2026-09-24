@@ -756,6 +756,8 @@ type (
 		OneShotStart *OneShotRunStartCommand
 		// OneShotChildStart stores a parent link and start for a sessionless child.
 		OneShotChildStart *OneShotChildRunStartCommand
+		// SynchronousStart stores a callback's exact prepared start.
+		SynchronousStart *SynchronousRunStartCommand
 		// Cancellation stores the first cancellation reason and its record.
 		Cancellation *RunCancellationCommand
 		// Suspension stores a continuation checkpoint and its suspended record.
@@ -774,6 +776,8 @@ type (
 	RootRunStartCommand struct {
 		// SeedEndID is the publication attached by this accepted start.
 		SeedEndID string
+		// RequestDigest binds this start to the complete request accepted by the engine.
+		RequestDigest []byte
 		// Started is the run-started record.
 		Started *RecordActivityInput
 	}
@@ -782,6 +786,8 @@ type (
 	ChildRunStartCommand struct {
 		// SeedEndID is the publication attached by this accepted start.
 		SeedEndID string
+		// RequestDigest binds this start to the complete request accepted by the engine.
+		RequestDigest []byte
 		// ParentLinked is stored on the parent run.
 		ParentLinked *RecordActivityInput
 		// Started is stored on the child run when its session is active.
@@ -792,6 +798,8 @@ type (
 	OneShotRunStartCommand struct {
 		// SeedEndID is the publication attached by this accepted start.
 		SeedEndID string
+		// RequestDigest binds this start to the complete request accepted by the engine.
+		RequestDigest []byte
 		// Started is the run-started record.
 		Started *RecordActivityInput
 	}
@@ -800,9 +808,20 @@ type (
 	OneShotChildRunStartCommand struct {
 		// SeedEndID is the publication attached by this accepted start.
 		SeedEndID string
+		// RequestDigest binds this start to the complete request accepted by the engine.
+		RequestDigest []byte
 		// ParentLinked is stored on the sessionless parent run.
 		ParentLinked *RecordActivityInput
 		// Started is stored on the child run.
+		Started *RecordActivityInput
+	}
+
+	// SynchronousRunStartCommand carries a callback's immutable start record.
+	// It has no engine request digest and permits only exact command retries.
+	SynchronousRunStartCommand struct {
+		// SeedEndID is the publication attached by this exact callback start.
+		SeedEndID string
+		// Started preserves the invocation's original event, owner and time.
 		Started *RecordActivityInput
 	}
 
@@ -845,6 +864,8 @@ type (
 		OneShotStart *StartRunResult
 		// OneShotChildStart reports the sessionless child start writes.
 		OneShotChildStart *StartRunResult
+		// SynchronousStart reports the callback's exact start and current state.
+		SynchronousStart *StartRunResult
 		// Cancellation reports whether the cancellation reason was accepted.
 		Cancellation *RunCancellationResult
 		// Suspension reports the suspended record write.

@@ -140,10 +140,19 @@ func TestInitialHistoryCommandByteBoundary(t *testing.T) {
 				AgentID: "agent", RunID: "boundary", Kind: storage.SeedLiteral,
 			}, messages)
 			if size > storage.MaxSeedCommandBytes {
-				require.ErrorContains(t, err, "initial message exceeds")
-				require.Empty(t, store.seeds)
-				_, err = store.LoadRunSeed(t.Context(), "boundary", storage.EmptySeedEndID)
-				require.ErrorIs(t, err, storage.ErrSeedNotFound)
+				require.NoError(t, err)
+				require.Len(t, store.seeds, 3, "two literal parts followed by compiled start")
+				var decoder transcript.LiteralDecoder
+				for index, write := range store.seeds[:2] {
+					require.NotNil(t, write.Record.LiteralPart)
+					require.Equal(t, index == 1, write.Record.LiteralPart.Final)
+					got, err := decoder.Append(t.Context(), *write.Record.LiteralPart)
+					require.NoError(t, err)
+					if index == 1 {
+						require.Equal(t, messages, got)
+					}
+				}
+				require.NoError(t, decoder.Finish())
 			} else {
 				require.NoError(t, err)
 				require.Len(t, store.seeds, 2, "history is followed by one compiled-start part")

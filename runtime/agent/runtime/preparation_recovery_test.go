@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -32,7 +33,9 @@ func TestPreparationRecoveryPreservesAcceptedRequestAfterLostReply(t *testing.T)
 	client, store := newPreparedRunTestClient(eng, testAgentDefinition("svc.agent", "agent.workflow", "agent.queue", nil, nil))
 	require.NoError(t, createPreparedRunSession(t.Context(), store))
 	client.(*agentClient).r.Store = &publicationReplyLost{Store: store, lose: true}
-	original := []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "original prompt"}}}}
+	// A lost publication reply must recover the same compiled request when
+	// its history required several literal records.
+	original := []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: strings.Repeat("original prompt", 80_000)}}}}
 	_, err := client.Prepare(t.Context(), "session-1", original, WithRunID("run-1"), WithPreparation("original-command", "attempt-1"), WithLabels(map[string]string{"profile": "original"}))
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.Zero(t, eng.startCalls)

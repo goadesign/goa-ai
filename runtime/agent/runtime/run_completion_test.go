@@ -692,7 +692,7 @@ func TestEnsureRunCompletionRedeliversStoredChildLinkBeforeCompletion(t *testing
 	childInput := &RunInput{AgentID: "child.agent", RunID: "child", SessionID: "session"}
 	publishTestRunInput(t, startRuntime, childInput, nil)
 	_, err = startRuntime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
-		ChildStart: &api.ChildRunStartCommand{SeedEndID: childInput.SeedEndID, ParentLinked: linkedInput, Started: started},
+		ChildStart: &api.ChildRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: childInput.SeedEndID, ParentLinked: linkedInput, Started: started},
 	})
 	require.ErrorContains(t, err, "child link delivery failed")
 	completed := testHookRecord(t, hooks.NewRunCompletedEvent(

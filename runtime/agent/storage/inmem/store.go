@@ -47,12 +47,18 @@ type (
 	// lifecycleRecords remembers which immutable record made each run state
 	// visible. Exact retries must use these same keys.
 	lifecycleRecords struct {
-		start        string
-		parentLink   string
-		cancellation string
-		suspension   string
-		terminal     string
+		startKind     runStartKind
+		requestDigest [32]byte
+		start         string
+		parentLink    string
+		cancellation  string
+		suspension    string
+		terminal      string
 	}
+
+	// runStartKind records who owns execution for the whole Run lifetime.
+	// Zero is invalid; missing old metadata never implies a synchronous start.
+	runStartKind uint8
 
 	// sessionRunStartResult is the common private result used while the store
 	// chooses the active-session or ended-session record.
@@ -63,6 +69,11 @@ type (
 		started      storage.AppendResult
 		canceled     storage.AppendResult
 	}
+)
+
+const (
+	engineRunStart runStartKind = iota + 1
+	synchronousRunStart
 )
 
 var _ storage.Store = (*Store)(nil)
@@ -251,7 +262,7 @@ func (s *Store) StartRootRun(_ context.Context, command storage.RootRunStart) (s
 	if err := lifecycle.ValidateRootRunStart(command); err != nil {
 		return contractResult(storage.RootRunStartResult{}, err)
 	}
-	result, err := s.startSessionRun(command.Run, false, nil, command.Started, command.Canceled)
+	result, err := s.startSessionRun(command.RequestDigest, command.Run, false, nil, command.Started, command.Canceled)
 	return contractResult(storage.RootRunStartResult{
 		Outcome:   result.outcome,
 		RunStatus: result.runStatus,
@@ -266,7 +277,7 @@ func (s *Store) StartChildRun(_ context.Context, command storage.ChildRunStart) 
 	if err := lifecycle.ValidateChildRunStart(command); err != nil {
 		return contractResult(storage.ChildRunStartResult{}, err)
 	}
-	result, err := s.startSessionRun(command.Run, true, command.ParentLinked, command.Started, command.Canceled)
+	result, err := s.startSessionRun(command.RequestDigest, command.Run, true, command.ParentLinked, command.Started, command.Canceled)
 	return contractResult(storage.ChildRunStartResult{
 		Outcome:      result.outcome,
 		RunStatus:    result.runStatus,
@@ -278,7 +289,10 @@ func (s *Store) StartChildRun(_ context.Context, command storage.ChildRunStart) 
 
 // StartOneShotRun stores a sessionless run and its first record together.
 func (s *Store) StartOneShotRun(_ context.Context, command storage.OneShotRunStart) (storage.OneShotRunStartResult, error) {
-	return contractResult(s.startOneShotRun(command))
+	if err := lifecycle.ValidateOneShotRunStart(command); err != nil {
+		return contractResult(storage.OneShotRunStartResult{}, err)
+	}
+	return contractResult(s.startSessionlessRun(command.Run, command.Started, engineRunStart, command.RequestDigest))
 }
 
 // StartOneShotChildRun stores a sessionless parent link and child start in one
@@ -287,33 +301,51 @@ func (s *Store) StartOneShotChildRun(_ context.Context, command storage.OneShotC
 	return contractResult(s.startOneShotChildRun(command))
 }
 
-// startOneShotRun applies the command while StartOneShotRun assigns the public
-// permanent-error category.
-func (s *Store) startOneShotRun(command storage.OneShotRunStart) (storage.OneShotRunStartResult, error) {
-	if err := lifecycle.ValidateOneShotRunStart(command); err != nil {
-		return storage.OneShotRunStartResult{}, err
+// StartSynchronousRun stores a callback start or returns its exact earlier
+// command. Another invocation cannot substitute a new occurrence time.
+func (s *Store) StartSynchronousRun(_ context.Context, command storage.SynchronousRunStart) (storage.OneShotRunStartResult, error) {
+	if err := lifecycle.ValidateSynchronousRunStart(command); err != nil {
+		return contractResult(storage.OneShotRunStartResult{}, err)
 	}
+	return contractResult(s.startSessionlessRun(command.Run, command.Started, synchronousRunStart, [32]byte{}))
+}
+
+// startSessionlessRun shares the record write for engine and synchronous starts.
+// The explicit kind controls identity; a missing digest never selects a kind.
+// Only the engine operation can select a closed run at a newly proposed time.
+func (s *Store) startSessionlessRun(start session.RunStart, started *runlog.Event, kind runStartKind, digest [32]byte) (storage.OneShotRunStartResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.validateStartSeedLocked(command.Run); err != nil {
+	if err := s.validateStartSeedLocked(start); err != nil {
 		return storage.OneShotRunStartResult{}, err
 	}
-	if existing, ok := s.runs[command.Run.RunID]; ok {
-		if !sameRunStart(existing, command.Run) || existing.StartOutcome != session.RunStartProceed {
+	if existing, ok := s.runs[start.RunID]; ok {
+		if kind == engineRunStart {
+			if err := s.checkStartDigestLocked(start.RunID, digest); err != nil {
+				return storage.OneShotRunStartResult{}, err
+			}
+			if session.IsTerminalRunStatus(existing.Status) {
+				result, err := s.closedStartLocked(existing, start, nil, started, nil)
+				return storage.OneShotRunStartResult{RunStatus: result.runStatus, Record: result.started}, err
+			}
+		} else if err := s.checkStartKindLocked(start.RunID, kind); err != nil {
+			return storage.OneShotRunStartResult{}, err
+		}
+		if !sameRunStart(existing, start) || existing.StartOutcome != session.RunStartProceed {
 			return storage.OneShotRunStartResult{}, session.ErrRunConflict
 		}
-		if s.lifecycle[command.Run.RunID].start != command.Started.EventKey {
+		if s.lifecycle[start.RunID].start != started.EventKey {
 			return storage.OneShotRunStartResult{}, session.ErrRunConflict
 		}
-		result, err := s.appendLocked(command.Started)
+		result, err := s.appendLocked(started)
 		return storage.OneShotRunStartResult{RunStatus: existing.Status, Record: result}, err
 	}
-	if err := s.checkNewRunRecordLocked(command.Started, command.Run); err != nil {
+	if err := s.checkNewRunRecordLocked(started, start); err != nil {
 		return storage.OneShotRunStartResult{}, err
 	}
-	s.runs[command.Run.RunID] = newRunMeta(command.Run, session.RunStartProceed, session.RunStatusRunning)
-	s.lifecycle[command.Run.RunID] = lifecycleRecords{start: command.Started.EventKey}
-	result, err := s.appendLocked(command.Started)
+	s.runs[start.RunID] = newRunMeta(start, session.RunStartProceed, session.RunStatusRunning)
+	s.lifecycle[start.RunID] = lifecycleRecords{startKind: kind, requestDigest: digest, start: started.EventKey}
+	result, err := s.appendLocked(started)
 	return storage.OneShotRunStartResult{RunStatus: session.RunStatusRunning, Record: result}, err
 }
 
@@ -329,6 +361,13 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 		return storage.OneShotChildRunStartResult{}, err
 	}
 	if existing, ok := s.runs[command.Run.RunID]; ok {
+		if err := s.checkStartDigestLocked(command.Run.RunID, command.RequestDigest); err != nil {
+			return storage.OneShotChildRunStartResult{}, err
+		}
+		if session.IsTerminalRunStatus(existing.Status) {
+			result, err := s.closedStartLocked(existing, command.Run, command.ParentLinked, command.Started, nil)
+			return storage.OneShotChildRunStartResult{RunStatus: result.runStatus, ParentRecord: result.parentRecord, Started: result.started}, err
+		}
 		keys := s.lifecycle[command.Run.RunID]
 		if !sameRunStart(existing, command.Run) || existing.StartOutcome != session.RunStartProceed ||
 			keys.parentLink != command.ParentLinked.EventKey || keys.start != command.Started.EventKey {
@@ -364,8 +403,10 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 	}
 	s.runs[command.Run.RunID] = newRunMeta(command.Run, session.RunStartProceed, session.RunStatusRunning)
 	s.lifecycle[command.Run.RunID] = lifecycleRecords{
-		parentLink: command.ParentLinked.EventKey,
-		start:      command.Started.EventKey,
+		startKind:     engineRunStart,
+		requestDigest: command.RequestDigest,
+		parentLink:    command.ParentLinked.EventKey,
+		start:         command.Started.EventKey,
 	}
 	parentRecord, err := s.appendLocked(command.ParentLinked)
 	if err != nil {
@@ -678,7 +719,7 @@ func (s *Store) ListSessionRunRecords(_ context.Context, sessionID, cursor strin
 
 // startSessionRun chooses the active or ended path while holding the same lock
 // used by EndSession.
-func (s *Store) startSessionRun(start session.RunStart, child bool, parent, started, canceled *runlog.Event) (sessionRunStartResult, error) {
+func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, child bool, parent, started, canceled *runlog.Event) (sessionRunStartResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, purged := s.purged[start.SessionID]; purged {
@@ -690,19 +731,30 @@ func (s *Store) startSessionRun(start session.RunStart, child bool, parent, star
 	if err := s.validatePredecessorLocked(start); err != nil {
 		return sessionRunStartResult{}, err
 	}
-	if parent != nil {
-		if err := s.checkAppendLocked(parent); err != nil {
+	if existing, ok := s.runs[start.RunID]; ok {
+		if err := s.checkStartDigestLocked(start.RunID, requestDigest); err != nil {
 			return sessionRunStartResult{}, err
 		}
-	}
-	if existing, ok := s.runs[start.RunID]; ok {
+		if session.IsTerminalRunStatus(existing.Status) {
+			return s.closedStartLocked(existing, start, parent, started, canceled)
+		}
 		if !sameRunStart(existing, start) {
 			return sessionRunStartResult{}, session.ErrRunConflict
 		}
 		if !sameStartRecordKeys(s.lifecycle[start.RunID], existing.StartOutcome, parent, started, canceled) {
 			return sessionRunStartResult{}, session.ErrRunConflict
 		}
+		if parent != nil {
+			if err := s.checkAppendLocked(parent); err != nil {
+				return sessionRunStartResult{}, err
+			}
+		}
 		return s.appendStartRecordsLocked(existing.StartOutcome, parent, started, canceled)
+	}
+	if parent != nil {
+		if err := s.checkAppendLocked(parent); err != nil {
+			return sessionRunStartResult{}, err
+		}
 	}
 	current, ok := s.sessions[start.SessionID]
 	if !ok {
@@ -738,7 +790,7 @@ func (s *Store) startSessionRun(start session.RunStart, child bool, parent, star
 		}
 	}
 	s.runs[start.RunID] = newRunMeta(start, outcome, status)
-	keys := lifecycleRecords{start: started.EventKey}
+	keys := lifecycleRecords{startKind: engineRunStart, requestDigest: requestDigest, start: started.EventKey}
 	if parent != nil {
 		keys.parentLink = parent.EventKey
 	}
