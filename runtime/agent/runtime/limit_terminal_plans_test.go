@@ -124,8 +124,9 @@ func TestExecuteWorkflowRejectsInvalidLimitPlansBeforePlanning(t *testing.T) {
 	reg := AgentRegistration{Definition: testRegistrationDefinition("service.agent", engine.WorkflowDefinition{}, []tools.ToolSpec{terminal}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{}}
 	rt.agents[reg.Definition.route.ID] = reg
 	input := &RunInput{
-		AgentID: reg.Definition.route.ID,
-		RunID:   "run-1",
+		AgentID:   reg.Definition.route.ID,
+		RunID:     "run-1",
+		SeedEndID: "0",
 		Policy: &PolicyOverrides{
 			LimitTerminalPlans: &LimitTerminalPlans{},
 		},
@@ -465,14 +466,11 @@ func executeWorkflowLimitTerminalPlan(
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "Do the work."}},
-		}},
 		Policy: &PolicyOverrides{
 			LimitTerminalPlans: testLimitTerminalPlans(terminal.Name),
 		},
 	}
+	publishTestRunInput(t, rt, input, []*model.Message{userMsg("Do the work.")})
 	if withLabels {
 		input.Labels = map[string]string{
 			"account":               "caller-account",
@@ -548,6 +546,7 @@ func executeWorkflowLimitTerminalPlan(
 	}
 	assert.Equal(t, expectedPlannerCalls, plannerCalls)
 	assert.Equal(t, terminal.Name, executed.Name)
+	publishTestRunInput(t, rt, input, []*model.Message{userMsg("Do the work.")})
 	if withLabels {
 		assert.Equal(t, "policy-account", executed.Labels["account"])
 		assert.Equal(t, "policy-value", executed.Labels["policy"])

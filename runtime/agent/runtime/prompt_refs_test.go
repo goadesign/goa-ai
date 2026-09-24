@@ -129,6 +129,11 @@ func TestResolvePromptRefsTraversesSessionlessChild(t *testing.T) {
 		RunID:     "parent",
 		StartedAt: startedAt,
 	}
+	seedEndID, err := publishLiteralHistory(t.Context(), store, storage.SeedDeclaration{
+		AgentID: parent.AgentID, RunID: parent.RunID, Kind: storage.SeedLiteral,
+	}, nil)
+	require.NoError(t, err)
+	parent.SeedEndID = seedEndID
 	parentStarted := testHookRecord(t, hooks.NewRunStartedEvent(
 		parent.RunID,
 		agent.Ident(parent.AgentID),
@@ -137,7 +142,7 @@ func TestResolvePromptRefsTraversesSessionlessChild(t *testing.T) {
 		"",
 		nil,
 	), "parent-start", startedAt)
-	_, err := store.StartOneShotRun(t.Context(), storage.OneShotRunStart{
+	_, err = store.StartOneShotRun(t.Context(), storage.OneShotRunStart{
 		Run: parent, Started: parentStarted,
 	})
 	require.NoError(t, err)
@@ -147,6 +152,10 @@ func TestResolvePromptRefsTraversesSessionlessChild(t *testing.T) {
 		ParentRunID: parent.RunID,
 		StartedAt:   startedAt,
 	}
+	child.SeedEndID, err = publishLiteralHistory(t.Context(), store, storage.SeedDeclaration{
+		AgentID: child.AgentID, RunID: child.RunID, Kind: storage.SeedLiteral,
+	}, nil)
+	require.NoError(t, err)
 	linked := testHookRecord(t, hooks.NewChildRunLinkedEvent(
 		parent.RunID,
 		agent.Ident(parent.AgentID),
@@ -649,6 +658,11 @@ func startStoppedRunForTest(t *testing.T, store storage.Store, meta session.RunM
 		AgentID: meta.AgentID, RunID: meta.RunID, SessionID: meta.SessionID,
 		ParentRunID: meta.ParentRunID, StartedAt: startedAt, Labels: meta.Labels,
 	}
+	seedEndID, err := publishLiteralHistory(t.Context(), store, storage.SeedDeclaration{
+		AgentID: meta.AgentID, RunID: meta.RunID, SessionID: meta.SessionID, Kind: storage.SeedLiteral,
+	}, nil)
+	require.NoError(t, err)
+	start.SeedEndID = seedEndID
 	started := testHookRecord(t, hooks.NewRunStartedEvent(
 		meta.RunID,
 		agent.Ident(meta.AgentID),

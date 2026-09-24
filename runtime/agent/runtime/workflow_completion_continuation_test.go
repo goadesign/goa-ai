@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -51,12 +52,13 @@ func TestCompletionStatisticsIncludeContinuationHistory(t *testing.T) {
 	_, err := createSessionForTest(t.Context(), rt.Store, "completion-session")
 	require.NoError(t, err)
 	firstInput := &api.RunInput{AgentID: "records.agent", RunID: "first", SessionID: "completion-session", TurnID: "turn"}
+	publishTestRunInput(t, rt, firstInput, nil)
 	firstHandle, err := rt.Engine.StartWorkflow(t.Context(), engine.WorkflowStartRequest{ID: "first", Workflow: "records.workflow", TaskQueue: "records.queue", Input: firstInput})
 	require.NoError(t, err)
 	first, err := firstHandle.Wait(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, first.Suspension)
-	assert.Equal(t, "goa-ai.run-suspension.v8", first.Suspension.Version)
+	assert.Equal(t, api.RunSuspensionVersion, first.Suspension.Version)
 	assert.Contains(t, string(first.Suspension.Checkpoint), `"ToolEvents":[`)
 	assert.NotContains(t, string(first.Suspension.Checkpoint), `"ToolCount"`)
 	assert.Equal(t, 1, first.ToolCount)
@@ -71,6 +73,16 @@ func TestCompletionStatisticsIncludeContinuationHistory(t *testing.T) {
 			Confirmation: &api.ConfirmationDecision{ID: first.Suspension.Pending[0].Confirmation.ID, Approved: true, RequestedBy: "operator"},
 		}},
 	}
+	seed, err := rt.Store.BeginRunSeed(t.Context(), storage.SeedDeclaration{
+		AgentID: string(secondInput.AgentID), RunID: secondInput.RunID, SessionID: secondInput.SessionID,
+		CommandID: secondInput.RunID, AttemptID: secondInput.RunID,
+		Kind: storage.SeedContinuation, SourceRunID: checkpoint.PreviousRunID, SourceEndID: checkpoint.HistoryEndID,
+	})
+	require.NoError(t, err)
+	writer := initialHistoryWriter{store: rt.Store, runID: secondInput.RunID, attemptID: secondInput.RunID, endID: storage.EmptySeedEndID}
+	require.NoError(t, writer.appendPrefix(t.Context(), seed.Source))
+	secondInput.SeedEndID = writer.endID
+	require.NoError(t, writer.publish(t.Context(), []byte(`{}`)))
 	secondHandle, err := rt.Engine.StartWorkflow(t.Context(), engine.WorkflowStartRequest{ID: "second", Workflow: "records.workflow", TaskQueue: "records.queue", Input: secondInput})
 	require.NoError(t, err)
 	second, err := secondHandle.Wait(t.Context())

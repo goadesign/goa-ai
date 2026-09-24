@@ -73,9 +73,11 @@ func TestRequestValidationToolFailureStopsWorkflow(t *testing.T) {
 					},
 				},
 			}
-			out, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+			input := &RunInput{
 				AgentID: "service.agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",
-			})
+			}
+			publishTestRunInput(t, rt, input, nil)
+			out, err := rt.ExecuteWorkflow(wfCtx, input)
 			require.Error(t, err)
 			assert.Nil(t, out)
 			assert.True(t, temporalerrors.IsRequestValidation(err), "%v", err)

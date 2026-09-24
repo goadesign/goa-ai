@@ -23,6 +23,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -34,7 +35,7 @@ type (
 		PreviousRunID  string
 		PreviousTurnID string
 		Policy         *PolicyOverrides
-		BaseMessages   []*model.Message
+		HistoryEndID   string
 		Context        checkpointRunContext
 		State          checkpointRunState
 		Batch          checkpointStepBatch
@@ -323,7 +324,7 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 		PreviousRunID:  l.input.RunID,
 		PreviousTurnID: l.input.TurnID,
 		Policy:         clonePolicyOverrides(l.input.Policy),
-		BaseMessages:   l.base.Messages,
+		HistoryEndID:   l.base.HistoryEndID,
 		Context:        checkpointContextFromRun(baseContext),
 		State: checkpointRunState{
 			Caps:                   l.st.Caps,
@@ -513,7 +514,6 @@ func decodeCheckpointToolEvent(event *api.ToolEvent, call ToolCall, lookup toolS
 // ExecuteWorkflow has restored and validated the checkpoint-owned input.
 func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg AgentRegistration, input *RunInput, checkpoint *workflowCheckpoint, historyEndID string) (*RunOutput, error) {
 	base := &workflowConversation{
-		Messages:     checkpoint.BaseMessages,
 		HistoryEndID: historyEndID,
 		RunContext:   restoreCheckpointRunContext(checkpoint.Context, input),
 	}
@@ -979,6 +979,31 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 		AgentID: cfg.Definition.route.ID,
 		RunID:   nested.RunID, SessionID: nested.SessionID, TurnID: nested.TurnID,
 		Continuation: &api.RunContinuationInput{Suspension: pending.Suspension, Response: response},
+	}
+	checkpoint, err := prepareContinuation(childInput, cfg.Definition)
+	if err != nil {
+		return nil, err
+	}
+	seedStore := workflowSeedWriter{r: l.r}
+	seed, err := seedStore.BeginRunSeed(l.wfCtx.Context(), storage.SeedDeclaration{
+		AgentID: string(childInput.AgentID), RunID: childInput.RunID, SessionID: childInput.SessionID,
+		CommandID: childInput.RunID, AttemptID: childInput.RunID,
+		Kind: storage.SeedContinuation, SourceRunID: checkpoint.PreviousRunID, SourceEndID: checkpoint.HistoryEndID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	writer := initialHistoryWriter{store: seedStore, runID: childInput.RunID, attemptID: childInput.RunID, endID: storage.EmptySeedEndID}
+	if err := writer.appendPrefix(l.wfCtx.Context(), seed.Source); err != nil {
+		return nil, err
+	}
+	childInput.SeedEndID = writer.endID
+	compiled, err := json.Marshal(childInput)
+	if err != nil {
+		return nil, err
+	}
+	if err := writer.publish(l.wfCtx.Context(), compiled); err != nil {
+		return nil, err
 	}
 
 	route := cfg.Definition.route

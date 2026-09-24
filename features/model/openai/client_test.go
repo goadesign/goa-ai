@@ -1890,6 +1890,20 @@ func newReplayTranscriptStore(t *testing.T, ctx context.Context) *storageinmem.S
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	_, err := store.CreateSession(ctx, "session-1", now)
 	require.NoError(t, err)
+	_, err = store.BeginRunSeed(ctx, storage.SeedDeclaration{
+		AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", CommandID: "run-1", AttemptID: "run-1", Kind: storage.SeedLiteral,
+	})
+	require.NoError(t, err)
+	prepared := []byte(`{}`)
+	end, err := store.AppendRunSeed(ctx, storage.SeedAppend{
+		RunID: "run-1", AttemptID: "run-1",
+		Record: storage.SeedRecord{Key: "prepared", PreviousID: storage.EmptySeedEndID, Prepared: prepared},
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.PublishRunSeed(ctx, storage.SeedPublication{
+		RunID: "run-1", AttemptID: "run-1", SeedEndID: storage.EmptySeedEndID,
+		EndID: end, PreparedBytes: int64(len(prepared)),
+	}))
 	started := replayLifecycleRecord(t, hooks.NewRunStartedEvent("run-1", "agent-1", "session-1", "", "", nil), "run-started", now)
 	canceled := replayLifecycleRecord(t, hooks.NewRunCompletedEvent(
 		"run-1",
@@ -1902,7 +1916,7 @@ func newReplayTranscriptStore(t *testing.T, ctx context.Context) *storageinmem.S
 		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
 	), "run-canceled", now)
 	_, err = store.StartRootRun(ctx, storage.RootRunStart{
-		Run:     session.RunStart{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", StartedAt: now},
+		Run:     session.RunStart{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", StartedAt: now, SeedEndID: storage.EmptySeedEndID},
 		Started: started, Canceled: canceled,
 	})
 	require.NoError(t, err)

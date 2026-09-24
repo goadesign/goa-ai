@@ -30,9 +30,9 @@ type (
 	}
 )
 
-const preparedRequestV1Golden = `{"version":"goa-ai-prepared-run-v1","agent_id":"agent","id":"run-1","workflow":"agent.workflow","task_queue":"custom.queue","input":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"eyJBZ2VudElEIjoiYWdlbnQiLCJSdW5JRCI6InJ1bi0xIiwiU2Vzc2lvbklEIjoic2Vzc2lvbi0xIiwiVHVybklEIjoiIiwiUGFyZW50VG9vbENhbGxJRCI6IiIsIlBhcmVudFJ1bklEIjoiIiwiUGFyZW50QWdlbnRJRCI6IiIsIlRvb2wiOiIiLCJUb29sQXJncyI6bnVsbCwiTWVzc2FnZXMiOm51bGwsIlJlbmRlcmVkUHJvbXB0cyI6bnVsbCwiTGFiZWxzIjpudWxsLCJNZXRhZGF0YSI6bnVsbCwiUG9saWN5IjpudWxsLCJDb250aW51YXRpb24iOm51bGx9"},"run_timeout":0,"retry_policy":{"MaxAttempts":4,"UnlimitedAttempts":false,"InitialInterval":2000000000,"BackoffCoefficient":1.5},"memo":[{"name":"note","payload":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Im1lbW8gdmFsdWUi"}}],"search_attributes":[{"name":"Attempt","payload":{"metadata":{"encoding":"anNvbi9wbGFpbg==","type":"SW50"},"data":"Mw=="}}],"task_queue_override":"custom.queue"}`
+const preparedRequestV2Golden = `{"version":"goa-ai-prepared-run-v2","agent_id":"agent","id":"run-1","workflow":"agent.workflow","task_queue":"custom.queue","input":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"eyJBZ2VudElEIjoiYWdlbnQiLCJSdW5JRCI6InJ1bi0xIiwiU2Vzc2lvbklEIjoic2Vzc2lvbi0xIiwiVHVybklEIjoiIiwiUGFyZW50VG9vbENhbGxJRCI6IiIsIlBhcmVudFJ1bklEIjoiIiwiUGFyZW50QWdlbnRJRCI6IiIsIlRvb2wiOiIiLCJUb29sQXJncyI6bnVsbCwiU2VlZEVuZElEIjoicHVibGlzaGVkIiwiTGFiZWxzIjpudWxsLCJNZXRhZGF0YSI6bnVsbCwiUG9saWN5IjpudWxsLCJDb250aW51YXRpb24iOm51bGx9"},"run_timeout":0,"retry_policy":{"MaxAttempts":4,"UnlimitedAttempts":false,"InitialInterval":2000000000,"BackoffCoefficient":1.5},"memo":[{"name":"note","payload":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Im1lbW8gdmFsdWUi"}}],"search_attributes":[{"name":"Attempt","payload":{"metadata":{"encoding":"anNvbi9wbGFpbg==","type":"SW50"},"data":"Mw=="}}],"task_queue_override":"custom.queue"}`
 
-func TestPreparedRequestV1GoldenBytes(t *testing.T) {
+func TestPreparedRequestV2GoldenBytes(t *testing.T) {
 	memo, err := EncodeMemo(map[string]any{"note": "memo value"})
 	require.NoError(t, err)
 	created, err := NewPreparedRequest("agent", engine.WorkflowStartRequest{
@@ -43,6 +43,7 @@ func TestPreparedRequestV1GoldenBytes(t *testing.T) {
 			AgentID:   "agent",
 			RunID:     "run-1",
 			SessionID: "session-1",
+			SeedEndID: "published",
 		},
 		Memo:             memo,
 		SearchAttributes: map[string]any{"Attempt": int64(3)},
@@ -56,19 +57,19 @@ func TestPreparedRequestV1GoldenBytes(t *testing.T) {
 	createdData, err := created.MarshalBinary()
 	require.NoError(t, err)
 	//nolint:testifylint // The durable contract requires identical bytes, not equivalent JSON.
-	require.Equal(t, preparedRequestV1Golden, string(createdData))
+	require.Equal(t, preparedRequestV2Golden, string(createdData))
 
-	parsed, err := ParsePreparedRequest([]byte(preparedRequestV1Golden))
+	parsed, err := ParsePreparedRequest([]byte(preparedRequestV2Golden))
 	require.NoError(t, err)
 	parsedData, err := parsed.MarshalBinary()
 	require.NoError(t, err)
 	//nolint:testifylint // The durable contract requires identical bytes, not equivalent JSON.
-	require.Equal(t, preparedRequestV1Golden, string(parsedData))
+	require.Equal(t, preparedRequestV2Golden, string(parsedData))
 	parsedData[0] = 'X'
 	again, err := parsed.MarshalBinary()
 	require.NoError(t, err)
 	//nolint:testifylint // A parsed request must retain the exact accepted bytes.
-	require.Equal(t, preparedRequestV1Golden, string(again))
+	require.Equal(t, preparedRequestV2Golden, string(again))
 }
 
 func TestNewPreparedRequestDefersDurableEncoding(t *testing.T) {
@@ -101,7 +102,7 @@ func TestPreparedRequestMarshalBinaryUsesAcceptedSnapshot(t *testing.T) {
 	require.Equal(t, prepared.Digest, parsed.Digest)
 }
 
-func TestPreparedRequestMarshalBinaryOwnsStoredRecordLimit(t *testing.T) {
+func TestPreparedRequestMarshalBinaryPreservesLargeAcceptedRequest(t *testing.T) {
 	const memoCount = 120_000
 	memo := make(map[string]engine.EncodedValue, memoCount)
 	for index := range memoCount {
@@ -116,8 +117,20 @@ func TestPreparedRequestMarshalBinaryOwnsStoredRecordLimit(t *testing.T) {
 	}, taskQueue)
 	require.NoError(t, err)
 	require.Nil(t, prepared.data)
-	_, err = prepared.MarshalBinary()
-	require.ErrorContains(t, err, "prepared run exceeds maximum stored size")
+	data, err := prepared.MarshalBinary()
+	require.NoError(t, err)
+	require.Greater(t, len(data), 8<<20)
+	require.LessOrEqual(t, len(data), PreparedRequestByteLimit())
+	parsed, err := ParsePreparedRequest(data)
+	require.NoError(t, err)
+	require.Equal(t, prepared.Digest, parsed.Digest)
+	require.Equal(t, workflow, parsed.Request.Workflow)
+	require.Equal(t, taskQueue, parsed.Request.TaskQueue)
+	require.Len(t, parsed.Request.Memo, memoCount)
+	for name := range memo {
+		_, exists := parsed.Request.Memo[name]
+		require.Truef(t, exists, "missing memo entry %s", name)
+	}
 }
 
 func TestPreparedRequestRoundTripPreservesEveryEngineField(t *testing.T) {
@@ -201,7 +214,7 @@ func TestPreparedRequestRejectsInvalidEnvelope(t *testing.T) {
 	var envelope map[string]any
 	require.NoError(t, json.Unmarshal(valid, &envelope))
 	wrongVersion := mapsClone(envelope)
-	wrongVersion["version"] = "goa-ai-prepared-run-v2"
+	wrongVersion["version"] = "goa-ai-prepared-run-v1"
 	wrongVersionData, err := json.Marshal(wrongVersion)
 	require.NoError(t, err)
 	unknownField := mapsClone(envelope)
@@ -455,7 +468,7 @@ func TestParsePreparedRequestRejectsOversizedSearchListBeforeDecoding(t *testing
 	}}
 	data, err := json.Marshal(wire)
 	require.NoError(t, err)
-	require.Less(t, len(data), maxPreparedRequestBytes)
+	require.Less(t, len(data), PreparedRequestByteLimit())
 
 	_, err = ParsePreparedRequest(data)
 	require.ErrorContains(t, err, "decode prepared run search attribute \"sites\"")
@@ -463,10 +476,10 @@ func TestParsePreparedRequestRejectsOversizedSearchListBeforeDecoding(t *testing
 }
 
 func TestParsePreparedRequestRejectsOversizedEnvelopeBeforeJSON(t *testing.T) {
-	_, err := ParsePreparedRequest(make([]byte, maxPreparedRequestBytes+1))
+	_, err := ParsePreparedRequest(make([]byte, PreparedRequestByteLimit()+1))
 	require.EqualError(t, err, fmt.Sprintf(
 		"decode prepared run: stored value exceeds maximum size %d bytes",
-		maxPreparedRequestBytes,
+		PreparedRequestByteLimit(),
 	))
 }
 

@@ -172,6 +172,7 @@ func TestStartPreparedContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 func TestStartOneShotRejectsMissingRequiredLabels(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
+		Store:   newTestStore(),
 		Engine:  eng,
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},

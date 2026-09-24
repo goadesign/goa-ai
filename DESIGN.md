@@ -650,8 +650,13 @@ with the same request; continuing the parent starts a new child workflow from
 the child's saved checkpoint. Sessionless one-shot runs reject external-input
 requests because they have no continuation API.
 
-Initial sessionful runs use the same command. `Prepare` validates the generated
-agent contract and produces the final engine request without starting it.
+Initial sessionful runs use the same command. `Prepare(ctx, sessionID, messages,
+options...)` validates the generated agent contract and publishes the exact
+literal initial history before producing the final engine request. Publication
+does not create a run or start a workflow. `PrepareNextTurn` instead takes one
+exact completed run, fresh system messages and fresh input. The store verifies
+the source's agent and Session and freezes its successful completion position;
+the runtime never chooses a latest run for the caller.
 The returned `PreparedRun.RunID` is the workflow ID the application associates
 with its durable command. Applications can store the versioned bytes and parse
 them after a process restart. `Start` and `Continue` are convenience methods
@@ -671,13 +676,27 @@ Initial and one-shot calls express each launch setting through `WithTaskQueue`,
 saved run and its typed answer. The value configures only the new engine start;
 it never becomes workflow input or changes the saved continuation state.
 
-Initial preparation is client-only and performs no storage write, worker
-registration change, or engine call. One-shot preparation uses the same path.
-Continuation preparation first reads the saved suspension, then performs the
-same pure request construction. It does not create the optional stored form.
-`MarshalBinary` creates and validates that form; `StartPrepared` independently
-submits the prepared engine request. The convenience methods never serialize
-the stored form.
+Preparation requires the owning Store in caller processes. It uploads bounded,
+ordered history records followed by the complete compiled engine request. One
+atomic publication accepts both, without submitting a workflow. Multiple
+candidates may upload for one original operation; only one complete candidate
+can become accepted. Continuations reference their saved history without
+removing system messages or reasoning.
+
+Application-owned starts record the original command and upload attempt before
+calling preparation with `WithPreparation`. `RecoverPrepared` retrieves the
+accepted result. `SettlePrepared` returns that same result or permanently
+abandons the exact attempt, including a first upload that arrives afterward.
+A lost reply or transferred worker lease cannot replace accepted prompts,
+profile policy, labels, or control values. A genuinely new operation may resolve
+current configuration.
+
+`PreparedRun` uses one current v3 reference format: original operation identity,
+exact history/body positions, byte length and digest. `MarshalBinary` never
+copies full engine control into an application row. `StartPrepared` reads and
+validates the exact accepted body through bounded Store pages, then submits its
+original engine request. Child preparation uses the same acceptance lifecycle
+and recovers its saved result before resolving mutable prompts again.
 
 Planner and child-preparation activity commands identify the exact committed
 end of the current run's transcript instead of carrying its message array.
@@ -685,9 +704,14 @@ end of the current run's transcript instead of carrying its message array.
 bounded ordered pages through that position. The activity reconstructs the
 original messages before calling the planner or child validator. Later appends
 cannot change an earlier activity's input, and summaries do not replace durable
-messages. This changes activity wire inputs; old workflows require their original
-workers. Prepared requests, initial workflow input, and stored continuation
-checkpoints retain their existing formats.
+messages. Prepared v3 references the accepted preparation; initial workflow input names the published history;
+checkpoint v9 replaces only the full prior message array with its exact history
+position. Active response transcript, tool values, pending order, nested state,
+native metadata, policy and budgets remain control state. Starting a run attaches
+the publication in the owner's existing start transaction without copying it.
+Old accepted workflows require their original workers. Existing unsubmitted
+prepared requests and resumable checkpoints need a separately verified finite
+transition before this format can be deployed; there is no v1/v8 decoder.
 
 Agent-tool registrations carry only child configuration, while ordinary toolsets
 carry only their execution function. The workflow starts all configured children
@@ -695,8 +719,9 @@ with its exact saved history position. Registration rejects missing or competing
 execution routes. Generated registration constructors no longer take a Runtime;
 applications regenerate and update callers together.
 
-Prepared bytes remain private application data because they can contain the
-complete transcript and continuation checkpoint. The application atomically
+Prepared bytes remain private application data because a continuation can
+contain tool values and its private control checkpoint. Initial messages remain
+in the owning Store. The application atomically
 stores those bytes with initial-run admission or continuation-answer acceptance.
 Launch settings such as memo, search attributes, and task queue exist only on
 the engine request; `api.RunInput` contains only workflow input. The inclusive
@@ -707,6 +732,14 @@ its complete representation, including the agent ID, explicit queue override,
 JSON escaping, base64 expansion, and field syntax. `MarshalBinary` enforces it
 when creating a record and parsing enforces it before decoding. The storage
 limit protects the record format and never increases the engine request limit.
+
+Stored historical completion reporting verifies the run owner, public suspension
+facts and digest of the opaque checkpoint without interpreting private execution
+state or rewriting the original result. Restoring execution remains strict.
+Repairing an actually missing completion validates the engine's current-format
+result before writing it. Historical records that require only public reporting
+can remain unchanged; an outstanding repair that needs retired execution state
+still blocks that format's removal.
 
 Runtime callers provide ordinary memo values. Goa-AI encodes each value once
 and gives engines an `engine.EncodedValue` containing its encoding metadata and
@@ -733,14 +766,14 @@ reader maps the frozen old `json/plain` result schema to the same count and
 telemetry contract. The temporary reader's removal and deployment conditions
 are defined in [Workflow results](docs/workflow-results.md).
 
-A storage-encoding failure returns `ErrPreparedRunRejected` without changing
-the in-memory prepared request; it remains startable, although a caller that
-requires durable admission must store it before starting. Malformed parsed
-bytes or a request that no longer satisfies the current generated definition
-also return `ErrPreparedRunRejected` and cannot start with that generated
-release. Passing valid bytes to the wrong generated agent client returns the
-same error, but does not invalidate the bytes; the application must submit them
-through the matching client. The detailed caller contract is in
+Malformed prepared references, changed publication identities, or a stored
+request that no longer satisfies the current generated definition return
+`ErrPreparedRunRejected` and cannot start. A valid reference submitted through
+the wrong generated agent client also returns that error; its owning client may
+still use it. Full compiled JSON is bounded independently from engine bytes,
+including per-entry syntax for many tiny memo values; it lives only in bounded
+Store records. The compact application reference has its own identity/framing
+bound. The detailed contract is in
 [External Input and Workflow Continuations](docs/runtime.md#external-input-and-workflow-continuations).
 `ErrWorkflowStartFailed` preserves the exact accepted request. Goa-AI does not
 retry it implicitly; the application chooses each attempt and submits the same

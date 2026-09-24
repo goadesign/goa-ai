@@ -76,7 +76,7 @@ func TestCompleteToolInputRecoveryWorkflow(t *testing.T) {
 	h.runtime.agents[h.input.AgentID] = h.registration
 	h.input.RunID = "complete-input-workflow"
 	h.workflow.runID = h.input.RunID
-	h.input.Messages = []*model.Message{userMsg("Look up a record.")}
+	publishTestRunInput(t, h.runtime, h.input, []*model.Message{userMsg("Look up a record.")})
 	sink := &recordingStreamSink{}
 	h.runtime.streamSubscriber = runtimeWithModelOutputSink(t, sink).streamSubscriber
 	converter := workflowcodec.NewDataConverter()

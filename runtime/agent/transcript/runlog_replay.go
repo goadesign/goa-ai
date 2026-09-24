@@ -13,9 +13,10 @@ import (
 
 const runlogReplayPageSize = 512
 
-// runLogLister is the one run-log operation transcript replay needs. Callers
-// do not need to provide append, session listing, or purge capabilities.
+// runLogLister exposes only the reads required to select and expand a saved
+// history. Callers need no mutation capability.
 type runLogLister interface {
+	transcriptPrefixStore
 	ListRunRecords(ctx context.Context, runID string, cursor string, limit int) (runlog.Page, error)
 }
 
@@ -49,31 +50,44 @@ func BuildMessagesFromRunLog(ctx context.Context, store runLogLister, runID stri
 	if runID == "" {
 		return nil, fmt.Errorf("transcript: run id is required")
 	}
-	var (
-		cursor   string
-		messages []*model.Message
-		found    bool
-	)
+	meta, err := store.LoadRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	var cursor, endID string
+	found := meta.SeedEndID != ""
+	seen := make(map[string]struct{})
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		page, err := store.ListRunRecords(ctx, runID, cursor, runlogReplayPageSize)
 		if err != nil {
 			return nil, fmt.Errorf("transcript: list runlog events for run %q: %w", runID, err)
 		}
-		replayed, pageFound, err := ReplayRunLogEvents(page.Events)
-		if err != nil {
-			return nil, err
+		for _, event := range page.Events {
+			if event == nil || event.RunID != runID || event.ID == "" {
+				return nil, prefixContractError("invalid run record while selecting history")
+			}
+			if _, repeated := seen[event.ID]; repeated {
+				return nil, prefixContractError("repeated run record while selecting history")
+			}
+			seen[event.ID] = struct{}{}
+			endID = event.ID
+			found = found || isTranscriptRunLogType(event.Type)
 		}
-		messages = append(messages, replayed...)
-		found = found || pageFound
 		if page.NextCursor == "" {
 			break
+		}
+		if len(page.Events) == 0 || page.NextCursor == cursor || page.NextCursor != endID {
+			return nil, prefixContractError("run page made no forward progress")
 		}
 		cursor = page.NextCursor
 	}
 	if !found {
 		return nil, fmt.Errorf("transcript: runlog for run %q has no transcript message events", runID)
 	}
-	return messages, nil
+	return BuildMessagesFromRunLogPrefix(ctx, store, runID, endID)
 }
 
 // decodeTranscriptMessagesDelta decodes a single durable runlog event into the

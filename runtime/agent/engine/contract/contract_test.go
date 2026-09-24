@@ -13,6 +13,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/engine/contract"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 // contractAdapter is the smallest custom-engine ownership path: it retains one
@@ -30,12 +31,10 @@ func TestNormalizeRootRequestOwnsValuesAndIdentifiesExactRetries(t *testing.T) {
 		Workflow:  "assistant",
 		TaskQueue: "agents",
 		Input: &api.RunInput{
-			RunID:  "run-1",
-			Labels: map[string]string{"tenant": "acme"},
-			Messages: []*model.Message{{
-				Role:  model.ConversationRoleUser,
-				Parts: []model.Part{model.TextPart{Text: "help"}},
-			}},
+			RunID:     "run-1",
+			SeedEndID: "published",
+			Labels:    map[string]string{"tenant": "acme"},
+			ToolArgs:  rawjson.Message(`{"input":"help"}`),
 		},
 		Memo: map[string]engine.EncodedValue{
 			"trace": {Metadata: map[string][]byte{"encoding": []byte("json/plain")}, Data: []byte(`"abc"`)},
@@ -50,11 +49,12 @@ func TestNormalizeRootRequestOwnsValuesAndIdentifiesExactRetries(t *testing.T) {
 	assert.Equal(t, first.Digest, second.Digest)
 
 	request.Input.Labels["tenant"] = changedValue
-	request.Input.Messages[0].Parts[0] = model.TextPart{Text: changedValue}
+	request.Input.ToolArgs[10] = 'x'
 	request.Memo["trace"].Metadata["encoding"][0] = 'x'
 	request.SearchAttributes["tenant"] = changedValue
 	assert.Equal(t, "acme", first.Request.Input.Labels["tenant"])
-	assert.Equal(t, model.TextPart{Text: "help"}, first.Request.Input.Messages[0].Parts[0])
+	assert.Equal(t, rawjson.Message(`{"input":"help"}`), first.Request.Input.ToolArgs)
+	assert.Equal(t, "published", first.Request.Input.SeedEndID)
 	assert.Equal(t, []byte("json/plain"), first.Request.Memo["trace"].Metadata["encoding"])
 	assert.Equal(t, "acme", first.Request.SearchAttributes["tenant"])
 

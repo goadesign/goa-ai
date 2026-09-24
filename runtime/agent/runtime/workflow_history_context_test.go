@@ -18,6 +18,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 func TestWorkflowHistoryContextSurvivesSerializedRecovery(t *testing.T) {
@@ -52,6 +53,7 @@ func TestWorkflowHistoryContextSurvivesSerializedRecovery(t *testing.T) {
 				h.base.Messages = requestHistoryMessages()
 				h.base.HistoryEndID = testToolHistory(t, h.runtime, h.input.AgentID, h.base.RunContext, h.base.Messages)
 				original := canonicalHistory(t, h.base.Messages)
+				h.base.Messages = nil
 				h.runtime.models["test"] = mustTestModelClient(stubModelClient{complete: func(context.Context, *model.Request) (*model.Response, error) {
 					return testModelResponse([]model.Message{*assistantTextMsg("supported answer")}), nil
 				}})
@@ -94,7 +96,10 @@ func TestWorkflowHistoryContextSurvivesSerializedRecovery(t *testing.T) {
 				require.NoError(t, err)
 				assert.Equal(t, "supported answer", out.Final.Text())
 				assert.Equal(t, 2, resumes)
-				assert.Equal(t, original, canonicalHistory(t, h.base.Messages[:4]))
+				saved, err := transcript.BuildMessagesFromRunLogPrefix(t.Context(), h.runtime.Store, h.input.RunID, h.base.HistoryEndID)
+				require.NoError(t, err)
+				require.GreaterOrEqual(t, len(saved), 4)
+				assert.Equal(t, original, canonicalHistory(t, saved[:4]))
 				if historical {
 					assert.Equal(t, 2, fresh)
 					assert.Zero(t, reused)

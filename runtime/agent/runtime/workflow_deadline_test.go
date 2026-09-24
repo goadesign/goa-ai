@@ -230,12 +230,14 @@ func TestExecuteWorkflowFinalizesPlanStartAtBudget(t *testing.T) {
 		},
 	}
 
-	out, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+	input := &RunInput{
 		AgentID:   "agent-1",
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
-	})
+	}
+	publishTestRunInput(t, rt, input, nil)
+	out, err := rt.ExecuteWorkflow(wfCtx, input)
 
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -273,12 +275,14 @@ func TestExecuteWorkflowKeepsPlanStartResultAtBudget(t *testing.T) {
 		},
 	}
 
-	out, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+	input := &RunInput{
 		AgentID:   "agent-1",
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
-	})
+	}
+	publishTestRunInput(t, rt, input, nil)
+	out, err := rt.ExecuteWorkflow(wfCtx, input)
 
 	require.NoError(t, err)
 	require.Equal(t, planOutput.Result.FinalResponse.Message, out.Final)
@@ -375,12 +379,14 @@ func TestExecuteWorkflowPreservesPlanStartProviderTimeout(t *testing.T) {
 		},
 	}
 
-	out, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+	input := &RunInput{
 		AgentID:   "agent-1",
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
-	})
+	}
+	publishTestRunInput(t, rt, input, nil)
+	out, err := rt.ExecuteWorkflow(wfCtx, input)
 
 	require.Nil(t, out)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -426,12 +432,14 @@ func TestExecuteWorkflowClassifiesExpiredPlanStartFinalizer(t *testing.T) {
 		},
 	}
 
-	out, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
+	input := &RunInput{
 		AgentID:   "agent-1",
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
-	})
+	}
+	publishTestRunInput(t, rt, input, nil)
+	out, err := rt.ExecuteWorkflow(wfCtx, input)
 
 	require.Nil(t, out)
 	require.ErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)

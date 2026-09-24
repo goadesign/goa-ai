@@ -213,6 +213,7 @@ func boundedCompletionRuntime(t *testing.T, backend string, pages int, modelName
 		PlanActivityName: "completion.plan", ResumeActivityName: "completion.resume", ExecuteToolActivity: "completion.tool",
 	}))
 	input := &api.RunInput{AgentID: "completion.agent", RunID: "completion-run", SessionID: "completion-session", TurnID: "completion-turn"}
+	input.SeedEndID = publishTemporalTestSeed(t, store, input.AgentID, input.RunID, input.SessionID)
 	return rt, store, func() (*api.RunOutput, error) {
 		if env != nil {
 			env.ExecuteWorkflow("completion.workflow", input)

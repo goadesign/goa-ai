@@ -17,23 +17,32 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func seedRunMeta(t *testing.T, rt *Runtime, input *RunInput) {
+func seedRunMeta(t testing.TB, rt *Runtime, input *RunInput) {
 	t.Helper()
 	now := time.Now().UTC()
 	_, err := createSessionForTest(context.Background(), rt.Store, input.SessionID)
 	require.NoError(t, err)
-	admitRunForTest(t, rt.Store, session.RunMeta{
+	predecessorRunID := ""
+	if input.Continuation != nil {
+		predecessorRunID = publishTestContinuationInput(t, rt, input)
+	}
+	admitRunWithPredecessorForTest(t, rt.Store, session.RunMeta{
 		AgentID:   string(input.AgentID),
 		RunID:     input.RunID,
 		SessionID: input.SessionID,
+		SeedEndID: input.SeedEndID,
 		Status:    session.RunStatusRunning,
 		StartedAt: now,
 		UpdatedAt: now,
-	})
+	}, predecessorRunID)
+	meta, err := rt.Store.LoadRun(t.Context(), input.RunID)
+	require.NoError(t, err)
+	input.SeedEndID = meta.SeedEndID
 }
 
 func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
@@ -208,4 +217,36 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 	require.Nil(t, out.Final)
 	require.Equal(t, 2, executions)
 	require.Equal(t, 1, resumes)
+}
+
+// publishTestContinuationInput models the workflow wrapper's saved suspension
+// and prepares its successor without accepting a new workflow.
+func publishTestContinuationInput(t testing.TB, rt *Runtime, input *RunInput) string {
+	t.Helper()
+	checkpoint, err := decodeWorkflowCheckpointState(input.Continuation.Suspension)
+	require.NoError(t, err)
+	predecessorRunID := checkpoint.PreviousRunID
+	// These fixtures call runLoop directly, below ExecuteWorkflow's
+	// suspension write. Complete that same write before preparing a successor.
+	previous := &RunInput{
+		AgentID: input.AgentID, RunID: predecessorRunID,
+		SessionID: input.SessionID, TurnID: checkpoint.PreviousTurnID,
+	}
+	records, err := prepareRunSuspensionRecords(t.Context(), previous, input.Continuation.Suspension)
+	require.NoError(t, err)
+	command, _, err := rt.runSuspensionStorageCommand(records[0], records[1])
+	require.NoError(t, err)
+	_, err = rt.Store.RecordRunSuspension(t.Context(), command)
+	require.NoError(t, err)
+	seed, err := rt.Store.BeginRunSeed(t.Context(), storage.SeedDeclaration{
+		AgentID: string(input.AgentID), RunID: input.RunID, SessionID: input.SessionID,
+		CommandID: input.RunID, AttemptID: input.RunID,
+		Kind: storage.SeedContinuation, SourceRunID: predecessorRunID, SourceEndID: checkpoint.HistoryEndID,
+	})
+	require.NoError(t, err)
+	writer := initialHistoryWriter{store: rt.Store, runID: input.RunID, attemptID: input.RunID, endID: storage.EmptySeedEndID}
+	require.NoError(t, writer.appendPrefix(t.Context(), seed.Source))
+	input.SeedEndID = writer.endID
+	require.NoError(t, writer.publish(t.Context(), []byte(`{}`)))
+	return predecessorRunID
 }

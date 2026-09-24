@@ -68,16 +68,38 @@ func (s *testStore) AppendRunRecord(ctx context.Context, record *runlog.Event) (
 	if encodeErr != nil {
 		return storage.AppendResult{}, encodeErr
 	}
+	if record.SessionID != "" {
+		_, err := s.CreateSession(ctx, record.SessionID, startedAt)
+		if err != nil && !errors.Is(err, session.ErrSessionEnded) {
+			return storage.AppendResult{}, err
+		}
+	}
+	if _, err := s.BeginRunSeed(ctx, storage.SeedDeclaration{
+		AgentID: string(record.AgentID), RunID: record.RunID, SessionID: record.SessionID, CommandID: record.RunID, AttemptID: record.RunID, Kind: storage.SeedLiteral,
+	}); err != nil {
+		return storage.AppendResult{}, err
+	}
+	prepared := []byte(`{}`)
+	end, err := s.AppendRunSeed(ctx, storage.SeedAppend{
+		RunID: record.RunID, AttemptID: record.RunID,
+		Record: storage.SeedRecord{Key: "prepared", PreviousID: storage.EmptySeedEndID, Prepared: prepared},
+	})
+	if err != nil {
+		return storage.AppendResult{}, err
+	}
+	if err := s.PublishRunSeed(ctx, storage.SeedPublication{
+		RunID: record.RunID, AttemptID: record.RunID, SeedEndID: storage.EmptySeedEndID,
+		EndID: end, PreparedBytes: int64(len(prepared)),
+	}); err != nil {
+		return storage.AppendResult{}, err
+	}
+	start.SeedEndID = storage.EmptySeedEndID
 	if record.SessionID == "" {
 		_, startErr := s.StartOneShotRun(ctx, storage.OneShotRunStart{Run: start, Started: started})
 		if startErr != nil {
 			return storage.AppendResult{}, startErr
 		}
 	} else {
-		_, createErr := s.CreateSession(ctx, record.SessionID, startedAt)
-		if createErr != nil && !errors.Is(createErr, session.ErrSessionEnded) {
-			return storage.AppendResult{}, createErr
-		}
 		canceled, canceledErr := encodeTestHookRecord(hooks.NewRunCompletedEvent(
 			record.RunID,
 			record.AgentID,
@@ -175,7 +197,47 @@ func admitRunWithPredecessorForTest(
 	start := session.RunStart{
 		AgentID: run.AgentID, RunID: run.RunID, SessionID: run.SessionID,
 		ParentRunID: run.ParentRunID, PredecessorRunID: predecessorRunID,
-		StartedAt: run.StartedAt, Labels: run.Labels,
+		StartedAt: run.StartedAt, Labels: run.Labels, SeedEndID: run.SeedEndID,
+	}
+	if start.SeedEndID == "" {
+		declaration := storage.SeedDeclaration{
+			AgentID: run.AgentID, RunID: run.RunID, SessionID: run.SessionID, CommandID: run.RunID, AttemptID: run.RunID, Kind: storage.SeedLiteral,
+		}
+		if predecessorRunID != "" {
+			var endID string
+			for cursor := ""; ; {
+				page, err := store.ListRunRecords(t.Context(), predecessorRunID, cursor, 512)
+				require.NoError(t, err)
+				for _, event := range page.Events {
+					endID = event.ID
+				}
+				if page.NextCursor == "" {
+					break
+				}
+				require.NotEqual(t, cursor, page.NextCursor)
+				cursor = page.NextCursor
+			}
+			declaration.Kind = storage.SeedContinuation
+			declaration.SourceRunID = predecessorRunID
+			declaration.SourceEndID = endID
+		}
+		seed, err := store.BeginRunSeed(t.Context(), declaration)
+		require.NoError(t, err)
+		start.SeedEndID = storage.EmptySeedEndID
+		if seed.Source != nil {
+			start.SeedEndID, err = store.AppendRunSeed(t.Context(), storage.SeedAppend{
+				RunID: run.RunID, AttemptID: declaration.AttemptID, Record: storage.SeedRecord{
+					Key: "initial-0", PreviousID: storage.EmptySeedEndID, Prefix: seed.Source,
+				},
+			})
+			require.NoError(t, err)
+		}
+		next := 0
+		if seed.Source != nil {
+			next = 1
+		}
+		writer := initialHistoryWriter{store: store, runID: run.RunID, attemptID: declaration.AttemptID, endID: start.SeedEndID, next: next}
+		require.NoError(t, writer.publish(t.Context(), []byte(`{}`)))
 	}
 	started := testHookRecord(t, hooks.NewRunStartedEvent(
 		run.RunID,

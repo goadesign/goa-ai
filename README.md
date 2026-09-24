@@ -48,10 +48,14 @@ workflow, so a service method can also become an agent tool.
   then implement the application behavior. You and your coding agent work from
   explicit types and a predictable directory structure, with compiler feedback
   when implementation code no longer matches.
-- **Planning commands keep history in its owning store.** Activities receive an
-  exact committed history position and load the original messages through
-  bounded store reads. See the [runtime store contract](docs/runtime.md#runtime-store-storagestore)
-  for implementation and worker upgrade requirements.
+- **Runs reference history in its owning store.** Preparation publishes bounded
+  history and the exact compiled request before submission. Lost replies recover
+  the accepted prompt and policy; application rows retain compact references.
+  New turns reference one exact completed
+  run; workflows, planner commands, and checkpoints carry saved positions.
+  Activities reconstruct original messages through bounded store reads. See the
+  [runtime store contract](docs/runtime.md#runtime-store-storagestore) for store
+  implementation and the required persisted-format cutover.
 
 ## Quick start
 

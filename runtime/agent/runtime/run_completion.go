@@ -3,6 +3,8 @@ package runtime
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -177,7 +179,7 @@ func (r *Runtime) ensureStoredRunCompletion(ctx context.Context, meta session.Ru
 			}
 			return fmt.Errorf("load stored run suspension: %w", loadErr)
 		}
-		storedSuspension, validateErr := validateStoredRunSuspension(suspension, meta)
+		storedSuspension, validateErr := validateHistoricalSuspension(suspension)
 		if validateErr != nil {
 			return corruptStoredRunLifecycle(meta.RunID, validateErr)
 		}
@@ -200,11 +202,7 @@ func (r *Runtime) ensureStoredRunCompletion(ctx context.Context, meta session.Ru
 		if validateErr := validateStoredRunSuspensionEvent(storedSuspension, event); validateErr != nil {
 			return corruptStoredRunLifecycle(meta.RunID, validateErr)
 		}
-		result, repairErr := r.repairRunSuspensionUntilApplied(ctx, command)
-		if repairErr != nil {
-			return repairErr
-		}
-		return r.redeliverStoredRunCompletion(ctx, meta, event, result)
+		return r.redeliverStoredRunCompletion(ctx, meta, record, event)
 
 	case session.RunStatusCompleted, session.RunStatusFailed, session.RunStatusCanceled:
 		command := storage.RunTerminal{
@@ -223,11 +221,7 @@ func (r *Runtime) ensureStoredRunCompletion(ctx context.Context, meta session.Ru
 		if !ok {
 			return corruptStoredRunLifecycle(meta.RunID, fmt.Errorf("record has type %q, want %q", record.Type, hooks.RunCompleted))
 		}
-		result, repairErr := r.repairRunTerminalUntilApplied(ctx, command)
-		if repairErr != nil {
-			return repairErr
-		}
-		return r.redeliverStoredRunCompletion(ctx, meta, event, result)
+		return r.redeliverStoredRunCompletion(ctx, meta, record, event)
 
 	case session.RunStatusRunning:
 		panic("runtime: stored completion ensure received open run status: " + string(meta.Status))
@@ -235,6 +229,27 @@ func (r *Runtime) ensureStoredRunCompletion(ctx context.Context, meta session.Ru
 	default:
 		panic("runtime: stored completion ensure received unsupported run status: " + string(meta.Status))
 	}
+}
+
+// validateHistoricalSuspension checks the public facts and exact opaque bytes
+// of a saved result. It does not interpret the private checkpoint or promise
+// that a worker can execute it.
+func validateHistoricalSuspension(stored session.RunSuspension) (*api.RunSuspension, error) {
+	var suspension api.RunSuspension
+	if err := decodeStoredRunSuspension(stored.Data, &suspension); err != nil {
+		return nil, fmt.Errorf("decode public suspension envelope: %w", err)
+	}
+	if err := validatePublicRunSuspension(&suspension); err != nil {
+		return nil, err
+	}
+	if suspension.ID != stored.ID {
+		return nil, errors.New("stored checkpoint id does not match payload")
+	}
+	digest := sha256.Sum256(suspension.Checkpoint)
+	if suspension.ID != hex.EncodeToString(digest[:16]) {
+		return nil, errors.New("run suspension id does not match checkpoint")
+	}
+	return &suspension, nil
 }
 
 // validateStoredRunSuspensionEvent checks that the public terminal record
@@ -275,13 +290,22 @@ func (r *Runtime) finalizeEnsuredRunCompletion(ctx context.Context, meta session
 	return r.ensureStoredRunCompletion(ctx, stored)
 }
 
-// redeliverStoredRunCompletion sends a validated stored event only after the
-// store confirms that the supplied record exactly matches the final result.
-func (r *Runtime) redeliverStoredRunCompletion(ctx context.Context, meta session.RunMeta, event hooks.Event, result storage.RunRepairResult) error {
-	if result.Outcome != storage.RunRepairAlreadyStored {
-		return corruptStoredRunLifecycle(meta.RunID, fmt.Errorf("exact retry returned %q, want %q", result.Outcome, storage.RunRepairAlreadyStored))
+// redeliverStoredRunCompletion sends immutable saved facts after checking that
+// their Session remains visible. Historical delivery never repairs the record
+// or decodes private execution state.
+func (r *Runtime) redeliverStoredRunCompletion(ctx context.Context, meta session.RunMeta, record *runlog.Event, event hooks.Event) error {
+	var status session.SessionStatus
+	if meta.SessionID != "" {
+		var err error
+		status, err = r.Store.LoadSessionStatus(ctx, meta.SessionID)
+		if err != nil {
+			return fmt.Errorf("load completion Session status: %w", err)
+		}
 	}
-	return r.publishEnsuredRunCompletion(ctx, meta, event, result)
+	return r.publishEnsuredRunCompletion(ctx, meta, event, storage.RunRepairResult{
+		Outcome: storage.RunRepairAlreadyStored,
+		Record:  storage.AppendResult{ID: record.ID, SessionStatus: status},
+	})
 }
 
 // publishEnsuredRunCompletion validates every stored event before it notifies

@@ -45,6 +45,9 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if err := validateWorkflowRunInput(input); err != nil {
 		return nil, err
 	}
+	if input.SeedEndID == "" {
+		return nil, errors.New("published initial history is required")
+	}
 	if r.logger != nil {
 		r.logger.Info(wfCtx.Context(), "ExecuteWorkflow called", "agent_id", input.AgentID, "run_id", input.RunID)
 	}
@@ -126,22 +129,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		predecessorRunID,
 		startLabels,
 	))
-	promptEvents := make([]hooks.Event, 0, len(input.RenderedPrompts))
-	for _, rendered := range input.RenderedPrompts {
-		promptEvents = append(promptEvents, hooks.NewPromptRenderedEvent(
-			input.RunID,
-			input.AgentID,
-			input.SessionID,
-			rendered.PromptID,
-			rendered.Version,
-			rendered.Scope,
-		))
-	}
 	startRecords, err := prepareRunStartRecords(wfCtx.Context(), startEvents, turnID)
-	if err != nil {
-		return nil, err
-	}
-	promptRecords, err := prepareRunStartRecords(wfCtx.Context(), promptEvents, turnID)
 	if err != nil {
 		return nil, err
 	}
@@ -242,6 +230,17 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	historyEndID := startResult.Records[len(startResult.Records)-1].ID
 	recordTerminalResult = true
+	promptEvents := make([]hooks.Event, 0, len(startResult.RenderedPrompts))
+	for _, rendered := range startResult.RenderedPrompts {
+		promptEvents = append(promptEvents, hooks.NewPromptRenderedEvent(
+			input.RunID, input.AgentID, input.SessionID,
+			rendered.PromptID, rendered.Version, rendered.Scope,
+		))
+	}
+	promptRecords, err := prepareRunStartRecords(wfCtx.Context(), promptEvents, turnID)
+	if err != nil {
+		return nil, err
+	}
 	if len(promptRecords) > 0 {
 		if _, err := r.executeStorageWithRetry(wfCtx.Detached().Context(), appendStorageCommand(promptRecords...)); err != nil {
 			return nil, fmt.Errorf("record initial run context: %w", err)
@@ -256,25 +255,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		return nil, err
 	}
 	if checkpoint != nil {
-		if len(checkpoint.BaseMessages) > 0 {
-			// A continuation starts a distinct run from the complete planner
-			// transcript restored from the predecessor checkpoint. Record that
-			// transcript as this run's seed before appending the external
-			// response so the successor remains independently replayable.
-			historyEndID, err = r.publishTranscriptSeed(
-				wfCtx.Context(),
-				input.RunID,
-				input.AgentID,
-				input.SessionID,
-				turnID,
-				checkpoint.BaseMessages,
-			)
-			if err != nil {
-				finalErr = err
-				finalStatus = terminalRunStatusForError(err)
-				return nil, err
-			}
-		}
 		if err := r.publishHook(
 			wfCtx.Context(),
 			hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhaseExecutingTools),
@@ -294,27 +274,8 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 
 	planInput := &workflowConversation{
-		Messages:     input.Messages,
 		RunContext:   runCtx,
 		HistoryEndID: historyEndID,
-	}
-	if len(input.Messages) > 0 {
-		// Seed the run transcript with the exact planner input. These messages are
-		// durable for replay/snapshots but are not newly committed conversation
-		// output for this run, so they must not be published as appended deltas.
-		planInput.HistoryEndID, err = r.publishTranscriptSeed(
-			wfCtx.Context(),
-			input.RunID,
-			input.AgentID,
-			input.SessionID,
-			turnID,
-			input.Messages,
-		)
-		if err != nil {
-			finalErr = err
-			finalStatus = terminalRunStatusForError(err)
-			return nil, err
-		}
 	}
 	// Materialize one active cap state before planning so ordinary tools,
 	// recovery turns, and terminal finalization all observe the same run budget.
