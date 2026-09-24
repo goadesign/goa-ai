@@ -679,6 +679,15 @@ uses the same tool-schema compiler; Bedrock transport restrictions are described
 | Cache options / cache checkpoints | Rejected explicitly |
 | Thinking | Enabled thinking uses `ThinkingEffort`; optional `DisabledThinkingEffort` maps explicit disabled thinking to `none`. Absent thinking leaves provider defaults unchanged. Enabled budgeted or interleaved requests and explicit enabled-thinking temperature fail fast; a configured default temperature is omitted when thinking is enabled |
 
+When strict conversion adds a `null` choice for an originally optional field,
+the adapter explains omission in the tool's main description. A tool instruction
+to omit that field therefore means to return `null` in strict output, not to
+invent a value for a property that now appears required. Only the provider's
+description changes; the caller's definition and schema remain intact. Decoding
+still removes only the nulls introduced by the adapter, preserving explicit
+values and nulls supported by the original contract. Complete-schema Bedrock
+tools receive no omission explanation because they require no such conversion.
+
 This adapter boundary lets an inference backend change providers without
 changing its planners or runtime flow.
 

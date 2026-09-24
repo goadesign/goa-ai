@@ -1431,6 +1431,9 @@ uses the shared strict compiler with Bedrock transport and never changes schema
 contracts after an error. Required disjoint string tags select each object union
 branch's own optional-null removal rules. The validated model client remains responsible
 for checking the original schema and generated decoder in every case.
+When this conversion adds omission values, the adapter explains their meaning
+in the provider's tool description without changing the caller's definition.
+See [strict tool omission](docs/runtime.md#openai-adapter-matrix).
 
 All constructors send `store:false` and explicitly include
 `reasoning.encrypted_content` on every request. Requesting replay data belongs

@@ -258,6 +258,8 @@ memory and prompt overrides, and Redis/Pulse for streams and registries.
 For OpenAI Responses on Bedrock, `NewBedrockStrictProvider` selects strict tool
 schemas. Existing `NewBedrock` and `NewBedrockProvider` retain complete schemas
 with local output validation; constructor choice is fixed, with no fallback.
+Strict tool descriptions explain when `null` represents an omitted optional
+field; applications keep their original tool contracts.
 For models that estimate tokens before a call, the usage-reconciled adaptive
 limiter admits work from that estimate and corrects its local balance with
 tokens reported in the response. Missing usage stays unknown. Shared limiter

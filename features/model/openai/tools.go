@@ -50,11 +50,17 @@ func encodeTools(defs []*model.ToolDefinition, modelID string, exact bool) ([]re
 			return nil, nil, fmt.Errorf("openai: tool %q is missing description", def.Name)
 		}
 		schema := def.Input.Contract().Schema
+		description := def.Description
 		providerName := canonToProv[def.Name]
 		if !exact {
 			projection, err := compileStrictSchemaForModel(schema, modelID)
 			if err != nil {
 				return nil, nil, fmt.Errorf("openai: tool %q schema: %w", def.Name, err)
+			}
+			// When strict output adds null choices for optional fields, explain
+			// how to omit those fields without inventing non-null values.
+			if projection.canonicalizes {
+				description += "\n\nIn the strict tool schema, an optional field that should be omitted is represented by null. Use null when the tool instructions say to omit a field."
 			}
 			codec.projections[providerName] = projection
 			schema, err = json.Marshal(projection.schema)
@@ -69,7 +75,7 @@ func encodeTools(defs []*model.ToolDefinition, modelID string, exact bool) ([]re
 		tools = append(tools, responses.ToolUnionParam{
 			OfFunction: &responses.FunctionToolParam{
 				Name:        providerName,
-				Description: param.NewOpt(def.Description),
+				Description: param.NewOpt(description),
 				Parameters:  parameters,
 				Strict:      param.NewOpt(!exact),
 			},
