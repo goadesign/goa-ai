@@ -297,7 +297,7 @@ func claudeSearchRequest(t *testing.T) *model.Request {
 		Tools: []*model.ToolDefinition{{
 			Name: "weather.lookup", Description: "Look up the weather.",
 			Deferred: true, Search: tools.NewSearchDocument("weather lookup temperature"),
-			Input: mustAnthropicToolInput(t, rawjson.Message(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"],"additionalProperties":false}`)),
+			Input: mustAnthropicToolInput(t, rawjson.Message(`{"type":"object","properties":{"city":{"type":"string","description":"Use <city> & country; population > 0."}},"required":["city"],"additionalProperties":false}`)),
 		}},
 		Cache: &model.CacheOptions{AfterTools: true},
 	}

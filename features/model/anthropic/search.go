@@ -204,20 +204,20 @@ func prepareClaudeSearch(ctx context.Context, req *model.Request, enc *encodedRe
 	return nil
 }
 
-// snapshotSearchDefinition retains the generated raw schema instead of the
-// SDK's map serialization, whose object key order can vary between requests.
+// snapshotSearchDefinition uses the same JSON escaping as retained definitions,
+// preserving raw schema key order and exact numbers without an SDK map round-trip.
 func snapshotSearchDefinition(definition *model.ToolDefinition, tool *sdk.ToolParam) (searchDefinition, error) {
 	input := definition.Input.Contract()
 	schema := input.Schema
 	if len(tool.InputExamples) > 0 {
 		schema = input.SchemaWithoutRootExample
 	}
-	var compact bytes.Buffer
-	if err := json.Compact(&compact, schema); err != nil {
+	encoded, err := json.Marshal(schema)
+	if err != nil {
 		return searchDefinition{}, fmt.Errorf("anthropic: snapshot tool schema: %w", err)
 	}
 	snapshot := searchDefinition{
-		Canonical: definition.Name, Name: tool.Name, Description: tool.Description.Value, InputSchema: compact.Bytes(),
+		Canonical: definition.Name, Name: tool.Name, Description: tool.Description.Value, InputSchema: encoded,
 	}
 	if len(tool.InputExamples) > 0 {
 		examples, err := json.Marshal(tool.InputExamples)
