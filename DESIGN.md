@@ -1763,9 +1763,9 @@ its own public completion event for an end-user interface.
     catalog, and `finish` is terminal for tool execution. A same-tool
     `correct_call` keeps that tool available alongside a parallel `replan`.
   - Planner activities preserve `ProviderError.Retryable()` in Temporal
-    application errors. Invalid requests and authentication failures therefore
-    stop immediately, while throttling and transient provider failures retain
-    activity retries.
+    application errors. This metadata does not override the runtime's
+    single-attempt planner policy: an activity may already have published model
+    output. A separate retry owner must establish that replay is safe.
 
 - **Terminal identity**
   - `RunCompletedEvent.Labels` carries the run-scoped labels provided at run
@@ -1777,6 +1777,21 @@ its own public completion event for an end-user interface.
 This keeps consumers simple: render `error`, gate “Retry” on `retryable`, and treat `canceled` as non-error.
 
 ## Provider Stream Integrity Contract
+
+The OpenAI Responses adapter decodes nested SDK stream errors using the official
+error fields. The exact `server_error` type with `internal_server_error` code
+becomes an `unavailable`, retryable `ProviderError`, retaining the provider's code,
+message, and original Go error cause. It does not infer an HTTP status or request
+ID from a stream event. Unknown, malformed, and conflicting-type events do not
+gain retryability from this rule; existing HTTP and flat-event rules still apply.
+Temporal serialization preserves the existing provider error fields, not the
+native SDK error object.
+
+Retryability means another attempt may succeed; it does not authorize replay of
+an operation that already published text or tool effects. The adapter does not
+retry a failed stream. Consumers that implement retries must independently enforce
+their output-safety and attempt limits. Corrected metadata can affect those
+consumers' retry decisions without changing an error schema or stored history.
 
 Provider adapters (Bedrock, Anthropic) validate the streaming event protocol
 with a strict state machine: a message must start before content blocks flow
