@@ -54,6 +54,21 @@ func TestEncodeToolsExplainsOptionalFieldOmission(t *testing.T) {
 			wantGuidance: true,
 		},
 		{
+			name: "optional field with required meaningful null",
+			schema: rawjson.Message(`{
+				"type":"object",
+				"properties":{
+					"priority":{"type":"string","enum":["low","high"]},
+					"label":{"type":["string","null"],"description":"Null clears the label."}
+				},
+				"required":["label"],
+				"additionalProperties":false
+			}`),
+			providerArgs: `{"priority":null,"label":null}`,
+			wantArgs:     `{"label":null}`,
+			wantGuidance: true,
+		},
+		{
 			name: "nested optional value with meaningful null",
 			schema: rawjson.Message(`{
 				"type":"object",
@@ -90,10 +105,11 @@ func TestEncodeToolsExplainsOptionalFieldOmission(t *testing.T) {
 			wantArgs:     `{"query":"alerts"}`,
 		},
 		{
-			name: "original optional null",
+			name: "original required null",
 			schema: rawjson.Message(`{
 				"type":"object",
 				"properties":{"label":{"type":["string","null"]}},
+				"required":["label"],
 				"additionalProperties":false
 			}`),
 			providerArgs: `{"label":null}`,

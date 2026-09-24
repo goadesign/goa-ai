@@ -57,8 +57,8 @@ func encodeTools(defs []*model.ToolDefinition, modelID string, exact bool) ([]re
 			if err != nil {
 				return nil, nil, fmt.Errorf("openai: tool %q schema: %w", def.Name, err)
 			}
-			// When strict output adds null choices for optional fields, explain
-			// how to omit those fields without inventing non-null values.
+			// The strict compiler only admits optional fields whose null
+			// representation can be decoded back to absence.
 			if projection.canonicalizes {
 				description += "\n\nIn the strict tool schema, an optional field that should be omitted is represented by null. Use null when the tool instructions say to omit a field."
 			}

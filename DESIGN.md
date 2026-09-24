@@ -1431,9 +1431,21 @@ uses the shared strict compiler with Bedrock transport and never changes schema
 contracts after an error. Required disjoint string tags select each object union
 branch's own optional-null removal rules. The validated model client remains responsible
 for checking the original schema and generated decoder in every case.
-When this conversion adds omission values, the adapter explains their meaning
-in the provider's tool description without changing the caller's definition.
-See [strict tool omission](docs/runtime.md#openai-adapter-matrix).
+Strict conversion represents an optional non-nullable member's absence with
+`null`; a generated function tool note explains that representation. Required
+meaningful nulls and explicit values remain intact. Before transport, the
+compiler requires concrete objects to be explicitly closed and rejects optional
+nullable members, reachable reference cycles, reference structural siblings,
+unions combined with local object-shape rules, and patterns that conflict with
+optional-member removal. The compiler also rejects a `const` or `enum` when its
+own value structure needs that removal, including at reference sites; making
+the entire field optional does not trigger this restriction. These are
+supported-subset restrictions, including redundant structural siblings and otherwise valid
+fixed values over optional structures. The compiler does not rewrite literals
+or infer equivalent object definitions from arbitrary compositions. Complete
+closed tagged branches and plain reused acyclic references retain their own
+omission rules. The caller's schema remains unchanged.
+See the [strict schema contract](docs/runtime.md#openai-adapter-matrix).
 
 All constructors send `store:false` and explicitly include
 `reasoning.encrypted_content` on every request. Requesting replay data belongs

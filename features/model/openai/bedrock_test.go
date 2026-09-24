@@ -390,7 +390,7 @@ func TestOpenAISDKStrictSchemaKeepsNumericTypes(t *testing.T) {
 	request := bedrockTestRequest()
 	request.Thinking = nil
 	request.ToolChoice = nil
-	request.Tools[0].Input = mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"count":{"type":"integer","minimum":0,"maximum":9007199254740993},"label":{"type":"string"}},"required":["count"]}`))
+	request.Tools[0].Input = mustOpenAIToolInput(rawjson.Message(`{"type":"object","properties":{"count":{"type":"integer","minimum":0,"maximum":9007199254740993},"label":{"type":"string"}},"required":["count"],"additionalProperties":false}`))
 	_, err = client.Complete(t.Context(), request)
 	require.NoError(t, err)
 	assert.Contains(t, string(body), `"strict":true`)

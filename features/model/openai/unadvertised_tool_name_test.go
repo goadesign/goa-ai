@@ -134,7 +134,7 @@ func TestCompleteAcceptsExactAdvertisedToolName(t *testing.T) {
 			"type":"function_call",
 			"call_id":"call_1",
 			"name":"lookup",
-			"arguments":"{}",
+			"arguments":"{\"id\":\"a\"}",
 			"status":"completed"
 		}]
 	}`)}
