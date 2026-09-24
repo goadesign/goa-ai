@@ -10,6 +10,7 @@ import (
 	_ "image/gif"  // Register GIF header decoding for image token counting.
 	_ "image/jpeg" // Register JPEG header decoding for image token counting.
 	_ "image/png"  // Register PNG header decoding for image token counting.
+	"math"
 	"strings"
 
 	"github.com/openai/openai-go/v3/packages/param"
@@ -17,6 +18,8 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/model"
 )
+
+const bedrockSolImageModel = "gpt-6-sol"
 
 // bedrockImageTokens replaces image URLs only in the freshly prepared counting
 // request and returns their separate token cost. The message encoder puts every
@@ -36,6 +39,9 @@ func bedrockImageTokens(prepared *preparedRequest) (int, error) {
 			if err != nil {
 				return 0, err
 			}
+			if count > math.MaxInt-tokens {
+				return 0, fmt.Errorf("openai: image token estimate exceeds supported integer range")
+			}
 			tokens += count
 			img.ImageURL = param.NewOpt("")
 		}
@@ -43,18 +49,18 @@ func bedrockImageTokens(prepared *preparedRequest) (int, error) {
 	return tokens, nil
 }
 
-// bedrockImageTokenCount applies GPT-5.6's documented auto/original image rule:
-// fit each image within 65,535 pixels per side, count 32-pixel patches, reject
-// more than 30,000 patches for that image, then round up the 1.2 multiplier.
-// See https://developers.openai.com/api/docs/guides/images-vision.
-// Unknown model rules fail counting rather than guessing from encoded bytes.
+// bedrockImageTokenCount estimates image tokens from 32-pixel patches with a
+// 1.2 multiplier. GPT-5.6 additionally applies its documented dimension and
+// patch limits (https://developers.openai.com/api/docs/guides/images-vision).
+// For GPT-6 Sol this is only a local estimate, not its billing formula or an
+// assertion about provider image limits. Response usage owns accounting.
 func bedrockImageTokenCount(modelID, dataURL string) (int, error) {
 	_, name, found := strings.Cut(modelID, ".openai.")
 	if !found {
 		name = strings.TrimPrefix(modelID, "openai.")
 	}
 	switch name {
-	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna":
+	case "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", bedrockSolImageModel:
 	default:
 		return 0, fmt.Errorf("openai: image token counting for model %q: %w", modelID, model.ErrTokenCountingUnsupported)
 	}
@@ -67,12 +73,18 @@ func bedrockImageTokenCount(modelID, dataURL string) (int, error) {
 		return 0, fmt.Errorf("openai: decode image dimensions for token counting: %w", err)
 	}
 	width, height := int64(config.Width), int64(config.Height)
-	if largest := max(width, height); largest > 65535 {
-		width, height = max(1, width*65535/largest), max(1, height*65535/largest)
+	if name != bedrockSolImageModel {
+		if largest := max(width, height); largest > 65535 {
+			width, height = max(1, width*65535/largest), max(1, height*65535/largest)
+		}
 	}
 	patches := ((width + 31) / 32) * ((height + 31) / 32)
-	if patches > 30000 {
+	if name != bedrockSolImageModel && patches > 30000 {
 		return 0, fmt.Errorf("openai: image requires %d patches; model %q permits at most 30000 per image", patches, modelID)
 	}
-	return int((patches*6 + 4) / 5), nil
+	tokens := (patches*6 + 4) / 5
+	if tokens > math.MaxInt {
+		return 0, fmt.Errorf("openai: image token estimate exceeds supported integer range")
+	}
+	return int(tokens), nil
 }

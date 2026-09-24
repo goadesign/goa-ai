@@ -87,6 +87,38 @@ func TestBedrockImageCountDimensionsAndPerImageLimits(t *testing.T) {
 	}
 }
 
+// Sol estimates do not claim another model's hard image limits.
+func TestBedrockSolImageEstimateDoesNotImposeGPT56Limits(t *testing.T) {
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, image.NewGray(image.Rect(0, 0, 1, 1))))
+	header := encoded.Bytes()
+	binary.BigEndian.PutUint32(header[16:20], 65536)
+	binary.BigEndian.PutUint32(header[20:24], 512)
+	binary.BigEndian.PutUint32(header[29:33], crc32.ChecksumIEEE(header[12:29]))
+	count, err := bedrockImageTokenCount("global.openai.gpt-6-sol", "data:image/png;base64,"+base64.StdEncoding.EncodeToString(header))
+	require.NoError(t, err)
+	assert.Equal(t, 39322, count)
+}
+
+func TestBedrockImageEstimateRejectsIntegerOverflow(t *testing.T) {
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, image.NewGray(image.Rect(0, 0, 1, 1))))
+	header := encoded.Bytes()
+	binary.BigEndian.PutUint32(header[16:20], 1073741823)
+	binary.BigEndian.PutUint32(header[20:24], 1073741823)
+	binary.BigEndian.PutUint32(header[29:33], crc32.ChecksumIEEE(header[12:29]))
+	raw, err := newProvider(Options{DefaultModel: "global.openai.gpt-6-sol", transport: &mockTransport{}}, true)
+	require.NoError(t, err)
+	parts := make([]model.Part, 7000)
+	for i := range parts {
+		parts[i] = model.ImagePart{Format: model.ImageFormatPNG, Bytes: header}
+	}
+	request := &model.Request{Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: parts}}}
+	counter := &bedrockProvider{provider: raw}
+	_, err = counter.CountTokens(t.Context(), request)
+	require.ErrorContains(t, err, "token estimate exceeds supported integer range")
+}
+
 func TestBedrockImageCountExactDimensionFit(t *testing.T) {
 	for _, test := range []struct {
 		height uint32
@@ -114,7 +146,7 @@ func TestBedrockImageCountExactDimensionFit(t *testing.T) {
 }
 
 func TestBedrockImageCountCapabilityAndMalformedImage(t *testing.T) {
-	for _, modelID := range []string{"global.openai.gpt-5.6-terra", "us.openai.gpt-5.6-sol", "us-gov.openai.gpt-5.6-luna", "openai.gpt-5.6-terra", "gpt-5.6-terra"} {
+	for _, modelID := range []string{"global.openai.gpt-5.6-terra", "us.openai.gpt-5.6-sol", "us-gov.openai.gpt-5.6-luna", "openai.gpt-5.6-terra", "gpt-5.6-terra", "global.openai.gpt-6-sol", "us.openai.gpt-6-sol", "openai.gpt-6-sol", "gpt-6-sol"} {
 		_, err := bedrockImageTokenCount(modelID, "data:image/jpeg;base64,invalid")
 		require.ErrorContains(t, err, "decode image dimensions")
 	}
