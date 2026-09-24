@@ -4442,7 +4442,14 @@ Lifecycle commands store the state change and matching records together:
   lookup to decide whether the record may be published.
 
 Exact start retries return the original immutable `StartOutcome` and ordered
-record identifiers. Changed run, agent, session, or parent identity returns
+record identifiers. All four result types also require `RunStatus`, read from
+the run in the same Store transaction or lock that selects those records.
+Child results describe the child, not its parent. An exact retry must return
+the stored current status, even after the run closes. One-shot results keep
+their existing shape apart from this required field; their original outcome
+is always `proceed`.
+
+Changed run, agent, session, or parent identity returns
 `session.ErrRunConflict`. A record whose agent or session differs from its
 stored run returns `storage.ErrRunRecordOwnerMismatch`.
 
@@ -4461,6 +4468,43 @@ runtime rejects empty commands, multiple commands, empty results, multiple
 results, and a result field that does not match the command. This explicit
 shape prevents the activity from guessing an operation by inspecting event
 types.
+
+Each start result requires a known `RunStatus`: `running`, `suspended`,
+`completed`, `failed`, or `canceled`. The runtime validates the complete
+selected result before publishing any hook:
+
+| Original decision and current state | Publication and execution |
+| --- | --- |
+| `proceed`, `running` | Existing start publication and execution continue. |
+| `proceed`, any closed state | No start or parent-link publication. Execution returns `engine.ErrWorkflowCompleted`. |
+| `stop`, `canceled` | Existing ended-Session cancellation behavior remains. |
+| Missing status or inconsistent result | The result is rejected before publication or execution. |
+
+`stop` is valid only for Session root and child starts. It requires
+`CancellationReason == "session_ended"` and the canceled completion record.
+`proceed` carries no initial cancellation reason. Its ordered record counts
+are one for root/one-shot starts and two for child starts; `stop` adds one
+completion record. Every record needs its committed ID and the existing
+consistent Session status. A closed `proceed` replay must report
+`Inserted == false` for every start and parent-link record.
+
+`ExecuteWorkflow`, its cancellation handler, and direct `RunOneShot` calls all
+respect a closed `proceed` response. They do not schedule planner/tool work,
+invoke the one-shot callback, write prompts or transcript seeds, accept a new
+cancellation, or replace terminal data. An original `stop` response retains
+its existing cancellation reason comparison. A `running` response describes
+the Store operation's observation; it does not prevent later cancellation.
+
+Both shipped engines stop workflow retries for `engine.ErrWorkflowCompleted`.
+Direct and in-memory callers receive that error. Normal Temporal workflow
+waits keep their existing backend error convention: the failure is a
+nonretryable application error with type `goa_ai_workflow_completed`.
+Cancellation updates retain their existing mapping back to the engine error.
+An activity's nonretryable contract error stops retries of that activity
+input. It does not disable the host's workflow retry policy: a fresh workflow
+attempt can obtain different prerequisite results and submit different input.
+Missing or malformed saved start results are rejected before effects without
+immediately repeating the storage invocation; they never default to running.
 
 Root and child starts serialize with session ending inside the host store. An
 active session produces running metadata. An ended session produces terminal
@@ -4489,6 +4533,30 @@ sees only newly inserted records. An active session's live stream also receives
 exact activity retries after a failed delivery; stable event keys let the sink
 return its original publication instead of creating a duplicate. The bus has no
 second lifecycle writer.
+
+#### Start-result history upgrade
+
+Update every host Store implementation and transport adapter to return the
+required current `RunStatus` for all four start operations. Update every
+runtime worker and custom activity-result producer together. The field is
+also required in `api.StartRunResult`; its JSON name is `RunStatus` and it is
+never omitted. This change does not alter model tool schemas, start commands,
+request digests, or persisted run fields.
+
+Previously saved activity results omit `RunStatus`. Decoding those results
+does not authorize execution: the runtime rejects the empty value before
+effects. Do not fill it with `running`, rewrite immutable activity history,
+or replay old history on the new workers.
+
+Before switching workers, stop admissions, finish or cancel every old open
+execution on its original worker, and settle every uncertain prepared start.
+Verify that no open history still needs the old start-result contract. Keep
+retained old histories with their matching binary for offline replay; do not
+reset them onto new workers. Old workers likewise cannot decode new results
+under their strict unknown-field rules. Worker routing must prevent either
+version from taking the other's history. If the host cannot establish this
+drain, it needs a separately designed temporary history transition before
+upgrading.
 
 Prompt references and child relationships are derived from canonical ordered
 records. `RunMeta` does not duplicate those values. `ChildRunLinked` contains

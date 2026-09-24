@@ -99,6 +99,9 @@ func (r *Runtime) handleWorkflowCancellation(
 		}
 		return nil
 	}
+	if session.IsTerminalRunStatus(start.RunStatus) {
+		return engine.ErrWorkflowCompleted
+	}
 	return r.publishRunCancellation(cancelCtx, input, request)
 }
 

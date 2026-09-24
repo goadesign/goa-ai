@@ -38,9 +38,10 @@ type (
 	// write so tests can exercise the runtime's store-result checks.
 	startSessionStatusStore struct {
 		storage.Store
-		root    storage.RootRunStartResult
-		child   storage.ChildRunStartResult
-		oneShot storage.OneShotRunStartResult
+		root         storage.RootRunStartResult
+		child        storage.ChildRunStartResult
+		oneShot      storage.OneShotRunStartResult
+		oneShotChild storage.OneShotChildRunStartResult
 	}
 )
 
@@ -58,6 +59,10 @@ func (s startSessionStatusStore) StartChildRun(context.Context, storage.ChildRun
 
 func (s startSessionStatusStore) StartOneShotRun(context.Context, storage.OneShotRunStart) (storage.OneShotRunStartResult, error) {
 	return s.oneShot, nil
+}
+
+func (s startSessionStatusStore) StartOneShotChildRun(context.Context, storage.OneShotChildRunStart) (storage.OneShotChildRunStartResult, error) {
+	return s.oneShotChild, nil
 }
 
 func TestRecordActivityStoresRootStartDecision(t *testing.T) {
@@ -242,8 +247,8 @@ func TestRecordActivityStartsOneShotChildRun(t *testing.T) {
 }
 
 func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
-	active := storage.AppendResult{SessionStatus: session.StatusActive}
-	ended := storage.AppendResult{SessionStatus: session.StatusEnded}
+	active := storage.AppendResult{ID: "active-record", SessionStatus: session.StatusActive}
+	ended := storage.AppendResult{ID: "ended-record", SessionStatus: session.StatusEnded}
 	for _, test := range []struct {
 		name  string
 		kind  storageCommandKind
@@ -254,8 +259,9 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			name: "root proceed invalid status",
 			kind: storageCommandRootStart,
 			store: startSessionStatusStore{root: storage.RootRunStartResult{
-				Outcome: session.RunStartProceed,
-				Started: storage.AppendResult{Inserted: true, SessionStatus: session.StatusEnded},
+				Outcome:   session.RunStartProceed,
+				RunStatus: session.RunStatusRunning,
+				Started:   storage.AppendResult{ID: "started", Inserted: true, SessionStatus: session.StatusEnded},
 			}},
 			want: `newly inserted proceeding start record 0 reports ended session`,
 		},
@@ -263,9 +269,10 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			name: "root stop",
 			kind: storageCommandRootStart,
 			store: startSessionStatusStore{root: storage.RootRunStartResult{
-				Outcome:  session.RunStartStop,
-				Started:  ended,
-				Canceled: active,
+				Outcome:   session.RunStartStop,
+				RunStatus: session.RunStatusCanceled,
+				Started:   ended,
+				Canceled:  active,
 			}},
 			want: `start record 1 has session status "active", want all records to report "ended"`,
 		},
@@ -274,6 +281,7 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			kind: storageCommandChildStart,
 			store: startSessionStatusStore{child: storage.ChildRunStartResult{
 				Outcome:      session.RunStartProceed,
+				RunStatus:    session.RunStatusRunning,
 				ParentRecord: ended,
 				Started:      active,
 			}},
@@ -284,6 +292,7 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			kind: storageCommandChildStart,
 			store: startSessionStatusStore{child: storage.ChildRunStartResult{
 				Outcome:      session.RunStartStop,
+				RunStatus:    session.RunStatusCanceled,
 				ParentRecord: ended,
 				Started:      active,
 				Canceled:     ended,
@@ -295,6 +304,7 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			kind: storageCommandChildStart,
 			store: startSessionStatusStore{child: storage.ChildRunStartResult{
 				Outcome:      session.RunStartStop,
+				RunStatus:    session.RunStatusCanceled,
 				ParentRecord: ended,
 				Started:      ended,
 				Canceled:     active,
@@ -305,7 +315,8 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			name: "one shot",
 			kind: storageCommandOneShotStart,
 			store: startSessionStatusStore{oneShot: storage.OneShotRunStartResult{
-				Record: active,
+				RunStatus: session.RunStatusRunning,
+				Record:    active,
 			}},
 			want: `one-shot start has session status "active", want empty`,
 		},

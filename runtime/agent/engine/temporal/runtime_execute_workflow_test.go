@@ -627,17 +627,20 @@ func storageCommandRecords(command *api.StorageActivityCommand) []*api.RecordAct
 func storageCommandResult(command *api.StorageActivityCommand, recordCount int) *api.StorageActivityResult {
 	results := make([]storage.AppendResult, recordCount)
 	for index := range results {
-		results[index] = storage.AppendResult{ID: fmt.Sprint(index + 1), Inserted: true, SessionStatus: session.StatusActive}
+		results[index] = storage.AppendResult{ID: fmt.Sprint(index + 1), Inserted: true}
+		if command.OneShotStart == nil && command.OneShotChildStart == nil {
+			results[index].SessionStatus = session.StatusActive
+		}
 	}
 	switch {
 	case command.Append != nil:
 		return &api.StorageActivityResult{Append: &api.AppendRecordsResult{Records: results}}
 	case command.RootStart != nil:
-		return &api.StorageActivityResult{RootStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: results}}
+		return &api.StorageActivityResult{RootStart: &api.StartRunResult{Outcome: session.RunStartProceed, RunStatus: session.RunStatusRunning, Records: results}}
 	case command.ChildStart != nil:
-		return &api.StorageActivityResult{ChildStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: results}}
+		return &api.StorageActivityResult{ChildStart: &api.StartRunResult{Outcome: session.RunStartProceed, RunStatus: session.RunStatusRunning, Records: results}}
 	case command.OneShotStart != nil:
-		return &api.StorageActivityResult{OneShotStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: results}}
+		return &api.StorageActivityResult{OneShotStart: &api.StartRunResult{Outcome: session.RunStartProceed, RunStatus: session.RunStatusRunning, Records: results}}
 	case command.Cancellation != nil:
 		return &api.StorageActivityResult{Cancellation: &api.RunCancellationResult{Outcome: api.RunCancellationAccepted, Record: results[0]}}
 	case command.Suspension != nil:

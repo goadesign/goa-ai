@@ -869,13 +869,13 @@ func testStorageResult(command *api.StorageActivityCommand) *api.StorageActivity
 			Records: testRecordResults(command.Append.Records...),
 		}}
 	case command.RootStart != nil:
-		return &api.StorageActivityResult{RootStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: testRecordResults(command.RootStart.Started)}}
+		return &api.StorageActivityResult{RootStart: &api.StartRunResult{Outcome: session.RunStartProceed, RunStatus: session.RunStatusRunning, Records: testRecordResults(command.RootStart.Started)}}
 	case command.ChildStart != nil:
-		return &api.StorageActivityResult{ChildStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: testRecordResults(command.ChildStart.ParentLinked, command.ChildStart.Started)}}
+		return &api.StorageActivityResult{ChildStart: &api.StartRunResult{Outcome: session.RunStartProceed, RunStatus: session.RunStatusRunning, Records: testRecordResults(command.ChildStart.ParentLinked, command.ChildStart.Started)}}
 	case command.OneShotStart != nil:
-		return &api.StorageActivityResult{OneShotStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: testRecordResults(command.OneShotStart.Started)}}
+		return &api.StorageActivityResult{OneShotStart: &api.StartRunResult{Outcome: session.RunStartProceed, RunStatus: session.RunStatusRunning, Records: testRecordResults(command.OneShotStart.Started)}}
 	case command.OneShotChildStart != nil:
-		return &api.StorageActivityResult{OneShotChildStart: &api.StartRunResult{Outcome: session.RunStartProceed, Records: testRecordResults(command.OneShotChildStart.ParentLinked, command.OneShotChildStart.Started)}}
+		return &api.StorageActivityResult{OneShotChildStart: &api.StartRunResult{Outcome: session.RunStartProceed, RunStatus: session.RunStatusRunning, Records: testRecordResults(command.OneShotChildStart.ParentLinked, command.OneShotChildStart.Started)}}
 	case command.Cancellation != nil:
 		return &api.StorageActivityResult{Cancellation: &api.RunCancellationResult{Outcome: api.RunCancellationAccepted}}
 	case command.Suspension != nil:
@@ -885,12 +885,15 @@ func testStorageResult(command *api.StorageActivityCommand) *api.StorageActivity
 	}
 }
 
-// testRecordResults gives each mock write its stable event key as the record ID.
+// testRecordResults returns committed IDs and active Session state for mock writes.
 // Tests that read stored history must use hookRuntime to execute actual writes.
 func testRecordResults(records ...*RecordActivityInput) []storage.AppendResult {
 	results := make([]storage.AppendResult, len(records))
 	for i, record := range records {
 		results[i].ID = record.EventKey
+		if record.SessionID != "" {
+			results[i].SessionStatus = session.StatusActive
+		}
 	}
 	return results
 }

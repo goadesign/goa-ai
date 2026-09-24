@@ -28,6 +28,9 @@ type (
 	// change the result. Implementations use lifecycle.ValidateOrdinaryRunRecord
 	// for ordinary appends and the other storage/lifecycle validators for
 	// lifecycle changes.
+	// Every start result includes the current RunStatus observed in that same
+	// atomic operation. Exact retries preserve the original decision and
+	// record IDs, even when the run has since closed.
 	//
 	// StartRootRun and StartChildRun accept a continuation when
 	// Run.PredecessorRunID is set. Before either method writes the successor run,
@@ -174,21 +177,24 @@ type (
 		Record AppendResult
 	}
 
-	// RootRunStartResult reports the immutable root-run decision and records.
+	// RootRunStartResult reports the original root start and the current run state.
 	RootRunStartResult struct {
-		// Outcome tells the workflow whether it may do work.
+		// Outcome is the immutable decision made when the run first started.
 		Outcome session.RunStartOutcome
+		// RunStatus is the run state observed in the same atomic operation.
+		RunStatus session.RunStatus
 		// Started is the run-started record stored for every outcome.
 		Started AppendResult
 		// Canceled is the run-completed record stored only when Outcome is stop.
 		Canceled AppendResult
 	}
 
-	// ChildRunStartResult reports the immutable child-run decision and the two
-	// records stored by the operation.
+	// ChildRunStartResult reports the original child start and the current child state.
 	ChildRunStartResult struct {
-		// Outcome tells the child workflow whether it may do work.
+		// Outcome is the immutable decision made when the child first started.
 		Outcome session.RunStartOutcome
+		// RunStatus is the child state observed in the same atomic operation.
+		RunStatus session.RunStatus
 		// ParentRecord is the child-link record stored on the parent run.
 		ParentRecord AppendResult
 		// Started is the child run-started record stored for every outcome.
@@ -197,15 +203,18 @@ type (
 		Canceled AppendResult
 	}
 
-	// OneShotRunStartResult reports the first record for a sessionless run.
+	// OneShotRunStartResult reports the first record and current sessionless run state.
 	OneShotRunStartResult struct {
+		// RunStatus is the run state observed in the same atomic operation.
+		RunStatus session.RunStatus
 		// Record is the run-started record.
 		Record AppendResult
 	}
 
-	// OneShotChildRunStartResult reports the two records stored for a
-	// sessionless child.
+	// OneShotChildRunStartResult reports the original records and current child state.
 	OneShotChildRunStartResult struct {
+		// RunStatus is the child state observed in the same atomic operation.
+		RunStatus session.RunStatus
 		// ParentRecord is the child-link record stored on the parent run.
 		ParentRecord AppendResult
 		// Started is the run-started record stored on the child run.
