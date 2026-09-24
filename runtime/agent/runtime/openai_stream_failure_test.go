@@ -91,3 +91,48 @@ func TestOpenAIStreamFailurePreservesPublishedTextAndTemporalMetadata(t *testing
 	assert.Zero(t, pe.HTTPStatus())
 	assert.Empty(t, pe.RequestID())
 }
+
+func TestOpenAIStreamMalformedMessageTemporalMetadata(t *testing.T) {
+	for _, message := range []string{`123`, `{"unexpected":"object"}`} {
+		t.Run(message, func(t *testing.T) {
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.Header().Set("Content-Type", "text/event-stream")
+				_, err := fmt.Fprint(w, `data: {"error":{"type":"server_error","code":"internal_server_error","message":`+message+"}}\n\n")
+				assert.NoError(t, err)
+			}))
+			defer server.Close()
+			sdk := openaisdk.NewClient(option.WithAPIKey("synthetic"), option.WithBaseURL(server.URL), option.WithMaxRetries(0))
+			client, err := openaimodel.New(openaimodel.Options{Client: &sdk.Responses, DefaultModel: "synthetic-model"})
+			require.NoError(t, err)
+			stream, err := client.Stream(t.Context(), &model.Request{Messages: []*model.Message{{
+				Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Answer briefly."}},
+			}}})
+			require.NoError(t, err)
+			_, streamErr := stream.Recv()
+			var original *ssestream.StreamError
+			require.ErrorAs(t, streamErr, &original)
+			require.NoError(t, stream.Close())
+			assert.EqualValues(t, 1, requests.Load())
+
+			converter := temporal.GetDefaultFailureConverter()
+			failure := converter.ErrorToFailure(temporalerrors.Wrap(streamErr))
+			encoded, err := proto.Marshal(failure)
+			require.NoError(t, err)
+			require.NoError(t, proto.Unmarshal(encoded, failure))
+			decoded := converter.FailureToError(failure)
+			var app *temporal.ApplicationError
+			require.ErrorAs(t, decoded, &app)
+			assert.True(t, app.NonRetryable())
+			pe, ok := temporalerrors.Provider(decoded)
+			require.True(t, ok)
+			assert.Equal(t, model.ProviderErrorKindUnknown, pe.Kind())
+			assert.False(t, pe.Retryable())
+			assert.Empty(t, pe.Code())
+			assert.Equal(t, original.Error(), pe.Message())
+			assert.Zero(t, pe.HTTPStatus())
+			assert.Empty(t, pe.RequestID())
+		})
+	}
+}

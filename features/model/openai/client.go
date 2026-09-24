@@ -550,6 +550,23 @@ func providerErrorFromSDK(operation string, err error) error {
 			Error openaisdk.Error `json:"error"`
 		}
 		if json.Unmarshal(streamErr.Event.Data, &envelope) == nil {
+			// The SDK's response decoder can stringify non-string fields.
+			// Check retained JSON types before trusting any decoded value;
+			// omitted and null fields retain their existing absence behavior.
+			for _, raw := range []string{
+				envelope.Error.JSON.Type.Raw(),
+				envelope.Error.JSON.Code.Raw(),
+				envelope.Error.JSON.Message.Raw(),
+				envelope.Error.JSON.Param.Raw(),
+			} {
+				if raw == "" || raw == "null" {
+					continue
+				}
+				var text string
+				if json.Unmarshal([]byte(raw), &text) != nil {
+					return newProviderError(operation, 0, "", err.Error(), err)
+				}
+			}
 			code = envelope.Error.Code
 			msg = envelope.Error.Message
 			if envelope.Error.Type == openAIServerError && code == "internal_server_error" {
