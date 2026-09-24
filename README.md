@@ -259,7 +259,8 @@ image inputs from dimensions, while response usage remains the accounting total.
 
 Vertex tool arguments require valid UTF-8 text and keys. Workflow writes reject
 map keys with custom JSON or text encoders; use plain strings or named string
-types without those encoders. Existing persisted JSON reads are unchanged.
+types without those encoders. Strict lifecycle and rejection record reads
+reject invalid raw UTF-8 instead of replacing bytes during JSON decoding.
 See the [JSON boundary contract](docs/runtime.md#json-boundary-contract).
 
 Application code owns planners, service behavior, authorization, side-effect
