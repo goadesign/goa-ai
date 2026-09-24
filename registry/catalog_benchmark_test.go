@@ -55,3 +55,42 @@ func BenchmarkCatalogHealthLifecycle(b *testing.B) {
 		})
 	}
 }
+
+// BenchmarkCatalogDefinitionRead measures the complete warm definition lookup,
+// including decoding, validation and compiled execution-schema reuse.
+func BenchmarkCatalogDefinitionRead(b *testing.B) {
+	for _, size := range []int{0, 32_768} {
+		name := "small"
+		if size != 0 {
+			name = "large"
+		}
+		b.Run(name, func(b *testing.B) {
+			ctx := b.Context()
+			clock := newTestTimeSource(time.Unix(1_700_000_000, 0))
+			store := newTestCatalogMap(clock)
+			catalog := newToolsetCatalog(store, clock)
+			input := testDefinitionToolset()
+			schema, err := json.Marshal(map[string]any{
+				"type": "object", "description": strings.Repeat("schema evidence ", size),
+			})
+			require.NoError(b, err)
+			input.Tools[0].PayloadSchema = schema
+			input.Tools[0].ExecutionPayloadSchema = schema
+			input.Tools[0].ResultSchema = schema
+			definition := testCatalogDefinition(b, input)
+			_, err = catalog.Register(ctx, definition, testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
+			require.NoError(b, err)
+			_, err = catalog.ActiveRegistration(ctx, input.Name)
+			require.NoError(b, err)
+			store.snapshotReads = 0
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				entry, err := catalog.ActiveRegistration(ctx, input.Name)
+				require.NoError(b, err)
+				require.NoError(b, validatePayload(entry.Toolset.executionSchemas["tools.lookup"], []byte(`{}`)))
+			}
+			b.ReportMetric(float64(store.snapshotReads*len(definition.raw))/float64(b.N), "definition-B/op")
+		})
+	}
+}

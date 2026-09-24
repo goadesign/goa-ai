@@ -33,12 +33,15 @@ type (
 	// catalogWrite describes one catalog-owned transition. Definition bytes
 	// are supplied only when registration changes them. LiveLease requires
 	// the previous lease to remain valid when Redis commits the update.
+	// A positive RoutableUntilUnixMilli requires existing routable membership
+	// to survive until commit; expiration retries without writing stale health.
 	catalogWrite struct {
-		State          string
-		Definition     string
-		CandidateToken string
-		RetireToken    string
-		LiveLease      string
+		State                  string
+		Definition             string
+		CandidateToken         string
+		RetireToken            string
+		LiveLease              string
+		RoutableUntilUnixMilli int64
 	}
 
 	redisCatalogStore struct {
@@ -97,6 +100,13 @@ if ARGV[7] ~= "" then
   local now_millis = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
   if not lease or tonumber(lease.expires_at_unix_milli) <= now_millis then
     return redis.error_reply("PROVIDERLEASELOST")
+  end
+end
+if tonumber(ARGV[8]) > 0 then
+  local now = redis.call("TIME")
+  local now_millis = tonumber(now[1]) * 1000 + math.floor(tonumber(now[2]) / 1000)
+  if now_millis >= tonumber(ARGV[8]) then
+    return 0
   end
 end
 if ARGV[4] ~= "" then
@@ -178,7 +188,7 @@ func (s *redisCatalogStore) Commit(ctx context.Context, key, previous string, ne
 	defer finishCatalogSpan(ctx, span, &err)
 	result, err := catalogCommitScript.Run(ctx, s.redis,
 		[]string{s.state, s.definitions, s.retired},
-		key, previous, next.State, next.Definition, next.CandidateToken, next.RetireToken, next.LiveLease,
+		key, previous, next.State, next.Definition, next.CandidateToken, next.RetireToken, next.LiveLease, next.RoutableUntilUnixMilli,
 	).Int()
 	if err != nil {
 		switch {

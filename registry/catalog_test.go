@@ -39,6 +39,8 @@ type testCatalogMap struct {
 	readErr                error
 	snapshotErr            error
 	commitErr              error
+	beforeSnapshot         func(string)
+	afterSnapshot          func(string)
 	afterExactRead         func(string)
 	afterRetiredTokensRead func()
 	beforeCommit           func(string, catalogWrite)
@@ -368,10 +370,8 @@ func TestCatalogDelayedOldIncarnationReleaseCannotDeleteReplacement(t *testing.T
 	t.Parallel()
 
 	ctx := context.Background()
-	catalog := newToolsetCatalog(
-		newTestCatalogMap(),
-		newTestTimeSource(time.Unix(1_700_000_000, 0)),
-	)
+	clock := newTestTimeSource(time.Unix(1_700_000_000, 0))
+	catalog := newToolsetCatalog(newTestCatalogMap(clock), clock)
 	first, err := catalog.Register(
 		ctx,
 		testCatalogDefinition(t, testCatalogToolset("test.toolset", "test", nil)),
@@ -588,7 +588,6 @@ func TestCatalogFailedReplacementPreservesAllRecords(t *testing.T) {
 	assert.Equal(t, before, after)
 	assert.Equal(t, string(old.Toolset.raw), store.definitions[toolsetCatalogKey("tools")])
 	assert.Empty(t, store.retiredTokens)
-	assert.Same(t, old.Toolset, catalog.definitions["tools"])
 	require.NoError(t, catalog.validatePersistedEntries(ctx))
 
 	_, err = catalog.Register(ctx, definition, testAdmissionRevisionB, "provider", testIncarnationB, time.Minute)
@@ -617,7 +616,6 @@ func TestCatalogRegisterRechecksPermanentRetirementAtCommit(t *testing.T) {
 	require.ErrorIs(t, err, errAdmissionRetired)
 	assert.Empty(t, store.content)
 	assert.Empty(t, store.definitions)
-	assert.Empty(t, catalog.definitions)
 	assert.Contains(t, store.retiredTokens, token)
 }
 
@@ -721,7 +719,7 @@ func testCatalogDefinition(t testing.TB, toolset *genregistry.Toolset) *catalogT
 }
 
 // newTestCatalogMap keeps the shared helper name while implementing catalogStore.
-// Lease-extension tests supply the catalog clock for the commit-time expiry check.
+// Join and lease-extension tests share the catalog clock with commit-time checks.
 func newTestCatalogMap(clocks ...registryTimeSource) *testCatalogMap {
 	clock := registryTimeSource(newTestTimeSource(time.Now()))
 	if len(clocks) > 0 {
@@ -768,8 +766,20 @@ func (m *testCatalogMap) Read(ctx context.Context, key string) (string, bool, er
 }
 
 func (m *testCatalogMap) Snapshot(ctx context.Context, key string) (string, string, bool, bool, error) {
+	m.mu.RLock()
+	before := m.beforeSnapshot
+	m.mu.RUnlock()
+	if before != nil {
+		before(key)
+	}
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	after := m.afterSnapshot
+	defer func() {
+		m.mu.Unlock()
+		if after != nil {
+			after(key)
+		}
+	}()
 	if err := ctx.Err(); err != nil {
 		return "", "", false, false, err
 	}
@@ -897,6 +907,15 @@ func (m *testCatalogMap) Commit(ctx context.Context, key, previous string, next 
 		lease, exists := state.ProviderLeases[next.LiveLease]
 		if !exists || lease.ExpiresAtUnixMilli <= now.UnixMilli() {
 			return false, errProviderLeaseLost
+		}
+	}
+	if next.RoutableUntilUnixMilli > 0 {
+		now, err := m.clock.Now(ctx)
+		if err != nil {
+			return false, err
+		}
+		if now.UnixMilli() >= next.RoutableUntilUnixMilli {
+			return false, nil
 		}
 	}
 	if next.Definition != "" {

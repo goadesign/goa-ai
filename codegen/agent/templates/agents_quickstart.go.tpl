@@ -322,11 +322,13 @@ handler := toolsetpkg.NewProvider(svcImpl)
 podName := mustRequiredEnv("HOSTNAME")
 providerID := podName + "/" + toolsetID
 admissionRevision := mustRequiredEnv("TOOL_REGISTRY_ADMISSION_REVISION")
+if err := registrywire.ValidateAdmissionRevision(admissionRevision); err != nil {
+    return err
+}
 go func() {
     err := toolprovider.Serve(ctx, pulseClient, toolsetID, handler,
         toolprovider.Registration{
-            AdmissionRevision: admissionRevision,
-            Register: func(ctx context.Context, toolset, providerID, incarnationID, admissionRevision string) (toolprovider.RegistrationLease, error) {
+            Register: func(ctx context.Context, toolset, providerID, incarnationID string) (toolprovider.RegistrationLease, error) {
                 schemaFingerprint, err := toolsetpkg.SchemaFingerprint(toolset)
                 if err != nil {
                     return toolprovider.RegistrationLease{}, err
@@ -459,7 +461,7 @@ Notes:
 - Providers are generated only when the toolset has at least one **method-backed** tool (and the toolset is not registry-backed).
 - Import `goa.design/goa-ai/runtime/toolregistry` as `registrywire`. Every provider Register payload must set `WireProtocolVersion: registrywire.WireProtocolVersion`; the registry rejects missing or mismatched versions before admission.
 - Registry-backed consumer clients must set the same `WireProtocolVersion` on every CallTool and RetryTool payload; the registry rejects mismatches before catalog lookup or publication. CallTool performs initial admission. When the executor receives `provider_overloaded` retry control, its RetryTool implementation must pass the original `ToolCallRef.RegistrationToken` as `ExpectedRegistrationToken`; the registry rejects admission rollover and never republishes through a replacement provider.
-- `AdmissionRevision` is required and immutable for one fenced admission. Reuse it for scaling and same-contract rolling updates; change it only when schema or rollout intent needs a new execution fence. `Registration.Register` passes it to the typed registry payload and returns `RegistrationToken` plus `LeaseDurationMs`.
+- `AdmissionRevision` is required and immutable for one fenced admission. Reuse it for scaling and same-contract rolling updates; change it only when schema or rollout intent needs a new execution fence. Validate it before `Serve` starts, then capture it in the `Registration.Register` closure that sends the typed registry payload and returns `RegistrationToken` plus `LeaseDurationMs`. The generic callback receives no revision argument. A provider attaching to a declaration instead captures its exact token and calls `AttachProvider`; it does not invent a revision.
 - `Serve` generates one UUID incarnation, registers its generated definitions at startup, and only then creates the shared request sink. The required `Registration.Renew` calls `RenewProvider` with the exact lease identity and returns only its duration; it never sends schemas or changes the token. Renewal starts around one third of the granted duration. `provider_lease_lost` is terminal and never triggers re-registration. On exit, Serve cancels renewal, marks its lease draining, closes intake, settles accepted work and acknowledgements, then releases the exact lease. An in-flight renewal preserves draining and any longer settlement deadline. Callbacks must honor cancellation; cleanup failures remain errors.
 - `RegistrationToken` is the deterministic SHA-256 admission-generation fence derived from the registry wire protocol version, canonical generated schema bytes, and `AdmissionRevision`, not a secret. Its canonical wire form is lowercase 64-hex. Every success, error, and best-effort output delta echoes the call token. Providers complete stale queued calls with `stale_registration`; independent executor readers ignore mismatched late deltas/results and continue waiting for the exact tool-use ID and token pair.
 - The gateway derives the global transport `ToolUseID` from required run ID plus required model/provider call ID. One call record owns immutable identity, terminal state, a Redis-selected execution deadline no longer than `MaxToolCallWait`, and a later bounded result-history expiration. Handler contexts and executor waiting use the execution deadline; result streams and canonical terminals use retention. Unresolved claims atomically settle to `outcome_unknown` before retention expires. Result consumers use independent oldest-first Pulse Readers, so sequential and concurrent retries each replay the same retained events without acknowledgement or consumer-group metadata. A full provider queue publishes top-level retry control with reason `provider_overloaded`, bounded delay, and no planner failure; overload reporting is idempotent per request event. RetryTool attaches to the existing immutable admission and serializes delayed republication only while that exact token remains active.

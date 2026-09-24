@@ -56,8 +56,7 @@ func TestRegistrationCallbacksValidateLeaseDuration(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					now := time.Unix(1_700_000_000, 0)
 					registration := registrationConfig{
-						admissionRevision: testAdmissionRevision,
-						register: func(context.Context, string, string, string, string) (RegistrationLease, error) {
+						register: func(context.Context, string, string, string) (RegistrationLease, error) {
 							return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: tc.duration}, nil
 						},
 						renew: func(context.Context, string, string, string, string) (time.Duration, error) {
@@ -308,7 +307,7 @@ func TestServeRenewalDuringDrainKeepsOneLease(t *testing.T) {
 			var closed, completed, acknowledged atomic.Bool
 			var incarnation string
 			registration := successfulRegistration()
-			registration.Register = func(_ context.Context, _, _, gotIncarnation, _ string) (RegistrationLease, error) {
+			registration.Register = func(_ context.Context, _, _, gotIncarnation string) (RegistrationLease, error) {
 				registrations.Add(1)
 				incarnation = gotIncarnation
 				return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Hour}, nil

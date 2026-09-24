@@ -15,6 +15,8 @@ import (
 
 // Client is the "registry" service client.
 type Client struct {
+	DeclareServiceToolsetEndpoint  goa.Endpoint
+	AttachProviderEndpoint         goa.Endpoint
 	RegisterEndpoint               goa.Endpoint
 	RenewProviderEndpoint          goa.Endpoint
 	ReleaseProviderEndpoint        goa.Endpoint
@@ -38,8 +40,10 @@ type Client struct {
 }
 
 // NewClient initializes a "registry" service client given the endpoints.
-func NewClient(register, renewProvider, releaseProvider, drainProvider, unregister, pong, registerAgentToolset, replaceAgentToolset, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
+func NewClient(declareServiceToolset, attachProvider, register, renewProvider, releaseProvider, drainProvider, unregister, pong, registerAgentToolset, replaceAgentToolset, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
 	return &Client{
+		DeclareServiceToolsetEndpoint:  declareServiceToolset,
+		AttachProviderEndpoint:         attachProvider,
 		RegisterEndpoint:               register,
 		RenewProviderEndpoint:          renewProvider,
 		ReleaseProviderEndpoint:        releaseProvider,
@@ -61,6 +65,40 @@ func NewClient(register, renewProvider, releaseProvider, drainProvider, unregist
 		ReportToolCallOverloadEndpoint: reportToolCallOverload,
 		ClaimToolCallEndpoint:          claimToolCall,
 	}
+}
+
+// DeclareServiceToolset calls the "DeclareServiceToolset" endpoint of the
+// "registry" service.
+// DeclareServiceToolset may return the following errors:
+//   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
+//   - "admission_retired" (type *goa.ServiceError): The requested admission was intentionally retired
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) DeclareServiceToolset(ctx context.Context, p *ServiceToolsetDeclaration) (res *ResolvedToolset, err error) {
+	var ires any
+	ires, err = c.DeclareServiceToolsetEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ResolvedToolset), nil
+}
+
+// AttachProvider calls the "AttachProvider" endpoint of the "registry" service.
+// AttachProvider may return the following errors:
+//   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
+//   - "admission_retired" (type *goa.ServiceError): The requested admission was intentionally retired
+//   - "provider_lease_lost" (type *goa.ServiceError): The exact provider incarnation no longer holds the admitted lease and must stop serving
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) AttachProvider(ctx context.Context, p *AttachProviderPayload) (res *RegisterResult, err error) {
+	var ires any
+	ires, err = c.AttachProviderEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*RegisterResult), nil
 }
 
 // Register calls the "Register" endpoint of the "registry" service.

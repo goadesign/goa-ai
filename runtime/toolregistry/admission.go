@@ -16,8 +16,9 @@ const (
 	// carry it explicitly so the registry rejects binaries that encode another
 	// message contract or registration schema contract before side effects.
 	WireProtocolVersion = 10
-	// AdmissionRevisionPattern is the canonical deployment-issued admission
-	// revision syntax shared by the Goa boundary and provider lifecycle config.
+	// AdmissionRevisionPattern is the admission revision syntax shared by Goa
+	// and catalog state. Register accepts deployment-issued revisions;
+	// DeclareServiceToolset allocates a registry-issued UUID revision.
 	AdmissionRevisionPattern = `^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,255}$`
 	// RegistrationTokenPattern is the lowercase SHA-256 admission-generation
 	// identity syntax shared by Goa and Pulse message boundaries.

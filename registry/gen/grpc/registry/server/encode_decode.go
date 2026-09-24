@@ -16,6 +16,72 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// EncodeDeclareServiceToolsetResponse encodes responses from the "registry"
+// service "DeclareServiceToolset" endpoint.
+func EncodeDeclareServiceToolsetResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.ResolvedToolset)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "DeclareServiceToolset", "*registry.ResolvedToolset", v)
+	}
+	resp := NewProtoDeclareServiceToolsetResponse(result)
+	return resp, nil
+}
+
+// DecodeDeclareServiceToolsetRequest decodes requests sent to "registry"
+// service "DeclareServiceToolset" endpoint.
+func DecodeDeclareServiceToolsetRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.DeclareServiceToolsetRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.DeclareServiceToolsetRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "DeclareServiceToolset", "*registrypb.DeclareServiceToolsetRequest", v)
+		}
+		if err := ValidateDeclareServiceToolsetRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.ServiceToolsetDeclaration
+	{
+		payload = NewDeclareServiceToolsetPayload(message)
+	}
+	return payload, nil
+}
+
+// EncodeAttachProviderResponse encodes responses from the "registry" service
+// "AttachProvider" endpoint.
+func EncodeAttachProviderResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.RegisterResult)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "AttachProvider", "*registry.RegisterResult", v)
+	}
+	resp := NewProtoAttachProviderResponse(result)
+	return resp, nil
+}
+
+// DecodeAttachProviderRequest decodes requests sent to "registry" service
+// "AttachProvider" endpoint.
+func DecodeAttachProviderRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.AttachProviderRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.AttachProviderRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "AttachProvider", "*registrypb.AttachProviderRequest", v)
+		}
+		if err := ValidateAttachProviderRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.AttachProviderPayload
+	{
+		payload = NewAttachProviderPayload(message)
+	}
+	return payload, nil
+}
+
 // EncodeRegisterResponse encodes responses from the "registry" service
 // "Register" endpoint.
 func EncodeRegisterResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {

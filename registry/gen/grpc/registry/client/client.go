@@ -31,6 +31,56 @@ func NewClient(cc *grpc.ClientConn, opts ...grpc.CallOption) *Client {
 	}
 }
 
+// DeclareServiceToolset calls the "DeclareServiceToolset" function in
+// registrypb.RegistryClient interface.
+func (c *Client) DeclareServiceToolset() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildDeclareServiceToolsetFunc(c.grpccli, c.opts...),
+			EncodeDeclareServiceToolsetRequest,
+			DecodeDeclareServiceToolsetResponse)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+					return nil, ctxErr
+				}
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
+// AttachProvider calls the "AttachProvider" function in
+// registrypb.RegistryClient interface.
+func (c *Client) AttachProvider() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		inv := goagrpc.NewInvoker(
+			BuildAttachProviderFunc(c.grpccli, c.opts...),
+			EncodeAttachProviderRequest,
+			DecodeAttachProviderResponse)
+		res, err := inv.Invoke(ctx, v)
+		if err != nil {
+			resp := goagrpc.DecodeError(err)
+			switch message := resp.(type) {
+			case *goapb.ErrorResponse:
+				return nil, goagrpc.NewServiceError(message)
+			default:
+				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+					return nil, ctxErr
+				}
+				return nil, goa.Fault("%s", err.Error())
+			}
+		}
+		return res, nil
+	}
+}
+
 // Register calls the "Register" function in registrypb.RegistryClient
 // interface.
 func (c *Client) Register() goa.Endpoint {

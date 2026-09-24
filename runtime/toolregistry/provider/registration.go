@@ -21,7 +21,7 @@ import (
 
 type (
 	// RegistrationLease is the registration identity and lease duration returned
-	// by the initial typed registry Register call.
+	// by the initial typed registry Register or AttachProvider call.
 	RegistrationLease struct {
 		// RegistrationToken identifies the admission for this Serve lifecycle.
 		RegistrationToken string
@@ -35,21 +35,17 @@ type (
 	// Registration configures the registry membership that Serve owns for its
 	// complete lifecycle.
 	Registration struct {
-		// AdmissionRevision is the deployment-issued revision shared by every
-		// provider replica in one fenced admission. Same-contract scaling and
-		// RollingUpdate reuse it; change it only to create a new fence.
-		AdmissionRevision string
-
 		// Register performs one idempotent provider admission during startup
-		// using the toolset, stable provider ID, runtime-generated incarnation,
-		// and immutable admission revision supplied by Serve. Implementations
-		// must call the typed registry client with one immutable schema payload
-		// and return its registration token and lease duration.
+		// using the toolset, stable provider ID, and runtime-generated incarnation.
+		// A deployment callback captures its validated revision and immutable
+		// schemas for Register. An attachment callback captures the exact saved
+		// registration token for AttachProvider. Both return the granted token
+		// and lease duration; neither may change its selection between retries.
 		//
 		// Register must honor ctx and return promptly after its cancellation.
 		Register func(
 			ctx context.Context,
-			toolset, providerID, incarnationID, admissionRevision string,
+			toolset, providerID, incarnationID string,
 		) (RegistrationLease, error)
 
 		// Renew extends the exact lease admitted at startup and returns only its
@@ -137,8 +133,7 @@ type (
 	}
 
 	registrationConfig struct {
-		admissionRevision  string
-		register           func(ctx context.Context, toolset, providerID, incarnationID, admissionRevision string) (RegistrationLease, error)
+		register           func(ctx context.Context, toolset, providerID, incarnationID string) (RegistrationLease, error)
 		renew              func(ctx context.Context, toolset, providerID, incarnationID, expectedRegistrationToken string) (time.Duration, error)
 		drain              func(ctx context.Context, toolset, providerID, incarnationID, expectedRegistrationToken string, settlementDuration time.Duration) error
 		release            func(ctx context.Context, toolset, providerID, incarnationID, expectedRegistrationToken string) error
@@ -248,9 +243,6 @@ func (r Registration) normalizedWithJitter(jitter registrationJitter) (registrat
 	if r.Claim == nil {
 		return registrationConfig{}, fmt.Errorf("claim callback is required")
 	}
-	if err := toolregistry.ValidateAdmissionRevision(r.AdmissionRevision); err != nil {
-		return registrationConfig{}, err
-	}
 	if r.RetryInitialInterval < 0 {
 		return registrationConfig{}, fmt.Errorf("registration retry initial interval must not be negative")
 	}
@@ -301,7 +293,6 @@ func (r Registration) normalizedWithJitter(jitter registrationJitter) (registrat
 		}
 	}
 	return registrationConfig{
-		admissionRevision:    r.AdmissionRevision,
 		register:             r.Register,
 		renew:                r.Renew,
 		drain:                r.Drain,
@@ -550,7 +541,6 @@ func registerProvider(
 		toolset,
 		providerID,
 		incarnationID,
-		registration.admissionRevision,
 	)
 	if err != nil {
 		return registrationState{}, fmt.Errorf("register provider %q for toolset %q: %w", providerID, toolset, err)
@@ -679,15 +669,15 @@ func jitterRegistrationDelay(base, maximum time.Duration) time.Duration {
 	return delay
 }
 
-// isPermanentRegistrationError identifies lost lease authority, retirement,
-// and validation failures that must stop instead of being retried.
+// isPermanentRegistrationError identifies invalid selection, lost lease
+// authority, retirement, and validation failures that cannot succeed on retry.
 func isPermanentRegistrationError(err error) bool {
 	var serviceErr *goa.ServiceError
 	if !errors.As(err, &serviceErr) {
 		return false
 	}
 	switch serviceErr.Name {
-	case "provider_lease_lost", "admission_retired", "validation_error":
+	case "provider_lease_lost", "admission_retired", "admission_conflict", "validation_error":
 		return true
 	default:
 		return false

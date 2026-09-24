@@ -60,7 +60,7 @@ func TestServeGeneratedClientCancellation(t *testing.T) {
 			registration.RetryMaxInterval = 50 * time.Millisecond
 			registration.ShutdownMargin = 10 * time.Millisecond
 			registration.ReleaseTimeout = time.Second
-			registration.Register = func(context.Context, string, string, string, string) (RegistrationLease, error) {
+			registration.Register = func(context.Context, string, string, string) (RegistrationLease, error) {
 				registrations.Add(1)
 				return RegistrationLease{RegistrationToken: testRegistrationTokenA, Duration: time.Second}, nil
 			}

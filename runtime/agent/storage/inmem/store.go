@@ -58,6 +58,7 @@ type (
 	// chooses the active-session or ended-session record.
 	sessionRunStartResult struct {
 		outcome      session.RunStartOutcome
+		runStatus    session.RunStatus
 		parentRecord storage.AppendResult
 		started      storage.AppendResult
 		canceled     storage.AppendResult
@@ -252,9 +253,10 @@ func (s *Store) StartRootRun(_ context.Context, command storage.RootRunStart) (s
 	}
 	result, err := s.startSessionRun(command.Run, false, nil, command.Started, command.Canceled)
 	return contractResult(storage.RootRunStartResult{
-		Outcome:  result.outcome,
-		Started:  result.started,
-		Canceled: result.canceled,
+		Outcome:   result.outcome,
+		RunStatus: result.runStatus,
+		Started:   result.started,
+		Canceled:  result.canceled,
 	}, err)
 }
 
@@ -266,8 +268,11 @@ func (s *Store) StartChildRun(_ context.Context, command storage.ChildRunStart) 
 	}
 	result, err := s.startSessionRun(command.Run, true, command.ParentLinked, command.Started, command.Canceled)
 	return contractResult(storage.ChildRunStartResult{
-		Outcome: result.outcome, ParentRecord: result.parentRecord,
-		Started: result.started, Canceled: result.canceled,
+		Outcome:      result.outcome,
+		RunStatus:    result.runStatus,
+		ParentRecord: result.parentRecord,
+		Started:      result.started,
+		Canceled:     result.canceled,
 	}, err)
 }
 
@@ -301,7 +306,7 @@ func (s *Store) startOneShotRun(command storage.OneShotRunStart) (storage.OneSho
 			return storage.OneShotRunStartResult{}, session.ErrRunConflict
 		}
 		result, err := s.appendLocked(command.Started)
-		return storage.OneShotRunStartResult{Record: result}, err
+		return storage.OneShotRunStartResult{RunStatus: existing.Status, Record: result}, err
 	}
 	if err := s.checkNewRunRecordLocked(command.Started, command.Run); err != nil {
 		return storage.OneShotRunStartResult{}, err
@@ -309,7 +314,7 @@ func (s *Store) startOneShotRun(command storage.OneShotRunStart) (storage.OneSho
 	s.runs[command.Run.RunID] = newRunMeta(command.Run, session.RunStartProceed, session.RunStatusRunning)
 	s.lifecycle[command.Run.RunID] = lifecycleRecords{start: command.Started.EventKey}
 	result, err := s.appendLocked(command.Started)
-	return storage.OneShotRunStartResult{Record: result}, err
+	return storage.OneShotRunStartResult{RunStatus: session.RunStatusRunning, Record: result}, err
 }
 
 // startOneShotChildRun applies the sessionless child start under the same lock
@@ -334,7 +339,9 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 			return storage.OneShotChildRunStartResult{}, err
 		}
 		started, err := s.appendLocked(command.Started)
-		return storage.OneShotChildRunStartResult{ParentRecord: parentRecord, Started: started}, err
+		return storage.OneShotChildRunStartResult{
+			RunStatus: existing.Status, ParentRecord: parentRecord, Started: started,
+		}, err
 	}
 	parent, ok := s.runs[command.Run.ParentRunID]
 	if !ok {
@@ -365,7 +372,9 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 		return storage.OneShotChildRunStartResult{}, err
 	}
 	started, err := s.appendLocked(command.Started)
-	return storage.OneShotChildRunStartResult{ParentRecord: parentRecord, Started: started}, err
+	return storage.OneShotChildRunStartResult{
+		RunStatus: session.RunStatusRunning, ParentRecord: parentRecord, Started: started,
+	}, err
 }
 
 // AppendRunRecord stores an ordinary record without changing lifecycle state.
@@ -787,7 +796,7 @@ func (s *Store) validatePredecessorLocked(start session.RunStart) error {
 
 // appendStartRecordsLocked appends the exact record set selected by outcome.
 func (s *Store) appendStartRecordsLocked(outcome session.RunStartOutcome, parent, started, canceled *runlog.Event) (sessionRunStartResult, error) {
-	result := sessionRunStartResult{outcome: outcome}
+	result := sessionRunStartResult{outcome: outcome, runStatus: s.runs[started.RunID].Status}
 	if parent != nil {
 		stored, err := s.appendLocked(parent)
 		if err != nil {

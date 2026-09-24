@@ -34,6 +34,7 @@ func TestStorageResultStartVariants(t *testing.T) {
 			result := test.result(testStorageResult(test.command))
 			require.NotNil(t, result)
 			require.Equal(t, session.RunStartProceed, result.Outcome)
+			require.Equal(t, session.RunStatusRunning, result.RunStatus)
 			ids := make([]string, 0, len(result.Records))
 			for _, record := range result.Records {
 				ids = append(ids, record.ID)

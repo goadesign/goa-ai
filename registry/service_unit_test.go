@@ -294,8 +294,9 @@ func TestCheckAdmissionReturnsOneCatalogSnapshotDuringReplacement(t *testing.T) 
 
 	ctx := t.Context()
 	now := time.Date(2026, time.August, 28, 19, 0, 0, 0, time.UTC)
-	activeMap := newTestCatalogMap()
-	activeCatalog := newToolsetCatalog(activeMap, newTestTimeSource(now))
+	clock := newTestTimeSource(now)
+	activeMap := newTestCatalogMap(clock)
+	activeCatalog := newToolsetCatalog(activeMap, clock)
 	active, err := activeCatalog.Register(
 		ctx,
 		testCatalogDefinition(t, testCatalogToolset("test.toolset", "active", nil)),
@@ -306,8 +307,8 @@ func TestCheckAdmissionReturnsOneCatalogSnapshotDuringReplacement(t *testing.T) 
 	)
 	require.NoError(t, err)
 
-	replacementMap := newTestCatalogMap()
-	replacementCatalog := newToolsetCatalog(replacementMap, newTestTimeSource(now))
+	replacementMap := newTestCatalogMap(clock)
+	replacementCatalog := newToolsetCatalog(replacementMap, clock)
 	replacement, err := replacementCatalog.Register(
 		ctx,
 		testCatalogDefinition(t, testCatalogToolset("test.toolset", "replacement", nil)),

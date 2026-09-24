@@ -348,8 +348,9 @@ func syntheticProductionReplayHistory(
 	require.NoError(t, err)
 	rootStartResult, err := dataConverter.ToPayloads(&api.StorageActivityResult{
 		RootStart: &api.StartRunResult{
-			Outcome: session.RunStartProceed,
-			Records: []storage.AppendResult{{ID: "start-record", Inserted: true}},
+			Outcome:   session.RunStartProceed,
+			RunStatus: session.RunStatusRunning,
+			Records:   []storage.AppendResult{{ID: "start-record", Inserted: true, SessionStatus: session.StatusActive}},
 		},
 	})
 	require.NoError(t, err)
