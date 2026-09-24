@@ -21,8 +21,8 @@ import (
 
 type (
 	// RunInput captures everything an initial or continuation workflow needs.
-	// It includes the full conversational context plus caller-provided labels and
-	// metadata.
+	// Initial history has already been published; engine commands carry its
+	// position plus caller-provided control values.
 	RunInput struct {
 		// AgentID identifies which agent should process the run.
 		AgentID agent.Ident
@@ -68,13 +68,8 @@ type (
 		// It is absent for top-level runs and compiled Agent tools.
 		ToolRegistry *tools.RegistryBinding `json:",omitempty"` //nolint:tagliatelle // Persisted records retain Go field names.
 
-		// Messages carries the conversation history supplied by the caller.
-		Messages []*model.Message
-
-		// RenderedPrompts lists prompts whose rendered text is already present in
-		// Messages. The accepted workflow stores these facts after it creates the
-		// run and before it starts planner work.
-		RenderedPrompts []prompt.RenderEvent
+		// SeedEndID identifies this run's exact published initial history.
+		SeedEndID string
 
 		// Labels contains caller-provided metadata (account, priority, etc.).
 		Labels map[string]string
@@ -742,6 +737,12 @@ type (
 	// code freezes records before scheduling the activity, and retries reuse the
 	// complete command without rebuilding it.
 	StorageActivityCommand struct {
+		// SeedBegin reserves a child's initial history before engine submission.
+		SeedBegin *storage.SeedDeclaration
+		// SeedAppend writes one bounded record in the child's initial history.
+		SeedAppend *storage.SeedAppend
+		// SeedPublish makes the child's complete initial history executable.
+		SeedPublish *storage.SeedPublication
 		// Append stores ordinary records without changing run lifecycle state.
 		Append *AppendRecordsCommand
 		// RootStart stores the start of a session root run. An ended session also
@@ -771,12 +772,16 @@ type (
 
 	// RootRunStartCommand carries the frozen start record for a session root run.
 	RootRunStartCommand struct {
+		// SeedEndID is the publication attached by this accepted start.
+		SeedEndID string
 		// Started is the run-started record.
 		Started *RecordActivityInput
 	}
 
 	// ChildRunStartCommand carries the records that link and start a child run.
 	ChildRunStartCommand struct {
+		// SeedEndID is the publication attached by this accepted start.
+		SeedEndID string
 		// ParentLinked is stored on the parent run.
 		ParentLinked *RecordActivityInput
 		// Started is stored on the child run when its session is active.
@@ -785,12 +790,16 @@ type (
 
 	// OneShotRunStartCommand carries the frozen start record for a sessionless run.
 	OneShotRunStartCommand struct {
+		// SeedEndID is the publication attached by this accepted start.
+		SeedEndID string
 		// Started is the run-started record.
 		Started *RecordActivityInput
 	}
 
 	// OneShotChildRunStartCommand carries the frozen records for a sessionless child.
 	OneShotChildRunStartCommand struct {
+		// SeedEndID is the publication attached by this accepted start.
+		SeedEndID string
 		// ParentLinked is stored on the sessionless parent run.
 		ParentLinked *RecordActivityInput
 		// Started is stored on the child run.
@@ -820,6 +829,12 @@ type (
 	// StorageActivityResult reports the result matching the selected command.
 	// Exactly one field is set, and it must match the command field.
 	StorageActivityResult struct {
+		// SeedBegin reports the immutable declaration and captured source.
+		SeedBegin *storage.RunSeed
+		// SeedAppend reports the accepted record position.
+		SeedAppend *SeedPositionResult
+		// SeedPublish reports the exact published position.
+		SeedPublish *SeedPositionResult
 		// Append reports ordinary record writes.
 		Append *AppendRecordsResult
 		// RootStart reports the root-start decision.
@@ -838,6 +853,12 @@ type (
 		Terminal *RecordWriteResult
 	}
 
+	// SeedPositionResult returns one store-assigned initial-history position.
+	SeedPositionResult struct {
+		// EndID is the accepted append or publication position.
+		EndID string
+	}
+
 	// AppendRecordsResult reports ordinary writes in command order.
 	AppendRecordsResult struct {
 		// Records contains store results in durable commit order.
@@ -846,6 +867,8 @@ type (
 
 	// StartRunResult reports the immutable start decision and every stored record.
 	StartRunResult struct {
+		// RenderedPrompts contains prompt facts attached from the publication.
+		RenderedPrompts []prompt.RenderEvent
 		// Outcome is exactly proceed or stop.
 		Outcome session.RunStartOutcome
 		// CancellationReason is set only when Outcome is stop.
@@ -924,14 +947,11 @@ type (
 		ParentRun run.Context
 	}
 
-	// AgentChildActivitySuccess contains the prompt facts recorded in workflow
-	// history after child preparation succeeds.
+	// AgentChildActivitySuccess contains the publication and control values
+	// recorded in workflow history after child preparation succeeds.
 	AgentChildActivitySuccess struct {
-		// Messages is the complete initial child transcript.
-		Messages []*model.Message
-
-		// RenderedPrompts identifies every stored prompt version used in Messages.
-		RenderedPrompts []prompt.RenderEvent
+		// SeedEndID identifies the child's published initial history.
+		SeedEndID string
 		// Labels supplies the child configuration's execution labels.
 		Labels map[string]string `json:",omitempty"` //nolint:tagliatelle // Activity history retains Go field names.
 		// Policy supplies the child configuration's per-run tool and model policy.
@@ -1119,7 +1139,7 @@ const (
 	// Version 8 retains the advertised catalog for every accepted recovery plan
 	// that waits for input. Failed tool names cannot reconstruct other choices
 	// advertised during that plan. Earlier versions are rejected.
-	RunSuspensionVersion = "goa-ai.run-suspension.v8"
+	RunSuspensionVersion = "goa-ai.run-suspension.v9"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

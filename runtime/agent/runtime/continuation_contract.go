@@ -422,6 +422,9 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 	if checkpoint.PreviousRunID == "" {
 		return errors.New("run suspension checkpoint requires predecessor run id")
 	}
+	if checkpoint.HistoryEndID == "" {
+		return errors.New("run suspension checkpoint requires an exact saved history position")
+	}
 	if !checkpoint.State.ResponseCommitted {
 		return errors.New("run suspension checkpoint requires a committed planner response")
 	}
@@ -579,14 +582,6 @@ func validateWorkflowRunInput(input *RunInput) error {
 	if input == nil {
 		return errors.New("run input is required")
 	}
-	for index, rendered := range input.RenderedPrompts {
-		if rendered.PromptID == "" || rendered.Version == "" {
-			return fmt.Errorf("rendered prompt %d requires prompt id and version", index)
-		}
-		if rendered.Scope.SessionID != "" && rendered.Scope.SessionID != input.SessionID {
-			return fmt.Errorf("rendered prompt %d scope session does not match run session", index)
-		}
-	}
 	if input.Continuation == nil {
 		if input.Policy != nil {
 			return validateMaxRecoveryTurns(input.Policy.MaxRecoveryTurns)
@@ -596,10 +591,10 @@ func validateWorkflowRunInput(input *RunInput) error {
 	if err := validatePendingInputResponse(input.Continuation.Response); err != nil {
 		return err
 	}
-	if len(input.Messages) > 0 || len(input.Labels) > 0 || len(input.Metadata) > 0 ||
+	if len(input.Labels) > 0 || len(input.Metadata) > 0 ||
 		input.Policy != nil || input.ParentRunID != "" || input.ParentAgentID != "" ||
 		input.ParentToolCallID != "" || input.Tool != "" || len(input.ToolArgs) > 0 ||
-		len(input.RenderedPrompts) > 0 || input.ToolRegistry != nil {
+		input.ToolRegistry != nil {
 		return errors.New("run continuation cannot include caller-supplied checkpoint state")
 	}
 	return nil

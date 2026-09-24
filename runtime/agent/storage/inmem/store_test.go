@@ -30,6 +30,7 @@ func TestRootStartPersistsOneImmutableOutcome(t *testing.T) {
 	require.NoError(t, err)
 
 	start := session.RunStart{AgentID: "agent", RunID: "run", SessionID: "session", StartedAt: now}
+	start = publishStartHistory(t, store, start)
 	command := rootStartCommand(t, start)
 	first, err := store.StartRootRun(ctx, command)
 	require.NoError(t, err)
@@ -56,6 +57,7 @@ func TestRootStartRetryKeepsOriginalOutcomeAfterCompletion(t *testing.T) {
 	_, err := store.CreateSession(ctx, "session", now)
 	require.NoError(t, err)
 	start := session.RunStart{AgentID: "agent", RunID: "run", SessionID: "session", StartedAt: now}
+	start = publishStartHistory(t, store, start)
 	command := rootStartCommand(t, start)
 	_, err = store.StartRootRun(ctx, command)
 	require.NoError(t, err)
@@ -155,12 +157,20 @@ func TestContinuationStartRequiresMatchingSuspendedPredecessor(t *testing.T) {
 			store := New()
 			_, err := store.CreateSession(t.Context(), "session", now)
 			require.NoError(t, err)
-			if test.predecessor != nil {
-				store.runs[test.predecessor.RunID] = *test.predecessor
-			}
+			source := session.RunStart{AgentID: "agent", RunID: "predecessor", SessionID: "session", StartedAt: now}
+			source = startSeedTestRun(t, store, source)
+			stored := store.runs[source.RunID]
+			stored.Status = session.RunStatusSuspended
+			store.runs[source.RunID] = stored
 			start := session.RunStart{
 				AgentID: "agent", RunID: "successor", SessionID: "session",
 				PredecessorRunID: "predecessor", StartedAt: now,
+			}
+			start = publishStartHistory(t, store, start)
+			if test.predecessor == nil {
+				delete(store.runs, source.RunID)
+			} else {
+				store.runs[source.RunID] = *test.predecessor
 			}
 
 			_, err = store.StartRootRun(t.Context(), rootStartCommand(t, start))
@@ -197,11 +207,19 @@ func TestChildContinuationChecksPredecessorBeforeParentLink(t *testing.T) {
 				ParentRunID: parent.RunID, Status: status,
 			}
 			store.runs[predecessor.RunID] = predecessor
+			// Preparation observes a valid suspended predecessor; the start
+			// must recheck it after the test changes its persisted status.
+			original := store.runs[predecessor.RunID]
+			original.Status = session.RunStatusSuspended
+			store.runs[predecessor.RunID] = original
+			store.records[predecessor.RunID] = []*runlog.Event{{ID: "1"}}
 			child := session.RunStart{
 				AgentID: "child", RunID: "successor", SessionID: parent.SessionID,
 				ParentRunID: parent.RunID, PredecessorRunID: predecessor.RunID,
 				StartedAt: parent.StartedAt,
 			}
+			child = publishStartHistory(t, store, child)
+			store.runs[predecessor.RunID] = predecessor
 			command := storage.ChildRunStart{
 				Run: child, ParentLinked: childLinkRecord(t, "child-link", parent, child),
 				Started: startedRecord(t, "child-start", child),
@@ -234,7 +252,7 @@ func TestRecordRetryRequiresExactTimestamp(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	store := New()
 	start := session.RunStart{AgentID: "agent", RunID: "run", StartedAt: now}
-	_, err := store.StartOneShotRun(ctx, storage.OneShotRunStart{Run: start, Started: startedRecord(t, "started", start)})
+	_, err := store.StartOneShotRun(ctx, storage.OneShotRunStart{Run: publishStartHistory(t, store, start), Started: startedRecord(t, "started", start)})
 	require.NoError(t, err)
 	record := record("note", "run", "agent", "", "note")
 	_, err = store.AppendRunRecord(ctx, record)
@@ -373,8 +391,15 @@ func TestEndedSessionStartStoresTerminalCancellation(t *testing.T) {
 	require.NoError(t, err)
 	_, err = store.EndSession(ctx, "session", now.Add(time.Second))
 	require.NoError(t, err)
-
 	start := session.RunStart{AgentID: "agent", RunID: "run", SessionID: "session", StartedAt: now}
+	start = publishStartHistory(t, store, start)
+	accepted, found, err := store.FindRunPreparation(ctx, storage.PreparationOperation{
+		AgentID: start.AgentID, RunID: start.RunID, SessionID: start.SessionID, CommandID: start.RunID,
+	})
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, start.SeedEndID, accepted.Seed.EndID)
+	require.Positive(t, accepted.PreparedBytes)
 	command := rootStartCommand(t, start)
 	result, err := store.StartRootRun(ctx, command)
 	require.NoError(t, err)
@@ -409,12 +434,14 @@ func TestChildStartStoresParentLinkAndChildStartTogether(t *testing.T) {
 	_, err := store.CreateSession(ctx, "session", now)
 	require.NoError(t, err)
 	parentStart := session.RunStart{AgentID: "parent", RunID: "parent", SessionID: "session", StartedAt: now}
+	parentStart = publishStartHistory(t, store, parentStart)
 	_, err = store.StartRootRun(ctx, rootStartCommand(t, parentStart))
 	require.NoError(t, err)
 
 	childStart := session.RunStart{
 		AgentID: "child", RunID: "child", SessionID: "session", ParentRunID: "parent", StartedAt: now,
 	}
+	childStart = publishStartHistory(t, store, childStart)
 	result, err := store.StartChildRun(ctx, storage.ChildRunStart{
 		Run:          childStart,
 		ParentLinked: childLinkRecord(t, "child-link", parentStart, childStart),
@@ -438,12 +465,13 @@ func TestOneShotChildStartStoresParentLinkAndChildStartTogether(t *testing.T) {
 	store := New()
 	parent := session.RunStart{AgentID: "parent", RunID: "parent", StartedAt: now}
 	_, err := store.StartOneShotRun(t.Context(), storage.OneShotRunStart{
-		Run: parent, Started: startedRecord(t, "parent-start", parent),
+		Run: publishStartHistory(t, store, parent), Started: startedRecord(t, "parent-start", parent),
 	})
 	require.NoError(t, err)
 	child := session.RunStart{
 		AgentID: "child", RunID: "child", ParentRunID: parent.RunID, StartedAt: now,
 	}
+	child = publishStartHistory(t, store, child)
 	command := storage.OneShotChildRunStart{
 		Run:          child,
 		ParentLinked: childLinkRecord(t, "child-link", parent, child),
@@ -474,10 +502,11 @@ func TestOneShotChildStartStoresParentLinkAndChildStartTogether(t *testing.T) {
 
 func TestOneShotChildStartRequiresRunningSessionlessParent(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
-	childFor := func(parent session.RunStart) storage.OneShotChildRunStart {
+	childFor := func(store *Store, parent session.RunStart) storage.OneShotChildRunStart {
 		child := session.RunStart{
 			AgentID: "child", RunID: "child", ParentRunID: parent.RunID, StartedAt: now,
 		}
+		child = publishStartHistory(t, store, child)
 		return storage.OneShotChildRunStart{
 			Run: child, ParentLinked: childLinkRecord(t, "child-link", parent, child),
 			Started: startedRecord(t, "child-start", child),
@@ -488,16 +517,17 @@ func TestOneShotChildStartRequiresRunningSessionlessParent(t *testing.T) {
 		_, err := store.CreateSession(t.Context(), "session", now)
 		require.NoError(t, err)
 		parent := session.RunStart{AgentID: "parent", RunID: "parent", SessionID: "session", StartedAt: now}
+		parent = publishStartHistory(t, store, parent)
 		_, err = store.StartRootRun(t.Context(), rootStartCommand(t, parent))
 		require.NoError(t, err)
-		_, err = store.StartOneShotChildRun(t.Context(), childFor(parent))
+		_, err = store.StartOneShotChildRun(t.Context(), childFor(store, parent))
 		require.ErrorContains(t, err, "parent identity does not match child run")
 	})
 	t.Run("completed parent", func(t *testing.T) {
 		store := New()
 		parent := session.RunStart{AgentID: "parent", RunID: "parent", StartedAt: now}
 		_, err := store.StartOneShotRun(t.Context(), storage.OneShotRunStart{
-			Run: parent, Started: startedRecord(t, "parent-start", parent),
+			Run: publishStartHistory(t, store, parent), Started: startedRecord(t, "parent-start", parent),
 		})
 		require.NoError(t, err)
 		_, err = store.RecordRunTerminal(t.Context(), storage.RunTerminal{
@@ -505,7 +535,7 @@ func TestOneShotChildStartRequiresRunningSessionlessParent(t *testing.T) {
 			Record: completedRecord(t, "parent-complete", parent, "success", nil),
 		})
 		require.NoError(t, err)
-		_, err = store.StartOneShotChildRun(t.Context(), childFor(parent))
+		_, err = store.StartOneShotChildRun(t.Context(), childFor(store, parent))
 		require.ErrorIs(t, err, session.ErrRunNotActive)
 	})
 }
@@ -520,16 +550,18 @@ func TestSessionChildStartRequiresRunningParent(t *testing.T) {
 		parent := session.RunStart{
 			AgentID: "parent", RunID: "parent", SessionID: "session", StartedAt: now,
 		}
+		parent = publishStartHistory(t, store, parent)
 		_, err = store.StartRootRun(t.Context(), rootStartCommand(t, parent))
 		require.NoError(t, err)
 		return store, parent
 	}
-	childCommand := func(t *testing.T, parent session.RunStart) storage.ChildRunStart {
+	childCommand := func(t *testing.T, store *Store, parent session.RunStart) storage.ChildRunStart {
 		t.Helper()
 		child := session.RunStart{
 			AgentID: "child", RunID: "child", SessionID: parent.SessionID,
 			ParentRunID: parent.RunID, StartedAt: now,
 		}
+		child = publishStartHistory(t, store, child)
 		return storage.ChildRunStart{
 			Run: child, ParentLinked: childLinkRecord(t, "child-link", parent, child),
 			Started: startedRecord(t, "child-start", child),
@@ -548,13 +580,13 @@ func TestSessionChildStartRequiresRunningParent(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		_, err = store.StartChildRun(t.Context(), childCommand(t, parent))
+		_, err = store.StartChildRun(t.Context(), childCommand(t, store, parent))
 		require.ErrorIs(t, err, session.ErrRunNotActive)
 	})
 
 	t.Run("exact retry", func(t *testing.T) {
 		store, parent := newStore(t)
-		command := childCommand(t, parent)
+		command := childCommand(t, store, parent)
 		first, err := store.StartChildRun(t.Context(), command)
 		require.NoError(t, err)
 		_, err = store.RecordRunTerminal(t.Context(), storage.RunTerminal{
@@ -579,6 +611,7 @@ func TestChildStartAfterPurgeReportsPurgedSession(t *testing.T) {
 	_, err := store.CreateSession(ctx, "session", now)
 	require.NoError(t, err)
 	parent := session.RunStart{AgentID: "parent", RunID: "parent", SessionID: "session", StartedAt: now}
+	parent = publishStartHistory(t, store, parent)
 	_, err = store.StartRootRun(ctx, rootStartCommand(t, parent))
 	require.NoError(t, err)
 	_, err = store.RecordRunTerminal(ctx, storage.RunTerminal{
@@ -612,6 +645,7 @@ func TestRunRecordsMustMatchStoredRunOwner(t *testing.T) {
 	_, err := store.CreateSession(ctx, "session", now)
 	require.NoError(t, err)
 	start := session.RunStart{AgentID: "agent", RunID: "run", SessionID: "session", StartedAt: now}
+	start = publishStartHistory(t, store, start)
 	_, err = store.StartRootRun(ctx, rootStartCommand(t, start))
 	require.NoError(t, err)
 
@@ -631,7 +665,7 @@ func TestOneShotCancellationAndTerminalAreRecorded(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	store := New()
 	start := session.RunStart{AgentID: "agent", RunID: "run", StartedAt: now}
-	_, err := store.StartOneShotRun(ctx, storage.OneShotRunStart{Run: start, Started: startedRecord(t, "started", start)})
+	_, err := store.StartOneShotRun(ctx, storage.OneShotRunStart{Run: publishStartHistory(t, store, start), Started: startedRecord(t, "started", start)})
 	require.NoError(t, err)
 
 	_, err = store.RecordRunCancellation(ctx, storage.RunCancellation{
@@ -671,6 +705,7 @@ func TestSuspensionCheckpointAndTerminalRecordAreAtomic(t *testing.T) {
 	_, err := store.CreateSession(ctx, "session", now)
 	require.NoError(t, err)
 	start := session.RunStart{AgentID: "agent", RunID: "run", SessionID: "session", StartedAt: now}
+	start = publishStartHistory(t, store, start)
 	_, err = store.StartRootRun(ctx, rootStartCommand(t, start))
 	require.NoError(t, err)
 
@@ -794,6 +829,7 @@ func TestRepairRunSuspensionRetryReportsExistingState(t *testing.T) {
 func TestLifecycleRetriesRequireOriginalRecordKeys(t *testing.T) {
 	t.Run("root start", func(t *testing.T) {
 		store, start := activeRunStore(t)
+		start = publishStartHistory(t, store, start)
 		command := rootStartCommand(t, start)
 		_, err := store.StartRootRun(t.Context(), command)
 		require.NoError(t, err)
@@ -850,6 +886,7 @@ func TestLifecycleRetriesRequireOriginalRecordKeys(t *testing.T) {
 			AgentID: "child", RunID: "child", SessionID: parent.SessionID,
 			ParentRunID: parent.RunID, StartedAt: parent.StartedAt,
 		}
+		child = publishStartHistory(t, store, child)
 		command := storage.ChildRunStart{
 			Run:          child,
 			ParentLinked: childLinkRecord(t, "child-link", parent, child),
@@ -869,6 +906,7 @@ func TestLifecycleRetriesRequireOriginalRecordKeys(t *testing.T) {
 func TestLifecycleCommandsRejectContradictoryTypedRecords(t *testing.T) {
 	t.Run("start labels", func(t *testing.T) {
 		store, start := activeRunStore(t)
+		start = publishStartHistory(t, store, start)
 		command := rootStartCommand(t, start)
 		changed := start
 		changed.Labels = map[string]string{"site": "other"}
@@ -956,9 +994,39 @@ func activeRunStore(t *testing.T) (*Store, session.RunStart) {
 func runningRootStore(t *testing.T) (*Store, session.RunStart) {
 	t.Helper()
 	store, start := activeRunStore(t)
+	start = publishStartHistory(t, store, start)
 	_, err := store.StartRootRun(t.Context(), rootStartCommand(t, start))
 	require.NoError(t, err)
 	return store, start
+}
+
+// publishStartHistory prepares a fixture's explicit empty history or exact
+// suspended prefix before the test exercises a lifecycle operation.
+func publishStartHistory(t *testing.T, store *Store, start session.RunStart) session.RunStart {
+	t.Helper()
+	declaration := storage.SeedDeclaration{
+		AgentID: start.AgentID, RunID: start.RunID, SessionID: start.SessionID, CommandID: start.RunID, AttemptID: start.RunID, Kind: storage.SeedLiteral,
+	}
+	if start.PredecessorRunID != "" {
+		declaration.Kind = storage.SeedContinuation
+		declaration.SourceRunID = start.PredecessorRunID
+		records := store.records[start.PredecessorRunID]
+		require.NotEmpty(t, records)
+		declaration.SourceEndID = records[len(records)-1].ID
+	}
+	seed, err := store.BeginRunSeed(t.Context(), declaration)
+	require.NoError(t, err)
+	start.SeedEndID = storage.EmptySeedEndID
+	if seed.Source != nil {
+		start.SeedEndID, err = store.AppendRunSeed(t.Context(), storage.SeedAppend{
+			RunID: start.RunID, AttemptID: declaration.AttemptID, Record: storage.SeedRecord{
+				Key: "source", PreviousID: storage.EmptySeedEndID, Prefix: seed.Source,
+			},
+		})
+		require.NoError(t, err)
+	}
+	require.NoError(t, store.PublishRunSeed(t.Context(), appendSeedTestCompletion(t, store, declaration, start.SeedEndID)))
+	return start
 }
 
 // rootStartCommand builds the two typed records whose selection depends on the

@@ -110,8 +110,7 @@ func TestProductionWorkflowReplaysModelInvocationRecovery(t *testing.T) {
 		},
 	}, true))
 
-	resumeScheduled := history.Events[34].
-		GetActivityTaskScheduledEventAttributes()
+	resumeScheduled := scheduledActivity(t, history, productionReplayResume).GetActivityTaskScheduledEventAttributes()
 	require.Equal(t, productionReplayResume, resumeScheduled.ActivityType.Name)
 	var resumeInput api.PlanActivityInput
 	require.NoError(t, NewAgentDataConverter().FromPayloads(resumeScheduled.Input, &resumeInput))
@@ -340,6 +339,7 @@ func syntheticProductionReplayHistory(
 		AgentID:   productionReplayAgentID,
 		RunID:     productionReplayRunID,
 		SessionID: productionReplaySessionID,
+		SeedEndID: "published",
 		TurnID:    productionReplayTurnID,
 	}
 	startInput, err := dataConverter.ToPayloads(runInput)

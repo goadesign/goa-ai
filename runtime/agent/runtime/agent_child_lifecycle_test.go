@@ -11,18 +11,27 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/storage"
 )
 
 func TestExecuteAgentChildWaitsAfterParentCancellation(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
+	runtime := New(newTestStore())
+	_, err := createSessionForTest(t.Context(), runtime.Store, "session-1")
+	require.NoError(t, err)
+	seedEndID, err := publishLiteralHistory(ctx, runtime.Store, storage.SeedDeclaration{
+		AgentID: "child.agent", RunID: "child-run", SessionID: "session-1",
+		Kind: storage.SeedLiteral,
+	}, nil)
+	require.NoError(t, err)
 	childHandles := make(chan *controlledChildHandle, 1)
 	wfCtx := &testWorkflowContext{
 		ctx:                    ctx,
+		hookRuntime:            runtime,
 		controlledChildHandles: childHandles,
 	}
-	runtime := &Runtime{}
 	type result struct {
 		err error
 	}
@@ -31,7 +40,7 @@ func TestExecuteAgentChildWaitsAfterParentCancellation(t *testing.T) {
 		_, err := runtime.executeAgentChild(
 			wfCtx,
 			testAgentDefinition("child.agent", "child.workflow", "child.queue", nil, nil),
-			agentChildRequest{runContext: run.Context{
+			agentChildRequest{seedEndID: seedEndID, runContext: run.Context{
 				RunID:            "child-run",
 				SessionID:        "session-1",
 				TurnID:           "turn-1",

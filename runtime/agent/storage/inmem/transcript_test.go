@@ -96,6 +96,7 @@ func transcriptPageFixture(t *testing.T, sizes ...int) (*Store, []string, []*mod
 	t.Helper()
 	store := New()
 	start := session.RunStart{AgentID: "agent", RunID: "run", StartedAt: time.Now().UTC().Truncate(time.Millisecond)}
+	start = publishStartHistory(t, store, start)
 	_, err := store.StartOneShotRun(t.Context(), storage.OneShotRunStart{
 		Run: start, Started: startedRecord(t, "started", start),
 	})

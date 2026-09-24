@@ -241,18 +241,21 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 		return nil, err
 	}
 	if foundTranscript {
-		s.Transcript = transcriptMessages
-		for i := len(transcriptMessages) - 1; i >= 0; i-- {
-			msg := transcriptMessages[i]
-			if msg == nil || msg.Role != model.ConversationRoleAssistant {
-				continue
-			}
-			if text := msg.Text(); text != "" {
-				s.LastAssistantMessage = text
-				break
-			}
-		}
+		setSnapshotTranscript(s, transcriptMessages)
 	}
 
 	return s, nil
+}
+
+// setSnapshotTranscript keeps the full saved conversation and its last
+// assistant text together, including messages reached through initial history.
+func setSnapshotTranscript(snapshot *run.Snapshot, messages []*model.Message) {
+	snapshot.Transcript = messages
+	for index := len(messages) - 1; index >= 0; index-- {
+		message := messages[index]
+		if message.Role == model.ConversationRoleAssistant && message.Text() != "" {
+			snapshot.LastAssistantMessage = message.Text()
+			break
+		}
+	}
 }

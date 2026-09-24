@@ -6,6 +6,7 @@ package transcript_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -15,11 +16,24 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/runlog"
+	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 type prefixPageFunc func(context.Context, string, string, string, int) (runlog.Page, error)
+
+func (f prefixPageFunc) LoadRun(ctx context.Context, runID string) (session.RunMeta, error) {
+	return session.RunMeta{RunID: runID}, ctx.Err()
+}
+
+func (f prefixPageFunc) LoadRunSeed(context.Context, string, string) (storage.RunSeed, error) {
+	panic("literal run fixture has no seed publication")
+}
+
+func (f prefixPageFunc) ListRunSeedRecords(context.Context, string, string, string, int) (storage.SeedPage, error) {
+	panic("literal run fixture has no seed publication")
+}
 
 func (f prefixPageFunc) ListRunTranscriptRecords(ctx context.Context, runID, endID, after string, limit int) (runlog.Page, error) {
 	return f(ctx, runID, endID, after, limit)
@@ -78,6 +92,26 @@ func TestRunLogPrefixRejectsInvalidPositions(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrInvalidTranscriptPosition, "a start record is not a transcript page cursor")
 	_, err = store.ListRunTranscriptRecords(t.Context(), "run-1", "", "", 1)
 	require.ErrorIs(t, err, storage.ErrInvalidTranscriptPosition)
+	_, err = transcript.BuildMessagesFromRunLogPrefix(t.Context(), store, "run-1", "9999")
+	require.ErrorIs(t, err, transcript.ErrInvalidHistory)
+	require.ErrorIs(t, err, storage.ErrInvalidTranscriptPosition)
+}
+
+func TestRunLogPrefixDoesNotClassifyReturnedCursorAsInvalidHistory(t *testing.T) {
+	store := prefixPageFunc(func(_ context.Context, _, _, after string, _ int) (runlog.Page, error) {
+		if after != "" {
+			return runlog.Page{}, storage.NewContractError(storage.ErrInvalidTranscriptPosition)
+		}
+		return runlog.Page{
+			Events: []*runlog.Event{{
+				ID: "1", RunID: "run", Type: transcript.RunLogMessagesSeeded, Payload: []byte(`[]`),
+			}},
+			NextCursor: "1",
+		}, nil
+	})
+	_, err := transcript.BuildMessagesFromRunLogPrefix(t.Context(), store, "run", "end")
+	require.ErrorIs(t, err, storage.ErrInvalidTranscriptPosition)
+	require.NotErrorIs(t, err, transcript.ErrInvalidHistory)
 }
 
 func TestRunLogPrefixRejectsBrokenPagesAndHonorsCancellation(t *testing.T) {
@@ -100,6 +134,9 @@ func TestRunLogPrefixRejectsBrokenPagesAndHonorsCancellation(t *testing.T) {
 			})
 			_, err := transcript.BuildMessagesFromRunLogPrefix(t.Context(), store, "run", "end")
 			require.Error(t, err)
+			var contractErr *storage.ContractError
+			require.ErrorAs(t, err, &contractErr)
+			require.Equal(t, test.name == "malformed payload", errors.Is(err, transcript.ErrInvalidHistory))
 		})
 	}
 	ctx, cancel := context.WithCancel(t.Context())

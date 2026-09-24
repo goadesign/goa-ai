@@ -76,7 +76,7 @@ func TestClaudeSearchThroughNewTurnAndHistoryTrimming(t *testing.T) {
 	require.NoError(t, transcript.ValidatePlannerTranscript(history))
 	start, err := buildOneShotRunStart("svc.agent", history, []RunOption{WithoutPriorReasoning()})
 	require.NoError(t, err)
-	request.Messages = start.input.Messages
+	request.Messages = start.messages
 	for _, message := range request.Messages {
 		require.NotEmpty(t, message.Parts)
 	}

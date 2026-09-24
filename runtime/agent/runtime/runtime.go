@@ -46,6 +46,7 @@ import (
 	vertexprovider "goa.design/goa-ai/features/model/vertex"
 	"goa.design/goa-ai/internal/registrycall"
 	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -416,6 +417,9 @@ type (
 	// runOption adapts the package's option functions to RunOption.
 	runOption func(*runStart)
 
+	// preparationOption cannot change checkpoint-owned continuation values.
+	preparationOption struct{ commandID, attemptID string }
+
 	// workflowLaunchSettings contains the queue and encoded metadata submitted
 	// to the workflow engine. These values never become workflow input.
 	workflowLaunchSettings struct {
@@ -426,7 +430,11 @@ type (
 
 	// runStart keeps engine launch settings separate from the workflow input.
 	runStart struct {
+		preparationCommand    string
+		preparationAttempt    string
 		input                 RunInput
+		messages              []*model.Message
+		renderedPrompts       []prompt.RenderEvent
 		options               WorkflowOptions
 		launch                workflowLaunchSettings
 		withoutPriorReasoning bool
@@ -505,6 +513,16 @@ func WithoutPriorReasoning() RunOption {
 	return runOption(func(start *runStart) { start.withoutPriorReasoning = true })
 }
 
+// WithPreparation supplies the original application command and upload attempt.
+// The application records both before uploading; lease transfers keep the same
+// attempt until the preparation owner settles publication versus abandonment.
+func WithPreparation(commandID, attemptID string) RunOption {
+	if commandID == "" || attemptID == "" {
+		panic("runtime: preparation command and attempt IDs are required")
+	}
+	return preparationOption{commandID: commandID, attemptID: attemptID}
+}
+
 // WithRunID sets the RunID on the constructed RunInput.
 func WithRunID(id string) RunOption {
 	return runOption(func(start *runStart) { start.input.RunID = id })
@@ -537,10 +555,11 @@ func WithMetadata(meta map[string]any) RunOption {
 }
 
 // WithRenderedPrompts records prompts whose rendered text is already included
-// in the run input. The accepted workflow stores them before planner work.
+// in the published initial history. The accepted workflow records them before
+// planner work.
 func WithRenderedPrompts(events []prompt.RenderEvent) RunOption {
 	return runOption(func(start *runStart) {
-		start.input.RenderedPrompts = clonePromptRenderEvents(events)
+		start.renderedPrompts = clonePromptRenderEvents(events)
 	})
 }
 
@@ -711,6 +730,11 @@ func WithTagPolicyClauses(clauses []TagPolicyClause) RunOption {
 }
 
 // apply updates the private run values owned by the runtime package.
+func (option preparationOption) apply(start *runStart) {
+	start.preparationCommand = option.commandID
+	start.preparationAttempt = option.attemptID
+}
+
 func (option runOption) apply(start *runStart) {
 	option(start)
 }
@@ -1585,10 +1609,29 @@ func (r *Runtime) ExecuteAgentChild(
 	messages []*model.Message,
 	nestedRunCtx run.Context,
 ) (*RunOutput, error) {
-	return r.executeAgentChild(wfCtx, definition, agentChildRequest{
+	request := agentChildRequest{
 		messages:   messages,
 		runContext: nestedRunCtx,
-	})
+	}
+	if _, err := agentChildRunInput(definition, request); err != nil {
+		return nil, err
+	}
+	writer, err := stageLiteralHistory(wfCtx.Context(), workflowSeedWriter{r: r}, storage.SeedDeclaration{
+		AgentID: string(definition.route.ID), RunID: nestedRunCtx.RunID, SessionID: nestedRunCtx.SessionID,
+		CommandID: nestedRunCtx.RunID, AttemptID: nestedRunCtx.RunID, Kind: storage.SeedLiteral,
+	}, messages)
+	if err != nil {
+		return nil, err
+	}
+	request.seedEndID = writer.endID
+	compiled, err := json.Marshal(&api.AgentChildActivitySuccess{SeedEndID: writer.endID, Labels: nestedRunCtx.Labels})
+	if err != nil {
+		return nil, err
+	}
+	if err := writer.publish(wfCtx.Context(), compiled); err != nil {
+		return nil, err
+	}
+	return r.executeAgentChild(wfCtx, definition, request)
 }
 
 // executeAgentChild starts one fully assembled child request. Prompt versions
@@ -1601,6 +1644,9 @@ func (r *Runtime) executeAgentChild(
 	input, err := agentChildRunInput(definition, request)
 	if err != nil {
 		return nil, err
+	}
+	if input.SeedEndID == "" {
+		return nil, errors.New("child requires published initial history")
 	}
 	route := definition.route
 	handle, err := wfCtx.StartChildWorkflow(wfCtx.Context(), engine.ChildWorkflowRequest{
@@ -1650,8 +1696,7 @@ func agentChildRunInput(definition AgentDefinition, request agentChildRequest) (
 		ToolArgs:         nested.ToolArgs,
 		ToolRegistry:     nested.ToolRegistry.Clone(),
 		Policy:           clonePolicyOverrides(request.policy),
-		Messages:         request.messages,
-		RenderedPrompts:  clonePromptRenderEvents(request.renderedPrompts),
+		SeedEndID:        request.seedEndID,
 		Labels:           nested.Labels,
 	}, nil
 }
@@ -1686,9 +1731,6 @@ func prepareRunWithDefinition(input *RunInput, launch workflowLaunchSettings, de
 			return engine.WorkflowStartRequest{}, errors.New("run id is required for a sessionful workflow")
 		}
 		input.RunID = generateRunID(string(input.AgentID))
-	}
-	if err := transcript.ValidatePlannerTranscript(input.Messages); err != nil {
-		return engine.WorkflowStartRequest{}, fmt.Errorf("runtime: invalid transcript: %w", err)
 	}
 	runLabels := input.Labels
 	effectivePolicy := input.Policy
@@ -1867,7 +1909,11 @@ func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snaps
 		cursor = ""
 		events []*runlog.Event
 	)
+	seen := make(map[string]struct{})
 	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		page, err := r.Store.ListRunRecords(ctx, runID, cursor, pageSize)
 		if err != nil {
 			return nil, err
@@ -1876,9 +1922,22 @@ func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snaps
 		if page.NextCursor == "" {
 			break
 		}
+		if _, repeated := seen[page.NextCursor]; repeated || page.NextCursor == cursor {
+			return nil, storage.NewContractError(fmt.Errorf("snapshot record page made no progress"))
+		}
+		seen[page.NextCursor] = struct{}{}
 		cursor = page.NextCursor
 	}
-	return newRunSnapshot(events)
+	snapshot, err := newRunSnapshot(events)
+	if err != nil {
+		return nil, err
+	}
+	messages, err := transcript.BuildMessagesFromRunLogPrefix(ctx, r.Store, runID, events[len(events)-1].ID)
+	if err != nil {
+		return nil, err
+	}
+	setSnapshotTranscript(snapshot, messages)
+	return snapshot, nil
 }
 
 // isTerminalRunEventType reports the two durable events that permanently end

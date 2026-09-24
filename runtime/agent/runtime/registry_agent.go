@@ -11,15 +11,25 @@ import (
 	"maps"
 
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
 	// AgentToolConfiguration contains the messages, labels, and policy prepared
-	// for one child call. The runtime records it before starting the child.
-	AgentToolConfiguration = api.AgentChildActivitySuccess
+	// for one child call. The runtime publishes its messages before returning
+	// the compact child activity result to workflow history.
+	AgentToolConfiguration struct {
+		// Messages is the exact initial transcript supplied by the resolver.
+		Messages []*model.Message
+		// RenderedPrompts identifies the prompt versions used in Messages.
+		RenderedPrompts []prompt.RenderEvent
+		// Labels supplies the child configuration's execution labels.
+		Labels map[string]string
+		// Policy supplies the child configuration's per-run execution policy.
+		Policy *PolicyOverrides
+	}
 
 	// AgentToolResolver loads an immutable application configuration and prepares
 	// a child transcript from the validated tool call. The reference comes from
@@ -88,7 +98,7 @@ func (r *Runtime) selectedAgentToolConfig(call ToolCall) (*AgentToolConfig, erro
 
 // prepareRegistryAgentChild resolves the saved configuration only after source,
 // executor, payload, and required-label checks have accepted the call.
-func (r *Runtime) prepareRegistryAgentChild(ctx context.Context, call ToolCall) (*api.AgentChildActivityOutput, error) {
+func (r *Runtime) prepareRegistryAgentChild(ctx context.Context, call ToolCall) (*AgentToolConfiguration, error) {
 	cfg, err := r.selectedAgentToolConfig(call)
 	if err != nil {
 		return nil, err
@@ -130,7 +140,7 @@ func (r *Runtime) prepareRegistryAgentChild(ctx context.Context, call ToolCall) 
 		if err := validateRequiredLabels(cfg.Definition, owned.Labels); err != nil {
 			return nil, err
 		}
-		return &api.AgentChildActivityOutput{Success: &owned}, nil
+		return &owned, nil
 	}
 	return nil, fmt.Errorf("saved registry declaration contains no tool %q", call.Name)
 }

@@ -41,6 +41,9 @@ const (
 	storageCommandCancellation
 	storageCommandSuspension
 	storageCommandTerminal
+	storageCommandSeedBegin
+	storageCommandSeedAppend
+	storageCommandSeedPublish
 )
 
 // executeStorageCommand applies one explicitly selected storage operation
@@ -73,16 +76,27 @@ func (r *Runtime) executeStorageCommand(ctx context.Context, command *api.Storag
 	}
 	var result *api.StorageActivityResult
 	switch kind {
+	case storageCommandSeedBegin:
+		seed, beginErr := r.Store.BeginRunSeed(ctx, *command.SeedBegin)
+		err = beginErr
+		result = &api.StorageActivityResult{SeedBegin: &seed}
+	case storageCommandSeedAppend:
+		end, appendErr := r.Store.AppendRunSeed(ctx, *command.SeedAppend)
+		err = appendErr
+		result = &api.StorageActivityResult{SeedAppend: &api.SeedPositionResult{EndID: end}}
+	case storageCommandSeedPublish:
+		err = r.Store.PublishRunSeed(ctx, *command.SeedPublish)
+		result = &api.StorageActivityResult{SeedPublish: &api.SeedPositionResult{EndID: command.SeedPublish.EndID}}
 	case storageCommandAppend:
 		result, err = r.appendRecords(ctx, command.Append.Records)
 	case storageCommandRootStart:
-		result, err = r.storeRunStart(ctx, kind, command.RootStart.Started, nil)
+		result, err = r.storeRunStart(ctx, kind, command.RootStart.SeedEndID, command.RootStart.Started, nil)
 	case storageCommandChildStart:
-		result, err = r.storeRunStart(ctx, kind, command.ChildStart.Started, command.ChildStart.ParentLinked)
+		result, err = r.storeRunStart(ctx, kind, command.ChildStart.SeedEndID, command.ChildStart.Started, command.ChildStart.ParentLinked)
 	case storageCommandOneShotStart:
-		result, err = r.storeRunStart(ctx, kind, command.OneShotStart.Started, nil)
+		result, err = r.storeRunStart(ctx, kind, command.OneShotStart.SeedEndID, command.OneShotStart.Started, nil)
 	case storageCommandOneShotChildStart:
-		result, err = r.storeRunStart(ctx, kind, command.OneShotChildStart.Started, command.OneShotChildStart.ParentLinked)
+		result, err = r.storeRunStart(ctx, kind, command.OneShotChildStart.SeedEndID, command.OneShotChildStart.Started, command.OneShotChildStart.ParentLinked)
 	case storageCommandCancellation:
 		result, err = r.cancelRun(ctx, command.Cancellation.Record)
 	case storageCommandSuspension:
@@ -210,7 +224,7 @@ func (r *Runtime) recordResult(ctx context.Context, input *RecordActivityInput) 
 }
 
 // startRun stores a root, child, or one-shot start selected by the command.
-func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, startedInput, linkedInput *RecordActivityInput) (*api.StorageActivityResult, error) {
+func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, seedEndID string, startedInput, linkedInput *RecordActivityInput) (*api.StorageActivityResult, error) {
 	if startedInput == nil || startedInput.Type != hooks.RunStarted {
 		return nil, malformedStorageCommand(errors.New("runtime: start command requires a run-started record"))
 	}
@@ -239,14 +253,20 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, st
 		if started.SessionID() != "" || started.ParentRunID == "" || linkedInput == nil {
 			return nil, malformedStorageCommand(errors.New("runtime: one-shot child start requires a parent link and no session"))
 		}
-	case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal:
+	case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal,
+		storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish:
 		return nil, malformedStorageCommand(errors.New("runtime: start command has wrong operation"))
 	}
 	startedRecord := runLogEvent(startedInput, startedInput.Payload, started.Timestamp())
 	start := session.RunStart{
-		AgentID: started.AgentID(), RunID: started.RunID(), SessionID: started.SessionID(),
+		SeedEndID: seedEndID,
+		AgentID:   started.AgentID(), RunID: started.RunID(), SessionID: started.SessionID(),
 		ParentRunID: started.ParentRunID, PredecessorRunID: started.PredecessorRunID,
 		StartedAt: time.UnixMilli(started.Timestamp()).UTC(), Labels: started.Labels,
+	}
+	seed, err := r.Store.LoadRunSeed(ctx, start.RunID, seedEndID)
+	if err != nil {
+		return nil, err
 	}
 	var outcome session.RunStartOutcome
 	var records []storage.AppendResult
@@ -314,7 +334,8 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, st
 				selectedEvents = append(selectedEvents, canceledEvent)
 			}
 		}
-	case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal:
+	case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal,
+		storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish:
 		return nil, malformedStorageCommand(errors.New("runtime: start command has wrong operation"))
 	}
 	if err != nil {
@@ -338,8 +359,9 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, st
 		}
 	}
 	startResult := &api.StartRunResult{
-		Outcome: outcome,
-		Records: append([]storage.AppendResult(nil), records...),
+		Outcome:         outcome,
+		Records:         append([]storage.AppendResult(nil), records...),
+		RenderedPrompts: clonePromptRenderEvents(seed.Declaration.RenderedPrompts),
 	}
 	if outcome == session.RunStartStop {
 		startResult.CancellationReason = run.CancellationReasonSessionEnded
@@ -353,7 +375,8 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, st
 		return &api.StorageActivityResult{OneShotStart: startResult}, nil
 	case storageCommandOneShotChildStart:
 		return &api.StorageActivityResult{OneShotChildStart: startResult}, nil
-	case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal:
+	case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal,
+		storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish:
 		return nil, malformedStorageCommand(errors.New("runtime: start command has wrong operation"))
 	}
 	return nil, malformedStorageCommand(errors.New("runtime: start command has unknown operation"))
@@ -561,6 +584,9 @@ func selectedStorageCommandKind(command *api.StorageActivityCommand) (storageCom
 	}
 	selected := storageCommandKind(0)
 	count := 0
+	selected, count = includeStorageKind(selected, count, storageCommandSeedBegin, command.SeedBegin != nil)
+	selected, count = includeStorageKind(selected, count, storageCommandSeedAppend, command.SeedAppend != nil)
+	selected, count = includeStorageKind(selected, count, storageCommandSeedPublish, command.SeedPublish != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandAppend, command.Append != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandRootStart, command.RootStart != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandChildStart, command.ChildStart != nil)
@@ -583,6 +609,9 @@ func validateStorageResult(kind storageCommandKind, result *api.StorageActivityR
 	}
 	selected := storageCommandKind(0)
 	count := 0
+	selected, count = includeStorageKind(selected, count, storageCommandSeedBegin, result.SeedBegin != nil)
+	selected, count = includeStorageKind(selected, count, storageCommandSeedAppend, result.SeedAppend != nil)
+	selected, count = includeStorageKind(selected, count, storageCommandSeedPublish, result.SeedPublish != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandAppend, result.Append != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandRootStart, result.RootStart != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandChildStart, result.ChildStart != nil)
@@ -598,6 +627,18 @@ func validateStorageResult(kind storageCommandKind, result *api.StorageActivityR
 		return errors.New("runtime: storage result does not match command")
 	}
 	switch kind {
+	case storageCommandSeedBegin:
+		if result.SeedBegin.EndID == "" {
+			return errors.New("runtime: seed begin returned no position")
+		}
+	case storageCommandSeedAppend:
+		if result.SeedAppend.EndID == "" {
+			return errors.New("runtime: seed append returned no position")
+		}
+	case storageCommandSeedPublish:
+		if result.SeedPublish.EndID == "" {
+			return errors.New("runtime: seed publication returned no position")
+		}
 	case storageCommandRootStart, storageCommandChildStart, storageCommandOneShotStart, storageCommandOneShotChildStart:
 		start := result.RootStart
 		if kind == storageCommandChildStart {

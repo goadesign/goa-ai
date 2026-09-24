@@ -93,14 +93,15 @@ func TestBuildMessagesFromRunLogReplaysSeededAndAppendedTranscriptMessages(t *te
 	require.Equal(t, model.ConversationRoleAssistant, messages[1].Role)
 }
 
-func TestBuildMessagesFromRunLogRequiresTranscriptDeltaEvents(t *testing.T) {
+func TestBuildMessagesFromRunLogAllowsPublishedEmptyHistory(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
 	store := newTranscriptTestStore(t, ctx)
 
-	_, err := transcript.BuildMessagesFromRunLog(ctx, store, "run-1")
-	require.ErrorContains(t, err, "has no transcript message events")
+	messages, err := transcript.BuildMessagesFromRunLog(ctx, store, "run-1")
+	require.NoError(t, err)
+	require.Empty(t, messages)
 }
 
 func appendTranscriptDelta(t *testing.T, ctx context.Context, store storage.Store, turnID string, messages []*model.Message) {
@@ -135,6 +136,19 @@ func newTranscriptTestStore(t *testing.T, ctx context.Context) *storageinmem.Sto
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	_, err := store.CreateSession(ctx, "session-1", now)
 	require.NoError(t, err)
+	_, err = store.BeginRunSeed(ctx, storage.SeedDeclaration{
+		AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", CommandID: "run-1", AttemptID: "run-1", Kind: storage.SeedLiteral,
+	})
+	require.NoError(t, err)
+	prepared := []byte(`{}`)
+	end, err := store.AppendRunSeed(ctx, storage.SeedAppend{
+		RunID: "run-1", AttemptID: "run-1",
+		Record: storage.SeedRecord{Key: "prepared", PreviousID: storage.EmptySeedEndID, Prepared: prepared},
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.PublishRunSeed(ctx, storage.SeedPublication{
+		RunID: "run-1", AttemptID: "run-1", SeedEndID: storage.EmptySeedEndID, EndID: end, PreparedBytes: int64(len(prepared)),
+	}))
 	started := transcriptLifecycleRecord(t, hooks.NewRunStartedEvent(
 		"run-1", "agent-1", "session-1", "", "", nil,
 	), "run-started", now)
@@ -149,7 +163,7 @@ func newTranscriptTestStore(t *testing.T, ctx context.Context) *storageinmem.Sto
 		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
 	), "run-canceled", now)
 	_, err = store.StartRootRun(ctx, storage.RootRunStart{
-		Run:      session.RunStart{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", StartedAt: now},
+		Run:      session.RunStart{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", SeedEndID: storage.EmptySeedEndID, StartedAt: now},
 		Started:  started,
 		Canceled: canceled,
 	})

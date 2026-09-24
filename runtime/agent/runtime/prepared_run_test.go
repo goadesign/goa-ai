@@ -22,6 +22,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -44,7 +45,7 @@ func TestPreparedInitialRunSurvivesMutationAndFreshParse(t *testing.T) {
 		Parts: []model.Part{model.TextPart{Text: "original question"}},
 	}
 	memoBytes := []byte("original memo")
-	prepared, err := client.Prepare(
+	prepared, err := client.Prepare(t.Context(),
 		"session-1",
 		[]*model.Message{message},
 		WithRunID("run-1"),
@@ -72,7 +73,7 @@ func TestPreparedInitialRunSurvivesMutationAndFreshParse(t *testing.T) {
 	_, err = client.StartPrepared(t.Context(), parsed)
 	require.NoError(t, err)
 	require.Equal(t, 1, eng.sealCalls)
-	require.Equal(t, "original question", eng.last.Input.Messages[0].Parts[0].(model.TextPart).Text)
+	require.Equal(t, "original question", testInitialMessages(t, store, eng.last.Input)[0].Parts[0].(model.TextPart).Text)
 	require.Equal(t, preparedMemoAlias("named value"), decodePreparedMemo[preparedMemoAlias](t, eng.last.Memo, "alias"))
 	require.Equal(t, []byte("original memo"), decodePreparedMemo[[]byte](t, eng.last.Memo, "binary"))
 	messageValue := decodePreparedMemo[*commonpb.WorkflowExecution](t, eng.last.Memo, "message")
@@ -92,7 +93,7 @@ func TestPrepareRejectsInvalidLaunchBeforeEngineActivation(t *testing.T) {
 	))
 	require.NoError(t, createPreparedRunSession(t.Context(), store))
 
-	_, err := client.Prepare(
+	_, err := client.Prepare(t.Context(),
 		"session-1",
 		nil,
 		WithRunID("run-1"),
@@ -108,14 +109,14 @@ func TestPrepareRejectsInvalidLaunchBeforeEngineActivation(t *testing.T) {
 func TestPrepareOneShotNormalizesSearchValuesWithoutEngineWork(t *testing.T) {
 	eng := &stubEngine{}
 	definition := testAgentDefinition("svc.agent", "agent.workflow", "agent.queue", nil, nil)
-	client, _ := newPreparedRunTestClient(eng, definition)
+	client, store := newPreparedRunTestClient(eng, definition)
 	tags := []string{"alpha", "beta"}
 	attributes := map[string]any{
 		"attempt": int(3),
 		"tags":    tags,
 	}
 
-	prepared, err := client.PrepareOneShot(
+	prepared, err := client.PrepareOneShot(t.Context(),
 		nil,
 		WithRunID("run-1"),
 		WithSearchAttributes(attributes),
@@ -130,7 +131,7 @@ func TestPrepareOneShotNormalizesSearchValuesWithoutEngineWork(t *testing.T) {
 	parsed, err := ParsePreparedRun(data)
 	require.NoError(t, err)
 
-	freshClient, _ := newPreparedRunTestClient(eng, definition)
+	freshClient := New(store, WithEngine(eng)).MustClientFor(definition)
 	_, err = freshClient.StartPrepared(t.Context(), parsed)
 	require.NoError(t, err)
 	require.Equal(t, int64(3), eng.last.SearchAttributes["attempt"])
@@ -142,7 +143,7 @@ func TestPreparedOneShotRunIDSurvivesStorageRoundTrip(t *testing.T) {
 	client, _ := newPreparedRunTestClient(&stubEngine{}, testAgentDefinition(
 		"svc.agent", "agent.workflow", "agent.queue", nil, nil,
 	))
-	prepared, err := client.PrepareOneShot(nil)
+	prepared, err := client.PrepareOneShot(t.Context(), nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, prepared.RunID())
 
@@ -169,31 +170,41 @@ func TestPreparedRunMarshalBinaryRejectsInvalidReceiver(t *testing.T) {
 	}
 }
 
-func TestPreparedRunStorageFailureDoesNotChangeStartRequest(t *testing.T) {
+func TestPreparedRunCompactReferencePreservesLargeStartRequest(t *testing.T) {
 	eng := &stubEngine{}
-	// Many empty memo entries fit the engine request limit, but the stored JSON
-	// also records field names and syntax and therefore exceeds its larger limit.
+	// Many empty memo entries fit the engine request limit even though the full
+	// stored request includes enough JSON framing to exceed the old 8 MiB cap.
 	workflow := strings.Repeat("\x01", 170_000)
 	queue := strings.Repeat("\x01", 170_000)
-	client, _ := newPreparedRunTestClient(eng, testAgentDefinition(
-		"svc.agent", workflow, queue, nil, nil,
-	))
+	definition := testAgentDefinition("svc.agent", workflow, queue, nil, nil)
+	client, store := newPreparedRunTestClient(eng, definition)
+	require.NoError(t, createPreparedRunSession(t.Context(), store))
 	empty := converter.NewRawValue(&commonpb.Payload{})
 	memo := make(map[string]any, 99_000)
 	for index := range 99_000 {
 		memo[fmt.Sprintf("%06d", index)] = empty
 	}
-	prepared, err := client.PrepareOneShot(nil, WithMemo(memo), WithTaskQueue(queue))
+	prepared, err := client.PrepareOneShot(t.Context(), nil, WithMemo(memo), WithTaskQueue(queue))
 	require.NoError(t, err)
-
-	_, err = prepared.MarshalBinary()
-	require.ErrorIs(t, err, ErrPreparedRunRejected)
-	require.ErrorContains(t, err, "prepared run exceeds maximum stored size")
-	_, err = client.StartPrepared(t.Context(), prepared)
+	require.Greater(t, prepared.reference.Bytes, int64(8<<20))
+	data, err := prepared.MarshalBinary()
+	require.NoError(t, err)
+	require.Less(t, len(data), 1024)
+	t.Logf("compact prepared reference: %d bytes; stored request: %d bytes", len(data), prepared.reference.Bytes)
+	parsed, err := ParsePreparedRun(data)
+	require.NoError(t, err)
+	freshClient := New(store, WithEngine(eng)).MustClientFor(definition)
+	_, err = freshClient.StartPrepared(t.Context(), parsed)
 	require.NoError(t, err)
 	require.Equal(t, prepared.RunID(), eng.last.ID)
-	_, err = prepared.MarshalBinary()
-	require.ErrorIs(t, err, ErrPreparedRunRejected)
+	require.Equal(t, workflow, eng.last.Workflow)
+	require.Equal(t, queue, eng.last.TaskQueue)
+	require.Len(t, eng.last.Memo, len(memo))
+	for name := range memo {
+		_, exists := eng.last.Memo[name]
+		require.Truef(t, exists, "missing memo entry %s", name)
+	}
+	require.Empty(t, eng.last.Input.SessionID)
 
 	_, err = client.Start(
 		t.Context(), "session-1", nil,
@@ -201,6 +212,10 @@ func TestPreparedRunStorageFailureDoesNotChangeStartRequest(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.Equal(t, 2, eng.startCalls)
+	require.Equal(t, "run-2", eng.last.ID)
+	require.Equal(t, workflow, eng.last.Workflow)
+	require.Equal(t, queue, eng.last.TaskQueue)
+	require.Len(t, eng.last.Memo, len(memo))
 }
 
 func TestPreparedRunReportsActivationFailureAsStartFailure(t *testing.T) {
@@ -209,7 +224,7 @@ func TestPreparedRunReportsActivationFailureAsStartFailure(t *testing.T) {
 		"svc.agent", "agent.workflow", "agent.queue", nil, nil,
 	))
 	require.NoError(t, createPreparedRunSession(t.Context(), store))
-	prepared, err := client.Prepare("session-1", nil, WithRunID("run-1"))
+	prepared, err := client.Prepare(t.Context(), "session-1", nil, WithRunID("run-1"))
 	require.NoError(t, err)
 	require.Zero(t, eng.sealCalls)
 
@@ -231,7 +246,7 @@ func TestPreparedRunRejectsAnotherAgent(t *testing.T) {
 		"svc.agent", "agent.workflow", "agent.queue", nil, nil,
 	))
 	require.NoError(t, createPreparedRunSession(t.Context(), store))
-	prepared, err := client.Prepare("session-1", nil, WithRunID("run-1"))
+	prepared, err := client.Prepare(t.Context(), "session-1", nil, WithRunID("run-1"))
 	require.NoError(t, err)
 	other, _ := newPreparedRunTestClient(eng, testAgentDefinition(
 		"svc.other", "other.workflow", "other.queue", nil, nil,
@@ -249,9 +264,9 @@ func TestPreparedRunRejectsChangedAgentDefinition(t *testing.T) {
 		"svc.agent", "agent.workflow", "agent.queue", nil, nil,
 	))
 	require.NoError(t, createPreparedRunSession(t.Context(), store))
-	prepared, err := client.Prepare("session-1", nil, WithRunID("run-1"))
+	prepared, err := client.Prepare(t.Context(), "session-1", nil, WithRunID("run-1"))
 	require.NoError(t, err)
-	changed, _ := newPreparedRunTestClient(eng, testAgentDefinition(
+	changed := New(store, WithEngine(eng)).MustClientFor(testAgentDefinition(
 		"svc.agent", "agent.workflow", "changed.queue", nil, nil,
 	))
 
@@ -267,7 +282,7 @@ func TestParsePreparedRunRejectsInvalidBytes(t *testing.T) {
 		"svc.agent", "agent.workflow", "agent.queue", nil, nil,
 	))
 	require.NoError(t, createPreparedRunSession(t.Context(), store))
-	prepared, err := client.Prepare("session-1", nil, WithRunID("run-1"))
+	prepared, err := client.Prepare(t.Context(), "session-1", nil, WithRunID("run-1"))
 	require.NoError(t, err)
 	valid, err := prepared.MarshalBinary()
 	require.NoError(t, err)
@@ -281,7 +296,7 @@ func TestParsePreparedRunRejectsInvalidBytes(t *testing.T) {
 		{
 			name: "version",
 			data: []byte(strings.Replace(
-				string(valid), "goa-ai-prepared-run-v1", "goa-ai-prepared-run-v2", 1,
+				string(valid), "goa-ai-prepared-run-v3", "unsupported-prepared-version", 1,
 			)),
 			wantError: "unsupported version",
 		},
@@ -311,7 +326,7 @@ func TestPreparedRunKeepsExactDuplicateIdentity(t *testing.T) {
 	)
 	client, store := newPreparedRunTestClient(eng, definition)
 	require.NoError(t, createPreparedRunSession(t.Context(), store))
-	original, err := client.Prepare(
+	original, err := client.Prepare(t.Context(),
 		"session-1",
 		[]*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "first"}}}},
 		WithRunID("run-1"),
@@ -331,9 +346,9 @@ func TestPreparedRunKeepsExactDuplicateIdentity(t *testing.T) {
 	parsed, err := ParsePreparedRun(originalBytes)
 	require.NoError(t, err)
 
-	// A caller-only runtime reconstructed after preparation does not need the
-	// source runtime's in-memory state to submit the stored request.
-	freshClient, _ := newPreparedRunTestClient(eng, definition)
+	// A new caller process uses the same owning store's published history;
+	// it does not depend on the preparing runtime's process memory.
+	freshClient := New(store, WithEngine(eng)).MustClientFor(definition)
 	handle, err := freshClient.StartPrepared(t.Context(), parsed)
 	require.NoError(t, err)
 	_, err = handle.Wait(t.Context())
@@ -349,22 +364,15 @@ func TestPreparedRunKeepsExactDuplicateIdentity(t *testing.T) {
 	_, err = freshClient.StartPrepared(t.Context(), retry)
 	require.NoError(t, err)
 
-	changed, err := client.Prepare(
+	_, err = client.Prepare(t.Context(),
 		"session-1",
-		[]*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "changed"}}}},
+		[]*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "first"}}}},
 		WithRunID("run-1"),
 	)
-	require.NoError(t, err)
-	changedBytes, err := changed.MarshalBinary()
-	require.NoError(t, err)
-	changedParsed, err := ParsePreparedRun(changedBytes)
-	require.NoError(t, err)
-	_, err = freshClient.StartPrepared(t.Context(), changedParsed)
-	require.ErrorIs(t, err, engine.ErrWorkflowStartConflict)
-	require.ErrorIs(t, err, ErrWorkflowStartFailed)
+	require.ErrorIs(t, err, storage.ErrSeedConflict)
 }
 
-func TestParsedContinuationStartsWithoutPredecessorStorage(t *testing.T) {
+func TestParsedContinuationStartsFromFreshClientWithPublishedHistory(t *testing.T) {
 	spec := newAnyJSONSpec("svc.lookup")
 	definition := testAgentDefinition("svc.agent", "agent.workflow", "agent.queue", []tools.ToolSpec{spec}, nil)
 	sourceClient, sourceStore := newPreparedRunTestClient(&stubEngine{}, definition)
@@ -404,9 +412,7 @@ func TestParsedContinuationStartsWithoutPredecessorStorage(t *testing.T) {
 			return &RunOutput{RunID: input.RunID}, nil
 		},
 	}))
-	freshClient, freshStore := newPreparedRunTestClient(freshEngine, definition)
-	_, err = freshStore.LoadRun(t.Context(), "run-1")
-	require.ErrorIs(t, err, session.ErrRunNotFound)
+	freshClient := New(sourceStore, WithEngine(freshEngine)).MustClientFor(definition)
 	handle, err := freshClient.StartPrepared(t.Context(), parsed)
 	require.NoError(t, err)
 	output, err := handle.Wait(t.Context())

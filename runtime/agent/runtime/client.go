@@ -12,7 +12,9 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/policy"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 type (
@@ -43,12 +45,17 @@ type (
 		// Prepare validates one initial sessionful run and returns its complete
 		// launch request without starting a workflow. Callers store the result
 		// before StartPrepared so a new process can retry the exact same start.
-		Prepare(sessionID string, messages []*model.Message, opts ...RunOption) (*PreparedRun, error)
+		Prepare(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (*PreparedRun, error)
+
+		// PrepareNextTurn publishes fresh system messages, the selected completed
+		// run without its system messages, and fresh input. The runtime store
+		// captures that exact successful run's position and verifies ownership.
+		PrepareNextTurn(ctx context.Context, sessionID, completedRunID string, systemMessages, freshMessages []*model.Message, opts ...RunOption) (*PreparedRun, error)
 
 		// PrepareOneShot validates one initial sessionless run and returns its
 		// complete launch request without starting a workflow. Callers store the
 		// result before StartPrepared so a new process can retry the exact start.
-		PrepareOneShot(messages []*model.Message, opts ...RunOption) (*PreparedRun, error)
+		PrepareOneShot(ctx context.Context, messages []*model.Message, opts ...RunOption) (*PreparedRun, error)
 
 		// Continue loads one exact predecessor suspension, starts a new sessionful
 		// workflow with its first pending response, and blocks until completion.
@@ -68,7 +75,15 @@ type (
 			sessionID, predecessorRunID, runID, turnID string,
 			response *api.PendingInputResponse,
 			workflowOptions WorkflowOptions,
+			options ...RunOption,
 		) (*PreparedRun, error)
+
+		// RecoverPrepared loads the original command's exact accepted request.
+		// Absence does not authorize canceling an upload still in progress.
+		RecoverPrepared(ctx context.Context, sessionID, runID, commandID string) (*PreparedRun, bool, error)
+		// SettlePrepared either recovers the accepted request or permanently
+		// prevents the exact registered attempt from publishing.
+		SettlePrepared(ctx context.Context, sessionID, runID, commandID, attemptID string) (*PreparedRun, bool, error)
 
 		// StartPrepared submits one value returned by Prepare or
 		// PrepareContinuation. The prepared run can be stored in trusted application
@@ -310,14 +325,14 @@ func (c *agentClient) Run(ctx context.Context, sessionID string, messages []*mod
 }
 
 func (c *agentClient) Start(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
-	prepared, err := c.Prepare(sessionID, messages, opts...)
+	prepared, err := c.Prepare(ctx, sessionID, messages, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return c.StartPrepared(ctx, prepared)
 }
 
-func (c *agentClient) Prepare(sessionID string, messages []*model.Message, opts ...RunOption) (*PreparedRun, error) {
+func (c *agentClient) Prepare(ctx context.Context, sessionID string, messages []*model.Message, opts ...RunOption) (*PreparedRun, error) {
 	start, err := buildSessionRunStart(c.definition.route.ID, sessionID, messages, opts)
 	if err != nil {
 		return nil, err
@@ -326,10 +341,10 @@ func (c *agentClient) Prepare(sessionID string, messages []*model.Message, opts 
 	if err != nil {
 		return nil, err
 	}
-	return newPreparedRun(c.definition.route.ID, request, start.launch.taskQueue)
+	return c.prepareLiteral(ctx, &start, request)
 }
 
-func (c *agentClient) PrepareOneShot(messages []*model.Message, opts ...RunOption) (*PreparedRun, error) {
+func (c *agentClient) PrepareOneShot(ctx context.Context, messages []*model.Message, opts ...RunOption) (*PreparedRun, error) {
 	start, err := buildOneShotRunStart(c.definition.route.ID, messages, opts)
 	if err != nil {
 		return nil, err
@@ -338,7 +353,112 @@ func (c *agentClient) PrepareOneShot(messages []*model.Message, opts ...RunOptio
 	if err != nil {
 		return nil, err
 	}
-	return newPreparedRun(c.definition.route.ID, request, start.launch.taskQueue)
+	return c.prepareLiteral(ctx, &start, request)
+}
+
+func (c *agentClient) prepareLiteral(ctx context.Context, start *runStart, request engine.WorkflowStartRequest) (*PreparedRun, error) {
+	command, attempt := start.preparationIdentity()
+	writer, err := stageLiteralHistory(ctx, c.r.Store, storage.SeedDeclaration{
+		AgentID: string(start.input.AgentID), RunID: start.input.RunID, SessionID: start.input.SessionID,
+		CommandID: command, AttemptID: attempt, Kind: storage.SeedLiteral, RenderedPrompts: start.renderedPrompts,
+	}, start.messages)
+	if err != nil {
+		return nil, err
+	}
+	start.input.SeedEndID = writer.endID
+	return publishPreparedRun(ctx, writer, c.definition.route.ID, request, start.launch.taskQueue, command)
+}
+
+// preparationIdentity keeps ordinary immutable input retries under the run ID.
+// Application-owned operations supply their already registered command/attempt.
+func (start *runStart) preparationIdentity() (string, string) {
+	if start.preparationCommand == "" && start.preparationAttempt == "" {
+		return start.input.RunID, start.input.RunID
+	}
+	return start.preparationCommand, start.preparationAttempt
+}
+
+func (c *agentClient) PrepareNextTurn(ctx context.Context, sessionID, completedRunID string, systemMessages, freshMessages []*model.Message, opts ...RunOption) (*PreparedRun, error) {
+	start, err := buildSessionRunStart(c.definition.route.ID, sessionID, nil, opts)
+	if err != nil {
+		return nil, err
+	}
+	request, err := prepareRunWithDefinition(&start.input, start.launch, c.definition, true)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateSeedPromptFacts(sessionID, start.renderedPrompts); err != nil {
+		return nil, err
+	}
+	for _, message := range systemMessages {
+		if message == nil || message.Role != model.ConversationRoleSystem {
+			return nil, errors.New("next-turn system messages must have the system role")
+		}
+	}
+	for _, message := range freshMessages {
+		if message == nil || message.Role == model.ConversationRoleSystem {
+			return nil, errors.New("next-turn fresh input cannot contain system messages")
+		}
+	}
+	commandID, attemptID := start.preparationIdentity()
+	seed, err := c.r.Store.BeginRunSeed(ctx, storage.SeedDeclaration{
+		AgentID: string(start.input.AgentID), RunID: start.input.RunID, SessionID: sessionID,
+		CommandID: commandID, AttemptID: attemptID,
+		Kind: storage.SeedNextTurn, SourceRunID: completedRunID,
+		ExcludeReasoning: start.withoutPriorReasoning, RenderedPrompts: start.renderedPrompts,
+	})
+	if err != nil {
+		return nil, err
+	}
+	prior, err := transcript.BuildMessagesFromRunLogPrefix(ctx, c.r.Store, seed.Source.RunID, seed.Source.EndID)
+	if err != nil {
+		return nil, err
+	}
+	priorWithoutSystem := prior[:0]
+	for _, message := range prior {
+		if message.Role != model.ConversationRoleSystem {
+			priorWithoutSystem = append(priorWithoutSystem, message)
+		}
+	}
+	if len(priorWithoutSystem) == 0 {
+		return nil, errors.New("completed source history has no non-system messages")
+	}
+	if err := transcript.ValidatePlannerTranscript(priorWithoutSystem); err != nil {
+		return nil, fmt.Errorf("invalid completed source transcript: %w", err)
+	}
+	if start.withoutPriorReasoning {
+		priorWithoutSystem, err = transcript.WithoutCompletedReasoning(priorWithoutSystem)
+		if err != nil {
+			return nil, err
+		}
+		systemMessages, err = transcript.WithoutCompletedReasoning(systemMessages)
+		if err != nil {
+			return nil, err
+		}
+		freshMessages, err = transcript.WithoutCompletedReasoning(freshMessages)
+		if err != nil {
+			return nil, err
+		}
+	}
+	complete := make([]*model.Message, 0, len(systemMessages)+len(priorWithoutSystem)+len(freshMessages))
+	complete = append(complete, systemMessages...)
+	complete = append(complete, priorWithoutSystem...)
+	complete = append(complete, freshMessages...)
+	if err := transcript.ValidatePlannerTranscript(complete); err != nil {
+		return nil, fmt.Errorf("runtime: invalid next-turn transcript: %w", err)
+	}
+	writer := initialHistoryWriter{store: c.r.Store, runID: start.input.RunID, attemptID: attemptID, endID: storage.EmptySeedEndID}
+	if err := writer.appendMessages(ctx, systemMessages); err != nil {
+		return nil, err
+	}
+	if err := writer.appendPrefix(ctx, seed.Source); err != nil {
+		return nil, err
+	}
+	if err := writer.appendMessages(ctx, freshMessages); err != nil {
+		return nil, err
+	}
+	start.input.SeedEndID = writer.endID
+	return publishPreparedRun(ctx, &writer, c.definition.route.ID, request, start.launch.taskQueue, commandID)
 }
 
 func (c *agentClient) Continue(
@@ -363,8 +483,18 @@ func (c *agentClient) PrepareContinuation(
 	sessionID, predecessorRunID, runID, turnID string,
 	response *api.PendingInputResponse,
 	workflowOptions WorkflowOptions,
+	options ...RunOption,
 ) (*PreparedRun, error) {
-	input, err := c.r.buildStoredContinuationRunInput(ctx, c.definition, sessionID, predecessorRunID, runID, turnID, response)
+	start := runStart{input: RunInput{RunID: runID}}
+	for _, option := range options {
+		preparation, ok := option.(preparationOption)
+		if !ok {
+			return nil, continuationContractError(errors.New("continuation accepts only preparation identity options; execution values belong to its checkpoint"))
+		}
+		preparation.apply(&start)
+	}
+	commandID, attemptID := start.preparationIdentity()
+	input, writer, err := c.r.buildStoredContinuationRunInput(ctx, c.definition, sessionID, predecessorRunID, runID, turnID, response, commandID, attemptID)
 	if err != nil {
 		return nil, err
 	}
@@ -376,15 +506,11 @@ func (c *agentClient) PrepareContinuation(
 	if err != nil {
 		return nil, continuationContractError(err)
 	}
-	prepared, err := newPreparedRun(c.definition.route.ID, request, launch.taskQueue)
-	if err != nil {
-		return nil, continuationContractError(err)
-	}
-	return prepared, nil
+	return publishPreparedRun(ctx, writer, c.definition.route.ID, request, launch.taskQueue, commandID)
 }
 
 func (c *agentClient) StartOneShot(ctx context.Context, messages []*model.Message, opts ...RunOption) (engine.WorkflowHandle, error) {
-	prepared, err := c.PrepareOneShot(messages, opts...)
+	prepared, err := c.PrepareOneShot(ctx, messages, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -402,10 +528,9 @@ func (c *agentClient) OneShotRun(ctx context.Context, messages []*model.Message,
 // buildSessionRunStart constructs a sessionful workflow input and its separate
 // engine launch settings.
 func buildSessionRunStart(agentID agent.Ident, sessionID string, messages []*model.Message, opts []RunOption) (runStart, error) {
-	start := runStart{input: RunInput{
+	start := runStart{messages: messages, input: RunInput{
 		AgentID:   agentID,
 		SessionID: sessionID,
-		Messages:  messages,
 	}}
 	if err := applyRunOptions(&start, opts); err != nil {
 		return runStart{}, err
@@ -421,9 +546,8 @@ func buildSessionRunStart(agentID agent.Ident, sessionID string, messages []*mod
 // buildOneShotRunStart constructs a sessionless workflow input and its
 // separate engine launch settings.
 func buildOneShotRunStart(agentID agent.Ident, messages []*model.Message, opts []RunOption) (runStart, error) {
-	start := runStart{input: RunInput{
-		AgentID:  agentID,
-		Messages: messages,
+	start := runStart{messages: messages, input: RunInput{
+		AgentID: agentID,
 	}}
 	if err := applyRunOptions(&start, opts); err != nil {
 		return runStart{}, err
@@ -477,26 +601,40 @@ func (r *Runtime) buildStoredContinuationRunInput(
 	definition AgentDefinition,
 	sessionID, predecessorRunID, runID, turnID string,
 	response *api.PendingInputResponse,
-) (*RunInput, error) {
+	commandID, attemptID string,
+) (*RunInput, *initialHistoryWriter, error) {
 	if predecessorRunID == "" {
-		return nil, continuationContractError(errors.New("predecessor run id is required"))
+		return nil, nil, continuationContractError(errors.New("predecessor run id is required"))
 	}
 	suspension, err := r.LoadRunSuspension(ctx, predecessorRunID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	input, err := buildContinuationRunInput(definition.route.ID, sessionID, runID, turnID, suspension, response)
 	if err != nil {
-		return nil, continuationContractError(err)
+		return nil, nil, continuationContractError(err)
 	}
 	checkpoint, err := prepareContinuation(input, definition)
 	if err != nil {
-		return nil, continuationContractError(err)
+		return nil, nil, continuationContractError(err)
 	}
 	if checkpoint.PreviousRunID != predecessorRunID {
-		return nil, continuationContractError(errors.New("predecessor run id does not match stored suspension"))
+		return nil, nil, continuationContractError(errors.New("predecessor run id does not match stored suspension"))
 	}
-	return input, nil
+	seed, err := r.Store.BeginRunSeed(ctx, storage.SeedDeclaration{
+		AgentID: string(input.AgentID), RunID: runID, SessionID: sessionID,
+		CommandID: commandID, AttemptID: attemptID,
+		Kind: storage.SeedContinuation, SourceRunID: predecessorRunID, SourceEndID: checkpoint.HistoryEndID,
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	writer := initialHistoryWriter{store: r.Store, runID: runID, attemptID: attemptID, endID: storage.EmptySeedEndID}
+	if err := writer.appendPrefix(ctx, seed.Source); err != nil {
+		return nil, nil, err
+	}
+	input.SeedEndID = writer.endID
+	return input, &writer, nil
 }
 
 // applyRunOptions applies caller options in order to workflow input and launch
@@ -509,11 +647,11 @@ func applyRunOptions(start *runStart, opts []RunOption) error {
 		option.apply(start)
 	}
 	if start.withoutPriorReasoning {
-		messages, err := completedTurnMessages(start.input.Messages)
+		messages, err := transcript.WithoutCompletedReasoning(start.messages)
 		if err != nil {
 			return fmt.Errorf("prepare initial messages without prior reasoning: %w", err)
 		}
-		start.input.Messages = messages
+		start.messages = messages
 	}
 	return nil
 }

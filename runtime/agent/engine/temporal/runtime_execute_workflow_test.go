@@ -64,6 +64,26 @@ func testTemporalAgentDefinition(
 
 const runSuspensionType = "runtime.run_suspension"
 
+// publishTemporalTestSeed prepares an explicit empty history before these
+// engine-level tests bypass AgentClient and start a workflow directly.
+func publishTemporalTestSeed(t *testing.T, store storage.Store, agentID agent.Ident, runID, sessionID string) string {
+	t.Helper()
+	_, err := store.BeginRunSeed(t.Context(), storage.SeedDeclaration{
+		AgentID: string(agentID), RunID: runID, SessionID: sessionID, CommandID: runID, AttemptID: runID, Kind: storage.SeedLiteral,
+	})
+	require.NoError(t, err)
+	prepared := []byte(`{}`)
+	end, err := store.AppendRunSeed(t.Context(), storage.SeedAppend{
+		RunID: runID, AttemptID: runID,
+		Record: storage.SeedRecord{Key: "prepared", PreviousID: storage.EmptySeedEndID, Prepared: prepared},
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.PublishRunSeed(t.Context(), storage.SeedPublication{
+		RunID: runID, AttemptID: runID, SeedEndID: storage.EmptySeedEndID, EndID: end, PreparedBytes: int64(len(prepared)),
+	}))
+	return storage.EmptySeedEndID
+}
+
 // storageCaptureEngine exposes the runtime-registered storage activity to the
 // Temporal test environment so recorded writes also create the history it reads.
 type storageCaptureEngine struct {
@@ -152,6 +172,7 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 	runtime := agentruntime.New(store, agentruntime.WithEngine(storageEngine))
 	_, err := store.CreateSession(context.Background(), sessionID, time.Now().UTC())
 	require.NoError(t, err)
+	seedEndID := publishTemporalTestSeed(t, store, agentID, runID, sessionID)
 	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
 		Definition: testTemporalAgentDefinition(agentID, workflowName, taskQueue, nil),
 		Planner:    plannerStub,
@@ -192,6 +213,7 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 			RunID:     runID,
 			SessionID: sessionID,
 			TurnID:    "turn-publication",
+			SeedEndID: seedEndID,
 		})
 	})
 
@@ -231,6 +253,7 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	runtime := agentruntime.New(store, agentruntime.WithEngine(storageEngine))
 	_, err := store.CreateSession(context.Background(), sessionID, time.Now().UTC())
 	require.NoError(t, err)
+	seedEndID := publishTemporalTestSeed(t, store, agentID, runID, sessionID)
 	require.NoError(t, runtime.RegisterAgent(context.Background(), agentruntime.AgentRegistration{
 		Definition: testTemporalAgentDefinition(agentID, workflowName, taskQueue, []tools.ToolSpec{anyJSONToolSpec(questionTool)}),
 		Planner:    plannerStub,
@@ -256,7 +279,7 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	env.RegisterActivityWithOptions(runtime.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
 	env.ExecuteWorkflow(func(ctx workflow.Context) (*api.RunOutput, error) {
 		return runtime.ExecuteWorkflow(NewWorkflowContext(eng, ctx), &agentruntime.RunInput{
-			AgentID: agentID, RunID: runID, SessionID: sessionID, TurnID: turnID,
+			AgentID: agentID, RunID: runID, SessionID: sessionID, TurnID: turnID, SeedEndID: seedEndID,
 		})
 	})
 
@@ -315,6 +338,7 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 	runtime := agentruntime.New(store)
 	_, err := store.CreateSession(context.Background(), sessionID, time.Now().UTC())
 	require.NoError(t, err)
+	seedEndID := publishTemporalTestSeed(t, store, agentID, runID, sessionID)
 	startedAt := time.Now().UTC().Truncate(time.Millisecond)
 	startedRecord := lifecycleRecord(t, hooks.NewRunStartedEvent(runID, agentID, sessionID, "", "", nil), "run-started", startedAt)
 	canceledRecord := lifecycleRecord(t, hooks.NewRunCompletedEvent(
@@ -328,7 +352,7 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
 	), "run-stopped", startedAt)
 	_, err = store.StartRootRun(context.Background(), storage.RootRunStart{
-		Run:     session.RunStart{AgentID: string(agentID), RunID: runID, SessionID: sessionID, StartedAt: startedAt},
+		Run:     session.RunStart{AgentID: string(agentID), RunID: runID, SessionID: sessionID, StartedAt: startedAt, SeedEndID: seedEndID},
 		Started: startedRecord, Canceled: canceledRecord,
 	})
 	require.NoError(t, err)
@@ -368,6 +392,7 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 		RunID:     runID,
 		SessionID: sessionID,
 		TurnID:    "turn-1",
+		SeedEndID: seedEndID,
 	})
 
 	workflowErr := env.GetWorkflowError()

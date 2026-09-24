@@ -57,6 +57,7 @@ type (
 	// agentChildRequest contains the complete immutable input assembled before a
 	// child workflow starts, including prompt versions used in its messages.
 	agentChildRequest struct {
+		seedEndID       string
 		policy          *api.PolicyOverrides
 		messages        []*model.Message
 		runContext      run.Context

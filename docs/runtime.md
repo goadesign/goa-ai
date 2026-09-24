@@ -3261,41 +3261,56 @@ with the stored command. `Start` prepares and submits in memory when the
 application does not need a durable write between validation and engine
 submission.
 
-`Prepare` and `PrepareOneShot` are client-only operations. They copy and
-validate a complete request without writing runtime storage, sealing worker
-registration, or calling the workflow engine. `PrepareContinuation` first reads
-the saved suspension but still performs no write and starts no workflow.
-Preparation does not serialize the optional stored form. `MarshalBinary`
-creates that form; `StartPrepared` independently submits the engine request.
-`Start`, `StartOneShot`, and `Continue` never call `MarshalBinary`.
+`Prepare(ctx, sessionID, messages, options...)` and
+`PrepareOneShot(ctx, messages, options...)` publish the exact supplied messages
+through the owning Store before returning. `PrepareNextTurn(ctx, sessionID,
+completedRunID, systemMessages, freshMessages, options...)` publishes fresh
+system messages, a reference to the selected completed run without its system
+messages, and fresh input. Its saved source must belong to the same agent and
+Session and have a valid, nonempty transcript independently of the fresh input.
+`PrepareContinuation` reads the exact suspension and publishes a reference to
+its saved history without applying completed-turn transforms. Preparation needs
+the Store in caller processes; it neither registers workers nor starts work.
+Preparation serializes the complete compiled request into bounded Store records
+and atomically publishes it with the history. `Start`, `StartOneShot`, and
+`Continue` use this same durable acceptance path.
 
-Prepared bytes can contain the complete transcript, tool results, and private
-continuation checkpoint. Store them only in trusted, access-controlled
-application storage. Workflow launch settings are stored only in the engine
-request; `api.RunInput` contains only workflow input. One workflow start may use
-at most `engine.MaxPayloadBytes` (1,048,576) bytes. This inclusive count covers
-the workflow ID, workflow and queue names, memo and search-attribute names, the
-encoded workflow input, every memo and search value's data and metadata, and
-the reserved digest memo added by the engine. Exactly 1,048,576 bytes is
-accepted and one more is rejected. The stored JSON record has its own
-8,388,608-byte ceiling for its complete representation, including the agent ID,
-explicit queue override, JSON escaping, base64 expansion, and JSON field syntax.
-`MarshalBinary` checks the complete record when it creates the bytes, and
-`ParsePreparedRun` checks it before decoding. This second limit protects the
-stored format; it does not increase the workflow request limit. Store large
-domain values separately and pass durable references instead.
+Before the first upload, application-owned commands retain their original
+command ID and upload-attempt ID, then supply `WithPreparation(commandID,
+attemptID)`. A lease replacement retains that attempt ID. `RecoverPrepared`
+returns a complete accepted result after a lost reply without resolving prompts
+or configuration again. `SettlePrepared` either returns that accepted result or
+permanently prevents the exact attempt from publishing, even if Begin has not
+arrived yet. Only after absence is settled may an application discard unfinished
+work or register a new attempt. Concurrent attempts cannot replace the winner.
 
-`MarshalBinary` reports a storage-encoding failure as
-`ErrPreparedRunRejected` without changing the in-memory prepared request. It
-remains startable, but an application that requires durable admission must not
-start it until the bytes are stored. `ErrPreparedRunRejected` from
-`ParsePreparedRun` means the stored bytes are malformed or are not the exact
-format produced by `MarshalBinary`; they cannot be retried. `StartPrepared`
-returns the same error when the stored
-request no longer satisfies the current generated agent definition; that
-command cannot start with this generated release. It also returns the error
-when valid bytes are passed to the wrong generated agent client. The bytes
-remain valid and must be submitted through the matching client.
+Prepared v3 is one compact reference format: agent, session, run and original
+command identities; exact history/body end positions; compiled byte length; and
+SHA-256 digest. `MarshalBinary` and `ParsePreparedRun` store and restore this
+reference only. Full launch settings and continuation control remain in the
+Session-owned body. `StartPrepared` loads that exact accepted body, verifies the
+reference and generated agent definition, then submits it. There is no inline
+alternative, latest-result selection, or old-format reader.
+
+One workflow start still uses at most `engine.MaxPayloadBytes` (1,048,576) bytes.
+This inclusive count covers workflow identity, route and queue, encoded input,
+memo/search names and payload data/metadata, and the reserved engine digest.
+Exactly the limit is accepted; one more is rejected. JSON storage has additional
+per-entry syntax even for empty values. The canonical codec derives its parser
+ceiling from its actual empty-entry and fixed-envelope shapes: currently
+391 + 75 × 1,048,576 = 78,643,591 bytes. This is a conservative bound for every
+engine-valid request, not an increased engine budget. The body is uploaded and
+read through bounded store records; the preparation record contains its compact reference.
+For example, a valid 99,000-entry memo occupies 8,604,745 stored bytes but returns
+a 332-byte prepared reference. The reference parser separately bounds identity
+text by the owning declaration budget plus its fixed publication framing.
+
+`ErrPreparedRunRejected` from `ParsePreparedRun` means the reference is malformed
+or not the canonical current format. `StartPrepared` uses that error when a
+reference differs from the accepted publication, the body is invalid, or the
+current generated definition no longer accepts its original request. Passing a
+valid reference to the wrong generated client does not invalidate it; submit it
+through the matching client.
 `ErrWorkflowStartFailed`
 means the engine did not confirm the start. Goa-AI does not retry automatically;
 the application explicitly calls `StartPrepared` again with the same value, or
@@ -3519,12 +3534,14 @@ For runtime storage and workflow adapters:
   between validation and start.
 - Use `PreparedRun` for both initial and continuation starts.
   `PreparedRun.RunID` returns the workflow ID assigned during preparation,
-  `PreparedRun.MarshalBinary` creates the optional durable form only when
-  called, and `ParsePreparedRun` restores it after a process restart.
-- `Prepare(sessionID, messages, opts...)` and
-  `PrepareOneShot(messages, opts...)` are new methods. Handwritten
-  `AgentClient` implementations must add both methods. Preparation performs no
-  I/O, so neither method accepts a context. `Start`, `Run`, `StartOneShot`, and
+  `PreparedRun.MarshalBinary` writes the compact accepted-preparation reference,
+  and `ParsePreparedRun` restores that reference after a process restart.
+- `Prepare(ctx, sessionID, messages, opts...)` and
+  `PrepareOneShot(ctx, messages, opts...)` require an owning Store. Handwritten
+  `AgentClient` implementations also implement `RecoverPrepared` and
+  `SettlePrepared`. Preparation accepts a
+  context and writes bounded initial-history records before publishing the
+  complete history. It does not submit a workflow. `Start`, `Run`, `StartOneShot`, and
   `OneShotRun` now use the same prepared-request path internally.
 - Replace custom `RunOption` functions with the option constructors in
   `runtime`, such as `WithRunID`, `WithMemo`, and `WithTaskQueue`. `RunOption`
@@ -4387,13 +4404,49 @@ store is configured.
 
 ### Runtime Store (`storage.Store`)
 
-The runtime requires one store for run metadata, continuation checkpoints, and
-ordered run records. The host's concrete repository also owns session creation,
+The runtime requires one store for published initial history, run metadata,
+continuation checkpoints, and ordered run records. The host's concrete
+repository also owns session creation,
 ending, listing, and permanent deletion, but those administrative operations are
 not part of the worker-facing `storage.Store` interface. A host may put that
 repository behind a Session service and give agent workers a `storage.Store`
 adapter built on the service's generated typed client. Agent workers must not
 open or share the Session service's database.
+
+`BeginRunSeed` registers one candidate under the original operation and attempt.
+`AppendRunSeed` writes exact keyed history records, then compiled-result parts.
+`PublishRunSeed` accepts only the complete history and compiled suffix together.
+A per-operation decision selects at most one winner. Other attempts cannot
+replace it; changed original command/owner identities reject. Exact record
+retries preserve bytes and assigned positions. Source references stay within the
+same Session and name an exact completed or suspended position.
+
+`FindRunPreparation` returns the accepted manifest or explicit absence.
+`SettleRunPreparation` shares publication's atomic decision: it returns the
+winner or leaves a durable rejection for that exact attempt. Rejection before
+Begin also blocks a late Begin. Private attempt state remains owned by the
+Store and is removed with its Session; it is never model-visible.
+`ListRunPreparationRecords` returns only compiled-result parts, while
+`ListRunSeedRecords` returns only history. Neither accepts an unpublished body.
+Neither preparation nor publication creates an accepted engine run.
+
+The runtime splits literal input at whole message boundaries. Each complete
+encoded seed command must fit the inclusive 1,000,000-byte storage-command limit.
+One larger message is rejected without truncation; a larger logical history
+uses multiple commands and has no new run-wide size cap. `LoadRunSeed` reads only
+an exact publication; `ListRunSeedRecords` returns bounded ordered records and
+an owner-assigned continuation position. Every page must advance. The common
+transcript reader iteratively expands references without rebuilding each
+ancestor's complete history. System/reasoning exclusions compose across links:
+a later turn cannot restore content excluded by an earlier turn.
+
+The accepted run's existing start transaction checks and attaches its exact
+publication without writing initial messages again. Publication, appends and
+start serialize with Session purge. Purge removes even unpublished and
+unsubmitted seeds and prevents delayed writes from recreating the owner. Failed
+preparation may leave inaccessible partial records. Explicit settlement prevents
+an abandoned attempt from publishing; accepted bodies remain recoverable. There
+is no implicit expiry that could delete pending user work.
 
 Planner and child-preparation activity inputs carry `HistoryEndID`, the exact
 committed end record for their source run. They do not carry `Messages`.
@@ -4417,10 +4470,22 @@ the same position even if later messages now exist. Finalization adds its
 instruction inside the activity; it does not append that instruction to saved
 history. Full-history memory remains proportional to the selected transcript.
 
-This activity-input change requires old running workflows to finish on their
-original workers. It does not change initial workflow inputs, prepared-request
-bytes, stored transcript records, or suspension checkpoint formats. It does
-not make closed old histories replayable on the new worker.
+Prepared v3 references the exact accepted preparation; workflow input references
+its published history. Checkpoint v9 replaces
+only prior history with its exact saved position; active response, tool, native,
+pending, recovery and nested control fields retain their existing meaning and
+budgets. Historical reporting validates public saved facts and the opaque
+checkpoint digest without restoring private execution state. Missing-result
+repair and actual continuation restoration require the current format.
+
+Old accepted workflows must keep their original execution semantics and workers.
+Before rollout, separately inventory and settle or convert old unsubmitted
+prepared requests, pending resumes, accepted answers, nested checkpoints and
+missing completion delivery. A lease timeout does not prove non-submission.
+Changed checkpoint bytes require a new digest-derived ID; changed prepared input
+changes its engine recipe. This implementation has no old prepared/checkpoint
+decoder, alias, automatic repair or dual mode. Existing canonical literal
+transcript records remain literal records, not a compatibility representation.
 
 Lifecycle commands store the state change and matching records together:
 
@@ -4515,8 +4580,9 @@ reason, and start time. That run does no planner or tool work, so it contributes
 no prompt references or child relationships. The method collects each
 `PromptRendered` reference once and visits each run once. These records show
 which prompt versions and scopes contributed to the run. Exact rendered prompt
-text remains in immutable workflow input or workflow history and is not
-reconstructed from the references.
+text remains in the published initial history or subsequent transcript records
+and is not reconstructed from the prompt references. Workflow input names the
+exact initial-history publication.
 
 Child workflow IDs are single-use. Every second explicit issue is rejected for
 open and closed children, including an otherwise identical request; Temporal
@@ -5327,9 +5393,13 @@ The public functions use only `engine` and `api` values.
 Custom adapters must also implement `RegisterAgentChildActivity` and
 `ExecuteAgentChildActivity`. This activity prepares a nested agent's messages,
 renders any consumer-side prompt, and returns exactly one `Success` or
-`Failure`. `Success` contains only the messages and prompt render facts that
-workflow history must retain. The workflow derives the child run, session,
-parent, tool, and label identity from the original recorded tool call. Workflow
+`Failure`. `Success` contains the published initial-history position, resolved
+labels, and policy. The published history retains the rendered messages and
+their prompt facts. Before rendering a retried activity, the runtime checks its
+original operation for an accepted result; it reuses the original labels and
+policy after lost publication or activity-result replies. Different attempts
+may stage concurrently, but only a complete candidate can win. The workflow derives the child run, session, parent, and
+tool identity from the original recorded tool call. Workflow
 code must not read prompt storage directly because replay could otherwise see a
 newer prompt version than the original execution.
 

@@ -251,16 +251,9 @@ func TestProviderToolCallIDCorrelatesTranscriptWhileExecutionIDOwnsRuntime(t *te
 			},
 		},
 	}
-	out, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
-		AgentID:   agentID,
-		RunID:     runID,
-		SessionID: sessionID,
-		TurnID:    turnID,
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "Look up status."}},
-		}},
-	})
+	input := &RunInput{AgentID: agentID, RunID: runID, SessionID: sessionID, TurnID: turnID}
+	publishTestRunInput(t, rt, input, []*model.Message{userMsg("Look up status.")})
+	out, err := rt.ExecuteWorkflow(wfCtx, input)
 	require.NoError(t, err)
 	require.Equal(t, "done", out.Final.Text())
 
@@ -704,16 +697,9 @@ func TestWorkflowTreatsPlannerAuthoredCanonicalContinuationAsStandalone(t *testi
 		},
 	}
 
-	output, err := rt.ExecuteWorkflow(wfCtx, &RunInput{
-		AgentID:   agentID,
-		RunID:     runID,
-		SessionID: sessionID,
-		TurnID:    turnID,
-		Messages: []*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "Continue the prior alarm query."}},
-		}},
-	})
+	input := &RunInput{AgentID: agentID, RunID: runID, SessionID: sessionID, TurnID: turnID}
+	publishTestRunInput(t, rt, input, []*model.Message{userMsg("Continue the prior alarm query.")})
+	output, err := rt.ExecuteWorkflow(wfCtx, input)
 
 	require.NoError(t, err)
 	require.NotNil(t, output)

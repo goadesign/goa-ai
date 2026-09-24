@@ -862,6 +862,7 @@ func TestWorkflowRecoversInitialRejectedModelAnswer(t *testing.T) {
 		},
 	}
 
+	publishTestRunInput(t, rt, runInput, nil)
 	out, err := rt.ExecuteWorkflow(wfCtx, runInput)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -994,6 +995,7 @@ func TestExecuteWorkflowRecoversInitialGeneratedModelToolCall(t *testing.T) {
 		},
 	}
 
+	publishTestRunInput(t, rt, input, nil)
 	out, err := rt.ExecuteWorkflow(wfCtx, input)
 
 	require.NoError(t, err)

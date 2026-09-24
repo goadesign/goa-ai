@@ -380,7 +380,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 	require.Equal(t, "cited answer", msgs[0].Text())
 }
 
-func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testing.T) {
+func TestExecuteWorkflowAttachesInitialTranscriptWithoutCopying(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -417,23 +417,15 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 		runtime:     rt,
 		hookRuntime: rt,
 	}
-	_, err = rt.ExecuteWorkflow(wfCtx, &RunInput{
-		AgentID:   "svc.agent",
-		RunID:     "run-1",
-		SessionID: "sess-1",
-		TurnID:    "turn-1",
-		Metadata:  map[string]any{"task_state": "state-json"},
-		Messages: []*model.Message{
-			{
-				Role:  model.ConversationRoleUser,
-				Parts: []model.Part{model.TextPart{Text: "prior user"}},
-			},
-			{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "prior assistant"}},
-			},
-		},
+	input := &RunInput{
+		AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1",
+		Metadata: map[string]any{"task_state": "state-json"},
+	}
+	publishTestRunInput(t, rt, input, []*model.Message{
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "prior user"}}},
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "prior assistant"}}},
 	})
+	_, err = rt.ExecuteWorkflow(wfCtx, input)
 	require.NoError(t, err)
 	storedRun, err := sessions.LoadRun(ctx, "run-1")
 	require.NoError(t, err)
@@ -447,22 +439,21 @@ func TestExecuteWorkflowSeedsInitialTranscriptInsteadOfAppendingHistory(t *testi
 			transcriptEvents = append(transcriptEvents, event)
 		}
 	}
-	require.Len(t, transcriptEvents, 2)
-	require.Equal(t, transcript.RunLogMessagesSeeded, transcriptEvents[0].Type)
-	require.Equal(t, transcript.RunLogMessagesAppended, transcriptEvents[1].Type)
+	require.Len(t, transcriptEvents, 1)
+	require.Equal(t, transcript.RunLogMessagesAppended, transcriptEvents[0].Type)
 
-	seeded, err := transcript.DecodeRunLogDelta(transcriptEvents[0].Payload)
+	seeded, err := transcript.BuildMessagesFromRunLogPrefix(ctx, store, "run-1", page.Events[0].ID)
 	require.NoError(t, err)
 	require.Len(t, seeded, 2)
 	require.Equal(t, "prior assistant", seeded[1].Text())
 
-	appended, err := transcript.DecodeRunLogDelta(transcriptEvents[1].Payload)
+	appended, err := transcript.DecodeRunLogDelta(transcriptEvents[0].Payload)
 	require.NoError(t, err)
 	require.Len(t, appended, 1)
 	require.Equal(t, "done", appended[0].Text())
 }
 
-func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
+func TestExecuteWorkflowReferencesRestoredContinuationTranscript(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -530,16 +521,12 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, first.Suspension)
-	require.NoError(t, storeSuspensionForTest(ctx, store, firstInput.RunID, session.RunSuspension{
-		ID: first.Suspension.ID, Data: []byte(`{}`),
-	}))
-
 	secondContext := &testWorkflowContext{
 		ctx:         ctx,
 		runtime:     rt,
 		hookRuntime: rt,
 	}
-	out, err := rt.ExecuteWorkflow(secondContext, &RunInput{
+	secondInput := &RunInput{
 		AgentID:   "svc.agent",
 		RunID:     "run-2",
 		SessionID: "sess-1",
@@ -551,7 +538,9 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 				Answer: "Building A",
 			}},
 		},
-	})
+	}
+	publishTestContinuationInput(t, rt, secondInput)
+	out, err := rt.ExecuteWorkflow(secondContext, secondInput)
 	require.NoError(t, err)
 	require.Equal(t, "done", out.Final.Text())
 
@@ -559,7 +548,6 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 	require.NoError(t, err)
 	var (
 		transcriptEvents []*runlog.Event
-		messages         []*model.Message
 		started          *hooks.RunStartedEvent
 	)
 	for _, event := range page.Events {
@@ -576,12 +564,13 @@ func TestExecuteWorkflowSeedsRestoredContinuationTranscript(t *testing.T) {
 			continue
 		}
 		transcriptEvents = append(transcriptEvents, event)
-		delta, err := transcript.DecodeRunLogDelta(event.Payload)
-		require.NoError(t, err)
-		messages = append(messages, delta...)
 	}
 	require.NotEmpty(t, transcriptEvents)
-	require.Equal(t, transcript.RunLogMessagesSeeded, transcriptEvents[0].Type)
+	for _, event := range transcriptEvents {
+		require.Equal(t, transcript.RunLogMessagesAppended, event.Type)
+	}
+	messages, err := transcript.BuildMessagesFromRunLog(ctx, store, "run-2")
+	require.NoError(t, err)
 	require.NoError(t, transcript.ValidatePlannerTranscript(messages))
 	require.Len(t, messages, 3)
 	require.Equal(t, model.ConversationRoleAssistant, messages[0].Role)
@@ -629,13 +618,15 @@ func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
 	}
 
 	labels := map[string]string{"household_id": "house-42", "source": "email"}
-	_, err = rt.ExecuteWorkflow(wfCtx, &RunInput{
+	input := &RunInput{
 		AgentID:   "svc.agent",
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 		Labels:    labels,
-	})
+	}
+	publishTestRunInput(t, rt, input, nil)
+	_, err = rt.ExecuteWorkflow(wfCtx, input)
 	require.NoError(t, err)
 
 	page, err := store.ListRunRecords(ctx, "run-1", "", 20)
@@ -666,6 +657,7 @@ func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
 func TestStartOneShotDoesNotRequireSession(t *testing.T) {
 	eng := &stubEngine{}
 	rt := &Runtime{
+		Store:   newTestStore(),
 		Engine:  eng,
 		logger:  telemetry.NoopLogger{},
 		metrics: telemetry.NoopMetrics{},
@@ -1125,7 +1117,7 @@ func TestRunOptionsRejectNil(t *testing.T) {
 	require.NoError(t, createPreparedRunSession(t.Context(), store))
 
 	require.PanicsWithValue(t, "runtime: run option is required", func() {
-		_, _ = client.Prepare("session-1", nil, nil)
+		_, _ = client.Prepare(t.Context(), "session-1", nil, nil)
 	})
 }
 
@@ -1813,8 +1805,9 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 		input.TurnID,
 	)
 	require.NoError(t, err)
+	publishTestRunInput(t, rt, &input, nil)
 	_, err = rt.executeStorageCommand(context.Background(), &api.StorageActivityCommand{
-		RootStart: &api.RootRunStartCommand{Started: started},
+		RootStart: &api.RootRunStartCommand{SeedEndID: input.SeedEndID, Started: started},
 	})
 	require.NoError(t, err)
 

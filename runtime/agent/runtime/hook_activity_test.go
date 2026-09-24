@@ -60,6 +60,10 @@ func (s startSessionStatusStore) StartOneShotRun(context.Context, storage.OneSho
 	return s.oneShot, nil
 }
 
+func (s startSessionStatusStore) LoadRunSeed(context.Context, string, string) (storage.RunSeed, error) {
+	return storage.RunSeed{EndID: storage.EmptySeedEndID}, nil
+}
+
 func TestRecordActivityStoresRootStartDecision(t *testing.T) {
 	for _, test := range []struct {
 		name    string
@@ -87,8 +91,9 @@ func TestRecordActivityStoresRootStartDecision(t *testing.T) {
 			record, err := prepareHookRecordInput(ctx, event, "turn")
 			require.NoError(t, err)
 
+			publishTestRunInput(t, runtime, &RunInput{AgentID: "svc.agent", RunID: "run", SessionID: "session"}, nil)
 			output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
-				RootStart: &api.RootRunStartCommand{Started: record},
+				RootStart: &api.RootRunStartCommand{SeedEndID: "0", Started: record},
 			})
 			require.NoError(t, err)
 			start := output.RootStart
@@ -154,8 +159,9 @@ func TestRecordActivityStoresRenderedPromptsOnlyForStartedRun(t *testing.T) {
 			), "turn")
 			require.NoError(t, err)
 
+			publishTestRunInput(t, runtime, &RunInput{AgentID: "svc.agent", RunID: "run", SessionID: "session"}, nil)
 			output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
-				RootStart: &api.RootRunStartCommand{Started: started},
+				RootStart: &api.RootRunStartCommand{SeedEndID: "0", Started: started},
 			})
 			require.NoError(t, err)
 			wantStartRecords := 1
@@ -186,8 +192,9 @@ func TestRecordActivityStartsOneShotRun(t *testing.T) {
 	record, err := prepareHookRecordInput(ctx, event, "")
 	require.NoError(t, err)
 
+	publishTestRunInput(t, runtime, &RunInput{AgentID: "svc.agent", RunID: "run"}, nil)
 	output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
-		OneShotStart: &api.OneShotRunStartCommand{Started: record},
+		OneShotStart: &api.OneShotRunStartCommand{SeedEndID: "0", Started: record},
 	})
 	require.NoError(t, err)
 	require.Equal(t, session.RunStartProceed, output.OneShotStart.Outcome)
@@ -202,8 +209,9 @@ func TestRecordActivityStartsOneShotChildRun(t *testing.T) {
 	parentEvent := hooks.NewRunStartedEvent("parent", agent.Ident("parent.agent"), "", "", "", nil)
 	parentRecord, err := prepareHookRecordInput(t.Context(), parentEvent, "turn")
 	require.NoError(t, err)
+	publishTestRunInput(t, runtime, &RunInput{AgentID: "parent.agent", RunID: "parent"}, nil)
 	_, err = runtime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
-		OneShotStart: &api.OneShotRunStartCommand{Started: parentRecord},
+		OneShotStart: &api.OneShotRunStartCommand{SeedEndID: "0", Started: parentRecord},
 	})
 	require.NoError(t, err)
 	childEvent := hooks.NewRunStartedEvent(
@@ -222,8 +230,10 @@ func TestRecordActivityStartsOneShotChildRun(t *testing.T) {
 	), "turn")
 	require.NoError(t, err)
 
+	publishTestRunInput(t, runtime, &RunInput{AgentID: "child.agent", RunID: "child"}, nil)
 	output, err := runtime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
 		OneShotChildStart: &api.OneShotChildRunStartCommand{
+			SeedEndID:    "0",
 			ParentLinked: linkedRecord,
 			Started:      childRecord,
 		},
@@ -341,7 +351,7 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			}
 			runtime := &Runtime{Store: test.store, Bus: hooks.NewBus()}
 
-			_, err = runtime.storeRunStart(t.Context(), test.kind, startedInput, linkedInput)
+			_, err = runtime.storeRunStart(t.Context(), test.kind, "0", startedInput, linkedInput)
 
 			require.ErrorContains(t, err, test.want)
 			require.True(t, engine.IsActivityErrorNonRetryable(err))
@@ -358,8 +368,10 @@ func TestRecordActivityAcceptsProceedRetryAfterSessionEnds(t *testing.T) {
 		"run", agent.Ident("svc.agent"), "session", "", "", nil,
 	), "turn")
 	require.NoError(t, err)
+	input := &RunInput{AgentID: "svc.agent", RunID: "run", SessionID: "session"}
+	publishTestRunInput(t, runtime, input, nil)
 	command := &api.StorageActivityCommand{
-		RootStart: &api.RootRunStartCommand{Started: started},
+		RootStart: &api.RootRunStartCommand{SeedEndID: input.SeedEndID, Started: started},
 	}
 
 	first, err := runtime.executeStorageCommand(t.Context(), command)

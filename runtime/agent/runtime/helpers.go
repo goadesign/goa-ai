@@ -370,14 +370,14 @@ func runStartStorageCommand(input *RunInput, records []*RecordActivityInput) (*a
 				return nil, errors.New("runtime: one-shot child start requires parent-link and run-started records")
 			}
 			return &api.StorageActivityCommand{
-				OneShotChildStart: &api.OneShotChildRunStartCommand{ParentLinked: records[0], Started: records[1]},
+				OneShotChildStart: &api.OneShotChildRunStartCommand{SeedEndID: input.SeedEndID, ParentLinked: records[0], Started: records[1]},
 			}, nil
 		}
 		if len(records) != 1 {
 			return nil, errors.New("runtime: one-shot start requires one record")
 		}
 		return &api.StorageActivityCommand{
-			OneShotStart: &api.OneShotRunStartCommand{Started: records[0]},
+			OneShotStart: &api.OneShotRunStartCommand{SeedEndID: input.SeedEndID, Started: records[0]},
 		}, nil
 	}
 	if input.ParentRunID == "" {
@@ -385,14 +385,14 @@ func runStartStorageCommand(input *RunInput, records []*RecordActivityInput) (*a
 			return nil, errors.New("runtime: root start requires one record")
 		}
 		return &api.StorageActivityCommand{
-			RootStart: &api.RootRunStartCommand{Started: records[0]},
+			RootStart: &api.RootRunStartCommand{SeedEndID: input.SeedEndID, Started: records[0]},
 		}, nil
 	}
 	if len(records) != 2 {
 		return nil, errors.New("runtime: child start requires parent-link and run-started records")
 	}
 	return &api.StorageActivityCommand{
-		ChildStart: &api.ChildRunStartCommand{ParentLinked: records[0], Started: records[1]},
+		ChildStart: &api.ChildRunStartCommand{SeedEndID: input.SeedEndID, ParentLinked: records[0], Started: records[1]},
 	}, nil
 }
 
@@ -520,29 +520,6 @@ func (r *Runtime) publishTranscriptMessages(
 		return "", err
 	}
 	return result.Append.Records[0].ID, nil
-}
-
-// publishTranscriptSeed persists canonical transcript seed messages for a
-// run. Seeded transcript messages rebuild run snapshots but must not fan out as
-// newly committed assistant turns.
-func (r *Runtime) publishTranscriptSeed(
-	ctx context.Context,
-	runID string,
-	agentID agent.Ident,
-	sessionID string,
-	turnID string,
-	messages []*model.Message,
-) (string, error) {
-	return r.publishTranscriptMessages(
-		ctx,
-		transcript.RunLogMessagesSeeded,
-		runID,
-		agentID,
-		sessionID,
-		turnID,
-		"",
-		messages,
-	)
 }
 
 // publishTranscriptDelta persists canonical transcript messages appended
