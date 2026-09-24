@@ -423,6 +423,9 @@ run policy, and registration admission still apply.
 Claude's native add/remove history requires a model supporting tool
 availability changes. Replacing a retained tool definition under the same
 name cannot be represented by that protocol and is rejected explicitly.
+Schema descriptions containing `<`, `>`, or `&` survive native-search replay,
+including after JSON persistence. Current and retained schemas use the same
+JSON escaping; serialization alone does not count as a definition change.
 An application must start a new conversation or supply a deliberately
 compacted conversation that no longer retains that definition. The adapter
 does not silently reset history. Native-only Claude pause continuation is not

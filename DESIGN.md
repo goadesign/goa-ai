@@ -1085,6 +1085,9 @@ provider function names; they are not an application concept or new stored state
 Claude uses provider-hosted deferred search, including
 the dedicated Messages transport on Bedrock. Provider-specific search records
 stay in existing message metadata. There is no separate loaded-tool store.
+Claude snapshots encode raw schemas with the same JSON escaping used by retained
+definitions, preserving key order and exact number literals. Replay rejects actual
+definition changes, not escaping introduced by serialization.
 
 Accepted calls retain their selected definition and fixed pagination partner
 with the existing registration token. Confirmation, decoding, and replay use
