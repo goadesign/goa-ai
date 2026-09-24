@@ -590,7 +590,11 @@ precedence over argument correction.
 Provider processes that need adaptive token admission can apply
 `AdaptiveRateLimiter.WrapProvider` while preserving this raw gateway contract.
 Planner and runtime processes use `AdaptiveRateLimiter.Middleware` when the
-limiter belongs beneath a validated client.
+limiter belongs beneath a validated client. A shared limiter subscribes before
+initializing its Redis capacity and waits for that value to reach the local map.
+Use a process-lifetime context: cancellation stops initialization or subsequent
+capacity updates and releases the subscription. Failed initialization returns
+an error; it does not substitute process-local capacity.
 
 ### Model request and output bounds
 
@@ -754,6 +758,11 @@ fit within 65,535 pixels on each side, count 32-pixel patches, and round up the
 1.2 token multiplier. More than 30,000 patches rejects that individual image;
 multiple valid images add their counts independently. PNG, JPEG, GIF, and WebP
 headers are decoded without altering the image sent for inference.
+
+GPT-6 Sol uses a local estimate of 32-pixel patches times 1.2, rounded up,
+without applying GPT-5.6 image limits or resizing. This is an admission and
+compaction estimate, not a documented Sol billing formula or an upper bound.
+AWS validates the actual images; accounting uses the response usage.
 
 Image counting for another model returns `model.ErrTokenCountingUnsupported`
 with the model name. This tightens the previous wire-byte approximation for
