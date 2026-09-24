@@ -12,7 +12,6 @@ import (
 	"math"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -60,14 +59,11 @@ type (
 		Draining           bool  `json:"draining"`
 	}
 
-	// toolsetCatalog owns atomic provider transitions and cached definitions.
+	// toolsetCatalog owns atomic provider transitions and validated definitions.
 	toolsetCatalog struct {
 		store     catalogStore
 		clock     registryTimeSource
 		validator *schemaValidator
-
-		definitionsMu sync.Mutex
-		definitions   map[string]*catalogToolset
 	}
 
 	catalogEntryState string
@@ -90,14 +86,14 @@ var (
 
 // newToolsetCatalog constructs the canonical admission store.
 func newToolsetCatalog(store catalogStore, clock registryTimeSource) *toolsetCatalog {
-	return &toolsetCatalog{store: store, clock: clock, validator: newSchemaValidator(), definitions: make(map[string]*catalogToolset)}
+	return &toolsetCatalog{store: store, clock: clock, validator: newSchemaValidator()}
 }
 
 // validatePersistedEntries checks all definition/state pairs and permanent
 // retired tokens before the registry begins serving. Old combined records are
 // rejected by the new strict decoder and require the offline conversion.
 func (c *toolsetCatalog) validatePersistedEntries(ctx context.Context) error {
-	keys, err := c.authoritativeKeys(ctx)
+	keys, err := c.store.Keys(ctx)
 	if err != nil {
 		return fmt.Errorf("enumerate persisted catalog: %w", err)
 	}
@@ -196,16 +192,18 @@ func (c *toolsetCatalog) Register(ctx context.Context, definition *catalogToolse
 			}
 			pruned := pruneExpiredProviderLeases(&existing, now)
 			if existing.RegistrationToken == token {
-				hadRoutable := routableProviderCount(existing, now) > 0
+				routableUntil := routableProviderDeadline(existing)
 				if previous := existing.ProviderLeases[leaseKey]; previous.ExpiresAtUnixMilli > lease.ExpiresAtUnixMilli {
 					lease.ExpiresAtUnixMilli = previous.ExpiresAtUnixMilli
 				}
 				existing.ProviderLeases[leaseKey] = lease
-				if !hadRoutable {
+				if routableUntil == 0 {
 					existing.HealthEpoch++
 					existing.LastPongUnixNano = 0
 				}
-				updated, err := c.commit(ctx, key, raw, existing, catalogWrite{CandidateToken: token})
+				updated, err := c.commit(ctx, key, raw, existing, catalogWrite{
+					CandidateToken: token, RoutableUntilUnixMilli: routableUntil,
+				})
 				if err != nil {
 					return catalogState{}, err
 				}
@@ -227,7 +225,8 @@ func (c *toolsetCatalog) Register(ctx context.Context, definition *catalogToolse
 				return catalogState{}, fmt.Errorf("%w: toolset %q retains %d provider leases", errAdmissionBlocked, name, len(existing.ProviderLeases))
 			}
 		}
-		candidate := newCatalogState(definition, admissionRevision, token, leaseKey, lease, now)
+		candidate := newCatalogState(definition, admissionRevision, token, now)
+		candidate.ProviderLeases[leaseKey] = lease
 		write := catalogWrite{CandidateToken: token}
 		if !exists || existing.SchemaFingerprint != definition.fingerprint {
 			write.Definition = string(definition.raw)
@@ -245,11 +244,6 @@ func (c *toolsetCatalog) Register(ctx context.Context, definition *catalogToolse
 			return catalogState{}, err
 		}
 		if updated {
-			if write.Definition != "" {
-				c.definitionsMu.Lock()
-				c.definitions[name] = definition
-				c.definitionsMu.Unlock()
-			}
 			return candidate, nil
 		}
 	}
@@ -492,16 +486,6 @@ func (c *toolsetCatalog) GetToolset(ctx context.Context, name string) (*genregis
 
 // ActiveRegistration returns one coherent definition and active admission.
 func (c *toolsetCatalog) ActiveRegistration(ctx context.Context, name string) (catalogEntry, error) {
-	state, err := c.activeState(ctx, name)
-	if err != nil {
-		return catalogEntry{}, err
-	}
-	c.definitionsMu.Lock()
-	definition := c.definitions[name]
-	c.definitionsMu.Unlock()
-	if definition != nil && definition.fingerprint == state.SchemaFingerprint {
-		return catalogEntry{catalogState: state, Toolset: definition}, nil
-	}
 	entry, err := c.snapshot(ctx, name)
 	if err != nil {
 		return catalogEntry{}, err
@@ -715,7 +699,7 @@ func (c *toolsetCatalog) ListToolsets(ctx context.Context, tags []string) ([]*ge
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	keys, err := c.authoritativeKeys(ctx)
+	keys, err := c.store.Keys(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -748,7 +732,7 @@ func (c *toolsetCatalog) SearchToolsets(ctx context.Context, query string) ([]*g
 		return nil, err
 	}
 	lowerQuery := strings.ToLower(query)
-	keys, err := c.authoritativeKeys(ctx)
+	keys, err := c.store.Keys(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -795,47 +779,17 @@ func (c *toolsetCatalog) commit(ctx context.Context, key, previous string, state
 	return updated, nil
 }
 
-// authoritativeKeys reads the current Redis keys and drops local definitions
-// whose records were removed. A concurrent registration can only lose reuse;
-// its next read still validates the exact saved definition.
-func (c *toolsetCatalog) authoritativeKeys(ctx context.Context) ([]string, error) {
-	keys, err := c.store.Keys(ctx)
-	if err != nil {
-		return nil, err
-	}
-	present := make(map[string]struct{}, len(keys))
-	for _, key := range keys {
-		if name, ok := strings.CutPrefix(key, toolsetCatalogKeyPrefix); ok {
-			present[name] = struct{}{}
-		}
-	}
-	c.definitionsMu.Lock()
-	for name := range c.definitions {
-		if _, exists := present[name]; !exists {
-			delete(c.definitions, name)
-		}
-	}
-	c.definitionsMu.Unlock()
-	return keys, nil
-}
-
-// exactRaw reads authoritative compact state directly and drops
-// the local definition when Redis reports that its record no longer exists.
+// exactRaw reads compact state and identifies the catalog key on storage errors.
 func (c *toolsetCatalog) exactRaw(ctx context.Context, key string) (string, bool, error) {
 	raw, exists, err := c.store.Read(ctx, key)
 	if err != nil {
 		return "", false, fmt.Errorf("read catalog key %q: %w", key, err)
 	}
-	if !exists {
-		c.definitionsMu.Lock()
-		delete(c.definitions, strings.TrimPrefix(key, toolsetCatalogKeyPrefix))
-		c.definitionsMu.Unlock()
-	}
 	return raw, exists, nil
 }
 
 // newCatalogState derives the small discovery summary once per admission.
-func newCatalogState(definition *catalogToolset, revision, token, leaseKey string, lease providerLease, now time.Time) catalogState {
+func newCatalogState(definition *catalogToolset, revision, token string, now time.Time) catalogState {
 	registeredAt := now.UTC().Format(time.RFC3339Nano)
 	info := copyToolsetInfo(definition.info)
 	info.RegisteredAt = registeredAt
@@ -847,7 +801,7 @@ func newCatalogState(definition *catalogToolset, revision, token, leaseKey strin
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		RegistrationToken:   token,
 		RegisteredAt:        registeredAt,
-		ProviderLeases:      map[string]providerLease{leaseKey: lease},
+		ProviderLeases:      make(map[string]providerLease),
 		HealthEpoch:         1,
 	}
 }
@@ -880,6 +834,19 @@ func nonDrainingProviderCount(entry catalogState) int {
 		}
 	}
 	return count
+}
+
+// routableProviderDeadline returns the last expiry among non-draining leases
+// after pruning. A join can preserve health only if one survives until commit.
+// Compute this before adding or extending the joining provider's lease.
+func routableProviderDeadline(entry catalogState) int64 {
+	var deadline int64
+	for _, lease := range entry.ProviderLeases {
+		if !lease.Draining {
+			deadline = max(deadline, lease.ExpiresAtUnixMilli)
+		}
+	}
+	return deadline
 }
 
 // routableProviderCount returns unexpired non-draining leases at now.

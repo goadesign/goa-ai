@@ -18,6 +18,22 @@ import (
 // renew leases for the one active schema and admission revision; consumers
 // discover and invoke only healthy admitted providers.
 type Service interface {
+	// Create a complete immutable service toolset before any provider connects.
+	// The registry assigns its admission revision and registration time. An
+	// identical active declaration returns the original saved definition, token,
+	// and time; a different declaration or native Agent occupancy returns
+	// admission_conflict. A retired service declaration returns admission_retired.
+	// Declaration does not create a provider lease or establish health.
+	DeclareServiceToolset(context.Context, *ServiceToolsetDeclaration) (res *ResolvedToolset, err error)
+	// Attach one provider incarnation to the exact existing service registration
+	// without sending or changing its definition. The expected token and current
+	// wire protocol are required. Missing, different, or native Agent
+	// registrations return admission_conflict; permanently retired tokens return
+	// admission_retired. Repeating attachment preserves the original registration
+	// time and any longer lease deadline. An already-draining incarnation returns
+	// provider_lease_lost. After startup, use RenewProvider; attachment is not a
+	// renewal recovery operation.
+	AttachProvider(context.Context, *AttachProviderPayload) (res *RegisterResult, err error)
 	// Reject providers whose required runtime-owned wire protocol version differs
 	// from the registry, then atomically admit one provider-incarnation lease in
 	// the catalog admission record. The same wire version, schema, and admission
@@ -163,7 +179,7 @@ const ServiceName = "registry"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [20]string{"Register", "RenewProvider", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "RegisterAgentToolset", "ReplaceAgentToolset", "ListToolsets", "GetToolset", "ResolveToolset", "CheckAdmission", "Search", "CallTool", "CallResolvedTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
+var MethodNames = [22]string{"DeclareServiceToolset", "AttachProvider", "Register", "RenewProvider", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "RegisterAgentToolset", "ReplaceAgentToolset", "ListToolsets", "GetToolset", "ResolveToolset", "CheckAdmission", "Search", "CallTool", "CallResolvedTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
 
 // AdmissionStatus is the result type of the registry service CheckAdmission
 // method.
@@ -196,6 +212,21 @@ type AgentToolsetDeclaration struct {
 	Tags []string
 	// Complete Agent tool declarations.
 	Tools []*ToolSchema
+}
+
+// AttachProviderPayload is the payload type of the registry service
+// AttachProvider method.
+type AttachProviderPayload struct {
+	// Name of the registered toolset
+	Name string
+	// Stable identity of the provider process
+	ProviderID string
+	// Exact admission token returned by declaration, registration, or resolution.
+	ExpectedRegistrationToken string
+	// Runtime-generated UUID of the exact Serve lifecycle.
+	ProviderIncarnationID string
+	// Required runtime-owned provider message version.
+	WireProtocolVersion int
 }
 
 // CallResolvedToolPayload is the payload type of the registry service
@@ -358,7 +389,7 @@ type DrainProviderPayload struct {
 	Name string
 	// Stable identity of the provider process
 	ProviderID string
-	// Exact admission-generation token returned by Register
+	// Exact admission token returned by declaration, registration, or resolution.
 	ExpectedRegistrationToken string
 	// Runtime-generated UUID of the exact Serve lifecycle.
 	ProviderIncarnationID string
@@ -469,13 +500,15 @@ type RegisterPayload struct {
 	SchemaFingerprint string
 }
 
-// RegisterResult is the result type of the registry service Register method.
+// RegisterResult is the result type of the registry service AttachProvider
+// method.
 type RegisterResult struct {
 	// ISO 8601 timestamp of registration
 	RegisteredAt string
-	// Deterministic admission-generation token derived from the wire protocol
-	// version, canonical schema fingerprint, and deployment-issued admission
-	// revision
+	// Deterministic admission token derived from the wire protocol version,
+	// canonical schema fingerprint, and admission revision. Register uses a
+	// deployment-issued revision; DeclareServiceToolset assigns a registry-issued
+	// revision.
 	RegistrationToken string
 	// Duration of the admitted provider lease in milliseconds
 	LeaseDurationMs int64
@@ -488,7 +521,7 @@ type ReleaseProviderPayload struct {
 	Name string
 	// Stable identity of the provider process
 	ProviderID string
-	// Exact admission-generation token returned by Register
+	// Exact admission token returned by declaration, registration, or resolution.
 	ExpectedRegistrationToken string
 	// Runtime-generated UUID of the exact Serve lifecycle.
 	ProviderIncarnationID string
@@ -501,7 +534,7 @@ type RenewProviderPayload struct {
 	Name string
 	// Stable identity of the provider process
 	ProviderID string
-	// Exact admission-generation token returned by Register
+	// Exact admission token returned by declaration, registration, or resolution.
 	ExpectedRegistrationToken string
 	// Runtime-generated UUID of the exact Serve lifecycle.
 	ProviderIncarnationID string
@@ -532,7 +565,7 @@ type ReplaceAgentToolsetPayload struct {
 }
 
 // ResolvedToolset is the result type of the registry service
-// RegisterAgentToolset method.
+// DeclareServiceToolset method.
 type ResolvedToolset struct {
 	// Complete toolset definition read from the active registration.
 	Toolset *Toolset
@@ -576,6 +609,22 @@ type SearchResult struct {
 
 // Semantic version string (for example, "1.0.0" or "v1.0.0").
 type SemVer string
+
+// ServiceToolsetDeclaration is the payload type of the registry service
+// DeclareServiceToolset method.
+type ServiceToolsetDeclaration struct {
+	// Unique toolset route name.
+	Name string
+	// Human-readable description of the toolset.
+	Description *string
+	// Semantic version of the toolset.
+	Version *SemVer
+	// Categories used by discovery filters.
+	Tags []string
+	// Complete portable service tool declarations, including consumer contracts
+	// and matching pagination partners.
+	Tools []*ToolSchema
+}
 
 // Declares that successful results include the runtime's canonical result
 // bounds.
@@ -764,24 +813,19 @@ type ToolsetInfo struct {
 type UnregisterPayload struct {
 	// Name of the toolset to unregister
 	Name string
-	// Current token returned by Register, RegisterAgentToolset,
-	// ReplaceAgentToolset, or ResolveToolset.
+	// Current token returned by Register, DeclareServiceToolset,
+	// RegisterAgentToolset, ReplaceAgentToolset, or ResolveToolset.
 	ExpectedRegistrationToken string
 }
 
-// MakeAdmissionBlocked builds a goa.ServiceError from an error.
-func MakeAdmissionBlocked(err error) *goa.ServiceError {
-	return goa.NewServiceError(err, "admission_blocked", false, false, false)
+// MakeAdmissionConflict builds a goa.ServiceError from an error.
+func MakeAdmissionConflict(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "admission_conflict", false, false, false)
 }
 
 // MakeAdmissionRetired builds a goa.ServiceError from an error.
 func MakeAdmissionRetired(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "admission_retired", false, false, false)
-}
-
-// MakeProviderLeaseLost builds a goa.ServiceError from an error.
-func MakeProviderLeaseLost(err error) *goa.ServiceError {
-	return goa.NewServiceError(err, "provider_lease_lost", false, false, false)
 }
 
 // MakeValidationError builds a goa.ServiceError from an error.
@@ -794,9 +838,14 @@ func MakeServiceUnavailable(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "service_unavailable", false, false, false)
 }
 
-// MakeAdmissionConflict builds a goa.ServiceError from an error.
-func MakeAdmissionConflict(err error) *goa.ServiceError {
-	return goa.NewServiceError(err, "admission_conflict", false, false, false)
+// MakeProviderLeaseLost builds a goa.ServiceError from an error.
+func MakeProviderLeaseLost(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "provider_lease_lost", false, false, false)
+}
+
+// MakeAdmissionBlocked builds a goa.ServiceError from an error.
+func MakeAdmissionBlocked(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "admission_blocked", false, false, false)
 }
 
 // MakeNotFound builds a goa.ServiceError from an error.

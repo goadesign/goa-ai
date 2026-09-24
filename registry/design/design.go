@@ -55,6 +55,29 @@ var _ = Service("registry", func() {
 
 	// ---- Provider Operations ----
 
+	Method("DeclareServiceToolset", func() {
+		Description("Create a complete immutable service toolset before any provider connects. The registry assigns its admission revision and registration time. An identical active declaration returns the original saved definition, token, and time; a different declaration or native Agent occupancy returns admission_conflict. A retired service declaration returns admission_retired. Declaration does not create a provider lease or establish health.")
+		Payload(ServiceToolsetDeclaration)
+		Result(ResolvedToolset)
+		Error("admission_conflict")
+		Error("admission_retired")
+		Error("validation_error")
+		Error("service_unavailable")
+		GRPC(func() {})
+	})
+
+	Method("AttachProvider", func() {
+		Description("Attach one provider incarnation to the exact existing service registration without sending or changing its definition. The expected token and current wire protocol are required. Missing, different, or native Agent registrations return admission_conflict; permanently retired tokens return admission_retired. Repeating attachment preserves the original registration time and any longer lease deadline. An already-draining incarnation returns provider_lease_lost. After startup, use RenewProvider; attachment is not a renewal recovery operation.")
+		Payload(AttachProviderPayload)
+		Result(RegisterResult)
+		Error("admission_conflict")
+		Error("admission_retired")
+		Error("provider_lease_lost")
+		Error("validation_error")
+		Error("service_unavailable")
+		GRPC(func() {})
+	})
+
 	Method("Register", func() {
 		Description("Reject providers whose required runtime-owned wire protocol version differs from the registry, then atomically admit one provider-incarnation lease in the catalog admission record. The same wire version, schema, and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect. An already-draining incarnation returns provider_lease_lost; full registration cannot reopen it. Active providers use RenewProvider without resending definitions.")
 		Payload(RegisterPayload)
@@ -244,6 +267,29 @@ var _ = Service("registry", func() {
 
 // ---- Payload and Result Types ----
 
+var ServiceToolsetDeclaration = Type("ServiceToolsetDeclaration", func() {
+	Description("Complete service toolset declaration, independent of provider membership.")
+	Reference(RegisterPayload)
+	Field(1, "name", String, "Unique toolset route name.")
+	Field(2, "description", String, "Human-readable description of the toolset.")
+	Field(3, "version", registrytypes.SemVer, "Semantic version of the toolset.")
+	Field(4, "tags", ArrayOf(String), "Categories used by discovery filters.")
+	Field(5, "tools", ArrayOf(registrytypes.ToolSchema), "Complete portable service tool declarations, including consumer contracts and matching pagination partners.", func() {
+		MinLength(1)
+	})
+	Required("name", "tools")
+})
+
+var AttachProviderPayload = Type("AttachProviderPayload", func() {
+	Description("Exact existing service registration and provider incarnation to attach.")
+	providerLeaseIdentityFields()
+	Field(5, "wire_protocol_version", Int, "Required runtime-owned provider message version.", func() {
+		Enum(toolregistry.WireProtocolVersion)
+		Example(toolregistry.WireProtocolVersion)
+	})
+	Required("wire_protocol_version")
+})
+
 var RegisterPayload = Type("RegisterPayload", func() {
 	Description("Payload for registering a toolset with the registry")
 	Field(1, "name", String, "Unique name for the toolset", func() {
@@ -291,7 +337,7 @@ var RegisterResult = Type("RegisterResult", func() {
 		Format(FormatDateTime)
 		Example("2024-01-15T10:30:00Z")
 	})
-	Field(2, "registration_token", String, "Deterministic admission-generation token derived from the wire protocol version, canonical schema fingerprint, and deployment-issued admission revision", func() {
+	Field(2, "registration_token", String, "Deterministic admission token derived from the wire protocol version, canonical schema fingerprint, and admission revision. Register uses a deployment-issued revision; DeclareServiceToolset assigns a registry-issued revision.", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
 		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
@@ -309,7 +355,7 @@ var UnregisterPayload = Type("UnregisterPayload", func() {
 		MinLength(1)
 		Example("data-tools")
 	})
-	Field(2, "expected_registration_token", String, "Current token returned by Register, RegisterAgentToolset, ReplaceAgentToolset, or ResolveToolset.", func() {
+	Field(2, "expected_registration_token", String, "Current token returned by Register, DeclareServiceToolset, RegisterAgentToolset, ReplaceAgentToolset, or ResolveToolset.", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
 		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
@@ -640,7 +686,7 @@ func providerLeaseIdentityFields() {
 		Pattern(`^[^\x00]+$`)
 		Example("catalog-provider/catalog.lookup")
 	})
-	Field(3, "expected_registration_token", String, "Exact admission-generation token returned by Register", func() {
+	Field(3, "expected_registration_token", String, "Exact admission token returned by declaration, registration, or resolution.", func() {
 		Pattern(toolregistry.RegistrationTokenPattern)
 		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})

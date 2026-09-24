@@ -2177,6 +2177,62 @@ reg := helpers.NewHelpersToolsetRegistration(serviceClient)
 rt.RegisterToolset(reg)
 ```
 
+### Service Declarations Before Provider Startup
+
+`DeclareServiceToolset` registers a complete service toolset independently of
+provider availability. Supply its name, description, version, tags, schemas, and
+portable consumer contracts. Every tool must support service execution; qualified
+names must be unique and pagination partners must agree. The route name retains
+the existing inclusive limit of 256 Unicode code points used by registration,
+provider lease operations, and returned toolset records. This is a per-route
+constraint, not a limit on a collection or run.
+
+The result is `ResolvedToolset`: the saved definition with its registration time
+and exact registration token. Fingerprints include the complete declaration and
+raw schema bytes, ignoring tool and tag order. Repeating an equal active
+declaration returns the original winner's definition order, token, and Redis
+time. A changed declaration or native Agent occupancy returns
+`admission_conflict`; retired service occupancy returns `admission_retired`.
+The registry allocates a UUID admission revision internally. No provider lease,
+stream, or ping is created by this operation, and it does not require a health
+tracker. The existing catalog scheduler may acquire its sampling lease and
+report the disconnected toolset unavailable. Resolution and discovery do
+not imply readiness; `CheckAdmission` still requires a live routable lease and a
+fresh authenticated pong.
+
+To connect a provider to that declaration, capture its exact token in the
+`Registration.Register` closure and call `AttachProvider` with the name, token,
+provider ID, runtime-supplied incarnation, and `registrywire.WireProtocolVersion`.
+It returns `RegisterResult`, including the original declaration timestamp and
+the granted lease duration. It never resends or replaces definitions. Startup
+retries preserve longer lease deadlines and reject draining incarnations.
+Attachment and deployment replacement compete in one conditional Redis update;
+attachment cannot accidentally join a replacement registration.
+
+The existing `Serve` loop owns startup retries, renewal, claim, completion, drain,
+and release for either callback. `admission_conflict`, `admission_retired`,
+`provider_lease_lost`, and `validation_error` stop startup permanently.
+`service_unavailable` remains retryable while the startup context allows it.
+Neither new method uses `not_found`. After admission, lost lease authority stops
+`Serve`; it never calls either startup operation again to regain authority.
+A new Serve lifecycle has a new incarnation. Attachment gives that incarnation
+its own membership, never another incarnation's already-claimed calls.
+
+Deployment-managed generated providers continue using `Register`, including its
+existing replacement and retirement rules. Native Agent declaration and
+replacement remain separate. These operations require application-owned access
+control; names, tags, and registration tokens are not authorization credentials.
+
+**Source migration:** `provider.Registration` no longer has an
+`AdmissionRevision` field, and its `Register` callback no longer receives an
+admission-revision argument. Deployment composition roots must validate and
+capture the real revision before calling `Serve`. Do not supply a placeholder
+revision for attachment. Regenerate provider quickstarts and update callback
+literals and generated registry client construction together. This change adds
+RPCs without changing existing protobuf field numbers, wire protocol version, or
+saved catalog encoding; existing service and native records require no conversion
+for this increment.
+
 ### Registry-Routed Provider Execution (Service-Side)
 
 Goa-AI supports cross-process tool invocation via the **Internal Tool Registry**. In this mode:
@@ -2197,12 +2253,14 @@ toolSchemas := toolsetpkg.ToolSchemas()
 handler := toolsetpkg.NewProvider(serviceImpl)
 providerID := podName + "/" + toolsetID
 admissionRevision := mustRequiredEnv("TOOL_REGISTRY_ADMISSION_REVISION")
+if err := registrywire.ValidateAdmissionRevision(admissionRevision); err != nil {
+    return err
+}
 providerErr := make(chan error, 1)
 go func() {
     providerErr <- toolprovider.Serve(ctx, pulseClient, toolsetID, handler,
         toolprovider.Registration{
-            AdmissionRevision: admissionRevision,
-            Register: func(ctx context.Context, toolset, providerID, incarnationID, admissionRevision string) (toolprovider.RegistrationLease, error) {
+            Register: func(ctx context.Context, toolset, providerID, incarnationID string) (toolprovider.RegistrationLease, error) {
                 schemaFingerprint, err := toolsetpkg.SchemaFingerprint(toolset)
                 if err != nil {
                     return toolprovider.RegistrationLease{}, err
@@ -2358,6 +2416,8 @@ func newRegistryClient(address string) (*genregistry.Client, func() error, error
 	}
 	transport := genregistrygrpc.NewClient(conn, grpc.WaitForReady(true))
 	return genregistry.NewClient(
+		transport.DeclareServiceToolset(),
+		transport.AttachProvider(),
 		transport.Register(),
 		transport.RenewProvider(),
 		transport.ReleaseProvider(),
@@ -2396,8 +2456,10 @@ code never supplies or infers it. A delayed old-process release therefore cannot
 Deployment
 configuration supplies one required `AdmissionRevision` shared by every replica
 in one fenced admission. Reuse it for scaling and same-contract RollingUpdate;
-change it only when a new schema or rollout fence is intended. `Serve` passes
-the revision to Register and the provider/incarnation identity to its callbacks. It
+change it only when a new schema or rollout fence is intended. Validate it with
+`registrywire.ValidateAdmissionRevision` before calling `Serve`, and capture it
+in the `Register` callback. `Serve` passes only the provider/incarnation identity
+and toolset to that callback. It
 opens the Pulse stream, waits for typed registration, and only then creates the
 consumer-group sink. Calls published after admission but before sink startup
 remain queued; an unadmitted process cannot claim them.
@@ -2408,9 +2470,11 @@ for a same-contract binary rollout. Do not derive the revision from pod names,
 startup time, random process IDs, ReplicaSet hashes, filesystem metadata, or
 runtime Kubernetes inspection. The accepted syntax is
 `^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,255}$`.
-`Registration.Register` runs only during startup. It submits the runtime-owned
-`WireProtocolVersion`, generated `ToolSchemas()`, schema fingerprint, and fixed
-`AdmissionRevision`. A successful result supplies the one `RegistrationToken`
+`Registration.Register` runs only during startup. For deployment-managed
+providers, its closure submits the runtime-owned `WireProtocolVersion`, generated
+`ToolSchemas()`, schema fingerprint, and captured `AdmissionRevision`. For an
+existing declaration, its closure instead calls `AttachProvider` with the exact
+captured token and current wire version. A successful result supplies one `RegistrationToken`
 for this Serve lifecycle and its initial `LeaseDurationMs`. Startup may retry
 transient errors with bounded exponential jitter; an active provider never
 uses Register to recover lost lease authority.
@@ -2461,20 +2525,29 @@ inconsistent retirement membership fail startup. It does not convert or repair
 stored data. Existing installations require the [offline storage
 upgrade](#registry-storage-upgrade).
 
-Each replica compares the fingerprint in current state with its cached
-definition before fetching definition bytes. On a miss, it reads state and
-definition together, validates them, and prepares a map from tool names to
-compiled execution schemas using the existing schema validator. Calls use that
-map to validate dynamic argument JSON without decoding the whole toolset or
-rehashing and recompiling its schemas. `GetToolset` and `ResolveToolset` still
-return independent full definitions with metadata from the selected state.
-The cache never substitutes for live authorization or changes the consumer's
-per-planning-activity catalog lifetime.
+Every definition-dependent read fetches state, definition, and retirement
+membership together and validates the complete snapshot. This includes
+`GetToolset`, `ResolveToolset`, and call preparation or its availability retries.
+A semantic fingerprint can ignore ordering, and native replacement can reuse a
+token, so neither selects a previously cached definition. Returned definitions
+are independently owned and carry the selected state's token and time.
+
+The existing schema validator still reuses compiled schemas by digest. Each
+snapshot prepares its tool-name map from those compiled objects; dynamic
+arguments are checked against that map. Full definition transfer, decoding and
+fingerprinting therefore remain part of each definition-dependent read. Lease
+and health operations continue to read only compact state. This does not change
+live authorization or the consumer's per-planning-activity catalog lifetime.
 
 A change between zero and nonzero routable providers advances the health epoch
 and clears pong freshness. Draining or releasing an already non-routable lease
 does not advance it. Ping IDs carry the registration token and epoch; Pong
-checks both and the responding incarnation atomically. Health requires at least
+checks both and the responding incarnation atomically. When attachment or
+same-token Register preserves health, its atomic write also checks that at least
+one previous routable lease has not expired. If time invalidates that condition,
+it rereads current state before joining. A delayed join across an empty interval
+cannot reuse the old pong; uninterrupted healthy retries preserve it. Health
+requires at least
 one unexpired, non-draining lease and a fresh current-epoch pong, not a pong
 from every replica.
 
@@ -2557,7 +2630,8 @@ tokens or calls `Unregister` during rollout.
 `Unregister` is reserved for
 intentional retirement: exact active becomes retired while preserving leases,
 same-token retry succeeds, stale token returns `admission_conflict`, and the
-same retired token returns permanent `admission_retired` from `Register`.
+same retired token returns permanent `admission_retired` from `Register` or
+`AttachProvider`. Declaration cannot reclaim a retired service name.
 
 Do not overlap different admission generations on the same toolset stream.
 The registry persists `WireProtocolVersion`, `SchemaFingerprint`, and
@@ -5587,14 +5661,15 @@ Catalog storage operations emit the following spans, each identified by
 
 | Span | Byte-count attributes and meaning |
 | --- | --- |
-| `toolregistry.catalog.state.read` | `toolregistry.catalog.state_read_bytes`: compact state returned by Redis. A warm read also checks that the paired definition exists without fetching its bytes. |
+| `toolregistry.catalog.state.read` | `toolregistry.catalog.state_read_bytes`: compact state returned by Redis. Each compact read also checks that the paired definition exists without fetching its bytes. |
 | `toolregistry.catalog.state.update` | `toolregistry.catalog.state_compare_bytes`, `toolregistry.catalog.state_write_bytes`, and `toolregistry.catalog.definition_write_bytes`: the previous state compared and the proposed state/definition supplied to one conditional update. |
-| `toolregistry.catalog.definition.load` | `toolregistry.catalog.state_read_bytes` and `toolregistry.catalog.definition_read_bytes`: the coherent state/definition pair fetched for validation and cache loading. |
+| `toolregistry.catalog.definition.load` | `toolregistry.catalog.state_read_bytes` and `toolregistry.catalog.definition_read_bytes`: the coherent state/definition pair fetched for validation and schema preparation. |
 
 Update byte counts describe the attempted write, including an attempt that
 loses to another writer. `toolregistry.catalog.conditional_retry` is `true`
-when the stored state changed before that update could commit; this is an
-ordinary retry, not a storage fault. Together these spans show whether frequent
+when another writer changed the state or the previous routable membership
+expired before a health-preserving join could commit. This is an ordinary retry,
+not a storage fault. Together these spans show whether frequent
 lease and health operations stay on compact state and whether definition loads
 are occurring.
 

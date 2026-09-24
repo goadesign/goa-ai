@@ -3,7 +3,8 @@
 package registry
 
 // Real Redis tests pin the storage split and the atomic renewal checks. Large
-// schemas must not affect steady-state lease, health, or call-preparation reads.
+// schemas must not affect steady-state lease or health reads. Definition-dependent
+// reads transfer complete snapshots and reuse compiled execution schemas.
 
 import (
 	"context"
@@ -135,7 +136,7 @@ func TestRedisRetirementSurvivesCurrentRecordLoss(t *testing.T) {
 	require.ErrorIs(t, err, errAdmissionRetired)
 }
 
-func TestRedisWarmCatalogDoesNotTransferDefinitions(t *testing.T) {
+func TestRedisCompactLifecycleDoesNotTransferDefinitions(t *testing.T) {
 	ctx := t.Context()
 	rdb := getRedis(t)
 	store := &measuredCatalogStore{catalogStore: newRedisCatalogStore(rdb, t.Name())}
@@ -157,7 +158,7 @@ func TestRedisWarmCatalogDoesNotTransferDefinitions(t *testing.T) {
 	first, err := catalog.Register(ctx, definition, testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
 	require.NoError(t, err)
 
-	// A second registry process validates one complete definition on first use.
+	// A second registry process validates a complete definition on each use.
 	other := newToolsetCatalog(store, newRedisTimeSource(rdb))
 	_, err = other.ActiveRegistration(ctx, toolset.Name)
 	require.NoError(t, err)
@@ -172,14 +173,18 @@ func TestRedisWarmCatalogDoesNotTransferDefinitions(t *testing.T) {
 		list, err := other.ListToolsets(ctx, nil)
 		require.NoError(t, err)
 		require.Len(t, list, 1)
+	}
+	assert.Equal(t, 1, store.definitionReads, "lease and health operations must not fetch definitions")
+	assert.Equal(t, 1, store.definitionWrites, "renewal and pong must not rewrite definitions")
+	assert.Less(t, store.stateBytes, 100_000, "all state traffic remains smaller than one full definition")
+	t.Logf("definition=%d bytes; 10 renewal/pong/health/list cycles transferred %d compact JSON bytes", len(definition.raw), store.stateBytes)
+	for range 10 {
 		registration, err := other.ActiveRegistration(ctx, toolset.Name)
 		require.NoError(t, err)
 		require.NoError(t, validatePayload(registration.Toolset.executionSchemas["lookup"], []byte(`{}`)))
 	}
-	assert.Equal(t, 1, store.definitionReads, "warm lifecycle and call preparation must not fetch definitions")
-	assert.Equal(t, 1, store.definitionWrites, "renewal and pong must not rewrite definitions")
-	assert.Less(t, store.stateBytes, 100_000, "all state traffic remains smaller than one full definition")
-	t.Logf("definition=%d bytes; 10 renewal/pong/health/list/call-preparation cycles transferred %d compact JSON bytes", len(definition.raw), store.stateBytes)
+	assert.Equal(t, 11, store.definitionReads, "definition-dependent operations read an atomic snapshot each time")
+	assert.Equal(t, 1, store.definitionWrites)
 }
 
 func TestRedisCatalogReportsBoundedOperationSizes(t *testing.T) {
@@ -219,7 +224,7 @@ func TestRedisCatalogReportsBoundedOperationSizes(t *testing.T) {
 	}
 	assert.Equal(t, 1, seen["toolregistry.catalog.definition.load"])
 	assert.Equal(t, 2, seen["toolregistry.catalog.state.update"])
-	assert.Equal(t, 3, seen["toolregistry.catalog.state.read"])
+	assert.Equal(t, 2, seen["toolregistry.catalog.state.read"])
 }
 
 func (s *measuredCatalogStore) Read(ctx context.Context, key string) (string, bool, error) {

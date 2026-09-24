@@ -131,6 +131,12 @@ func TestQuickstart_IncludesProvidersSection_WhenGenerated(t *testing.T) {
 	require.NotEmpty(t, content)
 	require.Contains(t, content, "Service-Side Tool Providers (Registry-Routed Execution)")
 	require.Contains(t, content, "gen/<service>/toolsets/<toolset>/provider.go")
+	beforeServe, _, found := strings.Cut(content, "go func() {")
+	require.True(t, found)
+	require.Contains(t, beforeServe, "registrywire.ValidateAdmissionRevision(admissionRevision)")
+	require.Contains(t, content, "Register: func(ctx context.Context, toolset, providerID, incarnationID string)")
+	require.Contains(t, content, "AdmissionRevision: admissionRevision,")
+	require.NotContains(t, content, "incarnationID, admissionRevision string")
 
 	// The generated example must renew the existing lease through the small
 	// typed operation; it cannot upload tool definitions after startup.

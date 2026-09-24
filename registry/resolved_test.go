@@ -33,7 +33,7 @@ func TestResolveToolsetReturnsOneRegistration(t *testing.T) {
 	replacementRaw, exists := replacementStore.Get(key)
 	require.True(t, exists)
 	var replace sync.Once
-	store.afterExactRead = func(readKey string) {
+	store.afterSnapshot = func(readKey string) {
 		require.Equal(t, key, readKey)
 		replace.Do(func() {
 			store.mu.Lock()
