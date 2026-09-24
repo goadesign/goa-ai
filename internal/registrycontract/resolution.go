@@ -38,32 +38,42 @@ func Resolve(registered *genregistry.ResolvedToolset) (*Resolution, error) {
 	); err != nil {
 		return nil, fmt.Errorf("registry resolution: %w", err)
 	}
-	result := &Resolution{
-		Registered: registered,
-		Specs:      make(map[tools.Ident]tools.ToolSpec, len(registered.Toolset.Tools)),
-		byName:     make(map[tools.Ident]*genregistry.ToolSchema, len(registered.Toolset.Tools)),
+	specs, err := Compile(registered.Toolset.Tools)
+	if err != nil {
+		return nil, err
 	}
+	byName := make(map[tools.Ident]*genregistry.ToolSchema, len(registered.Toolset.Tools))
 	for _, declaration := range registered.Toolset.Tools {
+		byName[tools.Ident(declaration.Name)] = declaration
+	}
+	return &Resolution{Registered: registered, Specs: specs, byName: byName}, nil
+}
+
+// Compile validates a complete collection of portable tool declarations before
+// registration. Tool names must be qualified and unique, and pagination partners
+// must agree. No registration token or timestamp is needed to check definitions.
+func Compile(declarations []*genregistry.ToolSchema) (map[tools.Ident]tools.ToolSpec, error) {
+	specs := make(map[tools.Ident]tools.ToolSpec, len(declarations))
+	for _, declaration := range declarations {
 		name := tools.Ident(declaration.Name)
 		if name.Toolset() == "" || name.Tool() == "" {
 			return nil, fmt.Errorf("registry tool %q must be qualified", name)
 		}
-		if _, exists := result.Specs[name]; exists {
+		if _, exists := specs[name]; exists {
 			return nil, fmt.Errorf("registry resolution repeats tool %q", name)
 		}
 		spec, err := toolcontract.Compile(declaration)
 		if err != nil {
 			return nil, err
 		}
-		result.Specs[name] = spec
-		result.byName[name] = declaration
+		specs[name] = spec
 	}
-	for _, spec := range result.Specs {
-		if err := result.validatePaging(spec); err != nil {
+	for _, spec := range specs {
+		if err := validatePaging(specs, spec); err != nil {
 			return nil, err
 		}
 	}
-	return result, nil
+	return specs, nil
 }
 
 // Read validates a saved binding without consulting the current remote catalog.
@@ -114,19 +124,19 @@ func (r *Resolution) Select(registry string, name tools.Ident) (*tools.RegistryB
 
 // validatePaging rejects incomplete or contradictory source/continuation
 // pairs before the model can select a query whose cursor cannot be advanced.
-func (r *Resolution) validatePaging(spec tools.ToolSpec) error {
+func validatePaging(specs map[tools.Ident]tools.ToolSpec, spec tools.ToolSpec) error {
 	if spec.Bounds == nil || spec.Bounds.Paging == nil {
 		return nil
 	}
 	paging := spec.Bounds.Paging
 	if paging.SourceTool != "" {
-		source, ok := r.Specs[paging.SourceTool]
+		source, ok := specs[paging.SourceTool]
 		if !ok || source.Bounds == nil || source.Bounds.Paging == nil ||
 			source.Bounds.Paging.ContinueTool != spec.Name || paging.ContinueTool != spec.Name {
 			return fmt.Errorf("registry continuation %q has no matching source %q", spec.Name, paging.SourceTool)
 		}
 	} else if paging.ContinueTool != "" && paging.ContinueTool != spec.Name {
-		target, ok := r.Specs[paging.ContinueTool]
+		target, ok := specs[paging.ContinueTool]
 		if !ok || target.Bounds == nil || target.Bounds.Paging == nil ||
 			target.Bounds.Paging.SourceTool != spec.Name {
 			return fmt.Errorf("registry query %q has no matching continuation %q", spec.Name, paging.ContinueTool)

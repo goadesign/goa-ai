@@ -40,7 +40,8 @@ const (
 // It executes the agent's plan/tool loop using the configured planner, policy,
 // and runtime hooks. Returns the final agent output or an error if the workflow
 // fails. Generated code calls this from the workflow handler registered with
-// the engine.
+// the engine. An exact start replay of a closed run returns
+// engine.ErrWorkflowCompleted without replacing that run's result.
 func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput) (output *RunOutput, workflowErr error) {
 	if err := validateWorkflowRunInput(input); err != nil {
 		return nil, err
@@ -227,6 +228,9 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	startResult := runStartStorageResult(input, startOutput)
 	if startResult.Outcome == session.RunStartStop {
 		return nil, context.Canceled
+	}
+	if session.IsTerminalRunStatus(startResult.RunStatus) {
+		return nil, engine.ErrWorkflowCompleted
 	}
 	historyEndID := startResult.Records[len(startResult.Records)-1].ID
 	recordTerminalResult = true

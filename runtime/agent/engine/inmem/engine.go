@@ -426,7 +426,8 @@ func (e *eng) runWorkflow(
 			}
 			return copied, nil
 		}
-		if errors.Is(err, context.Canceled) || temporalerrors.IsRequestValidation(err) || !workflowRetryAllowed(retryPolicy, attempt) {
+		if errors.Is(err, context.Canceled) || errors.Is(err, engine.ErrWorkflowCompleted) ||
+			temporalerrors.IsRequestValidation(err) || !workflowRetryAllowed(retryPolicy, attempt) {
 			return result, err
 		}
 		cancellations.endAttempt()

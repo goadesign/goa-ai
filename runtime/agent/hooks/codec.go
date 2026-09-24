@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"time"
+	"unicode/utf8"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
@@ -505,11 +506,14 @@ func DecodeRunlogEvent(event *runlog.Event) (Event, error) {
 	return decoded, nil
 }
 
-// decodeRecordPayload requires one non-null JSON object that matches the
-// durable record shape. It rejects unknown fields and any value after that
-// object.
+// decodeRecordPayload requires one non-null UTF-8 JSON object that matches the
+// durable record shape. It rejects invalid UTF-8 before JSON decoding can replace
+// bytes with different text, and rejects unknown fields and trailing values.
 func decodeRecordPayload[T any](data []byte) (T, error) {
 	var zero T
+	if !utf8.Valid(data) {
+		return zero, errors.New("record payload contains invalid UTF-8")
+	}
 	var payload *T
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()

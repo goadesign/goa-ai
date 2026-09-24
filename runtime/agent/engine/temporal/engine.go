@@ -303,9 +303,8 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 	return nil
 }
 
-// temporalWorkflowHandler restores Temporal's cancellation error at the
-// adapter boundary after the backend-neutral runtime has classified the run.
-// Temporal otherwise records context.Canceled as workflow failure.
+// temporalWorkflowHandler preserves cancellation and rejects a new execution
+// of an already closed run when the runtime returns it to Temporal.
 func (e *Engine) temporalWorkflowHandler(
 	handler func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error),
 ) func(workflow.Context, *api.RunInput) (*api.RunOutput, error) {
@@ -313,6 +312,11 @@ func (e *Engine) temporalWorkflowHandler(
 		wfCtx := newTemporalWorkflowContext(e, tctx)
 		defer e.releaseWorkflowContext(wfCtx.runID)
 		out, err := handler(wfCtx, input)
+		if errors.Is(err, engine.ErrWorkflowCompleted) {
+			return out, temporal.NewNonRetryableApplicationError(
+				engine.ErrWorkflowCompleted.Error(), cancellationCompletedErrorType, nil,
+			)
+		}
 		if temporalerrors.CancellationOnly(err) {
 			return out, temporal.NewCanceledError("workflow canceled")
 		}

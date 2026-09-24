@@ -651,8 +651,23 @@ their methods can run or allocate unchecked output.
 
 Callers using a custom-encoded key type must supply plain string keys or a
 named string type without an encoder before writing a new workflow payload.
-Existing persisted JSON reads and stored-data formats are unchanged; this
-input restriction requires no stored-data migration.
+These map-key write restrictions do not change persisted JSON reads or
+stored-data formats and require no stored-data migration.
+
+`hooks.DecodeFromRecordInput` and `hooks.DecodeRunlogEvent` use strict payload
+decoding for `RunStarted`, `RunSuspended`, `RunCompleted`, `ChildRunLinked`,
+`ModelOutputRejected`, and `PlannerOutputRejected`. Their raw JSON must be valid
+UTF-8: malformed byte sequences return an error before JSON decoding can replace
+them with U+FFFD. Each payload must still be one non-null object with no unknown
+fields or trailing values. Valid non-ASCII text, Unicode and control escapes,
+and literal or escaped U+FFFD retain their existing decoding behavior.
+
+Lifecycle validators use this decoder before the store appends records or
+changes run state. Previously saved records containing invalid raw UTF-8 now
+fail decoding too; the runtime does not normalize, truncate, or rewrite them.
+Valid record formats and schema versions are unchanged, and no regeneration or
+stored-data migration is required for valid records. This check adds no byte
+cap and does not broaden validation of other hook kinds.
 
 ---
 
@@ -2242,6 +2257,62 @@ reg := helpers.NewHelpersToolsetRegistration(serviceClient)
 rt.RegisterToolset(reg)
 ```
 
+### Service Declarations Before Provider Startup
+
+`DeclareServiceToolset` registers a complete service toolset independently of
+provider availability. Supply its name, description, version, tags, schemas, and
+portable consumer contracts. Every tool must support service execution; qualified
+names must be unique and pagination partners must agree. The route name retains
+the existing inclusive limit of 256 Unicode code points used by registration,
+provider lease operations, and returned toolset records. This is a per-route
+constraint, not a limit on a collection or run.
+
+The result is `ResolvedToolset`: the saved definition with its registration time
+and exact registration token. Fingerprints include the complete declaration and
+raw schema bytes, ignoring tool and tag order. Repeating an equal active
+declaration returns the original winner's definition order, token, and Redis
+time. A changed declaration or native Agent occupancy returns
+`admission_conflict`; retired service occupancy returns `admission_retired`.
+The registry allocates a UUID admission revision internally. No provider lease,
+stream, or ping is created by this operation, and it does not require a health
+tracker. The existing catalog scheduler may acquire its sampling lease and
+report the disconnected toolset unavailable. Resolution and discovery do
+not imply readiness; `CheckAdmission` still requires a live routable lease and a
+fresh authenticated pong.
+
+To connect a provider to that declaration, capture its exact token in the
+`Registration.Register` closure and call `AttachProvider` with the name, token,
+provider ID, runtime-supplied incarnation, and `registrywire.WireProtocolVersion`.
+It returns `RegisterResult`, including the original declaration timestamp and
+the granted lease duration. It never resends or replaces definitions. Startup
+retries preserve longer lease deadlines and reject draining incarnations.
+Attachment and deployment replacement compete in one conditional Redis update;
+attachment cannot accidentally join a replacement registration.
+
+The existing `Serve` loop owns startup retries, renewal, claim, completion, drain,
+and release for either callback. `admission_conflict`, `admission_retired`,
+`provider_lease_lost`, and `validation_error` stop startup permanently.
+`service_unavailable` remains retryable while the startup context allows it.
+Neither new method uses `not_found`. After admission, lost lease authority stops
+`Serve`; it never calls either startup operation again to regain authority.
+A new Serve lifecycle has a new incarnation. Attachment gives that incarnation
+its own membership, never another incarnation's already-claimed calls.
+
+Deployment-managed generated providers continue using `Register`, including its
+existing replacement and retirement rules. Native Agent declaration and
+replacement remain separate. These operations require application-owned access
+control; names, tags, and registration tokens are not authorization credentials.
+
+**Source migration:** `provider.Registration` no longer has an
+`AdmissionRevision` field, and its `Register` callback no longer receives an
+admission-revision argument. Deployment composition roots must validate and
+capture the real revision before calling `Serve`. Do not supply a placeholder
+revision for attachment. Regenerate provider quickstarts and update callback
+literals and generated registry client construction together. This change adds
+RPCs without changing existing protobuf field numbers, wire protocol version, or
+saved catalog encoding; existing service and native records require no conversion
+for this increment.
+
 ### Registry-Routed Provider Execution (Service-Side)
 
 Goa-AI supports cross-process tool invocation via the **Internal Tool Registry**. In this mode:
@@ -2262,12 +2333,14 @@ toolSchemas := toolsetpkg.ToolSchemas()
 handler := toolsetpkg.NewProvider(serviceImpl)
 providerID := podName + "/" + toolsetID
 admissionRevision := mustRequiredEnv("TOOL_REGISTRY_ADMISSION_REVISION")
+if err := registrywire.ValidateAdmissionRevision(admissionRevision); err != nil {
+    return err
+}
 providerErr := make(chan error, 1)
 go func() {
     providerErr <- toolprovider.Serve(ctx, pulseClient, toolsetID, handler,
         toolprovider.Registration{
-            AdmissionRevision: admissionRevision,
-            Register: func(ctx context.Context, toolset, providerID, incarnationID, admissionRevision string) (toolprovider.RegistrationLease, error) {
+            Register: func(ctx context.Context, toolset, providerID, incarnationID string) (toolprovider.RegistrationLease, error) {
                 schemaFingerprint, err := toolsetpkg.SchemaFingerprint(toolset)
                 if err != nil {
                     return toolprovider.RegistrationLease{}, err
@@ -2423,6 +2496,8 @@ func newRegistryClient(address string) (*genregistry.Client, func() error, error
 	}
 	transport := genregistrygrpc.NewClient(conn, grpc.WaitForReady(true))
 	return genregistry.NewClient(
+		transport.DeclareServiceToolset(),
+		transport.AttachProvider(),
 		transport.Register(),
 		transport.RenewProvider(),
 		transport.ReleaseProvider(),
@@ -2461,8 +2536,10 @@ code never supplies or infers it. A delayed old-process release therefore cannot
 Deployment
 configuration supplies one required `AdmissionRevision` shared by every replica
 in one fenced admission. Reuse it for scaling and same-contract RollingUpdate;
-change it only when a new schema or rollout fence is intended. `Serve` passes
-the revision to Register and the provider/incarnation identity to its callbacks. It
+change it only when a new schema or rollout fence is intended. Validate it with
+`registrywire.ValidateAdmissionRevision` before calling `Serve`, and capture it
+in the `Register` callback. `Serve` passes only the provider/incarnation identity
+and toolset to that callback. It
 opens the Pulse stream, waits for typed registration, and only then creates the
 consumer-group sink. Calls published after admission but before sink startup
 remain queued; an unadmitted process cannot claim them.
@@ -2473,9 +2550,11 @@ for a same-contract binary rollout. Do not derive the revision from pod names,
 startup time, random process IDs, ReplicaSet hashes, filesystem metadata, or
 runtime Kubernetes inspection. The accepted syntax is
 `^[A-Za-z0-9][A-Za-z0-9._:/@+\-]{0,255}$`.
-`Registration.Register` runs only during startup. It submits the runtime-owned
-`WireProtocolVersion`, generated `ToolSchemas()`, schema fingerprint, and fixed
-`AdmissionRevision`. A successful result supplies the one `RegistrationToken`
+`Registration.Register` runs only during startup. For deployment-managed
+providers, its closure submits the runtime-owned `WireProtocolVersion`, generated
+`ToolSchemas()`, schema fingerprint, and captured `AdmissionRevision`. For an
+existing declaration, its closure instead calls `AttachProvider` with the exact
+captured token and current wire version. A successful result supplies one `RegistrationToken`
 for this Serve lifecycle and its initial `LeaseDurationMs`. Startup may retry
 transient errors with bounded exponential jitter; an active provider never
 uses Register to recover lost lease authority.
@@ -2526,20 +2605,29 @@ inconsistent retirement membership fail startup. It does not convert or repair
 stored data. Existing installations require the [offline storage
 upgrade](#registry-storage-upgrade).
 
-Each replica compares the fingerprint in current state with its cached
-definition before fetching definition bytes. On a miss, it reads state and
-definition together, validates them, and prepares a map from tool names to
-compiled execution schemas using the existing schema validator. Calls use that
-map to validate dynamic argument JSON without decoding the whole toolset or
-rehashing and recompiling its schemas. `GetToolset` and `ResolveToolset` still
-return independent full definitions with metadata from the selected state.
-The cache never substitutes for live authorization or changes the consumer's
-per-planning-activity catalog lifetime.
+Every definition-dependent read fetches state, definition, and retirement
+membership together and validates the complete snapshot. This includes
+`GetToolset`, `ResolveToolset`, and call preparation or its availability retries.
+A semantic fingerprint can ignore ordering, and native replacement can reuse a
+token, so neither selects a previously cached definition. Returned definitions
+are independently owned and carry the selected state's token and time.
+
+The existing schema validator still reuses compiled schemas by digest. Each
+snapshot prepares its tool-name map from those compiled objects; dynamic
+arguments are checked against that map. Full definition transfer, decoding and
+fingerprinting therefore remain part of each definition-dependent read. Lease
+and health operations continue to read only compact state. This does not change
+live authorization or the consumer's per-planning-activity catalog lifetime.
 
 A change between zero and nonzero routable providers advances the health epoch
 and clears pong freshness. Draining or releasing an already non-routable lease
 does not advance it. Ping IDs carry the registration token and epoch; Pong
-checks both and the responding incarnation atomically. Health requires at least
+checks both and the responding incarnation atomically. When attachment or
+same-token Register preserves health, its atomic write also checks that at least
+one previous routable lease has not expired. If time invalidates that condition,
+it rereads current state before joining. A delayed join across an empty interval
+cannot reuse the old pong; uninterrupted healthy retries preserve it. Health
+requires at least
 one unexpired, non-draining lease and a fresh current-epoch pong, not a pong
 from every replica.
 
@@ -2622,7 +2710,8 @@ tokens or calls `Unregister` during rollout.
 `Unregister` is reserved for
 intentional retirement: exact active becomes retired while preserving leases,
 same-token retry succeeds, stale token returns `admission_conflict`, and the
-same retired token returns permanent `admission_retired` from `Register`.
+same retired token returns permanent `admission_retired` from `Register` or
+`AttachProvider`. Declaration cannot reclaim a retired service name.
 
 Do not overlap different admission generations on the same toolset stream.
 The registry persists `WireProtocolVersion`, `SchemaFingerprint`, and
@@ -4599,7 +4688,14 @@ Lifecycle commands store the state change and matching records together:
   lookup to decide whether the record may be published.
 
 Exact start retries return the original immutable `StartOutcome` and ordered
-record identifiers. Changed run, agent, session, or parent identity returns
+record identifiers. All four result types also require `RunStatus`, read from
+the run in the same Store transaction or lock that selects those records.
+Child results describe the child, not its parent. An exact retry must return
+the stored current status, even after the run closes. One-shot results keep
+their existing shape apart from this required field; their original outcome
+is always `proceed`.
+
+Changed run, agent, session, or parent identity returns
 `session.ErrRunConflict`. A record whose agent or session differs from its
 stored run returns `storage.ErrRunRecordOwnerMismatch`.
 
@@ -4618,6 +4714,45 @@ runtime rejects empty commands, multiple commands, empty results, multiple
 results, and a result field that does not match the command. This explicit
 shape prevents the activity from guessing an operation by inspecting event
 types.
+
+Each start result requires a known `RunStatus`: `running`, `suspended`,
+`completed`, `failed`, or `canceled`. The runtime validates the complete
+selected result before publishing any hook:
+
+| Original decision and current state | Publication and execution |
+| --- | --- |
+| `proceed`, `running` | Existing start publication and execution continue. |
+| `proceed`, any closed state | No start or parent-link publication. Execution returns `engine.ErrWorkflowCompleted`. |
+| `stop`, `canceled` | Existing ended-Session cancellation behavior remains. |
+| Missing status or inconsistent result | The result is rejected before publication or execution. |
+
+`stop` is valid only for Session root and child starts. It requires
+`CancellationReason == "session_ended"` and the canceled completion record.
+`proceed` carries no initial cancellation reason. Its ordered record counts
+are one for root/one-shot starts and two for child starts; `stop` adds one
+completion record. Every record needs its committed ID and the existing
+consistent Session status. A closed `proceed` replay must report
+`Inserted == false` for every start and parent-link record.
+
+`ExecuteWorkflow`, its cancellation handler, and direct `RunOneShot` calls all
+respect a closed `proceed` response. They do not schedule planner/tool work,
+invoke the one-shot callback, append prompt or conversation records after that
+response, accept a new cancellation, or replace terminal data. Initial history
+is still published before start admission under the preparation contract.
+An original `stop` response retains
+its existing cancellation reason comparison. A `running` response describes
+the Store operation's observation; it does not prevent later cancellation.
+
+Both shipped engines stop workflow retries for `engine.ErrWorkflowCompleted`.
+Direct and in-memory callers receive that error. Normal Temporal workflow
+waits keep their existing backend error convention: the failure is a
+nonretryable application error with type `goa_ai_workflow_completed`.
+Cancellation updates retain their existing mapping back to the engine error.
+An activity's nonretryable contract error stops retries of that activity
+input. It does not disable the host's workflow retry policy: a fresh workflow
+attempt can obtain different prerequisite results and submit different input.
+Missing or malformed saved start results are rejected before effects without
+immediately repeating the storage invocation; they never default to running.
 
 Root and child starts serialize with session ending inside the host store. An
 active session produces running metadata. An ended session produces terminal
@@ -4646,6 +4781,34 @@ sees only newly inserted records. An active session's live stream also receives
 exact activity retries after a failed delivery; stable event keys let the sink
 return its original publication instead of creating a duplicate. The bus has no
 second lifecycle writer.
+
+#### Start-result history upgrade
+
+Update every host Store implementation and transport adapter to return the
+required current `RunStatus` for all four start operations. Update every
+runtime worker and custom activity-result producer together. The field is
+also required in `api.StartRunResult`; its JSON name is `RunStatus` and it is
+never omitted. This change does not alter model tool schemas, start commands,
+request digests, or persisted run fields.
+
+Previously saved activity results omit `RunStatus`. Decoding those results
+does not authorize execution: the runtime rejects the empty value before
+effects. Do not fill it with `running`, rewrite immutable activity history,
+or replay old history on the new workers.
+
+Before switching workers, stop admissions, finish or cancel every old open
+execution on its original worker, and settle every uncertain prepared start.
+Verify that no open history still needs the old start-result contract. Keep
+retained old histories with their matching binary for offline replay; do not
+reset them onto new workers. Old workers likewise cannot decode new results
+under their strict unknown-field rules. Worker routing must prevent either
+version from taking the other's history. If the host cannot establish this
+drain, it needs a separately designed temporary history transition before
+upgrading.
+
+This result requirement accompanies the current PreparedRun v3 reference and
+checkpoint v9 contracts. It does not restore older executable formats or
+change how initial history and compiled starts are published.
 
 Prompt references and child relationships are derived from canonical ordered
 records. `RunMeta` does not duplicate those values. `ChildRunLinked` contains
@@ -5657,14 +5820,15 @@ Catalog storage operations emit the following spans, each identified by
 
 | Span | Byte-count attributes and meaning |
 | --- | --- |
-| `toolregistry.catalog.state.read` | `toolregistry.catalog.state_read_bytes`: compact state returned by Redis. A warm read also checks that the paired definition exists without fetching its bytes. |
+| `toolregistry.catalog.state.read` | `toolregistry.catalog.state_read_bytes`: compact state returned by Redis. Each compact read also checks that the paired definition exists without fetching its bytes. |
 | `toolregistry.catalog.state.update` | `toolregistry.catalog.state_compare_bytes`, `toolregistry.catalog.state_write_bytes`, and `toolregistry.catalog.definition_write_bytes`: the previous state compared and the proposed state/definition supplied to one conditional update. |
-| `toolregistry.catalog.definition.load` | `toolregistry.catalog.state_read_bytes` and `toolregistry.catalog.definition_read_bytes`: the coherent state/definition pair fetched for validation and cache loading. |
+| `toolregistry.catalog.definition.load` | `toolregistry.catalog.state_read_bytes` and `toolregistry.catalog.definition_read_bytes`: the coherent state/definition pair fetched for validation and schema preparation. |
 
 Update byte counts describe the attempted write, including an attempt that
 loses to another writer. `toolregistry.catalog.conditional_retry` is `true`
-when the stored state changed before that update could commit; this is an
-ordinary retry, not a storage fault. Together these spans show whether frequent
+when another writer changed the state or the previous routable membership
+expired before a health-preserving join could commit. This is an ordinary retry,
+not a storage fault. Together these spans show whether frequent
 lease and health operations stay on compact state and whether definition loads
 are occurring.
 

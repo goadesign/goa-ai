@@ -865,15 +865,19 @@ type (
 		Records []storage.AppendResult
 	}
 
-	// StartRunResult reports the immutable start decision and every stored record.
+	// StartRunResult reports the original start decision, current run state,
+	// and every stored start record.
 	StartRunResult struct {
 		// RenderedPrompts contains prompt facts attached from the publication.
 		RenderedPrompts []prompt.RenderEvent
-		// Outcome is exactly proceed or stop.
+		// Outcome is the original decision, exactly proceed or stop.
 		Outcome session.RunStartOutcome
-		// CancellationReason is set only when Outcome is stop.
+		// RunStatus is required and records the run state observed by the store.
+		RunStatus session.RunStatus
+		// CancellationReason is session_ended only when Outcome is stop.
 		CancellationReason string
-		// Records contains the stored records in durable commit order.
+		// Records contains committed start records in order. A closed proceed
+		// replay returns only records whose Inserted field is false.
 		Records []storage.AppendResult
 	}
 

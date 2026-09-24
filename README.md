@@ -56,6 +56,10 @@ workflow, so a service method can also become an agent tool.
   Activities reconstruct original messages through bounded store reads. See the
   [runtime store contract](docs/runtime.md#runtime-store-storagestore) for store
   implementation and the required persisted-format cutover.
+- **Closed runs stay closed on an exact start replay.** All four start operations
+  return current run status alongside their original records. A replay of a
+  closed run stops before start hooks or agent work. Existing hosts must update
+  their Store results and follow the [start-result upgrade requirements](docs/runtime.md#start-result-history-upgrade).
 
 The Responses adapter preserves typed nested stream failures, including transient
 server-error metadata. Retry owners must still protect already-published output;
@@ -234,7 +238,7 @@ explains how to keep those responsibilities clear.
 | --- | --- |
 | [MCP servers](docs/dsl.md#mcp-server-definition) | Expose Goa service methods as MCP tools and resources, with static prompts and generated JSON-RPC adapters. |
 | [External tools](docs/dsl.md#mcp-backed-toolsets) | Consume MCP servers over stdio or HTTP using declared tool contracts. |
-| [Tool registries](docs/tool_search.md) | Consume a named toolset or a changing registry catalog. Generated contracts preserve confirmation, pagination, and exact execution across provider changes. Providers register definitions at startup and renew exact leases without resending schemas. |
+| [Tool registries](docs/tool_search.md) | Consume a named toolset or a changing registry catalog. Generated contracts preserve confirmation, pagination, and exact execution across provider changes. Providers register definitions at startup or attach to a complete declaration saved beforehand, then renew exact leases without resending schemas. |
 | [Deferred tool search](docs/tool_search.md) | Load definitions on demand using OpenAI native client search with BM25 or Claude hosted search. Consumers choose whole toolsets with `Deferred()` or exact compiled tools with `Deferred("search")`, keeping other tools immediately available. Claude replay preserves schema text through JSON escaping while still rejecting changed definitions. |
 | [Structured output](docs/runtime.md#typed-direct-completions) | Declare `Completion(...)` and get typed unary and streaming helpers. Use [typed tool output](docs/runtime.md#forced-typed-tool-output) when you want the same generated result contract with bounded model correction. |
 | [Specialist agents](docs/runtime.md#agent-as-tool-composition) | Expose compiled or dynamically configured agents as tools. Child workflows retain the selected configuration and typed result through updates and approval pauses, with linked progress and cancellation. |
@@ -275,7 +279,8 @@ image inputs from dimensions, while response usage remains the accounting total.
 
 Vertex tool arguments require valid UTF-8 text and keys. Workflow writes reject
 map keys with custom JSON or text encoders; use plain strings or named string
-types without those encoders. Existing persisted JSON reads are unchanged.
+types without those encoders. Strict lifecycle and rejection record reads
+reject invalid raw UTF-8 instead of replacing bytes during JSON decoding.
 See the [JSON boundary contract](docs/runtime.md#json-boundary-contract).
 
 Application code owns planners, service behavior, authorization, side-effect

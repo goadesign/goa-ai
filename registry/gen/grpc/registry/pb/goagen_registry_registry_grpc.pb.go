@@ -26,6 +26,8 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
+	Registry_DeclareServiceToolset_FullMethodName  = "/goa_ai_registry.Registry/DeclareServiceToolset"
+	Registry_AttachProvider_FullMethodName         = "/goa_ai_registry.Registry/AttachProvider"
 	Registry_Register_FullMethodName               = "/goa_ai_registry.Registry/Register"
 	Registry_RenewProvider_FullMethodName          = "/goa_ai_registry.Registry/RenewProvider"
 	Registry_ReleaseProvider_FullMethodName        = "/goa_ai_registry.Registry/ReleaseProvider"
@@ -57,6 +59,22 @@ const (
 // renew leases for the one active schema and admission revision; consumers
 // discover and invoke only healthy admitted providers.
 type RegistryClient interface {
+	// Create a complete immutable service toolset before any provider connects.
+	// The registry assigns its admission revision and registration time. An
+	// identical active declaration returns the original saved definition, token,
+	// and time; a different declaration or native Agent occupancy returns
+	// admission_conflict. A retired service declaration returns admission_retired.
+	// Declaration does not create a provider lease or establish health.
+	DeclareServiceToolset(ctx context.Context, in *DeclareServiceToolsetRequest, opts ...grpc.CallOption) (*DeclareServiceToolsetResponse, error)
+	// Attach one provider incarnation to the exact existing service registration
+	// without sending or changing its definition. The expected token and current
+	// wire protocol are required. Missing, different, or native Agent
+	// registrations return admission_conflict; permanently retired tokens return
+	// admission_retired. Repeating attachment preserves the original registration
+	// time and any longer lease deadline. An already-draining incarnation returns
+	// provider_lease_lost. After startup, use RenewProvider; attachment is not a
+	// renewal recovery operation.
+	AttachProvider(ctx context.Context, in *AttachProviderRequest, opts ...grpc.CallOption) (*AttachProviderResponse, error)
 	// Reject providers whose required runtime-owned wire protocol version differs
 	// from the registry, then atomically admit one provider-incarnation lease in
 	// the catalog admission record. The same wire version, schema, and admission
@@ -194,6 +212,26 @@ type registryClient struct {
 
 func NewRegistryClient(cc grpc.ClientConnInterface) RegistryClient {
 	return &registryClient{cc}
+}
+
+func (c *registryClient) DeclareServiceToolset(ctx context.Context, in *DeclareServiceToolsetRequest, opts ...grpc.CallOption) (*DeclareServiceToolsetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(DeclareServiceToolsetResponse)
+	err := c.cc.Invoke(ctx, Registry_DeclareServiceToolset_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *registryClient) AttachProvider(ctx context.Context, in *AttachProviderRequest, opts ...grpc.CallOption) (*AttachProviderResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AttachProviderResponse)
+	err := c.cc.Invoke(ctx, Registry_AttachProvider_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (c *registryClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error) {
@@ -405,6 +443,22 @@ func (c *registryClient) ClaimToolCall(ctx context.Context, in *ClaimToolCallReq
 // renew leases for the one active schema and admission revision; consumers
 // discover and invoke only healthy admitted providers.
 type RegistryServer interface {
+	// Create a complete immutable service toolset before any provider connects.
+	// The registry assigns its admission revision and registration time. An
+	// identical active declaration returns the original saved definition, token,
+	// and time; a different declaration or native Agent occupancy returns
+	// admission_conflict. A retired service declaration returns admission_retired.
+	// Declaration does not create a provider lease or establish health.
+	DeclareServiceToolset(context.Context, *DeclareServiceToolsetRequest) (*DeclareServiceToolsetResponse, error)
+	// Attach one provider incarnation to the exact existing service registration
+	// without sending or changing its definition. The expected token and current
+	// wire protocol are required. Missing, different, or native Agent
+	// registrations return admission_conflict; permanently retired tokens return
+	// admission_retired. Repeating attachment preserves the original registration
+	// time and any longer lease deadline. An already-draining incarnation returns
+	// provider_lease_lost. After startup, use RenewProvider; attachment is not a
+	// renewal recovery operation.
+	AttachProvider(context.Context, *AttachProviderRequest) (*AttachProviderResponse, error)
 	// Reject providers whose required runtime-owned wire protocol version differs
 	// from the registry, then atomically admit one provider-incarnation lease in
 	// the catalog admission record. The same wire version, schema, and admission
@@ -544,6 +598,12 @@ type RegistryServer interface {
 // pointer dereference when methods are called.
 type UnimplementedRegistryServer struct{}
 
+func (UnimplementedRegistryServer) DeclareServiceToolset(context.Context, *DeclareServiceToolsetRequest) (*DeclareServiceToolsetResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method DeclareServiceToolset not implemented")
+}
+func (UnimplementedRegistryServer) AttachProvider(context.Context, *AttachProviderRequest) (*AttachProviderResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AttachProvider not implemented")
+}
 func (UnimplementedRegistryServer) Register(context.Context, *RegisterRequest) (*RegisterResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Register not implemented")
 }
@@ -623,6 +683,42 @@ func RegisterRegistryServer(s grpc.ServiceRegistrar, srv RegistryServer) {
 		t.testEmbeddedByValue()
 	}
 	s.RegisterService(&Registry_ServiceDesc, srv)
+}
+
+func _Registry_DeclareServiceToolset_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(DeclareServiceToolsetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).DeclareServiceToolset(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Registry_DeclareServiceToolset_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).DeclareServiceToolset(ctx, req.(*DeclareServiceToolsetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Registry_AttachProvider_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AttachProviderRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).AttachProvider(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Registry_AttachProvider_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).AttachProvider(ctx, req.(*AttachProviderRequest))
+	}
+	return interceptor(ctx, in, info, handler)
 }
 
 func _Registry_Register_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
@@ -992,6 +1088,14 @@ var Registry_ServiceDesc = grpc.ServiceDesc{
 	ServiceName: "goa_ai_registry.Registry",
 	HandlerType: (*RegistryServer)(nil),
 	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "DeclareServiceToolset",
+			Handler:    _Registry_DeclareServiceToolset_Handler,
+		},
+		{
+			MethodName: "AttachProvider",
+			Handler:    _Registry_AttachProvider_Handler,
+		},
 		{
 			MethodName: "Register",
 			Handler:    _Registry_Register_Handler,

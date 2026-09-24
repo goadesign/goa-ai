@@ -1,6 +1,6 @@
-// Package registry reuses validated toolset JSON and compact discovery metadata.
-// Full schemas are decoded only for validation or callers that need them.
-// Admission state is decoded and checked on every Redis read.
+// Package registry validates saved definitions together with their current state.
+// Definition-dependent reads decode a fresh snapshot and reuse compiled schemas.
+// Lease and health operations read only compact state.
 package registry
 
 import (
@@ -25,8 +25,8 @@ import (
 )
 
 type (
-	// catalogToolset retains serialized schemas and compact information, without
-	// keeping the decoded consumer metadata graph alive between requests.
+	// catalogToolset owns one validated definition and its compiled execution
+	// schemas for registration or the caller that selected this snapshot.
 	catalogToolset struct {
 		raw              json.RawMessage
 		info             *genregistry.ToolsetInfo
@@ -247,12 +247,5 @@ func (c *toolsetCatalog) snapshot(ctx context.Context, name string) (entry catal
 	if !reflect.DeepEqual(info, state.Info) {
 		return catalogEntry{}, fmt.Errorf("toolset %q discovery metadata does not match definition", name)
 	}
-	c.definitionsMu.Lock()
-	if cached := c.definitions[name]; cached != nil && cached.fingerprint == fingerprint {
-		definition = cached
-	} else {
-		c.definitions[name] = definition
-	}
-	c.definitionsMu.Unlock()
 	return catalogEntry{catalogState: state, Toolset: definition}, nil
 }

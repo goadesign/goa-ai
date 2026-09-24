@@ -19,19 +19,19 @@ type runRepairCall func(context.Context) (storage.RunRepairResult, error)
 
 // storageCommandUntilApplied retries temporary failures without rebuilding the
 // command. Permanent Store contract failures return immediately.
-func (r *Runtime) storageCommandUntilApplied(ctx context.Context, command *api.StorageActivityCommand) error {
+func (r *Runtime) storageCommandUntilApplied(ctx context.Context, command *api.StorageActivityCommand) (*api.StorageActivityResult, error) {
 	delay := 100 * time.Millisecond
 	for {
-		if _, err := r.executeStorageCommand(ctx, command); err == nil {
-			return nil
+		if result, err := r.executeStorageCommand(ctx, command); err == nil {
+			return result, nil
 		} else if engine.IsActivityErrorNonRetryable(err) {
-			return err
+			return nil, err
 		}
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return ctx.Err()
+			return nil, ctx.Err()
 		case <-timer.C:
 		}
 		delay = min(delay*2, 5*time.Second)

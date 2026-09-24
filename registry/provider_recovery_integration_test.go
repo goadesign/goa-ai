@@ -61,16 +61,15 @@ func TestProviderRecoveryPreservesLeaseAuthority(t *testing.T) {
 			var pongs, registrations, renewals atomic.Int64
 			var serveErr error
 			serveDone := make(chan struct{})
+			shutdownWait := provider.DefaultShutdownTimeout + provider.DefaultRegistrationReleaseTimeout + time.Second
 			go func() {
 				registration := provider.Registration{
-					AdmissionRevision: payload.AdmissionRevision,
-					Register: func(ctx context.Context, toolset, providerID, incarnationID, revision string) (provider.RegistrationLease, error) {
+					Register: func(ctx context.Context, toolset, providerID, incarnationID string) (provider.RegistrationLease, error) {
 						registrations.Add(1)
 						registerPayload := *payload
 						registerPayload.Name = toolset
 						registerPayload.ProviderID = providerID
 						registerPayload.ProviderIncarnationID = incarnationID
-						registerPayload.AdmissionRevision = revision
 						res, err := svc.Register(ctx, &registerPayload)
 						if err != nil {
 							return provider.RegistrationLease{}, err
@@ -94,7 +93,6 @@ func TestProviderRecoveryPreservesLeaseAuthority(t *testing.T) {
 						renewals.Add(1)
 						return time.Duration(result.LeaseDurationMs) * time.Millisecond, nil
 					},
-					ReleaseTimeout: time.Second,
 					Drain: func(ctx context.Context, _, providerID, incarnationID, token string, settlementDuration time.Duration) error {
 						return svc.DrainProvider(ctx, &genregistry.DrainProviderPayload{
 							Name:                      toolset,
@@ -198,8 +196,7 @@ func TestProviderRecoveryPreservesLeaseAuthority(t *testing.T) {
 						pongs.Add(1)
 						return nil
 					},
-					EnsureInterval:  100 * time.Millisecond,
-					ShutdownTimeout: time.Second,
+					EnsureInterval: 100 * time.Millisecond,
 				})
 				close(serveDone)
 			}()
@@ -207,7 +204,7 @@ func TestProviderRecoveryPreservesLeaseAuthority(t *testing.T) {
 				cancel()
 				select {
 				case <-serveDone:
-				case <-time.After(5 * time.Second):
+				case <-time.After(shutdownWait):
 					t.Error("provider did not finish shutdown")
 				}
 			})
@@ -282,8 +279,8 @@ func TestProviderRecoveryPreservesLeaseAuthority(t *testing.T) {
 			cancel()
 			select {
 			case <-serveDone:
-				require.ErrorIs(t, serveErr, context.Canceled)
-			case <-time.After(5 * time.Second):
+				require.EqualError(t, serveErr, context.Canceled.Error(), "shutdown must not hide a cleanup failure")
+			case <-time.After(shutdownWait):
 				t.Fatal("provider did not finish shutdown after stream repair")
 			}
 		})

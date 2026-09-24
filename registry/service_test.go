@@ -120,7 +120,7 @@ func TestRegistrationIdempotence(t *testing.T) {
 
 func newTestServiceForServiceTests(pulseClient clientspulse.Client, streamManager StreamManager, healthTracker HealthTracker, seed ...*genregistry.Toolset) (*Service, error) {
 	clock := newTestTimeSource(time.Unix(1_700_000_000, 0))
-	catalog := newToolsetCatalog(newTestCatalogMap(), clock)
+	catalog := newToolsetCatalog(newTestCatalogMap(clock), clock)
 	ctx := context.Background()
 	for _, toolset := range seed {
 		if err := saveTestToolset(ctx, catalog, toolset); err != nil {

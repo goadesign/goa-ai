@@ -1,5 +1,5 @@
-// These tests keep definition reuse separate from authoritative provider state
-// and verify cold validation and independently owned responses.
+// These tests verify authoritative state/definition snapshots, compiled schema
+// reuse, and independently owned responses.
 package registry
 
 import (
@@ -22,7 +22,7 @@ const (
 	replacementDefinitionTitle = "replacement"
 )
 
-func TestCatalogDefinitionCacheEvictsRemovedNames(t *testing.T) {
+func TestCatalogDefinitionReadsObserveRemovedNames(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
@@ -61,7 +61,7 @@ func TestCatalogDefinitionCacheEvictsRemovedNames(t *testing.T) {
 			_, err = catalog.Register(ctx, testCatalogDefinition(t, testCatalogToolset("retained", "survives", nil)),
 				testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
 			require.NoError(t, err)
-			retained, err := catalog.ActiveRegistration(ctx, "retained")
+			_, err = catalog.ActiveRegistration(ctx, "retained")
 			require.NoError(t, err)
 			key := toolsetCatalogKey("tools")
 			body, exists := store.Get(key)
@@ -76,8 +76,6 @@ func TestCatalogDefinitionCacheEvictsRemovedNames(t *testing.T) {
 
 			tt.read(t, catalog)
 
-			assert.NotContains(t, catalog.definitions, "tools")
-			assert.Same(t, retained.Toolset, catalog.definitions["retained"])
 			_, exists = store.Get(key)
 			assert.False(t, exists)
 			unchanged, exists := store.Get(toolsetCatalogKey("retained"))
@@ -94,7 +92,6 @@ func TestCatalogDefinitionCacheEvictsRemovedNames(t *testing.T) {
 			store.mu.Unlock()
 			_, err = catalog.ActiveRegistration(ctx, "tools")
 			require.ErrorContains(t, err, "schema fingerprint")
-			assert.NotContains(t, catalog.definitions, "tools")
 
 			store.mu.Lock()
 			store.definitions[key] = definition
@@ -108,22 +105,19 @@ func TestCatalogDefinitionCacheEvictsRemovedNames(t *testing.T) {
 	}
 }
 
-func TestCatalogDefinitionCacheKeepsNamesOnReadFailure(t *testing.T) {
+func TestCatalogDefinitionReadsPropagateStorageFailure(t *testing.T) {
 	t.Parallel()
 	catalog, store, _ := testDefinitionCatalog(t)
-	original, err := catalog.ActiveRegistration(t.Context(), "tools")
+	_, err := catalog.ActiveRegistration(t.Context(), "tools")
 	require.NoError(t, err)
 	catalog.store = authoritativeKeysFailureMap{catalogStore: store, err: context.DeadlineExceeded}
 	_, err = catalog.ListToolsets(t.Context(), nil)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Same(t, original.Toolset, catalog.definitions["tools"])
-
 	store.mu.Lock()
-	store.readErr = context.DeadlineExceeded
+	store.snapshotErr = context.DeadlineExceeded
 	store.mu.Unlock()
 	_, err = catalog.ActiveRegistration(t.Context(), "tools")
 	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Same(t, original.Toolset, catalog.definitions["tools"])
 }
 
 func TestCatalogStateRejectsInvalidPersistedData(t *testing.T) {
@@ -262,7 +256,6 @@ func TestCatalogColdReadChecksCurrentRetirementMembership(t *testing.T) {
 			_, err = cold.snapshot(ctx, "tools")
 
 			require.ErrorContains(t, err, wantErr)
-			assert.Empty(t, cold.definitions, "invalid state must not populate the definition cache")
 		})
 	}
 }
@@ -305,7 +298,7 @@ func TestCatalogReadsRejectMissingDefinitionWithWarmOrColdCache(t *testing.T) {
 			assert.Equal(t, before, after)
 			store.mu.RLock()
 			assert.NotContains(t, store.definitions, key)
-			assert.Zero(t, store.snapshotReads, "presence checks must not fetch full definitions")
+			assert.Equal(t, 3, store.snapshotReads, "only the three definition-dependent operations request snapshots")
 			assert.Equal(t, 1, store.definitionWrites)
 			store.mu.RUnlock()
 		})
@@ -343,7 +336,6 @@ func TestCatalogColdDefinitionRejectsInvalidPersistedData(t *testing.T) {
 			cold := newToolsetCatalog(store, clock)
 			_, err := cold.ActiveRegistration(t.Context(), "tools")
 			require.ErrorContains(t, err, tt.wantErr)
-			assert.Empty(t, cold.definitions)
 			unchanged, exists := store.Get(key)
 			require.True(t, exists)
 			assert.Equal(t, body, unchanged)
@@ -364,17 +356,15 @@ func TestCatalogColdReadValidatesAndCachesExecutionSchemas(t *testing.T) {
 	require.NotNil(t, compiled)
 	assert.Same(t, compiled, first.Toolset.executionSchemas["tools.lookup"])
 
-	store.mu.Lock()
-	store.snapshotErr = context.DeadlineExceeded
-	store.mu.Unlock()
 	for range 3 {
 		cached, err := cold.ActiveRegistration(t.Context(), "tools")
 		require.NoError(t, err)
-		assert.Same(t, first.Toolset, cached.Toolset)
+		assert.NotSame(t, first.Toolset, cached.Toolset)
+		assert.Same(t, compiled, cached.Toolset.executionSchemas["tools.lookup"])
 		require.NoError(t, validatePayload(cached.Toolset.executionSchemas["tools.lookup"], []byte(`{}`)))
 		require.Error(t, validatePayload(cached.Toolset.executionSchemas["tools.lookup"], []byte(`[]`)))
 	}
-	assert.Equal(t, 1, store.snapshotReads)
+	assert.Equal(t, 4, store.snapshotReads)
 	assert.Len(t, cold.validator.compiled, 1)
 	assert.Same(t, compiled, cold.validator.compiled[digest])
 }
@@ -385,8 +375,9 @@ func TestCatalogLifecycleReadsNoDefinitions(t *testing.T) {
 	registered, store, clock := testDefinitionCatalog(t)
 	first, err := registered.ActiveRegistration(ctx, "tools")
 	require.NoError(t, err)
-	// A new catalog has no definition cache. Even cold lifecycle operations
-	// must succeed when full-definition reads are unavailable.
+	store.snapshotReads = 0
+	// Even a catalog with no compiled schemas must perform lifecycle operations
+	// when full-definition reads are unavailable.
 	catalog := newToolsetCatalog(store, clock)
 	store.mu.Lock()
 	store.snapshotErr = context.DeadlineExceeded
@@ -431,11 +422,10 @@ func TestCatalogLifecycleReadsNoDefinitions(t *testing.T) {
 	require.NoError(t, catalog.Retire(ctx, "tools", token))
 	assert.Zero(t, store.snapshotReads)
 	assert.Equal(t, 1, store.definitionWrites)
-	assert.Empty(t, catalog.definitions)
 	assert.Equal(t, string(first.Toolset.raw), store.definitions[toolsetCatalogKey("tools")])
 }
 
-func TestCatalogDefinitionCacheReplacesDefinition(t *testing.T) {
+func TestCatalogDefinitionReadsObserveReplacement(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	catalog, store, clock := testDefinitionCatalog(t)
@@ -461,8 +451,6 @@ func TestCatalogDefinitionCacheReplacesDefinition(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, replacementDefinitionTitle, currentDefinition.Tools[0].ConsumerContract.Title)
 	assert.Equal(t, "original", firstDefinition.Tools[0].ConsumerContract.Title)
-	assert.Len(t, catalog.definitions, 1)
-	assert.Same(t, current.Toolset, catalog.definitions["tools"])
 	assert.Equal(t, 2, store.definitionWrites)
 }
 
@@ -478,7 +466,8 @@ func TestCatalogSameDefinitionNewAdmissionKeepsCurrentMetadata(t *testing.T) {
 	require.NoError(t, err)
 	current, err := reader.ActiveRegistration(t.Context(), "tools")
 	require.NoError(t, err)
-	assert.Same(t, first.Toolset, current.Toolset)
+	assert.NotSame(t, first.Toolset, current.Toolset)
+	assert.Same(t, first.Toolset.executionSchemas["tools.lookup"], current.Toolset.executionSchemas["tools.lookup"])
 	assert.NotEqual(t, first.RegistrationToken, current.RegistrationToken)
 	assert.NotEqual(t, first.RegisteredAt, current.RegisteredAt)
 	assert.Equal(t, next.RegisteredAt, current.RegisteredAt)
@@ -487,7 +476,7 @@ func TestCatalogSameDefinitionNewAdmissionKeepsCurrentMetadata(t *testing.T) {
 	assert.Equal(t, next.RegisteredAt, decoded.RegisteredAt)
 	assert.Empty(t, current.Toolset.info.RegisteredAt)
 	assert.Equal(t, 1, store.definitionWrites)
-	assert.Equal(t, 1, store.snapshotReads)
+	assert.Equal(t, 2, store.snapshotReads)
 }
 
 func TestCatalogSameFingerprintReplacementPreservesStoredTagOrder(t *testing.T) {
@@ -523,11 +512,6 @@ func TestCatalogSameFingerprintReplacementPreservesStoredTagOrder(t *testing.T) 
 			assert.NotEqual(t, first.RegisteredAt, replacement.RegisteredAt)
 			assert.Equal(t, []string{"alpha", "beta"}, replacement.Info.Tags)
 			assert.Equal(t, replacement.RegisteredAt, replacement.Info.RegisteredAt)
-			if cache == "cold registrar" {
-				assert.Empty(t, registrar.definitions, "an unwritten definition must not populate the cache")
-			} else {
-				assert.Same(t, definition, registrar.definitions["tools"])
-			}
 			store.mu.RLock()
 			assert.Equal(t, string(definition.raw), store.definitions[toolsetCatalogKey("tools")])
 			assert.Equal(t, 1, store.definitionWrites)
@@ -564,9 +548,9 @@ func TestCatalogColdReadPairsDefinitionWithReplacementState(t *testing.T) {
 	definition := testCatalogDefinition(t, next)
 	var replacement catalogState
 	store.mu.Lock()
-	store.afterExactRead = func(string) {
+	store.beforeSnapshot = func(string) {
 		store.mu.Lock()
-		store.afterExactRead = nil
+		store.beforeSnapshot = nil
 		store.mu.Unlock()
 		var registerErr error
 		replacement, registerErr = writer.Register(ctx, definition, testAdmissionRevisionB, "provider", testIncarnationB, time.Minute)
@@ -583,9 +567,9 @@ func TestCatalogColdReadPairsDefinitionWithReplacementState(t *testing.T) {
 func TestCatalogDefinitionResultsHaveIndependentOwnership(t *testing.T) {
 	t.Parallel()
 	for _, cold := range []bool{false, true} {
-		name := "registered cache"
+		name := "registering process"
 		if cold {
-			name = "cold cache"
+			name = "independent process"
 		}
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -629,7 +613,7 @@ func TestCatalogDefinitionResultsHaveIndependentOwnership(t *testing.T) {
 	}
 }
 
-func TestCatalogDefinitionCacheConcurrentReadersAndPongs(t *testing.T) {
+func TestCatalogDefinitionConcurrentReadersAndPongs(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 	_, store, clock := testDefinitionCatalog(t)
@@ -690,10 +674,11 @@ func TestCatalogDefinitionCacheConcurrentReadersAndPongs(t *testing.T) {
 	for definition := range definitions {
 		if first == nil {
 			first = definition
+			continue
 		}
-		assert.Same(t, first, definition)
+		assert.NotSame(t, first, definition)
+		assert.Same(t, first.executionSchemas["tools.lookup"], definition.executionSchemas["tools.lookup"])
 	}
-	assert.Len(t, catalog.definitions, 1)
 	definition, err := first.decode("")
 	require.NoError(t, err)
 	assert.Equal(t, "original", definition.Tools[0].ConsumerContract.Title)

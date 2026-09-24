@@ -97,8 +97,8 @@ var (
 	ErrPlannerActivityDeadlineExceeded = errors.New("planner activity deadline exceeded")
 	// ErrWorkflowNotFound indicates that no workflow execution exists for the given identifier.
 	ErrWorkflowNotFound = errors.New("workflow not found")
-	// ErrWorkflowCompleted indicates that a requested workflow mutation arrived
-	// after the workflow had already completed.
+	// ErrWorkflowCompleted indicates that the workflow or its durable run has
+	// closed, so the requested execution or mutation cannot proceed.
 	ErrWorkflowCompleted = errors.New("workflow completed")
 	// ErrWorkflowStartConflict indicates that an existing workflow ID was
 	// started with different immutable execution semantics.
