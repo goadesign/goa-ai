@@ -5,6 +5,7 @@ package openai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -126,6 +127,7 @@ type (
 
 const (
 	openAIProviderName   = "openai"
+	openAIServerError    = "server_error"
 	thinkingEffortLow    = "low"
 	thinkingEffortMedium = "medium"
 	thinkingEffortHigh   = "high"
@@ -536,10 +538,28 @@ func providerErrorFromSDK(operation string, err error) error {
 		msg    string
 	)
 	var apiErr *openaisdk.Error
+	var streamErr *ssestream.StreamError
 	if errors.As(err, &apiErr) {
 		status = apiErr.StatusCode
 		code = fmt.Sprint(apiErr.Code)
 		msg = apiErr.Message
+	} else if errors.As(err, &streamErr) {
+		// The SDK retains nested stream errors as event bytes rather than HTTP
+		// errors. Decode their fields without inventing an HTTP status.
+		var envelope struct {
+			Error openaisdk.Error `json:"error"`
+		}
+		if json.Unmarshal(streamErr.Event.Data, &envelope) == nil {
+			code = envelope.Error.Code
+			msg = envelope.Error.Message
+			if envelope.Error.Type == openAIServerError && code == "internal_server_error" {
+				if msg == "" {
+					msg = err.Error()
+				}
+				return model.NewProviderError(openAIProviderName, operation, 0,
+					model.ProviderErrorKindUnavailable, code, msg, "", true, err)
+			}
+		}
 	}
 	if msg == "" {
 		msg = err.Error()
@@ -587,7 +607,7 @@ func classifyOpenAIError(status int, code string) (model.ProviderErrorKind, bool
 		return model.ProviderErrorKindUnavailable, true
 	case normalized == "rate_limit_exceeded":
 		return model.ProviderErrorKindRateLimited, true
-	case normalized == "server_error" || normalized == "vector_store_timeout":
+	case normalized == openAIServerError || normalized == "vector_store_timeout":
 		return model.ProviderErrorKindUnavailable, true
 	case normalized == "invalid_prompt" || strings.HasPrefix(normalized, "invalid_"):
 		return model.ProviderErrorKindInvalidRequest, false
@@ -600,7 +620,7 @@ func inferredStatus(code string) int {
 	switch strings.ToLower(code) {
 	case "rate_limit_exceeded":
 		return http.StatusTooManyRequests
-	case "server_error", "vector_store_timeout":
+	case openAIServerError, "vector_store_timeout":
 		return http.StatusInternalServerError
 	case "invalid_prompt":
 		return http.StatusBadRequest

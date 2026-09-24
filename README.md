@@ -53,6 +53,10 @@ workflow, so a service method can also become an agent tool.
   bounded store reads. See the [runtime store contract](docs/runtime.md#runtime-store-storagestore)
   for implementation and worker upgrade requirements.
 
+The Responses adapter preserves typed nested stream failures, including transient
+server-error metadata. Retry owners must still protect already-published output;
+classification does not replay streams. See the [provider stream contract](DESIGN.md#provider-stream-integrity-contract).
+
 ## Quick start
 
 With **Go 1.26.0 or newer**, run the checked-in example:
