@@ -310,7 +310,7 @@ func validatePreparedWire(wire preparedRequestWire) error {
 	if err := budget.AddText(wire.ID, wire.Workflow, wire.TaskQueue); err != nil {
 		return fmt.Errorf("decode prepared run text: %w", err)
 	}
-	if err := reserveRootRecipeMemo(workflowcodec.NewDataConverter(), budget); err != nil {
+	if err := reserveRecipeMemo(workflowcodec.NewDataConverter(), budget); err != nil {
 		return fmt.Errorf("decode prepared run: %w", err)
 	}
 	if err := budget.AddPayload(preparedPayloadView(wire.Input)); err != nil {

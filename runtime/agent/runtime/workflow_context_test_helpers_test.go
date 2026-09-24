@@ -214,3 +214,8 @@ func (r *routeWorkflowContext) ExecuteAgentChildActivity(call engine.AgentChildA
 	}
 	return r.childRuntime.prepareAgentChildActivity(r.Context(), call.Input)
 }
+
+// StartRequestDigest supplies the fixed accepted request for this workflow fixture.
+func (r *routeWorkflowContext) StartRequestDigest() ([32]byte, error) {
+	return [32]byte{1}, nil
+}

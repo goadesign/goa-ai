@@ -64,6 +64,10 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if !ok {
 		return nil, fmt.Errorf("agent %q is not registered", input.AgentID)
 	}
+	requestDigest, err := wfCtx.StartRequestDigest()
+	if err != nil {
+		return nil, fmt.Errorf("accepted workflow request: %w", err)
+	}
 	var checkpoint *workflowCheckpoint
 	if input.Continuation != nil {
 		var err error
@@ -212,7 +216,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			workflowErr = errors.Join(workflowErr, fmt.Errorf("record terminal run result: %w", err))
 		}
 	}()
-	startCommand, err := runStartStorageCommand(input, startRecords)
+	startCommand, err := runStartStorageCommand(input, requestDigest, startRecords)
 	if err != nil {
 		return nil, err
 	}

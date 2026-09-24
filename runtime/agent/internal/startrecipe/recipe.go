@@ -27,7 +27,8 @@ const (
 	// supply this key because the engine owns duplicate validation.
 	MemoKey = "goa_ai_engine_start_recipe_v1"
 
-	recipeVersion = "goa-ai-engine-start-recipe-v1"
+	recipeVersion      = "goa-ai-engine-start-recipe-v1"
+	childRecipeVersion = "goa-ai-engine-child-start-recipe-v1"
 )
 
 type (
@@ -86,12 +87,14 @@ type (
 	}
 
 	// ChildRequestSnapshot contains one immutable child workflow request and its
-	// final encoded input. Child starts do not carry the root recipe digest memo.
+	// final encoded input. Its digest uses a separate domain from root starts.
 	ChildRequestSnapshot struct {
 		// Request is the copied child workflow request accepted by the engine.
 		Request engine.ChildWorkflowRequest
 		// InputPayload is the exact encoded form of Request.Input.
 		InputPayload *commonpb.Payload
+		// Digest identifies the complete accepted child request.
+		Digest [sha256.Size]byte
 	}
 )
 
@@ -174,7 +177,7 @@ func SnapshotRequest(request engine.WorkflowStartRequest) (RequestSnapshot, erro
 	if err := budget.AddText(request.ID, request.Workflow, request.TaskQueue); err != nil {
 		return RequestSnapshot{}, fmt.Errorf("validate workflow start text: %w", err)
 	}
-	if err := reserveRootRecipeMemo(dataConverter, budget); err != nil {
+	if err := reserveRecipeMemo(dataConverter, budget); err != nil {
 		return RequestSnapshot{}, err
 	}
 	input, err := snapshotRunInput(dataConverter, request.Input)
@@ -241,7 +244,7 @@ func SnapshotRequest(request engine.WorkflowStartRequest) (RequestSnapshot, erro
 
 // SnapshotChildRequest copies and encodes one child workflow request. It uses
 // the same text, input normalization, ownership, and byte rules as a root
-// request without reserving the root-only recipe digest memo.
+// request, including its engine-owned digest memo.
 func SnapshotChildRequest(request engine.ChildWorkflowRequest) (ChildRequestSnapshot, error) {
 	if err := engine.ValidateChildWorkflowRequest(request); err != nil {
 		return ChildRequestSnapshot{}, fmt.Errorf("validate child workflow request: %w", err)
@@ -260,7 +263,17 @@ func SnapshotChildRequest(request engine.ChildWorkflowRequest) (ChildRequestSnap
 	}
 	ownedRequest := request
 	ownedRequest.Input = input.Input
-	return ChildRequestSnapshot{Request: ownedRequest, InputPayload: input.Payload}, nil
+	if err := reserveRecipeMemo(dataConverter, budget); err != nil {
+		return ChildRequestSnapshot{}, err
+	}
+	digest, err := digestRequest(dataConverter, digestInput{
+		Workflow: request.Workflow, TaskQueue: request.TaskQueue,
+		InputPayload: input.Payload, RunTimeout: request.RunTimeout, RetryPolicy: request.RetryPolicy,
+	}, childRecipeVersion)
+	if err != nil {
+		return ChildRequestSnapshot{}, err
+	}
+	return ChildRequestSnapshot{Request: ownedRequest, InputPayload: input.Payload, Digest: digest}, nil
 }
 
 // EncodeSearchAttributes applies the engine's Temporal visibility type mapping
@@ -332,9 +345,9 @@ func preflightSearchAttributes(attributes map[string]any) error {
 	return nil
 }
 
-// reserveRootRecipeMemo counts the memo entry that official root adapters add
+// reserveRecipeMemo counts the memo entry that official engine adapters add
 // after the request digest has been computed.
-func reserveRootRecipeMemo(dataConverter converter.DataConverter, budget *workflowcodec.Budget) error {
+func reserveRecipeMemo(dataConverter converter.DataConverter, budget *workflowcodec.Budget) error {
 	if err := budget.AddText(MemoKey); err != nil {
 		return fmt.Errorf("validate workflow recipe memo name: %w", err)
 	}
@@ -352,8 +365,13 @@ func reserveRootRecipeMemo(dataConverter converter.DataConverter, budget *workfl
 // and every payload includes sorted metadata plus data bytes, so distinct field
 // layouts and native payload types cannot produce the same byte stream.
 func digest(dataConverter converter.DataConverter, input digestInput) ([sha256.Size]byte, error) {
+	return digestRequest(dataConverter, input, recipeVersion)
+}
+
+// digestRequest separates root and child requests while framing every accepted field.
+func digestRequest(dataConverter converter.DataConverter, input digestInput, version string) ([sha256.Size]byte, error) {
 	hashValue := sha256.New()
-	writeBytes(hashValue, []byte(recipeVersion))
+	writeBytes(hashValue, []byte(version))
 	if err := writeValue(hashValue, dataConverter, "workflow", input.Workflow); err != nil {
 		return [sha256.Size]byte{}, err
 	}

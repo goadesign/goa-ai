@@ -363,21 +363,21 @@ func prepareRunStartRecords(ctx context.Context, events []hooks.Event, turnID st
 // runStartStorageCommand selects the start operation from the workflow input,
 // whose session and parent identifiers define whether the run is root, child,
 // or sessionless.
-func runStartStorageCommand(input *RunInput, records []*RecordActivityInput) (*api.StorageActivityCommand, error) {
+func runStartStorageCommand(input *RunInput, requestDigest [32]byte, records []*RecordActivityInput) (*api.StorageActivityCommand, error) {
 	if input.SessionID == "" {
 		if input.ParentRunID != "" {
 			if len(records) != 2 {
 				return nil, errors.New("runtime: one-shot child start requires parent-link and run-started records")
 			}
 			return &api.StorageActivityCommand{
-				OneShotChildStart: &api.OneShotChildRunStartCommand{SeedEndID: input.SeedEndID, ParentLinked: records[0], Started: records[1]},
+				OneShotChildStart: &api.OneShotChildRunStartCommand{RequestDigest: requestDigest[:], SeedEndID: input.SeedEndID, ParentLinked: records[0], Started: records[1]},
 			}, nil
 		}
 		if len(records) != 1 {
 			return nil, errors.New("runtime: one-shot start requires one record")
 		}
 		return &api.StorageActivityCommand{
-			OneShotStart: &api.OneShotRunStartCommand{SeedEndID: input.SeedEndID, Started: records[0]},
+			OneShotStart: &api.OneShotRunStartCommand{RequestDigest: requestDigest[:], SeedEndID: input.SeedEndID, Started: records[0]},
 		}, nil
 	}
 	if input.ParentRunID == "" {
@@ -385,14 +385,14 @@ func runStartStorageCommand(input *RunInput, records []*RecordActivityInput) (*a
 			return nil, errors.New("runtime: root start requires one record")
 		}
 		return &api.StorageActivityCommand{
-			RootStart: &api.RootRunStartCommand{SeedEndID: input.SeedEndID, Started: records[0]},
+			RootStart: &api.RootRunStartCommand{RequestDigest: requestDigest[:], SeedEndID: input.SeedEndID, Started: records[0]},
 		}, nil
 	}
 	if len(records) != 2 {
 		return nil, errors.New("runtime: child start requires parent-link and run-started records")
 	}
 	return &api.StorageActivityCommand{
-		ChildStart: &api.ChildRunStartCommand{SeedEndID: input.SeedEndID, ParentLinked: records[0], Started: records[1]},
+		ChildStart: &api.ChildRunStartCommand{RequestDigest: requestDigest[:], SeedEndID: input.SeedEndID, ParentLinked: records[0], Started: records[1]},
 	}, nil
 }
 

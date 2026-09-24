@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -70,15 +71,25 @@ func (w *initialHistoryWriter) publish(ctx context.Context, prepared []byte) err
 	seedEnd := w.endID
 	total := int64(len(prepared))
 	for len(prepared) > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		command := w.command()
 		// Binary parts use JSON base64 encoding. Start with the command maximum,
 		// then reduce against the actual workflow converter and canonical codec.
 		size := min(len(prepared), storage.MaxSeedCommandBytes*3/4)
 		for {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			command.Record.Prepared = prepared[:size]
 			err := storage.ValidateSeedAppend(command)
 			if err == nil {
-				_, err = workflowcodec.NewDataConverter().ToPayload(&api.StorageActivityCommand{SeedAppend: &command})
+				var encodedBytes int
+				encodedBytes, err = seedCommandSize(command)
+				if err == nil && encodedBytes > storage.MaxSeedCommandBytes {
+					err = errors.New("compiled preparation part exceeds seed command limit")
+				}
 			}
 			if err == nil {
 				break
@@ -97,7 +108,8 @@ func (w *initialHistoryWriter) publish(ctx context.Context, prepared []byte) err
 }
 
 // appendMessages encodes each complete message once, then partitions those
-// bytes. The size includes the actual workflow storage-command envelope, so a
+// bytes. A message that cannot fit alone uses contiguous literal parts. The
+// size includes the actual workflow storage-command envelope, so a
 // larger logical import never becomes one oversized activity.
 func (w *initialHistoryWriter) appendMessages(ctx context.Context, messages []*model.Message) error {
 	var encodedNext []byte
@@ -107,20 +119,13 @@ func (w *initialHistoryWriter) appendMessages(ctx context.Context, messages []*m
 		}
 		command := w.command()
 		command.Record.Messages = rawjson.Message("[]")
-		payload, err := workflowcodec.NewDataConverter().ToPayload(&api.StorageActivityCommand{SeedAppend: &command})
+		encodedBytes, err := seedCommandSize(command)
 		if err != nil {
-			return err
-		}
-		budget := new(workflowcodec.Budget)
-		if err := budget.AddPayload(payload); err != nil {
 			return err
 		}
 		// JSON preserves raw literal bytes. The empty array's two bytes are
 		// replaced by the bounded array assembled below.
-		overhead := len(payload.Data) - 2
-		for key, value := range payload.Metadata {
-			overhead += len(key) + len(value)
-		}
+		overhead := encodedBytes - 2
 		available := storage.MaxSeedCommandBytes - overhead
 		if available <= 2 {
 			return errors.New("initial-history command identity exceeds its byte limit")
@@ -144,7 +149,14 @@ func (w *initialHistoryWriter) appendMessages(ctx context.Context, messages []*m
 			}
 			if len(data)+separator+len(encodedNext)+1 > available {
 				if count == 0 {
-					return fmt.Errorf("initial message exceeds the %d-byte seed command limit", storage.MaxSeedCommandBytes)
+					literal := make([]byte, 0, len(encodedNext)+2)
+					literal = append(literal, '[')
+					literal = append(literal, encodedNext...)
+					literal = append(literal, ']')
+					if err := w.appendLiteralParts(ctx, literal); err != nil {
+						return err
+					}
+					messages, encodedNext = messages[1:], nil
 				}
 				break
 			}
@@ -155,12 +167,43 @@ func (w *initialHistoryWriter) appendMessages(ctx context.Context, messages []*m
 			encodedNext = nil
 			count++
 		}
+		if count == 0 {
+			continue
+		}
 		data = append(data, ']')
 		command.Record.Messages = data
 		if err := w.append(ctx, command); err != nil {
 			return err
 		}
 		messages = messages[count:]
+	}
+	return nil
+}
+
+// appendLiteralParts derives each part's capacity from its complete encoded
+// command. The byte slice may split JSON tokens or UTF-8; only Final closes it.
+func (w *initialHistoryWriter) appendLiteralParts(ctx context.Context, data []byte) error {
+	for len(data) > 0 {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		command := w.command()
+		command.Record.LiteralPart = &storage.LiteralPart{Data: []byte{0}}
+		encodedBytes, err := seedCommandSize(command)
+		if err != nil {
+			return err
+		}
+		overhead := encodedBytes - base64.StdEncoding.EncodedLen(1)
+		capacity := (storage.MaxSeedCommandBytes - overhead) / 4 * 3
+		if capacity < 1 {
+			return errors.New("initial-history command identity exceeds its byte limit")
+		}
+		size := min(len(data), capacity)
+		command.Record.LiteralPart = &storage.LiteralPart{Data: data[:size], Final: size == len(data)}
+		if err := w.append(ctx, command); err != nil {
+			return err
+		}
+		data = data[size:]
 	}
 	return nil
 }
@@ -188,8 +231,12 @@ func (w *initialHistoryWriter) append(ctx context.Context, command storage.SeedA
 	}
 	// Use the real converter on the complete command even when this caller
 	// writes directly through the owning store API.
-	if _, err := workflowcodec.NewDataConverter().ToPayload(&api.StorageActivityCommand{SeedAppend: &command}); err != nil {
+	size, err := seedCommandSize(command)
+	if err != nil {
 		return err
+	}
+	if size > storage.MaxSeedCommandBytes {
+		return fmt.Errorf("initial-history command exceeds the %d-byte seed command limit", storage.MaxSeedCommandBytes)
 	}
 	end, err := w.store.AppendRunSeed(ctx, command)
 	if err != nil {
@@ -200,6 +247,20 @@ func (w *initialHistoryWriter) append(ctx context.Context, command storage.SeedA
 	}
 	w.endID, w.next = end, w.next+1
 	return nil
+}
+
+// seedCommandSize measures the activity envelope and converter metadata, not
+// just the store's inner append value.
+func seedCommandSize(command storage.SeedAppend) (int, error) {
+	payload, err := workflowcodec.NewDataConverter().ToPayload(&api.StorageActivityCommand{SeedAppend: &command})
+	if err != nil {
+		return 0, err
+	}
+	size := len(payload.Data)
+	for key, value := range payload.Metadata {
+		size += len(key) + len(value)
+	}
+	return size, nil
 }
 
 func (w workflowSeedWriter) BeginRunSeed(ctx context.Context, declaration storage.SeedDeclaration) (storage.RunSeed, error) {

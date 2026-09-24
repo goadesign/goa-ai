@@ -81,7 +81,7 @@ func replayStartOperation(t *testing.T, store *Store, start session.RunStart, ki
 	if kind == "child" || kind == "one shot child" {
 		parent = publishStartHistory(t, store, parent)
 		if start.SessionID == "" {
-			_, err := store.StartOneShotRun(t.Context(), storage.OneShotRunStart{
+			_, err := store.StartOneShotRun(t.Context(), storage.OneShotRunStart{RequestDigest: [32]byte{1},
 				Run: parent, Started: startedRecord(t, "parent-start", parent),
 			})
 			require.NoError(t, err)
@@ -100,7 +100,7 @@ func replayStartOperation(t *testing.T, store *Store, start session.RunStart, ki
 			return startReplayResult{result.Outcome, result.RunStatus, []storage.AppendResult{result.Started}}
 		}
 	case "child":
-		command := storage.ChildRunStart{
+		command := storage.ChildRunStart{RequestDigest: [32]byte{1},
 			Run: start, ParentLinked: childLinkRecord(t, "link", parent, start),
 			Started: root.Started, Canceled: root.Canceled,
 		}
@@ -112,14 +112,14 @@ func replayStartOperation(t *testing.T, store *Store, start session.RunStart, ki
 			}
 		}
 	case "one shot":
-		command := storage.OneShotRunStart{Run: start, Started: root.Started}
+		command := storage.OneShotRunStart{RequestDigest: [32]byte{1}, Run: start, Started: root.Started}
 		return func() startReplayResult {
 			result, err := store.StartOneShotRun(t.Context(), command)
 			require.NoError(t, err)
 			return startReplayResult{session.RunStartProceed, result.RunStatus, []storage.AppendResult{result.Record}}
 		}
 	default:
-		command := storage.OneShotChildRunStart{
+		command := storage.OneShotChildRunStart{RequestDigest: [32]byte{1},
 			Run: start, ParentLinked: childLinkRecord(t, "link", parent, start), Started: root.Started,
 		}
 		return func() startReplayResult {

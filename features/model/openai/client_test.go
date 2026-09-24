@@ -1917,7 +1917,7 @@ func newReplayTranscriptStore(t *testing.T, ctx context.Context) *storageinmem.S
 		context.Canceled,
 		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
 	), "run-canceled", now)
-	_, err = store.StartRootRun(ctx, storage.RootRunStart{
+	_, err = store.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte{1},
 		Run:     session.RunStart{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", StartedAt: now, SeedEndID: storage.EmptySeedEndID},
 		Started: started, Canceled: canceled,
 	})

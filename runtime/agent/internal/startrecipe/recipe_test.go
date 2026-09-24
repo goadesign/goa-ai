@@ -699,15 +699,15 @@ func TestSnapshotsEnforceRootAndChildPayloadLimits(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "maximum aggregate size")
 
-	childPadding := engine.MaxPayloadBytes - fixedText - payloadByteSize(basePayload)
-	require.Greater(t, childPadding, rootPadding)
+	childPadding := engine.MaxPayloadBytes - fixedText - rootReserve - payloadByteSize(basePayload)
+	require.Equal(t, childPadding, rootPadding)
 	childInput := &api.RunInput{
 		RunID:    "run-1",
 		Metadata: map[string]any{"payload": strings.Repeat("x", childPadding)},
 	}
 	childPayload, err := dataConverter.ToPayload(childInput)
 	require.NoError(t, err)
-	require.Equal(t, engine.MaxPayloadBytes, fixedText+payloadByteSize(childPayload))
+	require.Equal(t, engine.MaxPayloadBytes, fixedText+rootReserve+payloadByteSize(childPayload))
 	child, err := SnapshotChildRequest(engine.ChildWorkflowRequest{
 		ID: id, Workflow: workflowName, TaskQueue: taskQueue, Input: childInput,
 	})
@@ -716,7 +716,7 @@ func TestSnapshotsEnforceRootAndChildPayloadLimits(t *testing.T) {
 	_, err = SnapshotRequest(engine.WorkflowStartRequest{
 		ID: id, Workflow: workflowName, TaskQueue: taskQueue, Input: childInput,
 	})
-	require.ErrorContains(t, err, "maximum aggregate size")
+	require.NoError(t, err)
 	childInput.Metadata["payload"] = strings.Repeat("x", childPadding+1)
 	_, err = SnapshotChildRequest(engine.ChildWorkflowRequest{
 		ID: id, Workflow: workflowName, TaskQueue: taskQueue, Input: childInput,

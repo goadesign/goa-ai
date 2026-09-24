@@ -81,7 +81,7 @@ func TestProductionWorkflowReplaysRejectionDiagnosticVersions(t *testing.T) {
 				}
 				var history *historypb.History
 				if recovery {
-					history = syntheticProductionReplayHistory(t, first, true)
+					history = syntheticAcceptedProductionHistory(t, first, true)
 				} else {
 					history = terminalRejectionReplayHistory(t, first)
 					if version != errorevidence.ReasonVersion {
@@ -158,7 +158,7 @@ func rejectionReplayPublication(t *testing.T, first *api.PlanActivityOutput) []*
 // The replayer must produce the failure command without running an activity.
 func terminalRejectionReplayHistory(t *testing.T, first *api.PlanActivityOutput) *historypb.History {
 	t.Helper()
-	history := syntheticProductionReplayHistory(t, first, false)
+	history := syntheticAcceptedProductionHistory(t, first, false)
 	history.Events = history.Events[:28]
 	appendResult, err := NewAgentDataConverter().ToPayloads(&api.StorageActivityResult{Append: &api.AppendRecordsResult{}})
 	require.NoError(t, err)

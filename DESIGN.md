@@ -677,6 +677,16 @@ with its durable command. Applications can store the versioned bytes and parse
 them after a process restart. `Start` and `Continue` are convenience methods
 that prepare and start through this same path.
 
+Literal history uses complete canonical message arrays when they fit the
+storage command. A larger literal uses contiguous `LiteralPart` records:
+nonempty binary `Data` and an explicit `Final` boolean. These records divide
+bytes, never messages, images or semantic content. Existing record keys and
+previous positions provide ordering and exact retries. An unfinished literal
+cannot be followed by another content kind or published. The shared transcript
+decoder joins parts across pages and validates complete JSON and UTF-8 before
+returning messages. Command packing measures the complete encoded activity
+envelope, including base64; it adds no total-history or per-image limit.
+
 `WithoutPriorReasoning()` is an initial-run option for applications supplying
 completed conversation history. Before the prepared request is frozen, the
 runtime copies those messages and removes prior thinking and provider-native
@@ -977,14 +987,33 @@ prompt events and the terminal result after the callback returns, even when the
 callback canceled its context. Store retries reuse the prepared records and do
 not run the callback again. An exact start replay that reports a closed run
 returns `engine.ErrWorkflowCompleted` without invoking the callback.
+Its `StartSynchronousRun` operation has no engine-request digest. It requires
+the same original timestamp, identity, published history and complete event on
+every retry. Lost history begin, append, publish and start replies reuse that
+invocation's exact commands and attempt before any callback can run.
+The Store records synchronous versus engine ownership explicitly for the
+entire Run lifetime. Neither operation can claim the other's Run ID, even
+when all other command fields match. Missing old metadata identifies neither.
 
-Current run status is required in all four Store start results and in the
-shared `api.StartRunResult` activity envelope. Existing run records already
-contain status; this change adds no persisted lifecycle field. Old saved
-activity results lack the required value and are rejected before effects,
-never treated as running. Hosts must finish old executions on their matching
-workers and settle uncertain starts before the worker/history cutover described
-in [the upgrade contract](docs/runtime.md#start-result-history-upgrade).
+The four engine start operations require the digest of the complete accepted
+`RequestSnapshot`, supplied through `WorkflowContext.StartRequestDigest`.
+Root digest encoding is unchanged. Child starts use a separate versioned
+domain for their complete supported request. Engine-owned metadata carries
+the digest into each workflow attempt, including canceled and detached
+contexts. The first Store write binds it atomically to the original actual
+start and record IDs. A matching closed request validates and selects those
+original records and its closing outcome, even when a new execution proposes
+a later time. A changed request or missing proof is an error. Ordinary
+running-start timestamp equality is unchanged; this does not resume a running
+Run or recover missing records. Matching closed results produce no new hooks,
+streams, planner work or outcome writes.
+
+All five Store methods return current run status in the same operation that
+selects the original records. Synchronous starts reuse the sessionless result
+shape. Hosts must implement the required engine digest and explicit execution
+ownership, update the activity commands, and finish old executions on their
+matching workers before the [history cutover](docs/runtime.md#start-result-history-upgrade).
+No digest or execution owner is inferred from old records.
 
 The recipe digest is also an all-writer cutover. Before deployment, stop new
 admissions and prove that no unresolved pre-upgrade start obligation or active

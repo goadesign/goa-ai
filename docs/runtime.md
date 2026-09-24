@@ -4615,10 +4615,48 @@ Store and is removed with its Session; it is never model-visible.
 `ListRunSeedRecords` returns only history. Neither accepts an unpublished body.
 Neither preparation nor publication creates an accepted engine run.
 
-The runtime splits literal input at whole message boundaries. Each complete
-encoded seed command must fit the inclusive 1,000,000-byte storage-command limit.
-One larger message is rejected without truncation; a larger logical history
-uses multiple commands and has no new run-wide size cap. `LoadRunSeed` reads only
+The runtime groups whole messages into canonical literal arrays while they fit.
+When one message cannot fit alone, its exact array bytes use contiguous
+`SeedRecord.LiteralPart` values. Each part has nonempty binary `Data` and required
+`Final`; false remains present on the wire. A part is not a message and need not
+contain independently valid JSON or UTF-8. Only the completed literal is decoded.
+The new JSON field is `literal_part` and is omitted on complete literal records.
+Complete literals retain their original bytes, record grouping and positions.
+
+Each complete encoded seed command must fit the inclusive 1,000,000-byte
+storage-command limit, including the activity envelope, converter metadata and
+base64 expansion. Capacity is derived from that command's actual framing.
+Seed pages include record IDs and the continuation cursor within the inclusive
+1,000,045-byte logical JSON limit. A larger logical history uses multiple
+commands and has no new run-wide or per-image size cap. Existing model-request,
+activity, provider and host-transport limits remain separate.
+
+Stores apply literal ordering and closure checks atomically with append and
+publication. Once a nonfinal part is accepted, only the next part can follow;
+whole literals, source references, compiled-start parts and publication reject
+until a final part closes that literal. An exact duplicate retains its original
+position even after later writes or publication. Changed bytes or `Final` under
+the same key conflict. No extra fragment identity, count or durable state is
+needed: the last accepted record identifies whether a literal is unfinished.
+
+`transcript.LiteralDecoder` is the common pure codec for host copy readers and
+runtime replay. Feed ordered parts to `Append`; it returns no messages until
+the final part passes the canonical message codec and complete UTF-8 validation.
+Call `Finish` before another content kind or the selected history end, never
+merely at a page boundary. Incomplete or malformed literals return errors and
+must not escape as partial history. Full transcript validation still checks
+tool-call/result relationships after all selected messages are assembled.
+The decoder grows only with actual received bytes, not an untrusted declared
+length. It checks cancellation between bounded parts.
+
+Host adapters must preserve the explicit literal-part branch, enforce the same
+closed record shapes, ordering and publication rules, and return bounded pages.
+Workers and host readers must support this branch before accepting fragmented
+preparations. Existing whole literals need no rewrite; old readers cannot read
+new fragmented literals. This does not change Prepared v3, checkpoint v9,
+`SeedEndID`, compiled-request suffixes or their existing adoption requirements.
+
+`LoadRunSeed` reads only
 an exact publication; `ListRunSeedRecords` returns bounded ordered records and
 an owner-assigned continuation position. Every page must advance. The common
 transcript reader iteratively expands references without rebuilding each
@@ -4685,6 +4723,11 @@ Lifecycle commands store the state change and matching records together:
   stores `RunStarted`.
 - `StartOneShotChildRun` atomically stores `ChildRunLinked` on a running
   sessionless parent and `RunStarted` on its sessionless child.
+- `StartSynchronousRun` stores a sessionless callback's prepared start before
+  invoking application code. It takes `SynchronousRunStart` and reuses
+  `OneShotRunStartResult`. Each retry must contain the same timestamp, owner
+  identity, published `SeedEndID` and complete event. It has no engine-request
+  digest and makes no promise to reconnect a new invocation to earlier work.
 - `RecordRunCancellation`, `RecordRunSuspension`, and `RecordRunTerminal` each
   store the run change and its matching record atomically.
 - `AppendRunRecord` stores ordinary records and returns the session state
@@ -4692,12 +4735,44 @@ Lifecycle commands store the state change and matching records together:
   lookup to decide whether the record may be published.
 
 Exact start retries return the original immutable `StartOutcome` and ordered
-record identifiers. All four result types also require `RunStatus`, read from
+record identifiers. All five operations require `RunStatus`, read from
 the run in the same Store transaction or lock that selects those records.
 Child results describe the child, not its parent. An exact retry must return
 the stored current status, even after the run closes. One-shot results keep
 their existing shape apart from this required field; their original outcome
 is always `proceed`.
+
+The four engine commands require `RequestDigest`: a 32-byte value other than all zero,
+supplied by `WorkflowContext.StartRequestDigest`, not computed by runtime or
+host code from Run labels or selected input fields. The Store atomically binds
+that complete accepted request to its first actual start, original record
+keys and execution owner. The engine/synchronous owner distinction is explicit
+and permanent for the Run lifetime. Either kind conflicts with the other's
+Run ID even when all visible metadata, timestamps and events match. Do not
+infer a synchronous owner from an absent legacy digest.
+
+After a Run closes, a new engine execution with the same accepted request can
+select the original start at its original time. The Store checks the digest,
+complete non-time candidate content, original start and parent-link meaning,
+original record IDs, and matching suspension or terminal facts together.
+It returns the original records and current status without writes. Missing
+or corrupt proof is an error. For a still-running Run, the complete original
+command and timestamp must match; the digest does not permit resumption by a
+new execution. Synchronous starts always require exact command equality,
+including time, whether the Run is running or closed.
+
+Every start still validates its exact published initial history and owner in
+the same Store operation. Closed selection compares `SeedEndID` with the
+original Run; missing, unpublished, changed or purged history remains an error.
+The engine digest covers the accepted input containing that position. It does
+not replace publication checks or the digest used to verify compiled bytes.
+
+`RunOneShot` publishes empty history and its immutable synchronous command
+before invoking the callback. Lost begin, append, publish or start replies use
+the existing storage retry rule with the same command, attempt, bytes and
+timestamp. General caller preparation retains its context-aware behavior.
+PreparedRun v3 references, compiled v2 envelopes, checkpoint v9, and rendered
+prompt facts keep their existing ownership and formats.
 
 Changed run, agent, session, or parent identity returns
 `session.ErrRunConflict`. A record whose agent or session differs from its
@@ -4711,8 +4786,9 @@ ordinary errors so the storage activity can retry them.
 
 Workflow code reaches the store through one `runtime.store` activity. Its
 `StorageActivityCommand` sets exactly one of `Append`, `RootStart`,
-`ChildStart`, `OneShotStart`, `OneShotChildStart`, `Cancellation`, `Suspension`,
-or `Terminal`.
+`ChildStart`, `OneShotStart`, `OneShotChildStart`, `SynchronousStart`,
+`Cancellation`, `Suspension`, `Terminal`, `SeedBegin`, `SeedAppend`, or
+`SeedPublish`.
 `StorageActivityResult` sets exactly the same field and no other field. The
 runtime rejects empty commands, multiple commands, empty results, multiple
 results, and a result field that does not match the command. This explicit
@@ -4727,7 +4803,8 @@ selected result before publishing any hook:
 | --- | --- |
 | `proceed`, `running` | Existing start publication and execution continue. |
 | `proceed`, any closed state | No start or parent-link publication. Execution returns `engine.ErrWorkflowCompleted`. |
-| `stop`, `canceled` | Existing ended-Session cancellation behavior remains. |
+| `stop`, `canceled`, newly inserted records | Existing ended-Session cancellation behavior remains. |
+| `stop`, `canceled`, original records | No new publication or execution. |
 | Missing status or inconsistent result | The result is rejected before publication or execution. |
 
 `stop` is valid only for Session root and child starts. It requires
@@ -4747,13 +4824,18 @@ An original `stop` response retains
 its existing cancellation reason comparison. A `running` response describes
 the Store operation's observation; it does not prevent later cancellation.
 
-Both shipped engines stop workflow retries for `engine.ErrWorkflowCompleted`.
+Both shipped engines stop workflow retries for `engine.ErrWorkflowCompleted`
+and `engine.ErrWorkflowStartConflict`. A changed accepted request returns the
+typed `WorkflowStartConflictError` with its Run ID. Temporal carries it through
+activity, child and workflow failures as a nonretryable application error with
+type `goa_ai_workflow_start_conflict`; normal engine handles recover the typed
+error without exposing or guessing another request's content.
 Direct and in-memory callers receive that error. Normal Temporal workflow
 waits keep their existing backend error convention: the failure is a
 nonretryable application error with type `goa_ai_workflow_completed`.
 Cancellation updates retain their existing mapping back to the engine error.
-An activity's nonretryable contract error stops retries of that activity
-input. It does not disable the host's workflow retry policy: a fresh workflow
+Other activity nonretryable contract errors stop retries of that activity
+input. They do not disable the host's workflow retry policy: a fresh workflow
 attempt can obtain different prerequisite results and submit different input.
 Missing or malformed saved start results are rejected before effects without
 immediately repeating the storage invocation; they never default to running.
@@ -4773,11 +4855,17 @@ entry with its payload metadata and bytes. The in-memory engine stores only the
 fixed-size digest and executes a converter-produced input snapshot on its own
 cancelable context. Every root and child request requires its engine workflow ID
 to equal `RunInput.RunID`. A zero `engine.RetryPolicy` supplies no override.
+Root requests retain the existing digest domain. Child requests use
+`goa-ai-engine-child-start-recipe-v1` over their workflow, queue, exact
+converter-owned input, timeout and retry policy. Both carry their digest in
+the reserved `goa_ai_engine_start_recipe_v1` memo key; callers cannot set it.
+The memo counts against the existing request budget.
 When a request supplies a policy, `MaxAttempts` includes the first execution;
 retry timing requires a positive `MaxAttempts` or `UnlimitedAttempts`. After
-backend history expires, the owning application uses
-durable command identity to prevent reopening settled work; the engine does not
-add a durable identity registry.
+backend history expires, an engine may accept a new execution. Its first Store
+command must select a matching closed Run or reject missing/different proof
+before any agent effects. The Store owns this retained identity; the engine
+does not add another durable registry.
 
 Hook persistence has one owner. Start and lifecycle commands store their
 selected records. Other durable hook events use `AppendRunRecord`. The hook bus
@@ -4788,17 +4876,40 @@ second lifecycle writer.
 
 #### Start-result history upgrade
 
-Update every host Store implementation and transport adapter to return the
-required current `RunStatus` for all four start operations. Update every
+Update every host Store implementation and transport adapter for all five
+start operations. The four engine methods require `RequestDigest [32]byte`;
+their activity commands require a length-32 byte slice, preserving invalid
+wire lengths for rejection before conversion to the Store array. The separate
+`SynchronousRunStart` and activity `SynchronousStart` contain no digest.
+Bind the explicit execution owner and, for engine starts, the accepted digest
+in the same durable operation as the first actual start. Retain these facts
+for the Run lifetime and enforce cross-kind conflicts on every retry.
+Use the existing canonical lifecycle validators for record meaning.
+
+Return the required current `RunStatus` for all five methods. Update every
 runtime worker and custom activity-result producer together. The field is
 also required in `api.StartRunResult`; its JSON name is `RunStatus` and it is
-never omitted. This change does not alter model tool schemas, start commands,
-request digests, or persisted run fields.
+never omitted. Model tool schemas, `RunInput`, prepared root request bytes,
+and root digest encoding are unchanged. Store commands and private retained
+identity change; each host owns its durable schema and installation plan.
+The framework performs no migration or automatic backfill.
 
 Previously saved activity results omit `RunStatus`. Decoding those results
 does not authorize execution: the runtime rejects the empty value before
 effects. Do not fill it with `running`, rewrite immutable activity history,
 or replay old history on the new workers.
+Old pending engine start commands also lack the required digest. Old saved
+completed activities can replay from their recorded results without executing
+the Store command; that does not establish a durable request binding. Missing
+engine memo, missing stored digest, or missing execution ownership is an error.
+Do not manufacture proof from labels, preparation time, a latest application
+command or an arbitrary engine memo. Any retained-data conversion requires
+separately verified original acceptance and record identity.
+
+The host must prove committed durable selection, not only a consistent read.
+A snapshot read followed by transaction abort does not establish majority
+durability. The framework's in-memory lock tests do not prove a host database's
+commit behavior.
 
 Before switching workers, stop admissions, finish or cancel every old open
 execution on its original worker, and settle every uncertain prepared start.

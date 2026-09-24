@@ -68,7 +68,7 @@ func readPreparation(ctx context.Context, store storage.Store, accepted storage.
 			return nil, err
 		}
 		for _, record := range page.Records {
-			if record.PreviousID != previous || record.ID == previous || len(record.Prepared) == 0 || len(record.Messages) > 0 || record.Prefix != nil {
+			if record.PreviousID != previous || record.ID == previous || len(record.Prepared) == 0 || len(record.Messages) > 0 || record.LiteralPart != nil || record.Prefix != nil {
 				return nil, storage.NewContractError(errors.New("invalid accepted preparation record"))
 			}
 			if int64(len(data))+int64(len(record.Prepared)) > accepted.PreparedBytes {

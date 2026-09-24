@@ -88,6 +88,16 @@ func (s *closedStartStore) StartOneShotChildRun(ctx context.Context, command sto
 	return s.Store.StartOneShotChildRun(ctx, command)
 }
 
+func (s *closedStartStore) StartSynchronousRun(ctx context.Context, command storage.SynchronousRunStart) (storage.OneShotRunStartResult, error) {
+	if _, err := s.Store.StartSynchronousRun(ctx, command); err != nil {
+		return storage.OneShotRunStartResult{}, err
+	}
+	if err := s.closeRun(ctx, command.Run.RunID); err != nil {
+		return storage.OneShotRunStartResult{}, err
+	}
+	return s.Store.StartSynchronousRun(ctx, command)
+}
+
 func (s *closedStartStore) AppendRunRecord(ctx context.Context, record *runlog.Event) (storage.AppendResult, error) {
 	s.ordinaryCalls++
 	return s.Store.AppendRunRecord(ctx, record)
@@ -163,7 +173,7 @@ func newClosedStartFixture(t *testing.T, kind storageCommandKind, status session
 	))
 	records, err := prepareRunStartRecords(wfCtx.Context(), events, input.TurnID)
 	require.NoError(t, err)
-	command, err := runStartStorageCommand(input, records)
+	command, err := runStartStorageCommand(input, [32]byte{1}, records)
 	require.NoError(t, err)
 	return closedStartFixture{runtime, closedStore, wfCtx, input, command, bus, sink}
 }

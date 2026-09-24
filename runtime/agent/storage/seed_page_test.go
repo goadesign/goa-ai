@@ -1,12 +1,11 @@
 package storage_test
 
 // Page admission uses the same canonical record codec as append admission.
-// These tests pin the framing calculation for both record variants and IDs
+// These tests pin the framing calculation for history variants and IDs
 // whose JSON representation is longer than their source string.
 
 import (
 	"encoding/json"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -18,22 +17,34 @@ import (
 func TestSeedPageFramingPreservesEveryAcceptedAppend(t *testing.T) {
 	for _, runID := range []string{"r", "a-longer-run-identifier", "<&\"\n"} {
 		for _, position := range []string{"1", "9", "10", "9223372036854775807"} {
-			for _, prefix := range []bool{false, true} {
-				t.Run(runID+"/"+position+"/"+strconv.FormatBool(prefix), func(t *testing.T) {
+			for _, variant := range []string{"whole", "prefix", "part", "final part"} {
+				t.Run(runID+"/"+position+"/"+variant, func(t *testing.T) {
 					record := storage.SeedRecord{Key: "<key>", PreviousID: "9223372036854775806"}
-					if prefix {
+					switch variant {
+					case "prefix":
 						record.Prefix = &storage.HistoryPrefix{RunID: "s", EndID: "e"}
-					} else {
+					case "whole":
 						record.Messages = rawjson.Message(`[""]`)
+					default:
+						record.LiteralPart = &storage.LiteralPart{Data: []byte{0}, Final: variant == "final part"}
 					}
 					appendCommand := storage.SeedAppend{RunID: runID, AttemptID: "a", Record: record}
 					base, err := json.Marshal(appendCommand)
 					require.NoError(t, err)
 					padding := strings.Repeat("x", storage.MaxSeedCommandBytes-len(base))
-					if prefix {
+					switch variant {
+					case "prefix":
 						appendCommand.Record.Prefix.RunID += padding
-					} else {
+					case "whole":
 						appendCommand.Record.Messages = rawjson.Message(`["` + padding + `"]`)
+					default:
+						// Base64 grows four encoded bytes per three source
+						// bytes; fill the remaining one to three bytes in Key.
+						size := (storage.MaxSeedCommandBytes - len(base) + 4) / 4 * 3
+						appendCommand.Record.LiteralPart.Data = make([]byte, size)
+						data, err := json.Marshal(appendCommand)
+						require.NoError(t, err)
+						appendCommand.Record.Key += strings.Repeat("x", storage.MaxSeedCommandBytes-len(data))
 					}
 					require.NoError(t, storage.ValidateSeedAppend(appendCommand))
 					encodedAppend, err := json.Marshal(appendCommand)

@@ -82,7 +82,7 @@ func TestStartValidatesBothPossibleLifecycleRecords(t *testing.T) {
 	other := start
 	other.RunID = "other-run"
 	invalidCanceled := completedRecord(t, "terminal", other, "canceled", &run.Cancellation{Reason: run.CancellationReasonSessionEnded})
-	_, err = store.StartRootRun(ctx, storage.RootRunStart{
+	_, err = store.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte{1},
 		Run:      start,
 		Started:  startedRecord(t, "started", start),
 		Canceled: invalidCanceled,
@@ -220,7 +220,7 @@ func TestChildContinuationChecksPredecessorBeforeParentLink(t *testing.T) {
 			}
 			child = publishStartHistory(t, store, child)
 			store.runs[predecessor.RunID] = predecessor
-			command := storage.ChildRunStart{
+			command := storage.ChildRunStart{RequestDigest: [32]byte{1},
 				Run: child, ParentLinked: childLinkRecord(t, "child-link", parent, child),
 				Started: startedRecord(t, "child-start", child),
 				Canceled: completedRecord(t, "child-stop", child, "canceled", &run.Cancellation{
@@ -252,7 +252,7 @@ func TestRecordRetryRequiresExactTimestamp(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	store := New()
 	start := session.RunStart{AgentID: "agent", RunID: "run", StartedAt: now}
-	_, err := store.StartOneShotRun(ctx, storage.OneShotRunStart{Run: publishStartHistory(t, store, start), Started: startedRecord(t, "started", start)})
+	_, err := store.StartOneShotRun(ctx, storage.OneShotRunStart{RequestDigest: [32]byte{1}, Run: publishStartHistory(t, store, start), Started: startedRecord(t, "started", start)})
 	require.NoError(t, err)
 	record := record("note", "run", "agent", "", "note")
 	_, err = store.AppendRunRecord(ctx, record)
@@ -442,7 +442,7 @@ func TestChildStartStoresParentLinkAndChildStartTogether(t *testing.T) {
 		AgentID: "child", RunID: "child", SessionID: "session", ParentRunID: "parent", StartedAt: now,
 	}
 	childStart = publishStartHistory(t, store, childStart)
-	result, err := store.StartChildRun(ctx, storage.ChildRunStart{
+	result, err := store.StartChildRun(ctx, storage.ChildRunStart{RequestDigest: [32]byte{1},
 		Run:          childStart,
 		ParentLinked: childLinkRecord(t, "child-link", parentStart, childStart),
 		Started:      startedRecord(t, "child-start", childStart),
@@ -464,7 +464,7 @@ func TestOneShotChildStartStoresParentLinkAndChildStartTogether(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	store := New()
 	parent := session.RunStart{AgentID: "parent", RunID: "parent", StartedAt: now}
-	_, err := store.StartOneShotRun(t.Context(), storage.OneShotRunStart{
+	_, err := store.StartOneShotRun(t.Context(), storage.OneShotRunStart{RequestDigest: [32]byte{1},
 		Run: publishStartHistory(t, store, parent), Started: startedRecord(t, "parent-start", parent),
 	})
 	require.NoError(t, err)
@@ -472,7 +472,7 @@ func TestOneShotChildStartStoresParentLinkAndChildStartTogether(t *testing.T) {
 		AgentID: "child", RunID: "child", ParentRunID: parent.RunID, StartedAt: now,
 	}
 	child = publishStartHistory(t, store, child)
-	command := storage.OneShotChildRunStart{
+	command := storage.OneShotChildRunStart{RequestDigest: [32]byte{1},
 		Run:          child,
 		ParentLinked: childLinkRecord(t, "child-link", parent, child),
 		Started:      startedRecord(t, "child-start", child),
@@ -507,7 +507,7 @@ func TestOneShotChildStartRequiresRunningSessionlessParent(t *testing.T) {
 			AgentID: "child", RunID: "child", ParentRunID: parent.RunID, StartedAt: now,
 		}
 		child = publishStartHistory(t, store, child)
-		return storage.OneShotChildRunStart{
+		return storage.OneShotChildRunStart{RequestDigest: [32]byte{1},
 			Run: child, ParentLinked: childLinkRecord(t, "child-link", parent, child),
 			Started: startedRecord(t, "child-start", child),
 		}
@@ -526,7 +526,7 @@ func TestOneShotChildStartRequiresRunningSessionlessParent(t *testing.T) {
 	t.Run("completed parent", func(t *testing.T) {
 		store := New()
 		parent := session.RunStart{AgentID: "parent", RunID: "parent", StartedAt: now}
-		_, err := store.StartOneShotRun(t.Context(), storage.OneShotRunStart{
+		_, err := store.StartOneShotRun(t.Context(), storage.OneShotRunStart{RequestDigest: [32]byte{1},
 			Run: publishStartHistory(t, store, parent), Started: startedRecord(t, "parent-start", parent),
 		})
 		require.NoError(t, err)
@@ -562,7 +562,7 @@ func TestSessionChildStartRequiresRunningParent(t *testing.T) {
 			ParentRunID: parent.RunID, StartedAt: now,
 		}
 		child = publishStartHistory(t, store, child)
-		return storage.ChildRunStart{
+		return storage.ChildRunStart{RequestDigest: [32]byte{1},
 			Run: child, ParentLinked: childLinkRecord(t, "child-link", parent, child),
 			Started: startedRecord(t, "child-start", child),
 			Canceled: completedRecord(
@@ -627,7 +627,7 @@ func TestChildStartAfterPurgeReportsPurgedSession(t *testing.T) {
 		AgentID: "child", RunID: "child", SessionID: parent.SessionID,
 		ParentRunID: parent.RunID, StartedAt: now.Add(2 * time.Second),
 	}
-	_, err = store.StartChildRun(ctx, storage.ChildRunStart{
+	_, err = store.StartChildRun(ctx, storage.ChildRunStart{RequestDigest: [32]byte{1},
 		Run:          child,
 		ParentLinked: childLinkRecord(t, "child-link", parent, child),
 		Started:      startedRecord(t, "child-start", child),
@@ -665,7 +665,7 @@ func TestOneShotCancellationAndTerminalAreRecorded(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	store := New()
 	start := session.RunStart{AgentID: "agent", RunID: "run", StartedAt: now}
-	_, err := store.StartOneShotRun(ctx, storage.OneShotRunStart{Run: publishStartHistory(t, store, start), Started: startedRecord(t, "started", start)})
+	_, err := store.StartOneShotRun(ctx, storage.OneShotRunStart{RequestDigest: [32]byte{1}, Run: publishStartHistory(t, store, start), Started: startedRecord(t, "started", start)})
 	require.NoError(t, err)
 
 	_, err = store.RecordRunCancellation(ctx, storage.RunCancellation{
@@ -887,7 +887,7 @@ func TestLifecycleRetriesRequireOriginalRecordKeys(t *testing.T) {
 			ParentRunID: parent.RunID, StartedAt: parent.StartedAt,
 		}
 		child = publishStartHistory(t, store, child)
-		command := storage.ChildRunStart{
+		command := storage.ChildRunStart{RequestDigest: [32]byte{1},
 			Run:          child,
 			ParentLinked: childLinkRecord(t, "child-link", parent, child),
 			Started:      startedRecord(t, "child-start", child),
@@ -1033,7 +1033,7 @@ func publishStartHistory(t *testing.T, store *Store, start session.RunStart) ses
 // session state observed by StartRootRun.
 func rootStartCommand(t *testing.T, start session.RunStart) storage.RootRunStart {
 	t.Helper()
-	return storage.RootRunStart{
+	return storage.RootRunStart{RequestDigest: [32]byte{1},
 		Run:      start,
 		Started:  startedRecord(t, "started", start),
 		Canceled: completedRecord(t, "stopped", start, "canceled", &run.Cancellation{Reason: run.CancellationReasonSessionEnded}),

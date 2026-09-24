@@ -271,6 +271,27 @@ func (w *temporalWorkflowContext) RunID() string {
 	return w.runID
 }
 
+// StartRequestDigest reads only the engine-reserved metadata attached to this
+// accepted execution. Caller input and current workflow state cannot replace it.
+func (w *temporalWorkflowContext) StartRequestDigest() ([32]byte, error) {
+	memo := workflow.GetInfo(w.ctx).Memo
+	if memo == nil || memo.Fields[startrecipe.MemoKey] == nil {
+		return [32]byte{}, errors.New("workflow accepted request digest is missing")
+	}
+	var value []byte
+	if err := NewAgentDataConverter().FromPayload(memo.Fields[startrecipe.MemoKey], &value); err != nil {
+		return [32]byte{}, fmt.Errorf("decode accepted request digest: %w", err)
+	}
+	if len(value) != 32 {
+		return [32]byte{}, errors.New("workflow accepted request digest must contain 32 bytes")
+	}
+	digest := [32]byte(value)
+	if digest == ([32]byte{}) {
+		return [32]byte{}, errors.New("workflow accepted request digest is missing")
+	}
+	return digest, nil
+}
+
 func (w *temporalWorkflowContext) ExecuteStorageActivity(call engine.StorageActivityCall) (*api.StorageActivityResult, error) {
 	if call.Name == "" {
 		return nil, errors.New("storage activity name is required")
@@ -283,7 +304,7 @@ func (w *temporalWorkflowContext) ExecuteStorageActivity(call engine.StorageActi
 	fut := workflow.ExecuteActivity(actx, call.Name, call.Command)
 	var output api.StorageActivityResult
 	if err := fut.Get(actx, &output); err != nil {
-		return nil, err
+		return nil, mapStartConflictError(err)
 	}
 	return &output, nil
 }
@@ -387,18 +408,18 @@ func (w *temporalWorkflowContext) Await(condition func() bool) error {
 func (w *temporalWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 	cctx, cancel := workflow.WithCancel(w.ctx)
 	return &temporalWorkflowContext{
-			engine:     w.engine,
-			ctx:        cctx,
-			workflowID: w.workflowID,
-			runID:      w.runID,
-			sequence:   w.sequence,
-			logger:     w.logger,
-			metrics:    w.metrics,
-			tracer:     w.tracer,
-			baseCtx:    w.baseCtx,
-		}, func() {
-			cancel()
-		}
+		engine:     w.engine,
+		ctx:        cctx,
+		workflowID: w.workflowID,
+		runID:      w.runID,
+		sequence:   w.sequence,
+		logger:     w.logger,
+		metrics:    w.metrics,
+		tracer:     w.tracer,
+		baseCtx:    w.baseCtx,
+	}, func() {
+		cancel()
+	}
 }
 
 func (w *temporalWorkflowContext) activityOptionsFor(name string, override engine.ActivityOptions) workflow.ActivityOptions {
@@ -473,6 +494,7 @@ func (w *temporalWorkflowContext) StartChildWorkflow(_ context.Context, req engi
 		ParentClosePolicy:     enumspb.PARENT_CLOSE_POLICY_TERMINATE,
 		WorkflowIDReusePolicy: enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 		RetryPolicy:           convertRetryPolicy(req.RetryPolicy),
+		Memo:                  map[string]any{startrecipe.MemoKey: snapshot.Digest[:]},
 	}
 
 	cctx := workflow.WithChildOptions(w.ctx, opts)
@@ -510,7 +532,7 @@ func (w *temporalWorkflowContext) Detached() engine.WorkflowContext {
 func (h *temporalChildHandle) Get(_ context.Context) (*api.RunOutput, error) {
 	var out *api.RunOutput
 	if err := h.future.Get(h.ctx, &out); err != nil {
-		return nil, err
+		return nil, mapStartConflictError(err)
 	}
 	return out, nil
 }

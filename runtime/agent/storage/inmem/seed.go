@@ -111,6 +111,9 @@ func (s *Store) AppendRunSeed(ctx context.Context, command storage.SeedAppend) (
 	if state.published || record.PreviousID != state.endID {
 		return contractResult("", storage.ErrSeedConflict)
 	}
+	if state.literalOpen() && record.LiteralPart == nil {
+		return contractResult("", storage.ErrSeedConflict)
+	}
 	if state.preparedBytes > 0 && len(record.Prepared) == 0 {
 		return contractResult("", storage.ErrSeedConflict)
 	}
@@ -159,7 +162,7 @@ func (s *Store) PublishRunSeed(ctx context.Context, publication storage.SeedPubl
 	}
 	if publication.SeedEndID != state.seed.EndID || publication.EndID != state.endID ||
 		publication.PreparedBytes <= 0 || publication.PreparedBytes != state.preparedBytes ||
-		(state.seed.Source != nil && !state.hasSource) {
+		(state.seed.Source != nil && !state.hasSource) || state.literalOpen() {
 		return storage.NewContractError(storage.ErrSeedConflict)
 	}
 	if accepted, exists := s.seeds[publication.RunID]; exists && accepted != state {
@@ -465,9 +468,23 @@ func cloneSeed(seed storage.RunSeed) storage.RunSeed {
 func cloneSeedRecord(record storage.SeedRecord) storage.SeedRecord {
 	record.Messages = bytes.Clone(record.Messages)
 	record.Prepared = bytes.Clone(record.Prepared)
+	if record.LiteralPart != nil {
+		part := *record.LiteralPart
+		part.Data = bytes.Clone(part.Data)
+		record.LiteralPart = &part
+	}
 	if record.Prefix != nil {
 		prefix := *record.Prefix
 		record.Prefix = &prefix
 	}
 	return record
+}
+
+// literalOpen derives incomplete byte framing from the last accepted record.
+func (s *seedState) literalOpen() bool {
+	if len(s.records) == 0 {
+		return false
+	}
+	part := s.records[len(s.records)-1].LiteralPart
+	return part != nil && !part.Final
 }

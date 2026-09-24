@@ -22,6 +22,7 @@ import (
 	"go.temporal.io/sdk/workflow"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 )
 
 func TestApplyActivityDefaultsUsesTemporalPlannerDefaults(t *testing.T) {
@@ -442,8 +443,11 @@ func TestStartChildWorkflowEnforcesExactPayloadLimit(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: 5 * time.Second})
-	exact := temporalInputAtWorkflowBudget(t, "child1", "child", "test.queue", 0, 0)
-	oversized := temporalInputAtWorkflowBudget(t, "child2", "child", "test.queue", 0, 1)
+	recipePayload, err := NewAgentDataConverter().ToPayload(make([]byte, 32))
+	require.NoError(t, err)
+	reserved := len(startrecipe.MemoKey) + temporalPayloadSize(recipePayload)
+	exact := temporalInputAtWorkflowBudget(t, "child1", "child", "test.queue", reserved, 0)
+	oversized := temporalInputAtWorkflowBudget(t, "child2", "child", "test.queue", reserved, 1)
 	env.RegisterWorkflowWithOptions(
 		func(workflow.Context, *api.RunInput) (*api.RunOutput, error) {
 			return &api.RunOutput{}, nil

@@ -29,12 +29,14 @@ type (
 		storage.Store
 		cancel   context.CancelFunc
 		attempts int
+		commands []storage.SynchronousRunStart
 	}
 )
 
-func (s *uncertainStartStore) StartOneShotRun(ctx context.Context, command storage.OneShotRunStart) (storage.OneShotRunStartResult, error) {
+func (s *uncertainStartStore) StartSynchronousRun(ctx context.Context, command storage.SynchronousRunStart) (storage.OneShotRunStartResult, error) {
 	s.attempts++
-	result, err := s.Store.StartOneShotRun(ctx, command)
+	s.commands = append(s.commands, command)
+	result, err := s.Store.StartSynchronousRun(ctx, command)
 	if err != nil {
 		return storage.OneShotRunStartResult{}, err
 	}
@@ -184,6 +186,8 @@ func TestRunOneShotCompletesLifecycleAfterUncertainStartAndCallerCancellation(t 
 	require.ErrorIs(t, err, context.Canceled)
 	require.Equal(t, 2, retryingStore.attempts)
 	require.Equal(t, 1, executions)
+	require.Len(t, retryingStore.commands, 2)
+	require.Equal(t, retryingStore.commands[0], retryingStore.commands[1])
 	meta, err := store.LoadRun(context.Background(), "run")
 	require.NoError(t, err)
 	require.Equal(t, session.RunStatusCanceled, meta.Status)

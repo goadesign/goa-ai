@@ -36,6 +36,7 @@ type (
 		seedAfter  string
 		sourceSeen bool
 		seedSeen   map[string]struct{}
+		literal    LiteralDecoder
 		logPage    runlog.Page
 		logIndex   int
 		logSeen    map[string]struct{}
@@ -76,6 +77,11 @@ func BuildMessagesFromRunLogPrefix(ctx context.Context, store transcriptPrefixSt
 			if record == nil {
 				continue
 			}
+			if record.LiteralPart == nil {
+				if err := frame.literal.Finish(); err != nil {
+					return nil, invalidHistoryError(err)
+				}
+			}
 			if record.Prefix != nil {
 				if frame.sourceSeen || !reflect.DeepEqual(record.Prefix, frame.seed.Source) {
 					return nil, invalidHistoryError(errors.New("seed reference differs from its declared source"))
@@ -99,8 +105,16 @@ func BuildMessagesFromRunLogPrefix(ctx context.Context, store transcriptPrefixSt
 				active[ref.RunID] = struct{}{}
 				continue
 			}
-			delta, err := DecodeRunLogDelta(record.Messages)
+			var delta []*model.Message
+			if record.LiteralPart != nil {
+				delta, err = frame.literal.Append(ctx, *record.LiteralPart)
+			} else {
+				delta, err = DecodeRunLogDelta(record.Messages)
+			}
 			if err != nil {
+				if ctx.Err() != nil {
+					return nil, ctx.Err()
+				}
 				return nil, invalidHistoryError(err)
 			}
 			delta, err = transformPrefixMessages(delta, frame.ref)
@@ -186,6 +200,9 @@ func (f *prefixFrame) nextSeedRecord(ctx context.Context, store transcriptPrefix
 			if f.seedAfter != f.seed.EndID || (f.seed.Source != nil && !f.sourceSeen) {
 				return nil, prefixContractError("published seed is incomplete")
 			}
+			if err := f.literal.Finish(); err != nil {
+				return nil, invalidHistoryError(err)
+			}
 			f.seedDone = true
 			return nil, nil
 		}
@@ -193,6 +210,9 @@ func (f *prefixFrame) nextSeedRecord(ctx context.Context, store transcriptPrefix
 		page, err := store.ListRunSeedRecords(ctx, f.ref.RunID, f.seed.EndID, cursor, runlogReplayPageSize)
 		if err != nil {
 			return nil, err
+		}
+		if err := storage.ValidateSeedPageSize(page); err != nil {
+			return nil, storage.NewContractError(err)
 		}
 		if page.NextCursor != "" &&
 			(len(page.Records) == 0 || page.NextCursor == cursor || page.NextCursor != page.Records[len(page.Records)-1].ID) {
@@ -203,14 +223,27 @@ func (f *prefixFrame) nextSeedRecord(ctx context.Context, store transcriptPrefix
 			if f.seedAfter != f.seed.EndID || (f.seed.Source != nil && !f.sourceSeen) {
 				return nil, prefixContractError("published seed ended before its final position")
 			}
+			if err := f.literal.Finish(); err != nil {
+				return nil, invalidHistoryError(err)
+			}
 			f.seedDone = true
 			return nil, nil
 		}
 	}
 	record := f.seedPage.Records[f.seedIndex]
 	f.seedIndex++
+	variants := 0
+	if len(record.Messages) > 0 {
+		variants++
+	}
+	if record.LiteralPart != nil {
+		variants++
+	}
+	if record.Prefix != nil {
+		variants++
+	}
 	if record.ID == "" || record.PreviousID != f.seedAfter ||
-		(len(record.Messages) > 0) == (record.Prefix != nil) {
+		variants != 1 || len(record.Prepared) != 0 {
 		return nil, prefixContractError("invalid seed record or ordering")
 	}
 	if _, duplicate := f.seedSeen[record.ID]; duplicate {

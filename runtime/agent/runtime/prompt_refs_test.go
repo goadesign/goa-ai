@@ -142,7 +142,7 @@ func TestResolvePromptRefsTraversesSessionlessChild(t *testing.T) {
 		"",
 		nil,
 	), "parent-start", startedAt)
-	_, err = store.StartOneShotRun(t.Context(), storage.OneShotRunStart{
+	_, err = store.StartOneShotRun(t.Context(), storage.OneShotRunStart{RequestDigest: [32]byte{1},
 		Run: parent, Started: parentStarted,
 	})
 	require.NoError(t, err)
@@ -173,7 +173,7 @@ func TestResolvePromptRefsTraversesSessionlessChild(t *testing.T) {
 		"",
 		nil,
 	), "child-start", startedAt)
-	_, err = store.StartOneShotChildRun(t.Context(), storage.OneShotChildRunStart{
+	_, err = store.StartOneShotChildRun(t.Context(), storage.OneShotChildRunStart{RequestDigest: [32]byte{1},
 		Run: child, ParentLinked: linked, Started: childStarted,
 	})
 	require.NoError(t, err)
@@ -682,7 +682,7 @@ func startStoppedRunForTest(t *testing.T, store storage.Store, meta session.RunM
 		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
 	), "stopped", startedAt)
 	if meta.ParentRunID == "" {
-		result, err := store.StartRootRun(t.Context(), storage.RootRunStart{
+		result, err := store.StartRootRun(t.Context(), storage.RootRunStart{RequestDigest: [32]byte{1},
 			Run: start, Started: started, Canceled: canceled,
 		})
 		require.NoError(t, err)
@@ -700,7 +700,7 @@ func startStoppedRunForTest(t *testing.T, store storage.Store, meta session.RunM
 		meta.RunID,
 		agent.Ident(meta.AgentID),
 	), "child-link-"+meta.RunID, startedAt)
-	result, err := store.StartChildRun(t.Context(), storage.ChildRunStart{
+	result, err := store.StartChildRun(t.Context(), storage.ChildRunStart{RequestDigest: [32]byte{1},
 		Run: start, ParentLinked: linked, Started: started, Canceled: canceled,
 	})
 	require.NoError(t, err)
