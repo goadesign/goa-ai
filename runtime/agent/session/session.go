@@ -115,7 +115,8 @@ const (
 	// RunStatusCanceled indicates the run was canceled externally.
 	RunStatusCanceled RunStatus = "canceled"
 
-	// RunStartProceed allows the workflow to plan and execute tools.
+	// RunStartProceed records that the first start allowed planner and tool
+	// work. An exact retry must also inspect the current run status.
 	RunStartProceed RunStartOutcome = "proceed"
 	// RunStartStop prevents the workflow from doing work because its session
 	// had already ended.

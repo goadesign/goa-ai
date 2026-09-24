@@ -9,9 +9,11 @@ import (
 
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/session"
 )
 
 type (
@@ -48,6 +50,8 @@ type (
 //
 // The execute callback receives a context that records prompt versions. The
 // runtime stores those records before it completes the run.
+// An exact start replay of a closed run returns engine.ErrWorkflowCompleted
+// before invoking the callback or writing any later records.
 //
 // Contract:
 // - RunOneShot stores run metadata but never creates, loads, or updates a session.
@@ -74,21 +78,25 @@ func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute
 		Labels:    cloneLabels(input.Labels),
 	}
 	storageCtx := context.WithoutCancel(ctx)
-	if err := r.recordOneShotEvent(storageCtx, hooks.NewRunStartedEvent(
+	startResult, err := r.recordOneShotEvent(storageCtx, hooks.NewRunStartedEvent(
 		input.RunID,
 		input.AgentID,
 		"",
 		"",
 		"",
 		runCtx.Labels,
-	), input.TurnID); err != nil {
+	), input.TurnID)
+	if err != nil {
 		return err
+	}
+	if session.IsTerminalRunStatus(startResult.OneShotStart.RunStatus) {
+		return engine.ErrWorkflowCompleted
 	}
 	promptRenders := prompt.NewRenderRecorder()
 	execCtx := prompt.WithRenderRecorder(ctx, promptRenders)
 	execErr := execute(execCtx)
 	for _, rendered := range promptRenders.Events() {
-		if err := r.recordOneShotEvent(storageCtx, hooks.NewPromptRenderedEvent(
+		if _, err := r.recordOneShotEvent(storageCtx, hooks.NewPromptRenderedEvent(
 			input.RunID,
 			input.AgentID,
 			"",
@@ -106,7 +114,7 @@ func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute
 	if err != nil {
 		return errors.Join(execErr, fmt.Errorf("build one-shot terminal record: %w", err))
 	}
-	if err := r.recordOneShotEvent(storageCtx, completed, input.TurnID); err != nil {
+	if _, err := r.recordOneShotEvent(storageCtx, completed, input.TurnID); err != nil {
 		return errors.Join(execErr, fmt.Errorf("record one-shot terminal result: %w", err))
 	}
 	return execErr
@@ -114,11 +122,11 @@ func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute
 
 // recordOneShotEvent prepares one immutable record and retries temporary store
 // failures without running the caller's work again. Permanent state conflicts
-// return immediately.
-func (r *Runtime) recordOneShotEvent(ctx context.Context, event hooks.Event, turnID string) error {
+// return immediately. The caller receives the accepted activity result.
+func (r *Runtime) recordOneShotEvent(ctx context.Context, event hooks.Event, turnID string) (*api.StorageActivityResult, error) {
 	record, err := prepareHookRecordInput(ctx, event, turnID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var command *api.StorageActivityCommand
 	switch event.Type() {

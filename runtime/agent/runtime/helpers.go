@@ -441,7 +441,7 @@ func (r *Runtime) executeStorage(ctx context.Context, command *api.StorageActivi
 		return nil, err
 	}
 	if err := validateStorageResult(kind, output); err != nil {
-		return nil, err
+		return nil, engine.MarkActivityErrorNonRetryable(err)
 	}
 	return output, nil
 }

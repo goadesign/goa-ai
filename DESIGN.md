@@ -768,7 +768,8 @@ complete workflow state change instead of separate metadata and record writes.
 `StartRootRun`, `StartChildRun`, `StartOneShotRun`, and
 `StartOneShotChildRun` accept a concrete
 `RunStart` after the engine accepts the workflow. Exact retries return the
-stored outcome and record identifiers; changed identity returns
+original outcome and record identifiers, together with the current `RunStatus`
+observed in the same atomic Store operation; changed identity returns
 `session.ErrRunConflict`. `RecordRunCancellation`, `RecordRunSuspension`, and
 `RecordRunTerminal` store the state change and matching ordered record together.
 This is a source-breaking replacement for the former `session.Store` and
@@ -827,8 +828,14 @@ empty. The same value is part of `session.RunStart`. Before writing any part of
 the successor start, the store requires the predecessor to exist, be suspended,
 and have the same session, agent, and parent. `RunMeta` does not duplicate the
 predecessor because the immutable start record owns that relationship. The
-returned immutable `StartOutcome` tells the workflow whether it may begin
-planner work. Prompt references are derived from `PromptRendered`, the
+immutable `StartOutcome` records the first start decision. The returned
+`RunStatus` records current state. A `proceed` start whose run is now suspended,
+completed, failed, or canceled returns `engine.ErrWorkflowCompleted` before
+planner work, prompt or transcript writes, or terminal replacement. The
+storage activity validates the complete result before publishing hooks and
+suppresses both parent-link and start publication for that closed replay.
+An original `stop` outcome still publishes its newly inserted canceled
+lifecycle and returns cancellation. Prompt references are derived from `PromptRendered`, the
 continuation predecessor in `RunStarted`, and `ChildRunLinked` rather than
 duplicated in `RunMeta`. Cancellation, suspension, and terminal commands update
 run metadata and store their matching record in one transaction. The hook bus
@@ -920,7 +927,16 @@ carry time as integer milliseconds.
 `RunOneShot` stores its start before invoking application code. It records
 prompt events and the terminal result after the callback returns, even when the
 callback canceled its context. Store retries reuse the prepared records and do
-not run the callback again.
+not run the callback again. An exact start replay that reports a closed run
+returns `engine.ErrWorkflowCompleted` without invoking the callback.
+
+Current run status is required in all four Store start results and in the
+shared `api.StartRunResult` activity envelope. Existing run records already
+contain status; this change adds no persisted lifecycle field. Old saved
+activity results lack the required value and are rejected before effects,
+never treated as running. Hosts must finish old executions on their matching
+workers and settle uncertain starts before the worker/history cutover described
+in [the upgrade contract](docs/runtime.md#start-result-history-upgrade).
 
 The recipe digest is also an all-writer cutover. Before deployment, stop new
 admissions and prove that no unresolved pre-upgrade start obligation or active

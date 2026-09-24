@@ -52,6 +52,10 @@ workflow, so a service method can also become an agent tool.
   exact committed history position and load the original messages through
   bounded store reads. See the [runtime store contract](docs/runtime.md#runtime-store-storagestore)
   for implementation and worker upgrade requirements.
+- **Closed runs stay closed on an exact start replay.** All four start operations
+  return current run status alongside their original records. A replay of a
+  closed run stops before start hooks or agent work. Existing hosts must update
+  their Store results and follow the [start-result upgrade requirements](docs/runtime.md#start-result-history-upgrade).
 
 ## Quick start
 
