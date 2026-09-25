@@ -48,6 +48,25 @@ func TestRequestValidationTemporalRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRequestByteCapacityUsesExistingTerminalFailure(t *testing.T) {
+	for _, original := range []error{
+		model.ErrRequestByteCapacity,
+		fmt.Errorf("encoded request: %w", model.ErrRequestByteCapacity),
+		model.NewRequestValidationError(fmt.Errorf("adapter: %w", model.ErrRequestByteCapacity)),
+	} {
+		assert.True(t, IsRequestValidation(original))
+		saved := roundTripCurrentFailure(t, Wrap(original))
+		assert.Equal(t, requestValidationApplicationType, saved.Type())
+		assert.True(t, saved.NonRetryable())
+		assert.False(t, saved.HasDetails())
+		require.NoError(t, saved.Unwrap())
+		assert.True(t, IsRequestValidation(saved))
+		assert.Equal(t, original.Error(), saved.Message())
+		// Saved diagnostics retain terminal meaning, not a new capacity fact.
+		require.NotErrorIs(t, saved, model.ErrRequestByteCapacity)
+	}
+}
+
 func TestRequestValidationRejectsMalformedSavedFailures(t *testing.T) {
 	for _, test := range []struct {
 		name string

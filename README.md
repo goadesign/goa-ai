@@ -289,6 +289,11 @@ does not mark new ordinary evidence. Model clients reject a second reader bindin
 See [retained native images](docs/native_images.md) for registration, bounded read
 work and the required historical-decoder upgrade before writing new records.
 
+Adapters can report a locally measured complete-request byte failure with
+[`model.ErrRequestByteCapacity`](docs/runtime.md#locally-measured-request-byte-capacity).
+History selection may keep fewer optional older turns; required newest and
+summary evidence still fail whole when they cannot fit.
+
 Vertex tool arguments require valid UTF-8 text and keys. Workflow writes reject
 map keys with custom JSON or text encoders; use plain strings or named string
 types without those encoders. Strict lifecycle and rejection record reads

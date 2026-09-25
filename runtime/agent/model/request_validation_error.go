@@ -4,7 +4,9 @@ package model
 // validation, before a model provider accepts them. The runtime keeps these
 // failures terminal without attributing them to a provider or requesting a model
 // correction. Adapters must mark only known request validation failures, not
-// transport, observer, or provider errors.
+// network, observer, or provider errors.
+
+import "errors"
 
 type (
 	// RequestValidationError reports that a model request failed local validation.
@@ -14,6 +16,14 @@ type (
 		cause error
 	}
 )
+
+// ErrRequestByteCapacity reports that the complete request exceeds a known local
+// byte allowance, measured before remote inference dispatch. It is a terminal
+// RequestValidationError; adapters may wrap it to include the measured size.
+// History compression may select fewer optional older turns, but cannot discard
+// the newest turn or required summary evidence. Do not infer this error from
+// image presence, token counts, remote status codes, or unknown provider limits.
+var ErrRequestByteCapacity = NewRequestValidationError(errors.New("model request exceeds local byte allowance"))
 
 // NewRequestValidationError marks a known local model-request rejection. cause
 // must be non-nil and must describe the validation that rejected the request.

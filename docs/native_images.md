@@ -188,6 +188,13 @@ missing resource, cancellation, transport failure and unknown provider capacity
 are ordinary failures and stop the operation. No extra reservation, cache,
 timeout or global budget registry is added.
 
+An adapter's complete encoded request can exceed its local allowance even when
+each selected image fits. Use the distinct
+[`ErrRequestByteCapacity` contract](runtime.md#locally-measured-request-byte-capacity)
+for that measured request failure; do not relabel text or tool-definition
+overflow as an image-source failure. It follows the same whole-turn selection
+rules and never permits omission of required summary evidence.
+
 ## Historical compatibility and rollout
 
 Initial-history publication still enforces its existing encoded-record limits.

@@ -436,7 +436,8 @@ func fitHistorySummary(ctx context.Context, cfg HistoryCompressionConfig, counte
 		}
 		count, err := countMessages(ctx, cfg, counter, request, messages)
 		if err != nil {
-			if errors.Is(err, model.ErrImageSourceCapacity) && keepStart < len(turns)-1 {
+			if keepStart < len(turns)-1 &&
+				(errors.Is(err, model.ErrImageSourceCapacity) || errors.Is(err, model.ErrRequestByteCapacity)) {
 				continue
 			}
 			return HistoryResult{}, false, err
@@ -500,7 +501,8 @@ func shouldCompress(
 	}
 	count, err := countMessages(ctx, cfg, counter, request, request.Messages)
 	if err != nil {
-		if errors.Is(err, model.ErrImageSourceCapacity) {
+		if errors.Is(err, model.ErrImageSourceCapacity) ||
+			errors.Is(err, model.ErrRequestByteCapacity) {
 			return true, nil
 		}
 		return false, err
@@ -560,7 +562,8 @@ func exactTailStart(
 		if cfg.KeepMaxInputTokens > 0 || cfg.CompressAtMaxInputTokens > 0 {
 			count, err := countMessages(ctx, cfg, counter, request, requestShape(system, turns, i))
 			if err != nil {
-				if errors.Is(err, model.ErrImageSourceCapacity) {
+				if errors.Is(err, model.ErrImageSourceCapacity) ||
+					errors.Is(err, model.ErrRequestByteCapacity) {
 					break
 				}
 				return 0, err
