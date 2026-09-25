@@ -123,6 +123,55 @@ func TestGeneratedOriginalValidationRules(t *testing.T) {
 	}
 }
 
+func TestGeneratedDefaultedAliases(t *testing.T) {
+	files, err := generate(t, func() {
+		label := dsl.Type("Label", dsl.String, func() {
+			dsl.Meta("struct:pkg:path", "types")
+			dsl.Enum("brief", "detailed")
+			dsl.Default("brief")
+		})
+		optional := dsl.Type("OptionalLabel", dsl.String, func() {
+			dsl.Meta("struct:pkg:path", "types")
+			dsl.Enum("brief", "detailed")
+		})
+		located("Record", func() {
+			dsl.Attribute("Label", label)
+			dsl.Attribute("Optional", optional)
+			dsl.Attribute("Required", label)
+			dsl.Attribute("Items", dsl.ArrayOf(label))
+			dsl.Attribute("Index", dsl.MapOf(dsl.String, label))
+			dsl.Required("Required")
+		})
+	})
+	require.NoError(t, err)
+	root := compileModule(t, files)
+	source, err := os.ReadFile("testdata/defaulted_alias_test.go")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/defaulted_alias_test.go"), source, 0o600)) // #nosec G703 -- root belongs to this generated fixture.
+	runGo(t, root, "test", "-count=1", "-v", "./gen/...")
+}
+
+func TestGeneratedCodecLocalNames(t *testing.T) {
+	files, err := generate(t, func() {
+		token := dsl.Type("Token", dsl.String, func() {
+			dsl.Meta("struct:pkg:path", "types")
+			dsl.MinLength(1)
+		})
+		located("Record", func() {
+			for _, name := range []string{"Data", "Err", "Root", "Decoder", "In", "Body", "Out"} {
+				dsl.Attribute(name, token)
+				dsl.Required(name)
+			}
+		})
+	})
+	require.NoError(t, err)
+	root := compileModule(t, files)
+	source, err := os.ReadFile("testdata/local_names_test.go")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/local_names_test.go"), source, 0o600)) // #nosec G703 -- root belongs to this generated fixture.
+	runGo(t, root, "test", "-count=1", "-v", "./gen/...")
+}
+
 func generateOriginalRules(t *testing.T, aliases bool) {
 	t.Helper()
 	files, err := generate(t, func() {
