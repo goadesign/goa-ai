@@ -316,6 +316,8 @@ func (p *Plan) imports() []*goacodegen.ImportSpec {
 	return imports
 }
 
+// Conversion blocks keep field-derived temporary variables separate from the
+// encoder and decoder variables while assigning their outer result values.
 const codecSource = `
 {{ range .Types }}
 // {{ .Name }} stores JSON fields until they have been validated.
@@ -488,7 +490,9 @@ func {{ .Encode }}(in {{ .ServiceRef }}) ([]byte, error) {
 	}
 	{{- end }}
 	var body {{ .TransportRef }}
-	{{ .EncodeTransform }}
+	{
+		{{ .EncodeTransform }}
+	}
 	if err := {{ .Validator }}(body); err != nil {
 		return nil, {{ $.Imports.Fmt }}.Errorf("validate {{ .Name }} JSON: %w", err)
 	}
@@ -506,7 +510,9 @@ func {{ .Constructor }}(body {{ .TransportRef }}) (out {{ .ServiceRef }}, err er
 	if err := {{ .Validator }}(body); err != nil {
 		return out, {{ $.Imports.Fmt }}.Errorf("validate {{ .Name }} JSON: %w", err)
 	}
-	{{ .DecodeTransform }}
+	{
+		{{ .DecodeTransform }}
+	}
 	return out, nil
 }
 
@@ -541,7 +547,9 @@ func {{ .Decode }}(data []byte) (out {{ .ServiceRef }}, err error) {
 	if err := {{ .Validator }}(body); err != nil {
 		return out, {{ $.Imports.Fmt }}.Errorf("validate {{ .Name }} JSON: %w", err)
 	}
-	{{ .DecodeTransform }}
+	{
+		{{ .DecodeTransform }}
+	}
 	return out, nil
 	{{- end }}
 }

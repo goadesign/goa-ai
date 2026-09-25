@@ -89,8 +89,10 @@ func EncodeAnswer(in *Answer) ([]byte, error) {
 		return nil, fmt.Errorf("encode Answer JSON: %w", err)
 	}
 	var body *jsonAnswerTransport
-	body = &jsonAnswerTransport{
-		Text: &in.Text,
+	{
+		body = &jsonAnswerTransport{
+			Text: &in.Text,
+		}
 	}
 	if err := validatejsonAnswerTransport(body); err != nil {
 		return nil, fmt.Errorf("validate Answer JSON: %w", err)
@@ -126,8 +128,10 @@ func DecodeAnswer(data []byte) (out *Answer, err error) {
 	if err := validatejsonAnswerTransport(body); err != nil {
 		return out, fmt.Errorf("validate Answer JSON: %w", err)
 	}
-	out = &Answer{
-		Text: *body.Text,
+	{
+		out = &Answer{
+			Text: *body.Text,
+		}
 	}
 	return out, nil
 }
@@ -138,8 +142,10 @@ func EncodeAskPayload(in *AskPayload) ([]byte, error) {
 		return nil, fmt.Errorf("encode AskPayload JSON: %w", err)
 	}
 	var body *jsonAskPayloadTransport
-	body = &jsonAskPayloadTransport{
-		Question: &in.Question,
+	{
+		body = &jsonAskPayloadTransport{
+			Question: &in.Question,
+		}
 	}
 	if err := validatejsonAskPayloadTransport(body); err != nil {
 		return nil, fmt.Errorf("validate AskPayload JSON: %w", err)
@@ -175,8 +181,10 @@ func DecodeAskPayload(data []byte) (out *AskPayload, err error) {
 	if err := validatejsonAskPayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate AskPayload JSON: %w", err)
 	}
-	out = &AskPayload{
-		Question: *body.Question,
+	{
+		out = &AskPayload{
+			Question: *body.Question,
+		}
 	}
 	return out, nil
 }
