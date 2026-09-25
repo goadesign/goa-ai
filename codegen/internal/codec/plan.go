@@ -34,6 +34,7 @@ type (
 		direction         Direction
 		service           *goaexpr.AttributeExpr
 		transport         *goaexpr.AttributeExpr
+		transportLayout   *goacodegen.GoTypePlan
 		types             []*plannedType
 		unions            []*plannedUnion
 		decode            *goacodegen.TransformPlan
@@ -42,6 +43,7 @@ type (
 		encodeDeclaration *goacodegen.NameDeclaration
 		constructor       *goacodegen.NameDeclaration
 		serviceAttributor goacodegen.Attributor
+		standalone        *standalonePlan
 	}
 
 	// TransportField describes one top-level field in a private JSON type.
@@ -68,7 +70,9 @@ type (
 		declaration          *goacodegen.NameDeclaration
 		typeDeclaration      *goacodegen.TypeDeclaration
 		validatorDeclaration *goacodegen.NameDeclaration
+		alias                bool
 		layout               *goacodegen.GoTypePlan
+		parameter            *goacodegen.GoTypePlan
 		validation           *goacodegen.ValidationPlan
 	}
 
@@ -364,6 +368,8 @@ func (v *Value) declareTypes(localTypes []goaexpr.UserType) error {
 			declaration:          declaration,
 			typeDeclaration:      typeDeclaration,
 			validatorDeclaration: validator,
+			// A named union keeps the underlying transport's JSON methods.
+			alias: goaexpr.IsUnion(userType),
 		})
 	}
 	return nil
@@ -422,18 +428,49 @@ func (v *Value) planTypes() error {
 		return goacodegen.GoTypeBinding{}, fmt.Errorf("unsupported transport type kind %s", request.Kind)
 	}
 	policy := transportPolicy()
+	// Retain the named root and its contents so conversions can resolve every
+	// transport value after package names freeze.
+	transportLayout, err := goacodegen.PlanGoType(v.transport, goacodegen.GoTypePlanOptions{
+		Owner:            v.plan.pkg.ImportPath(),
+		Policy:           policy,
+		Bind:             binder,
+		RetainNamedValue: true,
+	})
+	if err != nil {
+		return err
+	}
+	v.transportLayout = transportLayout
 	for _, planned := range v.types {
+		definitionPolicy := policy
+		if goaexpr.IsPrimitive(planned.userType) {
+			// Scalar definition validators receive values. Pointer presence
+			// belongs to their enclosing JSON fields, not these parameters.
+			definitionPolicy.Pointer = false
+		}
 		layout, err := goacodegen.PlanGoType(planned.userType.Attribute(), goacodegen.GoTypePlanOptions{
-			Owner:  v.plan.pkg.ImportPath(),
-			Policy: policy,
-			Bind:   binder,
+			Owner:            v.plan.pkg.ImportPath(),
+			Policy:           definitionPolicy,
+			Bind:             binder,
+			RetainNamedValue: true,
+		})
+		if err != nil {
+			return err
+		}
+		// The function accepts the named transport type, whose union methods
+		// may belong to an underlying declaration in its retained definition.
+		parameter := &goaexpr.AttributeExpr{Type: planned.userType}
+		parameterLayout, err := goacodegen.PlanGoType(parameter, goacodegen.GoTypePlanOptions{
+			Owner:            v.plan.pkg.ImportPath(),
+			Policy:           definitionPolicy,
+			Bind:             binder,
+			RetainNamedValue: true,
 		})
 		if err != nil {
 			return err
 		}
 		validation, err := goacodegen.NewValidationPlan(
-			planned.userType.Attribute(),
-			layout,
+			parameter,
+			parameterLayout,
 			goacodegen.ValidationPlanOptions{
 				Required: true,
 				Alias:    goaexpr.IsAlias(planned.userType),
@@ -451,6 +488,7 @@ func (v *Value) planTypes() error {
 			return err
 		}
 		planned.layout = layout
+		planned.parameter = parameterLayout
 		planned.validation = validation
 	}
 	for _, union := range v.unions {

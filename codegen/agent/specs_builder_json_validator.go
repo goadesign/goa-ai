@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"goa.design/goa-ai/boundedresult"
+	"goa.design/goa-ai/codegen/internal/jsonshape"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -29,7 +30,7 @@ type (
 		plan      *toolSpecsPackagePlan
 		key       string
 		preferred string
-		named     map[goaexpr.UserType]*plannedJSONValidator
+		named     map[*jsonshape.Node]*plannedJSONValidator
 	}
 )
 
@@ -41,7 +42,7 @@ func (p *toolSpecsPackagePlan) declareJSONValidator(key, preferred string, attri
 		plan:      p,
 		key:       key,
 		preferred: preferred,
-		named:     make(map[goaexpr.UserType]*plannedJSONValidator),
+		named:     make(map[*jsonshape.Node]*plannedJSONValidator),
 	}
 	root, err := planner.build(attribute, "Root", true)
 	if err != nil {
@@ -62,32 +63,45 @@ func (p *toolSpecsPackagePlan) declareJSONValidator(key, preferred string, attri
 
 // build plans one value validator and then its statically known children.
 func (p *jsonValidatorPlanner) build(attribute *goaexpr.AttributeExpr, suffix string, root bool) (*plannedJSONValidator, error) {
-	if primitive, ok := jsonValidatorPrimitiveType(attribute); ok {
-		return p.primitiveValidator(primitive), nil
-	}
-	if goaexpr.IsUnion(attribute.Type) {
-		return p.categoryValidator(jsonSchemaTypeObject), nil
-	}
-	if userType, ok := attribute.Type.(goaexpr.UserType); ok {
-		identity := userType.Origin()
-		if existing := p.named[identity]; existing != nil {
-			return existing, nil
-		}
-		if !root {
-			suffix = jsonValidatorUserTypeName(userType)
-		}
-		validator := p.newValidator(suffix, userType.Attribute(), root)
-		p.named[identity] = validator
-		if err := p.populate(validator, userType.Attribute(), suffix); err != nil {
-			return nil, err
-		}
-		return validator, nil
-	}
-	validator := p.newValidator(suffix, attribute, root)
-	if err := p.populate(validator, attribute, suffix); err != nil {
+	node, err := jsonshape.Build(attribute)
+	if err != nil {
 		return nil, err
 	}
-	return validator, nil
+	return p.adapt(node, suffix, root), nil
+}
+
+// adapt retains tool-specific names and error descriptions around the shared shape graph.
+func (p *jsonValidatorPlanner) adapt(node *jsonshape.Node, suffix string, root bool) *plannedJSONValidator {
+	if node.Kind == jsonValidatorPrimitive || node.Kind == jsonValidatorAny {
+		return p.primitiveValidator(node.Primitive)
+	}
+	if node.Kind == "union" {
+		return p.categoryValidator(jsonSchemaTypeObject)
+	}
+	if existing := p.named[node]; existing != nil {
+		return existing
+	}
+	if node.UserType != nil && !root {
+		suffix = jsonValidatorUserTypeName(node.UserType)
+	}
+	validator := p.newValidator(suffix, node.Attribute, root)
+	p.named[node] = validator
+	validator.kind = node.Kind
+	for _, field := range node.Fields {
+		child := p.adapt(field.Node, suffix+goacodegen.Goify(field.Name, true), false)
+		validator.fields = append(validator.fields, &plannedJSONValidatorField{
+			name: field.Name, call: &plannedJSONValidatorCall{validator: child, description: field.Description},
+		})
+	}
+	if node.Element != nil {
+		child := p.adapt(node.Element, suffix+"Element", false)
+		description := ""
+		if node.Kind == jsonValidatorMap {
+			description = node.ElementDescription
+		}
+		validator.element = &plannedJSONValidatorCall{validator: child, description: description, inheritDescription: description == ""}
+	}
+	return validator
 }
 
 // newValidator records a value check before planning its children. This order
@@ -110,7 +124,7 @@ func (p *jsonValidatorPlanner) newValidator(suffix string, attribute *goaexpr.At
 // primitiveValidator plans the exact JSON check for one primitive Go value.
 // The package pass later shares it with every matching check.
 func (p *jsonValidatorPlanner) primitiveValidator(primitive goaexpr.Primitive) *plannedJSONValidator {
-	signed, unsigned, bits := jsonIntegerShape(primitive.Kind())
+	signed, unsigned, bits := jsonshape.IntegerShape(primitive.Kind())
 	expected := generatedJSONType(primitive)
 	validator := p.newPrimitiveValidator(jsonPrimitiveValidatorName(expected, signed, unsigned, bits), expected)
 	if primitive.Kind() == goaexpr.AnyKind {
@@ -144,22 +158,6 @@ func (p *jsonValidatorPlanner) newPrimitiveValidator(preferred, expected string)
 	return validator
 }
 
-// jsonValidatorPrimitiveType follows aliases and returns their concrete Goa
-// primitive so the package can share the exact same raw JSON check.
-func jsonValidatorPrimitiveType(attribute *goaexpr.AttributeExpr) (goaexpr.Primitive, bool) {
-	if attribute == nil || attribute.Type == nil {
-		return 0, false
-	}
-	switch actual := attribute.Type.(type) {
-	case goaexpr.Primitive:
-		return actual, true
-	case goaexpr.UserType:
-		return jsonValidatorPrimitiveType(actual.Attribute())
-	default:
-		return 0, false
-	}
-}
-
 // jsonPrimitiveValidatorName returns the readable helper name for one exact
 // primitive check.
 func jsonPrimitiveValidatorName(expected string, signed, unsigned bool, bits int) string {
@@ -177,83 +175,6 @@ func jsonPrimitiveValidatorName(expected string, signed, unsigned bool, bits int
 		return "validate" + prefix + "JSONValue"
 	}
 	return "validate" + goacodegen.Goify(expected, true) + "JSONValue"
-}
-
-// populate records the direct calls needed for one known Goa value shape.
-func (p *jsonValidatorPlanner) populate(validator *plannedJSONValidator, attribute *goaexpr.AttributeExpr, suffix string) error {
-	switch actual := attribute.Type.(type) {
-	case goaexpr.UserType:
-		return p.populate(validator, actual.Attribute(), suffix)
-	case *goaexpr.Object:
-		validator.kind = jsonValidatorObject
-		fields := slices.Clone(*actual)
-		sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
-		validator.fields = make([]*plannedJSONValidatorField, 0, len(fields))
-		for _, field := range fields {
-			child, err := p.build(field.Attribute, suffix+goacodegen.Goify(field.Name, true), false)
-			if err != nil {
-				return err
-			}
-			validator.fields = append(validator.fields, &plannedJSONValidatorField{
-				name: field.Name,
-				call: &plannedJSONValidatorCall{validator: child, description: field.Attribute.Description},
-			})
-		}
-	case *goaexpr.Array:
-		validator.kind = jsonValidatorArray
-		child, err := p.build(actual.ElemType, suffix+"Element", false)
-		if err != nil {
-			return err
-		}
-		validator.element = &plannedJSONValidatorCall{validator: child, inheritDescription: true}
-	case *goaexpr.Map:
-		validator.kind = jsonValidatorMap
-		child, err := p.build(actual.ElemType, suffix+"Element", false)
-		if err != nil {
-			return err
-		}
-		validator.element = &plannedJSONValidatorCall{
-			validator:          child,
-			description:        actual.ElemType.Description,
-			inheritDescription: actual.ElemType.Description == "",
-		}
-	default:
-		return fmt.Errorf("plan JSON validator for unsupported Goa type %T", attribute.Type)
-	}
-	return nil
-}
-
-// jsonIntegerShape reports how generated code parses one Goa integer. A zero
-// width means the generated program uses the width of its Go int or uint.
-func jsonIntegerShape(kind goaexpr.Kind) (signed, unsigned bool, bits int) {
-	switch kind {
-	case goaexpr.IntKind:
-		return true, false, 0
-	case goaexpr.Int32Kind:
-		return true, false, 32
-	case goaexpr.Int64Kind:
-		return true, false, 64
-	case goaexpr.UIntKind:
-		return false, true, 0
-	case goaexpr.UInt32Kind:
-		return false, true, 32
-	case goaexpr.UInt64Kind:
-		return false, true, 64
-	case goaexpr.BooleanKind,
-		goaexpr.Float32Kind,
-		goaexpr.Float64Kind,
-		goaexpr.StringKind,
-		goaexpr.BytesKind,
-		goaexpr.ArrayKind,
-		goaexpr.ObjectKind,
-		goaexpr.MapKind,
-		goaexpr.UnionKind,
-		goaexpr.UserTypeKind,
-		goaexpr.ResultTypeKind,
-		goaexpr.AnyKind:
-		return false, false, 0
-	}
-	panic(fmt.Sprintf("unsupported Goa kind %d", kind))
 }
 
 // declareJSONValidatorName reserves one private validator function in the

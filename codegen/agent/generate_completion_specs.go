@@ -4,6 +4,7 @@ package codegen
 
 import (
 	"fmt"
+	"goa.design/goa-ai/codegen/internal/jsonshape"
 	"path/filepath"
 	"sort"
 
@@ -150,7 +151,7 @@ func completionSpecsFiles(data *GeneratorData, planned *toolSpecsPlan) ([]*codeg
 			codegen.Header(svc.Service.Name+" completion codecs", packageName, codecImports),
 			{
 				Name:   "completion-spec-codecs",
-				Source: agentsTemplates.Read(toolCodecsFileT),
+				Source: agentsTemplates.Read(toolCodecsFileT) + jsonshape.ValidatorsSource,
 				Data: toolCodecsFileData{
 					Types:                  specsData.typesList(),
 					JSONDocumentValidators: specsData.JSONDocumentValidators,

@@ -196,6 +196,9 @@ type (
 		Name               string
 		Description        string
 		InheritDescription bool
+		// AllowNull is left false for tool codecs; selected standalone array
+		// occurrences supply this fact to the shared validator template.
+		AllowNull bool
 	}
 
 	toolMetaPair struct {

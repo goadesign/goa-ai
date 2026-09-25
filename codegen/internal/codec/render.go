@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"goa.design/goa-ai/codegen/internal/jsonshape"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -14,16 +15,20 @@ import (
 type (
 	// fileData contains the complete source model for one generated codec file.
 	fileData struct {
-		Types   []*typeData
-		Unions  []*unionData
-		Values  []*valueData
-		Helpers []*goacodegen.TransformFunctionData
+		Types              []*typeData
+		Unions             []*unionData
+		Values             []*valueData
+		Helpers            []*goacodegen.TransformFunctionData
+		JSONValidators     []*shapeData
+		Preflights         string
+		OriginalValidators []*originalValidatorData
 	}
 
 	// typeData contains one transport type and its validation function.
 	typeData struct {
 		Name       string
 		Definition string
+		Alias      bool
 		Validator  string
 		Reference  string
 		Pointer    bool
@@ -53,23 +58,18 @@ type (
 
 	// valueData contains the generated functions for one service value.
 	valueData struct {
-		Name            string
-		ServiceRef      string
-		TransportRef    string
-		Validator       string
-		Constructor     string
-		Encode          string
-		Decode          string
-		EncodeTransform string
-		DecodeTransform string
-	}
-
-	// transportTypeWriter applies transport pointer rules while keeping Goa's
-	// built-in empty type as an unnamed empty struct.
-	transportTypeWriter struct {
-		goacodegen.Attributor
-		types  map[goaexpr.UserType]*goacodegen.TypeDeclaration
-		unions map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration
+		Name              string
+		ServiceRef        string
+		TransportRef      string
+		Validator         string
+		Constructor       string
+		Encode            string
+		Decode            string
+		EncodeTransform   string
+		DecodeTransform   string
+		Shape             string
+		Preflight         string
+		OriginalValidator string
 	}
 
 	// serviceTypeWriter lets Goa's service resolver add the package name to each
@@ -93,12 +93,20 @@ func (p *Plan) Files() ([]*goacodegen.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	sections := []*goacodegen.SectionTemplate{
+		goacodegen.Header("Private JSON codecs for generated service values.", p.packageName, imports),
+		{Name: "json-codecs", Source: codecSource, Data: data},
+	}
+	if len(data.JSONValidators) > 0 {
+		sections = append(sections, &goacodegen.SectionTemplate{
+			Name:   "strict-json-values",
+			Source: `{{template "json-value-validators" .}}` + jsonshape.ValidatorsSource + standaloneSource + `{{.Preflights}}`,
+			Data:   data,
+		})
+	}
 	return []*goacodegen.File{{
-		Path: filepath.Join(p.pkg.OutputDirectory(), "codec.go"),
-		SectionTemplates: []*goacodegen.SectionTemplate{
-			goacodegen.Header("Private JSON codecs for generated service values.", p.packageName, imports),
-			{Name: "json-codecs", Source: codecSource, Data: data},
-		},
+		Path:             filepath.Join(p.pkg.OutputDirectory(), "codec.go"),
+		SectionTemplates: sections,
 	}}, nil
 }
 
@@ -109,22 +117,37 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 	unionKeys := make(map[*goacodegen.UnionDeclaration]*unionData)
 	helperKeys := make(map[*goacodegen.NameDeclaration]struct{})
 	for _, value := range p.values {
+		if value.standalone != nil {
+			data.JSONValidators = append(data.JSONValidators, value.shapeData()...)
+			preflight, err := value.renderPreflight()
+			if err != nil {
+				return nil, nil, err
+			}
+			data.Preflights += preflight
+			validators, err := value.originalValidationData()
+			if err != nil {
+				return nil, nil, err
+			}
+			data.OriginalValidators = append(data.OriginalValidators, validators...)
+		}
 		for _, planned := range value.types {
 			if _, exists := typeKeys[planned.declaration]; exists {
 				continue
 			}
 			typeKeys[planned.declaration] = struct{}{}
 			linkedType := planned.layout.Link(p.pkg.ImportPath(), p.pkg.ImportName)
-			linkedValidation, err := planned.validation.Link(linkedType)
+			parameter := planned.parameter.Link(p.pkg.ImportPath(), p.pkg.ImportName)
+			linkedValidation, err := planned.validation.Link(parameter)
 			if err != nil {
 				return nil, nil, err
 			}
 			data.Types = append(data.Types, &typeData{
 				Name:       planned.typeDeclaration.Name(),
 				Definition: linkedType.Def(),
+				Alias:      planned.alias,
 				Validator:  planned.validatorDeclaration.Name(),
-				Reference:  planned.typeDeclaration.Ref(planned.userType),
-				Pointer:    strings.HasPrefix(planned.typeDeclaration.Ref(planned.userType), "*"),
+				Reference:  parameter.Ref(),
+				Pointer:    parameter.ReferenceIsPointer(),
 				Validation: linkedValidation.Render("value", "body"),
 			})
 		}
@@ -180,24 +203,18 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 	return data, p.imports(), nil
 }
 
-// link binds the transport and service type writers and renders both conversions.
+// link binds the retained transport layout and service writer, then renders conversions.
 func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) {
-	transportAttributor := &transportTypeWriter{
-		Attributor: goacodegen.NewAttributeScope(v.plan.pkg.Scope()),
-		types:      make(map[goaexpr.UserType]*goacodegen.TypeDeclaration, len(v.types)),
-		unions:     make(map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration, len(v.unions)),
-	}
-	for _, planned := range v.types {
-		transportAttributor.types[planned.userType.Origin()] = planned.typeDeclaration
-	}
-	for _, planned := range v.unions {
-		transportAttributor.unions[goacodegen.NewUnionDeclarationID(planned.attribute)] = planned.declaration
-	}
+	transportLayout := v.transportLayout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName)
 	transportContext := &goacodegen.AttributeContext{
 		Pointer:             true,
-		Scope:               transportAttributor,
+		Scope:               goacodegen.NewAttributeScope(v.plan.pkg.Scope()),
 		UnionPointer:        true,
 		ArrayElementPointer: true,
+	}
+	transportContext, err := transportContext.WithGoTypeLayout(transportLayout)
+	if err != nil {
+		return nil, nil, fmt.Errorf("link JSON value %q transport layout: %w", v.key, err)
 	}
 	serviceWriter := &serviceTypeWriter{Attributor: v.serviceAttributor}
 	serviceContext := &goacodegen.AttributeContext{
@@ -208,8 +225,15 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 	data := &valueData{
 		Name:         v.preferredName,
 		ServiceRef:   serviceWriter.Ref(v.service, ""),
-		TransportRef: top.typeDeclaration.Ref(top.userType),
+		TransportRef: transportLayout.Ref(),
 		Validator:    top.validatorDeclaration.Name(),
+	}
+	if v.standalone != nil {
+		data.Shape = v.standalone.names[v.standalone.root].Name()
+		data.Preflight = v.standalone.preflight.Name()
+		if v.standalone.originalValidator != nil {
+			data.OriginalValidator = v.standalone.originalValidator.Name()
+		}
 	}
 	if v.constructor != nil {
 		data.Constructor = v.constructor.Name()
@@ -244,41 +268,6 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 	return data, helpers, nil
 }
 
-// Name returns the generated transport type name.
-func (w *transportTypeWriter) Name(attribute *goaexpr.AttributeExpr, pkg string, pointer, useDefault bool) string {
-	if attribute.Type == goaexpr.Empty {
-		return "struct {}"
-	}
-	if name, ok := w.plannedName(attribute); ok {
-		return qualifyTypeName(pkg, name)
-	}
-	return w.Attributor.Name(attribute, pkg, pointer, useDefault)
-}
-
-// Ref returns the generated transport type reference.
-func (w *transportTypeWriter) Ref(attribute *goaexpr.AttributeExpr, pkg string) string {
-	if attribute.Type == goaexpr.Empty {
-		return "*struct {}"
-	}
-	if name, ok := w.plannedName(attribute); ok {
-		name = qualifyTypeName(pkg, name)
-		if goaexpr.IsObject(attribute.Type) || goaexpr.IsUnion(attribute.Type) {
-			return "*" + name
-		}
-		return name
-	}
-	return w.Attributor.Ref(attribute, pkg)
-}
-
-// Enter keeps the empty-type rule while following nested type ownership.
-func (w *transportTypeWriter) Enter(attribute *goaexpr.AttributeExpr) goacodegen.Attributor {
-	return &transportTypeWriter{
-		Attributor: w.Attributor.Enter(attribute),
-		types:      w.types,
-		unions:     w.unions,
-	}
-}
-
 // Package returns no separate package name because the service resolver adds
 // it when it writes a named type.
 func (*serviceTypeWriter) Package(*goaexpr.AttributeExpr) string {
@@ -288,35 +277,6 @@ func (*serviceTypeWriter) Package(*goaexpr.AttributeExpr) string {
 // Enter keeps that rule while the service resolver follows nested types.
 func (w *serviceTypeWriter) Enter(attribute *goaexpr.AttributeExpr) goacodegen.Attributor {
 	return &serviceTypeWriter{Attributor: w.Attributor.Enter(attribute)}
-}
-
-// plannedName returns the final Goa name for a private named type or union.
-func (w *transportTypeWriter) plannedName(attribute *goaexpr.AttributeExpr) (string, bool) {
-	switch actual := attribute.Type.(type) {
-	case goaexpr.UserType:
-		declaration := w.types[actual.Origin()]
-		if declaration == nil {
-			panic(fmt.Sprintf("transport type %q has no planned declaration", actual.Name()))
-		}
-		return declaration.Name(), true
-	case *goaexpr.Union:
-		declaration := w.unions[goacodegen.NewUnionDeclarationID(attribute)]
-		if declaration == nil {
-			panic(fmt.Sprintf("transport union %q has no planned declaration", actual.Name()))
-		}
-		return declaration.Name(), true
-	default:
-		return "", false
-	}
-}
-
-// qualifyTypeName adds a package qualifier when the generated type is used
-// outside its private codec package.
-func qualifyTypeName(pkg, name string) string {
-	if pkg == "" {
-		return name
-	}
-	return pkg + "." + name
 }
 
 // imports returns the packages required by the conversions selected in the
@@ -345,7 +305,7 @@ func (p *Plan) imports() []*goacodegen.ImportSpec {
 const codecSource = `
 {{ range .Types }}
 // {{ .Name }} stores JSON fields until they have been validated.
-type {{ .Name }} {{ .Definition }}
+type {{ .Name }} {{ if .Alias }}= {{ end }}{{ .Definition }}
 
 // {{ .Validator }} checks decoded JSON before it becomes a service value.
 func {{ .Validator }}(value {{ .Reference }}) (err error) {
@@ -354,6 +314,13 @@ func {{ .Validator }}(value {{ .Reference }}) (err error) {
 		return goa.MissingFieldError("body", "JSON value")
 	}
 	{{- end }}
+	{{ .Validation }}
+	return err
+}
+{{ end }}
+{{ range .OriginalValidators }}
+// {{ .Name }} checks the original typed value before JSON conversion.
+func {{ .Name }}(value {{ .Reference }}) (err error) {
 	{{ .Validation }}
 	return err
 }
@@ -496,6 +463,16 @@ func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
 {{ if .Encode }}
 // {{ .Encode }} turns a service value into JSON using the field names in the Goa design.
 func {{ .Encode }}(in {{ .ServiceRef }}) ([]byte, error) {
+	{{- if .Preflight }}
+	if err := {{ .Preflight }}(in); err != nil {
+		return nil, fmt.Errorf("encode {{ .Name }} JSON: %w", err)
+	}
+	{{- end }}
+	{{- if .OriginalValidator }}
+	if err := {{ .OriginalValidator }}(in); err != nil {
+		return nil, fmt.Errorf("validate {{ .Name }} value: %w", err)
+	}
+	{{- end }}
 	var body {{ .TransportRef }}
 	{{ .EncodeTransform }}
 	if err := {{ .Validator }}(body); err != nil {
@@ -523,6 +500,15 @@ func {{ .Constructor }}(body {{ .TransportRef }}) (out {{ .ServiceRef }}, err er
 {{ if .Decode }}
 // {{ .Decode }} checks JSON field names from the Goa design and returns a service value.
 func {{ .Decode }}(data []byte) (out {{ .ServiceRef }}, err error) {
+	{{- if .Shape }}
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode {{ .Name }} JSON: %w", err)
+	}
+	if err := {{ .Shape }}("", root, ""); err != nil {
+		return out, fmt.Errorf("decode {{ .Name }} JSON: %w", err)
+	}
+	{{- end }}
 	var body {{ .TransportRef }}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()

@@ -2079,6 +2079,28 @@ side effect:
   `worker.Options.OnFatalError` callback instead of being silently ignored.
   Integrating services should treat that callback as process-fatal and exit.
 
+## Standalone Value Codecs
+
+The `codegen/jsoncodec` plugin adds strict JSON functions for original named
+Goa types selected with `Meta("goa-ai:json:codec")`. Goa's service generator
+continues to own the type, its package, and its representation. The plugin
+owns a separate public codec package and private transport support; selecting
+a value does not create a service, tool, completion, or second domain type.
+
+Encoding checks the original typed value before conversion, including required
+nil fields, invalid text, and cycles. Decoding checks raw JSON names, types,
+duplicates, and text before typed decoding can lose those distinctions.
+Generated validation and transforms reuse Goa's retained type layouts,
+declarations, and constraints. Named union receivers use the underlying
+declaration that owns their methods. The same planned parameter type supplies
+each validator's signature and checks.
+
+The standalone codec and tool codecs share generated JSON shape checks while
+retaining their separate public contracts. Application request budgets and
+stored-data conversion remain application-owned. See
+[Standalone JSON codecs](docs/json_codecs.md) for selection, supported values,
+errors, and adoption.
+
 ## Tool Input Schema
 
 Every model-visible tool input is an object. Designs may use an inline object or

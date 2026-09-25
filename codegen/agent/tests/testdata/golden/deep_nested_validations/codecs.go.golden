@@ -390,6 +390,10 @@ func MarshalValidatePayload(v *ValidatePayload) ([]byte, error) {
 		out.Groups = make(map[string]map[string]string, len(in.Groups))
 		for key, val := range in.Groups {
 			tk := key
+			if val == nil {
+				out.Groups[tk] = nil
+				continue
+			}
 			tvb := make(map[string]string, len(val))
 			for key, val := range val {
 				tk := key
@@ -457,6 +461,10 @@ func UnmarshalValidatePayload(data []byte) (*ValidatePayload, error) {
 		out.Groups = make(map[string]map[string]string, len(in.Groups))
 		for key, val := range in.Groups {
 			tk := key
+			if val == nil {
+				out.Groups[tk] = nil
+				continue
+			}
 			tvb := make(map[string]string, len(val))
 			for key, val := range val {
 				tk := key
@@ -512,6 +520,10 @@ func MarshalValidateResult(v *ValidateResult) ([]byte, error) {
 		out.Groups = make(map[string]map[string]string, len(in.Groups))
 		for key, val := range in.Groups {
 			tk := key
+			if val == nil {
+				out.Groups[tk] = nil
+				continue
+			}
 			tvb := make(map[string]string, len(val))
 			for key, val := range val {
 				tk := key
@@ -579,6 +591,10 @@ func UnmarshalValidateResult(data []byte) (*ValidateResult, error) {
 		out.Groups = make(map[string]map[string]string, len(in.Groups))
 		for key, val := range in.Groups {
 			tk := key
+			if val == nil {
+				out.Groups[tk] = nil
+				continue
+			}
 			tvb := make(map[string]string, len(val))
 			for key, val := range val {
 				tk := key
