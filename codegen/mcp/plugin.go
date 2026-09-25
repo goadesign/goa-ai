@@ -660,7 +660,7 @@ func planMCPCodecs(
 
 	codecImportPath := path.Join(data.mcpImportPath, "internal", "codec")
 	serviceImportPath := data.serviceImportPath
-	planned, err := jsoncodec.NewPlan(generation, codecImportPath, "codec", serviceImportPath)
+	planned, err := jsoncodec.NewPlan(generation, codecImportPath, serviceImportPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("plan MCP codecs for service %q: %w", prepared.userService.Name, err)
 	}
@@ -735,7 +735,7 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 		}
 	}
 	bindMCPCodecData(planned.adapterData, planned.methodCodecs)
-	files, err := planned.codecPlan.Files()
+	files, err := planned.codecPlan.Files("codec")
 	if err != nil {
 		return nil, fmt.Errorf("render MCP codecs for service %q: %w", planned.prepared.userService.Name, err)
 	}

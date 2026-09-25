@@ -26,10 +26,9 @@ require (
 	go.temporal.io/sdk v1.44.1
 	go.temporal.io/sdk/contrib/opentelemetry v0.7.0
 	goa.design/clue v1.2.6
-	goa.design/goa/v3 v3.32.0
+	goa.design/goa/v3 v3.32.1-0.20260925160336-fc407c6657a4
 	goa.design/pulse v1.10.3-0.20260825143355-aea9ab01cba6
 	golang.org/x/image v0.43.0
-	golang.org/x/time v0.15.0
 	google.golang.org/genai v1.62.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
@@ -320,6 +319,7 @@ require (
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 	golang.org/x/tools v0.50.0 // indirect
 	google.golang.org/api v0.278.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260706201446-f0a921348800 // indirect

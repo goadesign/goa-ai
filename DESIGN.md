@@ -2079,6 +2079,38 @@ side effect:
   `worker.Options.OnFatalError` callback instead of being silently ignored.
   Integrating services should treat that callback as process-fatal and exit.
 
+## Standalone Value Codecs
+
+The normal Goa-AI generation plugin adds strict JSON functions beside supported
+original named Goa types. Designs import only DSL packages. Goa's original-type
+catalog owns reachability, force metadata, package placement, and declarations;
+codec generation does not repeat that selection or create a synthetic service.
+`type:generate:force` retains its existing service scope for otherwise-unused
+types.
+
+Each original package receives public encode/decode functions and private JSON
+helpers. Complete-original transport declarations are shared within that
+package, while field-occurrence rules remain attached to their actual fields.
+No codec subdirectory or public transport representation is introduced. Types
+containing `Any`, custom Go representations, or non-string map keys have their
+complete codecs skipped; their original types remain valid and supported peers
+remain eligible. Runtime-owned builtin forms are excluded.
+
+Encoding checks the original typed value before conversion, including required
+nil fields, invalid text, and cycles. Decoding checks raw JSON names, types,
+duplicates, and text before typed decoding can lose those distinctions.
+Generated validation and transforms reuse Goa's retained type layouts,
+declarations, and constraints. Named union receivers use the underlying
+declaration that owns their methods. The same planned parameter type supplies
+each validator's signature and checks.
+
+The original-value, tool, and completion codecs share JSON shape checks while
+retaining their different contracts. Complete-original functions do not change
+model-visible field selection, completion-owned result representations, or
+existing JSON methods. Application request budgets and stored-data conversion
+remain application-owned. See [Standalone JSON codecs](docs/json_codecs.md) for
+automatic coverage, supported values, errors, and adoption.
+
 ## Tool Input Schema
 
 Every model-visible tool input is an object. Designs may use an inline object or

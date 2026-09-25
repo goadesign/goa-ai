@@ -1,0 +1,109 @@
+package types_test
+
+import (
+	"bytes"
+	gentypes "codec.local/gen/types"
+	"runtime/debug"
+	"strings"
+	"testing"
+)
+
+const containerDocument = `{"Single":{"Label":""},"Loose":[null,{"Label":""}],"Tight":[{"Label":""}],"Choice":{"type":"entry","value":{"Label":""}}}`
+
+// The same named Entry is shared by every array, object and union occurrence.
+// Array element permission must not change that Entry's own required shape.
+func TestNullablePermissionBelongsToArrayOccurrence(t *testing.T) {
+	for name, choice := range map[string]string{
+		"entry": `{"type":"entry","value":{"Label":""}}`,
+		"text":  `{"type":"text","value":""}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if p := recover(); p != nil {
+					t.Errorf("unexpected codec panic: %v\n%s", p, debug.Stack())
+				}
+			}()
+			document := strings.Replace(containerDocument, `{"type":"entry","value":{"Label":""}}`, choice, 1)
+			value, err := gentypes.DecodeContainer([]byte(document))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if value.Single == nil || value.Single.Label != "" ||
+				len(value.Loose) != 2 || value.Loose[0] != nil || value.Loose[1] == nil ||
+				len(value.Tight) != 1 || value.Tight[0] == nil {
+				t.Fatalf("changed shared Entry occurrences: %#v", value)
+			}
+			first, err := gentypes.EncodeContainer(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			again, err := gentypes.DecodeContainer(first)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, err := gentypes.EncodeContainer(again)
+			if err != nil || !bytes.Equal(first, second) {
+				t.Fatalf("unstable occurrence encoding: %s %s %v", first, second, err)
+			}
+		})
+	}
+}
+
+func TestSharedEntryStrictNullOccurrences(t *testing.T) {
+	const loose = `"Loose":[null,{"Label":""}]`
+	const choice = `{"type":"entry","value":{"Label":""}}`
+	for name, document := range map[string]string{
+		"root":                      `null`,
+		"missing required array":    strings.Replace(containerDocument, loose+`,`, "", 1),
+		"null required loose array": strings.Replace(containerDocument, loose, `"Loose":null`, 1),
+		"null required tight array": strings.Replace(containerDocument, `"Tight":[{"Label":""}]`, `"Tight":null`, 1),
+		"required single":           strings.Replace(containerDocument, `"Single":{"Label":""}`, `"Single":null`, 1),
+		"required element":          strings.Replace(containerDocument, `"Tight":[{"Label":""}]`, `"Tight":[null]`, 1),
+		"union entry":               strings.Replace(containerDocument, choice, `{"type":"entry","value":null}`, 1),
+		"union field":               strings.Replace(containerDocument, choice, `null`, 1),
+		"union missing child":       strings.Replace(containerDocument, choice, `{"type":"entry","value":{}}`, 1),
+		"union text":                strings.Replace(containerDocument, choice, `{"type":"text","value":null}`, 1),
+		"missing child":             strings.Replace(containerDocument, loose, `"Loose":[null,{}]`, 1),
+		"null child field":          strings.Replace(containerDocument, loose, `"Loose":[null,{"Label":null}]`, 1),
+		"unknown child":             strings.Replace(containerDocument, loose, `"Loose":[null,{"Label":"","Extra":0}]`, 1),
+		"case child":                strings.Replace(containerDocument, loose, `"Loose":[null,{"label":""}]`, 1),
+		"duplicate child":           strings.Replace(containerDocument, loose, `"Loose":[null,{"Label":"","\u004cabel":"second"}]`, 1),
+		"surrogate child":           strings.Replace(containerDocument, loose, `"Loose":[null,{"Label":"\ud800"}]`, 1),
+		"UTF8 child":                strings.Replace(containerDocument, loose, `"Loose":[null,{"Label":"`+string([]byte{0xff})+`"}]`, 1),
+	} {
+		t.Run(name, func(t *testing.T) {
+			defer func() {
+				if p := recover(); p != nil {
+					t.Errorf("unexpected codec panic: %v\n%s", p, debug.Stack())
+				}
+			}()
+			value, err := gentypes.DecodeContainer([]byte(document))
+			if err == nil || value != nil {
+				t.Fatalf("usable invalid occurrence: %#v %v; %s", value, err, document)
+			}
+		})
+	}
+	for name, mutate := range map[string]func(*gentypes.Container){
+		"required loose array": func(v *gentypes.Container) { v.Loose = nil },
+		"required tight array": func(v *gentypes.Container) { v.Tight = nil },
+		"single":               func(v *gentypes.Container) { v.Single = nil },
+		"required element":     func(v *gentypes.Container) { v.Tight[0] = nil },
+		"union entry":          func(v *gentypes.Container) { v.Choice.SetEntry(nil) },
+	} {
+		t.Run("encode/"+name, func(t *testing.T) {
+			defer func() {
+				if p := recover(); p != nil {
+					t.Errorf("unexpected codec panic: %v\n%s", p, debug.Stack())
+				}
+			}()
+			value, err := gentypes.DecodeContainer([]byte(containerDocument))
+			if err != nil {
+				t.Fatal(err)
+			}
+			mutate(value)
+			if data, err := gentypes.EncodeContainer(value); err == nil || data != nil {
+				t.Fatalf("usable invalid occurrence encoding: %s %v", data, err)
+			}
+		})
+	}
+}

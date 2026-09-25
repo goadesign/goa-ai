@@ -1,0 +1,54 @@
+package types_test
+
+import (
+	"bytes"
+	gentypes "codec.local/gen/types"
+	"testing"
+)
+
+func TestFiniteRecursiveOriginalValues(t *testing.T) {
+	leaf := &gentypes.Node{Label: "leaf"}
+	for name, root := range map[string]*gentypes.Node{
+		"named slice":       {Label: "root", Children: gentypes.NodeList{nil, leaf}},
+		"named map":         {Label: "root", Index: gentypes.NodeMap{"leaf": leaf}},
+		"mutual":            {Label: "root", Branch: &gentypes.Branch{Label: "branch", Nodes: gentypes.NodeList{leaf}}},
+		"shared DAG":        {Label: "root", Children: gentypes.NodeList{leaf, leaf}, Index: gentypes.NodeMap{"same": leaf}},
+		"nested":            {Label: "root", Children: gentypes.NodeList{&gentypes.Node{Label: "middle", Branch: &gentypes.Branch{Label: "branch", Nodes: gentypes.NodeList{leaf}}}}},
+		"empty collections": {Label: "root", Children: gentypes.NodeList{}, Index: gentypes.NodeMap{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root.Choice.SetNode(leaf)
+			data, err := gentypes.EncodeRoot(&gentypes.Root{Node: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			value, err := gentypes.DecodeRoot(data)
+			if err != nil {
+				t.Fatalf("%s: %v", data, err)
+			}
+			next, err := gentypes.EncodeRoot(value)
+			if err != nil || !bytes.Equal(data, next) {
+				t.Fatalf("unstable: %s %s %v", data, next, err)
+			}
+		})
+	}
+}
+
+func TestRecursiveChildValidation(t *testing.T) {
+	for name, root := range map[string]*gentypes.Node{
+		"named slice": {Label: "root", Children: gentypes.NodeList{&gentypes.Node{}}},
+		"named map":   {Label: "root", Index: gentypes.NodeMap{"bad": &gentypes.Node{}}},
+		"mutual":      {Label: "root", Branch: &gentypes.Branch{Label: "branch", Nodes: gentypes.NodeList{&gentypes.Node{}}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if data, err := gentypes.EncodeRoot(&gentypes.Root{Node: root}); err == nil || data != nil {
+				t.Fatalf("invalid: %s %v", data, err)
+			}
+		})
+	}
+	root := &gentypes.Node{Label: "root"}
+	root.Choice.SetNode(&gentypes.Node{})
+	if data, err := gentypes.EncodeRoot(&gentypes.Root{Node: root}); err == nil || data != nil {
+		t.Fatalf("invalid union: %s %v", data, err)
+	}
+}

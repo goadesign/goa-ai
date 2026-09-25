@@ -5,6 +5,7 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
+	"goa.design/goa-ai/codegen/internal/jsonshape"
 	"maps"
 	"strings"
 
@@ -205,43 +206,7 @@ func generatedFieldMetadataKey(path []fieldPathSegmentData, branches []unionBran
 
 // generatedJSONType maps Goa types to exact JSON categories. It returns an
 // empty string when the design accepts more than one category.
-func generatedJSONType(dt goaexpr.DataType) string {
-	switch actual := dt.(type) {
-	case goaexpr.UserType:
-		return generatedJSONType(actual.Attribute().Type)
-	case *goaexpr.Object, *goaexpr.Map, *goaexpr.Union:
-		return jsonSchemaTypeObject
-	case *goaexpr.Array:
-		return "array"
-	case goaexpr.Primitive:
-		switch actual.Kind() {
-		case goaexpr.BooleanKind:
-			return "boolean"
-		case goaexpr.StringKind, goaexpr.BytesKind:
-			return "string"
-		case goaexpr.IntKind,
-			goaexpr.Int32Kind,
-			goaexpr.Int64Kind,
-			goaexpr.UIntKind,
-			goaexpr.UInt32Kind,
-			goaexpr.UInt64Kind:
-			return jsonSchemaTypeInteger
-		case goaexpr.Float32Kind,
-			goaexpr.Float64Kind:
-			return "number"
-		case goaexpr.AnyKind:
-			return ""
-		case goaexpr.ArrayKind,
-			goaexpr.ObjectKind,
-			goaexpr.MapKind,
-			goaexpr.UnionKind,
-			goaexpr.UserTypeKind,
-			goaexpr.ResultTypeKind:
-			return ""
-		}
-	}
-	return ""
-}
+func generatedJSONType(dt goaexpr.DataType) string { return jsonshape.Category(dt) }
 
 // isEmptyStruct reports whether the attribute resolves to an empty object.
 // It follows user types so callers can treat alias user types over empty
@@ -514,7 +479,7 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 	case *goaexpr.Map:
 		values, ok := schema["additionalProperties"].(map[string]any)
 		if !ok {
-			primitive, primitiveOK := jsonValidatorPrimitiveType(dt.ElemType)
+			primitive, primitiveOK := jsonshape.PrimitiveType(dt.ElemType)
 			if primitiveOK && primitive.Kind() == goaexpr.AnyKind {
 				return nil
 			}

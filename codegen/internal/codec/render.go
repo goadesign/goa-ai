@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"goa.design/goa-ai/codegen/internal/jsonshape"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -14,16 +15,25 @@ import (
 type (
 	// fileData contains the complete source model for one generated codec file.
 	fileData struct {
-		Types   []*typeData
-		Unions  []*unionData
-		Values  []*valueData
-		Helpers []*goacodegen.TransformFunctionData
+		Types              []*typeData
+		Unions             []*unionData
+		Values             []*valueData
+		Helpers            []*goacodegen.TransformFunctionData
+		JSONValidators     []*shapeData
+		Preflights         string
+		OriginalValidators []*originalValidatorData
+		Imports            codecImportNames
+		JSONNames          jsonshape.Names
+		ReadStrictJSON     string
+		ReadJSONValue      string
+		ValidateJSONText   string
 	}
 
 	// typeData contains one transport type and its validation function.
 	typeData struct {
 		Name       string
 		Definition string
+		Alias      bool
 		Validator  string
 		Reference  string
 		Pointer    bool
@@ -53,23 +63,18 @@ type (
 
 	// valueData contains the generated functions for one service value.
 	valueData struct {
-		Name            string
-		ServiceRef      string
-		TransportRef    string
-		Validator       string
-		Constructor     string
-		Encode          string
-		Decode          string
-		EncodeTransform string
-		DecodeTransform string
-	}
-
-	// transportTypeWriter applies transport pointer rules while keeping Goa's
-	// built-in empty type as an unnamed empty struct.
-	transportTypeWriter struct {
-		goacodegen.Attributor
-		types  map[goaexpr.UserType]*goacodegen.TypeDeclaration
-		unions map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration
+		Name              string
+		ServiceRef        string
+		TransportRef      string
+		Validator         string
+		Constructor       string
+		Encode            string
+		Decode            string
+		EncodeTransform   string
+		DecodeTransform   string
+		Shape             string
+		Preflight         string
+		OriginalValidator string
 	}
 
 	// serviceTypeWriter lets Goa's service resolver add the package name to each
@@ -80,9 +85,12 @@ type (
 )
 
 // Files writes the single codec file after Goa has fixed all package names.
-func (p *Plan) Files() ([]*goacodegen.File, error) {
+func (p *Plan) Files(packageName string) ([]*goacodegen.File, error) {
 	if !p.generation.Frozen() {
 		return nil, fmt.Errorf("JSON codec files cannot be rendered before generation freeze")
+	}
+	if packageName == "" {
+		return nil, fmt.Errorf("JSON codec files require the owning package name")
 	}
 	for _, value := range p.values {
 		if value.serviceAttributor == nil {
@@ -93,65 +101,94 @@ func (p *Plan) Files() ([]*goacodegen.File, error) {
 	if err != nil {
 		return nil, err
 	}
+	sections := []*goacodegen.SectionTemplate{
+		goacodegen.Header("Private JSON codecs for generated service values.", packageName, imports),
+		{Name: "json-codecs", Source: codecSource, Data: data},
+	}
+	if len(data.JSONValidators) > 0 {
+		sections = append(sections, &goacodegen.SectionTemplate{
+			Name:   "strict-json-values",
+			Source: `{{template "json-value-validators" .}}` + jsonshape.ValidatorsSource + standaloneSource + `{{.Preflights}}`,
+			Data:   data,
+		})
+	}
 	return []*goacodegen.File{{
-		Path: filepath.Join(p.pkg.OutputDirectory(), "codec.go"),
-		SectionTemplates: []*goacodegen.SectionTemplate{
-			goacodegen.Header("Private JSON codecs for generated service values.", p.packageName, imports),
-			{Name: "json-codecs", Source: codecSource, Data: data},
-		},
+		Path:             filepath.Join(p.pkg.OutputDirectory(), "codec.go"),
+		SectionTemplates: sections,
 	}}, nil
 }
 
 // link formats every retained plan with the final Goa names and import aliases.
 func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
-	data := &fileData{}
+	data := &fileData{Imports: p.importNames()}
+	if p.jsonHelpers != nil {
+		data.JSONNames = p.jsonNames(data.Imports)
+		data.ReadStrictJSON = p.jsonHelpers.read.Name()
+		data.ReadJSONValue = p.jsonHelpers.value.Name()
+		data.ValidateJSONText = p.jsonHelpers.text.Name()
+	}
 	typeKeys := make(map[*goacodegen.NameDeclaration]struct{})
-	unionKeys := make(map[*goacodegen.UnionDeclaration]*unionData)
+	unionKeys := make(map[*goacodegen.NameDeclaration]*unionData)
 	helperKeys := make(map[*goacodegen.NameDeclaration]struct{})
 	for _, value := range p.values {
+		if value.standalone != nil {
+			data.JSONValidators = append(data.JSONValidators, value.shapeData()...)
+			preflight, err := value.renderPreflight()
+			if err != nil {
+				return nil, nil, err
+			}
+			data.Preflights += preflight
+			validators, err := value.originalValidationData()
+			if err != nil {
+				return nil, nil, err
+			}
+			data.OriginalValidators = append(data.OriginalValidators, validators...)
+		}
 		for _, planned := range value.types {
 			if _, exists := typeKeys[planned.declaration]; exists {
 				continue
 			}
 			typeKeys[planned.declaration] = struct{}{}
 			linkedType := planned.layout.Link(p.pkg.ImportPath(), p.pkg.ImportName)
-			linkedValidation, err := planned.validation.Link(linkedType)
+			parameter := planned.parameter.Link(p.pkg.ImportPath(), p.pkg.ImportName)
+			linkedValidation, err := planned.validation.Link(parameter)
 			if err != nil {
 				return nil, nil, err
 			}
 			data.Types = append(data.Types, &typeData{
-				Name:       planned.typeDeclaration.Name(),
+				Name:       planned.declaration.Name(),
 				Definition: linkedType.Def(),
+				Alias:      planned.alias,
 				Validator:  planned.validatorDeclaration.Name(),
-				Reference:  planned.typeDeclaration.Ref(planned.userType),
-				Pointer:    strings.HasPrefix(planned.typeDeclaration.Ref(planned.userType), "*"),
+				Reference:  parameter.Ref(),
+				Pointer:    parameter.ReferenceIsPointer(),
 				Validation: linkedValidation.Render("value", "body"),
 			})
 		}
 		for _, planned := range value.unions {
-			if linked := unionKeys[planned.declaration]; linked != nil {
+			if linked := unionKeys[planned.name]; linked != nil {
 				linked.Encode = linked.Encode || value.direction.encodes()
 				linked.Decode = linked.Decode || value.direction.decodes()
 				continue
 			}
 			expression := planned.attribute.Type.(*goaexpr.Union)
 			union := &unionData{
-				Name:     planned.declaration.Name(),
-				KindName: planned.declaration.KindName(),
+				Name:     planned.name.Name(),
+				KindName: planned.kind.Name(),
 				TypeKey:  expression.GetTypeKey(),
 				ValueKey: expression.GetValueKey(),
 				Encode:   value.direction.encodes(),
 				Decode:   value.direction.decodes(),
 			}
-			unionKeys[planned.declaration] = union
+			unionKeys[planned.name] = union
 			for _, branch := range planned.branches {
 				fieldType := branch.layout.Link(p.pkg.ImportPath(), p.pkg.ImportName).Ref()
 				union.Branches = append(union.Branches, &unionBranchData{
 					Name:        branch.name,
 					FieldName:   branch.fieldName,
 					FieldType:   fieldType,
-					Kind:        branch.declaration.KindConst(),
-					Constructor: branch.declaration.Constructor(),
+					Kind:        branch.kind.Name(),
+					Constructor: branch.constructor.Name(),
 					Nilable: strings.HasPrefix(fieldType, "*") ||
 						strings.HasPrefix(fieldType, "[]") || strings.HasPrefix(fieldType, "map["),
 				})
@@ -180,24 +217,18 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 	return data, p.imports(), nil
 }
 
-// link binds the transport and service type writers and renders both conversions.
+// link binds the retained transport layout and service writer, then renders conversions.
 func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) {
-	transportAttributor := &transportTypeWriter{
-		Attributor: goacodegen.NewAttributeScope(v.plan.pkg.Scope()),
-		types:      make(map[goaexpr.UserType]*goacodegen.TypeDeclaration, len(v.types)),
-		unions:     make(map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration, len(v.unions)),
-	}
-	for _, planned := range v.types {
-		transportAttributor.types[planned.userType.Origin()] = planned.typeDeclaration
-	}
-	for _, planned := range v.unions {
-		transportAttributor.unions[goacodegen.NewUnionDeclarationID(planned.attribute)] = planned.declaration
-	}
+	transportLayout := v.transportLayout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName)
 	transportContext := &goacodegen.AttributeContext{
 		Pointer:             true,
-		Scope:               transportAttributor,
+		Scope:               goacodegen.NewAttributeScope(v.plan.pkg.Scope()),
 		UnionPointer:        true,
 		ArrayElementPointer: true,
+	}
+	transportContext, err := transportContext.WithGoTypeLayout(transportLayout)
+	if err != nil {
+		return nil, nil, fmt.Errorf("link JSON value %q transport layout: %w", v.key, err)
 	}
 	serviceWriter := &serviceTypeWriter{Attributor: v.serviceAttributor}
 	serviceContext := &goacodegen.AttributeContext{
@@ -208,8 +239,15 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 	data := &valueData{
 		Name:         v.preferredName,
 		ServiceRef:   serviceWriter.Ref(v.service, ""),
-		TransportRef: top.typeDeclaration.Ref(top.userType),
+		TransportRef: transportLayout.Ref(),
 		Validator:    top.validatorDeclaration.Name(),
+	}
+	if v.standalone != nil {
+		data.Shape = v.standalone.names[v.standalone.root].Name()
+		data.Preflight = v.standalone.preflight.Name()
+		if v.standalone.originalValidator != nil {
+			data.OriginalValidator = v.standalone.originalValidator.Name()
+		}
 	}
 	if v.constructor != nil {
 		data.Constructor = v.constructor.Name()
@@ -244,41 +282,6 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 	return data, helpers, nil
 }
 
-// Name returns the generated transport type name.
-func (w *transportTypeWriter) Name(attribute *goaexpr.AttributeExpr, pkg string, pointer, useDefault bool) string {
-	if attribute.Type == goaexpr.Empty {
-		return "struct {}"
-	}
-	if name, ok := w.plannedName(attribute); ok {
-		return qualifyTypeName(pkg, name)
-	}
-	return w.Attributor.Name(attribute, pkg, pointer, useDefault)
-}
-
-// Ref returns the generated transport type reference.
-func (w *transportTypeWriter) Ref(attribute *goaexpr.AttributeExpr, pkg string) string {
-	if attribute.Type == goaexpr.Empty {
-		return "*struct {}"
-	}
-	if name, ok := w.plannedName(attribute); ok {
-		name = qualifyTypeName(pkg, name)
-		if goaexpr.IsObject(attribute.Type) || goaexpr.IsUnion(attribute.Type) {
-			return "*" + name
-		}
-		return name
-	}
-	return w.Attributor.Ref(attribute, pkg)
-}
-
-// Enter keeps the empty-type rule while following nested type ownership.
-func (w *transportTypeWriter) Enter(attribute *goaexpr.AttributeExpr) goacodegen.Attributor {
-	return &transportTypeWriter{
-		Attributor: w.Attributor.Enter(attribute),
-		types:      w.types,
-		unions:     w.unions,
-	}
-}
-
 // Package returns no separate package name because the service resolver adds
 // it when it writes a named type.
 func (*serviceTypeWriter) Package(*goaexpr.AttributeExpr) string {
@@ -288,35 +291,6 @@ func (*serviceTypeWriter) Package(*goaexpr.AttributeExpr) string {
 // Enter keeps that rule while the service resolver follows nested types.
 func (w *serviceTypeWriter) Enter(attribute *goaexpr.AttributeExpr) goacodegen.Attributor {
 	return &serviceTypeWriter{Attributor: w.Attributor.Enter(attribute)}
-}
-
-// plannedName returns the final Goa name for a private named type or union.
-func (w *transportTypeWriter) plannedName(attribute *goaexpr.AttributeExpr) (string, bool) {
-	switch actual := attribute.Type.(type) {
-	case goaexpr.UserType:
-		declaration := w.types[actual.Origin()]
-		if declaration == nil {
-			panic(fmt.Sprintf("transport type %q has no planned declaration", actual.Name()))
-		}
-		return declaration.Name(), true
-	case *goaexpr.Union:
-		declaration := w.unions[goacodegen.NewUnionDeclarationID(attribute)]
-		if declaration == nil {
-			panic(fmt.Sprintf("transport union %q has no planned declaration", actual.Name()))
-		}
-		return declaration.Name(), true
-	default:
-		return "", false
-	}
-}
-
-// qualifyTypeName adds a package qualifier when the generated type is used
-// outside its private codec package.
-func qualifyTypeName(pkg, name string) string {
-	if pkg == "" {
-		return name
-	}
-	return pkg + "." + name
 }
 
 // imports returns the packages required by the conversions selected in the
@@ -345,15 +319,22 @@ func (p *Plan) imports() []*goacodegen.ImportSpec {
 const codecSource = `
 {{ range .Types }}
 // {{ .Name }} stores JSON fields until they have been validated.
-type {{ .Name }} {{ .Definition }}
+type {{ .Name }} {{ if .Alias }}= {{ end }}{{ .Definition }}
 
 // {{ .Validator }} checks decoded JSON before it becomes a service value.
 func {{ .Validator }}(value {{ .Reference }}) (err error) {
 	{{- if .Pointer }}
 	if value == nil {
-		return goa.MissingFieldError("body", "JSON value")
+		return {{ $.Imports.Goa }}.MissingFieldError("body", "JSON value")
 	}
 	{{- end }}
+	{{ .Validation }}
+	return err
+}
+{{ end }}
+{{ range .OriginalValidators }}
+// {{ .Name }} checks the original typed value before JSON conversion.
+func {{ .Name }}(value {{ .Reference }}) (err error) {
 	{{ .Validation }}
 	return err
 }
@@ -408,15 +389,15 @@ func (u {{ .Name }}) Validate() error {
 	case {{ .Kind }}:
 		{{- if .Nilable }}
 		if u.{{ .FieldName }} == nil {
-			return goa.MissingFieldError({{ printf "%q" $union.ValueKey }}, {{ printf "%q" $union.Name }})
+			return {{ $.Imports.Goa }}.MissingFieldError({{ printf "%q" $union.ValueKey }}, {{ printf "%q" $union.Name }})
 		}
 		{{- end }}
 		return nil
 	{{- end }}
 	case "":
-		return goa.MissingFieldError({{ printf "%q" .TypeKey }}, {{ printf "%q" .Name }})
+		return {{ $.Imports.Goa }}.MissingFieldError({{ printf "%q" .TypeKey }}, {{ printf "%q" .Name }})
 	default:
-		return goa.InvalidEnumValueError({{ printf "%q" .TypeKey }}, u.kind, []any{
+		return {{ $.Imports.Goa }}.InvalidEnumValueError({{ printf "%q" .TypeKey }}, u.kind, []any{
 			{{- range .Branches }}string({{ .Kind }}),{{- end }}
 		})
 	}
@@ -435,9 +416,9 @@ func (u {{ .Name }}) MarshalJSON() ([]byte, error) {
 		value = u.{{ .FieldName }}
 	{{- end }}
 	default:
-		return nil, fmt.Errorf("unexpected {{ .Name }} branch %q", u.kind)
+		return nil, {{ $.Imports.Fmt }}.Errorf("unexpected {{ .Name }} branch %q", u.kind)
 	}
-	return json.Marshal(struct {
+	return {{ $.Imports.JSON }}.Marshal(struct {
 		Type string ` + "`json:\"{{ .TypeKey }}\"`" + `
 		Value any ` + "`json:\"{{ .ValueKey }}\"`" + `
 	}{Type: string(u.kind), Value: value})
@@ -449,33 +430,33 @@ func (u {{ .Name }}) MarshalJSON() ([]byte, error) {
 func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Type string ` + "`json:\"{{ .TypeKey }}\"`" + `
-		Value json.RawMessage ` + "`json:\"{{ .ValueKey }}\"`" + `
+		Value {{ $.Imports.JSON }}.RawMessage ` + "`json:\"{{ .ValueKey }}\"`" + `
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder := {{ $.Imports.JSON }}.NewDecoder({{ $.Imports.Bytes }}.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&raw); err != nil {
 		return err
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+	if err := decoder.Decode(&struct{}{}); err != {{ $.Imports.IO }}.EOF {
 		if err == nil {
-			return fmt.Errorf("decode {{ .Name }} JSON: multiple JSON values")
+			return {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} JSON: multiple JSON values")
 		}
 		return err
 	}
 	if raw.Type == "" {
-		return goa.MissingFieldError({{ printf "%q" .TypeKey }}, {{ printf "%q" .Name }})
+		return {{ $.Imports.Goa }}.MissingFieldError({{ printf "%q" .TypeKey }}, {{ printf "%q" .Name }})
 	}
 	if len(raw.Value) == 0 {
-		return goa.MissingFieldError({{ printf "%q" .ValueKey }}, {{ printf "%q" .Name }})
+		return {{ $.Imports.Goa }}.MissingFieldError({{ printf "%q" .ValueKey }}, {{ printf "%q" .Name }})
 	}
-	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-		return goa.InvalidFieldTypeError({{ printf "%q" .ValueKey }}, nil, "non-null JSON value")
+	if {{ $.Imports.Bytes }}.Equal({{ $.Imports.Bytes }}.TrimSpace(raw.Value), []byte("null")) {
+		return {{ $.Imports.Goa }}.InvalidFieldTypeError({{ printf "%q" .ValueKey }}, nil, "non-null JSON value")
 	}
 	switch raw.Type {
 	{{- range .Branches }}
 	case string({{ .Kind }}):
 		var value {{ .FieldType }}
-		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
+		decoder := {{ $.Imports.JSON }}.NewDecoder({{ $.Imports.Bytes }}.NewReader(raw.Value))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&value); err != nil {
 			return err
@@ -484,7 +465,7 @@ func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
 		u.{{ .FieldName }} = value
 	{{- end }}
 	default:
-		return goa.InvalidEnumValueError({{ printf "%q" .TypeKey }}, raw.Type, []any{
+		return {{ $.Imports.Goa }}.InvalidEnumValueError({{ printf "%q" .TypeKey }}, raw.Type, []any{
 			{{- range .Branches }}string({{ .Kind }}),{{- end }}
 		})
 	}
@@ -496,14 +477,24 @@ func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
 {{ if .Encode }}
 // {{ .Encode }} turns a service value into JSON using the field names in the Goa design.
 func {{ .Encode }}(in {{ .ServiceRef }}) ([]byte, error) {
+	{{- if .Preflight }}
+	if err := {{ .Preflight }}(in); err != nil {
+		return nil, {{ $.Imports.Fmt }}.Errorf("encode {{ .Name }} JSON: %w", err)
+	}
+	{{- end }}
+	{{- if .OriginalValidator }}
+	if err := {{ .OriginalValidator }}(in); err != nil {
+		return nil, {{ $.Imports.Fmt }}.Errorf("validate {{ .Name }} value: %w", err)
+	}
+	{{- end }}
 	var body {{ .TransportRef }}
 	{{ .EncodeTransform }}
 	if err := {{ .Validator }}(body); err != nil {
-		return nil, fmt.Errorf("validate {{ .Name }} JSON: %w", err)
+		return nil, {{ $.Imports.Fmt }}.Errorf("validate {{ .Name }} JSON: %w", err)
 	}
-	data, err := json.Marshal(body)
+	data, err := {{ $.Imports.JSON }}.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("encode {{ .Name }} JSON: %w", err)
+		return nil, {{ $.Imports.Fmt }}.Errorf("encode {{ .Name }} JSON: %w", err)
 	}
 	return data, nil
 }
@@ -513,7 +504,7 @@ func {{ .Encode }}(in {{ .ServiceRef }}) ([]byte, error) {
 // {{ .Constructor }} validates a decoded transport value and returns the service value.
 func {{ .Constructor }}(body {{ .TransportRef }}) (out {{ .ServiceRef }}, err error) {
 	if err := {{ .Validator }}(body); err != nil {
-		return out, fmt.Errorf("validate {{ .Name }} JSON: %w", err)
+		return out, {{ $.Imports.Fmt }}.Errorf("validate {{ .Name }} JSON: %w", err)
 	}
 	{{ .DecodeTransform }}
 	return out, nil
@@ -523,23 +514,32 @@ func {{ .Constructor }}(body {{ .TransportRef }}) (out {{ .ServiceRef }}, err er
 {{ if .Decode }}
 // {{ .Decode }} checks JSON field names from the Goa design and returns a service value.
 func {{ .Decode }}(data []byte) (out {{ .ServiceRef }}, err error) {
+	{{- if .Shape }}
+	root, err := {{ $.ReadStrictJSON }}(data)
+	if err != nil {
+		return out, {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} JSON: %w", err)
+	}
+	if err := {{ .Shape }}("", root, ""); err != nil {
+		return out, {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} JSON: %w", err)
+	}
+	{{- end }}
 	var body {{ .TransportRef }}
-	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder := {{ $.Imports.JSON }}.NewDecoder({{ $.Imports.Bytes }}.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode {{ .Name }} JSON: %w", err)
+		return out, {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} JSON: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+	if err := decoder.Decode(&struct{}{}); err != {{ $.Imports.IO }}.EOF {
 		if err == nil {
-			return out, fmt.Errorf("decode {{ .Name }} JSON: multiple JSON values")
+			return out, {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} JSON: multiple JSON values")
 		}
-		return out, fmt.Errorf("decode {{ .Name }} JSON after first value: %w", err)
+		return out, {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} JSON after first value: %w", err)
 	}
 	{{- if .Constructor }}
 	return {{ .Constructor }}(body)
 	{{- else }}
 	if err := {{ .Validator }}(body); err != nil {
-		return out, fmt.Errorf("validate {{ .Name }} JSON: %w", err)
+		return out, {{ $.Imports.Fmt }}.Errorf("validate {{ .Name }} JSON: %w", err)
 	}
 	{{ .DecodeTransform }}
 	return out, nil

@@ -18,12 +18,13 @@ type (
 	Plan struct {
 		generation         *goacodegen.Generation
 		pkg                *goacodegen.GeneratedPackage
-		packageName        string
 		serviceImportPath  string
 		values             []*Value
 		valuesByKey        map[string]*Value
 		importPaths        map[string]struct{}
 		locatedImportPaths map[string]struct{}
+		originals          *originalTransportGraph
+		jsonHelpers        *jsonHelperPlan
 	}
 
 	// Value records one service value and its private JSON representation.
@@ -34,6 +35,7 @@ type (
 		direction         Direction
 		service           *goaexpr.AttributeExpr
 		transport         *goaexpr.AttributeExpr
+		transportLayout   *goacodegen.GoTypePlan
 		types             []*plannedType
 		unions            []*plannedUnion
 		decode            *goacodegen.TransformPlan
@@ -42,6 +44,8 @@ type (
 		encodeDeclaration *goacodegen.NameDeclaration
 		constructor       *goacodegen.NameDeclaration
 		serviceAttributor goacodegen.Attributor
+		standalone        *standalonePlan
+		originalLayout    *goacodegen.GoTypePlan
 	}
 
 	// TransportField describes one top-level field in a private JSON type.
@@ -68,22 +72,27 @@ type (
 		declaration          *goacodegen.NameDeclaration
 		typeDeclaration      *goacodegen.TypeDeclaration
 		validatorDeclaration *goacodegen.NameDeclaration
+		alias                bool
 		layout               *goacodegen.GoTypePlan
+		parameter            *goacodegen.GoTypePlan
 		validation           *goacodegen.ValidationPlan
 	}
 
 	// plannedUnion contains one generated Goa OneOf declaration and its branches.
 	plannedUnion struct {
-		attribute   *goaexpr.AttributeExpr
-		declaration *goacodegen.UnionDeclaration
-		branches    []*plannedUnionBranch
+		key       string
+		attribute *goaexpr.AttributeExpr
+		name      *goacodegen.NameDeclaration
+		kind      *goacodegen.NameDeclaration
+		branches  []*plannedUnionBranch
 	}
 
 	// plannedUnionBranch contains the type and generated names for one branch.
 	plannedUnionBranch struct {
 		name        string
 		fieldName   string
-		declaration *goacodegen.UnionBranchDeclaration
+		kind        *goacodegen.NameDeclaration
+		constructor *goacodegen.NameDeclaration
 		layout      *goacodegen.GoTypePlan
 	}
 
@@ -105,16 +114,14 @@ const (
 	ConstructOnly
 )
 
-// NewPlan creates the plan for one generated service's private JSON package.
-func NewPlan(generation *goacodegen.Generation, importPath, packageName, serviceImportPath string) (*Plan, error) {
+// NewPlan creates a codec plan for one output package. Original-value codecs may
+// use the original owner's package; Files receives its authoritative Go name.
+func NewPlan(generation *goacodegen.Generation, importPath, serviceImportPath string) (*Plan, error) {
 	if generation == nil {
 		return nil, fmt.Errorf("plan JSON codecs: generation must not be nil")
 	}
 	if importPath == "" {
 		return nil, fmt.Errorf("plan JSON codecs: import path must not be empty")
-	}
-	if packageName == "" {
-		return nil, fmt.Errorf("plan JSON codecs: package name must not be empty")
 	}
 	if serviceImportPath == "" {
 		return nil, fmt.Errorf("plan JSON codecs: service import path must not be empty")
@@ -126,7 +133,6 @@ func NewPlan(generation *goacodegen.Generation, importPath, packageName, service
 	return &Plan{
 		generation:         generation,
 		pkg:                pkg,
-		packageName:        packageName,
 		serviceImportPath:  serviceImportPath,
 		valuesByKey:        make(map[string]*Value),
 		importPaths:        make(map[string]struct{}),
@@ -238,7 +244,7 @@ func (v *Value) TransportTypeName(outputPath string, qualifier goacodegen.GoType
 		return "", fmt.Errorf("link JSON value %q transport type before generation freeze", v.key)
 	}
 	top := v.types[0]
-	name := top.typeDeclaration.Name()
+	name := top.declaration.Name()
 	if outputPath != v.plan.pkg.ImportPath() {
 		name = qualifier(v.plan.pkg.ImportPath()) + "." + name
 	}
@@ -364,6 +370,8 @@ func (v *Value) declareTypes(localTypes []goaexpr.UserType) error {
 			declaration:          declaration,
 			typeDeclaration:      typeDeclaration,
 			validatorDeclaration: validator,
+			// A named union keeps the underlying transport's JSON methods.
+			alias: goaexpr.IsUnion(userType),
 		})
 	}
 	return nil
@@ -385,7 +393,10 @@ func (v *Value) declareUnions() error {
 		if err != nil {
 			return err
 		}
-		v.unions = append(v.unions, &plannedUnion{attribute: attribute, declaration: declaration})
+		v.unions = append(v.unions, &plannedUnion{
+			attribute: attribute,
+			name:      declaration.Declaration(), kind: declaration.KindDeclaration(),
+		})
 		return nil
 	})
 }
@@ -404,8 +415,15 @@ func (v *Value) planTypes() error {
 			if planned == nil {
 				return goacodegen.GoTypeBinding{}, fmt.Errorf("transport type %q has no declaration", userType.Name())
 			}
+			if v.originalLayout != nil {
+				return goacodegen.GoTypeBinding{Owner: v.plan.pkg.ImportPath(), Declaration: planned.declaration}, nil
+			}
 			return goacodegen.GoTypeBinding{Owner: v.plan.pkg.ImportPath(), Type: planned.typeDeclaration}, nil
 		case goacodegen.GoUnion:
+			if v.originalLayout != nil {
+				union := v.plan.originals.unionsByLocal[request.Attribute.Type.(*goaexpr.Union)]
+				return goacodegen.GoTypeBinding{Owner: v.plan.pkg.ImportPath(), Declaration: union.name}, nil
+			}
 			declaration, err := v.plan.pkg.Union(request.Attribute)
 			if err != nil {
 				return goacodegen.GoTypeBinding{}, err
@@ -422,18 +440,52 @@ func (v *Value) planTypes() error {
 		return goacodegen.GoTypeBinding{}, fmt.Errorf("unsupported transport type kind %s", request.Kind)
 	}
 	policy := transportPolicy()
+	// Retain the named root and its contents so conversions can resolve every
+	// transport value after package names freeze.
+	transportLayout, err := goacodegen.PlanGoType(v.transport, goacodegen.GoTypePlanOptions{
+		Owner:            v.plan.pkg.ImportPath(),
+		Policy:           policy,
+		Bind:             binder,
+		RetainNamedValue: true,
+	})
+	if err != nil {
+		return err
+	}
+	v.transportLayout = transportLayout
 	for _, planned := range v.types {
+		if planned.validation != nil {
+			continue
+		}
+		definitionPolicy := policy
+		if goaexpr.IsPrimitive(planned.userType) {
+			// Scalar definition validators receive values. Pointer presence
+			// belongs to their enclosing JSON fields, not these parameters.
+			definitionPolicy.Pointer = false
+		}
 		layout, err := goacodegen.PlanGoType(planned.userType.Attribute(), goacodegen.GoTypePlanOptions{
-			Owner:  v.plan.pkg.ImportPath(),
-			Policy: policy,
-			Bind:   binder,
+			Owner:            v.plan.pkg.ImportPath(),
+			Policy:           definitionPolicy,
+			Bind:             binder,
+			RetainNamedValue: true,
+		})
+		if err != nil {
+			return err
+		}
+		// The function accepts the named transport type, whose union methods
+		// may belong to an underlying declaration in its retained definition.
+		parameter := &goaexpr.AttributeExpr{Type: planned.userType}
+		parameterLayout, err := goacodegen.PlanGoType(parameter, goacodegen.GoTypePlanOptions{
+			Owner:            v.plan.pkg.ImportPath(),
+			Policy:           definitionPolicy,
+			Bind:             binder,
+			RetainNamedValue: true,
 		})
 		if err != nil {
 			return err
 		}
 		validation, err := goacodegen.NewValidationPlan(
-			planned.userType.Attribute(),
-			layout,
+			parameter,
+			parameterLayout,
 			goacodegen.ValidationPlanOptions{
 				Required: true,
 				Alias:    goaexpr.IsAlias(planned.userType),
@@ -451,13 +503,27 @@ func (v *Value) planTypes() error {
 			return err
 		}
 		planned.layout = layout
+		planned.parameter = parameterLayout
 		planned.validation = validation
 	}
 	for _, union := range v.unions {
+		if len(union.branches) > 0 {
+			continue
+		}
 		for _, branch := range union.attribute.Type.(*goaexpr.Union).Values {
-			declaration, err := v.plan.pkg.UnionBranch(union.attribute, branch.Name)
-			if err != nil {
-				return err
+			var kind, constructor *goacodegen.NameDeclaration
+			if v.originalLayout == nil {
+				declaration, err := v.plan.pkg.UnionBranch(union.attribute, branch.Name)
+				if err != nil {
+					return err
+				}
+				kind, constructor = declaration.KindDeclaration(), declaration.ConstructorDeclaration()
+			} else {
+				var err error
+				kind, constructor, err = v.plan.declarePrivateUnionBranch(union, branch.Name)
+				if err != nil {
+					return err
+				}
 			}
 			layout, err := goacodegen.PlanGoType(branch.Attribute, goacodegen.GoTypePlanOptions{
 				Owner:  v.plan.pkg.ImportPath(),
@@ -470,7 +536,8 @@ func (v *Value) planTypes() error {
 			union.branches = append(union.branches, &plannedUnionBranch{
 				name:        branch.Name,
 				fieldName:   goacodegen.Goify(branch.Name, true),
-				declaration: declaration,
+				kind:        kind,
+				constructor: constructor,
 				layout:      layout,
 			})
 		}
@@ -484,14 +551,24 @@ func (v *Value) planTransforms() error {
 		if err := v.planDecodeTransform(); err != nil {
 			return err
 		}
-		v.decodeDeclaration = goacodegen.NewPreferredName(
-			goacodegen.NameFunction,
-			"Decode"+v.preferredName,
-			goacodegen.ExportedName,
-			nameOrder{packagePath: v.plan.pkg.ImportPath(), key: v.key + ":decode"},
-		)
-		if err := v.plan.pkg.DeclareName(v.decodeDeclaration); err != nil {
-			return err
+		if v.originalLayout != nil {
+			var err error
+			v.decodeDeclaration, err = v.plan.pkg.DeclareDependentName(
+				goacodegen.NameFunction, v.originalLayout.TypeDeclaration().Declaration(),
+				"Decode", "", nameOrder{packagePath: v.plan.pkg.ImportPath(), key: v.key + ":decode"})
+			if err != nil {
+				return err
+			}
+		} else {
+			v.decodeDeclaration = goacodegen.NewPreferredName(
+				goacodegen.NameFunction,
+				"Decode"+v.preferredName,
+				goacodegen.ExportedName,
+				nameOrder{packagePath: v.plan.pkg.ImportPath(), key: v.key + ":decode"},
+			)
+			if err := v.plan.pkg.DeclareName(v.decodeDeclaration); err != nil {
+				return err
+			}
 		}
 	}
 	if v.direction.encodes() {
@@ -503,14 +580,24 @@ func (v *Value) planTransforms() error {
 			return err
 		}
 		v.encode = encode
-		v.encodeDeclaration = goacodegen.NewPreferredName(
-			goacodegen.NameFunction,
-			"Encode"+v.preferredName,
-			goacodegen.ExportedName,
-			nameOrder{packagePath: v.plan.pkg.ImportPath(), key: v.key + ":encode"},
-		)
-		if err := v.plan.pkg.DeclareName(v.encodeDeclaration); err != nil {
-			return err
+		if v.originalLayout != nil {
+			var err error
+			v.encodeDeclaration, err = v.plan.pkg.DeclareDependentName(
+				goacodegen.NameFunction, v.originalLayout.TypeDeclaration().Declaration(),
+				"Encode", "", nameOrder{packagePath: v.plan.pkg.ImportPath(), key: v.key + ":encode"})
+			if err != nil {
+				return err
+			}
+		} else {
+			v.encodeDeclaration = goacodegen.NewPreferredName(
+				goacodegen.NameFunction,
+				"Encode"+v.preferredName,
+				goacodegen.ExportedName,
+				nameOrder{packagePath: v.plan.pkg.ImportPath(), key: v.key + ":encode"},
+			)
+			if err := v.plan.pkg.DeclareName(v.encodeDeclaration); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -583,7 +670,7 @@ func (p *Plan) requireValueImports(
 	if err != nil {
 		return err
 	}
-	if usesService {
+	if usesService && p.serviceImportPath != p.pkg.ImportPath() {
 		spec := goacodegen.NewImport(
 			strings.ToLower(goacodegen.Goify(path.Base(p.serviceImportPath), false)),
 			p.serviceImportPath,
@@ -623,7 +710,13 @@ func (p *Plan) requireImport(spec *goacodegen.ImportSpec) error {
 	if _, exists := p.importPaths[spec.Path]; exists {
 		return nil
 	}
-	if err := p.pkg.RequireImport(spec); err != nil {
+	var err error
+	if p.originals != nil {
+		err = p.pkg.DeclareImport(spec)
+	} else {
+		err = p.pkg.RequireImport(spec)
+	}
+	if err != nil {
 		return fmt.Errorf("plan JSON codec import %q: %w", spec.Path, err)
 	}
 	p.importPaths[spec.Path] = struct{}{}
@@ -657,6 +750,9 @@ func (p *Plan) recordLocatedImports(attribute *goaexpr.AttributeExpr) error {
 		location := goacodegen.UserTypeLocation(current.Type)
 		if location != nil {
 			importPath := path.Join(p.generation.GenPkg(), location.RelImportPath)
+			if importPath == p.pkg.ImportPath() {
+				return nil
+			}
 			spec := goacodegen.NewImport(
 				strings.ToLower(goacodegen.Goify(path.Base(importPath), false)), importPath,
 			)

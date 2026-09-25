@@ -1,0 +1,53 @@
+// The generated reader must apply the standard parser's nesting protection
+// before walking the document to reject duplicate keys.
+package types
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+	"testing"
+)
+
+func TestStrictReaderNesting(t *testing.T) {
+	// Go's standard JSON parser permits 10,000 nested containers. These
+	// small documents exercise that boundary without a stack-exhaustion probe.
+	for _, depth := range []int{9999, 10000, 10001} {
+		t.Run(fmt.Sprint(depth), func(t *testing.T) {
+			data := []byte(strings.Repeat("[", depth) + "0" + strings.Repeat("]", depth))
+			got, err := readStrictJSON(data)
+			t.Logf("depth=%d standardValid=%t readerError=%v", depth, json.Valid(data), err)
+			if json.Valid(data) {
+				if err != nil {
+					t.Fatalf("rejected standard-parser input: %v", err)
+				}
+				for level := 0; level < depth; level++ {
+					array, ok := got.([]any)
+					if !ok || len(array) != 1 {
+						t.Fatalf("changed nested array at level %d", level)
+					}
+					got = array[0]
+				}
+				if got != json.Number("0") {
+					t.Fatalf("changed numeric leaf: %#v", got)
+				}
+			} else if err == nil || got != nil {
+				t.Fatalf("accepted input rejected by the standard parser: %v", err)
+			}
+		})
+	}
+}
+
+func TestStrictReaderChecksSyntaxBeforeDuplicateTraversal(t *testing.T) {
+	// A duplicate key precedes the oversized subtree. Returning its error
+	// would prove the recursive reader ran before the standard syntax scan.
+	data := []byte(`{"x":0,"x":` + strings.Repeat("[", 10000) + "0" +
+		strings.Repeat("]", 10000) + "}")
+	if json.Valid(data) {
+		t.Fatal("fixture must exceed the standard parser's nesting limit")
+	}
+	got, err := readStrictJSON(data)
+	if got != nil || err == nil || err.Error() != "invalid JSON syntax or nesting" {
+		t.Fatalf("did not reject before duplicate traversal: %#v, %v", got, err)
+	}
+}

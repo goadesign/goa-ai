@@ -5,6 +5,7 @@ package codegen
 import (
 	"fmt"
 
+	"goa.design/goa-ai/codegen/internal/jsoncodec"
 	goacodegen "goa.design/goa/v3/codegen"
 	goagenerator "goa.design/goa/v3/codegen/generator"
 )
@@ -15,6 +16,7 @@ type (
 	agentPluginPlan struct {
 		core    *goagenerator.Plan
 		agent   *Plan
+		values  *jsoncodec.Plan
 		example bool
 	}
 )
@@ -50,6 +52,12 @@ func (p *agentPluginPlan) plan(core *goagenerator.Plan) error {
 	} else {
 		p.agent, err = NewPlan(core.Generation(), servicePlan)
 	}
+	if err != nil {
+		return err
+	}
+	if !p.example {
+		p.values, err = jsoncodec.NewPlan(core.Generation())
+	}
 	return err
 }
 
@@ -62,5 +70,12 @@ func (p *agentPluginPlan) generate(core *goagenerator.Plan, files []*goacodegen.
 	if err := p.agent.Link(); err != nil {
 		return nil, err
 	}
-	return p.agent.Files(files)
+	files, err := p.agent.Files(files)
+	if err != nil {
+		return nil, err
+	}
+	if p.example {
+		return files, nil
+	}
+	return p.values.Files(files)
 }
