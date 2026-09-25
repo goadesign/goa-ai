@@ -1,4 +1,4 @@
-package jsoncodec_test
+package types_test
 
 import (
 	"bytes"
@@ -7,19 +7,18 @@ import (
 	"testing"
 
 	gentypes "codec.local/gen/types"
-	"codec.local/gen/types/jsoncodec"
 )
 
 var (
-	_ func(*gentypes.Settings) ([]byte, error) = jsoncodec.EncodeSettings
-	_ func([]byte) (*gentypes.Settings, error) = jsoncodec.DecodeSettings
+	_ func(*gentypes.Settings) ([]byte, error) = gentypes.EncodeSettings
+	_ func([]byte) (*gentypes.Settings, error) = gentypes.DecodeSettings
 )
 
 const valid = `{"Enabled":false,"Count":0,"Title":"hello","Node":{"Label":"","Count":0},"Choice":{"type":"number","value":0}}`
 
 func value(t *testing.T) *gentypes.Settings {
 	t.Helper()
-	got, err := jsoncodec.DecodeSettings([]byte(valid))
+	got, err := gentypes.DecodeSettings([]byte(valid))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -29,7 +28,7 @@ func value(t *testing.T) *gentypes.Settings {
 func TestRequiredZeroAndIntegerWidth(t *testing.T) {
 	for _, number := range []string{"0", "2147483647", "4294967596", "9007199254740993", "9223372036854775807"} {
 		document := strings.Replace(valid, `"Count":0`, `"Count":`+number, 1)
-		got, err := jsoncodec.DecodeSettings([]byte(document))
+		got, err := gentypes.DecodeSettings([]byte(document))
 		want, widthErr := strconv.ParseInt(number, 10, strconv.IntSize)
 		if widthErr != nil {
 			if err == nil || got != nil {
@@ -40,14 +39,14 @@ func TestRequiredZeroAndIntegerWidth(t *testing.T) {
 		if err != nil || got == nil || int64(got.Count) != want || got.Enabled {
 			t.Fatalf("lost integer/false %s: %#v %v", number, got, err)
 		}
-		encoded, err := jsoncodec.EncodeSettings(got)
+		encoded, err := gentypes.EncodeSettings(got)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if !bytes.Contains(encoded, []byte(`"Enabled":false`)) || !bytes.Contains(encoded, []byte(`"Count":`+number)) {
 			t.Fatalf("lost presence or integer: %s", encoded)
 		}
-		again, err := jsoncodec.DecodeSettings(encoded)
+		again, err := gentypes.DecodeSettings(encoded)
 		if err != nil || again.Count != got.Count {
 			t.Fatalf("round trip: %#v %v", again, err)
 		}
@@ -98,7 +97,7 @@ func TestStrictDecode(t *testing.T) {
 	}
 	for name, document := range cases {
 		t.Run(name, func(t *testing.T) {
-			got, err := jsoncodec.DecodeSettings([]byte(document))
+			got, err := gentypes.DecodeSettings([]byte(document))
 			if err == nil || got != nil {
 				t.Fatalf("usable invalid value: %#v; error %v; input %q", got, err, document)
 			}
@@ -108,19 +107,19 @@ func TestStrictDecode(t *testing.T) {
 
 func TestUnicodeAndDeterministicOutput(t *testing.T) {
 	for _, text := range []string{`"雪😀"`, `"\u96ea\ud83d\ude00"`, `"\\ud800"`, `"\ufffd"`} {
-		got, err := jsoncodec.DecodeSettings([]byte(strings.Replace(valid, `"hello"`, text, 1)))
+		got, err := gentypes.DecodeSettings([]byte(strings.Replace(valid, `"hello"`, text, 1)))
 		if err != nil {
 			t.Fatal(err)
 		}
-		first, err := jsoncodec.EncodeSettings(got)
+		first, err := gentypes.EncodeSettings(got)
 		if err != nil {
 			t.Fatal(err)
 		}
-		again, err := jsoncodec.DecodeSettings(first)
+		again, err := gentypes.DecodeSettings(first)
 		if err != nil || again.Title != got.Title {
 			t.Fatalf("text changed: %#v %v", again, err)
 		}
-		second, err := jsoncodec.EncodeSettings(again)
+		second, err := gentypes.EncodeSettings(again)
 		if err != nil || !bytes.Equal(first, second) {
 			t.Fatalf("unstable output: %s %s %v", first, second, err)
 		}
@@ -142,19 +141,19 @@ func TestTypedEncodeRejectsBadTextAndCycles(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			v := value(t)
 			mutate(v)
-			data, err := jsoncodec.EncodeSettings(v)
+			data, err := gentypes.EncodeSettings(v)
 			if err == nil || data != nil {
 				t.Fatalf("usable invalid encoding: %q %v", data, err)
 			}
 		})
 	}
-	data, err := jsoncodec.EncodeSettings(nil)
+	data, err := gentypes.EncodeSettings(nil)
 	if err == nil || data != nil {
 		t.Fatalf("nil root: %q %v", data, err)
 	}
 	v := value(t)
 	v.Nodes = []*gentypes.Node{v.Node, v.Node}
-	if _, err := jsoncodec.EncodeSettings(v); err != nil {
+	if _, err := gentypes.EncodeSettings(v); err != nil {
 		t.Fatalf("shared acyclic node rejected: %v", err)
 	}
 }
@@ -164,11 +163,11 @@ func TestNullableObjectElementsRoundTrip(t *testing.T) {
 	v.Node.Entries = []*gentypes.Node{nil, {Label: "nested", Count: 0}}
 	v.Choice.SetNode(v.Node)
 	v.Nodes = []*gentypes.Node{nil, v.Node, nil}
-	first, err := jsoncodec.EncodeSettings(v)
+	first, err := gentypes.EncodeSettings(v)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := jsoncodec.DecodeSettings(first)
+	got, err := gentypes.DecodeSettings(first)
 	if err != nil {
 		t.Fatalf("cannot decode own nullable object array %s: %v", first, err)
 	}
@@ -179,7 +178,7 @@ func TestNullableObjectElementsRoundTrip(t *testing.T) {
 	if !ok || len(branch.Entries) != 2 || branch.Entries[0] != nil || branch.Entries[1].Label != "nested" {
 		t.Fatalf("changed nested array in union branch: %#v", branch)
 	}
-	second, err := jsoncodec.EncodeSettings(got)
+	second, err := gentypes.EncodeSettings(got)
 	if err != nil || !bytes.Equal(first, second) {
 		t.Fatalf("changed encoding: %s %s %v", first, second, err)
 	}
@@ -190,7 +189,7 @@ func TestNullableObjectElementsRoundTrip(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			v := value(t)
 			mutate(v)
-			data, err := jsoncodec.EncodeSettings(v)
+			data, err := gentypes.EncodeSettings(v)
 			if err == nil || data != nil {
 				t.Fatalf("usable invalid encoding: %q %v", data, err)
 			}

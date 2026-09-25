@@ -1,16 +1,13 @@
-package jsoncodec_test
+package types_test
 
 import (
 	"reflect"
 	"testing"
 
 	genleft "codec.local/gen/left/types"
-	genleftcodec "codec.local/gen/left/types/jsoncodec"
 	genordinary "codec.local/gen/ordinary"
 	genright "codec.local/gen/right/types"
-	genrightcodec "codec.local/gen/right/types/jsoncodec"
 	gentypes "codec.local/gen/types"
-	genjsoncodec "codec.local/gen/types/jsoncodec"
 )
 
 func TestNamedUnionCollections(t *testing.T) {
@@ -20,7 +17,7 @@ func TestNamedUnionCollections(t *testing.T) {
 		decode func([]byte) (*gentypes.NamedCollections, error)
 	}{
 		{"ordinary", genordinary.EncodeNamedCollections, genordinary.DecodeNamedCollections},
-		{"selected", genjsoncodec.EncodeNamedCollections, genjsoncodec.DecodeNamedCollections},
+		{"original", gentypes.EncodeNamedCollections, gentypes.DecodeNamedCollections},
 	} {
 		t.Run(codec.name, func(t *testing.T) {
 			text := genright.Derived(genleft.NewChoiceText(""))
@@ -80,7 +77,7 @@ func TestNamedUnionCollectionsRejectInvalidText(t *testing.T) {
 		Choices: []genright.Derived{},
 		ByName:  map[string]genright.Derived{},
 	}
-	if data, err := genjsoncodec.EncodeNamedCollections(value); err == nil || data != nil {
+	if data, err := gentypes.EncodeNamedCollections(value); err == nil || data != nil {
 		t.Fatalf("accepted invalid text: %s, error %v", data, err)
 	}
 }
@@ -94,7 +91,7 @@ func TestNamedUnionCollectionsRoots(t *testing.T) {
 		decodeDerived func([]byte) (*genright.Derived, error)
 	}{
 		{"ordinary", genordinary.EncodeBase, genordinary.DecodeBase, genordinary.EncodeDerived, genordinary.DecodeDerived},
-		{"selected", genleftcodec.EncodeBase, genleftcodec.DecodeBase, genrightcodec.EncodeDerived, genrightcodec.DecodeDerived},
+		{"original", genleft.EncodeBase, genleft.DecodeBase, genright.EncodeDerived, genright.DecodeDerived},
 	} {
 		t.Run(codec.name, func(t *testing.T) {
 			for _, test := range []struct {

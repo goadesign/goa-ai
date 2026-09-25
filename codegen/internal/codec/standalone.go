@@ -57,12 +57,10 @@ type (
 )
 
 // AddStandalone plans an always-strict, bidirectional value codec. Add retains
-// its existing contract and output for protocol generators.
+// its existing contract and output for protocol generators. The caller first
+// checks SupportsStandalone, before creating this plan or reserving names.
 func (p *Plan) AddStandalone(key, preferredName string, attribute *expr.AttributeExpr, layout *codegen.GoTypePlan) (*Value, error) {
-	if err := standaloneShape(attribute, make(map[expr.UserType]bool)); err != nil {
-		return nil, fmt.Errorf("standalone JSON codec %q: %w", key, err)
-	}
-	value, err := p.Add(key, preferredName, attribute, EncodeAndDecode)
+	value, err := p.addOriginal(key, preferredName, attribute, layout)
 	if err != nil {
 		return nil, err
 	}
@@ -75,6 +73,9 @@ func (p *Plan) AddStandalone(key, preferredName string, attribute *expr.Attribut
 		typedChecks: make(map[expr.UserType]*typedCheckPlan),
 	}
 	value.standalone = plan
+	if err := p.planJSONHelpers(); err != nil {
+		return nil, err
+	}
 	if err := value.planOriginalValidation(layout); err != nil {
 		return nil, fmt.Errorf("standalone JSON codec %q original validation: %w", key, err)
 	}
@@ -126,50 +127,6 @@ func (p *Plan) AddStandalone(key, preferredName string, attribute *expr.Attribut
 		}
 	}
 	return value, nil
-}
-
-// standaloneShape rejects representations whose Go values are not a closed,
-// generated JSON contract. It does not impose domain limits or field rules.
-func standaloneShape(attribute *expr.AttributeExpr, seen map[expr.UserType]bool) error {
-	if custom, _ := codegen.GetMetaType(attribute); custom != "" {
-		return fmt.Errorf("custom Go representation %q has no generated lossless JSON contract", custom)
-	}
-	switch actual := attribute.Type.(type) {
-	case expr.Primitive:
-		if actual == expr.Any {
-			return fmt.Errorf("dynamic Any has no closed generated value contract")
-		}
-	case expr.UserType:
-		if seen[actual.Origin()] {
-			return nil
-		}
-		seen[actual.Origin()] = true
-		return standaloneShape(actual.Attribute(), seen)
-	case *expr.Object:
-		for _, field := range *actual {
-			if err := standaloneShape(field.Attribute, seen); err != nil {
-				return fmt.Errorf("field %q: %w", field.Name, err)
-			}
-		}
-	case *expr.Array:
-		return standaloneShape(actual.ElemType, seen)
-	case *expr.Map:
-		key, ok := jsonshape.PrimitiveType(actual.KeyType)
-		if !ok || key != expr.String {
-			return fmt.Errorf("map keys must have a generated string representation")
-		}
-		if err := standaloneShape(actual.KeyType, seen); err != nil {
-			return err
-		}
-		return standaloneShape(actual.ElemType, seen)
-	case *expr.Union:
-		for _, branch := range actual.Values {
-			if err := standaloneShape(branch.Attribute, seen); err != nil {
-				return fmt.Errorf("branch %q: %w", branch.Name, err)
-			}
-		}
-	}
-	return nil
 }
 
 // strictName reserves an implementation name without changing existing plans.

@@ -1,6 +1,6 @@
 // The generated reader must apply the standard parser's nesting protection
 // before walking the document to reject duplicate keys.
-package codec
+package types
 
 import (
 	"encoding/json"

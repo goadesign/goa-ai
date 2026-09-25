@@ -1,9 +1,8 @@
-package jsoncodec_test
+package types_test
 
 import (
 	"bytes"
 	gentypes "codec.local/gen/types"
-	"codec.local/gen/types/jsoncodec"
 	"testing"
 )
 
@@ -19,15 +18,15 @@ func TestFiniteRecursiveOriginalValues(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			root.Choice.SetNode(leaf)
-			data, err := jsoncodec.EncodeRoot(&gentypes.Root{Node: root})
+			data, err := gentypes.EncodeRoot(&gentypes.Root{Node: root})
 			if err != nil {
 				t.Fatal(err)
 			}
-			value, err := jsoncodec.DecodeRoot(data)
+			value, err := gentypes.DecodeRoot(data)
 			if err != nil {
 				t.Fatalf("%s: %v", data, err)
 			}
-			next, err := jsoncodec.EncodeRoot(value)
+			next, err := gentypes.EncodeRoot(value)
 			if err != nil || !bytes.Equal(data, next) {
 				t.Fatalf("unstable: %s %s %v", data, next, err)
 			}
@@ -42,14 +41,14 @@ func TestRecursiveChildValidation(t *testing.T) {
 		"mutual":      {Label: "root", Branch: &gentypes.Branch{Label: "branch", Nodes: gentypes.NodeList{&gentypes.Node{}}}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if data, err := jsoncodec.EncodeRoot(&gentypes.Root{Node: root}); err == nil || data != nil {
+			if data, err := gentypes.EncodeRoot(&gentypes.Root{Node: root}); err == nil || data != nil {
 				t.Fatalf("invalid: %s %v", data, err)
 			}
 		})
 	}
 	root := &gentypes.Node{Label: "root"}
 	root.Choice.SetNode(&gentypes.Node{})
-	if data, err := jsoncodec.EncodeRoot(&gentypes.Root{Node: root}); err == nil || data != nil {
+	if data, err := gentypes.EncodeRoot(&gentypes.Root{Node: root}); err == nil || data != nil {
 		t.Fatalf("invalid union: %s %v", data, err)
 	}
 }

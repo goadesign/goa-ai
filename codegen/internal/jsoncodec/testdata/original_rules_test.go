@@ -1,18 +1,17 @@
-package jsoncodec_test
+package types_test
 
 import (
 	"bytes"
 	"testing"
 
 	gentypes "codec.local/gen/types"
-	"codec.local/gen/types/jsoncodec"
 )
 
 const rulesDocument = `{"Enabled":false,"Count":0,"Text":"","Token":"b9efb34b-0ac9-47ed-b5e0-5714dca660b7","Entry":{"Label":"雪"},"Other":{"Value":"A"},"Mode":"fast","Level":1,"Inclusive":0,"Items":[null,{"Label":"ok"}],"RequiredItems":[],"Labels":{}}`
 
 func ruleValue(t *testing.T) *gentypes.Record {
 	t.Helper()
-	value, err := jsoncodec.DecodeRecord([]byte(rulesDocument))
+	value, err := gentypes.DecodeRecord([]byte(rulesDocument))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,7 +43,7 @@ func TestOriginalRules(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			value := ruleValue(t)
 			mutate(value)
-			if data, err := jsoncodec.EncodeRecord(value); err == nil || data != nil {
+			if data, err := gentypes.EncodeRecord(value); err == nil || data != nil {
 				t.Fatalf("usable invalid encoding: %s %v", data, err)
 			}
 		})
@@ -54,7 +53,7 @@ func TestOriginalRules(t *testing.T) {
 func TestExplicitZeroFalseEmptyAndNullable(t *testing.T) {
 	value := ruleValue(t)
 	value.Items = value.Items[:0]
-	data, err := jsoncodec.EncodeRecord(value)
+	data, err := gentypes.EncodeRecord(value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,16 +65,16 @@ func TestExplicitZeroFalseEmptyAndNullable(t *testing.T) {
 	if value.Enabled || value.Count != 0 || value.Text != "" {
 		t.Fatalf("mutated input: %#v", value)
 	}
-	again, err := jsoncodec.DecodeRecord(data)
+	again, err := gentypes.DecodeRecord(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := jsoncodec.EncodeRecord(again)
+	next, err := gentypes.EncodeRecord(again)
 	if err != nil || !bytes.Equal(data, next) {
 		t.Fatalf("unstable: %s %s %v", data, next, err)
 	}
 	value = ruleValue(t)
-	data, err = jsoncodec.EncodeRecord(value)
+	data, err = gentypes.EncodeRecord(value)
 	if err != nil {
 		t.Fatal(err)
 	}

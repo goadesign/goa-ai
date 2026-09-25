@@ -1,4 +1,4 @@
-// These tests generate ordinary and selected codecs from the same service
+// These tests generate protocol and original-value codecs from the same service
 // declarations so union collection values and object pointers stay compatible.
 package jsoncodec
 
@@ -30,7 +30,6 @@ func TestGeneratedUnionCollectionCodecs(t *testing.T) {
 		dsl.Required("Label")
 	})
 	collections := located("UnionCollections", func() {
-		dsl.Meta(selectionKey)
 		dsl.Attribute("choices", dsl.ArrayOf(&expr.Union{TypeName: "ArrayChoice"}, func() {
 			dsl.Attribute("text", dsl.String, func() { dsl.Pattern("^[a-z]*$") })
 			dsl.Attribute("entry", entry)
@@ -54,10 +53,10 @@ func TestGeneratedUnionCollectionCodecs(t *testing.T) {
 	require.NoError(t, err)
 
 	// Both producers register before freeze and use Goa's original declarations.
-	selected := new(plugin)
-	require.NoError(t, selected.plan(generation))
+	originals, err := NewPlan(generation)
+	require.NoError(t, err)
 	const ordinaryPath = "codec.local/gen/ordinary"
-	ordinary, err := codec.NewPlan(generation, ordinaryPath, "ordinary", "codec.local/gen/types")
+	ordinary, err := codec.NewPlan(generation, ordinaryPath, "codec.local/gen/types")
 	require.NoError(t, err)
 	value, err := ordinary.Add("union-collections", "UnionCollections",
 		&expr.AttributeExpr{Type: collections}, codec.EncodeAndDecode)
@@ -67,15 +66,15 @@ func TestGeneratedUnionCollectionCodecs(t *testing.T) {
 	require.NoError(t, value.BindService(services.Services().ServiceAttributor("catalog", ordinaryPath)))
 	files, err := service.Files(services)
 	require.NoError(t, err)
-	files, err = selected.generate(files)
+	files, err = originals.Files(files)
 	require.NoError(t, err)
-	ordinaryFiles, err := ordinary.Files()
+	ordinaryFiles, err := ordinary.Files("ordinary")
 	require.NoError(t, err)
 	files = append(files, ordinaryFiles...)
 
 	root := compileModule(t, files)
-	fixture, err := os.ReadFile("testdata/union_collections_test.go.txt")
+	fixture, err := os.ReadFile("testdata/union_collections_test.go")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/jsoncodec/union_collections_test.go"), fixture, 0o600)) // #nosec G703 -- root is the test fixture's private directory.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/union_collections_test.go"), fixture, 0o600)) // #nosec G703 -- root is the test fixture's private directory.
 	runGo(t, root, "test", "-count=1", "-run", "^TestUnionCollections", "./gen/...")
 }

@@ -1,20 +1,19 @@
-package jsoncodec_test
+package types_test
 
 import (
 	"testing"
 
 	gentypes "codec.local/gen/types"
-	"codec.local/gen/types/jsoncodec"
 )
 
 func TestInheritedRequiredValues(t *testing.T) {
 	for _, note := range []string{"ready", ""} {
 		value := &gentypes.Derived{Label: "valid", Note: &note}
-		data, err := jsoncodec.EncodeDerived(value)
+		data, err := gentypes.EncodeDerived(value)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := jsoncodec.DecodeDerived(data)
+		got, err := gentypes.DecodeDerived(data)
 		if err != nil || got.Label != value.Label || got.Note == nil || *got.Note != note {
 			t.Fatalf("required pointer round trip: got %#v, err %v", got, err)
 		}
@@ -28,7 +27,7 @@ func TestInheritedRequiredValues(t *testing.T) {
 		{Note: &note},
 		{Label: string([]byte{0xff}), Note: &note},
 	} {
-		if data, err := jsoncodec.EncodeDerived(invalid); err == nil || data != nil {
+		if data, err := gentypes.EncodeDerived(invalid); err == nil || data != nil {
 			t.Fatalf("invalid original value produced bytes: %s, err %v", data, err)
 		}
 	}
@@ -37,7 +36,7 @@ func TestInheritedRequiredValues(t *testing.T) {
 		`{"Label":"valid","Note":null}`,
 		`{"Label":"","Note":""}`,
 	} {
-		if got, err := jsoncodec.DecodeDerived([]byte(document)); err == nil || got != nil {
+		if got, err := gentypes.DecodeDerived([]byte(document)); err == nil || got != nil {
 			t.Fatalf("invalid JSON produced value: %#v, err %v", got, err)
 		}
 	}

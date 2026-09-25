@@ -26,16 +26,13 @@ func TestGeneratedNamedUnionCollections(t *testing.T) {
 	dsl.Service("catalog", func() {})
 	base := dsl.Type("Base", &expr.Union{TypeName: "Choice"}, func() {
 		dsl.Meta("struct:pkg:path", "left/types")
-		dsl.Meta(selectionKey)
 		dsl.Attribute("text", dsl.String)
 		dsl.Attribute("number", dsl.Int, func() { dsl.Minimum(1) })
 	})
 	derived := dsl.Type("Derived", base, func() {
 		dsl.Meta("struct:pkg:path", "right/types")
-		dsl.Meta(selectionKey)
 	})
 	collections := located("NamedCollections", func() {
-		dsl.Meta(selectionKey)
 		dsl.Attribute("single", derived)
 		dsl.Attribute("choices", dsl.ArrayOf(derived))
 		dsl.Attribute("byName", dsl.MapOf(dsl.String, derived))
@@ -48,10 +45,10 @@ func TestGeneratedNamedUnionCollections(t *testing.T) {
 	require.NoError(t, err)
 	services, err := service.NewPlan(expr.Root, generation, expr.NewExampleGenerator(expr.Root.API.RandomizerFactory))
 	require.NoError(t, err)
-	selected := new(plugin)
-	require.NoError(t, selected.plan(generation))
+	originals, err := NewPlan(generation)
+	require.NoError(t, err)
 	const ordinaryPath = "codec.local/gen/ordinary"
-	ordinary, err := codec.NewPlan(generation, ordinaryPath, "ordinary", "codec.local/gen/types")
+	ordinary, err := codec.NewPlan(generation, ordinaryPath, "codec.local/gen/types")
 	require.NoError(t, err)
 	values := make([]*codec.Value, 0, 3)
 	for _, named := range []expr.UserType{base, derived, collections} {
@@ -67,15 +64,15 @@ func TestGeneratedNamedUnionCollections(t *testing.T) {
 	}
 	files, err := service.Files(services)
 	require.NoError(t, err)
-	files, err = selected.generate(files)
+	files, err = originals.Files(files)
 	require.NoError(t, err)
-	ordinaryFiles, err := ordinary.Files()
+	ordinaryFiles, err := ordinary.Files("ordinary")
 	require.NoError(t, err)
 	files = append(files, ordinaryFiles...)
 
 	root := compileModule(t, files)
-	fixture, err := os.ReadFile("testdata/named_union_collections_test.go.txt")
+	fixture, err := os.ReadFile("testdata/named_union_collections_test.go")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/jsoncodec/named_union_collections_test.go"), fixture, 0o600)) // #nosec G703 -- root is the generated fixture's private directory.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/named_union_collections_test.go"), fixture, 0o600)) // #nosec G703 -- root is the generated fixture's private directory.
 	runGo(t, root, "test", "-count=1", "-run", "^TestNamedUnionCollections", "./gen/...")
 }

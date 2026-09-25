@@ -19,7 +19,6 @@ func TestGeneratedOriginalRequiredValues(t *testing.T) {
 			dsl.Required("Label")
 		})
 		located("Container", func() {
-			dsl.Meta(selectionKey)
 			dsl.Attribute("Single", entry)
 			dsl.Attribute("Loose", dsl.ArrayOf(entry))
 			dsl.Attribute("Tight", dsl.ArrayOfRequired(entry))
@@ -32,59 +31,46 @@ func TestGeneratedOriginalRequiredValues(t *testing.T) {
 	})
 	require.NoError(t, err)
 	root := compileModule(t, files)
-	source, err := os.ReadFile("testdata/original_required_test.go.txt")
+	source, err := os.ReadFile("testdata/original_required_test.go")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/jsoncodec/original_required_test.go"), source, 0o600)) // #nosec G703 -- root belongs to this generated fixture.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/original_required_test.go"), source, 0o600)) // #nosec G703 -- root belongs to this generated fixture.
 	runGo(t, root, "test", "-count=1", "-v", "./gen/...")
 }
 
 func TestGeneratedNamedBase(t *testing.T) {
-	for _, selected := range []bool{false, true} {
-		name := "ordinary"
-		if selected {
-			name = "selected"
-		}
-		t.Run(name, func(t *testing.T) {
-			var derived expr.UserType
-			files, err := generate(t, func() {
-				base := located("Base", func() {
-					dsl.Attribute("Label", dsl.String, func() { dsl.MinLength(1) })
-					dsl.Attribute("Note", dsl.String)
-					dsl.Required("Label")
-				})
-				derived = dsl.Type("Derived", base, func() {
-					dsl.Meta("struct:pkg:path", "types")
-					dsl.Meta("type:generate:force")
-					dsl.Required("Note")
-					if selected {
-						dsl.Meta(selectionKey)
-					}
-				})
-			})
-			t.Logf("evaluated Derived definition: %T; alias=%t", derived.Attribute().Type, expr.IsAlias(derived))
-			require.NoError(t, err)
-			root := compileModule(t, files)
-			if selected {
-				source := `package jsoncodec_test
+	files, err := generate(t, func() {
+		base := located("Base", func() {
+			dsl.Attribute("Label", dsl.String, func() { dsl.MinLength(1) })
+			dsl.Attribute("Note", dsl.String)
+			dsl.Required("Label")
+		})
+		dsl.Type("Derived", base, func() {
+			dsl.Meta("struct:pkg:path", "types")
+			dsl.Meta("type:generate:force")
+			dsl.Required("Note")
+		})
+	})
+	require.NoError(t, err)
+	root := compileModule(t, files)
+	source := `package types_test
 import (
  "testing"
  gentypes "codec.local/gen/types"
- "codec.local/gen/types/jsoncodec"
 )
-var _ func(*gentypes.Derived) ([]byte, error) = jsoncodec.EncodeDerived
+var _ func(*gentypes.Derived) ([]byte, error) = gentypes.EncodeDerived
 func TestNamedBase(t *testing.T) {
  for _, note := range []string{"ready", ""} {
   value := &gentypes.Derived{Label:"valid", Note:note}
-  data, err := jsoncodec.EncodeDerived(value)
+  data, err := gentypes.EncodeDerived(value)
   if err != nil { t.Fatal(err) }
-  result, err := jsoncodec.DecodeDerived(data)
+  result, err := gentypes.DecodeDerived(data)
   if err != nil || result.Label != value.Label || result.Note != note { t.Fatalf("%#v %v", result, err) }
  }
  for _, invalid := range []*gentypes.Derived{
   {Note:"ready"},
   {Label:string([]byte{0xff}), Note:"ready"},
  } {
-  if data, err := jsoncodec.EncodeDerived(invalid); err == nil || data != nil {
+  if data, err := gentypes.EncodeDerived(invalid); err == nil || data != nil {
    t.Fatalf("invalid value produced bytes: %s %v", data, err)
   }
  }
@@ -92,18 +78,14 @@ func TestNamedBase(t *testing.T) {
   "{\"Label\":\"valid\"}",
   "{\"Label\":\"valid\",\"Note\":null}",
  } {
-  if value, err := jsoncodec.DecodeDerived([]byte(invalid)); err == nil || value != nil {
+  if value, err := gentypes.DecodeDerived([]byte(invalid)); err == nil || value != nil {
    t.Fatalf("invalid JSON produced value: %#v %v", value, err)
   }
  }
 }
-
 `
-				require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/jsoncodec/named_base_test.go"), []byte(source), 0o600)) // #nosec G703 -- root belongs to this generated fixture.
-			}
-			runGo(t, root, "test", "-count=1", "-v", "./gen/...")
-		})
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/named_base_test.go"), []byte(source), 0o600)) // #nosec G703 -- root belongs to this generated fixture.
+	runGo(t, root, "test", "-count=1", "-v", "./gen/...")
 }
 
 func TestGeneratedInheritedRequiredValues(t *testing.T) {
@@ -120,15 +102,14 @@ func TestGeneratedInheritedRequiredValues(t *testing.T) {
 		dsl.Type("Derived", middle, func() {
 			dsl.Meta("struct:pkg:path", "types")
 			dsl.Meta("type:generate:force")
-			dsl.Meta(selectionKey)
 			dsl.Required("Note")
 		})
 	})
 	require.NoError(t, err)
 	root := compileModule(t, files)
-	source, err := os.ReadFile("testdata/inherited_required_test.go.txt")
+	source, err := os.ReadFile("testdata/inherited_required_test.go")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/jsoncodec/inherited_required_test.go"), source, 0o600)) // #nosec G703 -- root belongs to this generated fixture.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/inherited_required_test.go"), source, 0o600)) // #nosec G703 -- root belongs to this generated fixture.
 	runGo(t, root, "test", "-count=1", "-v", "./gen/...")
 }
 
@@ -173,7 +154,6 @@ func generateOriginalRules(t *testing.T, aliases bool) {
 			counterType, tokenType = counter, token
 		}
 		located("Record", func() {
-			dsl.Meta(selectionKey)
 			dsl.Attribute("Enabled", dsl.Boolean, func() { dsl.Default(true) })
 			dsl.Attribute("Count", counterType, func() {
 				if !aliases {
@@ -202,16 +182,15 @@ func generateOriginalRules(t *testing.T, aliases bool) {
 	})
 	require.NoError(t, err)
 	root := compileModule(t, files)
-	source, err := os.ReadFile("testdata/original_rules_test.go.txt")
+	source, err := os.ReadFile("testdata/original_rules_test.go")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/jsoncodec/original_rules_test.go"), source, 0o600)) // #nosec G703 -- root belongs to this generated fixture.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/original_rules_test.go"), source, 0o600)) // #nosec G703 -- root belongs to this generated fixture.
 	runGo(t, root, "test", "-count=1", "-v", "./gen/...")
 }
 
 func TestGeneratedOriginalRecursiveValues(t *testing.T) {
 	files, err := generate(t, func() {
 		located("Root", func() {
-			dsl.Meta(selectionKey)
 			dsl.Attribute("Node", "Node")
 			dsl.Required("Node")
 		})
@@ -246,8 +225,8 @@ func TestGeneratedOriginalRecursiveValues(t *testing.T) {
 	})
 	require.NoError(t, err)
 	root := compileModule(t, files)
-	source, err := os.ReadFile("testdata/original_recursive_test.go.txt")
+	source, err := os.ReadFile("testdata/original_recursive_test.go")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/jsoncodec/original_recursive_test.go"), source, 0o600)) // #nosec G703 -- root belongs to this generated fixture.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/original_recursive_test.go"), source, 0o600)) // #nosec G703 -- root belongs to this generated fixture.
 	runGo(t, root, "test", "-count=1", "-v", "./gen/...")
 }

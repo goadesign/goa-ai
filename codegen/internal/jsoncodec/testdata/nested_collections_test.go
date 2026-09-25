@@ -1,41 +1,40 @@
-package jsoncodec_test
+package types_test
 
 import (
 	"reflect"
 	"testing"
 
 	gentypes "codec.local/gen/types"
-	"codec.local/gen/types/jsoncodec"
 )
 
 func TestNestedCollections(t *testing.T) {
-	checkCollection(t, jsoncodec.DecodeNestedEntries, jsoncodec.EncodeNestedEntries,
+	checkCollection(t, gentypes.DecodeNestedEntries, gentypes.EncodeNestedEntries,
 		[]string{`[]`, `[null,[]]`, `[[null,{"Label":""}],null]`},
 		[]string{`null`, `[[{}]]`, `[[{"Label":null}]]`, `[[{"Label":"","extra":true}]]`})
-	checkCollection(t, jsoncodec.DecodeRequiredRows, jsoncodec.EncodeRequiredRows,
+	checkCollection(t, gentypes.DecodeRequiredRows, gentypes.EncodeRequiredRows,
 		[]string{`[]`, `[[],[null,{"Label":""}]]`},
 		[]string{`null`, `[null]`, `[[],null]`, `[[{}]]`})
-	if data, err := jsoncodec.EncodeRequiredRows(gentypes.RequiredRows{nil}); err == nil || data != nil {
+	if data, err := gentypes.EncodeRequiredRows(gentypes.RequiredRows{nil}); err == nil || data != nil {
 		t.Fatalf("required row produced bytes: %s, err %v", data, err)
 	}
-	checkCollection(t, jsoncodec.DecodeMatrix, jsoncodec.EncodeMatrix,
+	checkCollection(t, gentypes.DecodeMatrix, gentypes.EncodeMatrix,
 		[]string{`[]`, `[null,[]]`, `[[""],["a","b"]]`},
 		[]string{`null`, `[[null]]`, `[[1]]`})
-	checkCollection(t, jsoncodec.DecodeChoices, jsoncodec.EncodeChoices,
+	checkCollection(t, gentypes.DecodeChoices, gentypes.EncodeChoices,
 		[]string{`[]`, `[{"type":"text","value":""},{"type":"entry","value":{"Label":""}}]`},
 		[]string{`null`, `[null]`, `[{}]`, `[{"type":"entry","value":null}]`,
 			`[{"type":"entry","value":{}}]`, `[{"type":"text","value":null}]`,
 			`[{"type":"unknown","value":""}]`})
-	checkCollection(t, jsoncodec.DecodeEntryMap, jsoncodec.EncodeEntryMap,
+	checkCollection(t, gentypes.DecodeEntryMap, gentypes.EncodeEntryMap,
 		[]string{`{}`, `{"nil":null,"value":{"Label":""}}`},
 		[]string{`null`, `{"bad":{}}`, `{"bad":{"Label":null}}`, `{"bad":{"Label":"","extra":true}}`})
-	checkCollection(t, jsoncodec.DecodeRowMap, jsoncodec.EncodeRowMap,
+	checkCollection(t, gentypes.DecodeRowMap, gentypes.EncodeRowMap,
 		[]string{`{}`, `{"empty":[],"nil":null,"value":["a"]}`},
 		[]string{`null`, `{"bad":[null]}`, `{"bad":[1]}`})
-	checkCollection(t, jsoncodec.DecodeBlobMap, jsoncodec.EncodeBlobMap,
+	checkCollection(t, gentypes.DecodeBlobMap, gentypes.EncodeBlobMap,
 		[]string{`{}`, `{"empty":"","nil":null,"value":"YQ=="}`},
 		[]string{`null`, `{"bad":[]}`, `{"bad":"!"}`})
-	checkCollection(t, jsoncodec.DecodeLabelMap, jsoncodec.EncodeLabelMap,
+	checkCollection(t, gentypes.DecodeLabelMap, gentypes.EncodeLabelMap,
 		[]string{`{}`, `{"value":""}`},
 		[]string{`null`, `{"bad":null}`, `{"bad":1}`})
 }

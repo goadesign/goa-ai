@@ -1,4 +1,4 @@
-{{define "json-value-validators"}}{{- range .JSONValidators }}
+{{define "json-value-validators"}}{{- $names := .JSONNames }}{{- range .JSONValidators }}
 
 // {{ .Name }} checks one value whose JSON shape is fixed by the generated Goa type.
 func {{ .Name }}(path string, value any, description string) error {
@@ -10,11 +10,11 @@ func {{ .Name }}(path string, value any, description string) error {
         field = "$payload"
     }
     if value == nil {
-        return invalidGeneratedFieldTypeError(field, {{ printf "%q" .Expected }}, "null", description)
+        return {{ $names.InvalidFieldType }}(field, {{ printf "%q" .Expected }}, "null", description)
     }
     {{- $usesTyped := or .SignedInteger .UnsignedInteger (eq .Kind "object") (eq .Kind "array") (eq .Kind "map") (eq .Kind "union") }}
     {{- if or (eq .Expected "integer") (eq .Expected "number") }}
-    {{ if $usesTyped }}typed{{ else }}_{{ end }}, ok := value.(json.Number)
+    {{ if $usesTyped }}typed{{ else }}_{{ end }}, ok := value.({{ $names.JSON }}.Number)
     {{- else if eq .Expected "string" }}
     {{ if $usesTyped }}typed{{ else }}_{{ end }}, ok := value.(string)
     {{- else if eq .Expected "boolean" }}
@@ -25,49 +25,49 @@ func {{ .Name }}(path string, value any, description string) error {
     {{ if $usesTyped }}typed{{ else }}_{{ end }}, ok := value.(map[string]any)
     {{- end }}
     if !ok {
-        return invalidGeneratedFieldTypeError(field, {{ printf "%q" .Expected }}, decodedJSONType(value), description)
+        return {{ $names.InvalidFieldType }}(field, {{ printf "%q" .Expected }}, {{ $names.DecodedType }}(value), description)
     }
     {{- if .SignedInteger }}
-    if _, err := strconv.ParseInt(typed.String(), 10, {{ if .IntegerBits }}{{ .IntegerBits }}{{ else }}strconv.IntSize{{ end }}); err != nil {
-        return invalidGeneratedFieldTypeError(field, "integer", "number", description)
+    if _, err := {{ $names.Strconv }}.ParseInt(typed.String(), 10, {{ if .IntegerBits }}{{ .IntegerBits }}{{ else }}{{ $names.Strconv }}.IntSize{{ end }}); err != nil {
+        return {{ $names.InvalidFieldType }}(field, "integer", "number", description)
     }
     {{- else if .UnsignedInteger }}
-    if _, err := strconv.ParseUint(typed.String(), 10, {{ if .IntegerBits }}{{ .IntegerBits }}{{ else }}strconv.IntSize{{ end }}); err != nil {
-        return invalidGeneratedFieldTypeError(field, "integer", "number", description)
+    if _, err := {{ $names.Strconv }}.ParseUint(typed.String(), 10, {{ if .IntegerBits }}{{ .IntegerBits }}{{ else }}{{ $names.Strconv }}.IntSize{{ end }}); err != nil {
+        return {{ $names.InvalidFieldType }}(field, "integer", "number", description)
     }
     {{- end }}
     {{- if eq .Kind "union" }}
     for key := range typed {
         if key != {{printf "%q" .TypeKey}} && key != {{printf "%q" .ValueKey}} {
-            return unknownJSONFieldError(path, key, []string{ {{printf "%q" .TypeKey}}, {{printf "%q" .ValueKey}} })
+            return {{ $names.UnknownField }}(path, key, []string{ {{printf "%q" .TypeKey}}, {{printf "%q" .ValueKey}} })
         }
     }
     discriminator, ok := typed[{{printf "%q" .TypeKey}}].(string)
-    if !ok { return fmt.Errorf("%s: missing or invalid union discriminator", field) }
+    if !ok { return {{ $names.Fmt }}.Errorf("%s: missing or invalid union discriminator", field) }
     branch, exists := typed[{{printf "%q" .ValueKey}}]
-    if !exists || branch == nil { return fmt.Errorf("%s: missing union value", field) }
+    if !exists || branch == nil { return {{ $names.Fmt }}.Errorf("%s: missing union value", field) }
     switch discriminator {
     {{- $union := . }}
     {{- range .Branches }}
     case {{printf "%q" .Name}}:
-        return {{.Call.Name}}(generatedJSONChildPath(path, {{printf "%q" $union.ValueKey}}, false), branch, {{printf "%q" .Call.Description}})
+        return {{.Call.Name}}({{ $names.ChildPath }}(path, {{printf "%q" $union.ValueKey}}, false), branch, {{printf "%q" .Call.Description}})
     {{- end }}
     default:
-        return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+        return {{ $names.Fmt }}.Errorf("%s: unknown union discriminator %q", field, discriminator)
     }
     {{- else if eq .Kind "object" }}
     keys := make([]string, 0, len(typed))
     for key := range typed {
         keys = append(keys, key)
     }
-    sort.Strings(keys)
+    {{ $names.Sort }}.Strings(keys)
     for _, key := range keys {
         switch key {
         {{- range .Fields }}
         case {{ printf "%q" .Name }}:
             {{- if .Call }}
             if err := {{ .Call.Name }}(
-                generatedJSONChildPath(path, key, false),
+                {{ $names.ChildPath }}(path, key, false),
                 typed[key],
                 {{- if .Call.InheritDescription }}description{{ else }}{{ printf "%q" .Call.Description }}{{ end }},
             ); err != nil {
@@ -76,7 +76,7 @@ func {{ .Name }}(path string, value any, description string) error {
             {{- end }}
         {{- end }}
         default:
-            return unknownJSONFieldError(path, key, []string{
+            return {{ $names.UnknownField }}(path, key, []string{
                 {{- range .Fields }}
                 {{ printf "%q" .Name }},
                 {{- end }}
@@ -91,7 +91,7 @@ func {{ .Name }}(path string, value any, description string) error {
         }
         {{- end }}
         if err := {{ .Element.Name }}(
-            generatedJSONChildPath(path, strconv.Itoa(index), true),
+            {{ $names.ChildPath }}(path, {{ $names.Strconv }}.Itoa(index), true),
             item,
             {{- if .Element.InheritDescription }}description{{ else }}{{ printf "%q" .Element.Description }}{{ end }},
         ); err != nil {
@@ -103,7 +103,7 @@ func {{ .Name }}(path string, value any, description string) error {
     for key := range typed {
         keys = append(keys, key)
     }
-    sort.Strings(keys)
+    {{ $names.Sort }}.Strings(keys)
     for _, key := range keys {
         {{- if .Element.AllowNull }}
         if typed[key] == nil {
@@ -111,7 +111,7 @@ func {{ .Name }}(path string, value any, description string) error {
         }
         {{- end }}
         if err := {{ .Element.Name }}(
-            generatedJSONChildPath(path, key, true),
+            {{ $names.ChildPath }}(path, key, true),
             typed[key],
             {{- if .Element.InheritDescription }}description{{ else }}{{ printf "%q" .Element.Description }}{{ end }},
         ); err != nil {

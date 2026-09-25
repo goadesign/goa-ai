@@ -1,13 +1,99 @@
-package jsoncodec_test
+package types_test
 
 import (
 	"bytes"
-	gentypes "codec.local/gen/types"
-	"codec.local/gen/types/jsoncodec"
-	"runtime/debug"
 	"strings"
 	"testing"
+
+	gentypes "codec.local/gen/types"
 )
+
+var (
+	_ func(gentypes.Entries) ([]byte, error)         = gentypes.EncodeEntries
+	_ func([]byte) (gentypes.Entries, error)         = gentypes.DecodeEntries
+	_ func(gentypes.RequiredEntries) ([]byte, error) = gentypes.EncodeRequiredEntries
+	_ func([]byte) (gentypes.RequiredEntries, error) = gentypes.DecodeRequiredEntries
+)
+
+func TestArrayRootOccurrences(t *testing.T) {
+	for _, document := range []string{`[]`, `[null]`, `[null,{"Label":""},null]`} {
+		got, err := gentypes.DecodeEntries([]byte(document))
+		if err != nil {
+			t.Fatalf("%s: %v", document, err)
+		}
+		first, err := gentypes.EncodeEntries(got)
+		if err != nil || string(first) != document {
+			t.Fatalf("changed array: %s %v", first, err)
+		}
+		again, err := gentypes.DecodeEntries(first)
+		if err != nil {
+			t.Fatal(err)
+		}
+		second, err := gentypes.EncodeEntries(again)
+		if err != nil || !bytes.Equal(first, second) {
+			t.Fatalf("changed encoding: %s %s %v", first, second, err)
+		}
+	}
+	for _, document := range []string{`null`, `[{}]`, `[{"Label":null}]`, `[{"label":""}]`, `[{"Label":"","extra":true}]`} {
+		got, err := gentypes.DecodeEntries([]byte(document))
+		if err == nil || got != nil {
+			t.Fatalf("usable invalid array %s: %#v %v", document, got, err)
+		}
+	}
+	if data, err := gentypes.EncodeEntries(nil); err == nil || data != nil {
+		t.Fatalf("usable nil root: %s %v", data, err)
+	}
+	for _, document := range []string{`null`, `[null]`, `[{"Label":""},null]`} {
+		got, err := gentypes.DecodeRequiredEntries([]byte(document))
+		if err == nil || got != nil {
+			t.Fatalf("usable nonnullable array %s: %#v %v", document, got, err)
+		}
+	}
+	if data, err := gentypes.EncodeRequiredEntries(gentypes.RequiredEntries{nil}); err == nil || data != nil {
+		t.Fatalf("encoded null required element: %s %v", data, err)
+	}
+	for _, document := range []string{`[]`, `[{"Label":""}]`} {
+		got, err := gentypes.DecodeRequiredEntries([]byte(document))
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err := gentypes.EncodeRequiredEntries(got)
+		if err != nil || string(data) != document {
+			t.Fatalf("changed required elements: %s %v", data, err)
+		}
+	}
+}
+
+func TestNilableAndValueElements(t *testing.T) {
+	if got, err := gentypes.DecodeWords([]byte(`[null]`)); err == nil || got != nil {
+		t.Fatalf("null became a string zero value: %#v %v", got, err)
+	}
+	got, err := gentypes.DecodeBlobs([]byte(`[null,""]`))
+	if err != nil || len(got) != 2 || got[0] != nil || got[1] == nil {
+		t.Fatalf("changed bytes: %#v %v", got, err)
+	}
+	data, err := gentypes.EncodeBlobs(got)
+	if err != nil || string(data) != `[null,""]` {
+		t.Fatalf("changed byte elements: %s %v", data, err)
+	}
+	if got, err := gentypes.DecodeRequiredWords([]byte(`[null]`)); err == nil || got != nil {
+		t.Fatalf("null became a required string zero value: %#v %v", got, err)
+	}
+	words, err := gentypes.DecodeRequiredWords([]byte(`[""]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err = gentypes.EncodeRequiredWords(words)
+	if err != nil || string(data) != `[""]` {
+		t.Fatalf("lost required empty string: %s %v", data, err)
+	}
+	if got, err := gentypes.DecodeRequiredBlobs([]byte(`[null]`)); err == nil || got != nil {
+		t.Fatalf("accepted required null byte element: %#v %v", got, err)
+	}
+	if data, err := gentypes.EncodeRequiredBlobs(gentypes.RequiredBlobs{nil}); err == nil || data != nil {
+		t.Fatalf("encoded required null byte element: %s %v", data, err)
+	}
+}
 
 const containerDocument = `{"Single":{"Label":""},"Loose":[null,{"Label":""}],"Tight":[{"Label":""}],"Choice":{"type":"entry","value":{"Label":""}}}`
 
@@ -19,13 +105,8 @@ func TestNullablePermissionBelongsToArrayOccurrence(t *testing.T) {
 		"text":  `{"type":"text","value":""}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			defer func() {
-				if p := recover(); p != nil {
-					t.Errorf("unexpected codec panic: %v\n%s", p, debug.Stack())
-				}
-			}()
 			document := strings.Replace(containerDocument, `{"type":"entry","value":{"Label":""}}`, choice, 1)
-			value, err := jsoncodec.DecodeContainer([]byte(document))
+			value, err := gentypes.DecodeContainer([]byte(document))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -34,15 +115,15 @@ func TestNullablePermissionBelongsToArrayOccurrence(t *testing.T) {
 				len(value.Tight) != 1 || value.Tight[0] == nil {
 				t.Fatalf("changed shared Entry occurrences: %#v", value)
 			}
-			first, err := jsoncodec.EncodeContainer(value)
+			first, err := gentypes.EncodeContainer(value)
 			if err != nil {
 				t.Fatal(err)
 			}
-			again, err := jsoncodec.DecodeContainer(first)
+			again, err := gentypes.DecodeContainer(first)
 			if err != nil {
 				t.Fatal(err)
 			}
-			second, err := jsoncodec.EncodeContainer(again)
+			second, err := gentypes.EncodeContainer(again)
 			if err != nil || !bytes.Equal(first, second) {
 				t.Fatalf("unstable occurrence encoding: %s %s %v", first, second, err)
 			}
@@ -73,12 +154,7 @@ func TestSharedEntryStrictNullOccurrences(t *testing.T) {
 		"UTF8 child":                strings.Replace(containerDocument, loose, `"Loose":[null,{"Label":"`+string([]byte{0xff})+`"}]`, 1),
 	} {
 		t.Run(name, func(t *testing.T) {
-			defer func() {
-				if p := recover(); p != nil {
-					t.Errorf("unexpected codec panic: %v\n%s", p, debug.Stack())
-				}
-			}()
-			value, err := jsoncodec.DecodeContainer([]byte(document))
+			value, err := gentypes.DecodeContainer([]byte(document))
 			if err == nil || value != nil {
 				t.Fatalf("usable invalid occurrence: %#v %v; %s", value, err, document)
 			}
@@ -92,17 +168,12 @@ func TestSharedEntryStrictNullOccurrences(t *testing.T) {
 		"union entry":          func(v *gentypes.Container) { v.Choice.SetEntry(nil) },
 	} {
 		t.Run("encode/"+name, func(t *testing.T) {
-			defer func() {
-				if p := recover(); p != nil {
-					t.Errorf("unexpected codec panic: %v\n%s", p, debug.Stack())
-				}
-			}()
-			value, err := jsoncodec.DecodeContainer([]byte(containerDocument))
+			value, err := gentypes.DecodeContainer([]byte(containerDocument))
 			if err != nil {
 				t.Fatal(err)
 			}
 			mutate(value)
-			if data, err := jsoncodec.EncodeContainer(value); err == nil || data != nil {
+			if data, err := gentypes.EncodeContainer(value); err == nil || data != nil {
 				t.Fatalf("usable invalid occurrence encoding: %s %v", data, err)
 			}
 		})

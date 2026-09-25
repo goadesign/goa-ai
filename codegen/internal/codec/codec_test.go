@@ -57,7 +57,6 @@ func TestPlanRendersOneExactJSONContract(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"codec",
 		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
@@ -68,7 +67,7 @@ func TestPlanRendersOneExactJSONContract(t *testing.T) {
 
 	service := goacodegen.NewAttributeContext(false, false, true, "widgets", servicePackage.Scope())
 	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope)))
-	files, err := planned.Files()
+	files, err := planned.Files("codec")
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 
@@ -104,7 +103,6 @@ func TestValueReportsExactTransportFields(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"codec",
 		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
@@ -156,7 +154,6 @@ func TestPlanKeepsUnionSourceIdentity(t *testing.T) {
 		planned, err := NewPlan(
 			generation,
 			"example.com/gen/mcp_widgets/internal/codec",
-			"codec",
 			"example.com/gen/widgets",
 		)
 		require.NoError(t, err)
@@ -165,7 +162,7 @@ func TestPlanKeepsUnionSourceIdentity(t *testing.T) {
 		require.NoError(t, err)
 		copy, err := planned.Add("widgets.copy.payload", "CreatePayload", goaexpr.DupAtt(attribute), EncodeAndDecode)
 		require.NoError(t, err)
-		require.Same(t, first.unions[0].declaration, copy.unions[0].declaration)
+		require.Same(t, first.unions[0].name, copy.unions[0].name)
 	})
 
 	t.Run("independent same name fails", func(t *testing.T) {
@@ -174,7 +171,6 @@ func TestPlanKeepsUnionSourceIdentity(t *testing.T) {
 		planned, err := NewPlan(
 			generation,
 			"example.com/gen/mcp_widgets/internal/codec",
-			"codec",
 			"example.com/gen/widgets",
 		)
 		require.NoError(t, err)
@@ -190,7 +186,6 @@ func TestPlanKeepsUnionSourceIdentity(t *testing.T) {
 		planned, err := NewPlan(
 			generation,
 			"example.com/gen/mcp_widgets/internal/codec",
-			"codec",
 			"example.com/gen/widgets",
 		)
 		require.NoError(t, err)
@@ -198,7 +193,7 @@ func TestPlanKeepsUnionSourceIdentity(t *testing.T) {
 		require.NoError(t, err)
 		second, err := planned.Add("widgets.second.payload", "OtherPayload", codecTestAttribute(), EncodeAndDecode)
 		require.NoError(t, err)
-		require.NotSame(t, first.unions[0].declaration, second.unions[0].declaration)
+		require.NotSame(t, first.unions[0].name, second.unions[0].name)
 	})
 }
 
@@ -215,7 +210,6 @@ func TestGeneratedCodecBehavior(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"codec",
 		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
@@ -225,7 +219,7 @@ func TestGeneratedCodecBehavior(t *testing.T) {
 	require.NoError(t, generation.Freeze())
 	service := goacodegen.NewAttributeContext(false, false, true, "widgets", servicePackage.Scope())
 	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope)))
-	files, err := planned.Files()
+	files, err := planned.Files("codec")
 	require.NoError(t, err)
 	_, err = files[0].Render(moduleDirectory)
 	require.NoError(t, err)
@@ -264,7 +258,6 @@ func TestPlanUsesCodecPackageImportScope(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"codec",
 		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
@@ -276,7 +269,7 @@ func TestPlanUsesCodecPackageImportScope(t *testing.T) {
 
 	service := goacodegen.NewAttributeContext(false, false, true, "widgets", servicePackage.Scope())
 	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope)))
-	files, err := planned.Files()
+	files, err := planned.Files("codec")
 	require.NoError(t, err)
 	directory := t.TempDir()
 	_, err = files[0].Render(directory)
@@ -295,7 +288,6 @@ func TestPlanLetsServiceWriterResolvePrimitiveReference(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"codec",
 		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
@@ -309,7 +301,7 @@ func TestPlanLetsServiceWriterResolvePrimitiveReference(t *testing.T) {
 	require.NoError(t, generation.Freeze())
 	service := &primitiveCodecTestWriter{Attributor: goacodegen.NewAttributeScope(goacodegen.NewNameScope())}
 	require.NoError(t, value.BindService(service))
-	files, err := planned.Files()
+	files, err := planned.Files("codec")
 	require.NoError(t, err)
 	directory := t.TempDir()
 	_, err = files[0].Render(directory)
@@ -378,7 +370,6 @@ func renderImportPriorityCodec(t *testing.T, generatedFirst bool) string {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"codec",
 		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
@@ -393,7 +384,7 @@ func renderImportPriorityCodec(t *testing.T, generatedFirst bool) string {
 		genpkg:         generation.GenPkg(),
 		defaultPackage: "widgets",
 	}))
-	files, err := planned.Files()
+	files, err := planned.Files("codec")
 	require.NoError(t, err)
 	directory := t.TempDir()
 	_, err = files[0].Render(directory)
@@ -411,7 +402,6 @@ func TestPlanRejectsIncompleteLifecycle(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"codec",
 		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
@@ -422,7 +412,7 @@ func TestPlanRejectsIncompleteLifecycle(t *testing.T) {
 	require.EqualError(t, err, `JSON value key "widgets.create.payload" is already planned`)
 	_, err = planned.Add("widgets.invalid", "Invalid", attribute, Direction(0))
 	require.EqualError(t, err, `plan JSON value "widgets.invalid": direction must select encoding, decoding, or typed construction`)
-	_, err = planned.Files()
+	_, err = planned.Files("codec")
 	require.EqualError(t, err, "JSON codec files cannot be rendered before generation freeze")
 }
 
@@ -434,7 +424,6 @@ func TestPlanKeepsNestedTypesLocalToEachValue(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"codec",
 		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
@@ -462,7 +451,6 @@ func TestPlanHandlesRecursiveAndRepeatedTypes(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"codec",
 		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
@@ -471,7 +459,7 @@ func TestPlanHandlesRecursiveAndRepeatedTypes(t *testing.T) {
 	require.NoError(t, generation.Freeze())
 	service := goacodegen.NewAttributeContext(false, false, true, "widgets", servicePackage.Scope())
 	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope)))
-	files, err := planned.Files()
+	files, err := planned.Files("codec")
 	require.NoError(t, err)
 
 	directory := t.TempDir()
@@ -608,7 +596,6 @@ func renderCollidingCodec(t *testing.T, reverse bool) string {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"codec",
 		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
@@ -641,7 +628,7 @@ func renderCollidingCodec(t *testing.T, reverse bool) string {
 	for _, value := range values {
 		require.NoError(t, value.BindService(service.Scope))
 	}
-	files, err := planned.Files()
+	files, err := planned.Files("codec")
 	require.NoError(t, err)
 	directory := t.TempDir()
 	_, err = files[0].Render(directory)
@@ -662,7 +649,6 @@ func renderDirectionalCodec(t *testing.T, direction Direction) (string, *Value) 
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"codec",
 		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
@@ -689,7 +675,7 @@ func renderDirectionalCodec(t *testing.T, direction Direction) (string, *Value) 
 	}
 	service := goacodegen.NewAttributeContext(false, false, true, "widgets", servicePackage.Scope())
 	require.NoError(t, value.BindService(newCodecTestServiceAttributor(service.Scope)))
-	files, err := planned.Files()
+	files, err := planned.Files("codec")
 	require.NoError(t, err)
 	directory := t.TempDir()
 	_, err = files[0].Render(directory)

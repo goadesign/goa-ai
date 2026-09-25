@@ -1,5 +1,5 @@
 // These tests compile the generated API and exercise strictness through its
-// public typed functions, alongside selection and original-type ownership.
+// public typed functions, alongside automatic discovery and type ownership.
 package jsoncodec
 
 import (
@@ -23,88 +23,101 @@ func TestGeneratedStandaloneCodec(t *testing.T) {
 	files, err := generate(t, settingsDesign)
 	require.NoError(t, err)
 	root := compileModule(t, files)
-	source, err := os.ReadFile("testdata/codec_test.go.txt")
+	source, err := os.ReadFile("testdata/codec_test.go")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/jsoncodec/codec_test.go"), source, 0o600)) // #nosec G703 -- root is this test's private temporary directory.
-	reader, err := os.ReadFile("testdata/strict_reader_test.go.txt")
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/codec_test.go"), source, 0o600)) // #nosec G703 -- root is this test's private temporary directory.
+	reader, err := os.ReadFile("testdata/strict_reader_test.go")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/jsoncodec/internal/codec/strict_reader_test.go"), reader, 0o600)) // #nosec G703 -- root is this test's private temporary directory.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/strict_reader_test.go"), reader, 0o600)) // #nosec G703 -- root is this test's private temporary directory.
 	runGo(t, root, "test", "-count=1", "-v", "./gen/...")
 }
 
-func TestSelectionErrors(t *testing.T) {
+func TestUnsupportedOriginalsAreSkipped(t *testing.T) {
 	for _, test := range []struct {
 		name   string
 		design func()
-		want   string
 	}{
-		{"values", func() { dsl.Type("Settings", func() { dsl.Meta(selectionKey, "true") }) }, "takes no values"},
-		{"unlocated", func() { dsl.Type("Settings", func() { dsl.Meta(selectionKey) }) }, "explicit generated package"},
-		{"unemitted", func() {
-			dsl.Type("Settings", func() { dsl.Meta(selectionKey); dsl.Meta("struct:pkg:path", "types") })
-		}, "not generated"},
-		{"field", func() {
-			dsl.Type("Settings", func() { dsl.Attribute("title", dsl.String, func() { dsl.Meta(selectionKey) }) })
-		}, "only valid on a named type"},
-		{"service", func() { dsl.Service("extra", func() { dsl.Meta(selectionKey) }) }, "only valid on a named type"},
-		{"method", func() { dsl.Service("extra", func() { dsl.Method("read", func() { dsl.Meta(selectionKey) }) }) }, "only valid on a named type"},
-		{"any", func() { located("Settings", func() { dsl.Meta(selectionKey); dsl.Attribute("value", dsl.Any) }) }, "Any has no closed"},
+		{"any", func() { dsl.Attribute("value", dsl.Any) }},
 		{"custom", func() {
-			located("Settings", func() {
-				dsl.Meta(selectionKey)
-				dsl.Attribute("value", dsl.Bytes, func() {
-					dsl.Meta("struct:field:type", "json.RawMessage", "encoding/json")
-				})
+			dsl.Attribute("value", dsl.Bytes, func() {
+				dsl.Meta("struct:field:type", "json.RawMessage", "encoding/json")
 			})
-		}, "custom Go representation"},
+		}},
 		{"nonstringmap", func() {
-			located("Settings", func() { dsl.Meta(selectionKey); dsl.Attribute("value", dsl.MapOf(dsl.Int, dsl.String)) })
-		}, "map keys must"},
-		{"outputowner", func() {
-			located("Settings", func() { dsl.Meta(selectionKey); dsl.Attribute("title", dsl.String) })
-			dsl.Type("Occupied", func() {
-				dsl.Meta("struct:pkg:path", "types/jsoncodec")
-				dsl.Meta("type:generate:force")
-				dsl.Attribute("value", dsl.String)
+			dsl.Attribute("value", dsl.MapOf(dsl.Int, dsl.String))
+		}},
+		{"optional array", func() { dsl.Attribute("value", dsl.ArrayOf(dsl.Any)) }},
+		{"union", func() {
+			dsl.OneOf("value", func() {
+				dsl.Attribute("text", dsl.String)
+				dsl.Attribute("dynamic", dsl.Any)
 			})
-		}, "already owned"},
+		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			_, err := generate(t, test.design)
-			require.ErrorContains(t, err, test.want)
+			files, err := generate(t, func() {
+				child := dsl.Type("Child", func() {
+					dsl.Meta("struct:pkg:path", "types")
+					dsl.Attribute("text", dsl.String)
+				})
+				located("Skipped", func() {
+					test.design()
+					dsl.Attribute("child", child)
+				})
+			})
+			require.NoError(t, err)
+			source := generatedSource(t, files, "gen/types")
+			require.Contains(t, source, "type Skipped struct")
+			require.NotContains(t, source, "func EncodeSkipped(")
+			require.NotContains(t, source, "func DecodeSkipped(")
+			require.Contains(t, source, "func EncodeChild(")
+			require.Contains(t, source, "func DecodeChild(")
+			runGo(t, compileModule(t, files), "test", "./gen/...")
 		})
 	}
 }
 
-func TestOnlySelectedOriginalReceivesAPI(t *testing.T) {
+func TestEverySupportedOriginalReceivesAPI(t *testing.T) {
 	files, err := generate(t, func() {
-		base := located("Base", func() { dsl.Meta(selectionKey); dsl.Attribute("title", dsl.String) })
+		base := located("Base", func() { dsl.Attribute("title", dsl.String) })
 		located("Derived", func() { dsl.Extend(base); dsl.Attribute("extra", dsl.String) })
 		located("Parent", func() { dsl.Attribute("left", base); dsl.Attribute("right", base) })
 	})
 	require.NoError(t, err)
-	var api string
-	for _, file := range files {
-		if filepath.ToSlash(file.Path) == "gen/types/jsoncodec/codec.go" {
-			var text strings.Builder
-			for _, section := range file.SectionTemplates {
-				require.NoError(t, section.Write(&text))
-			}
-			api = text.String()
-		}
+	api := generatedSource(t, files, "gen/types")
+	for _, name := range []string{"Base", "Derived", "Parent"} {
+		require.Equal(t, 1, strings.Count(api, "func Encode"+name+"("))
+		require.Equal(t, 1, strings.Count(api, "func Decode"+name+"("))
 	}
-	require.Equal(t, 1, strings.Count(api, "func EncodeBase("))
-	require.Equal(t, 1, strings.Count(api, "func DecodeBase("))
-	require.NotContains(t, api, "EncodeDerived")
-	require.NotContains(t, api, "EncodeParent")
+	runGo(t, compileModule(t, files), "test", "./gen/...")
 }
 
-func TestUnselectedAddsNothing(t *testing.T) {
-	files, err := generate(t, func() { located("Settings", func() { dsl.Attribute("title", dsl.String) }) })
+func TestUnusedOriginalIsNotGenerated(t *testing.T) {
+	files, err := generate(t, func() {
+		dsl.Type("Unused", func() {
+			dsl.Meta("struct:pkg:path", "types")
+			dsl.Attribute("title", dsl.String)
+		})
+	})
 	require.NoError(t, err)
 	for _, file := range files {
-		require.NotContains(t, filepath.ToSlash(file.Path), "/jsoncodec/")
+		require.NotContains(t, filepath.ToSlash(file.Path), "gen/types/")
 	}
+}
+
+func TestExistingCodecDirectoryRemainsValid(t *testing.T) {
+	files, err := generate(t, func() {
+		located("Settings", func() { dsl.Attribute("title", dsl.String) })
+		dsl.Type("Occupied", func() {
+			dsl.Meta("struct:pkg:path", "types/jsoncodec")
+			dsl.Meta("type:generate:force")
+			dsl.Attribute("value", dsl.String)
+		})
+	})
+	require.NoError(t, err)
+	require.Contains(t, generatedSource(t, files, "gen/types"), "func EncodeSettings(")
+	require.Contains(t, generatedSource(t, files, "gen/types/jsoncodec"), "func EncodeOccupied(")
+	runGo(t, compileModule(t, files), "test", "./gen/...")
 }
 
 func TestLocatedRootsAndImports(t *testing.T) {
@@ -114,7 +127,6 @@ func TestLocatedRootsAndImports(t *testing.T) {
 				dsl.Meta("struct:pkg:path", name)
 				dsl.Meta("struct:type:name", name+"Record")
 				dsl.Meta("type:generate:force")
-				dsl.Meta(selectionKey)
 				dsl.Attribute("Text", dsl.String)
 				dsl.Required("Text")
 			})
@@ -122,17 +134,14 @@ func TestLocatedRootsAndImports(t *testing.T) {
 		dsl.Type("Word", dsl.String, func() {
 			dsl.Meta("struct:pkg:path", "types")
 			dsl.Meta("type:generate:force")
-			dsl.Meta(selectionKey)
 		})
 		dsl.Type("Words", dsl.ArrayOf(dsl.String), func() {
 			dsl.Meta("struct:pkg:path", "types")
 			dsl.Meta("type:generate:force")
-			dsl.Meta(selectionKey)
 		})
 		dsl.Type("Labels", dsl.MapOf(dsl.String, dsl.String), func() {
 			dsl.Meta("struct:pkg:path", "types")
 			dsl.Meta("type:generate:force")
-			dsl.Meta(selectionKey)
 		})
 	})
 	require.NoError(t, err)
@@ -157,7 +166,6 @@ func settingsDesign() {
 		dsl.Required("Label", "Count")
 	})
 	located("Settings", func() {
-		dsl.Meta(selectionKey)
 		dsl.Attribute("Enabled", dsl.Boolean, func() { dsl.Default(false) })
 		dsl.Attribute("Count", dsl.Int, func() { dsl.Minimum(0) })
 		dsl.Attribute("Title", dsl.String, func() { dsl.MinLength(1) })
@@ -203,8 +211,8 @@ func generate(t *testing.T, design func()) ([]*codegen.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := new(plugin)
-	if err := p.plan(generation); err != nil {
+	p, err := NewPlan(generation)
+	if err != nil {
 		return nil, err
 	}
 	if err := generation.Freeze(); err != nil {
@@ -217,7 +225,22 @@ func generate(t *testing.T, design func()) ([]*codegen.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	return p.generate(files)
+	return p.Files(files)
+}
+
+// generatedSource renders exactly one owner package for coverage assertions.
+func generatedSource(t *testing.T, files []*codegen.File, directory string) string {
+	t.Helper()
+	var text strings.Builder
+	for _, file := range files {
+		if filepath.ToSlash(filepath.Dir(file.Path)) != directory {
+			continue
+		}
+		for _, section := range file.SectionTemplates {
+			require.NoError(t, section.Write(&text))
+		}
+	}
+	return text.String()
 }
 
 // compileModule uses the repository's pinned dependency graph in a throwaway module.
@@ -230,11 +253,11 @@ func compileModule(t *testing.T, files []*codegen.File) string {
 		require.NoError(t, err)
 		t.Logf("retained generated fixture: %s", root)
 	}
-	mod, err := os.ReadFile("../../go.mod")
+	mod, err := os.ReadFile("../../../go.mod")
 	require.NoError(t, err)
 	mod = []byte(strings.Replace(string(mod), "module goa.design/goa-ai", "module codec.local", 1))
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), mod, 0o600)) // #nosec G703 -- root is t.TempDir, with a constant child name.
-	sum, err := os.ReadFile("../../go.sum")
+	sum, err := os.ReadFile("../../../go.sum")
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.sum"), sum, 0o600)) // #nosec G703 -- root is t.TempDir, with a constant child name.
 	for _, file := range files {

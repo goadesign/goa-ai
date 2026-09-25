@@ -1,5 +1,5 @@
 // These checks call generated codecs with value unions and pointer objects.
-package jsoncodec_test
+package types_test
 
 import (
 	"reflect"
@@ -8,7 +8,6 @@ import (
 
 	genordinary "codec.local/gen/ordinary"
 	gentypes "codec.local/gen/types"
-	genjsoncodec "codec.local/gen/types/jsoncodec"
 )
 
 func TestUnionCollectionsRoundTrip(t *testing.T) {
@@ -18,7 +17,7 @@ func TestUnionCollectionsRoundTrip(t *testing.T) {
 		decode func([]byte) (*gentypes.UnionCollections, error)
 	}{
 		{"ordinary", genordinary.EncodeUnionCollections, genordinary.DecodeUnionCollections},
-		{"selected", genjsoncodec.EncodeUnionCollections, genjsoncodec.DecodeUnionCollections},
+		{"original", gentypes.EncodeUnionCollections, gentypes.DecodeUnionCollections},
 	} {
 		t.Run(codec.name, func(t *testing.T) {
 			value := validUnionCollections()
@@ -54,7 +53,7 @@ func TestUnionCollectionsRejectInvalidValues(t *testing.T) {
 		encode func(*gentypes.UnionCollections) ([]byte, error)
 	}{
 		{"ordinary", genordinary.EncodeUnionCollections},
-		{"selected", genjsoncodec.EncodeUnionCollections},
+		{"original", gentypes.EncodeUnionCollections},
 	} {
 		t.Run(codec.name, func(t *testing.T) {
 			for _, test := range []struct {
@@ -98,7 +97,7 @@ func TestUnionCollectionsRejectInvalidJSON(t *testing.T) {
 		decode func([]byte) (*gentypes.UnionCollections, error)
 	}{
 		{"ordinary", genordinary.DecodeUnionCollections},
-		{"selected", genjsoncodec.DecodeUnionCollections},
+		{"original", gentypes.DecodeUnionCollections},
 	} {
 		t.Run(codec.name, func(t *testing.T) {
 			for _, document := range []string{
@@ -153,7 +152,7 @@ func TestUnionCollectionsSelectedChecksText(t *testing.T) {
 			value, want := validUnionCollections(), validUnionCollections()
 			test.change(value)
 			test.change(want)
-			data, err := genjsoncodec.EncodeUnionCollections(value)
+			data, err := gentypes.EncodeUnionCollections(value)
 			if err == nil || data != nil || !strings.Contains(err.Error(), "UTF-8") {
 				t.Fatalf("invalid text was not rejected before conversion: %s, err %v", data, err)
 			}

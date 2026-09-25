@@ -33,7 +33,6 @@ func TestGeneratedNestedCollections(t *testing.T) {
 			dsl.Type(test.name, test.value, func() {
 				dsl.Meta("struct:pkg:path", "types")
 				dsl.Meta("type:generate:force")
-				dsl.Meta(selectionKey)
 			})
 		}
 		dsl.Type("Choices", dsl.ArrayOf(&expr.Union{TypeName: "Choice"}, func() {
@@ -42,13 +41,12 @@ func TestGeneratedNestedCollections(t *testing.T) {
 		}), func() {
 			dsl.Meta("struct:pkg:path", "types")
 			dsl.Meta("type:generate:force")
-			dsl.Meta(selectionKey)
 		})
 	})
 	require.NoError(t, err)
 	root := compileModule(t, files)
-	fixture, err := os.ReadFile("testdata/nested_collections_test.go.txt")
+	fixture, err := os.ReadFile("testdata/nested_collections_test.go")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/jsoncodec/nested_collections_test.go"), fixture, 0o600)) // #nosec G703 -- root is the generated fixture's private directory.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/nested_collections_test.go"), fixture, 0o600)) // #nosec G703 -- root is the generated fixture's private directory.
 	runGo(t, root, "test", "-count=1", "-v", "./gen/...")
 }

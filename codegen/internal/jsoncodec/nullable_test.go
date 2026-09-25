@@ -31,11 +31,9 @@ func TestGeneratedNullableArrayRoots(t *testing.T) {
 			dsl.Type(test.name, test.value, func() {
 				dsl.Meta("struct:pkg:path", "types")
 				dsl.Meta("type:generate:force")
-				dsl.Meta(selectionKey)
 			})
 		}
 		located("Container", func() {
-			dsl.Meta(selectionKey)
 			dsl.Attribute("Single", entry)
 			dsl.Attribute("Loose", dsl.ArrayOf(entry))
 			dsl.Attribute("Tight", dsl.ArrayOfRequired(entry))
@@ -48,8 +46,8 @@ func TestGeneratedNullableArrayRoots(t *testing.T) {
 	})
 	require.NoError(t, err)
 	root := compileModule(t, files)
-	source, err := os.ReadFile("testdata/nullable_test.go.txt")
+	source, err := os.ReadFile("testdata/nullable_test.go")
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/jsoncodec/nullable_test.go"), source, 0o600)) // #nosec G703 -- root is this test's private temporary directory.
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/nullable_test.go"), source, 0o600)) // #nosec G703 -- root is this test's private temporary directory.
 	runGo(t, root, "test", "-count=1", "./gen/...")
 }
