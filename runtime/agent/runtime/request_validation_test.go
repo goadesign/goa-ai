@@ -25,14 +25,23 @@ import (
 )
 
 func TestRequestValidationToolFailureStopsWorkflow(t *testing.T) {
-	for _, inline := range []bool{false, true} {
-		t.Run(fmt.Sprintf("inline=%t", inline), func(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		inline bool
+		cause  error
+	}{
+		{"queued validation", false, model.NewRequestValidationError(errors.New("lookup model request rejected locally"))},
+		{"inline validation", true, model.NewRequestValidationError(errors.New("lookup model request rejected locally"))},
+		{"queued byte capacity", false, model.ErrRequestByteCapacity},
+		{"inline byte capacity", true, fmt.Errorf("lookup request: %w", model.ErrRequestByteCapacity)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
 			rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 			spec := newAnyJSONSpec("catalog.lookup")
 			var starts, resumes, executions int
-			cause := model.NewRequestValidationError(errors.New("lookup model request rejected locally"))
+			cause := tc.cause
 			require.NoError(t, rt.RegisterToolset(ToolsetRegistration{
-				Name: "catalog", Inline: inline, Specs: []tools.ToolSpec{spec},
+				Name: "catalog", Inline: tc.inline, Specs: []tools.ToolSpec{spec},
 				Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
 					executions++
 					return nil, cause

@@ -478,6 +478,14 @@ rejection into model correction guidance. The run failure has kind
 diagnostic. See [the saved error and worker upgrade
 contract](docs/runtime.md#local-model-request-rejections).
 
+Adapters can report `model.ErrRequestByteCapacity` for a complete request proved
+too large before remote inference dispatch. This existing terminal error type
+also identifies the specific byte failure during history selection, where the
+runtime may retain fewer optional older whole turns. It never removes the newest
+turn, fixed request settings or required summary evidence, and does not infer
+capacity from unrelated errors. See the
+[request-byte contract](docs/runtime.md#locally-measured-request-byte-capacity).
+
 Diagnostics are separate from that execution decision. Planner activities offer
 the original error to the application tracer and retain the exact selected
 reason in v2 rejection metadata when it is valid UTF-8, without a per-reason

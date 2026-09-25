@@ -32,3 +32,21 @@ func TestRequestValidationErrorRequiresCause(t *testing.T) {
 		assert.NotNil(t, NewRequestValidationError(nil))
 	})
 }
+
+func TestRequestByteCapacityRetainsTerminalIdentity(t *testing.T) {
+	for _, err := range []error{
+		ErrRequestByteCapacity,
+		fmt.Errorf("encoded request: %w", ErrRequestByteCapacity),
+		NewRequestValidationError(fmt.Errorf("adapter rejected request: %w", ErrRequestByteCapacity)),
+	} {
+		require.ErrorIs(t, err, ErrRequestByteCapacity)
+		var rejected *RequestValidationError
+		require.ErrorAs(t, err, &rejected)
+		require.NotErrorIs(t, err, ErrImageSourceCapacity)
+		_, provider := AsProviderError(err)
+		assert.False(t, provider)
+	}
+	// Matching diagnostic text does not establish a locally measured byte limit.
+	unmarked := NewRequestValidationError(errors.New(ErrRequestByteCapacity.Error()))
+	require.NotErrorIs(t, unmarked, ErrRequestByteCapacity)
+}

@@ -4356,6 +4356,44 @@ contain it, including during rollback. There is no database migration, generated
 API change, or compatibility mode; route affected histories only to upgraded
 workers. Upgrading does not relabel earlier saved failures.
 
+#### Locally measured request byte capacity
+
+An adapter may return or wrap `model.ErrRequestByteCapacity` when it measures
+the complete request and proves that it exceeds a known local byte allowance
+before remote inference dispatch. The marker is already a
+`RequestValidationError`; wrapping it adds diagnostics while preserving terminal
+classification and `errors.Is`. The adapter owns the encoding and its allowance.
+The framework adds no byte limit, image count rule, or transport measurement.
+
+The fact belongs to that exact request, including its text, images, tools and
+settings. An image can fit one request while the complete request with another
+image or larger tool definitions does not. This is separate from
+`model.ErrImageSourceCapacity`, which concerns a selected image's allowance
+during source resolution. Do not infer either marker from image presence,
+estimated tokens, remote status codes, diagnostic text, or unknown provider
+capacity. Other request-validation, provider, authorization, missing-data,
+checksum, network, output and cancellation errors retain their meaning.
+
+The existing history policy recognizes the request-byte marker only where it
+already handles image capacity: the initial count can trigger compression,
+adding optional older turns can stop, and a summary can be counted with fewer
+older complete turns within its declared source coverage. All system messages,
+the complete newest turn and fixed request settings stay present. Failure to
+admit that required request ends the operation.
+
+The summary-generation request must retain all selected original evidence,
+including native images. Its byte-capacity failure ends work without omitting
+evidence, splitting the request or generating another summary. Failure to fit
+the summary plus newest turn also ends work. Final completion and stream calls
+are independently admitted by the adapter: an earlier successful token count
+does not authorize them. There is no new counting trigger or automatic retry.
+
+This marker uses the existing saved request-validation error format and requires
+no data conversion or generated API change. Its identity is used locally during
+history selection, not reconstructed from saved diagnostic text. Workers that
+already support request-validation failures retain their terminal meaning; the
+older-worker upgrade requirement above still applies.
+
 ### Diagnostic ownership and transport
 
 Applications decide what their instrumentation stores and exposes. The runtime
