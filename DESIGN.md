@@ -1291,9 +1291,10 @@ lease, or scheduling health checks. The catalog privately owns three kinds of du
 
 | Data | Contents and ownership |
 | --- | --- |
-| Compact current state | Active/retired status, listing summary, wire version, schema fingerprint, admission revision, registration token/time, provider-incarnation leases with draining flags and expiry, health epoch, and last pong. |
+| Compact current state | Active/retired status, listing summary, optional immutable application scope/public-name identity, wire version, schema fingerprint, admission revision, registration token/time, provider-incarnation leases with draining flags and expiry, health epoch, and last pong. |
 | Current definition | One serialized toolset per name, including generated schemas and consumer metadata. Registration time is supplied by current state, not the static definition. |
 | Permanent retired tokens | Every token invalidated by replacement or retirement. Tokens never expire and cannot be truncated. |
+| Derived application membership | Sorted internal routes for each explicitly owned scope, updated in the same conditional commit as active/retired state. No membership is inferred for identity-free records. |
 
 Registry replicas read and update these records directly through Redis commands
 and conditional-update scripts; there is no Pulse replicated catalog map,
@@ -1303,6 +1304,40 @@ Renewal, health, pong, drain, release, and atomic call-ownership checks operate
 on compact state without transferring definitions. Publication, claim, and
 completion still check the exact lease in the same Redis operation that records
 their effects.
+
+Application owners may call the explicit `WithIdentity` variants of Register,
+DeclareServiceToolset, RegisterAgentToolset and ReplaceAgentToolset. These share
+the existing compiler and catalog commit. Identity is immutable, is not part of
+the declaration fingerprint, and cannot be introduced by an ordinary retry.
+Existing identity-free registration remains supported. Assignment to historical
+records is an application's explicit migration responsibility, not a fallback.
+
+Upgrade every registry replica sharing the catalog before using identity-taking
+registration. Older readers reject the new identity field in current state.
+Existing identity-free records need no migration. After identity-bearing records
+exist, downgrading those readers requires an application-owned data conversion;
+reverting the library alone is not a safe rollback. Provider wire messages and
+stored declaration JSON remain unchanged.
+
+`CatalogRoutesAfter` reads bounded exclusive lexical positions from one scope;
+`CatalogContains` checks one exact membership. `ReadCatalogToolset` requires a
+positive raw-byte budget and checks the sum of state/definition `HSTRLEN` before
+either `HGET` or decoding in one finite Lua operation. It reuses canonical
+snapshot validation and the exact-record provider-health calculation without
+lease pruning or retries. A budget failure leaves registration and bytes intact.
+No definition codec, definition write cap, cursor TTL or application authorization
+is introduced. Applications own page selection and encoded response budgets.
+Native Agent records carry no service-health value; their configured executor's
+readiness belongs to the application. `LookupAgentToolsetRegistration` compares
+the complete intended Agent declaration and explicit identity through the same
+preparation and admission checks as registration. It returns the existing typed
+registration with saved token/time, `found=true` and no error for a match.
+Ordinary absence is `(nil, false, nil)`. A different, retired or differently
+owned entry returns `admission_conflict`; invalid input or failed reads remain
+errors, with no registration and `found=false`. Callers check the error before
+using `found`. Lookup loads compact state without writing, reserving the name,
+exposing admission facts for callers to compare, or imposing discovery capacity
+on registration.
 
 A nonzero-to-zero lease transition
 advances the epoch and resets pong freshness. Ping IDs carry token plus epoch;

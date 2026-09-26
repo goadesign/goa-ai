@@ -28,6 +28,7 @@ type (
 	// catalogToolset owns one validated definition and its compiled execution
 	// schemas for registration or the caller that selected this snapshot.
 	catalogToolset struct {
+		identity         *CatalogIdentity
 		raw              json.RawMessage
 		info             *genregistry.ToolsetInfo
 		fingerprint      string
@@ -130,6 +131,11 @@ func parseCatalogState(name, body string) (catalogState, error) {
 	if entry.Info == nil || entry.Info.Name != name || entry.Info.ToolCount < 0 {
 		return catalogState{}, fmt.Errorf("toolset %q has invalid discovery metadata", name)
 	}
+	if entry.Identity != nil {
+		if err := entry.Identity.validate(); err != nil {
+			return catalogState{}, fmt.Errorf("toolset %q: %w", name, err)
+		}
+	}
 	if entry.RegisteredAt == "" || entry.Info.RegisteredAt != entry.RegisteredAt {
 		return catalogState{}, fmt.Errorf("toolset %q has invalid registered_at", name)
 	}
@@ -209,6 +215,12 @@ func (c *toolsetCatalog) snapshot(ctx context.Context, name string) (entry catal
 		attribute.Int("toolregistry.catalog.state_read_bytes", len(raw)),
 		attribute.Int("toolregistry.catalog.definition_read_bytes", len(definitionRaw)),
 	)
+	return c.decodeSnapshot(name, raw, definitionRaw, tokenRetired)
+}
+
+// decodeSnapshot validates the state/definition pair for both ordinary and
+// bounded reads. Neither path changes the persisted definition's encoding.
+func (c *toolsetCatalog) decodeSnapshot(name, raw, definitionRaw string, tokenRetired bool) (catalogEntry, error) {
 	state, err := parseCatalogState(name, raw)
 	if err != nil {
 		return catalogEntry{}, err

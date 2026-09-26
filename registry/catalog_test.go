@@ -35,6 +35,7 @@ type testCatalogMap struct {
 	content                map[string]string
 	definitions            map[string]string
 	retiredTokens          map[string]struct{}
+	scopeRoutes            map[string]map[string]struct{}
 	clock                  registryTimeSource
 	readErr                error
 	snapshotErr            error
@@ -729,6 +730,7 @@ func newTestCatalogMap(clocks ...registryTimeSource) *testCatalogMap {
 		content:       make(map[string]string),
 		definitions:   make(map[string]string),
 		retiredTokens: make(map[string]struct{}),
+		scopeRoutes:   make(map[string]map[string]struct{}),
 		clock:         clock,
 	}
 }
@@ -926,5 +928,6 @@ func (m *testCatalogMap) Commit(ctx context.Context, key, previous string, next 
 		m.retiredTokens[next.RetireToken] = struct{}{}
 	}
 	m.content[key] = next.State
+	m.indexWrite(key, next)
 	return true, nil
 }
