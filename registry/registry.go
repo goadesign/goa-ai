@@ -199,6 +199,7 @@ func New(ctx context.Context, cfg Config) (*Registry, error) {
 		catalog:               catalog,
 		StreamManager:         streamManager,
 		HealthTracker:         healthTracker,
+		CatalogHealth:         healthTracker.healthFromEntry,
 		CallAdmissions:        callAdmissions,
 		PulseClient:           pulseClient,
 		ExecutionTimeout:      cfg.ExecutionTimeout,

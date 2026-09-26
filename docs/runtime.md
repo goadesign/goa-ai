@@ -2587,6 +2587,31 @@ startup registration and renewal.
 
 #### Registry storage and definition reuse
 
+Applications may attach an immutable `CatalogIdentity{Scope, Name}` through
+`RegisterWithIdentity`, `DeclareServiceToolsetWithIdentity`,
+`RegisterAgentToolsetWithIdentity`, and `ReplaceAgentToolsetWithIdentity`.
+Identity lives in compact state; its derived sorted scope index changes in the
+same catalog commit. Declaration JSON, fingerprints, admission tokens and
+provider messages retain their existing encoding. Ordinary identity-free
+framework registration remains supported. Existing records cannot acquire,
+lose or change identity through a registration retry.
+
+Upgrade all registry replicas sharing the catalog before creating records with
+identity: older readers reject that new state field. Identity-free records need
+no migration. Once records with identity exist, rollback to older readers
+requires an explicit application-owned data conversion. Provider messages and
+stored declaration JSON do not change.
+
+Use `CatalogRoutesAfter` and `CatalogContains` for bounded scope selection,
+then `ReadCatalogToolset` for one record. Its caller must supply a positive
+raw-byte budget: a finite Redis script checks combined state/definition
+`HSTRLEN` before either value is transferred or decoded. Budget failures do not
+change admission or stored data. Service availability uses the selected
+record's leases/pong and Redis time without a pruning loop. Native executor
+availability, authorization, cursor binding, page size and complete encoded
+response limits belong to the application. The framework supplies no default
+budget, write cap, cursor expiry or historical-identity inference.
+
 The catalog owns compact current state, a separate current definition per
 toolset, and permanent retired tokens in Redis. Current state contains the
 active/retired status, listing summary, wire version, schema fingerprint,
