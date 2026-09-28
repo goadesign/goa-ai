@@ -495,6 +495,15 @@ func NewProtoCompleteToolCallRequest(payload *registry.CompleteToolCallPayload) 
 	return message
 }
 
+// NewCompleteToolCallResult builds *registry.CompleteToolCallResult from
+// *registrypb.CompleteToolCallResponse.
+func NewCompleteToolCallResult(message *registrypb.CompleteToolCallResponse) *registry.CompleteToolCallResult {
+	result := &registry.CompleteToolCallResult{
+		Accepted: *message.Accepted,
+	}
+	return result
+}
+
 // NewProtoPublishToolOutputDeltaRequest builds
 // *registrypb.PublishToolOutputDeltaRequest from
 // *registry.PublishToolOutputDeltaPayload.
@@ -2102,6 +2111,15 @@ func ValidateCompleteToolCallRequest(message *registrypb.CompleteToolCallRequest
 	}
 	if message.ProviderRegistrationToken != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("message.provider_registration_token", *message.ProviderRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	return
+}
+
+// ValidateCompleteToolCallResponse runs the validations defined on
+// CompleteToolCallResponse.
+func ValidateCompleteToolCallResponse(message *registrypb.CompleteToolCallResponse) (err error) {
+	if message.Accepted == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("accepted", "message"))
 	}
 	return
 }

@@ -196,7 +196,10 @@ Claude-on-Bedrock clients share one multimodal message contract.
 Retained images use the request-only `ImageSourcePart{SourceKind, Data}` in saved
 messages. Generated `NativeImage` evidence metadata identifies admitted producers;
 source-only generated manifests keep historical kind codecs independent of
-current tool visibility. New results use only their selected tool's item markers.
+current tool visibility. Marked source graphs retain exact declared Goa attribute
+names across codecs, raw-field validation, schemas, field metadata and examples.
+The selection belongs to that ServerData occurrence; ordinary tool and unmarked
+evidence naming stays unchanged even when they reuse the same nested type. New results use only their selected tool's item markers.
 Producer declarations match exactly; historical kind equality ignores only the
 top-level producer-specific Go alias. Each model client has one reader binding,
 preserved by wrappers; current runs and summaries bind from unbound bases.
@@ -670,8 +673,11 @@ ID. The tool-result hook and `tool_end` stream payload carry the original call
 run ID explicitly; the result event's own run ID identifies the workflow that
 received the external answer. When a nested agent suspends, the parent ends
 with the same request; continuing the parent starts a new child workflow from
-the child's saved checkpoint. Sessionless one-shot runs reject external-input
-requests because they have no continuation API.
+the child's saved checkpoint. That child names the new parent execution before
+its request is accepted, while retaining the original tool-call ID, call run,
+arguments, selected contract, actor and resource context. The old checkpoint
+keeps its historical parent unchanged. Sessionless one-shot runs reject
+external-input requests because they have no continuation API.
 
 Initial sessionful runs use the same command. `Prepare(ctx, sessionID, messages,
 options...)` validates the generated agent contract and publishes the exact
@@ -892,7 +898,13 @@ continued run puts the exact run ID whose
 checkpoint it restored in `RunStarted.PredecessorRunID`; initial runs leave it
 empty. The same value is part of `session.RunStart`. Before writing any part of
 the successor start, the store requires the predecessor to exist, be suspended,
-and have the same session, agent, and parent. `RunMeta` does not duplicate the
+and have the same session, agent, and root-or-child identity. For children, both
+exact parent-link records must retain the tool-call ID, tool name, parent agent
+and child agent. Their execution parents may differ. Before that start, runtime
+proves the new parent's first pending child from its accepted continuation seed
+and immediate checkpoint. A fresh child still requires its execution parent to
+be running; exact accepted retries remain valid after closure. The old records
+and checkpoints are never rewritten. `RunMeta` does not duplicate the
 predecessor because the immutable start record owns that relationship. The
 immutable `StartOutcome` records the first start decision. The returned
 `RunStatus` records current state. A `proceed` start whose run is now suspended,
@@ -903,8 +915,12 @@ suppresses both parent-link and start publication for that closed replay.
 An original `stop` outcome still publishes its newly inserted canceled
 lifecycle and returns cancellation. Prompt references are derived from `PromptRendered`, the
 continuation predecessor in `RunStarted`, and `ChildRunLinked` rather than
-duplicated in `RunMeta`. Cancellation, suspension, and terminal commands update
-run metadata and store their matching record in one transaction. The hook bus
+duplicated in `RunMeta`. A child continuation's prompt references follow its
+exact accepted history source, not equality between its old and new execution
+parents. That source must match the predecessor in its start record; Session,
+agent, root-or-child identity and suspended status remain required. Cancellation,
+suspension, and terminal commands update run metadata and store their matching
+record in one transaction. The hook bus
 receives successfully stored records afterward and does not write lifecycle
 state.
 
@@ -1247,10 +1263,18 @@ claims that committed before draining.
 An exact retry of one of those claim operations returns its original `execute`
 decision. The drain transition carries the configured shutdown duration so
 Redis keeps that authority for the full settlement lifecycle. `Serve` waits
-workers and registry-owned terminal publication, drains every queued
-acknowledgement, and releases its one exact lease only after settlement succeeds. Failed
+for workers and any terminal publication, drains every queued acknowledgement,
+and releases its one exact lease only after local cleanup succeeds. Native
+release settles remaining claims after removing that lease. Failed
 settlement suppresses release and returns the cleanup error. A sink-setup
 failure has no consumption to settle and proceeds directly to bounded release.
+`ServeAndWait` shares this lifecycle and its arguments with `Serve`, but waits
+internally for all invocation-owned work, including the original sink Close,
+before returning the already-decided result. It may outlast the settlement
+deadline while dependencies finish. That later join never permits release after
+incomplete settlement. `Serve` retains its published bounded-return behavior.
+Neither entry point can join resources a sink leaves active after Close returns;
+the sink owns that local cleanup contract.
 Shutdown classification follows the returned error's own `Unwrap` causes, not
 alternate diagnostic errors exposed through `errors.As`. Cancellation joined
 with a real cleanup failure remains a failure with its original error chain.
@@ -1273,6 +1297,49 @@ atomically commits `internal` / `outcome_unknown`, states that the effect may
 have occurred, and forbids another execution. This happens before the later
 call-record retention deadline. The same transition publishes stale-generation
 terminal history before acknowledgement.
+
+`CompleteToolCall` returns a required `accepted` boolean. It is true when the
+registry retains the submitted provider terminal, including an identical
+repeat, and false when the call was settled by its execution deadline instead.
+Both outcomes finish the request delivery; neither permits another execution.
+Exact provider and dispatch ownership checks still precede that decision.
+`Registration.Complete` carries the boolean to `Serve`, which acknowledges
+either outcome but records provider-result publication only when accepted.
+The registry's existing atomic transition owns this distinction; no additional
+record, admission step, or retry protocol is introduced.
+
+`runtime/toolregistry.DecodeToolResultMessage` is the single explicit reader
+for the existing result envelope in native completion, retained call records,
+and executor result events. It rejects null or nonobject roots, trailing JSON,
+and unknown members in fixed records. Dynamic result, server-data payload, and
+recovery JSON retain their existing raw representations. Existing message
+validation, exact-call matching, Retry restrictions, and semantic tool codecs
+remain separate owners. The executor still filters foreign identities before
+validating the success/error/retry combination. Registry retains and replays
+the original submitted bytes without re-encoding them.
+The [runtime envelope contract](docs/runtime.md#registry-result-envelope-decoding)
+defines standard parser behavior and the external/retained compatibility gate.
+
+`runtime.ValidateSuccessfulToolResult` makes the existing successful-result
+checks available to adapters before completion. It delegates to the same private
+semantic-result decoder and bounds validator already used by the runtime.
+A no-result tool requires absent result bytes; a declared result must decode to
+a non-nil value, and its bounds must satisfy the selected tool's existing rules.
+The caller first establishes the successful envelope and exact identity, and
+validates server data with its existing owner. The function does not publish,
+re-encode, select a tool, or change native-provider behavior. Private runtime
+callers retain their existing validation paths and call-aware diagnostics.
+
+`Handler.HandleToolCall` may explicitly return `provider.ErrResultUnavailable`
+when it stops without a terminal. `Serve` recognizes the error at this return
+only, ends that call's local work, acknowledges delivery, and keeps serving.
+It does not construct `execution_failed`, call Complete, or claim that a
+terminal already exists. The durable dispatch claim remains with Registry,
+which performs its existing deadline or lease recovery. A clean provider
+release also settles these claims. Other handler errors and successful tools
+with no semantic result retain their existing behavior.
+The [runtime provider guide](docs/runtime.md#registry-routed-provider-execution-service-side)
+owns the marker, acknowledgement, and resource-lifetime contract.
 
 Provider processes supply one stable `ProviderID` per process/toolset pair and
 deployment callbacks capture one validated, deployment-issued `AdmissionRevision`
@@ -2122,6 +2189,18 @@ catalog owns reachability, force metadata, package placement, and declarations;
 codec generation does not repeat that selection or create a synthetic service.
 `type:generate:force` retains its existing service scope for otherwise-unused
 types.
+
+Complete original layouts come from Goa's exact original/declaration query for
+the current generation. Every root uses the common registered pairs; a local
+copy remains separate from the same original emitted in another service. The
+codec neither selects a convenient root or method nor reconstructs ownership
+from expression metadata. MCP consumes the existing complete method layout,
+including the top-level declaration, before imports and names become final.
+Both consumers register complete imports through Goa's
+`GeneratedImportPlan.AddCompleteType`. Goa retains generated-package naming
+preferences and distinguishes generated declarations from custom Go requests;
+the codec does not repeat that classification or traversal. Final aliases still
+belong to each output package.
 
 Each original package receives public encode/decode functions and private JSON
 helpers. Complete-original transport declarations are shared within that

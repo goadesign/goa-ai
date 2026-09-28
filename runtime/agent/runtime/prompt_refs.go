@@ -294,13 +294,32 @@ func (r *Runtime) loadPromptRelatedRun(
 	switch relation.kind {
 	case continuationPromptRunRelation:
 		if related.SessionID != current.SessionID || related.AgentID != current.AgentID ||
-			related.ParentRunID != current.ParentRunID || related.Status != session.RunStatusSuspended {
+			(related.ParentRunID == "") != (current.ParentRunID == "") || related.Status != session.RunStatusSuspended {
 			return session.RunMeta{}, fmt.Errorf(
 				"%w: continuation from run %q to run %q has invalid predecessor identity or status",
 				errPromptRefsCorrupt,
 				current.RunID,
 				related.RunID,
 			)
+		}
+		if current.ParentRunID != "" {
+			// A child can continue under a new execution parent. Its accepted
+			// history must still name this exact suspended predecessor. The
+			// atomic child start already checked both original tool-call links.
+			seed, err := r.Store.LoadRunSeed(ctx, current.RunID, current.SeedEndID)
+			if err != nil {
+				return session.RunMeta{}, fmt.Errorf("load child continuation %q accepted history: %w", current.RunID, err)
+			}
+			if seed.Declaration.RunID != current.RunID || seed.Declaration.SessionID != current.SessionID ||
+				seed.Declaration.AgentID != current.AgentID || seed.EndID != current.SeedEndID ||
+				seed.Declaration.Kind != storage.SeedContinuation || seed.Source == nil ||
+				seed.Declaration.SourceRunID != related.RunID || seed.Source.RunID != related.RunID ||
+				seed.Declaration.SourceEndID != seed.Source.EndID {
+				return session.RunMeta{}, fmt.Errorf(
+					"%w: child continuation %q accepted history does not match predecessor %q",
+					errPromptRefsCorrupt, current.RunID, related.RunID,
+				)
+			}
 		}
 	case childPromptRunRelation:
 		if related.SessionID != current.SessionID || related.AgentID != relation.childAgentID ||

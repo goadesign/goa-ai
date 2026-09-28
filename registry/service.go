@@ -52,7 +52,7 @@ type (
 			toolset, toolUseID, callRegistrationToken, providerRegistrationToken,
 			providerLease, requestEventID, resultStreamID string,
 			payload []byte,
-		) error
+		) (bool, error)
 		PublishLiveEvent(
 			ctx context.Context,
 			toolset, toolUseID, callRegistrationToken, providerRegistrationToken,
@@ -605,22 +605,23 @@ func (s *Service) retryTerminalOrError(
 	return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
 }
 
-// CompleteToolCall atomically commits one exact provider terminal result.
-func (s *Service) CompleteToolCall(ctx context.Context, p *genregistry.CompleteToolCallPayload) error {
-	var result toolregistry.ToolResultMessage
-	if err := json.Unmarshal(p.ResultJSON, &result); err != nil {
-		return genregistry.MakeValidationError(fmt.Errorf("decode terminal result: %w", err))
+// CompleteToolCall checks the submitted terminal and reports whether Registry
+// retained those exact bytes or settled the execution deadline instead.
+func (s *Service) CompleteToolCall(ctx context.Context, p *genregistry.CompleteToolCallPayload) (*genregistry.CompleteToolCallResult, error) {
+	result, err := toolregistry.DecodeToolResultMessage(p.ResultJSON)
+	if err != nil {
+		return nil, genregistry.MakeValidationError(fmt.Errorf("decode terminal result: %w", err))
 	}
 	if err := toolregistry.ValidateToolResultMessage(result); err != nil {
-		return genregistry.MakeValidationError(fmt.Errorf("validate terminal result: %w", err))
+		return nil, genregistry.MakeValidationError(fmt.Errorf("validate terminal result: %w", err))
 	}
 	if result.Retry != nil {
-		return genregistry.MakeValidationError(fmt.Errorf("terminal result must not contain retry control"))
+		return nil, genregistry.MakeValidationError(fmt.Errorf("terminal result must not contain retry control"))
 	}
 	if result.ToolUseID != p.ToolUseID || result.RegistrationToken != p.RegistrationToken {
-		return genregistry.MakeValidationError(fmt.Errorf("terminal result identity does not match payload"))
+		return nil, genregistry.MakeValidationError(fmt.Errorf("terminal result identity does not match payload"))
 	}
-	if err := s.callAdmissions.Complete(
+	accepted, err := s.callAdmissions.Complete(
 		ctx,
 		p.Toolset,
 		p.ToolUseID,
@@ -630,13 +631,14 @@ func (s *Service) CompleteToolCall(ctx context.Context, p *genregistry.CompleteT
 		p.RequestEventID,
 		toolregistry.ResultStreamID(p.ToolUseID),
 		p.ResultJSON,
-	); err != nil {
+	)
+	if err != nil {
 		if errors.Is(err, errCallTerminalConflict) {
-			return genregistry.MakeValidationError(err)
+			return nil, genregistry.MakeValidationError(err)
 		}
-		return genregistry.MakeServiceUnavailable(fmt.Errorf("complete tool call: %w", err))
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("complete tool call: %w", err))
 	}
-	return nil
+	return &genregistry.CompleteToolCallResult{Accepted: accepted}, nil
 }
 
 // PublishToolOutputDelta appends a provider output fragment only while its

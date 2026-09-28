@@ -514,9 +514,11 @@ func NewCompleteToolCallPayload(message *registrypb.CompleteToolCallRequest) *re
 }
 
 // NewProtoCompleteToolCallResponse builds *registrypb.CompleteToolCallResponse
-// from metadata values.
-func NewProtoCompleteToolCallResponse() *registrypb.CompleteToolCallResponse {
-	message := &registrypb.CompleteToolCallResponse{}
+// from *registry.CompleteToolCallResult.
+func NewProtoCompleteToolCallResponse(result *registry.CompleteToolCallResult) *registrypb.CompleteToolCallResponse {
+	message := &registrypb.CompleteToolCallResponse{
+		Accepted: &result.Accepted,
+	}
 	return message
 }
 

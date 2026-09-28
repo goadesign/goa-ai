@@ -55,8 +55,9 @@ func successfulRegistration(
 			_ context.Context,
 			_, _, _, _, _ string,
 			result toolregistry.ToolResultMessage,
-		) error {
-			return completeResult(result)
+		) (bool, error) {
+			err := completeResult(result)
+			return err == nil, err
 		},
 		PublishOutputDelta: publishOutputDeltaSuccess,
 		ReportOverload:     reportOverloadSuccess,
@@ -200,8 +201,8 @@ func TestServeOpensStreamRegistersThenCreatesSink(t *testing.T) {
 				close(released)
 				return nil
 			},
-			Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
-				return nil
+			Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) (bool, error) {
+				return true, nil
 			},
 			PublishOutputDelta: publishOutputDeltaSuccess,
 			ReportOverload:     reportOverloadSuccess,
@@ -333,8 +334,8 @@ func TestServeSetupFailurePrecedesRegistration(t *testing.T) {
 		},
 		Drain:   func(context.Context, string, string, string, string, time.Duration) error { return nil },
 		Release: func(context.Context, string, string, string, string) error { return nil },
-		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
-			return nil
+		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) (bool, error) {
+			return true, nil
 		},
 		PublishOutputDelta: publishOutputDeltaSuccess,
 		ReportOverload:     reportOverloadSuccess,
@@ -384,8 +385,8 @@ func TestServeClosesConsumptionBeforeLeaseExpiry(t *testing.T) {
 		},
 		Drain:   func(context.Context, string, string, string, string, time.Duration) error { return nil },
 		Release: func(context.Context, string, string, string, string) error { return nil },
-		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
-			return nil
+		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) (bool, error) {
+			return true, nil
 		},
 		PublishOutputDelta:   publishOutputDeltaSuccess,
 		ReportOverload:       reportOverloadSuccess,
@@ -717,8 +718,8 @@ func TestServePreservesRenewalFailureDuringCancellation(t *testing.T) {
 		},
 		Drain:   func(context.Context, string, string, string, string, time.Duration) error { return nil },
 		Release: func(context.Context, string, string, string, string) error { return nil },
-		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
-			return nil
+		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) (bool, error) {
+			return true, nil
 		},
 		PublishOutputDelta:   publishOutputDeltaSuccess,
 		ReportOverload:       reportOverloadSuccess,
@@ -826,8 +827,8 @@ func TestServeReturnsAtSettlementDeadlineWhenRenewalIgnoresCancellation(t *testi
 			releases.Add(1)
 			return nil
 		},
-		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
-			return nil
+		Complete: func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) (bool, error) {
+			return true, nil
 		},
 		PublishOutputDelta:   publishOutputDeltaSuccess,
 		ReportOverload:       reportOverloadSuccess,

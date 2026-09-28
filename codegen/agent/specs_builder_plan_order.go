@@ -43,11 +43,14 @@ func (o unionErrorNameOrder) ComparePackageName(other goacodegen.PackageNameOrde
 	return strings.Compare(o.unionName, right.unionName)
 }
 
-// ComparePackageName orders generated nested types by their source package,
-// name, and ID.
+// ComparePackageName preserves ordinary names, then orders nested types by
+// their source package, name, and ID.
 func (o localizedTypeNameOrder) ComparePackageName(other goacodegen.PackageNameOrder) int {
 	right := other.(localizedTypeNameOrder)
+	// Existing model declarations keep their names when a native transport
+	// requests a name already used by another authored type.
 	for _, compared := range []int{
+		int(o.jsonContract) - int(right.jsonContract),
 		strings.Compare(o.packagePath, right.packagePath),
 		strings.Compare(o.sourcePath, right.sourcePath),
 		strings.Compare(o.sourceName, right.sourceName),
@@ -63,16 +66,17 @@ func (o localizedTypeNameOrder) ComparePackageName(other goacodegen.PackageNameO
 
 // newLocalizedTypeNameOrder copies the stable source type details used while
 // Goa assigns generated package names.
-func newLocalizedTypeNameOrder(packagePath string, source goaexpr.UserType, role localizedTypeNameRole) localizedTypeNameOrder {
+func newLocalizedTypeNameOrder(packagePath string, source goaexpr.UserType, role localizedTypeNameRole, contract specJSONContract) localizedTypeNameOrder {
 	var sourcePath string
 	if location := goacodegen.UserTypeLocation(source); location != nil {
 		sourcePath = location.RelImportPath
 	}
 	return localizedTypeNameOrder{
-		packagePath: packagePath,
-		sourcePath:  sourcePath,
-		sourceName:  source.Name(),
-		sourceID:    source.ID(),
-		role:        role,
+		jsonContract: contract,
+		packagePath:  packagePath,
+		sourcePath:   sourcePath,
+		sourceName:   source.Name(),
+		sourceID:     source.ID(),
+		role:         role,
 	}
 }

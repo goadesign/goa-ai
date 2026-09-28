@@ -330,10 +330,10 @@ func TestServeRenewalDuringDrainKeepsOneLease(t *testing.T) {
 				close(drained)
 				return drainCtx.Err()
 			}
-			registration.Complete = func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
+			registration.Complete = func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) (bool, error) {
 				assert.True(t, closed.Load())
 				completed.Store(true)
-				return nil
+				return true, nil
 			}
 			registration.Release = func(releaseCtx context.Context, _, _, gotIncarnation, token string) error {
 				assert.Equal(t, incarnation, gotIncarnation)
@@ -361,7 +361,8 @@ func TestServeRenewalDuringDrainKeepsOneLease(t *testing.T) {
 			client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) { return stream, nil })
 			done := make(chan error, 1)
 			go func() {
-				done <- serve(ctx, client, "test.toolset", handler, registration, Options{
+				var run providerRun
+				done <- run.serve(ctx, client, "test.toolset", handler, registration, Options{
 					ProviderID:      testProviderID,
 					Pong:            func(context.Context, string, string, string) error { return nil },
 					ShutdownTimeout: time.Second,
@@ -460,7 +461,8 @@ func TestServePreservesRenewalFailureWhenDrainUsesSettlementDeadline(t *testing.
 	client.SetStream(func(string, ...streamopts.Stream) (pulse.Stream, error) { return stream, nil })
 	done := make(chan error, 1)
 	go func() {
-		done <- serve(ctx, client, "test.toolset", &recordingHandler{}, registration, Options{
+		var run providerRun
+		done <- run.serve(ctx, client, "test.toolset", &recordingHandler{}, registration, Options{
 			ProviderID:      testProviderID,
 			Pong:            func(context.Context, string, string, string) error { return nil },
 			ShutdownTimeout: 50 * time.Millisecond,

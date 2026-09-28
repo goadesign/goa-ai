@@ -10,7 +10,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	goacodegen "goa.design/goa/v3/codegen"
 	goagenerator "goa.design/goa/v3/codegen/generator"
+	goaservice "goa.design/goa/v3/codegen/service"
+	"goa.design/goa/v3/dsl"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
@@ -114,4 +117,109 @@ replace goa.design/goa/v3 => %s
 	require.Contains(t, string(register), `"time"`)
 	require.Contains(t, string(register), `[]*items.RelocatedItem`)
 	require.Contains(t, string(register), `[]time.Duration`)
+}
+
+// TestMCPRegistryUsesRetainedReferenceImports checks the real method layouts
+// used for codecs before registration submits imports to its own output package.
+func TestMCPRegistryUsesRetainedReferenceImports(t *testing.T) {
+	for _, useParent := range []bool{false, true} {
+		name := "direct inherited child"
+		if useParent {
+			name = "named parent excludes hidden child"
+		}
+		t.Run(name, func(t *testing.T) {
+			var child expr.UserType
+			root := goacodegen.RunDSL(t, func() {
+				dsl.API("imports", func() {})
+				child = dsl.Type("Child", func() {
+					if useParent {
+						dsl.Meta("struct:pkg:path", "a/types")
+					}
+					dsl.Attribute("value", dsl.String)
+					dsl.Required("value")
+				})
+				parent := dsl.Type("Parent", func() {
+					dsl.Meta("struct:pkg:path", "z/types")
+					dsl.Meta("type:generate:force")
+					dsl.Attribute("child", child)
+				})
+				selected := child
+				if useParent {
+					selected = parent
+				}
+				dsl.Service("values", func() {
+					dsl.Method("exchange", func() {
+						dsl.Payload(selected)
+						dsl.Result(selected)
+					})
+				})
+			})
+			generation, err := goacodegen.NewGeneration("generated.local/gen", []eval.Root{root})
+			require.NoError(t, err)
+			services, err := goaservice.NewPlan(root, generation, expr.NewExampleGenerator(root.API.RandomizerFactory))
+			require.NoError(t, err)
+			service := root.Service("values")
+			method := service.Method("exchange")
+			prepared := &preparedMCPService{
+				userService: service,
+				mcp: &mcpexpr.MCPExpr{
+					Tools: []*mcpexpr.ToolExpr{{Name: "exchange", Method: method}},
+				},
+			}
+			output, err := generation.ClaimPackage("generated.local/gen/mcp_values")
+			require.NoError(t, err)
+			data := &AdapterData{
+				mcpImportPath: output.ImportPath(),
+				mcpPackage:    output,
+				Tools: []*ToolAdapter{{
+					userMethodName: "exchange", HasPayload: true, HasResult: true,
+				}},
+			}
+			codecs, methods, err := planMCPCodecs(generation, services, prepared, data)
+			require.NoError(t, err)
+			require.NotNil(t, codecs)
+			values := methods["exchange"]
+			require.NotNil(t, values)
+			payload, result := values.payloadLayout, values.resultLayout
+			require.NotNil(t, payload)
+			require.NotNil(t, result)
+			require.True(t, payload.MatchesOccurrence(method.Payload))
+			require.True(t, result.MatchesOccurrence(method.Result))
+			require.Equal(t, "generated.local/gen/z/types", payload.Owner())
+			require.Equal(t, payload.Owner(), result.Owner())
+			require.NoError(t, planMCPRegisterTypeImports(prepared, data, methods))
+			require.Same(t, payload, values.payloadLayout)
+			require.Same(t, result, values.resultLayout)
+			require.Equal(t, []string{"generated.local/gen/z/types"}, data.registerImportPaths)
+			require.NoError(t, generation.Freeze())
+			require.Equal(t, "types", output.ImportName("generated.local/gen/z/types"))
+			if useParent {
+				require.PanicsWithValue(t, `import path "generated.local/gen/a/types" has no planned alias`, func() {
+					output.ImportName("generated.local/gen/a/types")
+				})
+			} else {
+				require.NotContains(t, child.Attribute().Meta, "struct:pkg:path")
+			}
+		})
+	}
+}
+
+func TestMCPRegistryNoValueImports(t *testing.T) {
+	root := goacodegen.RunDSL(t, func() {
+		dsl.Service("values", func() {
+			dsl.Method("ping", func() {})
+		})
+	})
+	generation, err := goacodegen.NewGeneration("generated.local/gen", []eval.Root{root})
+	require.NoError(t, err)
+	prepared := &preparedMCPService{
+		mcp: &mcpexpr.MCPExpr{
+			Tools: []*mcpexpr.ToolExpr{{Name: "ping", Method: root.Service("values").Method("ping")}},
+		},
+	}
+	output, err := generation.ClaimPackage("generated.local/gen/mcp_values")
+	require.NoError(t, err)
+	data := &AdapterData{mcpPackage: output}
+	require.NoError(t, planMCPRegisterTypeImports(prepared, data, nil))
+	require.Empty(t, data.registerImportPaths)
 }

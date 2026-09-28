@@ -805,7 +805,7 @@ func (r *Runtime) runPlanActivity(
 		if out.HistoryContext != nil && len(out.Transcript) == 0 {
 			return nil, errors.New("code-only planner output cannot select a history summary")
 		}
-		if _, err := r.normalizePlanResultForExecution(out.Result, input.RunContext.Tool); err != nil {
+		if err := r.normalizePlanResultForExecution(out.Result, input.RunContext, input.AgentID); err != nil {
 			return nil, err
 		}
 	}

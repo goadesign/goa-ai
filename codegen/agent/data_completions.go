@@ -42,6 +42,6 @@ func newCompletionDataFromIR(completion *ir.Completion) *CompletionData {
 		Name:        completion.Name,
 		Description: completion.Description,
 		Result:      completion.Expr.Return,
-		HasExample:  authoredExampleForAttribute(completion.Expr.Return) != nil,
+		HasExample:  specJSONModel.authoredExampleForAttribute(completion.Expr.Return) != nil,
 	}
 }

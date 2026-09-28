@@ -9,7 +9,6 @@ import (
 	"crypto/sha1" //nolint:gosec // Redis SHA-1 is a retained-record wire checksum, not a security primitive.
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -758,8 +757,8 @@ func decodePersistedToolResult(
 	payload []byte,
 	registrationToken, toolUseID string,
 ) (toolregistry.ToolResultMessage, error) {
-	var message toolregistry.ToolResultMessage
-	if err := json.Unmarshal(payload, &message); err != nil {
+	message, err := toolregistry.DecodeToolResultMessage(payload)
+	if err != nil {
 		return toolregistry.ToolResultMessage{}, fmt.Errorf("decode tool result: %w", err)
 	}
 	if err := toolregistry.ValidateToolResultMessage(message); err != nil {

@@ -53,6 +53,12 @@ type (
 	// registry dispatch claim before invoking a handler, so Pulse redelivery
 	// cannot repeat execution. Handlers must honor ctx cancellation and return
 	// promptly so Serve can join every worker before releasing its exact lease.
+	//
+	// A handler that has stopped producing output without a terminal returns
+	// ErrResultUnavailable, optionally wrapped with its cause. Serve acknowledges
+	// that delivery without publishing a result and leaves the retained claim to
+	// registry recovery. Other handler errors still become execution_failed.
+	// With any non-nil error, the returned result value is ignored.
 	Handler interface {
 		HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error)
 	}
@@ -134,6 +140,12 @@ type (
 		Tracer telemetry.Tracer
 	}
 
+	// providerRun owns every goroutine started by one provider invocation.
+	// Settlement decides its result before ServeAndWait joins this work.
+	providerRun struct {
+		goroutines sync.WaitGroup
+	}
+
 	// registryOutputDeltaPublisher submits best-effort output fragments through
 	// the registry's authoritative call-state boundary.
 	//
@@ -167,6 +179,16 @@ const (
 	MaxOverloadPublishDuration = 2 * time.Second
 )
 
+// ErrResultUnavailable tells Serve that this handler invocation has stopped
+// without a terminal result. Serve ends the call's local work and acknowledges
+// its delivery; the registry retains ownership and settles the unconfirmed
+// outcome on the existing deadline, lease loss, or provider release.
+//
+// Serve recognizes this signal only in a HandleToolCall return, using errors.Is.
+// Returning it does not stop other calls, authorize another execution, or report
+// a completed effect. A handler with a terminal returns it and nil error instead.
+var ErrResultUnavailable = errors.New("tool result unavailable")
+
 func (p *registryOutputDeltaPublisher) PublishToolOutputDelta(ctx context.Context, stream string, delta string) error {
 	return p.publish(ctx, stream, delta)
 }
@@ -174,6 +196,8 @@ func (p *registryOutputDeltaPublisher) PublishToolOutputDelta(ctx context.Contex
 // Serve prepares the toolset request stream, establishes the required registry
 // registration, and then dispatches tool calls to handler. It publishes tool
 // results through registry-owned call state and renews registration until shutdown.
+// Incomplete settlement returns without waiting for work that outlives the
+// settlement deadline. Use ServeAndWait when the caller must join that work.
 func Serve(
 	ctx context.Context,
 	pulse pulseclients.Client,
@@ -182,13 +206,37 @@ func Serve(
 	registration Registration,
 	opts Options,
 ) error {
-	return serve(ctx, pulse, toolset, handler, registration, opts, waitRegistrationDelay)
+	var run providerRun
+	return run.serve(ctx, pulse, toolset, handler, registration, opts, waitRegistrationDelay)
+}
+
+// ServeAndWait serves the same provider lifecycle as Serve and joins every
+// goroutine the provider runtime starts for that invocation. This includes workers,
+// renewal, consumer-group repair, acknowledgements and the original sink Close call.
+// It preserves the lifecycle's earlier error and never releases an incompletely
+// settled lease merely because the remaining work later finishes.
+//
+// Joining may outlast Options.ShutdownTimeout. Dependencies must return for the
+// join to finish; this function does not impose another timeout or interrupt I/O.
+// Dependencies remain responsible for work they leave running after returning;
+// in particular, a sink must join its own internal work when Close returns.
+func ServeAndWait(
+	ctx context.Context,
+	pulse pulseclients.Client,
+	toolset string,
+	handler Handler,
+	registration Registration,
+	opts Options,
+) error {
+	var run providerRun
+	defer run.goroutines.Wait()
+	return run.serve(ctx, pulse, toolset, handler, registration, opts, waitRegistrationDelay)
 }
 
 // serve runs one provider lifecycle. wait schedules registry retries and
-// renewals; Serve supplies the real timer while focused tests control the
-// ordering without short wall-clock leases.
-func serve(
+// renewals; both public entry points supply the real timer while focused tests
+// control the ordering without short wall-clock leases.
+func (run *providerRun) serve(
 	ctx context.Context,
 	pulse pulseclients.Client,
 	toolset string,
@@ -337,7 +385,7 @@ func serve(
 	)
 
 	ensureDone := make(chan struct{})
-	go func() {
+	run.goroutines.Go(func() {
 		defer close(ensureDone)
 		runEnsureGroupLoop(
 			cancelCtx,
@@ -348,7 +396,7 @@ func serve(
 			ensureInterval,
 			logger,
 		)
-	}()
+	})
 
 	type workItem struct {
 		ev  *streaming.Event
@@ -365,10 +413,10 @@ func serve(
 	workers.Add(maxConcurrent)
 	workerDone := make(chan struct{})
 	ackDone := make(chan struct{})
-	go func() {
+	run.goroutines.Go(func() {
 		workers.Wait()
 		close(workerDone)
-	}()
+	})
 
 	signalSettleFailure := func(err error) bool {
 		if cancelCtx.Err() != nil && containsOnlyCancellation(err) {
@@ -386,7 +434,7 @@ func serve(
 	}
 
 	registrationResult := make(chan error, 1)
-	go func() {
+	run.goroutines.Go(func() {
 		registrationErr := superviseRegistration(
 			cancelCtx,
 			toolset,
@@ -399,9 +447,9 @@ func serve(
 		)
 		registrationResult <- registrationErr
 		cancel()
-	}()
+	})
 
-	go func() {
+	run.goroutines.Go(func() {
 		defer close(ackDone)
 		for {
 			if ackLifecycleCtx.Err() != nil {
@@ -427,10 +475,10 @@ func serve(
 				signalSettleFailure(fmt.Errorf("ack toolset event %s: %w", ev.ID, err))
 			}
 		}
-	}()
+	})
 
 	for i := 0; i < maxConcurrent; i++ {
-		go func() {
+		run.goroutines.Go(func() {
 			defer workers.Done()
 			for {
 				if cancelCtx.Err() != nil || handlerCtx.Err() != nil {
@@ -535,6 +583,19 @@ func serve(
 				})
 
 				res, handlerErr := handler.HandleToolCall(callCtx, item.msg)
+				if errors.Is(handlerErr, ErrResultUnavailable) {
+					span.RecordError(handlerErr)
+					span.SetStatus(codes.Error, "tool result unavailable")
+					span.End()
+					cancelCall()
+					// The dispatch claim already belongs to Registry recovery.
+					// Ack finishes delivery without claiming a terminal exists.
+					select {
+					case acks <- item.ev:
+					case <-handlerCtx.Done():
+					}
+					continue
+				}
 				if handlerErr != nil {
 					span.RecordError(handlerErr)
 					span.SetStatus(codes.Error, "handle tool call")
@@ -571,8 +632,14 @@ func serve(
 				}
 
 				publishCtx, publishCancel := context.WithTimeout(context.WithoutCancel(callCtx), shutdownTimeout)
-				stopPublishCancel := context.AfterFunc(handlerCtx, publishCancel)
-				addErr := registrationConfig.complete(
+				// The cancellation callback can finish after the worker.
+				// Join it whether it runs or is stopped before starting.
+				run.goroutines.Add(1)
+				stopPublishCancel := context.AfterFunc(handlerCtx, func() {
+					defer run.goroutines.Done()
+					publishCancel()
+				})
+				accepted, addErr := registrationConfig.complete(
 					publishCtx,
 					toolset,
 					opts.ProviderID,
@@ -581,7 +648,9 @@ func serve(
 					item.ev.ID,
 					res,
 				)
-				stopPublishCancel()
+				if stopPublishCancel() {
+					run.goroutines.Done()
+				}
 				publishCancel()
 				if addErr != nil {
 					span.RecordError(addErr)
@@ -602,19 +671,30 @@ func serve(
 					cancelCall()
 					continue
 				}
-				span.AddEvent(
-					"toolregistry.tool_result_published",
-					"toolregistry.result_stream_id", resultStreamID,
-				)
+				if accepted {
+					span.AddEvent(
+						"toolregistry.tool_result_published",
+						"toolregistry.result_stream_id", resultStreamID,
+					)
+				} else {
+					span.AddEvent(
+						"toolregistry.tool_call_settled",
+						"toolregistry.result_stream_id", resultStreamID,
+						"toolregistry.settlement_cause", "execution_deadline",
+					)
+				}
 				span.End()
 
+				// Registry retained a terminal in either successful branch.
+				// Finish this delivery without repeating the handler or replacing
+				// a deadline outcome with the submitted provider result.
 				select {
 				case acks <- item.ev:
 				case <-handlerCtx.Done():
 				}
 				cancelCall()
 			}
-		}()
+		})
 	}
 
 	ackImmediate := func(ev *streaming.Event, description string) error {
@@ -736,7 +816,7 @@ func serve(
 		// The draining lease is now non-routable. Close intake before workers
 		// start claims for remaining queue entries; claims that committed before
 		// the drain may still finish under this exact lease.
-		closeErr := closeSinkBounded(settlementCtx, sink)
+		closeErr := run.closeSinkBounded(settlementCtx, sink)
 		close(work)
 
 		ensureErr := waitForDone(settlementCtx, ensureDone, "consumer-group ensure")
@@ -951,11 +1031,11 @@ func reportOverload(
 // closeSinkBounded waits for one Close call within the settlement deadline.
 // A transport may not interrupt its I/O when ctx expires. Report incomplete
 // closure without releasing its lease; the one Close call may finish later.
-func closeSinkBounded(ctx context.Context, sink pulseclients.Sink) error {
+func (run *providerRun) closeSinkBounded(ctx context.Context, sink pulseclients.Sink) error {
 	closed := make(chan error, 1)
-	go func() {
+	run.goroutines.Go(func() {
 		closed <- sink.Close(ctx)
-	}()
+	})
 	return waitForSinkClose(ctx, closed)
 }
 

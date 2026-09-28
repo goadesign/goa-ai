@@ -56,7 +56,7 @@ func (p *agentPluginPlan) plan(core *goagenerator.Plan) error {
 		return err
 	}
 	if !p.example {
-		p.values, err = jsoncodec.NewPlan(core.Generation())
+		p.values, err = jsoncodec.NewPlan(core.Generation(), servicePlan)
 	}
 	return err
 }

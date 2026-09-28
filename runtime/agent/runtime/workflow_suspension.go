@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"time"
 
@@ -578,7 +579,6 @@ func restoreContinuationRunInput(input *RunInput, checkpoint *workflowCheckpoint
 		return err
 	}
 
-	input.ParentRunID = checkpoint.Context.ParentRunID
 	input.ParentAgentID = checkpoint.Context.ParentAgentID
 	input.ParentToolCallID = checkpoint.Context.ParentToolCallID
 	input.Tool = checkpoint.Context.Tool
@@ -598,6 +598,9 @@ func validateContinuationIdentity(input *RunInput, checkpoint *workflowCheckpoin
 	}
 	if checkpoint.SessionID != input.SessionID {
 		return fmt.Errorf("run continuation session mismatch: checkpoint=%q input=%q", checkpoint.SessionID, input.SessionID)
+	}
+	if (checkpoint.Context.ParentRunID == "") != (input.ParentRunID == "") {
+		return errors.New("run continuation must preserve root or child topology with an explicit execution parent")
 	}
 	if checkpoint.PreviousRunID == input.RunID {
 		return fmt.Errorf("run continuation requires a new run id distinct from %q", input.RunID)
@@ -646,7 +649,7 @@ func restoreCheckpointRunContext(saved checkpointRunContext, input *RunInput) ru
 	return run.Context{
 		RunID:            input.RunID,
 		ParentToolCallID: saved.ParentToolCallID,
-		ParentRunID:      saved.ParentRunID,
+		ParentRunID:      input.ParentRunID,
 		ParentAgentID:    saved.ParentAgentID,
 		SessionID:        input.SessionID,
 		TurnID:           input.TurnID,
@@ -945,20 +948,26 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 	recordIndex := -1
 	for i := range batch.records {
 		if batch.records[i].call.ToolCallID == pending.ToolCallID {
+			if recordIndex >= 0 {
+				return nil, fmt.Errorf("child continuation has duplicate tool_call_id %s", pending.ToolCallID)
+			}
 			recordIndex = i
-			break
 		}
 	}
 	if recordIndex < 0 {
 		return nil, fmt.Errorf("child continuation references unknown tool_call_id %s", pending.ToolCallID)
 	}
 	record := &batch.records[recordIndex]
-	if record.childSuspension == nil || record.childSuspension.ID != pending.Suspension.ID {
+	if record.childSuspension == nil || !reflect.DeepEqual(record.childSuspension, pending.Suspension) {
 		return nil, fmt.Errorf("child continuation does not match tool_call_id %s", pending.ToolCallID)
 	}
 
 	cfg, err := l.r.selectedAgentToolConfig(record.call)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := validateCheckpointChild(record.call, pending.Suspension, l.reg.Definition); err != nil {
 		return nil, err
 	}
 
@@ -976,8 +985,8 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 		Labels:           cloneLabels(currentCall.Labels),
 	}
 	childInput := &RunInput{
-		AgentID: cfg.Definition.route.ID,
-		RunID:   nested.RunID, SessionID: nested.SessionID, TurnID: nested.TurnID,
+		AgentID: cfg.Definition.route.ID, ParentRunID: nested.ParentRunID,
+		RunID: nested.RunID, SessionID: nested.SessionID, TurnID: nested.TurnID,
 		Continuation: &api.RunContinuationInput{Suspension: pending.Suspension, Response: response},
 	}
 	checkpoint, err := prepareContinuation(childInput, cfg.Definition)

@@ -235,16 +235,20 @@ func attachedTestRegistration(client *genregistry.Client, selectedToken string) 
 				Name: name, ProviderID: providerID, ProviderIncarnationID: incarnationID, ExpectedRegistrationToken: token,
 			})
 		},
-		Complete: func(ctx context.Context, name, providerID, incarnationID, token, event string, result toolregistry.ToolResultMessage) error {
+		Complete: func(ctx context.Context, name, providerID, incarnationID, token, event string, result toolregistry.ToolResultMessage) (bool, error) {
 			body, err := json.Marshal(result)
 			if err != nil {
-				return err
+				return false, err
 			}
-			return client.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+			completion, err := client.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
 				Toolset: name, ProviderID: providerID, ProviderIncarnationID: incarnationID,
 				ProviderRegistrationToken: token, RegistrationToken: result.RegistrationToken,
 				ToolUseID: result.ToolUseID, RequestEventID: event, ResultJSON: body,
 			})
+			if err != nil {
+				return false, err
+			}
+			return completion.Accepted, nil
 		},
 		PublishOutputDelta: func(ctx context.Context, name, providerID, incarnationID, token, callToken, callID, event, stream, delta string) error {
 			return client.PublishToolOutputDelta(ctx, &genregistry.PublishToolOutputDeltaPayload{

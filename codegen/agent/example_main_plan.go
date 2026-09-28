@@ -92,7 +92,7 @@ func (p *exampleMainPackagePlan) declare(service *agentir.Service, moduleBase st
 	}
 
 	for _, completion := range service.Completions {
-		if authoredExampleForAttribute(completion.Expr.Return) == nil {
+		if specJSONModel.authoredExampleForAttribute(completion.Expr.Return) == nil {
 			continue
 		}
 		p.hasCompletions = true

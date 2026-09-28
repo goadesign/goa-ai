@@ -425,6 +425,8 @@ func AudienceEvidence() {
 }
 
 // NativeImage marks the current evidence ServerData as an image source.
+// Its generated JSON preserves declared Goa attribute names recursively in the
+// codec, schema, field metadata and examples. Other tool contracts are unchanged.
 // The generated descriptor is saved with conversation messages. An explicitly
 // registered host reader supplies its bytes only when a model request uses it.
 // NativeImage must appear inside ServerData with AudienceEvidence.

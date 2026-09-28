@@ -529,7 +529,7 @@ func TestNormalizePlanResultContractPreservesProviderIdentityInValidationProject
 	projected := plannerResultValidationProjection(result)
 	require.Equal(t, "provider-call-1", projected.ToolCalls[0].ModelToolCallID)
 	require.NotEqual(t, result.ToolCalls[0].ToolCallID, projected.ToolCalls[0].ModelToolCallID)
-	_, err := New(newTestStore()).normalizePlanResultContract(result, "")
+	_, err := New(newTestStore()).normalizePlanResultContract(result, run.Context{}, "")
 	require.NoError(t, err)
 }
 

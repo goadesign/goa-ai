@@ -266,6 +266,28 @@ func ValidateStoredChildLink(record *runlog.Event, parent, child session.RunMeta
 	return nil
 }
 
+// ValidateChildContinuationLinks requires the successor to continue the exact
+// call selected by the predecessor's historical parent link. Each store also
+// validates both links against their own parent and child identities.
+func ValidateChildContinuationLinks(previous, current *runlog.Event) error {
+	previousEvent, err := decodeHookRecord(previous, hooks.ChildRunLinked)
+	if err != nil {
+		return err
+	}
+	currentEvent, err := decodeHookRecord(current, hooks.ChildRunLinked)
+	if err != nil {
+		return err
+	}
+	old := previousEvent.(*hooks.ChildRunLinkedEvent)
+	next := currentEvent.(*hooks.ChildRunLinkedEvent)
+	if old.ToolCallID != next.ToolCallID || old.ToolName != next.ToolName ||
+		old.AgentID() != next.AgentID() || old.SessionID() != next.SessionID() ||
+		old.ChildAgentID != next.ChildAgentID {
+		return errors.New("child continuation does not match predecessor parent tool call")
+	}
+	return nil
+}
+
 // validateRunStartedRecord decodes one run-started hook and compares every
 // immutable fact supplied when the run was created.
 func validateRunStartedRecord(record *runlog.Event, start session.RunStart) error {

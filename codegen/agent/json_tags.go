@@ -1,3 +1,6 @@
+// Package codegen assigns JSON field names on copied tool attributes. Marked
+// native-image evidence keeps declared names; other tool contracts use model
+// names. Shared design expressions are never changed.
 package codegen
 
 import (
@@ -7,63 +10,47 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 )
 
-// cloneWithModelJSONTags returns the transport attribute graph used by generated
-// codecs. It preserves Goa attribute names so Goa transforms can map transport
-// values back to public tool types, but every visible object field carries the
-// model-facing JSON tag used on the wire.
-//
-// Transport types are model-facing: they must encode/decode using the JSON
-// schema property names and must preserve missing-vs-zero semantics via pointer
-// fields (controlled by modelJSONTransportContext, not by this helper).
-//
-// Existing HTTP/public transport JSON tag metadata is ignored because Goa
-// generators can attach it to shared design expressions. The only preserved JSON
-// tag is "-", which goa-ai uses to hide injected fields from the model contract.
-func cloneWithModelJSONTags(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
+// specJSONContract selects the JSON names for one generated type occurrence.
+// The native-image marker selects declared names only for that evidence graph.
+type specJSONContract uint8
+
+const (
+	specJSONModel specJSONContract = iota
+	specJSONNativeImage
+)
+
+// transportAttribute copies the type and assigns each field the JSON name that
+// its generated decoder accepts. Goa still owns pointer and presence rules.
+func (contract specJSONContract) transportAttribute(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return att
 	}
-
-	// Work on a deep copy so that we never mutate the shared Goa design
-	// expressions used by other generators.
 	cloned := goaexpr.DupAtt(att)
-	normalizeModelJSONTransportAttrRecursive(cloned)
-
+	contract.normalizeTransportAttribute(cloned, make(map[goaexpr.UserType]struct{}))
 	return cloned
 }
 
-// cloneModelSchemaAttribute returns the schema attribute graph used by generated
-// tool specs. Object keys are the model-facing JSON property names and fields
-// hidden from model JSON are removed entirely from both properties and required
-// lists.
-func cloneModelSchemaAttribute(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
+// schemaAttribute copies the transport graph for schemas and raw-field checks.
+// Native evidence already has declared names; model contracts also rename object
+// keys and remove injected fields from properties and required lists.
+func (contract specJSONContract) schemaAttribute(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return att
 	}
-
 	cloned := goaexpr.DupAtt(att)
-	normalizeModelSchemaAttrRecursive(cloned)
+	if contract == specJSONModel {
+		normalizeModelSchemaAttrRecursive(cloned)
+	}
 	return cloned
 }
 
-// normalizeModelJSONTransportAttrRecursive:
-//   - removes struct:pkg:* locators so nested user types can be materialized
-//     locally, and
-//   - ensures object fields carry json:name tags matching the model-facing
-//     field names.
-func normalizeModelJSONTransportAttrRecursive(att *goaexpr.AttributeExpr) {
-	normalizeModelJSONTransportAttr(att, make(map[goaexpr.UserType]struct{}))
-}
-
-// normalizeModelJSONTransportAttr visits every distinct named type once so a
-// recursive type can point back to itself without starting the walk again.
-func normalizeModelJSONTransportAttr(att *goaexpr.AttributeExpr, seen map[goaexpr.UserType]struct{}) {
+// normalizeTransportAttribute removes package locators from a copied graph and
+// writes its JSON tags. Each named type is visited once to preserve recursion.
+func (contract specJSONContract) normalizeTransportAttribute(att *goaexpr.AttributeExpr, seen map[goaexpr.UserType]struct{}) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return
 	}
-
 	stripStructPkgMetaKeys(att)
-
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
 		origin := dt.Origin()
@@ -71,7 +58,7 @@ func normalizeModelJSONTransportAttr(att *goaexpr.AttributeExpr, seen map[goaexp
 			return
 		}
 		seen[origin] = struct{}{}
-		normalizeModelJSONTransportAttr(dt.Attribute(), seen)
+		contract.normalizeTransportAttribute(dt.Attribute(), seen)
 	case *goaexpr.Object:
 		for _, nat := range *dt {
 			if nat == nil || nat.Attribute == nil {
@@ -80,30 +67,33 @@ func normalizeModelJSONTransportAttr(att *goaexpr.AttributeExpr, seen map[goaexp
 			if nat.Attribute.Meta == nil {
 				nat.Attribute.Meta = make(goaexpr.MetaExpr)
 			}
-			// Use "struct:tag:json:name" (not "struct:tag:json") so Goa can
-			// append ",omitempty" automatically for fields that are not required
-			// by their parent object.
-			hidden := hiddenJSONTag(nat.Attribute)
+			name, visible := contract.transportFieldName(nat)
 			delete(nat.Attribute.Meta, "struct:tag:json")
 			delete(nat.Attribute.Meta, "struct:tag:json:name")
-			if hidden {
-				nat.Attribute.Meta["struct:tag:json"] = []string{"-"}
+			if visible {
+				// Goa appends omitempty according to the containing field's rules.
+				nat.Attribute.Meta["struct:tag:json:name"] = []string{name}
 			} else {
-				nat.Attribute.Meta["struct:tag:json:name"] = []string{modelJSONName(nat.Name)}
+				nat.Attribute.Meta["struct:tag:json"] = []string{"-"}
 			}
-			normalizeModelJSONTransportAttr(nat.Attribute, seen)
+			contract.normalizeTransportAttribute(nat.Attribute, seen)
 		}
 	case *goaexpr.Array:
-		normalizeModelJSONTransportAttr(dt.ElemType, seen)
+		contract.normalizeTransportAttribute(dt.ElemType, seen)
 	case *goaexpr.Map:
-		normalizeModelJSONTransportAttr(dt.KeyType, seen)
-		normalizeModelJSONTransportAttr(dt.ElemType, seen)
+		contract.normalizeTransportAttribute(dt.KeyType, seen)
+		contract.normalizeTransportAttribute(dt.ElemType, seen)
 	case *goaexpr.Union:
+		if contract == specJSONNativeImage {
+			// Union helper names are exact in Goa. Derive a separate name from
+			// the authored declaration each time a transport copy is visited.
+			source := att.AuthoredAttribute().Type.(*goaexpr.Union)
+			dt.TypeName = source.TypeName + "NativeImageTransport"
+		}
 		for _, nat := range dt.Values {
-			if nat == nil {
-				continue
+			if nat != nil {
+				contract.normalizeTransportAttribute(nat.Attribute, seen)
 			}
-			normalizeModelJSONTransportAttr(nat.Attribute, seen)
 		}
 	}
 }
@@ -165,7 +155,7 @@ func normalizeModelSchemaUserExamples(att *goaexpr.AttributeExpr) {
 		if example == nil {
 			continue
 		}
-		normalized := normalizeExampleValue(att, example.Value)
+		normalized := specJSONModel.normalizeExampleValue(att, example.Value)
 		if normalized == nil {
 			continue
 		}
@@ -201,6 +191,13 @@ func normalizeModelSchemaObject(att *goaexpr.AttributeExpr, obj *goaexpr.Object,
 			panic("agent/codegen: model JSON field " + name + " collides between " + previous + " and " + originalName)
 		}
 		seen[name] = originalName
+		// Validation reads this copied schema but accesses the transport's Go
+		// fields. Preserve the original naming input when JSON renaming changes
+		// that selector; explicit field-name metadata remains authoritative.
+		fieldName := goacodegen.GoifyAtt(nat.Attribute, originalName, true)
+		if fieldName != goacodegen.GoifyAtt(nat.Attribute, name, true) {
+			nat.Attribute.AddMeta("struct:field:name", originalName)
+		}
 		normalizeModelSchemaAttr(nat.Attribute, typeSeen)
 		nat.Name = name
 		projected = append(projected, nat)
@@ -241,12 +238,15 @@ func modelJSONName(name string) string {
 	return goacodegen.SnakeCase(name)
 }
 
-// transportFieldName returns the JSON property name generated for nat in a
-// model-facing transport attribute. HTTP/public transport tag metadata is
-// ignored; json:"-" remains authoritative for hidden injected fields.
-func transportFieldName(nat *goaexpr.NamedAttributeExpr) (string, bool) {
+// transportFieldName returns the JSON name for this type occurrence. Complete
+// native evidence uses the declared field even when another transport hides it;
+// ordinary tool contracts retain their model naming and injected-field rules.
+func (contract specJSONContract) transportFieldName(nat *goaexpr.NamedAttributeExpr) (string, bool) {
 	if nat == nil || nat.Attribute == nil {
 		return "", false
+	}
+	if contract == specJSONNativeImage {
+		return nat.Name, true
 	}
 	if hiddenJSONTag(nat.Attribute) {
 		return "", false

@@ -5,11 +5,10 @@ package jsoncodec
 
 import (
 	"fmt"
-	"path"
 
 	"goa.design/goa-ai/codegen/internal/codec"
 	"goa.design/goa/v3/codegen"
-	"goa.design/goa/v3/expr"
+	"goa.design/goa/v3/codegen/service"
 )
 
 type (
@@ -37,36 +36,27 @@ const sourceHeader = "source-header"
 
 // NewPlan adds codecs only for supported original declarations already chosen
 // by Goa. Unsupported complete values do not claim names, imports, or packages.
-func NewPlan(generation *codegen.Generation) (*Plan, error) {
+func NewPlan(generation *codegen.Generation, services *service.Plan) (*Plan, error) {
 	plan := &Plan{generation: generation}
 	byOwner := make(map[*codegen.GeneratedPackage]*packagePlan)
 	for userType, declaration := range generation.UserTypes() {
-		attribute := &expr.AttributeExpr{Type: userType}
+		attribute, layout, err := services.UserTypeLayout(userType, declaration)
+		if err != nil {
+			return nil, fmt.Errorf("JSON codec %q original type layout: %w", userType.Name(), err)
+		}
 		if !codec.SupportsStandalone(attribute) {
 			continue
 		}
 		owner := generation.Package(declaration.PackagePath())
-		layout, importNames, err := planOriginalValue(generation, owner.ImportPath(), attribute)
-		if err != nil {
-			return nil, fmt.Errorf("JSON codec %q original type layout: %w", userType.Name(), err)
-		}
 		pkg := byOwner[owner]
 		if pkg == nil {
-			codecs, err := codec.NewPlan(generation, owner.ImportPath(), owner.ImportPath())
+			codecs, err := codec.NewPlan(generation, owner.ImportPath())
 			if err != nil {
 				return nil, err
 			}
 			pkg = &packagePlan{owner: owner, codecs: codecs}
 			byOwner[owner] = pkg
 			plan.packages = append(plan.packages, pkg)
-		}
-		for _, imp := range layout.CompleteImportPreferences() {
-			if imp.Path == owner.ImportPath() {
-				continue
-			}
-			if err := owner.ReserveGeneratedImport(codegen.NewImport(importNames[imp.Path], imp.Path)); err != nil {
-				return nil, err
-			}
 		}
 		value, err := pkg.codecs.AddStandalone(userType.Name(), userType.Name(), attribute, layout)
 		if err != nil {
@@ -138,33 +128,4 @@ func (p *Plan) Files(files []*codegen.File) ([]*codegen.File, error) {
 		}
 	}
 	return files, nil
-}
-
-// planOriginalValue follows Goa's declaration records while retaining the
-// original definitions, so JSON validation cannot use a reduced tool shape.
-func planOriginalValue(generation *codegen.Generation, owner string, attribute *expr.AttributeExpr) (*codegen.GoTypePlan, map[string]string, error) {
-	importNames := make(map[string]string)
-	binder := func(request codegen.GoTypeBindingRequest) (codegen.GoTypeBinding, error) {
-		owner := request.InheritedOwner
-		if location := codegen.UserTypeLocation(request.Attribute.Type); location != nil {
-			owner = path.Join(generation.GenPkg(), location.RelImportPath)
-			importNames[owner] = location.PackageName()
-		}
-		pkg := generation.Package(owner)
-		binding := codegen.GoTypeBinding{Owner: owner}
-		var err error
-		switch request.Kind {
-		case codegen.GoNamed:
-			binding.Type, err = pkg.Type(request.Attribute.Type.(expr.UserType))
-		case codegen.GoUnion:
-			binding.Union, err = pkg.Union(request.Attribute)
-		case codegen.GoPrimitive, codegen.GoArray, codegen.GoMap, codegen.GoStruct, codegen.GoEmpty, codegen.GoServiceError:
-			return binding, fmt.Errorf("unexpected original type binding %s", request.Kind)
-		}
-		return binding, err
-	}
-	layout, err := codegen.PlanGoType(attribute, codegen.GoTypePlanOptions{
-		Owner: owner, Policy: codegen.GoLayoutPolicy{UseDefault: true, SumType: true}, RetainNamedValue: true, Bind: binder,
-	})
-	return layout, importNames, err
 }

@@ -30,15 +30,17 @@ type (
 	unusedRegistryPulse struct{}
 )
 
+const testRegistryName = "company"
+
 func (s testRegistrySources) Resolve(ctx context.Context, catalog *RegistryCatalog) error {
 	if s.whole {
-		return catalog.IncludeRegistry(ctx, "company", true)
+		return catalog.IncludeRegistry(ctx, testRegistryName, true)
 	}
-	return catalog.IncludeToolset(ctx, "company", "provider.records", "1.0.0", true)
+	return catalog.IncludeToolset(ctx, testRegistryName, "provider.records", "1.0.0", true)
 }
 
 func (s testRegistrySources) Allows(registry, toolset, version string) bool {
-	return registry == "company" && (s.whole || toolset == "provider.records" && version == "1.0.0")
+	return registry == testRegistryName && (s.whole || toolset == "provider.records" && version == "1.0.0")
 }
 
 func (unusedRegistryPulse) Stream(string, ...streamopts.Stream) (pulsec.Stream, error) {
@@ -55,7 +57,7 @@ func TestRegistryCatalogChangesOnlyAtNextResolution(t *testing.T) {
 	client := &genregistry.Client{ResolveToolsetEndpoint: func(context.Context, any) (any, error) {
 		return current, nil
 	}}
-	require.NoError(t, rt.RegisterRegistry("company", client, unusedRegistryPulse{}))
+	require.NoError(t, rt.RegisterRegistry(testRegistryName, client, unusedRegistryPulse{}))
 	definition := testRegistryAgentDefinition(testRegistrySources{})
 	first, err := rt.resolveRegistryCatalog(t.Context(), definition)
 	require.NoError(t, err)
@@ -88,7 +90,7 @@ func TestWholeRegistryDistinguishesEmptyFromFailedResolution(t *testing.T) {
 		}
 		return &genregistry.ListToolsetsResult{}, nil
 	}}
-	require.NoError(t, rt.RegisterRegistry("company", client, unusedRegistryPulse{}))
+	require.NoError(t, rt.RegisterRegistry(testRegistryName, client, unusedRegistryPulse{}))
 	definition := testRegistryAgentDefinition(testRegistrySources{whole: true})
 	catalog, err := rt.resolveRegistryCatalog(t.Context(), definition)
 	require.NoError(t, err)
@@ -119,7 +121,7 @@ func TestRegistryPlanningAdvertisesCurrentToolsAndSavesOnlySelections(t *testing
 		reads++
 		return testRuntimeRegistryResolution("records.find", strings.Repeat("a", 64)), nil
 	}}
-	require.NoError(t, rt.RegisterRegistry("company", client, unusedRegistryPulse{}))
+	require.NoError(t, rt.RegisterRegistry(testRegistryName, client, unusedRegistryPulse{}))
 	input := &PlanActivityInput{
 		AgentID: definition.route.ID, RunID: "run-1", RunContext: run.Context{RunID: "run-1"},
 	}
@@ -155,11 +157,11 @@ func TestRegistryCatalogRejectsDuplicatesAndWrongVersion(t *testing.T) {
 	client := &genregistry.Client{ResolveToolsetEndpoint: func(context.Context, any) (any, error) {
 		return current, nil
 	}}
-	require.NoError(t, rt.RegisterRegistry("company", client, unusedRegistryPulse{}))
+	require.NoError(t, rt.RegisterRegistry(testRegistryName, client, unusedRegistryPulse{}))
 	definition := testRegistryAgentDefinition(testRegistrySources{})
 	catalog, err := rt.resolveRegistryCatalog(t.Context(), definition)
 	require.NoError(t, err)
-	err = catalog.IncludeToolset(t.Context(), "company", "provider.records", "1.0.0", true)
+	err = catalog.IncludeToolset(t.Context(), testRegistryName, "provider.records", "1.0.0", true)
 	require.ErrorContains(t, err, "repeats tool")
 	version := genregistry.SemVer("2.0.0")
 	current.Toolset.Version = &version
@@ -171,7 +173,7 @@ func TestSavedRegistryContractOwnsConfirmationAndResultValidation(t *testing.T) 
 	rt := New(newTestStore())
 	resolved, err := registrycontract.Resolve(testRuntimeRegistryResolution("records.find", strings.Repeat("a", 64)))
 	require.NoError(t, err)
-	binding, err := resolved.Select("company", "records.find")
+	binding, err := resolved.Select(testRegistryName, "records.find")
 	require.NoError(t, err)
 	call := ToolCall{
 		Name: "records.find", Registry: binding,
@@ -233,11 +235,11 @@ func (scopedRegistrySources) Resolve(ctx context.Context, catalog *RegistryCatal
 	labels := catalog.RunLabels()
 	namespace := labels["namespace"]
 	labels["namespace"] = "local-copy"
-	return catalog.IncludeToolset(ctx, "company", namespace, "", false)
+	return catalog.IncludeToolset(ctx, testRegistryName, namespace, "", false)
 }
 
 func (scopedRegistrySources) Allows(registry, toolset, _ string) bool {
-	return registry == "company" && (toolset == "support" || toolset == "operations")
+	return registry == testRegistryName && (toolset == "support" || toolset == "operations")
 }
 
 func TestRegistryCatalogUsesRunScopeWithoutSharingLabels(t *testing.T) {
@@ -250,7 +252,7 @@ func TestRegistryCatalogUsesRunScopeWithoutSharingLabels(t *testing.T) {
 		result.Toolset.Name = payload.Name
 		return result, nil
 	}}
-	require.NoError(t, rt.RegisterRegistry("company", client, unusedRegistryPulse{}))
+	require.NoError(t, rt.RegisterRegistry(testRegistryName, client, unusedRegistryPulse{}))
 	for _, namespace := range []string{"support", "operations"} {
 		t.Run(namespace, func(t *testing.T) {
 			t.Parallel()

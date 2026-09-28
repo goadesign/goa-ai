@@ -50,6 +50,7 @@ func TestAgentPackagePlanMovesDerivedNamesAroundPackageCollisions(t *testing.T) 
 	require.Equal(t, "ScribeAgent2", linked.StructName)
 	require.Equal(t, "ScribeAgentConfig2", linked.ConfigType)
 	require.Equal(t, "NewScribeAgent2", linked.PackageNames.Constructor)
+	require.Equal(t, "NewScribeAgent2Registration", linked.PackageNames.RegistrationConstructor)
 	require.Equal(t, "SharedToolsetName2", linked.UsedToolsets[0].RegistrationNameConst)
 }
 
@@ -266,6 +267,7 @@ func plannedAgentPackageNames(planned *agentPackagePlan) map[string]struct{} {
 		planned.configType,
 		planned.structType,
 		planned.constructor,
+		planned.registrationConstructor,
 		planned.register,
 		planned.usedOptions,
 	} {

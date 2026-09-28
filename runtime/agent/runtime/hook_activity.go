@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	agent "goa.design/goa-ai/runtime/agent"
@@ -335,6 +336,9 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 			linked, linkedOK := linkedEvent.(*hooks.ChildRunLinkedEvent)
 			if !linkedOK || linked.ChildRunID != start.RunID || linked.RunID() != start.ParentRunID {
 				return nil, malformedStorageCommand(errors.New("runtime: child link does not match child start"))
+			}
+			if err := r.validateChildContinuationStart(ctx, start, linked, seed); err != nil {
+				return nil, err
 			}
 			linkedRecord := runLogEvent(linkedInput, linkedInput.Payload, linked.Timestamp())
 			result, startErr := r.Store.StartChildRun(ctx, storage.ChildRunStart{RequestDigest: [32]byte(requestDigest),
@@ -906,4 +910,79 @@ func (r *Runtime) enrichToolCallScheduledHint(ctx context.Context, evt *hooks.To
 	}
 	evt.DisplayHint = hint
 	return true, nil
+}
+
+// validateChildContinuationStart proves a changed execution parent from its
+// accepted seed and immediate saved checkpoint. It reads only named immutable
+// facts; the store owns running-parent admission and exact closed-start retries.
+func (r *Runtime) validateChildContinuationStart(ctx context.Context, start session.RunStart, linked *hooks.ChildRunLinkedEvent, seed storage.RunSeed) error {
+	if start.PredecessorRunID == "" {
+		return nil
+	}
+	previous, err := r.Store.LoadRun(ctx, start.PredecessorRunID)
+	if err != nil {
+		return err
+	}
+	if previous.ParentRunID == start.ParentRunID {
+		return nil
+	}
+	parent, err := r.Store.LoadRun(ctx, start.ParentRunID)
+	if err != nil {
+		return err
+	}
+	if parent.SessionID != start.SessionID || parent.AgentID != linked.AgentID() {
+		return malformedStorageCommand(errors.New("runtime: child continuation execution parent owner mismatch"))
+	}
+	parentSeed, err := r.Store.LoadRunSeed(ctx, parent.RunID, parent.SeedEndID)
+	if err != nil {
+		return err
+	}
+	if parentSeed.Declaration.Kind != storage.SeedContinuation || parentSeed.Source == nil ||
+		parentSeed.Declaration.RunID != parent.RunID || parentSeed.Declaration.AgentID != parent.AgentID ||
+		parentSeed.Declaration.SessionID != parent.SessionID ||
+		parentSeed.Source.RunID != parentSeed.Declaration.SourceRunID || parentSeed.Source.EndID != parentSeed.Declaration.SourceEndID {
+		return malformedStorageCommand(errors.New("runtime: child continuation requires the execution parent's exact continuation seed"))
+	}
+	suspension, err := r.LoadRunSuspension(ctx, parentSeed.Source.RunID)
+	if err != nil {
+		return err
+	}
+	registration, ok := r.agents[agent.Ident(parent.AgentID)]
+	if !ok {
+		return malformedStorageCommand(fmt.Errorf("runtime: child continuation parent agent %q is not registered", parent.AgentID))
+	}
+	checkpoint, err := decodeWorkflowCheckpoint(suspension, registration.Definition)
+	if err != nil {
+		return malformedStorageCommand(err)
+	}
+	if checkpoint.AgentID != parent.AgentID || checkpoint.SessionID != start.SessionID ||
+		checkpoint.PreviousRunID != parentSeed.Source.RunID || checkpoint.HistoryEndID != parentSeed.Source.EndID {
+		return malformedStorageCommand(errors.New("runtime: child continuation parent checkpoint does not match accepted seed"))
+	}
+	pending := checkpoint.Pending[0].Child
+	if pending == nil || pending.ToolCallID != linked.ToolCallID {
+		return malformedStorageCommand(errors.New("runtime: child continuation is not the parent's first pending child call"))
+	}
+	record, ok := checkpointRecordByCallID(checkpoint.Batch.Records, pending.ToolCallID)
+	if !ok || record.Call.Name != linked.ToolName || record.Call.AgentID != agent.Ident(parent.AgentID) {
+		return malformedStorageCommand(errors.New("runtime: child continuation does not match the saved parent call"))
+	}
+	childSuspension, err := r.LoadRunSuspension(ctx, start.PredecessorRunID)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(pending.Suspension, childSuspension) {
+		return malformedStorageCommand(errors.New("runtime: child continuation does not match the selected predecessor suspension"))
+	}
+	childCheckpoint, err := decodeWorkflowCheckpointState(childSuspension)
+	if err != nil {
+		return malformedStorageCommand(err)
+	}
+	if childCheckpoint.PreviousRunID != start.PredecessorRunID || childCheckpoint.AgentID != start.AgentID ||
+		seed.Declaration.Kind != storage.SeedContinuation || seed.Source == nil ||
+		seed.Declaration.SourceRunID != start.PredecessorRunID || seed.Declaration.SourceEndID != childCheckpoint.HistoryEndID ||
+		seed.Source.RunID != start.PredecessorRunID || seed.Source.EndID != childCheckpoint.HistoryEndID {
+		return malformedStorageCommand(errors.New("runtime: child continuation seed does not match selected suspension history"))
+	}
+	return nil
 }

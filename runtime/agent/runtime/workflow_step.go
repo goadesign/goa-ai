@@ -203,9 +203,10 @@ func normalizeStepWithSpecs(result *PlanResult, lookup toolSpecLookup) (stepProg
 	}, nil
 }
 
-// normalizePlanResultContract validates the complete runtime-owned structure of
-// one planner result before transcript persistence or step selection.
-func (r *Runtime) normalizePlanResultContract(result *PlanResult, parentTool tools.Ident) (stepProgram, error) {
+// normalizePlanResultContract validates one planner result before saving its
+// transcript or choosing the next step. The run context supplies the exact
+// parent declaration used to validate a child result on every pass.
+func (r *Runtime) normalizePlanResultContract(result *PlanResult, runContext run.Context, executor agent.Ident) (stepProgram, error) {
 	program, err := r.normalizeStep(result)
 	if err != nil {
 		return stepProgram{}, err
@@ -213,8 +214,12 @@ func (r *Runtime) normalizePlanResultContract(result *PlanResult, parentTool too
 	if err := validatePlanResultToolCallIDs(result); err != nil {
 		return stepProgram{}, planner.NewOutputContractError(err)
 	}
+	parentTool, err := selectedParentTool(runContext.Tool, runContext.ToolRegistry, executor, r.toolSpec)
+	if err != nil {
+		return stepProgram{}, planner.NewOutputContractError(err)
+	}
 	plannerResult := plannerResultValidationProjection(result)
-	if err := r.validatePlannerResultPayloads(plannerResult, parentTool); err != nil {
+	if err := validatePlannerResultPayloads(plannerResult, runContext.Tool, parentTool); err != nil {
 		return stepProgram{}, planner.NewOutputContractError(err)
 	}
 	return program, nil
@@ -245,21 +250,20 @@ func plannerResultValidationProjection(result *PlanResult) *planner.PlanResult {
 
 // normalizePlanResultForExecution validates generated tool payload contracts
 // before planner events are published or the workflow accepts tool work.
-func (r *Runtime) normalizePlanResultForExecution(result *PlanResult, parentTool tools.Ident) (stepProgram, error) {
-	program, err := r.normalizePlanResultContract(result, parentTool)
-	if err != nil {
-		return stepProgram{}, err
+func (r *Runtime) normalizePlanResultForExecution(result *PlanResult, runContext run.Context, executor agent.Ident) error {
+	if _, err := r.normalizePlanResultContract(result, runContext, executor); err != nil {
+		return err
 	}
 	for index, call := range result.ToolCalls {
 		spec, ok, err := lookupCallSpec(call, r.toolSpec)
 		if err != nil {
-			return stepProgram{}, err
+			return err
 		}
 		if !ok {
-			return stepProgram{}, planner.NewOutputContractError(fmt.Errorf("tool %q has no payload codec", call.Name))
+			return planner.NewOutputContractError(fmt.Errorf("tool %q has no payload codec", call.Name))
 		}
 		if _, err := spec.ExecutionPayloadCodec.FromJSON(call.Payload); err != nil {
-			return stepProgram{}, planner.NewOutputContractError(
+			return planner.NewOutputContractError(
 				fmt.Errorf("workflow step tool call %d payload: %w", index, err),
 			)
 		}
@@ -270,12 +274,12 @@ func (r *Runtime) normalizePlanResultForExecution(result *PlanResult, parentTool
 	}
 	for index, call := range awaitToolRequests(awaitItems) {
 		if err := validatePlannerToolPayloadWithCodec(r.toolSpec, nil, call.Name, call.Payload); err != nil {
-			return stepProgram{}, planner.NewOutputContractError(
+			return planner.NewOutputContractError(
 				fmt.Errorf("workflow step await tool call %d payload: %w", index, err),
 			)
 		}
 	}
-	return program, nil
+	return nil
 }
 
 // validateAwaitTools requires every tool named by an await request to exist and

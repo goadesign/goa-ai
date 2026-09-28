@@ -53,13 +53,17 @@ func TestGeneratedUnionCollectionCodecs(t *testing.T) {
 	require.NoError(t, err)
 
 	// Both producers register before freeze and use Goa's original declarations.
-	originals, err := NewPlan(generation)
+	originals, err := NewPlan(generation, services)
 	require.NoError(t, err)
 	const ordinaryPath = "codec.local/gen/ordinary"
-	ordinary, err := codec.NewPlan(generation, ordinaryPath, "codec.local/gen/types")
+	ordinary, err := codec.NewPlan(generation, ordinaryPath)
+	require.NoError(t, err)
+	declaration, err := generation.Package("codec.local/gen/types").Type(collections)
+	require.NoError(t, err)
+	attribute, layout, err := services.UserTypeLayout(collections, declaration)
 	require.NoError(t, err)
 	value, err := ordinary.Add("union-collections", "UnionCollections",
-		&expr.AttributeExpr{Type: collections}, codec.EncodeAndDecode)
+		attribute, layout, codec.EncodeAndDecode)
 	require.NoError(t, err)
 	require.NoError(t, generation.Freeze())
 	require.NoError(t, services.Link())

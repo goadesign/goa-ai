@@ -46,7 +46,9 @@ func TestCloseSinkBoundedCompletion(t *testing.T) {
 				}
 				return test.closeErr
 			})
-			err := closeSinkBounded(ctx, sink)
+			var run providerRun
+			defer run.goroutines.Wait()
+			err := run.closeSinkBounded(ctx, sink)
 			select {
 			case <-finished:
 			case <-time.After(time.Second):

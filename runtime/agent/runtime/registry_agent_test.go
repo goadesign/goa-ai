@@ -24,6 +24,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+const registryAgentKind = "agent"
+
 func TestWithAgentExecutorsCopiesDefinitions(t *testing.T) {
 	parent := testRegistryAgentDefinition(testRegistrySources{})
 	child := testAgentDefinition("generic.agent", "generic.workflow", "generic.queue", nil, nil)
@@ -145,7 +147,7 @@ func TestRegistryAgentContextSurvivesCheckpointRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	var saved checkpointRunContext
 	require.NoError(t, json.Unmarshal(encoded, &saved))
-	restored := restoreCheckpointRunContext(saved, &RunInput{RunID: "continued", SessionID: call.SessionID})
+	restored := restoreCheckpointRunContext(saved, &RunInput{RunID: "continued", SessionID: call.SessionID, ParentRunID: nested.ParentRunID})
 	assert.Equal(t, call.Registry.Registry, restored.ToolRegistry.Registry)
 	assert.JSONEq(t, string(call.Registry.Resolution), string(restored.ToolRegistry.Resolution))
 	spec, err := selectedParentTool(restored.Tool, restored.ToolRegistry, "generic.agent", func(tools.Ident) (tools.ToolSpec, bool) {
@@ -163,7 +165,7 @@ func testNativeRegistryCall(t *testing.T, revision string) ToolCall {
 	resolution := testNativeRegistryResolution(revision)
 	resolved, err := registrycontract.Resolve(resolution)
 	require.NoError(t, err)
-	binding, err := resolved.Select("company", "records.find")
+	binding, err := resolved.Select(testRegistryName, "records.find")
 	require.NoError(t, err)
 	return ToolCall{
 		Name: "records.find", AgentID: "records.agent", RunID: "parent-run",
@@ -176,7 +178,7 @@ func testNativeRegistryCall(t *testing.T, revision string) ToolCall {
 func testNativeRegistryResolution(revision string) *genregistry.ResolvedToolset {
 	resolution := testRuntimeRegistryResolution("records.find", strings.Repeat("a", 64))
 	contract := resolution.Toolset.Tools[0].ConsumerContract
-	contract.Kind = "agent"
+	contract.Kind = registryAgentKind
 	contract.Agent = &genregistry.AgentToolTarget{Executor: "generic.agent", Configuration: revision}
 	contract.Confirmation = nil
 	return resolution
@@ -266,7 +268,7 @@ func TestRegistryAgentDiscoveryReadsReplacementWithoutRestart(t *testing.T) {
 	parent := testRegistryAgentDefinition(testRegistrySources{}).WithAgentExecutors(&child)
 	current := testNativeRegistryResolution("revision/1")
 	client := &genregistry.Client{ResolveToolsetEndpoint: func(context.Context, any) (any, error) { return current, nil }}
-	require.NoError(t, rt.RegisterRegistry("company", client, unusedRegistryPulse{}))
+	require.NoError(t, rt.RegisterRegistry(testRegistryName, client, unusedRegistryPulse{}))
 	first, err := rt.resolveRegistryCatalog(t.Context(), parent)
 	require.NoError(t, err)
 	selection := first.selections["records.find"]

@@ -127,7 +127,7 @@ func newClosedStartFixture(t *testing.T, kind storageCommandKind, status session
 		require.NoError(t, err)
 	}
 	if kind == storageCommandChildStart || kind == storageCommandOneShotChildStart {
-		input.ParentRunID, input.ParentAgentID = "parent-run", "parent.agent"
+		input.ParentRunID, input.ParentAgentID = "parent-run", parentAgentID
 		input.ParentToolCallID, input.Tool = "call", "parent.child"
 		admitRunForTest(t, store, session.RunMeta{
 			RunID: input.ParentRunID, AgentID: string(input.ParentAgentID), SessionID: input.SessionID,

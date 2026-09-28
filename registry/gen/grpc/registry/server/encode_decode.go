@@ -594,7 +594,11 @@ func DecodeRetryToolRequest(ctx context.Context, v any, md metadata.MD) (any, er
 // EncodeCompleteToolCallResponse encodes responses from the "registry" service
 // "CompleteToolCall" endpoint.
 func EncodeCompleteToolCallResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
-	resp := NewProtoCompleteToolCallResponse()
+	result, ok := v.(*registry.CompleteToolCallResult)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "CompleteToolCall", "*registry.CompleteToolCallResult", v)
+	}
+	resp := NewProtoCompleteToolCallResponse(result)
 	return resp, nil
 }
 

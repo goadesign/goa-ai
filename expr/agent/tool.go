@@ -755,9 +755,11 @@ func validateRequiredPagingField(where string, att *goaexpr.AttributeExpr, name 
 	if ut, ok := att.Type.(goaexpr.UserType); ok && ut != nil {
 		root = ut.Attribute()
 	}
-	for _, required := range root.Validation.Required {
-		if required == name {
-			return
+	if root.Validation != nil {
+		for _, required := range root.Validation.Required {
+			if required == name {
+				return
+			}
 		}
 	}
 	verr.Add(tool, "%s field %q must be required", where, name)

@@ -3,7 +3,6 @@ package codec
 
 import (
 	"fmt"
-	"path"
 	"strings"
 
 	goacodegen "goa.design/goa/v3/codegen"
@@ -18,7 +17,6 @@ type (
 	Plan struct {
 		generation         *goacodegen.Generation
 		pkg                *goacodegen.GeneratedPackage
-		serviceImportPath  string
 		values             []*Value
 		valuesByKey        map[string]*Value
 		importPaths        map[string]struct{}
@@ -116,15 +114,12 @@ const (
 
 // NewPlan creates a codec plan for one output package. Original-value codecs may
 // use the original owner's package; Files receives its authoritative Go name.
-func NewPlan(generation *goacodegen.Generation, importPath, serviceImportPath string) (*Plan, error) {
+func NewPlan(generation *goacodegen.Generation, importPath string) (*Plan, error) {
 	if generation == nil {
 		return nil, fmt.Errorf("plan JSON codecs: generation must not be nil")
 	}
 	if importPath == "" {
 		return nil, fmt.Errorf("plan JSON codecs: import path must not be empty")
-	}
-	if serviceImportPath == "" {
-		return nil, fmt.Errorf("plan JSON codecs: service import path must not be empty")
 	}
 	pkg, err := generation.ClaimPackage(importPath)
 	if err != nil {
@@ -133,7 +128,6 @@ func NewPlan(generation *goacodegen.Generation, importPath, serviceImportPath st
 	return &Plan{
 		generation:         generation,
 		pkg:                pkg,
-		serviceImportPath:  serviceImportPath,
 		valuesByKey:        make(map[string]*Value),
 		importPaths:        make(map[string]struct{}),
 		locatedImportPaths: make(map[string]struct{}),
@@ -144,6 +138,7 @@ func NewPlan(generation *goacodegen.Generation, importPath, serviceImportPath st
 func (p *Plan) Add(
 	key, preferredName string,
 	attribute *goaexpr.AttributeExpr,
+	layout *goacodegen.GoTypePlan,
 	direction Direction,
 ) (*Value, error) {
 	if key == "" {
@@ -164,8 +159,11 @@ func (p *Plan) Add(
 	if p.valuesByKey[key] != nil {
 		return nil, fmt.Errorf("JSON value key %q is already planned", key)
 	}
+	if layout == nil {
+		return nil, fmt.Errorf("plan JSON value %q: service layout must not be nil", key)
+	}
 	transport, localTypes := localTransportAttribute(attribute, key, preferredName)
-	if err := p.requireValueImports(direction, attribute); err != nil {
+	if err := p.requireValueImports(direction, layout); err != nil {
 		return nil, fmt.Errorf("plan JSON value %q imports: %w", key, err)
 	}
 	value := &Value{
@@ -190,9 +188,6 @@ func (p *Plan) Add(
 	}
 	if err := value.planTransforms(); err != nil {
 		return nil, fmt.Errorf("plan JSON value %q conversions: %w", key, err)
-	}
-	if err := p.recordLocatedImports(attribute); err != nil {
-		return nil, fmt.Errorf("plan JSON value %q imports: %w", key, err)
 	}
 	p.values = append(p.values, value)
 	p.valuesByKey[key] = value
@@ -646,7 +641,7 @@ func (v *Value) bindTransformHelpers(prefix string, transform *goacodegen.Transf
 // generated conversion and validation code.
 func (p *Plan) requireValueImports(
 	direction Direction,
-	service *goaexpr.AttributeExpr,
+	layout *goacodegen.GoTypePlan,
 ) error {
 	if err := p.requireImport(goacodegen.NewImport("fmt", "fmt")); err != nil {
 		return err
@@ -666,19 +661,12 @@ func (p *Plan) requireValueImports(
 			}
 		}
 	}
-	usesService, err := serviceUsesPackage(service, p.serviceImportPath, p.generation.GenPkg())
-	if err != nil {
-		return err
+	imports := goacodegen.NewGeneratedImportPlan(p.pkg)
+	if err := imports.AddCompleteType(layout); err != nil {
+		return fmt.Errorf("plan JSON service imports: %w", err)
 	}
-	if usesService && p.serviceImportPath != p.pkg.ImportPath() {
-		spec := goacodegen.NewImport(
-			strings.ToLower(goacodegen.Goify(path.Base(p.serviceImportPath), false)),
-			p.serviceImportPath,
-		)
-		if err := p.pkg.ReserveGeneratedImport(spec); err != nil {
-			return fmt.Errorf("plan JSON service import: %w", err)
-		}
-		p.importPaths[spec.Path] = struct{}{}
+	for _, importPath := range imports.Paths() {
+		p.locatedImportPaths[importPath] = struct{}{}
 	}
 	return nil
 }
@@ -721,54 +709,6 @@ func (p *Plan) requireImport(spec *goacodegen.ImportSpec) error {
 	}
 	p.importPaths[spec.Path] = struct{}{}
 	return nil
-}
-
-// serviceUsesPackage decides at generation time whether the codec file needs
-// the generated service package. The bound Goa service resolver still writes
-// every service type reference.
-func serviceUsesPackage(attribute *goaexpr.AttributeExpr, serviceImportPath, genpkg string) (bool, error) {
-	uses := false
-	err := walkAttribute(attribute, make(map[goaexpr.UserType]struct{}), func(current *goaexpr.AttributeExpr) error {
-		if uses {
-			return nil
-		}
-		userType, named := current.Type.(goaexpr.UserType)
-		if !named || userType == goaexpr.Empty {
-			return nil
-		}
-		location := goacodegen.UserTypeLocation(userType)
-		uses = location == nil || path.Join(genpkg, location.RelImportPath) == serviceImportPath
-		return nil
-	})
-	return uses, err
-}
-
-// recordLocatedImports reserves generated locations and custom Go field types
-// referenced by the service value.
-func (p *Plan) recordLocatedImports(attribute *goaexpr.AttributeExpr) error {
-	return walkAttribute(attribute, make(map[goaexpr.UserType]struct{}), func(current *goaexpr.AttributeExpr) error {
-		location := goacodegen.UserTypeLocation(current.Type)
-		if location != nil {
-			importPath := path.Join(p.generation.GenPkg(), location.RelImportPath)
-			if importPath == p.pkg.ImportPath() {
-				return nil
-			}
-			spec := goacodegen.NewImport(
-				strings.ToLower(goacodegen.Goify(path.Base(importPath), false)), importPath,
-			)
-			if err := p.pkg.ReserveGeneratedImport(spec); err != nil {
-				return err
-			}
-			p.locatedImportPaths[importPath] = struct{}{}
-		}
-		if _, spec := goacodegen.GetMetaType(current); spec != nil {
-			if err := p.pkg.DeclareImport(goacodegen.NewImport(spec.Name, spec.Path)); err != nil {
-				return err
-			}
-			p.locatedImportPaths[spec.Path] = struct{}{}
-		}
-		return nil
-	})
 }
 
 // transportPolicy preserves JSON presence until validation has completed.

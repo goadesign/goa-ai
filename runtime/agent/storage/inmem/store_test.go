@@ -206,13 +206,25 @@ func TestChildContinuationChecksPredecessorBeforeParentLink(t *testing.T) {
 				AgentID: "child", RunID: "predecessor", SessionID: parent.SessionID,
 				ParentRunID: parent.RunID, Status: status,
 			}
-			store.runs[predecessor.RunID] = predecessor
+			previousStart := session.RunStart{
+				AgentID: predecessor.AgentID, RunID: predecessor.RunID, SessionID: predecessor.SessionID,
+				ParentRunID: parent.RunID, StartedAt: parent.StartedAt,
+			}
+			previousStart = publishStartHistory(t, store, previousStart)
+			_, err := store.StartChildRun(t.Context(), storage.ChildRunStart{
+				RequestDigest: [32]byte{1}, Run: previousStart,
+				ParentLinked: childLinkRecord(t, "previous-link", parent, previousStart),
+				Started:      startedRecord(t, "previous-start", previousStart),
+				Canceled:     completedRecord(t, "previous-stop", previousStart, "canceled", &run.Cancellation{Reason: run.CancellationReasonSessionEnded}),
+			})
+			require.NoError(t, err)
+			predecessor = store.runs[predecessor.RunID]
+			predecessor.Status = status
 			// Preparation observes a valid suspended predecessor; the start
 			// must recheck it after the test changes its persisted status.
 			original := store.runs[predecessor.RunID]
 			original.Status = session.RunStatusSuspended
 			store.runs[predecessor.RunID] = original
-			store.records[predecessor.RunID] = []*runlog.Event{{ID: "1"}}
 			child := session.RunStart{
 				AgentID: "child", RunID: "successor", SessionID: parent.SessionID,
 				ParentRunID: parent.RunID, PredecessorRunID: predecessor.RunID,
@@ -234,13 +246,13 @@ func TestChildContinuationChecksPredecessorBeforeParentLink(t *testing.T) {
 			if status == session.RunStatusSuspended {
 				require.NoError(t, err)
 				require.Equal(t, session.RunStartProceed, result.Outcome)
-				require.Len(t, page.Events, 2)
+				require.Len(t, page.Events, 3)
 				_, err = store.LoadRun(t.Context(), child.RunID)
 				require.NoError(t, err)
 				return
 			}
 			require.ErrorContains(t, err, `has status "running", want "suspended"`)
-			require.Len(t, page.Events, 1)
+			require.Len(t, page.Events, 2)
 			_, err = store.LoadRun(t.Context(), child.RunID)
 			require.ErrorIs(t, err, session.ErrRunNotFound)
 		})
