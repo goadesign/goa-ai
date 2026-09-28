@@ -202,7 +202,7 @@ func TestLocalizeNestedTypesKeepsSourceIdentity(t *testing.T) {
 		{Name: "second", Attribute: &goaexpr.AttributeExpr{Type: second}},
 	}}
 
-	localized, types := localizeNestedTypes(attribute, false, nil)
+	localized, types := localizeNestedTypes(attribute, false, nil, specJSONModel)
 
 	require.Len(t, types, 2)
 	object := goaexpr.AsObject(localized.Type)
@@ -285,8 +285,8 @@ func TestToolSpecsPackagePlanSharesCodecTransformHelpers(t *testing.T) {
 		QualifiedName: "helpers.second",
 		ScopeName:     "helpers",
 	}
-	require.NoError(t, plan.declareType(first, attribute, usagePayload, ""))
-	require.NoError(t, plan.declareType(second, attribute, usagePayload, ""))
+	require.NoError(t, plan.declareType(first, attribute, usagePayload, "", specJSONModel))
+	require.NoError(t, plan.declareType(second, attribute, usagePayload, "", specJSONModel))
 	require.NoError(t, plan.finalizeTransformHelpers())
 	require.NoError(t, generation.Freeze())
 
@@ -319,8 +319,8 @@ func TestToolSpecsPackagePlanKeepsCollidingDSLToolsDistinct(t *testing.T) {
 		&goaexpr.NamedAttributeExpr{Name: "session_id", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String}},
 	}}
 
-	require.NoError(t, plan.declareType(first, firstPayload, usagePayload, ""))
-	require.NoError(t, plan.declareType(second, secondPayload, usagePayload, ""))
+	require.NoError(t, plan.declareType(first, firstPayload, usagePayload, "", specJSONModel))
+	require.NoError(t, plan.declareType(second, secondPayload, usagePayload, "", specJSONModel))
 	require.NoError(t, generation.Freeze())
 
 	firstType := plan.types[stableTypeKey(first, usagePayload, "")]
@@ -381,7 +381,7 @@ func TestToolSpecsPackagePlanRetainsReferencePointers(t *testing.T) {
 				ScopeName:     "helpers",
 			}
 
-			require.NoError(t, plan.declareType(owner, test.attribute, usageResult, ""))
+			require.NoError(t, plan.declareType(owner, test.attribute, usageResult, "", specJSONModel))
 			require.NoError(t, generation.Freeze())
 
 			planned := plan.types[stableTypeKey(owner, usageResult, "")]
@@ -471,7 +471,7 @@ func TestSchemaVariantsUsesPassedAPI(t *testing.T) {
 		TypeName: "ExactToolPayload",
 		UID:      "test:exact-tool-payload",
 	})
-	withExample, withoutExample, err := schemaVariantsForAttribute(exact, attribute, nil, identity)
+	withExample, withoutExample, err := specJSONModel.schemaVariantsForAttribute(exact, attribute, nil, identity)
 	require.NoError(t, err)
 	require.NotEmpty(t, withExample)
 	require.NotEmpty(t, withoutExample)

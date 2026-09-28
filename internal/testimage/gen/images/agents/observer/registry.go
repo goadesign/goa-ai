@@ -18,18 +18,18 @@ import (
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 )
 
-// RegisterObserverAgent registers the generated agent components with the local runtime.
-// This helper registers only with the runtime in this process. It does not
-// publish the agent to a registry service.
-func RegisterObserverAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ObserverAgentConfig) error {
+// NewObserverAgentRegistration creates the generated registration without
+// registering workers or toolsets. Applications may compose its immutable
+// Definition before creating a client and registering this same value.
+func NewObserverAgentRegistration(rt *agentsruntime.Runtime, cfg ObserverAgentConfig) (agentsruntime.AgentRegistration, error) {
 	if rt == nil {
-		return errors.New("runtime is required")
+		return agentsruntime.AgentRegistration{}, errors.New("runtime is required")
 	}
 	agent, err := NewObserverAgent(cfg)
 	if err != nil {
-		return err
+		return agentsruntime.AgentRegistration{}, err
 	}
-	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
+	return agentsruntime.AgentRegistration{
 		Definition:       Definition(),
 		Planner:          agent.Planner,
 		WorkflowHandler:  rt.ExecuteWorkflow,
@@ -69,7 +69,18 @@ func RegisterObserverAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg O
 				return agentsruntime.Compress(cfg.HistoryModel, historyCompression)
 			}(),
 		},
-	}); err != nil {
+	}, nil
+}
+
+// RegisterObserverAgent registers the generated agent components with the local runtime.
+// This helper registers only with the runtime in this process. It does not
+// publish the agent to a registry service.
+func RegisterObserverAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ObserverAgentConfig) error {
+	registration, err := NewObserverAgentRegistration(rt, cfg)
+	if err != nil {
+		return err
+	}
+	if err := rt.RegisterAgent(ctx, registration); err != nil {
 		return err
 	}
 

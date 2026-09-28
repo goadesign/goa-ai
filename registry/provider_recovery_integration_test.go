@@ -114,12 +114,12 @@ func TestProviderRecoveryPreservesLeaseAuthority(t *testing.T) {
 						ctx context.Context,
 						_, providerID, incarnationID, providerToken, requestEventID string,
 						result toolregistry.ToolResultMessage,
-					) error {
+					) (bool, error) {
 						body, err := json.Marshal(result)
 						if err != nil {
-							return err
+							return false, err
 						}
-						return svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+						completion, err := svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
 							Toolset:                   toolset,
 							ProviderID:                providerID,
 							ProviderIncarnationID:     incarnationID,
@@ -129,6 +129,10 @@ func TestProviderRecoveryPreservesLeaseAuthority(t *testing.T) {
 							RequestEventID:            requestEventID,
 							ProviderRegistrationToken: providerToken,
 						})
+						if err != nil {
+							return false, err
+						}
+						return completion.Accepted, nil
 					},
 					PublishOutputDelta: func(
 						ctx context.Context,

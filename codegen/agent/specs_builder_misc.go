@@ -231,7 +231,7 @@ func isEmptyStruct(att *goaexpr.AttributeExpr) bool {
 // schemaVariantsForAttribute builds two JSON schemas for att. Both keep nested
 // examples written in the design and remove examples invented by Goa. The first
 // also keeps the root example written in the design; the second leaves it out.
-func schemaVariantsForAttribute(
+func (contract specJSONContract) schemaVariantsForAttribute(
 	api *goaexpr.APIExpr,
 	att *goaexpr.AttributeExpr,
 	example any,
@@ -262,14 +262,14 @@ func schemaVariantsForAttribute(
 				// cycle while the schema is marshaled.
 				root := *def
 				root.Defs = maps.Clone(schema.Defs)
-				return schemaVariantBytes(&root, att, example)
+				return contract.schemaVariantBytes(&root, att, example)
 			}
 		}
 	}
-	return schemaVariantBytes(schema, att, example)
+	return contract.schemaVariantBytes(schema, att, example)
 }
 
-func schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, example any) ([]byte, []byte, error) {
+func (contract specJSONContract) schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, example any) ([]byte, []byte, error) {
 	prevExample := schema.Example
 	schema.Example = example
 	annotated, err := schema.JSON()
@@ -277,12 +277,12 @@ func schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, exam
 		schema.Example = prevExample
 		return annotated, nil, err
 	}
-	annotated, err = alignSchemaWithGeneratedDecoder(annotated, att)
+	annotated, err = contract.alignSchemaWithGeneratedDecoder(annotated, att)
 	if err != nil {
 		schema.Example = prevExample
 		return annotated, nil, err
 	}
-	annotated, err = projectAuthoredSchemaExamples(annotated, att, example)
+	annotated, err = contract.projectAuthoredSchemaExamples(annotated, att, example)
 	if err != nil {
 		schema.Example = prevExample
 		return annotated, nil, err
@@ -293,18 +293,18 @@ func schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, exam
 	if err != nil {
 		return annotated, plain, err
 	}
-	plain, err = alignSchemaWithGeneratedDecoder(plain, att)
+	plain, err = contract.alignSchemaWithGeneratedDecoder(plain, att)
 	if err != nil {
 		return annotated, plain, err
 	}
-	plain, err = projectAuthoredSchemaExamples(plain, att, nil)
+	plain, err = contract.projectAuthoredSchemaExamples(plain, att, nil)
 	return annotated, plain, err
 }
 
 // projectAuthoredSchemaExamples removes examples synthesized while Goa builds
 // the OpenAPI schema, then restores examples explicitly authored in the Goa
 // contract. Generated placeholder values are not model guidance.
-func projectAuthoredSchemaExamples(schemaBytes []byte, att *goaexpr.AttributeExpr, rootExample any) ([]byte, error) {
+func (contract specJSONContract) projectAuthoredSchemaExamples(schemaBytes []byte, att *goaexpr.AttributeExpr, rootExample any) ([]byte, error) {
 	var schema map[string]any
 	if err := json.Unmarshal(schemaBytes, &schema); err != nil {
 		return nil, fmt.Errorf("decode generated tool schema: %w", err)
@@ -314,7 +314,7 @@ func projectAuthoredSchemaExamples(schemaBytes []byte, att *goaexpr.AttributeExp
 		schema["example"] = rootExample
 	}
 	defs, _ := schema["$defs"].(map[string]any)
-	restoreNestedSchemaExamples(att, schema, defs, make(map[string]struct{}), true)
+	contract.restoreNestedSchemaExamples(att, schema, defs, make(map[string]struct{}), true)
 	projected, err := json.Marshal(schema)
 	if err != nil {
 		return nil, fmt.Errorf("encode generated tool schema: %w", err)
@@ -324,7 +324,7 @@ func projectAuthoredSchemaExamples(schemaBytes []byte, att *goaexpr.AttributeExp
 
 // restoreNestedSchemaExamples projects explicitly authored examples onto the
 // matching schema nodes after synthesized examples have been removed.
-func restoreNestedSchemaExamples(att *goaexpr.AttributeExpr, schema, defs map[string]any, seen map[string]struct{}, root bool) {
+func (contract specJSONContract) restoreNestedSchemaExamples(att *goaexpr.AttributeExpr, schema, defs map[string]any, seen map[string]struct{}, root bool) {
 	if att == nil || len(schema) == 0 {
 		return
 	}
@@ -337,40 +337,40 @@ func restoreNestedSchemaExamples(att *goaexpr.AttributeExpr, schema, defs map[st
 			return
 		}
 		seen[refName] = struct{}{}
-		restoreNestedSchemaExamples(att, definition, defs, seen, root)
+		contract.restoreNestedSchemaExamples(att, definition, defs, seen, root)
 		delete(seen, refName)
 		return
 	}
 	if !root {
-		if example := authoredExampleForAttribute(att); example != nil {
+		if example := contract.authoredExampleForAttribute(att); example != nil {
 			schema["example"] = example.Value
 		}
 	}
-	restoreSchemaChildExamples(att, schema, defs, seen)
+	contract.restoreSchemaChildExamples(att, schema, defs, seen)
 }
 
 // restoreSchemaChildExamples follows the attribute and specialized JSON Schema
-// together so each nested authored example lands on its model-visible node.
-func restoreSchemaChildExamples(att *goaexpr.AttributeExpr, schema, defs map[string]any, seen map[string]struct{}) {
+// together so each nested authored example lands on its matching JSON node.
+func (contract specJSONContract) restoreSchemaChildExamples(att *goaexpr.AttributeExpr, schema, defs map[string]any, seen map[string]struct{}) {
 	switch actual := att.Type.(type) {
 	case goaexpr.UserType:
-		restoreSchemaChildExamples(actual.Attribute(), schema, defs, seen)
+		contract.restoreSchemaChildExamples(actual.Attribute(), schema, defs, seen)
 	case *goaexpr.Object:
 		properties, _ := schema["properties"].(map[string]any)
 		for _, nat := range *actual {
-			name, ok := transportFieldName(nat)
+			name, ok := contract.transportFieldName(nat)
 			if !ok {
 				continue
 			}
 			child, _ := properties[name].(map[string]any)
-			restoreNestedSchemaExamples(nat.Attribute, child, defs, seen, false)
+			contract.restoreNestedSchemaExamples(nat.Attribute, child, defs, seen, false)
 		}
 	case *goaexpr.Array:
 		items, _ := schema["items"].(map[string]any)
-		restoreNestedSchemaExamples(actual.ElemType, items, defs, seen, false)
+		contract.restoreNestedSchemaExamples(actual.ElemType, items, defs, seen, false)
 	case *goaexpr.Map:
 		values, _ := schema["additionalProperties"].(map[string]any)
-		restoreNestedSchemaExamples(actual.ElemType, values, defs, seen, false)
+		contract.restoreNestedSchemaExamples(actual.ElemType, values, defs, seen, false)
 	case *goaexpr.Union:
 		valueKey := actual.GetValueKey()
 		if valueKey == "" {
@@ -384,7 +384,7 @@ func restoreSchemaChildExamples(att *goaexpr.AttributeExpr, schema, defs map[str
 			branch, _ := branches[i].(map[string]any)
 			properties, _ := branch["properties"].(map[string]any)
 			value, _ := properties[valueKey].(map[string]any)
-			restoreNestedSchemaExamples(nat.Attribute, value, defs, seen, false)
+			contract.restoreNestedSchemaExamples(nat.Attribute, value, defs, seen, false)
 		}
 	}
 }
@@ -408,7 +408,7 @@ func removeSchemaExamples(node any) {
 // alignSchemaWithGeneratedDecoder closes Goa objects to unknown fields and
 // changes each union to the {type,value} JSON object accepted by generated
 // decoders. Maps remain open because their keys are caller-defined.
-func alignSchemaWithGeneratedDecoder(schemaBytes []byte, att *goaexpr.AttributeExpr) ([]byte, error) {
+func (contract specJSONContract) alignSchemaWithGeneratedDecoder(schemaBytes []byte, att *goaexpr.AttributeExpr) ([]byte, error) {
 	if len(schemaBytes) == 0 || att == nil {
 		return schemaBytes, nil
 	}
@@ -417,7 +417,7 @@ func alignSchemaWithGeneratedDecoder(schemaBytes []byte, att *goaexpr.AttributeE
 		return nil, fmt.Errorf("unmarshal schema for generated decoder: %w", err)
 	}
 	defs, _ := doc["$defs"].(map[string]any)
-	if err := alignSchemaNodeWithGeneratedDecoder(att, doc, defs, map[string]struct{}{}); err != nil {
+	if err := contract.alignSchemaNodeWithGeneratedDecoder(att, doc, defs, map[string]struct{}{}); err != nil {
 		return nil, err
 	}
 	out, err := json.Marshal(doc)
@@ -430,12 +430,12 @@ func alignSchemaWithGeneratedDecoder(schemaBytes []byte, att *goaexpr.AttributeE
 // alignSchemaNodeWithGeneratedDecoder updates one schema node using its Goa type.
 // Named types are followed through $defs while seen prevents recursive types
 // from visiting the same definition forever.
-func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
+func (contract specJSONContract) alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
 	if att == nil || att.Type == nil || len(schema) == 0 {
 		return nil
 	}
 	if example, ok := schema["example"]; ok {
-		normalized, ok := canonicalizeSchemaExample(att, example)
+		normalized, ok := contract.canonicalizeSchemaExample(att, example)
 		if !ok {
 			delete(schema, "example")
 		} else {
@@ -452,11 +452,11 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 		}
 		seen[refName] = struct{}{}
 		defer delete(seen, refName)
-		return alignSchemaNodeWithGeneratedDecoder(att, defSchema, defs, seen)
+		return contract.alignSchemaNodeWithGeneratedDecoder(att, defSchema, defs, seen)
 	}
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
-		return alignSchemaNodeWithGeneratedDecoder(dt.Attribute(), schema, defs, seen)
+		return contract.alignSchemaNodeWithGeneratedDecoder(dt.Attribute(), schema, defs, seen)
 	case *goaexpr.Object:
 		schema["additionalProperties"] = false
 		properties, _ := schema["properties"].(map[string]any)
@@ -466,7 +466,7 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 			if !ok {
 				return fmt.Errorf("schema for field %q is missing", name)
 			}
-			if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, childSchema, defs, seen); err != nil {
+			if err := contract.alignSchemaNodeWithGeneratedDecoder(nat.Attribute, childSchema, defs, seen); err != nil {
 				return err
 			}
 		}
@@ -475,7 +475,7 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 		if !ok {
 			return fmt.Errorf("array schema is missing items")
 		}
-		return alignSchemaNodeWithGeneratedDecoder(dt.ElemType, items, defs, seen)
+		return contract.alignSchemaNodeWithGeneratedDecoder(dt.ElemType, items, defs, seen)
 	case *goaexpr.Map:
 		values, ok := schema["additionalProperties"].(map[string]any)
 		if !ok {
@@ -485,14 +485,14 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 			}
 			return fmt.Errorf("map schema is missing additionalProperties")
 		}
-		return alignSchemaNodeWithGeneratedDecoder(dt.ElemType, values, defs, seen)
+		return contract.alignSchemaNodeWithGeneratedDecoder(dt.ElemType, values, defs, seen)
 	case *goaexpr.Union:
-		return rewriteUnionSchema(dt, schema, defs, seen)
+		return contract.rewriteUnionSchema(dt, schema, defs, seen)
 	}
 	return nil
 }
 
-func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
+func (contract specJSONContract) rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
 	typeKey := union.GetTypeKey()
 	if typeKey == "" {
 		typeKey = unionTypeKeyDefault
@@ -525,7 +525,7 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[st
 			branch["description"] = nat.Attribute.Description
 		}
 		branch["additionalProperties"] = false
-		if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, valueSchema, defs, seen); err != nil {
+		if err := contract.alignSchemaNodeWithGeneratedDecoder(nat.Attribute, valueSchema, defs, seen); err != nil {
 			return err
 		}
 	}
@@ -548,7 +548,7 @@ func schemaRefName(schema map[string]any) string {
 
 // authoredExampleForAttribute returns the last Example(...) written for source
 // in the same JSON shape accepted by the generated decoder.
-func authoredExampleForAttribute(source *goaexpr.AttributeExpr) *exampleData {
+func (contract specJSONContract) authoredExampleForAttribute(source *goaexpr.AttributeExpr) *exampleData {
 	if source == nil {
 		return nil
 	}
@@ -556,12 +556,12 @@ func authoredExampleForAttribute(source *goaexpr.AttributeExpr) *exampleData {
 	if len(examples) == 0 {
 		return nil
 	}
-	return normalizeExampleValue(source, examples[len(examples)-1].Value)
+	return contract.normalizeExampleValue(source, examples[len(examples)-1].Value)
 }
 
 // normalizeExampleValue changes one example to ordinary JSON values and writes
 // each union as the {type,value} object accepted by the generated decoder.
-func normalizeExampleValue(att *goaexpr.AttributeExpr, v any) *exampleData {
+func (contract specJSONContract) normalizeExampleValue(att *goaexpr.AttributeExpr, v any) *exampleData {
 	// Normalize to JSON-native shapes (map[string]any, []any, float64, string, bool)
 	// so downstream rewriting logic doesn't have to handle typed maps/slices that
 	// Goa's example generator may produce for single-field objects.
@@ -573,8 +573,8 @@ func normalizeExampleValue(att *goaexpr.AttributeExpr, v any) *exampleData {
 	if err := json.Unmarshal(raw, &normalized); err != nil {
 		return nil
 	}
-	normalized = canonicalizeUnionExamples(att, normalized)
-	normalized = projectExampleFieldNames(att, normalized)
+	normalized = contract.canonicalizeUnionExamples(att, normalized)
+	normalized = contract.projectExampleFieldNames(att, normalized)
 	data, err := json.Marshal(normalized)
 	if err != nil || len(data) == 0 {
 		return nil
@@ -587,14 +587,14 @@ func normalizeExampleValue(att *goaexpr.AttributeExpr, v any) *exampleData {
 }
 
 // projectExampleFieldNames rewrites authored example object keys from Goa
-// attribute names to the generated model-facing JSON property names.
-func projectExampleFieldNames(att *goaexpr.AttributeExpr, example any) any {
+// attribute names to the JSON names selected for this occurrence.
+func (contract specJSONContract) projectExampleFieldNames(att *goaexpr.AttributeExpr, example any) any {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return example
 	}
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
-		return projectExampleFieldNames(dt.Attribute(), example)
+		return contract.projectExampleFieldNames(dt.Attribute(), example)
 	case *goaexpr.Object:
 		m, ok := example.(map[string]any)
 		if !ok {
@@ -602,7 +602,7 @@ func projectExampleFieldNames(att *goaexpr.AttributeExpr, example any) any {
 		}
 		projected := make(map[string]any, len(m))
 		for _, nat := range *dt {
-			name, ok := transportFieldName(nat)
+			name, ok := contract.transportFieldName(nat)
 			if !ok {
 				continue
 			}
@@ -613,7 +613,7 @@ func projectExampleFieldNames(att *goaexpr.AttributeExpr, example any) any {
 			if !exists {
 				continue
 			}
-			projected[name] = projectExampleFieldNames(nat.Attribute, value)
+			projected[name] = contract.projectExampleFieldNames(nat.Attribute, value)
 		}
 		return projected
 	case *goaexpr.Array:
@@ -622,7 +622,7 @@ func projectExampleFieldNames(att *goaexpr.AttributeExpr, example any) any {
 			return example
 		}
 		for i, v := range s {
-			s[i] = projectExampleFieldNames(dt.ElemType, v)
+			s[i] = contract.projectExampleFieldNames(dt.ElemType, v)
 		}
 		return s
 	case *goaexpr.Map:
@@ -631,11 +631,11 @@ func projectExampleFieldNames(att *goaexpr.AttributeExpr, example any) any {
 			return example
 		}
 		for k, v := range m {
-			m[k] = projectExampleFieldNames(dt.ElemType, v)
+			m[k] = contract.projectExampleFieldNames(dt.ElemType, v)
 		}
 		return m
 	case *goaexpr.Union:
-		return projectUnionExampleFieldNames(dt, example)
+		return contract.projectUnionExampleFieldNames(dt, example)
 	default:
 		return example
 	}
@@ -643,7 +643,7 @@ func projectExampleFieldNames(att *goaexpr.AttributeExpr, example any) any {
 
 // projectUnionExampleFieldNames keeps a union's {type,value} object and changes
 // field names inside the selected value to their JSON names.
-func projectUnionExampleFieldNames(u *goaexpr.Union, example any) any {
+func (contract specJSONContract) projectUnionExampleFieldNames(u *goaexpr.Union, example any) any {
 	m, ok := example.(map[string]any)
 	if !ok {
 		return example
@@ -665,7 +665,7 @@ func projectUnionExampleFieldNames(u *goaexpr.Union, example any) any {
 			continue
 		}
 		if value, exists := m[valueKey]; exists {
-			m[valueKey] = projectExampleFieldNames(nat.Attribute, value)
+			m[valueKey] = contract.projectExampleFieldNames(nat.Attribute, value)
 		}
 		return m
 	}
@@ -691,32 +691,32 @@ func exampleValue(example *exampleData) any {
 //
 // Goa returns only the selected branch value. This function keeps all other
 // example values unchanged and wraps each union value with its branch name.
-func canonicalizeUnionExamples(att *goaexpr.AttributeExpr, example any) any {
-	normalized, _ := canonicalizeUnionExampleValue(att, example, true)
+func (contract specJSONContract) canonicalizeUnionExamples(att *goaexpr.AttributeExpr, example any) any {
+	normalized, _ := contract.canonicalizeUnionExampleValue(att, example, true)
 	return normalized
 }
 
 // canonicalizeSchemaExample adds the branch name to a generated union example.
 // It returns false when no branch matches the example.
-func canonicalizeSchemaExample(att *goaexpr.AttributeExpr, example any) (any, bool) {
-	return canonicalizeUnionExampleValue(att, example, false)
+func (contract specJSONContract) canonicalizeSchemaExample(att *goaexpr.AttributeExpr, example any) (any, bool) {
+	return contract.canonicalizeUnionExampleValue(att, example, false)
 }
 
-func canonicalizeUnionExampleValue(att *goaexpr.AttributeExpr, example any, strict bool) (any, bool) {
+func (contract specJSONContract) canonicalizeUnionExampleValue(att *goaexpr.AttributeExpr, example any, strict bool) (any, bool) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return example, true
 	}
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
-		return canonicalizeUnionExampleValue(dt.Attribute(), example, strict)
+		return contract.canonicalizeUnionExampleValue(dt.Attribute(), example, strict)
 	case *goaexpr.Object:
 		m, ok := example.(map[string]any)
 		if !ok {
 			return example, true
 		}
 		for k, v := range m {
-			child := exampleChildAttribute(att, k)
-			normalized, ok := canonicalizeUnionExampleValue(child, v, strict)
+			child := contract.exampleChildAttribute(att, k)
+			normalized, ok := contract.canonicalizeUnionExampleValue(child, v, strict)
 			if !ok {
 				return nil, false
 			}
@@ -729,7 +729,7 @@ func canonicalizeUnionExampleValue(att *goaexpr.AttributeExpr, example any, stri
 			return example, true
 		}
 		for i, v := range s {
-			normalized, ok := canonicalizeUnionExampleValue(dt.ElemType, v, strict)
+			normalized, ok := contract.canonicalizeUnionExampleValue(dt.ElemType, v, strict)
 			if !ok {
 				return nil, false
 			}
@@ -742,7 +742,7 @@ func canonicalizeUnionExampleValue(att *goaexpr.AttributeExpr, example any, stri
 			return example, true
 		}
 		for k, v := range m {
-			normalized, ok := canonicalizeUnionExampleValue(dt.ElemType, v, strict)
+			normalized, ok := contract.canonicalizeUnionExampleValue(dt.ElemType, v, strict)
 			if !ok {
 				return nil, false
 			}
@@ -764,7 +764,7 @@ func canonicalizeUnionExampleValue(att *goaexpr.AttributeExpr, example any, stri
 		}
 
 		var chosen *goaexpr.NamedAttributeExpr
-		if canonical, ok := canonicalUnionExample(dt, example, typeKey, valueKey, strict); ok {
+		if canonical, ok := contract.canonicalUnionExample(dt, example, typeKey, valueKey, strict); ok {
 			return canonical, true
 		}
 		chosen = pickUnionVariantForExample(dt, example)
@@ -774,7 +774,7 @@ func canonicalizeUnionExampleValue(att *goaexpr.AttributeExpr, example any, stri
 			}
 			return nil, false
 		}
-		value, ok := canonicalizeUnionExampleValue(chosen.Attribute, example, strict)
+		value, ok := contract.canonicalizeUnionExampleValue(chosen.Attribute, example, strict)
 		if !ok {
 			return nil, false
 		}
@@ -789,8 +789,8 @@ func canonicalizeUnionExampleValue(att *goaexpr.AttributeExpr, example any, stri
 }
 
 // exampleChildAttribute resolves an authored example object key against both
-// the Goa design field name and the generated model-facing JSON field name.
-func exampleChildAttribute(att *goaexpr.AttributeExpr, key string) *goaexpr.AttributeExpr {
+// the Goa design field name and the JSON name selected for this occurrence.
+func (contract specJSONContract) exampleChildAttribute(att *goaexpr.AttributeExpr, key string) *goaexpr.AttributeExpr {
 	if att == nil || att.Type == nil {
 		return nil
 	}
@@ -802,7 +802,7 @@ func exampleChildAttribute(att *goaexpr.AttributeExpr, key string) *goaexpr.Attr
 		return nil
 	}
 	for _, nat := range *obj {
-		if name, ok := transportFieldName(nat); ok && name == key {
+		if name, ok := contract.transportFieldName(nat); ok && name == key {
 			return nat.Attribute
 		}
 	}
@@ -811,7 +811,7 @@ func exampleChildAttribute(att *goaexpr.AttributeExpr, key string) *goaexpr.Attr
 
 // canonicalUnionExample reads an example that already names its union branch
 // and fixes any union examples inside the selected value.
-func canonicalUnionExample(u *goaexpr.Union, example any, typeKey, valueKey string, strict bool) (any, bool) {
+func (contract specJSONContract) canonicalUnionExample(u *goaexpr.Union, example any, typeKey, valueKey string, strict bool) (any, bool) {
 	m, ok := example.(map[string]any)
 	if !ok {
 		return nil, false
@@ -837,7 +837,7 @@ func canonicalUnionExample(u *goaexpr.Union, example any, typeKey, valueKey stri
 		}
 		return nil, false
 	}
-	normalized, ok := canonicalizeUnionExampleValue(chosen.Attribute, value, strict)
+	normalized, ok := contract.canonicalizeUnionExampleValue(chosen.Attribute, value, strict)
 	if !ok {
 		return nil, false
 	}

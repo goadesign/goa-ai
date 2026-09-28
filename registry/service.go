@@ -52,7 +52,7 @@ type (
 			toolset, toolUseID, callRegistrationToken, providerRegistrationToken,
 			providerLease, requestEventID, resultStreamID string,
 			payload []byte,
-		) error
+		) (bool, error)
 		PublishLiveEvent(
 			ctx context.Context,
 			toolset, toolUseID, callRegistrationToken, providerRegistrationToken,
@@ -80,6 +80,7 @@ type (
 		validator      *schemaValidator
 		streamManager  StreamManager
 		healthTracker  HealthTracker
+		catalogHealth  func(catalogState, time.Time) ToolsetHealth
 		callAdmissions callAdmissionRepository
 
 		pulseClient           clientspulse.Client
@@ -96,6 +97,9 @@ type (
 		StreamManager StreamManager
 		// HealthTracker tracks provider health status.
 		HealthTracker HealthTracker
+		// CatalogHealth derives service health from the already selected record
+		// and Redis time, without a second read or lease mutation.
+		CatalogHealth func(catalogState, time.Time) ToolsetHealth
 		// CallAdmissions atomically coordinates call publication across replicas.
 		CallAdmissions callAdmissionRepository
 		// PulseClient creates/opens Pulse streams. Required for CallTool.
@@ -162,6 +166,9 @@ func newService(opts serviceOptions) (*Service, error) {
 	if opts.HealthTracker == nil {
 		return nil, fmt.Errorf("health tracker is required")
 	}
+	if opts.CatalogHealth == nil {
+		return nil, fmt.Errorf("catalog health observation is required")
+	}
 	if opts.CallAdmissions == nil {
 		return nil, fmt.Errorf("call admission store is required")
 	}
@@ -214,6 +221,7 @@ func newService(opts serviceOptions) (*Service, error) {
 		validator:             opts.catalog.validator,
 		streamManager:         opts.StreamManager,
 		healthTracker:         opts.HealthTracker,
+		catalogHealth:         opts.CatalogHealth,
 		callAdmissions:        opts.CallAdmissions,
 		pulseClient:           opts.PulseClient,
 		executionTimeout:      executionTimeout,
@@ -225,6 +233,21 @@ func newService(opts serviceOptions) (*Service, error) {
 // Register prepares routing and atomically admits or replaces the
 // catalog-owned admission and provider lease.
 func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) (*genregistry.RegisterResult, error) {
+	return s.register(ctx, p, nil)
+}
+
+// RegisterWithIdentity admits a provider and its explicit application resource
+// identity in the same catalog write. It preserves Register's lease and token
+// semantics; an existing route's identity must match.
+func (s *Service) RegisterWithIdentity(ctx context.Context, identity CatalogIdentity, p *genregistry.RegisterPayload) (*genregistry.RegisterResult, error) {
+	owned, err := identityInput(identity)
+	if err != nil {
+		return nil, err
+	}
+	return s.register(ctx, p, owned)
+}
+
+func (s *Service) register(ctx context.Context, p *genregistry.RegisterPayload, identity *CatalogIdentity) (*genregistry.RegisterResult, error) {
 	if err := toolregistry.ValidateWireProtocolVersion(p.WireProtocolVersion); err != nil {
 		return nil, genregistry.MakeValidationError(err)
 	}
@@ -258,6 +281,7 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 	if err != nil {
 		return nil, genregistry.MakeServiceUnavailable(err)
 	}
+	definition.identity = identity
 
 	// Ensure the Pulse request stream for this toolset exists.
 	_, _, err = s.streamManager.GetOrCreateStream(ctx, p.Name)
@@ -275,6 +299,8 @@ func (s *Service) Register(ctx context.Context, p *genregistry.RegisterPayload) 
 	)
 	if err != nil {
 		switch {
+		case errors.Is(err, errAdmissionConflict):
+			return nil, genregistry.MakeAdmissionBlocked(err)
 		case errors.Is(err, errAdmissionBlocked):
 			return nil, genregistry.MakeAdmissionBlocked(err)
 		case errors.Is(err, errAdmissionRetired):
@@ -579,22 +605,23 @@ func (s *Service) retryTerminalOrError(
 	return s.replayCallToolResult(ctx, prepared.toolUseID, prepared.resultStreamID, admission)
 }
 
-// CompleteToolCall atomically commits one exact provider terminal result.
-func (s *Service) CompleteToolCall(ctx context.Context, p *genregistry.CompleteToolCallPayload) error {
-	var result toolregistry.ToolResultMessage
-	if err := json.Unmarshal(p.ResultJSON, &result); err != nil {
-		return genregistry.MakeValidationError(fmt.Errorf("decode terminal result: %w", err))
+// CompleteToolCall checks the submitted terminal and reports whether Registry
+// retained those exact bytes or settled the execution deadline instead.
+func (s *Service) CompleteToolCall(ctx context.Context, p *genregistry.CompleteToolCallPayload) (*genregistry.CompleteToolCallResult, error) {
+	result, err := toolregistry.DecodeToolResultMessage(p.ResultJSON)
+	if err != nil {
+		return nil, genregistry.MakeValidationError(fmt.Errorf("decode terminal result: %w", err))
 	}
 	if err := toolregistry.ValidateToolResultMessage(result); err != nil {
-		return genregistry.MakeValidationError(fmt.Errorf("validate terminal result: %w", err))
+		return nil, genregistry.MakeValidationError(fmt.Errorf("validate terminal result: %w", err))
 	}
 	if result.Retry != nil {
-		return genregistry.MakeValidationError(fmt.Errorf("terminal result must not contain retry control"))
+		return nil, genregistry.MakeValidationError(fmt.Errorf("terminal result must not contain retry control"))
 	}
 	if result.ToolUseID != p.ToolUseID || result.RegistrationToken != p.RegistrationToken {
-		return genregistry.MakeValidationError(fmt.Errorf("terminal result identity does not match payload"))
+		return nil, genregistry.MakeValidationError(fmt.Errorf("terminal result identity does not match payload"))
 	}
-	if err := s.callAdmissions.Complete(
+	accepted, err := s.callAdmissions.Complete(
 		ctx,
 		p.Toolset,
 		p.ToolUseID,
@@ -604,13 +631,14 @@ func (s *Service) CompleteToolCall(ctx context.Context, p *genregistry.CompleteT
 		p.RequestEventID,
 		toolregistry.ResultStreamID(p.ToolUseID),
 		p.ResultJSON,
-	); err != nil {
+	)
+	if err != nil {
 		if errors.Is(err, errCallTerminalConflict) {
-			return genregistry.MakeValidationError(err)
+			return nil, genregistry.MakeValidationError(err)
 		}
-		return genregistry.MakeServiceUnavailable(fmt.Errorf("complete tool call: %w", err))
+		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("complete tool call: %w", err))
 	}
-	return nil
+	return &genregistry.CompleteToolCallResult{Accepted: accepted}, nil
 }
 
 // PublishToolOutputDelta appends a provider output fragment only while its

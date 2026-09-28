@@ -354,6 +354,58 @@ func TestResolvePromptRefsTraversesContinuationPredecessors(t *testing.T) {
 	}, refs)
 }
 
+// A resumed child keeps the original call's prompt history even when its
+// execution parent changes. An independent call is not a valid replacement.
+func TestResolvePromptRefsContinuedChildKeepsExactCallAcrossParents(t *testing.T) {
+	store := newTestStore()
+	parent := session.RunMeta{RunID: "parent-0", AgentID: "parent-agent", SessionID: "session", Status: session.RunStatusRunning}
+	admitRunForTest(t, store, parent)
+	for _, runID := range []string{"child-0", "independent-child"} {
+		admitRunForTest(t, store, session.RunMeta{
+			RunID: runID, AgentID: "child-agent", SessionID: "session",
+			ParentRunID: parent.RunID, Status: session.RunStatusRunning,
+		})
+		appendPromptEvent(t, store, runID, prompt.Ident(runID+"-prompt"), "v1")
+		require.NoError(t, storeSuspensionForTest(t.Context(), store, runID, session.RunSuspension{
+			ID: runID + "-suspension", Data: []byte(`{}`),
+		}))
+	}
+	require.NoError(t, storeSuspensionForTest(t.Context(), store, parent.RunID, session.RunSuspension{
+		ID: "parent-suspension", Data: []byte(`{}`),
+	}))
+	admitContinuedRunForTest(t, store, session.RunMeta{
+		RunID: "parent-1", AgentID: parent.AgentID, SessionID: parent.SessionID, Status: session.RunStatusRunning,
+	}, parent.RunID)
+	child := session.RunMeta{
+		RunID: "child-1", AgentID: "child-agent", SessionID: "session",
+		ParentRunID: "parent-1", Status: session.RunStatusRunning,
+	}
+	admitPromptChildContinuationForTest(t, store, child, "child-0", "call-child-0")
+	appendPromptEvent(t, store, child.RunID, "continued-prompt", "v2")
+	tracked := &promptRefsStore{Store: store, runReads: make(map[string]int), recordReads: make(map[string]int)}
+	rt := New(tracked)
+
+	refs, err := rt.ResolvePromptRefs(t.Context(), child.SessionID, child.RunID)
+	require.NoError(t, err)
+	require.Equal(t, []prompt.PromptRef{
+		{ID: "continued-prompt", Version: "v2"},
+		{ID: "child-0-prompt", Version: "v1"},
+	}, refs)
+	require.Equal(t, map[string]int{"child-1": 1, "child-0": 1}, tracked.recordReads)
+	require.Equal(t, map[string]int{"child-1": 1, "child-0": 1}, tracked.runReads)
+
+	// Both old children have the same Session, agent, and execution parent.
+	// Replacing the predecessor still contradicts this child's accepted seed.
+	tracked.recordPages = map[string]map[string]runlog.Page{
+		child.RunID: {"": {Events: []*runlog.Event{
+			runStartedRecord(t, child, "independent-child", "start"),
+		}}},
+	}
+	_, err = rt.ResolvePromptRefs(t.Context(), child.SessionID, child.RunID)
+	require.ErrorIs(t, err, errPromptRefsCorrupt)
+	require.ErrorContains(t, err, "accepted history does not match predecessor")
+}
+
 func TestResolvePromptRefsRejectsMalformedStartRecord(t *testing.T) {
 	store := newTestStore()
 	meta := session.RunMeta{
@@ -551,7 +603,7 @@ func TestResolvePromptRefsAllowsAcyclicConvergence(t *testing.T) {
 			ParentRunID: "root", Status: session.RunStatusRunning,
 		},
 	} {
-		admitContinuedRunForTest(t, store, meta, "predecessor")
+		admitPromptChildContinuationForTest(t, store, meta, "predecessor", "call-predecessor")
 	}
 	appendPromptEvent(t, store, "child-1", "child-1-prompt", "v1")
 	appendPromptEvent(t, store, "child-2", "child-2-prompt", "v1")
@@ -628,6 +680,51 @@ func TestResolvePromptRefsRejectsMissingRoot(t *testing.T) {
 	rt := New(newTestStore())
 	_, err := rt.ResolvePromptRefs(t.Context(), "session", "missing")
 	require.ErrorIs(t, err, session.ErrRunNotFound)
+}
+
+// admitPromptChildContinuationForTest publishes one small fixture's saved
+// history and admits its child through the real store. The supplied call ID
+// keeps the predecessor's original parent call instead of creating a new call.
+func admitPromptChildContinuationForTest(t *testing.T, store storage.Store, meta session.RunMeta, predecessorRunID, callID string) {
+	t.Helper()
+	page, err := store.ListRunRecords(t.Context(), predecessorRunID, "", 500)
+	require.NoError(t, err)
+	require.Empty(t, page.NextCursor)
+	require.NotEmpty(t, page.Events)
+	declaration := storage.SeedDeclaration{
+		AgentID: meta.AgentID, RunID: meta.RunID, SessionID: meta.SessionID,
+		CommandID: meta.RunID, AttemptID: meta.RunID, Kind: storage.SeedContinuation,
+		SourceRunID: predecessorRunID, SourceEndID: page.Events[len(page.Events)-1].ID,
+	}
+	seed, err := store.BeginRunSeed(t.Context(), declaration)
+	require.NoError(t, err)
+	writer := initialHistoryWriter{store: store, runID: meta.RunID, attemptID: meta.RunID, endID: storage.EmptySeedEndID}
+	require.NoError(t, writer.appendPrefix(t.Context(), seed.Source))
+	seedEndID := writer.endID
+	require.NoError(t, writer.publish(t.Context(), []byte(`{}`)))
+	parent, err := store.LoadRun(t.Context(), meta.ParentRunID)
+	require.NoError(t, err)
+	startedAt := time.Now().UTC().Truncate(time.Millisecond)
+	start := session.RunStart{
+		AgentID: meta.AgentID, RunID: meta.RunID, SessionID: meta.SessionID,
+		ParentRunID: meta.ParentRunID, PredecessorRunID: predecessorRunID,
+		SeedEndID: seedEndID, StartedAt: startedAt, Labels: meta.Labels,
+	}
+	started := testHookRecord(t, hooks.NewRunStartedEvent(
+		meta.RunID, agent.Ident(meta.AgentID), meta.SessionID, meta.ParentRunID, predecessorRunID, meta.Labels,
+	), "start", startedAt)
+	linked := testHookRecord(t, hooks.NewChildRunLinkedEvent(
+		parent.RunID, agent.Ident(parent.AgentID), meta.SessionID, "test.child", callID, meta.RunID, agent.Ident(meta.AgentID),
+	), "child-link-"+meta.RunID, startedAt)
+	canceled := testHookRecord(t, hooks.NewRunCompletedEvent(
+		meta.RunID, agent.Ident(meta.AgentID), meta.SessionID, "canceled", agentrun.PhaseCanceled,
+		meta.Labels, context.Canceled, &agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
+	), "stopped", startedAt)
+	result, err := store.StartChildRun(t.Context(), storage.ChildRunStart{
+		RequestDigest: [32]byte{1}, Run: start, ParentLinked: linked, Started: started, Canceled: canceled,
+	})
+	require.NoError(t, err)
+	require.Equal(t, session.RunStartProceed, result.Outcome)
 }
 
 func appendPromptEvent(t *testing.T, store storage.Store, runID string, promptID prompt.Ident, version string) {

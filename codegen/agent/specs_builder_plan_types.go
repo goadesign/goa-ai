@@ -131,13 +131,13 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 	if payload == nil || payload.Type == nil || payload.Type == goaexpr.Empty {
 		payload = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
 	}
-	if err := p.declareTypeImports(owner, payload, usagePayload); err != nil {
+	if err := p.declareTypeImports(owner, payload, usagePayload, specJSONModel); err != nil {
 		return err
 	}
 	if isDedicatedContinuation(tool) {
 		modelOwner := *owner
 		modelOwner.ModelHiddenPayloadFields = modelHiddenPayloadFields(tool)
-		if err := p.declareTypeImports(&modelOwner, payload, usageModelPayload); err != nil {
+		if err := p.declareTypeImports(&modelOwner, payload, usageModelPayload, specJSONModel); err != nil {
 			return err
 		}
 	}
@@ -154,14 +154,18 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 	if result == nil {
 		result = &goaexpr.AttributeExpr{Type: goaexpr.Empty}
 	}
-	if err := p.declareTypeImports(owner, result, usageResult); err != nil {
+	if err := p.declareTypeImports(owner, result, usageResult, specJSONModel); err != nil {
 		return err
 	}
 	for _, serverData := range tool.ServerData {
 		if serverData == nil || serverData.Schema == nil {
 			continue
 		}
-		if err := p.declareTypeImports(owner, serverData.Schema, usageServerData); err != nil {
+		contract := specJSONModel
+		if serverData.NativeImage {
+			contract = specJSONNativeImage
+		}
+		if err := p.declareTypeImports(owner, serverData.Schema, usageServerData, contract); err != nil {
 			return err
 		}
 	}
@@ -186,7 +190,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 	if payload == nil || payload.Type == nil || payload.Type == goaexpr.Empty {
 		payload = &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}
 	}
-	if err := p.declareType(owner, payload, usagePayload, ""); err != nil {
+	if err := p.declareType(owner, payload, usagePayload, "", specJSONModel); err != nil {
 		return err
 	}
 	names := p.tools[tool.Name]
@@ -195,7 +199,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 	if isDedicatedContinuation(tool) {
 		modelOwner := *owner
 		modelOwner.ModelHiddenPayloadFields = modelHiddenPayloadFields(tool)
-		if err := p.declareType(&modelOwner, payload, usageModelPayload, ""); err != nil {
+		if err := p.declareType(&modelOwner, payload, usageModelPayload, "", specJSONModel); err != nil {
 			return err
 		}
 		names.modelPayloadType = p.types[stableTypeKey(owner, usageModelPayload, "")]
@@ -228,7 +232,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 	if result == nil {
 		result = &goaexpr.AttributeExpr{Type: goaexpr.Empty}
 	}
-	if err := p.declareType(owner, result, usageResult, ""); err != nil {
+	if err := p.declareType(owner, result, usageResult, "", specJSONModel); err != nil {
 		return err
 	}
 	names.resultType = p.types[stableTypeKey(owner, usageResult, "")]
@@ -239,7 +243,11 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 		if serverData == nil || serverData.Schema == nil {
 			continue
 		}
-		if err := p.declareType(owner, serverData.Schema, usageServerData, serverData.Kind); err != nil {
+		contract := specJSONModel
+		if serverData.NativeImage {
+			contract = specJSONNativeImage
+		}
+		if err := p.declareType(owner, serverData.Schema, usageServerData, serverData.Kind, contract); err != nil {
 			return err
 		}
 		names.serverDataTypes[serverData.Kind] = p.types[stableTypeKey(owner, usageServerData, serverData.Kind)]
@@ -304,7 +312,7 @@ func (p *toolSpecsPackagePlan) declareToolTransforms(toolset string, tool *agent
 
 // declareType records one public Go type, its JSON-decoding Go type, every
 // union it contains, and the functions that copy values between the two types.
-func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *goaexpr.AttributeExpr, usage typeUsage, qualifier string) error {
+func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *goaexpr.AttributeExpr, usage typeUsage, qualifier string, contract specJSONContract) error {
 	identity := stableTypeKey(owner, usage, qualifier)
 	if p.types[identity] != nil {
 		return nil
@@ -321,7 +329,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 	case usageServerData:
 		preferred += goacodegen.Goify(qualifier, true) + "ServerData"
 	}
-	shapes := localizedSpecShapes(owner, attribute, usage)
+	shapes := localizedSpecShapes(owner, attribute, usage, contract)
 	public := shapes.public
 	publicTypes := shapes.publicTypes
 	if err := p.declareLocalTypes(p.public, p.publicTypes, p.publicTypeUses, publicTypes); err != nil {
@@ -429,11 +437,14 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 	if err != nil {
 		return err
 	}
-	jsonValidator, err := p.declareJSONValidator(key, preferred, cloneModelSchemaAttribute(shapes.transport), owner, usage)
+	schemaShape := contract.schemaAttribute(shapes.transport)
+	jsonValidator, err := p.declareJSONValidator(key, preferred, schemaShape, owner, usage)
 	if err != nil {
 		return err
 	}
 	p.types[identity] = &plannedSpecType{
+		jsonContract:         contract,
+		schemaShape:          schemaShape,
 		publicDeclaration:    publicDeclaration,
 		transportDeclaration: transportDeclaration,
 		publicLayout:         publicLayout,
@@ -465,8 +476,8 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 
 // declareTypeImports records the packages written by the generated type,
 // codec, union, and validation files before Goa chooses their final names.
-func (p *toolSpecsPackagePlan) declareTypeImports(owner *contractTypeOwner, attribute *goaexpr.AttributeExpr, usage typeUsage) error {
-	shapes := localizedSpecShapes(owner, attribute, usage)
+func (p *toolSpecsPackagePlan) declareTypeImports(owner *contractTypeOwner, attribute *goaexpr.AttributeExpr, usage typeUsage, contract specJSONContract) error {
+	shapes := localizedSpecShapes(owner, attribute, usage, contract)
 	for _, localized := range shapes.publicTypes {
 		if err := p.fileImports.publicTypes.AddTypeExpressions(localized.generated.AttributeExpr); err != nil {
 			return err
@@ -498,12 +509,12 @@ func (p *toolSpecsPackagePlan) declareTypeImports(owner *contractTypeOwner, attr
 // localizedSpecShapes copies one design type into the two package-specific
 // forms emitted by Goa-AI. Import planning and declaration use this function,
 // so a nested type cannot appear only after package names are fixed.
-func localizedSpecShapes(owner *contractTypeOwner, attribute *goaexpr.AttributeExpr, usage typeUsage) localizedSpecTypeShapes {
+func localizedSpecShapes(owner *contractTypeOwner, attribute *goaexpr.AttributeExpr, usage typeUsage, contract specJSONContract) localizedSpecTypeShapes {
 	shape := attribute
 	if userType, ok := attribute.Type.(goaexpr.UserType); ok && userType != goaexpr.Empty {
 		shape = userType.Attribute()
 	}
-	public, publicTypes := localizeNestedTypes(shape, false, nil)
+	public, publicTypes := localizeNestedTypes(shape, false, nil, specJSONModel)
 	transportSource := public
 	if (usage == usagePayload || usage == usageModelPayload) && len(owner.ModelHiddenPayloadFields) > 0 {
 		transportSource = modelTransportShape(public, owner.ModelHiddenPayloadFields)
@@ -528,12 +539,12 @@ func localizedSpecShapes(owner *contractTypeOwner, attribute *goaexpr.AttributeE
 			break
 		}
 	}
-	transport := cloneWithModelJSONTags(transportSource)
+	transport := contract.transportAttribute(transportSource)
 	publicSources := make(map[goaexpr.UserType]goaexpr.UserType, len(publicTypes))
 	for _, localized := range publicTypes {
 		publicSources[localized.generated] = localized.source
 	}
-	transport, transportTypes := localizeNestedTypes(transport, true, publicSources)
+	transport, transportTypes := localizeNestedTypes(transport, true, publicSources, contract)
 	return localizedSpecTypeShapes{
 		public:         public,
 		publicTypes:    publicTypes,
@@ -677,9 +688,10 @@ func (p *toolSpecsPackagePlan) declareTypeNames(key, preferred string, completio
 }
 
 // declareLocalTypes records the nested types that one output package writes.
-func (p *toolSpecsPackagePlan) declareLocalTypes(pkg *goacodegen.GeneratedPackage, declared map[goaexpr.UserType]*goacodegen.TypeDeclaration, uses map[goaexpr.UserType]*goacodegen.NameDeclaration, types []*localizedType) error {
+func (p *toolSpecsPackagePlan) declareLocalTypes(pkg *goacodegen.GeneratedPackage, declared map[localizedTypeKey]*goacodegen.TypeDeclaration, uses map[goaexpr.UserType]*goacodegen.NameDeclaration, types []*localizedType) error {
 	for _, localized := range types {
-		if declaration := declared[localized.source]; declaration != nil {
+		key := localizedTypeKey{source: localized.source, jsonContract: localized.jsonContract}
+		if declaration := declared[key]; declaration != nil {
 			if err := pkg.BindGeneratedType(localized.generated, declaration); err != nil {
 				return err
 			}
@@ -689,7 +701,7 @@ func (p *toolSpecsPackagePlan) declareLocalTypes(pkg *goacodegen.GeneratedPackag
 		}
 		declaration, err := pkg.DeclareGeneratedType(
 			localized.generated.TypeName,
-			newLocalizedTypeNameOrder(pkg.ImportPath(), localized.source, localizedTypeDeclarationName),
+			newLocalizedTypeNameOrder(pkg.ImportPath(), localized.source, localizedTypeDeclarationName, localized.jsonContract),
 		)
 		if err != nil {
 			return err
@@ -697,7 +709,7 @@ func (p *toolSpecsPackagePlan) declareLocalTypes(pkg *goacodegen.GeneratedPackag
 		if err := pkg.BindGeneratedType(localized.generated, declaration); err != nil {
 			return err
 		}
-		declared[localized.source] = declaration
+		declared[key] = declaration
 		localized.declaration = declaration
 		uses[localized.generated] = declaration.Declaration()
 		if pkg == p.transport {
@@ -706,12 +718,12 @@ func (p *toolSpecsPackagePlan) declareLocalTypes(pkg *goacodegen.GeneratedPackag
 				declaration.Declaration(),
 				"Validate",
 				"",
-				newLocalizedTypeNameOrder(pkg.ImportPath(), localized.source, localizedTypeValidatorName),
+				newLocalizedTypeNameOrder(pkg.ImportPath(), localized.source, localizedTypeValidatorName, localized.jsonContract),
 			)
 			if err != nil {
 				return err
 			}
-			p.transportValidators[localized.source] = validator
+			p.transportValidators[declaration] = validator
 		}
 	}
 	return nil

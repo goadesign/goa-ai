@@ -5,6 +5,7 @@ package registry
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -23,6 +24,9 @@ type (
 	catalogStore interface {
 		Read(context.Context, string) (string, bool, error)
 		Snapshot(context.Context, string) (string, string, bool, bool, error)
+		BoundedSnapshot(context.Context, string, int64) (catalogSnapshot, error)
+		After(context.Context, string, string, int) ([]string, error)
+		Contains(context.Context, string, string) (bool, error)
 		Keys(context.Context) ([]string, error)
 		DefinitionKeys(context.Context) ([]string, error)
 		Retired(context.Context, string) (bool, error)
@@ -42,6 +46,8 @@ type (
 		RetireToken            string
 		LiveLease              string
 		RoutableUntilUnixMilli int64
+		Scope                  string
+		Indexed                bool
 	}
 
 	redisCatalogStore struct {
@@ -49,6 +55,7 @@ type (
 		state       string
 		definitions string
 		retired     string
+		indexPrefix string
 	}
 )
 
@@ -109,6 +116,12 @@ if tonumber(ARGV[8]) > 0 then
     return 0
   end
 end
+if ARGV[9] ~= "" then
+  local index_type = redis.call("TYPE", KEYS[4]).ok
+  if index_type ~= "none" and index_type ~= "zset" then
+    return redis.error_reply("CATALOGINVALIDINDEX")
+  end
+end
 if ARGV[4] ~= "" then
   redis.call("HSET", KEYS[2], ARGV[1], ARGV[4])
 end
@@ -116,6 +129,11 @@ if ARGV[6] ~= "" then
   redis.call("SADD", KEYS[3], ARGV[6])
 end
 redis.call("HSET", KEYS[1], ARGV[1], ARGV[3])
+if ARGV[9] == "active" then
+  redis.call("ZADD", KEYS[4], 0, ARGV[10])
+elseif ARGV[9] == "retired" then
+  redis.call("ZREM", KEYS[4], ARGV[10])
+end
 return 1
 `)
 )
@@ -128,6 +146,7 @@ func newRedisCatalogStore(client *redis.Client, name string) *redisCatalogStore 
 		state:       catalogStateHashKey(name),
 		definitions: "registry:" + name + ":definitions",
 		retired:     "registry:" + name + ":retired",
+		indexPrefix: "registry:" + name + ":scope:",
 	}
 }
 
@@ -186,9 +205,19 @@ func (s *redisCatalogStore) Commit(ctx context.Context, key, previous string, ne
 			attribute.Int("toolregistry.catalog.definition_write_bytes", len(next.Definition)),
 		))
 	defer finishCatalogSpan(ctx, span, &err)
+	indexState := ""
+	keys := []string{s.state, s.definitions, s.retired}
+	if next.Scope != "" {
+		keys = append(keys, s.scopeIndex(next.Scope))
+		indexState = string(catalogEntryRetired)
+		if next.Indexed {
+			indexState = string(catalogEntryActive)
+		}
+	}
 	result, err := catalogCommitScript.Run(ctx, s.redis,
-		[]string{s.state, s.definitions, s.retired},
+		keys,
 		key, previous, next.State, next.Definition, next.CandidateToken, next.RetireToken, next.LiveLease, next.RoutableUntilUnixMilli,
+		indexState, strings.TrimPrefix(key, toolsetCatalogKeyPrefix),
 	).Int()
 	if err != nil {
 		switch {
@@ -202,6 +231,10 @@ func (s *redisCatalogStore) Commit(ctx context.Context, key, previous string, ne
 	}
 	span.SetAttributes(attribute.Bool("toolregistry.catalog.conditional_retry", result == 0))
 	return result == 1, nil
+}
+
+func (s *redisCatalogStore) scopeIndex(scope string) string {
+	return fmt.Sprintf("%s%x", s.indexPrefix, sha256.Sum256([]byte(scope)))
 }
 
 // finishCatalogSpan reports storage failures without turning caller cancellation

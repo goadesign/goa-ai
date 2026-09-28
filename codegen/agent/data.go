@@ -175,6 +175,8 @@ type (
 		ExecuteToolActivity string
 		// Constructor names the function that creates the agent wrapper.
 		Constructor string
+		// RegistrationConstructor creates an unregistered runtime registration.
+		RegistrationConstructor string
 		// Definition names the function that returns this agent's generated definition.
 		Definition string
 		// DefinitionValue names the private immutable generated definition.

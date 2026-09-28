@@ -7,7 +7,18 @@
 
 package images
 
-import "context"
+import (
+	bytes "bytes"
+	"context"
+	json "encoding/json"
+	fmt "fmt"
+	io "io"
+	sort "sort"
+	strconv "strconv"
+	utf8 "unicode/utf8"
+
+	goa "goa.design/goa/v3/pkg"
+)
 
 // Service is the images service interface.
 type Service interface {
@@ -60,4 +71,761 @@ type ViewResult struct {
 	ID string
 	// Server-owned immutable image descriptor.
 	Source *ImageSource
+}
+
+// jsonImageSelectedTransport stores JSON fields until they have been validated.
+type jsonImageSelectedTransport struct {
+	// Exact selected image identity.
+	ID *string `json:"id"`
+}
+
+// validatejsonImageSelectedTransport checks decoded JSON before it becomes a service value.
+func validatejsonImageSelectedTransport(value *jsonImageSelectedTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	return err
+}
+
+// jsonImageSelectionTransport stores JSON fields until they have been validated.
+type jsonImageSelectionTransport struct {
+	// Exact image selected for inspection.
+	ID *string `json:"id"`
+}
+
+// validatejsonImageSelectionTransport checks decoded JSON before it becomes a service value.
+func validatejsonImageSelectionTransport(value *jsonImageSelectionTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if value.ID != nil {
+		if utf8.RuneCountInString(*value.ID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.id", *value.ID, utf8.RuneCountInString(*value.ID), 1, true))
+		}
+	}
+	return err
+}
+
+// jsonImageSourceTransport stores JSON fields until they have been validated.
+type jsonImageSourceTransport struct {
+	// Exact retained image identity.
+	ID *string `json:"id"`
+	// Accepted image encoding.
+	Format *string `json:"format"`
+	// Accepted image byte length.
+	Size *int64 `json:"size"`
+	// SHA-256 of the accepted bytes.
+	Sha256 *string `json:"sha256"`
+}
+
+// validatejsonImageSourceTransport checks decoded JSON before it becomes a service value.
+func validatejsonImageSourceTransport(value *jsonImageSourceTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if value.Format == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("format", "body"))
+	}
+	if value.Size == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("size", "body"))
+	}
+	if value.Sha256 == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("sha256", "body"))
+	}
+	if value.ID != nil {
+		if utf8.RuneCountInString(*value.ID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.id", *value.ID, utf8.RuneCountInString(*value.ID), 1, true))
+		}
+	}
+	if value.Format != nil {
+		if !(*value.Format == "png") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.format", *value.Format, []any{"png"}))
+		}
+	}
+	if value.Size != nil {
+		if *value.Size < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.size", *value.Size, 1, true))
+		}
+	}
+	if value.Sha256 != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.sha256", *value.Sha256, "^[a-f0-9]{64}$"))
+	}
+	return err
+}
+
+// validateImageSelectionOriginal checks the original typed value before JSON conversion.
+func validateImageSelectionOriginal(value *ImageSelection) (err error) {
+	if utf8.RuneCountInString(value.ID) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.id", value.ID, utf8.RuneCountInString(value.ID), 1, true))
+	}
+	return err
+}
+
+// validateImageSourceOriginal checks the original typed value before JSON conversion.
+func validateImageSourceOriginal(value *ImageSource) (err error) {
+	if utf8.RuneCountInString(value.ID) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.id", value.ID, utf8.RuneCountInString(value.ID), 1, true))
+	}
+	if !(value.Format == "png") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.format", value.Format, []any{"png"}))
+	}
+	if value.Size < 1 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.size", value.Size, 1, true))
+	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("value.sha256", value.Sha256, "^[a-f0-9]{64}$"))
+	return err
+}
+
+// EncodeImageSelected turns a service value into JSON using the field names in the Goa design.
+func EncodeImageSelected(in *ImageSelected) ([]byte, error) {
+	if err := checkImageSelectedValue(in); err != nil {
+		return nil, fmt.Errorf("encode ImageSelected JSON: %w", err)
+	}
+	var body *jsonImageSelectedTransport
+	{
+		body = &jsonImageSelectedTransport{
+			ID: &in.ID,
+		}
+	}
+	if err := validatejsonImageSelectedTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ImageSelected JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ImageSelected JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeImageSelected checks JSON field names from the Goa design and returns a service value.
+func DecodeImageSelected(data []byte) (out *ImageSelected, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ImageSelected JSON: %w", err)
+	}
+	if err := validateImageSelectedJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ImageSelected JSON: %w", err)
+	}
+	var body *jsonImageSelectedTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ImageSelected JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ImageSelected JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ImageSelected JSON after first value: %w", err)
+	}
+	if err := validatejsonImageSelectedTransport(body); err != nil {
+		return out, fmt.Errorf("validate ImageSelected JSON: %w", err)
+	}
+	{
+		out = &ImageSelected{
+			ID: *body.ID,
+		}
+	}
+	return out, nil
+}
+
+// EncodeImageSelection turns a service value into JSON using the field names in the Goa design.
+func EncodeImageSelection(in *ImageSelection) ([]byte, error) {
+	if err := checkImageSelectionValue(in); err != nil {
+		return nil, fmt.Errorf("encode ImageSelection JSON: %w", err)
+	}
+	if err := validateImageSelectionOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate ImageSelection value: %w", err)
+	}
+	var body *jsonImageSelectionTransport
+	{
+		body = &jsonImageSelectionTransport{
+			ID: &in.ID,
+		}
+	}
+	if err := validatejsonImageSelectionTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ImageSelection JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ImageSelection JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeImageSelection checks JSON field names from the Goa design and returns a service value.
+func DecodeImageSelection(data []byte) (out *ImageSelection, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ImageSelection JSON: %w", err)
+	}
+	if err := validateImageSelectionJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ImageSelection JSON: %w", err)
+	}
+	var body *jsonImageSelectionTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ImageSelection JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ImageSelection JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ImageSelection JSON after first value: %w", err)
+	}
+	if err := validatejsonImageSelectionTransport(body); err != nil {
+		return out, fmt.Errorf("validate ImageSelection JSON: %w", err)
+	}
+	{
+		out = &ImageSelection{
+			ID: *body.ID,
+		}
+	}
+	return out, nil
+}
+
+// EncodeImageSource turns a service value into JSON using the field names in the Goa design.
+func EncodeImageSource(in *ImageSource) ([]byte, error) {
+	if err := checkImageSourceValue(in); err != nil {
+		return nil, fmt.Errorf("encode ImageSource JSON: %w", err)
+	}
+	if err := validateImageSourceOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate ImageSource value: %w", err)
+	}
+	var body *jsonImageSourceTransport
+	{
+		body = &jsonImageSourceTransport{
+			ID:     &in.ID,
+			Format: &in.Format,
+			Size:   &in.Size,
+			Sha256: &in.Sha256,
+		}
+	}
+	if err := validatejsonImageSourceTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ImageSource JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ImageSource JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeImageSource checks JSON field names from the Goa design and returns a service value.
+func DecodeImageSource(data []byte) (out *ImageSource, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ImageSource JSON: %w", err)
+	}
+	if err := validateImageSourceJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ImageSource JSON: %w", err)
+	}
+	var body *jsonImageSourceTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ImageSource JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ImageSource JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ImageSource JSON after first value: %w", err)
+	}
+	if err := validatejsonImageSourceTransport(body); err != nil {
+		return out, fmt.Errorf("validate ImageSource JSON: %w", err)
+	}
+	{
+		out = &ImageSource{
+			ID:     *body.ID,
+			Format: *body.Format,
+			Size:   *body.Size,
+			Sha256: *body.Sha256,
+		}
+	}
+	return out, nil
+}
+
+// validateImageSelectedJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateImageSelectedJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "id":
+			if err := validateImageSelectedJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact selected image identity.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"id",
+			})
+		}
+	}
+	return nil
+}
+
+// validateImageSelectedJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateImageSelectedJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateImageSelectionJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateImageSelectionJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "id":
+			if err := validateImageSelectionJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact image selected for inspection.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"id",
+			})
+		}
+	}
+	return nil
+}
+
+// validateImageSelectionJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateImageSelectionJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateImageSourceJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateImageSourceJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "format":
+			if err := validateImageSourceJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Accepted image encoding.",
+			); err != nil {
+				return err
+			}
+		case "id":
+			if err := validateImageSourceJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact retained image identity.",
+			); err != nil {
+				return err
+			}
+		case "sha256":
+			if err := validateImageSourceJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "SHA-256 of the accepted bytes.",
+			); err != nil {
+				return err
+			}
+		case "size":
+			if err := validateImageSourceJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Accepted image byte length.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"format",
+				"id",
+				"sha256",
+				"size",
+			})
+		}
+	}
+	return nil
+}
+
+// validateImageSourceJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateImageSourceJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateImageSourceJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateImageSourceJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateImageSourceJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateImageSourceJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateImageSourceJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateImageSourceJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	typed, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	if _, err := strconv.ParseInt(typed.String(), 10, 64); err != nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
+	}
+	return nil
+}
+
+// readStrictJSON checks syntax and nesting before walking for duplicate keys,
+// and preserves integer text for the generated type checks.
+func readStrictJSON(data []byte) (any, error) {
+	if err := validateJSONText(data); err != nil {
+		return nil, err
+	}
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("invalid JSON syntax or nesting")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return readJSONValue(decoder)
+}
+
+// readJSONValue checks duplicate decoded keys before storing any object member.
+func readJSONValue(decoder *json.Decoder) (any, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	switch token {
+	case json.Delim('{'):
+		object := make(map[string]any)
+		for decoder.More() {
+			token, err := decoder.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := token.(string)
+			if !ok {
+				return nil, fmt.Errorf("object member name must be a string")
+			}
+			if _, exists := object[key]; exists {
+				return nil, fmt.Errorf("duplicate JSON member %q", key)
+			}
+			value, err := readJSONValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			object[key] = value
+		}
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+		return object, nil
+	case json.Delim('['):
+		array := make([]any, 0)
+		for decoder.More() {
+			value, err := readJSONValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			array = append(array, value)
+		}
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+		return array, nil
+	default:
+		if _, delimiter := token.(json.Delim); delimiter {
+			return nil, fmt.Errorf("unexpected JSON delimiter %v", token)
+		}
+		return token, nil
+	}
+}
+
+// validateJSONText rejects invalid UTF-8 and unpaired UTF-16 escapes before
+// encoding/json can silently replace them. JSON grammar remains decoder-owned.
+func validateJSONText(data []byte) error {
+	if !utf8.Valid(data) {
+		return fmt.Errorf("invalid UTF-8 in JSON")
+	}
+	for i := 0; i < len(data); i++ {
+		if data[i] != '"' {
+			continue
+		}
+		i++
+		for ; i < len(data) && data[i] != '"'; i++ {
+			if data[i] != '\\' {
+				continue
+			}
+			i++
+			if i >= len(data) || data[i] != 'u' {
+				continue
+			}
+			if i+4 >= len(data) {
+				return fmt.Errorf("incomplete Unicode escape")
+			}
+			code, err := strconv.ParseUint(string(data[i+1:i+5]), 16, 16)
+			if err != nil {
+				return fmt.Errorf("invalid Unicode escape: %w", err)
+			}
+			i += 4
+			if code >= 0xdc00 && code <= 0xdfff {
+				return fmt.Errorf("unpaired low Unicode surrogate")
+			}
+			if code < 0xd800 || code > 0xdbff {
+				continue
+			}
+			if i+6 >= len(data) || data[i+1] != '\\' || data[i+2] != 'u' {
+				return fmt.Errorf("unpaired high Unicode surrogate")
+			}
+			low, err := strconv.ParseUint(string(data[i+3:i+7]), 16, 16)
+			if err != nil || low < 0xdc00 || low > 0xdfff {
+				return fmt.Errorf("unpaired high Unicode surrogate")
+			}
+			i += 6
+		}
+	}
+	return nil
+}
+
+// invalidGeneratedFieldTypeError is the value-codec adapter for shared checks.
+func invalidGeneratedFieldTypeError(field, expected, actual, _ string) error {
+	return fmt.Errorf("%s: expected %s, got %s", field, expected, actual)
+}
+
+// unknownJSONFieldError reports exact authored names, without case folding.
+func unknownJSONFieldError(path, key string, _ []string) error {
+	return fmt.Errorf("%s: unknown JSON field %q", path, key)
+}
+
+// decodedJSONType describes values produced only by the strict JSON reader.
+func decodedJSONType(value any) string {
+	switch value.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case string:
+		return "string"
+	case json.Number:
+		return "number"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	default:
+		return "invalid JSON value"
+	}
+}
+
+// generatedJSONChildPath appends an unambiguous quoted member or array index.
+func generatedJSONChildPath(path, key string, _ bool) string {
+	return path + "[" + strconv.Quote(key) + "]"
+}
+
+// checkImageSelectedValue checks text and cycles before conversion.
+func checkImageSelectedValue(in *ImageSelected) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkImageSelectedImageSelectedValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkImageSelectedImageSelectedValue checks one generated value on the active path.
+func checkImageSelectedImageSelectedValue(in *ImageSelected, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.ID)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "id", false))
+		}
+	}
+	return nil
+}
+
+// checkImageSelectionValue checks text and cycles before conversion.
+func checkImageSelectionValue(in *ImageSelection) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkImageSelectionImageSelectionValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkImageSelectionImageSelectionValue checks one generated value on the active path.
+func checkImageSelectionImageSelectionValue(in *ImageSelection, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.ID)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "id", false))
+		}
+	}
+	return nil
+}
+
+// checkImageSourceValue checks text and cycles before conversion.
+func checkImageSourceValue(in *ImageSource) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkImageSourceImageSourceValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkImageSourceImageSourceValue checks one generated value on the active path.
+func checkImageSourceImageSourceValue(in *ImageSource, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.ID)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "id", false))
+		}
+		if !utf8.ValidString(string(in.Format)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "format", false))
+		}
+		if !utf8.ValidString(string(in.Sha256)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "sha256", false))
+		}
+	}
+	return nil
 }

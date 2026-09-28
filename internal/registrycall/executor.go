@@ -375,8 +375,8 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 				continue
 			}
 
-			var msg toolregistry.ToolResultMessage
-			if err := json.Unmarshal(ev.Payload, &msg); err != nil {
+			msg, err := toolregistry.DecodeToolResultMessage(ev.Payload)
+			if err != nil {
 				span.RecordError(err)
 				return nil, fmt.Errorf("decode terminal tool result event %s: %w", ev.ID, err)
 			}

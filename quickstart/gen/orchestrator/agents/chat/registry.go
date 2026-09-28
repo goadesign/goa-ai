@@ -18,18 +18,18 @@ import (
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 )
 
-// RegisterChatAgent registers the generated agent components with the local runtime.
-// This helper registers only with the runtime in this process. It does not
-// publish the agent to a registry service.
-func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatAgentConfig) error {
+// NewChatAgentRegistration creates the generated registration without
+// registering workers or toolsets. Applications may compose its immutable
+// Definition before creating a client and registering this same value.
+func NewChatAgentRegistration(rt *agentsruntime.Runtime, cfg ChatAgentConfig) (agentsruntime.AgentRegistration, error) {
 	if rt == nil {
-		return errors.New("runtime is required")
+		return agentsruntime.AgentRegistration{}, errors.New("runtime is required")
 	}
 	agent, err := NewChatAgent(cfg)
 	if err != nil {
-		return err
+		return agentsruntime.AgentRegistration{}, err
 	}
-	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
+	return agentsruntime.AgentRegistration{
 		Definition:       Definition(),
 		Planner:          agent.Planner,
 		WorkflowHandler:  rt.ExecuteWorkflow,
@@ -62,7 +62,18 @@ func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatA
 			MaxRecoveryTurns: 1,
 			TimeBudget:       time.Duration(15000000000),
 		},
-	}); err != nil {
+	}, nil
+}
+
+// RegisterChatAgent registers the generated agent components with the local runtime.
+// This helper registers only with the runtime in this process. It does not
+// publish the agent to a registry service.
+func RegisterChatAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ChatAgentConfig) error {
+	registration, err := NewChatAgentRegistration(rt, cfg)
+	if err != nil {
+		return err
+	}
+	if err := rt.RegisterAgent(ctx, registration); err != nil {
 		return err
 	}
 

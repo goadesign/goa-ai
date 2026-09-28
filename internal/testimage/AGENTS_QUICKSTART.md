@@ -336,12 +336,12 @@ go func() {
                     ExpectedRegistrationToken: expectedToken,
                 })
             },
-            Complete: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, requestEventID string, result registrywire.ToolResultMessage) error {
+            Complete: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, requestEventID string, result registrywire.ToolResultMessage) (bool, error) {
                 resultJSON, err := json.Marshal(result)
                 if err != nil {
-                    return err
+                    return false, err
                 }
-                return registryClient.CompleteToolCall(ctx, &registry.CompleteToolCallPayload{
+                completion, err := registryClient.CompleteToolCall(ctx, &registry.CompleteToolCallPayload{
                     Toolset:                   toolset,
                     ProviderID:                providerID,
                     ProviderIncarnationID:     incarnationID,
@@ -351,6 +351,10 @@ go func() {
                     RequestEventID:            requestEventID,
                     ProviderRegistrationToken: providerToken,
                 })
+                if err != nil {
+                    return false, err
+                }
+                return completion.Accepted, nil
             },
             PublishOutputDelta: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, callToken, toolUseID, requestEventID, stream, delta string) error {
                 return registryClient.PublishToolOutputDelta(ctx, &registry.PublishToolOutputDeltaPayload{

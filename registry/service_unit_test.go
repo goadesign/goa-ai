@@ -820,8 +820,8 @@ func (r *recordingCallAdmissions) Complete(
 	context.Context,
 	string, string, string, string, string, string, string,
 	[]byte,
-) error {
-	return nil
+) (bool, error) {
+	return true, nil
 }
 
 func (r *recordingCallAdmissions) PublishLiveEvent(

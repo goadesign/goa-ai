@@ -45,15 +45,20 @@ func TestGeneratedNamedUnionCollections(t *testing.T) {
 	require.NoError(t, err)
 	services, err := service.NewPlan(expr.Root, generation, expr.NewExampleGenerator(expr.Root.API.RandomizerFactory))
 	require.NoError(t, err)
-	originals, err := NewPlan(generation)
+	originals, err := NewPlan(generation, services)
 	require.NoError(t, err)
 	const ordinaryPath = "codec.local/gen/ordinary"
-	ordinary, err := codec.NewPlan(generation, ordinaryPath, "codec.local/gen/types")
+	ordinary, err := codec.NewPlan(generation, ordinaryPath)
 	require.NoError(t, err)
 	values := make([]*codec.Value, 0, 3)
 	for _, named := range []expr.UserType{base, derived, collections} {
+		location := codegen.UserTypeLocation(named)
+		declaration, err := generation.Package("codec.local/gen/" + location.RelImportPath).Type(named)
+		require.NoError(t, err)
+		attribute, layout, err := services.UserTypeLayout(named, declaration)
+		require.NoError(t, err)
 		value, err := ordinary.Add(named.Name(), named.Name(),
-			&expr.AttributeExpr{Type: named}, codec.EncodeAndDecode)
+			attribute, layout, codec.EncodeAndDecode)
 		require.NoError(t, err)
 		values = append(values, value)
 	}

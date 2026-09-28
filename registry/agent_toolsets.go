@@ -20,7 +20,58 @@ import (
 func (s *Service) RegisterAgentToolset(ctx context.Context, p *genregistry.AgentToolsetDeclaration) (*genregistry.ResolvedToolset, error) {
 	return s.registerAgentToolset(ctx, &genregistry.Toolset{
 		Name: p.Name, Description: p.Description, Version: p.Version, Tags: p.Tags, Tools: p.Tools,
-	}, "")
+	}, "", nil)
+}
+
+// RegisterAgentToolsetWithIdentity saves application ownership with a native
+// Agent declaration, preserving identical-registration behavior.
+func (s *Service) RegisterAgentToolsetWithIdentity(ctx context.Context, identity CatalogIdentity, p *genregistry.AgentToolsetDeclaration) (*genregistry.ResolvedToolset, error) {
+	owned, err := identityInput(identity)
+	if err != nil {
+		return nil, err
+	}
+	return s.registerAgentToolset(ctx, &genregistry.Toolset{
+		Name: p.Name, Description: p.Description, Version: p.Version, Tags: p.Tags, Tools: p.Tools,
+	}, "", owned)
+}
+
+// LookupAgentToolsetRegistration compares the complete intended declaration
+// and explicit identity with saved registration. An identical active entry
+// returns its saved token and time with found=true and no error. An absent
+// record returns (nil, false, nil). Invalid input, conflicts and failed reads
+// return (nil, false, error); a retired, different, or differently owned entry
+// is an admission_conflict.
+// Lookup does not reserve the name or change the saved declaration.
+func (s *Service) LookupAgentToolsetRegistration(ctx context.Context, identity CatalogIdentity, p *genregistry.AgentToolsetDeclaration) (*genregistry.ResolvedToolset, bool, error) {
+	owned, err := identityInput(identity)
+	if err != nil {
+		return nil, false, err
+	}
+	definition, err := s.prepareAgentToolset(&genregistry.Toolset{
+		Name: p.Name, Description: p.Description, Version: p.Version, Tags: p.Tags, Tools: p.Tools,
+	}, owned)
+	if err != nil {
+		return nil, false, err
+	}
+	raw, exists, err := s.catalog.exactRaw(ctx, toolsetCatalogKey(p.Name))
+	if err != nil {
+		return nil, false, genregistry.MakeServiceUnavailable(err)
+	}
+	if !exists {
+		return nil, false, nil
+	}
+	current, err := parseCatalogState(p.Name, raw)
+	if err != nil {
+		return nil, false, genregistry.MakeServiceUnavailable(err)
+	}
+	if err := checkAgentRegistration(current, owned, nativeAgentToken(definition.fingerprint), ""); err != nil {
+		return nil, false, genregistry.MakeAdmissionConflict(err)
+	}
+	saved, err := resolvedAgentRegistration(definition, current)
+	if err != nil {
+		return nil, false, err
+	}
+	return saved, true, nil
 }
 
 // ReplaceAgentToolset changes the declaration only while the supplied token
@@ -28,7 +79,19 @@ func (s *Service) RegisterAgentToolset(ctx context.Context, p *genregistry.Agent
 func (s *Service) ReplaceAgentToolset(ctx context.Context, p *genregistry.ReplaceAgentToolsetPayload) (*genregistry.ResolvedToolset, error) {
 	return s.registerAgentToolset(ctx, &genregistry.Toolset{
 		Name: p.Name, Description: p.Description, Version: p.Version, Tags: p.Tags, Tools: p.Tools,
-	}, p.ExpectedRegistrationToken)
+	}, p.ExpectedRegistrationToken, nil)
+}
+
+// ReplaceAgentToolsetWithIdentity replaces the exact native registration
+// without changing its application identity or any accepted call.
+func (s *Service) ReplaceAgentToolsetWithIdentity(ctx context.Context, identity CatalogIdentity, p *genregistry.ReplaceAgentToolsetPayload) (*genregistry.ResolvedToolset, error) {
+	owned, err := identityInput(identity)
+	if err != nil {
+		return nil, err
+	}
+	return s.registerAgentToolset(ctx, &genregistry.Toolset{
+		Name: p.Name, Description: p.Description, Version: p.Version, Tags: p.Tags, Tools: p.Tools,
+	}, p.ExpectedRegistrationToken, owned)
 }
 
 // nativeAgentToken identifies the complete native declaration without implying
@@ -52,7 +115,24 @@ func validateAgentTools(declarations []*genregistry.ToolSchema) error {
 	return nil
 }
 
-func (s *Service) registerAgentToolset(ctx context.Context, toolset *genregistry.Toolset, expected string) (*genregistry.ResolvedToolset, error) {
+func (s *Service) registerAgentToolset(ctx context.Context, toolset *genregistry.Toolset, expected string, identity *CatalogIdentity) (*genregistry.ResolvedToolset, error) {
+	definition, err := s.prepareAgentToolset(toolset, identity)
+	if err != nil {
+		return nil, err
+	}
+	state, err := s.catalog.RegisterAgent(ctx, definition, expected)
+	if err != nil {
+		if errors.Is(err, errAdmissionConflict) {
+			return nil, genregistry.MakeAdmissionConflict(err)
+		}
+		return nil, genregistry.MakeServiceUnavailable(err)
+	}
+	return resolvedAgentRegistration(definition, state)
+}
+
+// prepareAgentToolset applies registration's schema and native-tool checks to
+// the intended declaration. Lookup and registration compare the same token.
+func (s *Service) prepareAgentToolset(toolset *genregistry.Toolset, identity *CatalogIdentity) (*catalogToolset, error) {
 	if err := s.validator.ValidateToolSchemas(toolset.Tools); err != nil {
 		return nil, genregistry.MakeValidationError(err)
 	}
@@ -67,13 +147,13 @@ func (s *Service) registerAgentToolset(ctx context.Context, toolset *genregistry
 	if err != nil {
 		return nil, genregistry.MakeValidationError(err)
 	}
-	state, err := s.catalog.RegisterAgent(ctx, definition, expected)
-	if err != nil {
-		if errors.Is(err, errAdmissionConflict) {
-			return nil, genregistry.MakeAdmissionConflict(err)
-		}
-		return nil, genregistry.MakeServiceUnavailable(err)
-	}
+	definition.identity = identity
+	return definition, nil
+}
+
+// resolvedAgentRegistration returns a separate copy of the matching declaration
+// with the saved token and time. It does not rewrite stored definition bytes.
+func resolvedAgentRegistration(definition *catalogToolset, state catalogState) (*genregistry.ResolvedToolset, error) {
 	registered, err := definition.decode(state.RegisteredAt)
 	if err != nil {
 		return nil, genregistry.MakeServiceUnavailable(err)
@@ -98,17 +178,11 @@ func (c *toolsetCatalog) RegisterAgent(ctx context.Context, definition *catalogT
 			if err != nil {
 				return catalogState{}, err
 			}
-			if !current.NativeAgent {
-				return catalogState{}, fmt.Errorf("%w: %q belongs to a service provider", errAdmissionConflict, name)
+			if err := checkAgentRegistration(current, definition.identity, token, expected); err != nil {
+				return catalogState{}, err
 			}
 			if expected == "" {
-				if current.State == catalogEntryActive && current.RegistrationToken == token {
-					return current, nil
-				}
-				return catalogState{}, errAdmissionConflict
-			}
-			if current.RegistrationToken != expected {
-				return catalogState{}, errAdmissionConflict
+				return current, nil
 			}
 		} else if expected != "" {
 			return catalogState{}, errAdmissionConflict
@@ -118,6 +192,7 @@ func (c *toolsetCatalog) RegisterAgent(ctx context.Context, definition *catalogT
 			return catalogState{}, err
 		}
 		state := catalogState{
+			Identity:    definition.identity,
 			NativeAgent: true, State: catalogEntryActive,
 			Info: copyToolsetInfo(definition.info), SchemaFingerprint: definition.fingerprint,
 			RegistrationToken: token, RegisteredAt: now.Format(time.RFC3339Nano),
@@ -131,4 +206,26 @@ func (c *toolsetCatalog) RegisterAgent(ctx context.Context, definition *catalogT
 			return state, nil
 		}
 	}
+}
+
+// checkAgentRegistration owns the comparison used by lookup and registration.
+// Repeating creation requires an identical active native entry. Explicit
+// replacement requires the saved token and may reactivate a retired entry.
+func checkAgentRegistration(current catalogState, identity *CatalogIdentity, token, expected string) error {
+	if err := requireCatalogIdentity(current.Identity, identity); err != nil {
+		return err
+	}
+	if !current.NativeAgent {
+		return fmt.Errorf("%w: %q belongs to a service provider", errAdmissionConflict, current.Info.Name)
+	}
+	if expected == "" {
+		if current.State != catalogEntryActive || current.RegistrationToken != token {
+			return errAdmissionConflict
+		}
+		return nil
+	}
+	if current.RegistrationToken != expected {
+		return errAdmissionConflict
+	}
+	return nil
 }

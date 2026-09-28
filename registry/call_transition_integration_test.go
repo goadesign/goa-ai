@@ -107,7 +107,7 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 	)
 	resultJSON, err := json.Marshal(result)
 	require.NoError(t, err)
-	require.NoError(t, svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+	completion, err := svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                providerA.ProviderID,
 		ProviderIncarnationID:     providerA.ProviderIncarnationID,
@@ -116,7 +116,9 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 		ResultJSON:                resultJSON,
 		RequestEventID:            callAEventID,
 		ProviderRegistrationToken: admissionA.RegistrationToken,
-	}))
+	})
+	require.NoError(t, err)
+	assert.True(t, completion.Accepted)
 	terminalStreamKey := pulseStreamKeyPrefix + toolregistry.ResultStreamID(admittedA.ToolUseID)
 	terminalLength, err := rdb.XLen(ctx, terminalStreamKey).Result()
 	require.NoError(t, err)
@@ -150,7 +152,7 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 	)
 	overloadedResultJSON, err := json.Marshal(overloadedResult)
 	require.NoError(t, err)
-	require.NoError(t, svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+	overloadCompletion, err := svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                providerA.ProviderID,
 		ProviderIncarnationID:     providerA.ProviderIncarnationID,
@@ -159,7 +161,9 @@ func TestCallIdentityAndSettlementSurviveAdmissionTransitions(t *testing.T) {
 		ResultJSON:                overloadedResultJSON,
 		RequestEventID:            overloadedCallEventID,
 		ProviderRegistrationToken: admissionA.RegistrationToken,
-	}))
+	})
+	require.NoError(t, err)
+	assert.True(t, overloadCompletion.Accepted)
 
 	require.NoError(t, svc.ReleaseProvider(ctx, &genregistry.ReleaseProviderPayload{
 		Name:                      toolset,
@@ -328,7 +332,7 @@ func TestConcurrentDispatchClaimsExecuteExactlyOnce(t *testing.T) {
 	)
 	resultJSON, err := json.Marshal(result)
 	require.NoError(t, err)
-	require.NoError(t, svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+	completion, err := svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                providerPayload.ProviderID,
 		ProviderIncarnationID:     providerPayload.ProviderIncarnationID,
@@ -337,7 +341,9 @@ func TestConcurrentDispatchClaimsExecuteExactlyOnce(t *testing.T) {
 		ResultJSON:                resultJSON,
 		RequestEventID:            eventID,
 		ProviderRegistrationToken: admission.RegistrationToken,
-	}))
+	})
+	require.NoError(t, err)
+	assert.True(t, completion.Accepted)
 	replayed, err := svc.ClaimToolCall(ctx, claimPayload)
 	require.NoError(t, err)
 	assert.Equal(t, string(callClaimTerminal), replayed.Disposition)

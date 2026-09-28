@@ -661,6 +661,20 @@ func EncodeCompleteToolCallRequest(ctx context.Context, v any, md *metadata.MD) 
 	return NewProtoCompleteToolCallRequest(payload), nil
 }
 
+// DecodeCompleteToolCallResponse decodes responses from the registry
+// CompleteToolCall endpoint.
+func DecodeCompleteToolCallResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.CompleteToolCallResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "CompleteToolCall", "*registrypb.CompleteToolCallResponse", v)
+	}
+	if err := ValidateCompleteToolCallResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewCompleteToolCallResult(message)
+	return res, nil
+}
+
 // BuildPublishToolOutputDeltaFunc builds the remote method to invoke for
 // "registry" service "PublishToolOutputDelta" endpoint.
 func BuildPublishToolOutputDeltaFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {

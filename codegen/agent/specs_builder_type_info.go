@@ -86,10 +86,10 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	ptr := planned.publicLayout.ReferenceIsPointer()
 
 	transportAttr := planned.transportShape
-	schemaAttr := cloneModelSchemaAttribute(transportAttr)
+	schemaAttr := planned.schemaShape
 
 	// Only examples written by the design author are shown to the model.
-	authoredExample := authoredExampleForAttribute(att)
+	authoredExample := planned.jsonContract.authoredExampleForAttribute(att)
 	var example *exampleData
 	if usage == usagePayload || (usage == usageResult && owner.Kind == contractTypeOwnerCompletion) {
 		// Union examples use the {type,value} JSON form accepted by the decoder.
@@ -101,7 +101,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		TypeName: key,
 		UID:      "goa-ai:tool-spec:" + key,
 	})
-	schemaBytes, schemaWithoutRootExampleBytes, err := schemaVariantsForAttribute(
+	schemaBytes, schemaWithoutRootExampleBytes, err := planned.jsonContract.schemaVariantsForAttribute(
 		b.api,
 		schemaAttr,
 		exampleValue(example),

@@ -109,7 +109,7 @@ func TestFilesPreserveOriginalOwners(t *testing.T) {
 	require.NoError(t, err)
 	services, err := service.NewPlan(expr.Root, generation, expr.NewExampleGenerator(expr.Root.API.RandomizerFactory))
 	require.NoError(t, err)
-	plan, err := NewPlan(generation)
+	plan, err := NewPlan(generation, services)
 	require.NoError(t, err)
 	require.NoError(t, generation.Freeze())
 	require.NoError(t, services.Link())
@@ -159,20 +159,19 @@ func TestFilesPreserveOriginalOwners(t *testing.T) {
 }
 
 func TestFilesAllowEmptyEntriesWithoutCodecs(t *testing.T) {
-	generation, err := codegen.NewGeneration("codec.local/gen", nil)
+	root := codegen.RunDSL(t, func() {
+		dsl.Type("Dynamic", func() {
+			dsl.Meta("struct:pkg:path", "types")
+			dsl.Meta("type:generate:force")
+			dsl.Attribute("value", dsl.Any)
+		})
+		dsl.Service("catalog", func() {})
+	})
+	generation, err := codegen.NewGeneration("codec.local/gen", []eval.Root{root})
 	require.NoError(t, err)
-	owner, err := generation.ClaimPackage("codec.local/gen/types")
+	services, err := service.NewPlan(root, generation, expr.NewExampleGenerator(root.API.RandomizerFactory))
 	require.NoError(t, err)
-	dynamic := &expr.UserTypeExpr{
-		TypeName: "Dynamic",
-		UID:      "test:dynamic",
-		AttributeExpr: &expr.AttributeExpr{Type: &expr.Object{
-			{Name: "value", Attribute: &expr.AttributeExpr{Type: expr.Any}},
-		}},
-	}
-	_, err = owner.DeclareUserType(dynamic)
-	require.NoError(t, err)
-	plan, err := NewPlan(generation)
+	plan, err := NewPlan(generation, services)
 	require.NoError(t, err)
 	require.NoError(t, generation.Freeze())
 	files, err := plan.Files([]*codegen.File{nil})

@@ -41,8 +41,14 @@ type (
 	// StartRootRun and StartChildRun accept a continuation when
 	// Run.PredecessorRunID is set. Before either method writes the successor run,
 	// its RunStarted record, or a child parent link, the predecessor must exist,
-	// be suspended, and have the same session ID, agent ID, and parent run ID as
-	// the successor. A failed check writes nothing. RunStarted stores the
+	// be suspended, and have the same session ID, agent ID, and root or child
+	// topology as the successor. Child continuations preserve the exact parent
+	// tool call, tool name and parent agent from the predecessor's stored link.
+	// The execution parent may change only after the runtime has proved the
+	// first pending child in that parent's accepted continuation checkpoint.
+	// A fresh child still requires its execution parent to be running; exact
+	// closed-start retries select the original records. A failed check writes
+	// nothing. RunStarted stores the
 	// predecessor run ID; implementations must not copy it into RunMeta or guess
 	// it from record order or timestamps.
 	// Temporary database and network failures remain unwrapped.

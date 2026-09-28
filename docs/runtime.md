@@ -2394,12 +2394,12 @@ go func() {
                     ExpectedRegistrationToken: expectedToken,
                 })
             },
-            Complete: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, requestEventID string, result registrywire.ToolResultMessage) error {
+            Complete: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, requestEventID string, result registrywire.ToolResultMessage) (bool, error) {
                 resultJSON, err := json.Marshal(result)
                 if err != nil {
-                    return err
+                    return false, err
                 }
-                return registryClient.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+                completion, err := registryClient.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
                     Toolset: toolset, ProviderID: providerID,
                     ProviderIncarnationID: incarnationID,
                     RegistrationToken: result.RegistrationToken,
@@ -2407,6 +2407,10 @@ go func() {
                     RequestEventID: requestEventID,
                     ProviderRegistrationToken: providerToken,
                 })
+                if err != nil {
+                    return false, err
+                }
+                return completion.Accepted, nil
             },
             PublishOutputDelta: func(ctx context.Context, toolset, providerID, incarnationID, providerToken, callToken, toolUseID, requestEventID, stream, delta string) error {
                 return registryClient.PublishToolOutputDelta(ctx, &genregistry.PublishToolOutputDeltaPayload{
@@ -2587,6 +2591,31 @@ startup registration and renewal.
 
 #### Registry storage and definition reuse
 
+Applications may attach an immutable `CatalogIdentity{Scope, Name}` through
+`RegisterWithIdentity`, `DeclareServiceToolsetWithIdentity`,
+`RegisterAgentToolsetWithIdentity`, and `ReplaceAgentToolsetWithIdentity`.
+Identity lives in compact state; its derived sorted scope index changes in the
+same catalog commit. Declaration JSON, fingerprints, admission tokens and
+provider messages retain their existing encoding. Ordinary identity-free
+framework registration remains supported. Existing records cannot acquire,
+lose or change identity through a registration retry.
+
+Upgrade all registry replicas sharing the catalog before creating records with
+identity: older readers reject that new state field. Identity-free records need
+no migration. Once records with identity exist, rollback to older readers
+requires an explicit application-owned data conversion. Provider messages and
+stored declaration JSON do not change.
+
+Use `CatalogRoutesAfter` and `CatalogContains` for bounded scope selection,
+then `ReadCatalogToolset` for one record. Its caller must supply a positive
+raw-byte budget: a finite Redis script checks combined state/definition
+`HSTRLEN` before either value is transferred or decoded. Budget failures do not
+change admission or stored data. Service availability uses the selected
+record's leases/pong and Redis time without a pruning loop. Native executor
+availability, authorization, cursor binding, page size and complete encoded
+response limits belong to the application. The framework supplies no default
+budget, write cap, cursor expiry or historical-identity inference.
+
 The catalog owns compact current state, a separate current definition per
 toolset, and permanent retired tokens in Redis. Current state contains the
 active/retired status, listing summary, wire version, schema fingerprint,
@@ -2671,10 +2700,27 @@ transport boundary. `ShutdownTimeout` therefore cannot exceed
 `MaxShutdownTimeout`, which reserves that margin inside
 `MaxProviderLeaseDuration`. A
 sink-creation failure has no consumption to settle and proceeds directly to
-bounded release. Only a proven clean settlement releases the exact provider
-lease. A sink-close, worker, result-publication, or acknowledgement failure is
+bounded release. Only proven clean local cleanup permits exact provider
+release; native release settles any remaining claims after removing authority.
+A sink-close, worker, result-publication, or acknowledgement failure is
 returned and suppresses release so lease expiry can converge safely. A stale
 release token or missing lease is an idempotent success.
+
+`toolprovider.ServeAndWait` takes the same arguments as `Serve` and runs the
+same provider lifecycle, but joins all invocation-owned work before returning:
+tool workers, renewal, consumer-group repair, acknowledgements, cancellation
+callbacks, and the original sink Close call. Use it when a request or another
+local owner must not return while its provider work remains active. `Serve`
+retains its existing bounded settlement return and may return while that work
+is still finishing.
+
+Joining can outlast `ShutdownTimeout`; it requires dependencies to finish and
+does not impose another timeout or interrupt their I/O. The lifecycle's earlier
+incomplete-settlement error is preserved. Later local completion never changes
+that result into success or triggers a late lease release. A sink implementation
+must still join its own internal resources when Close returns; observing the
+Close invocation cannot strengthen a sink that leaves internal work running.
+
 Before each handler invocation, `Serve` calls `ClaimToolCall`. The registry
 authenticates the exact provider lease and request event, then atomically grants
 one immutable dispatch owner or returns `terminal`, `claimed`, or `expired`.
@@ -2693,6 +2739,52 @@ same operation publishes the canonical stale-registration terminal for an
 unclaimed old-generation request. Redis owns liveness.
 Handlers still must honor context cancellation and return promptly; otherwise
 `Serve` reports worker settlement failure and withholds lease release.
+
+A handler that stops without a terminal can return
+`provider.ErrResultUnavailable`. For example, a remote effect may have happened
+before its result connection failed. `Serve` recognizes this explicit error
+with `errors.Is` immediately after `HandleToolCall`, ends the call's span and
+context, and queues the existing Pulse acknowledgement. It publishes no
+terminal and keeps serving other calls. Registry already retains the immutable
+dispatch claim and will settle it as `outcome_unknown` through its existing
+deadline, lease-loss, or provider-release processing. Acknowledgement finishes
+request delivery; it does not claim that the tool effect completed or that a
+terminal has already been stored.
+
+The three handler outcomes remain distinct:
+
+- A result with nil error follows normal validation and completion. A tool
+  without a semantic result may still succeed with a nil result body.
+- An ordinary error, including a context error without the marker, keeps the
+  existing `execution_failed` behavior.
+- `ErrResultUnavailable`, directly or wrapped/joined with a cause, explicitly
+  selects no terminal for the whole handler return. As with other non-nil
+  errors, the result value is ignored. A same-text error does not opt in.
+
+Only the handler-return boundary recognizes this marker. It has no special
+meaning in Claim, Complete, Ack, renewal, Drain, or Release callbacks, which
+retain their existing failure and cleanup rules. A handler with a valid
+terminal must return it with nil error even if its context has also ended.
+Generated service-backed providers keep their existing service-error results.
+
+The handler must stop its own work before returning the marker and must not
+later publish output, return another result, or resume execution for that call.
+This frees a worker, not the durable claim: early returns can leave more
+nonterminal Registry calls than active workers until the unchanged deadlines.
+The existing lease-release index read and release timeout still apply; no new
+counter, capacity limit, retention rule, or retry is added.
+
+On an independently requested shutdown, other accepted workers still finish
+under the existing shared deadline. After workers return and acknowledgements
+drain, native ReleaseProvider removes the exact lease and settles any remaining
+claims. A clean marker return does not suppress release. A real acknowledgement
+or cleanup failure still does. The marker neither starts connection shutdown
+nor interrupts blocked transport I/O.
+
+This is an additive Go handler contract with no wire or storage change.
+Handlers opting in must use a runtime that implements it; an older runtime
+would treat the marker as an ordinary handler error. No regeneration or
+compatibility mode is required for this handler contract.
 
 Use RollingUpdate for provider releases. Replicas with the same token overlap
 normally. When the schema or admission revision changes, the replacement pod
@@ -2823,8 +2915,16 @@ terminal results, overload notices, and output deltas through typed registry
 operations. Each operation verifies the exact token/incarnation lease and the
 specific request-stream event claim. A preserved retired or draining exact
 lease may settle already-claimed work it owns.
-`CompleteToolCall` atomically appends the canonical result and commits terminal
-state; later overload notices and deltas become no-ops. Output fragments are
+`CompleteToolCall` returns a required `accepted` boolean after the registry's
+atomic terminal decision. It returns true when the exact submitted provider
+result is retained, including an identical repeat after a lost response. It
+returns false when the execution deadline committed `outcome_unknown` instead,
+whether settlement happened earlier or during this completion attempt.
+False is a successful settlement response, not acceptance of the submitted
+bytes or permission to execute again. Exact lease and dispatch identity checks
+still apply to repeats; different provider terminal bytes still conflict with
+an already accepted provider terminal. Later overload notices and deltas become
+no-ops. Output fragments are
 bounded by `MaxToolOutputDeltaBytes` and
 `MaxToolOutputDeltaCount` per call. Provider handler context, output, and
 completion are bounded by the execution deadline. If a claimed call has no
@@ -2844,6 +2944,24 @@ the stream. Publication preserves rather than extends the absolute deadline, so
 the terminal call record cannot expire before its retained result and a reused
 tool-use ID cannot republish while either exists. Completed, abandoned,
 duplicate, and recreated state expires without a separate cleanup protocol.
+
+Provider callbacks return `(accepted bool, err error)` and must pass through
+`CompleteToolCallResult.Accepted`; a nil error alone does not establish that the
+provider's result was retained. `Serve` acknowledges the delivery and continues
+serving after either successful disposition. It records
+`toolregistry.tool_result_published` for accepted provider results and
+`toolregistry.tool_call_settled` with `toolregistry.settlement_cause` set to
+`execution_deadline` for deadline settlement. Completion errors keep their
+existing failure and cleanup behavior.
+
+When adopting this contract, regenerate registry clients and update completion
+wrappers and callbacks together. The generated method now returns
+`(*CompleteToolCallResult, error)` instead of only `error`; the response has a
+required `accepted` field. This changes the generated Go and gRPC response
+contracts. Providers must connect to a registry implementing that response
+before relying on it. Existing call records, provider request messages, and
+terminal events keep their format; no storage migration or compatibility mode
+is needed.
 
 Every retained call hash has an explicit `admitted` or `rejected` decision.
 Missing and unknown decisions are protocol errors; reads reject them without
@@ -2939,6 +3057,109 @@ The registry wire protocol and deterministic stream IDs are defined in `runtime/
 
 - Toolset request stream: `toolset:<toolsetID>:requests`
 - Per-call result stream: `result:<toolUseID>`
+
+### Registry result envelope decoding
+
+Use `toolregistry.DecodeToolResultMessage(data)` to decode one non-null JSON
+object into the existing `ToolResultMessage`. The Registry native completion
+method, retained call-record reader, and executor result-event reader all use
+this implementation. No generated envelope decoder or additional wire type is
+involved. Ordinary `json.Marshal` remains the encoder.
+
+The decoder rejects malformed input, nonobject or null roots, additional JSON
+documents, and unknown fields in fixed records. Those records include the
+message, bounds, server-data items, error/failure/cause records, recovery and
+field-issue records, and Retry control. Every error returns a zero message;
+callers must not use a partial result. The existing `agent.Bounds` representation
+still marshals names such as `Returned`, `Truncated`, and `NextCursor`.
+
+This uses standard `encoding/json` semantics. Duplicate fields are processed in
+order, replacing or merging earlier values according to their Go type; field
+matching accepts case-insensitive matches. Invalid UTF-8 and invalid UTF-16
+surrogates in decoded strings are replaced with the Unicode replacement
+character. This is not a promise to reject duplicate names, case variants, or
+invalid Unicode. No additional parser policy is introduced.
+
+`result_json` and each server-data item's `data` remain `json.RawMessage`, so
+numbers such as 9007199254740993 are not converted to floating-point values and
+dynamic object fields are not discarded. Recovery `prior_input` and
+`example_json` retain their existing `rawjson.Message` behavior: non-null JSON
+is copied, surrounding whitespace is trimmed, and null means absence. The
+decoder does not rewrite the input buffer. Registry completion stores the
+original submitted envelope bytes, and retained-record validation checks their
+existing digest before replaying those same bytes.
+
+Decoding does not validate token or call identity, select a success/error/retry
+variant, or validate a selected tool's result, server data, or bounds. Apply the
+existing owners in the caller's established order:
+
+- Native `CompleteToolCall` validates the message, rejects Retry, requires exact
+  embedded/request identity, and submits the original bytes to Registry. Its
+  accepted/deadline-settled boolean keeps the same meaning.
+- Retained call records validate the message, exact identity, terminal cause,
+  and original-byte integrity digest.
+- The executor validates token form, filters foreign call identities, then
+  validates the message and handles Registry Retry. Terminal values continue
+  through the selected tool codecs and existing malformed-result behavior.
+
+A successful message with no semantic result remains representable. A public
+no-result `ToolSpec` has an empty result codec; it is not an arbitrary-JSON
+codec. The runtime's complete result contract owns missing/no-result and typed
+nil checks plus tool-specific bounds rules. After establishing the successful
+envelope and exact identity, use `runtime.ValidateSuccessfulToolResult(spec,
+result, bounds)` to apply those existing checks before forwarding a successful
+result. It invokes the selected Result.Codec itself; callers do not need to
+perform a second semantic decode. Server data still uses
+`toolserverdata.Apply(spec.CanonicalizeServerData, ...)` separately. Envelope
+decoding alone does not provide full tool acceptance. Neither operation broadens
+standalone original codec support to `Any` or custom Go types.
+
+Retry remains the nonterminal Registry overload instruction. Failure recovery
+keeps its existing `correct_call`, `replan`, and `finish` actions; there is no
+`noRetry` field. The decoder does not remap failure codes or recovery actions.
+
+Unknown fixed members were previously ignored by these three readers. They
+now fail decoding, including on retained messages and before an executor can
+filter a foreign identity. Before release, verify independently deployed
+providers and retained messages against this tightened contract. Source tests
+are not evidence about deployed writers or retained production data. The wire
+version, storage shape, provider behavior, and defaults do not change, and no
+fallback or compatibility mode is added.
+
+### Successful tool result validation
+
+`runtime.ValidateSuccessfulToolResult(spec, result, bounds)` validates the raw
+semantic JSON and bounds for one successful result against that call's selected
+`tools.ToolSpec`. It returns the existing validation error or nil. Use it only
+after the caller has checked the envelope, exact call identity, and successful
+variant. Failure, Retry, and server-data validation remain separate concerns.
+
+The function delegates to the existing private runtime result decoder, then
+the existing bounds validator. It adds no JSON parser or schema traversal:
+
+- A tool without a result codec requires no result bytes. Literal JSON null,
+  whitespace, and other nonempty values are rejected for that tool.
+- A tool with a result codec requires bytes accepted by that codec. A nil
+  decoded value, including a typed nil pointer, is rejected.
+- Unbounded tools cannot carry bounds. Successful bounded tools require them.
+  A present next cursor must be nonempty, requires configured paging, and
+  requires truncation. A truncated result needs a cursor or refinement hint.
+
+These are the current runtime rules, not additional schema or numeric limits.
+The function does not infer totals, repair bounds, encode JSON, or publish a
+terminal. A nil return establishes successful-result validity only; identity,
+server-data validation, and the owner's completion acknowledgement are still
+required by their existing contracts.
+
+The tool name in errors comes from spec.Name. The existing private bounds
+validator has no call ID at this public boundary; adapters add their already
+accepted call identity when reporting an error. Existing runtime callers keep
+their original private validation paths and call-aware diagnostics.
+
+This additive function requires no regeneration, migration, wire version or
+default change. Native Registry completion and existing local providers keep
+their current behavior. Provider connection lifetime, acknowledgement/replay,
+and transport shutdown are separate contracts.
 
 ### Dynamic registry consumption
 
@@ -3264,9 +3485,13 @@ Applications can also [register native Agent tools dynamically](tool_search.md#r
 These declarations select a preconfigured worker and immutable application
 configuration. They use the same child workflow lifecycle. The linked guide owns
 registration, configuration resolution, typed results, and upgrade requirements.
-A child continuation sends only its new run identity, saved suspension, and
-response; messages, labels, policy, and the selected parent contract come from
-that checkpoint.
+A child continuation sends its new run identity, execution parent, saved
+suspension, and response. Runtime derives the execution parent from the parent
+workflow that starts this child. Messages, labels, policy, original tool-call
+identity and the selected parent contract come from the checkpoint. Its saved
+historical parent is not rewritten. When a child is continued directly through
+its public client under the same running parent, the client derives that parent
+from the checkpoint; callers do not supply a parent selector.
 
 ### How It Works
 
@@ -3779,10 +4004,23 @@ For runtime storage and workflow adapters:
   ordered run record together.
 - When `session.RunStart.PredecessorRunID` is non-empty, implement root and
   child starts so they require that run to exist, be suspended, and have the
-  same session, agent, and parent. Check those facts in the same transaction as
-  the successor start. Reject a mismatch before writing the successor or its
-  parent link. Do not copy the predecessor ID into `RunMeta`; `RunStarted` is
-  the immutable relationship record.
+  same session, agent, and root-or-child identity. For a child, compare its
+  predecessor's exact accepted parent-link record with the new link: tool-call
+  ID, tool name, parent agent, Session and child agent must match, even when the
+  execution parent changes. Check those facts in the same transaction as the
+  successor start. Runtime separately proves the new parent's first pending
+  child from its accepted continuation seed and immediate checkpoint. A fresh
+  start still requires a running execution parent; preserve exact closed-start
+  retries. Reject a mismatch before writing the successor or its parent link.
+  Do not copy the predecessor ID into `RunMeta`; `RunStarted` is the immutable
+  relationship record.
+- Accepted child requests include their execution parent in the request digest.
+  Do not rewrite old accepted requests, checkpoint bytes or Temporal command
+  history to change that parent. Before rollout, determine which old workflows
+  and uncertain starts must finish, be canceled or be abandoned under the host's
+  existing release procedure. Retained-format reader tests do not establish
+  replay compatibility for already-emitted child commands; no fallback changes
+  their accepted identity.
 - Pass that store as the first argument to `runtime.New`. Remove
   `WithSessionStore` and `WithRunEventStore`; they no longer exist:
 
@@ -4977,10 +5215,17 @@ reads the requested run's records breadth-first across every predecessor named
 by its one `RunStarted` record and every `ChildRunLinked` child reachable from
 those runs.
 The predecessor is the suspended run whose saved planner messages the
-continuation restored. It must keep the same Session, agent, and parent run as
-its successor. Each child must keep the same Session and match the child agent
-and parent run named by its link record. A missing or mismatched related run, a
-relationship cycle, or more than one start record is a stored-data error; it is
+continuation restored. It must keep the same Session, agent, and root-or-child
+identity as its successor and remain suspended. A child continuation may have a
+new execution parent. The resolver loads that child's exact accepted history
+publication once per continuation relationship and requires its owner, source
+run and source position to match the continuation contract and the predecessor
+named by `RunStarted`. Atomic child admission already checked the original tool
+call against both exact parent links; prompt resolution does not scan parent
+histories or reinterpret saved checkpoints. Each child must still keep the same
+Session and match the child agent and execution parent named by its own link
+record. A missing or mismatched related run, a relationship cycle, or more than
+one start record is a stored-data error; it is
 never skipped. A run stopped because its Session had already ended has
 `RunStarted` followed by a canceled `RunCompleted` record. The resolver
 validates both records against the stored run, including their owner, labels,

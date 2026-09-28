@@ -43,11 +43,13 @@ type (
 		methodCodecs map[string]*plannedMethodCodec
 	}
 
-	// plannedMethodCodec stores the generated JSON value for each side of one
-	// original service method.
+	// plannedMethodCodec keeps each method side's codec and the exact Go layout
+	// supplied to it. Registration uses that layout for type-reference imports.
 	plannedMethodCodec struct {
-		payload *jsoncodec.Value
-		result  *jsoncodec.Value
+		payload       *jsoncodec.Value
+		result        *jsoncodec.Value
+		payloadLayout *goacodegen.GoTypePlan
+		resultLayout  *goacodegen.GoTypePlan
 	}
 
 	// mcpPlugin stores the MCP services added during Prepare and the file data
@@ -96,11 +98,11 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := declareMCPNames(plan.Generation(), adapter); err != nil {
 			return err
 		}
-		codecPlan, methodCodecs, err := planMCPCodecs(plan.Generation(), prepared, adapter)
+		codecPlan, methodCodecs, err := planMCPCodecs(plan.Generation(), servicePlan, prepared, adapter)
 		if err != nil {
 			return err
 		}
-		if err := planMCPImports(plan.Generation(), prepared, adapter); err != nil {
+		if err := planMCPImports(plan.Generation(), prepared, adapter, methodCodecs); err != nil {
 			return err
 		}
 		p.planned = append(p.planned, &plannedMCPService{
@@ -269,6 +271,7 @@ func planMCPImports(
 	generation *goacodegen.Generation,
 	prepared *preparedMCPService,
 	data *AdapterData,
+	methodCodecs map[string]*plannedMethodCodec,
 ) error {
 	data.jsonrpcClientImportPath = path.Join(generation.GenPkg(), "jsonrpc", data.mcpPathName, "client")
 	data.mcpPackage = generation.Package(data.mcpImportPath)
@@ -302,7 +305,7 @@ func planMCPImports(
 	}
 
 	if data.Register != nil {
-		if err := planMCPRegisterTypeImports(generation, prepared, data); err != nil {
+		if err := planMCPRegisterTypeImports(prepared, data, methodCodecs); err != nil {
 			return err
 		}
 		register := []*goacodegen.ImportSpec{
@@ -366,80 +369,35 @@ func planMCPJSONRPCServerImports(generation *goacodegen.Generation, data *Adapte
 	return nil
 }
 
-// planMCPRegisterTypeImports submits every package written in a generated tool
-// payload or result type before Goa chooses final import names.
+// planMCPRegisterTypeImports registers only packages named by each tool's retained
+// payload and result references, before Goa chooses final import names.
 func planMCPRegisterTypeImports(
-	generation *goacodegen.Generation,
 	prepared *preparedMCPService,
 	data *AdapterData,
+	methodCodecs map[string]*plannedMethodCodec,
 ) error {
+	imports := goacodegen.NewGeneratedImportPlan(data.mcpPackage)
 	for _, tool := range prepared.mcp.Tools {
-		for _, attribute := range []*expr.AttributeExpr{tool.Method.Payload, tool.Method.Result} {
-			if !hasMCPValue(attribute) {
+		if !hasMCPValue(tool.Method.Payload) && !hasMCPValue(tool.Method.Result) {
+			continue
+		}
+		values := methodCodecs[tool.Method.Name]
+		for _, side := range []struct {
+			attribute *expr.AttributeExpr
+			layout    *goacodegen.GoTypePlan
+		}{
+			{tool.Method.Payload, values.payloadLayout},
+			{tool.Method.Result, values.resultLayout},
+		} {
+			if !hasMCPValue(side.attribute) {
 				continue
 			}
-			if err := planMCPRegisterAttributeImports(generation, data, attribute); err != nil {
+			if err := imports.AddTypeReference(side.layout); err != nil {
 				return fmt.Errorf("plan MCP tool type import for method %q: %w", tool.Method.Name, err)
 			}
 		}
 	}
-	return nil
-}
-
-// planMCPRegisterAttributeImports walks the anonymous part of one service type.
-// Named types stop the walk because their child imports belong to their own
-// generated files, while arrays, maps, objects, and unions are written directly
-// in register.go and need every child package there.
-func planMCPRegisterAttributeImports(
-	generation *goacodegen.Generation,
-	data *AdapterData,
-	attribute *expr.AttributeExpr,
-) error {
-	if _, spec := goacodegen.GetMetaType(attribute); spec != nil {
-		if spec.Path == data.mcpPackage.ImportPath() {
-			return nil
-		}
-		if err := data.mcpPackage.DeclareImport(goacodegen.NewImport(spec.Name, spec.Path)); err != nil {
-			return err
-		}
-		data.registerImportPaths = append(data.registerImportPaths, spec.Path)
-		return nil
-	}
-	switch actual := attribute.Type.(type) {
-	case expr.UserType:
-		location := goacodegen.UserTypeLocation(actual)
-		if location == nil {
-			data.registerImportPaths = append(data.registerImportPaths, data.serviceImportPath)
-			return nil
-		}
-		importPath := path.Join(generation.GenPkg(), location.RelImportPath)
-		if importPath == data.mcpPackage.ImportPath() {
-			return nil
-		}
-		if err := data.mcpPackage.ReserveGeneratedImport(goacodegen.NewImport(location.PackageName(), importPath)); err != nil {
-			return err
-		}
-		data.registerImportPaths = append(data.registerImportPaths, importPath)
-	case *expr.Array:
-		return planMCPRegisterAttributeImports(generation, data, actual.ElemType)
-	case *expr.Map:
-		if err := planMCPRegisterAttributeImports(generation, data, actual.KeyType); err != nil {
-			return err
-		}
-		return planMCPRegisterAttributeImports(generation, data, actual.ElemType)
-	case *expr.Object:
-		for _, field := range *actual {
-			if err := planMCPRegisterAttributeImports(generation, data, field.Attribute); err != nil {
-				return err
-			}
-		}
-	case *expr.Union:
-		for _, branch := range actual.Values {
-			if err := planMCPRegisterAttributeImports(generation, data, branch.Attribute); err != nil {
-				return err
-			}
-		}
-	}
+	data.registerImportPaths = append(data.registerImportPaths, imports.Paths()...)
 	return nil
 }
 
@@ -643,6 +601,7 @@ func bindUserServiceMethod(
 // before Goa chooses final Go names.
 func planMCPCodecs(
 	generation *goacodegen.Generation,
+	services *goaservice.Plan,
 	prepared *preparedMCPService,
 	data *AdapterData,
 ) (*jsoncodec.Plan, map[string]*plannedMethodCodec, error) {
@@ -659,8 +618,7 @@ func planMCPCodecs(
 	}
 
 	codecImportPath := path.Join(data.mcpImportPath, "internal", "codec")
-	serviceImportPath := data.serviceImportPath
-	planned, err := jsoncodec.NewPlan(generation, codecImportPath, serviceImportPath)
+	planned, err := jsoncodec.NewPlan(generation, codecImportPath)
 	if err != nil {
 		return nil, nil, fmt.Errorf("plan MCP codecs for service %q: %w", prepared.userService.Name, err)
 	}
@@ -685,10 +643,16 @@ func planMCPCodecs(
 			data.NeedsServerCodec = data.NeedsServerCodec || !resource.TextResult
 		}
 		if hasMCPValue(method.Payload) && payloadDirection != 0 {
+			layout, layoutErr := services.MethodTypeLayout(method, method.Payload)
+			if layoutErr != nil {
+				return nil, nil, fmt.Errorf("plan MCP payload layout for method %q: %w", method.Name, layoutErr)
+			}
+			values.payloadLayout = layout
 			values.payload, err = planned.Add(
 				prepared.userService.Name+":"+method.Name+":payload",
 				preferred+"Payload",
 				method.Payload,
+				layout,
 				payloadDirection,
 			)
 			if err != nil {
@@ -696,10 +660,16 @@ func planMCPCodecs(
 			}
 		}
 		if hasMCPValue(method.Result) && resultDirection != 0 {
+			layout, layoutErr := services.MethodTypeLayout(method, method.Result)
+			if layoutErr != nil {
+				return nil, nil, fmt.Errorf("plan MCP result layout for method %q: %w", method.Name, layoutErr)
+			}
+			values.resultLayout = layout
 			values.result, err = planned.Add(
 				prepared.userService.Name+":"+method.Name+":result",
 				preferred+"Result",
 				method.Result,
+				layout,
 				resultDirection,
 			)
 			if err != nil {

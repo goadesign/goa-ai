@@ -39,11 +39,11 @@ type (
 		public                 *goacodegen.GeneratedPackage
 		transport              *goacodegen.GeneratedPackage
 		types                  map[specTypeKey]*plannedSpecType
-		publicTypes            map[goaexpr.UserType]*goacodegen.TypeDeclaration
-		transportTypes         map[goaexpr.UserType]*goacodegen.TypeDeclaration
+		publicTypes            map[localizedTypeKey]*goacodegen.TypeDeclaration
+		transportTypes         map[localizedTypeKey]*goacodegen.TypeDeclaration
 		publicTypeUses         map[goaexpr.UserType]*goacodegen.NameDeclaration
 		transportTypeUses      map[goaexpr.UserType]*goacodegen.NameDeclaration
-		transportValidators    map[goaexpr.UserType]*goacodegen.NameDeclaration
+		transportValidators    map[*goacodegen.TypeDeclaration]*goacodegen.NameDeclaration
 		publicFixed            map[string]*goacodegen.NameDeclaration
 		transportFixed         map[string]*goacodegen.NameDeclaration
 		publicUnionErrors      map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration
@@ -81,6 +81,8 @@ type (
 	// plannedSpecType stores one public Go type, its JSON-decoding Go type, and
 	// the functions that copy values between them.
 	plannedSpecType struct {
+		jsonContract         specJSONContract
+		schemaShape          *goaexpr.AttributeExpr
 		publicDeclaration    *goacodegen.NameDeclaration
 		transportDeclaration *goacodegen.NameDeclaration
 		publicLayout         *goacodegen.GoTypePlan
@@ -148,9 +150,17 @@ type (
 	// localizedType keeps the Goa type that owns a generated nested type next to
 	// the copy written in the tool package.
 	localizedType struct {
-		source      goaexpr.UserType
-		generated   *goaexpr.UserTypeExpr
-		declaration *goacodegen.TypeDeclaration
+		jsonContract specJSONContract
+		source       goaexpr.UserType
+		generated    *goaexpr.UserTypeExpr
+		declaration  *goacodegen.TypeDeclaration
+	}
+
+	// localizedTypeKey keeps the same named type separate when its native-image
+	// and ordinary JSON transport fields differ. Public types always use model.
+	localizedTypeKey struct {
+		source       goaexpr.UserType
+		jsonContract specJSONContract
 	}
 
 	// localizedSpecTypeShapes stores the public and JSON-decoding shapes used by
@@ -224,11 +234,12 @@ type (
 	// localizedTypeNameOrder stores the stable Goa type details used to order
 	// generated nested types that request the same Go name.
 	localizedTypeNameOrder struct {
-		packagePath string
-		sourcePath  string
-		sourceName  string
-		sourceID    string
-		role        localizedTypeNameRole
+		jsonContract specJSONContract
+		packagePath  string
+		sourcePath   string
+		sourceName   string
+		sourceID     string
+		role         localizedTypeNameRole
 	}
 
 	// localizedTypeNameRole distinguishes a nested type from the validation
@@ -311,7 +322,7 @@ func planToolSpecs(
 			QualifiedName: completion.Service.Name + "." + completion.Name,
 			ScopeName:     completion.Service.Name + ".completions",
 		}
-		if err := packagePlan.declareTypeImports(owner, completion.Expr.Return, usageResult); err != nil {
+		if err := packagePlan.declareTypeImports(owner, completion.Expr.Return, usageResult, specJSONModel); err != nil {
 			return nil, fmt.Errorf("plan completion %q imports: %w", completion.Name, err)
 		}
 	}
@@ -334,7 +345,7 @@ func planToolSpecs(
 			QualifiedName: completion.Service.Name + "." + completion.Name,
 			ScopeName:     completion.Service.Name + ".completions",
 		}
-		if err := packagePlan.declareType(owner, completion.Expr.Return, usageResult, ""); err != nil {
+		if err := packagePlan.declareType(owner, completion.Expr.Return, usageResult, "", specJSONModel); err != nil {
 			return nil, fmt.Errorf("plan completion %q: %w", completion.Name, err)
 		}
 		packagePlan.completionNames[completion.Name].resultType = packagePlan.types[stableTypeKey(owner, usageResult, "")]

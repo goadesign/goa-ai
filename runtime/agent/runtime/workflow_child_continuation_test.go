@@ -35,7 +35,7 @@ func TestChildContinuationWaitsAfterParentCancellation(t *testing.T) {
 	tool.AgentID = continuationChildAgentID
 	childTool := newAnyJSONSpec("child.lookup")
 	cfg := AgentToolConfig{
-		Definition:       testAgentDefinition(continuationChildAgentID, "nested.workflow", "nested.queue", []tools.ToolSpec{childTool}, nil),
+		Definition:       testAgentDefinition(continuationChildAgentID, "nested.workflow", "nested.queue", []tools.ToolSpec{childTool, tool}, nil),
 		Name:             "svc.agent",
 		AgentToolContent: AgentToolContent{Prompt: func(tools.Ident, any) string { return "work" }},
 	}
@@ -43,6 +43,9 @@ func TestChildContinuationWaitsAfterParentCancellation(t *testing.T) {
 	runtime.toolsets[registration.Name] = registration
 	seedTestToolset(runtime, registration.Name, tool)
 
+	parentRegistration := AgentRegistration{Definition: testAgentDefinitionWithChildren(
+		"parent.agent", "parent.workflow", "parent.queue", []tools.ToolSpec{tool}, nil, []AgentDefinition{cfg.Definition},
+	)}
 	ctx, cancel := context.WithCancel(context.Background())
 	childHandles := make(chan *controlledChildHandle, 1)
 	wfCtx := &testWorkflowContext{
@@ -57,6 +60,13 @@ func TestChildContinuationWaitsAfterParentCancellation(t *testing.T) {
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID,
 	}}
 	suspension := suspensionContractFixtureWithContext(t, childTool.Name, continuationChildAgentID, "previous-child", nil, nil)
+	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+		checkpoint.Context.ParentRunID = "run-1"
+		checkpoint.Context.ParentAgentID = "parent.agent"
+		checkpoint.Context.ParentToolCallID = "call-child"
+		checkpoint.Context.Tool = tool.Name
+		checkpoint.Context.ToolArgs = rawjson.Message(`{}`)
+	})
 	admitRunForTest(t, runtime.Store, session.RunMeta{
 		AgentID: continuationChildAgentID, RunID: "previous-child", SessionID: "session-1",
 		Status: session.RunStatusRunning,
@@ -69,10 +79,11 @@ func TestChildContinuationWaitsAfterParentCancellation(t *testing.T) {
 	batch := stepBatch{records: []stepToolRecord{{
 		call: ToolCall{
 			Name: tool.Name, ToolCallID: "call-child", Payload: rawjson.Message(`{}`),
+			AgentID: "parent.agent", RunID: "run-1", SessionID: "session-1",
 		},
 		childSuspension: suspension,
 	}}}
-	loop := &workflowLoop{r: runtime, wfCtx: wfCtx, input: input, base: base}
+	loop := &workflowLoop{r: runtime, wfCtx: wfCtx, input: input, base: base, reg: parentRegistration}
 	pending := &checkpointChildContinuation{
 		ToolCallID: "call-child",
 		Suspension: suspension,
@@ -113,7 +124,7 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 	if dynamic {
 		childID = "generic.agent"
 	}
-	childDefinition := testAgentDefinition(agent.Ident(childID), "nested.workflow", "nested.queue", []tools.ToolSpec{childTool}, nil)
+	childDefinition := testAgentDefinition(agent.Ident(childID), "nested.workflow", "nested.queue", []tools.ToolSpec{childTool, tool}, nil)
 	parentDefinition := testAgentDefinitionWithChildren(
 		"parent.agent", "parent.workflow", "parent.queue", []tools.ToolSpec{tool}, nil,
 		[]AgentDefinition{childDefinition})
@@ -187,13 +198,14 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 		nil,
 		nil,
 	)
-	if dynamic {
-		rewriteSuspensionCheckpoint(t, childSuspension, func(checkpoint *workflowCheckpoint) {
-			nested := agentChildRunContext(&call)
-			nested.Labels = firstContext.childRequests[0].Input.Labels
-			checkpoint.Context = checkpointContextFromRun(nested)
-		})
-	}
+	rewriteSuspensionCheckpoint(t, childSuspension, func(checkpoint *workflowCheckpoint) {
+		checkpoint.Context = checkpointRunContext{
+			ParentRunID: childInput.ParentRunID, ParentAgentID: childInput.ParentAgentID,
+			ParentToolCallID: childInput.ParentToolCallID, Tool: childInput.Tool,
+			ToolArgs: childInput.ToolArgs, ToolRegistry: childInput.ToolRegistry.Clone(),
+			Labels: cloneLabels(childInput.Labels), Metadata: cloneMetadata(childInput.Metadata),
+		}
+	})
 	suspensionData, err := json.Marshal(childSuspension)
 	require.NoError(t, err)
 	require.NoError(t, storeSuspensionForTest(t.Context(), runtime.Store, childInput.RunID, session.RunSuspension{

@@ -197,7 +197,16 @@ func TestStandaloneSameOriginDifferentOwners(t *testing.T) {
 	otherDeclaration, err := other.DeclareUserType(shared)
 	require.NoError(t, err)
 	first := addStandaloneTestValue(t, generation, owner, plan, shared).transport
-	second, err := plan.copyOriginalTransport(&expr.AttributeExpr{Type: shared}, other.ImportPath())
+	attribute := &expr.AttributeExpr{Type: shared}
+	layout, err := codegen.PlanGoType(attribute, codegen.GoTypePlanOptions{
+		Owner: other.ImportPath(), RetainNamedValue: true,
+		Policy: codegen.GoLayoutPolicy{UseDefault: true, SumType: true},
+		Bind: func(request codegen.GoTypeBindingRequest) (codegen.GoTypeBinding, error) {
+			return codegen.GoTypeBinding{Owner: other.ImportPath(), PreferredImportName: "other", Type: otherDeclaration}, nil
+		},
+	})
+	require.NoError(t, err)
+	second, err := plan.copyOriginalTransport(attribute, layout)
 	require.NoError(t, err)
 	assert.NotSame(t, first.Type, second.Type)
 	assert.NotNil(t, plan.originals.types[otherDeclaration])
@@ -231,7 +240,7 @@ func standaloneTestPlan(t *testing.T, types ...expr.UserType) (*codegen.Generati
 			return nil
 		}))
 	}
-	plan, err := NewPlan(generation, owner.ImportPath(), owner.ImportPath())
+	plan, err := NewPlan(generation, owner.ImportPath())
 	require.NoError(t, err)
 	return generation, owner, plan
 }

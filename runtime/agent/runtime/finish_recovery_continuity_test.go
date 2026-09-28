@@ -54,7 +54,7 @@ func TestFinishRecoveryRejectsLegacyExpandedCatalogBeforeExecution(t *testing.T)
 	// finish-recovery response was rejected. Its recorded catalog admits the
 	// name, but it cannot satisfy the run's retained finish restriction.
 	result := &PlanResult{ToolCalls: []ToolCall{{Name: search.Name, ToolCallID: "new-operation", Payload: rawjson.Message(`{}`)}}}
-	program, err := h.runtime.normalizePlanResultContract(result, "")
+	program, err := h.runtime.normalizePlanResultContract(result, h.base.RunContext, h.input.AgentID)
 	require.NoError(t, err)
 	_, err = loop.runStep(program)
 	var rejected *planner.OutputContractError

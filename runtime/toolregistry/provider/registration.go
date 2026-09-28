@@ -71,22 +71,27 @@ type (
 		) error
 
 		// Release idempotently removes the exact provider-incarnation lease from
-		// the admitted token.
-		// Serve calls it after consumption and renewal have stopped and all
-		// workers/acks have settled. Implementations must honor ctx.
+		// the admitted token and settles its remaining claims through the registry.
+		// Serve calls it after consumption and renewal have stopped, all workers
+		// have returned, and acknowledgements have drained. A handler may have
+		// returned ErrResultUnavailable without submitting a terminal; native
+		// ReleaseProvider settles that retained claim after removing the lease.
+		// Implementations must honor ctx.
 		Release func(
 			ctx context.Context,
 			toolset, providerID, incarnationID, expectedRegistrationToken string,
 		) error
 
-		// Complete atomically publishes one canonical terminal result and commits
-		// terminal state in the registry-owned call record.
+		// Complete submits one terminal to the registry and returns whether those
+		// exact bytes were retained, including identical replay. False with no
+		// error means the execution deadline settled the call instead. Both
+		// outcomes finish delivery; only true confirms this provider's result.
 		Complete func(
 			ctx context.Context,
 			toolset, providerID, incarnationID, providerRegistrationToken,
 			requestEventID string,
 			result toolregistry.ToolResultMessage,
-		) error
+		) (accepted bool, err error)
 
 		// PublishOutputDelta asks the registry to append one fragment only while
 		// the exact claimed call remains nonterminal.
@@ -137,7 +142,7 @@ type (
 		renew              func(ctx context.Context, toolset, providerID, incarnationID, expectedRegistrationToken string) (time.Duration, error)
 		drain              func(ctx context.Context, toolset, providerID, incarnationID, expectedRegistrationToken string, settlementDuration time.Duration) error
 		release            func(ctx context.Context, toolset, providerID, incarnationID, expectedRegistrationToken string) error
-		complete           func(ctx context.Context, toolset, providerID, incarnationID, providerRegistrationToken, requestEventID string, result toolregistry.ToolResultMessage) error
+		complete           func(ctx context.Context, toolset, providerID, incarnationID, providerRegistrationToken, requestEventID string, result toolregistry.ToolResultMessage) (bool, error)
 		publishOutputDelta func(
 			ctx context.Context,
 			toolset, providerID, incarnationID, providerRegistrationToken,

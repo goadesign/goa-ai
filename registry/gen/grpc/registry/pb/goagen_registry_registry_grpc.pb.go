@@ -174,13 +174,15 @@ type RegistryClient interface {
 	// Before returning either a republished or terminal call, the registry
 	// establishes the result stream so the caller can create a reader immediately.
 	RetryTool(ctx context.Context, in *RetryToolRequest, opts ...grpc.CallOption) (*RetryToolResponse, error)
-	// Publish one canonical terminal result for an admitted call. The registry
+	// Submit one canonical terminal result for an admitted call. The registry
 	// verifies the exact provider incarnation still owns an unexpired lease and
 	// claimed request event, then atomically stores the full terminal in the
-	// authoritative call record and appends it to bounded result history. If that
-	// exact dispatch lease disappears first, registry-owned settlement commits
-	// outcome_unknown because the effect may have occurred; execution ownership
-	// never transfers.
+	// authoritative call record and appends it to bounded result history. Accepted
+	// is true when those exact provider bytes are retained, including an identical
+	// replay, and false when the execution deadline settled the call as
+	// outcome_unknown instead. If that exact dispatch lease disappears first,
+	// registry-owned settlement commits outcome_unknown because the effect may
+	// have occurred; execution ownership never transfers.
 	CompleteToolCall(ctx context.Context, in *CompleteToolCallRequest, opts ...grpc.CallOption) (*CompleteToolCallResponse, error)
 	// Publish one best-effort output fragment for a claimed live call. The
 	// registry verifies the exact provider lease and request-event claim, then
@@ -558,13 +560,15 @@ type RegistryServer interface {
 	// Before returning either a republished or terminal call, the registry
 	// establishes the result stream so the caller can create a reader immediately.
 	RetryTool(context.Context, *RetryToolRequest) (*RetryToolResponse, error)
-	// Publish one canonical terminal result for an admitted call. The registry
+	// Submit one canonical terminal result for an admitted call. The registry
 	// verifies the exact provider incarnation still owns an unexpired lease and
 	// claimed request event, then atomically stores the full terminal in the
-	// authoritative call record and appends it to bounded result history. If that
-	// exact dispatch lease disappears first, registry-owned settlement commits
-	// outcome_unknown because the effect may have occurred; execution ownership
-	// never transfers.
+	// authoritative call record and appends it to bounded result history. Accepted
+	// is true when those exact provider bytes are retained, including an identical
+	// replay, and false when the execution deadline settled the call as
+	// outcome_unknown instead. If that exact dispatch lease disappears first,
+	// registry-owned settlement commits outcome_unknown because the effect may
+	// have occurred; execution ownership never transfers.
 	CompleteToolCall(context.Context, *CompleteToolCallRequest) (*CompleteToolCallResponse, error)
 	// Publish one best-effort output fragment for a claimed live call. The
 	// registry verifies the exact provider lease and request-event claim, then

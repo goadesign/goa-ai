@@ -21,6 +21,20 @@ import (
 // DeclareServiceToolset saves a complete service declaration independently of
 // provider availability. An identical retry returns the saved winner unchanged.
 func (s *Service) DeclareServiceToolset(ctx context.Context, p *genregistry.ServiceToolsetDeclaration) (*genregistry.ResolvedToolset, error) {
+	return s.declareServiceToolset(ctx, p, nil)
+}
+
+// DeclareServiceToolsetWithIdentity saves application ownership with a service
+// declaration. Identity is immutable and does not require an online provider.
+func (s *Service) DeclareServiceToolsetWithIdentity(ctx context.Context, identity CatalogIdentity, p *genregistry.ServiceToolsetDeclaration) (*genregistry.ResolvedToolset, error) {
+	owned, err := identityInput(identity)
+	if err != nil {
+		return nil, err
+	}
+	return s.declareServiceToolset(ctx, p, owned)
+}
+
+func (s *Service) declareServiceToolset(ctx context.Context, p *genregistry.ServiceToolsetDeclaration, identity *CatalogIdentity) (*genregistry.ResolvedToolset, error) {
 	compiled, err := registrycontract.Compile(p.Tools)
 	if err != nil {
 		return nil, genregistry.MakeValidationError(err)
@@ -44,6 +58,7 @@ func (s *Service) DeclareServiceToolset(ctx context.Context, p *genregistry.Serv
 	if err != nil {
 		return nil, genregistry.MakeValidationError(err)
 	}
+	definition.identity = identity
 	entry, err := s.catalog.DeclareService(ctx, definition)
 	if err != nil {
 		switch {
@@ -101,6 +116,9 @@ func (c *toolsetCatalog) DeclareService(ctx context.Context, definition *catalog
 	for {
 		current, err := c.snapshot(ctx, name)
 		if err == nil {
+			if err := requireCatalogIdentity(current.Identity, definition.identity); err != nil {
+				return catalogEntry{}, err
+			}
 			if current.NativeAgent {
 				return catalogEntry{}, errAdmissionConflict
 			}

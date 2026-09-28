@@ -24,6 +24,7 @@ type (
 	// catalogState contains only the facts used by discovery, health, and
 	// provider lifecycle operations. Tool definitions never enter this JSON.
 	catalogState struct {
+		Identity            *CatalogIdentity         `json:"identity,omitempty"`
 		NativeAgent         bool                     `json:"native_agent,omitempty"`
 		State               catalogEntryState        `json:"state"`
 		Info                *genregistry.ToolsetInfo `json:"info"`
@@ -175,6 +176,9 @@ func (c *toolsetCatalog) Register(ctx context.Context, definition *catalogToolse
 		if exists {
 			existing, err = parseCatalogState(name, raw)
 			if err != nil {
+				return catalogState{}, err
+			}
+			if err := requireCatalogIdentity(existing.Identity, definition.identity); err != nil {
 				return catalogState{}, err
 			}
 			if existing.NativeAgent {
@@ -772,6 +776,10 @@ func (c *toolsetCatalog) commit(ctx context.Context, key, previous string, state
 		return false, err
 	}
 	write.State = next
+	if state.Identity != nil {
+		write.Scope = state.Identity.Scope
+		write.Indexed = state.State == catalogEntryActive
+	}
 	updated, err := c.store.Commit(ctx, key, previous, write)
 	if err != nil {
 		return false, fmt.Errorf("replace catalog key %q: %w", key, err)
@@ -794,6 +802,7 @@ func newCatalogState(definition *catalogToolset, revision, token string, now tim
 	info := copyToolsetInfo(definition.info)
 	info.RegisteredAt = registeredAt
 	return catalogState{
+		Identity:            definition.identity,
 		State:               catalogEntryActive,
 		Info:                info,
 		SchemaFingerprint:   definition.fingerprint,

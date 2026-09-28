@@ -483,10 +483,10 @@ func TestServeShutdownPublishesThenAcknowledgesBeforeRelease(t *testing.T) {
 		return resultStream, nil
 	})
 	registration := successfulRegistration()
-	registration.Complete = func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) error {
+	registration.Complete = func(context.Context, string, string, string, string, string, toolregistry.ToolResultMessage) (bool, error) {
 		record("result")
 		close(resultPublished)
-		return nil
+		return true, nil
 	}
 	registration.Drain = func(_ context.Context, _, _, _, _ string, duration time.Duration) error {
 		drainDuration <- duration
@@ -591,9 +591,9 @@ func TestServeDrainingLeaseSettlesClaimedCallAndLeavesBufferedCallUnclaimed(t *t
 		_ context.Context,
 		_, _, _, _, _ string,
 		result toolregistry.ToolResultMessage,
-	) error {
+	) (bool, error) {
 		completed <- result.ToolUseID
-		return nil
+		return true, nil
 	}
 	registration.Release = func(context.Context, string, string, string, string) error {
 		close(released)

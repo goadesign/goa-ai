@@ -3773,7 +3773,10 @@ func (x *CompleteToolCallRequest) GetProviderRegistrationToken() string {
 }
 
 type CompleteToolCallResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// True for newly retained or identical provider terminal bytes; false when the
+	// execution deadline settled the call as outcome_unknown instead.
+	Accepted      *bool `protobuf:"varint,1,opt,name=accepted,proto3,oneof" json:"accepted,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3806,6 +3809,13 @@ func (x *CompleteToolCallResponse) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CompleteToolCallResponse.ProtoReflect.Descriptor instead.
 func (*CompleteToolCallResponse) Descriptor() ([]byte, []int) {
 	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *CompleteToolCallResponse) GetAccepted() bool {
+	if x != nil && x.Accepted != nil {
+		return *x.Accepted
+	}
+	return false
 }
 
 type PublishToolOutputDeltaRequest struct {
@@ -4685,8 +4695,10 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\f_tool_use_idB\x0e\n" +
 	"\f_result_jsonB\x13\n" +
 	"\x11_request_event_idB\x1e\n" +
-	"\x1c_provider_registration_token\"\x1a\n" +
-	"\x18CompleteToolCallResponse\"\xdd\x04\n" +
+	"\x1c_provider_registration_token\"H\n" +
+	"\x18CompleteToolCallResponse\x12\x1f\n" +
+	"\baccepted\x18\x01 \x01(\bH\x00R\baccepted\x88\x01\x01B\v\n" +
+	"\t_accepted\"\xdd\x04\n" +
 	"\x1dPublishToolOutputDeltaRequest\x12\x1b\n" +
 	"\x06stream\x18d \x01(\tH\x00R\x06stream\x88\x01\x01\x12\x19\n" +
 	"\x05delta\x18e \x01(\tH\x01R\x05delta\x88\x01\x01\x12\x1d\n" +
@@ -4992,6 +5004,7 @@ func file_goagen_registry_registry_proto_init() {
 	file_goagen_registry_registry_proto_msgTypes[51].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[52].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[53].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[54].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[55].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[57].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[59].OneofWrappers = []any{}

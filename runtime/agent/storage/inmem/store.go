@@ -728,7 +728,7 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 	if err := s.validateStartSeedLocked(start); err != nil {
 		return sessionRunStartResult{}, err
 	}
-	if err := s.validatePredecessorLocked(start); err != nil {
+	if err := s.validatePredecessorLocked(start, parent); err != nil {
 		return sessionRunStartResult{}, err
 	}
 	if existing, ok := s.runs[start.RunID]; ok {
@@ -802,8 +802,8 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 }
 
 // validatePredecessorLocked proves that a continuation restores a suspended
-// run with the same immutable owner and parent before the successor is stored.
-func (s *Store) validatePredecessorLocked(start session.RunStart) error {
+// run with the same owner and logical call before the successor is stored.
+func (s *Store) validatePredecessorLocked(start session.RunStart, parent *runlog.Event) error {
 	if start.PredecessorRunID == "" {
 		return nil
 	}
@@ -835,13 +835,28 @@ func (s *Store) validatePredecessorLocked(start session.RunStart) error {
 			start.AgentID,
 		)
 	}
-	if predecessor.ParentRunID != start.ParentRunID {
-		return fmt.Errorf(
-			"continuation predecessor %q parent run id %q does not match successor %q",
-			start.PredecessorRunID,
-			predecessor.ParentRunID,
-			start.ParentRunID,
-		)
+	if predecessor.ParentRunID == "" || start.ParentRunID == "" {
+		if predecessor.ParentRunID != start.ParentRunID {
+			return fmt.Errorf(
+				"continuation predecessor %q parent run id %q does not match successor %q",
+				start.PredecessorRunID, predecessor.ParentRunID, start.ParentRunID,
+			)
+		}
+		return nil
+	}
+	previousParent, ok := s.runs[predecessor.ParentRunID]
+	if !ok {
+		return session.ErrRunNotFound
+	}
+	previousLink, err := s.selectedStartRecordLocked(predecessor.ParentRunID, s.lifecycle[predecessor.RunID].parentLink)
+	if err != nil {
+		return err
+	}
+	if err := lifecycle.ValidateStoredChildLink(previousLink, previousParent, predecessor); err != nil {
+		return fmt.Errorf("continuation predecessor child link: %w", err)
+	}
+	if err := lifecycle.ValidateChildContinuationLinks(previousLink, parent); err != nil {
+		return err
 	}
 	return nil
 }

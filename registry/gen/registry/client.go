@@ -315,9 +315,13 @@ func (c *Client) RetryTool(ctx context.Context, p *RetryToolPayload) (res *CallT
 //   - "validation_error" (type *goa.ServiceError): Payload validation failed
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
-func (c *Client) CompleteToolCall(ctx context.Context, p *CompleteToolCallPayload) (err error) {
-	_, err = c.CompleteToolCallEndpoint(ctx, p)
-	return
+func (c *Client) CompleteToolCall(ctx context.Context, p *CompleteToolCallPayload) (res *CompleteToolCallResult, err error) {
+	var ires any
+	ires, err = c.CompleteToolCallEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*CompleteToolCallResult), nil
 }
 
 // PublishToolOutputDelta calls the "PublishToolOutputDelta" endpoint of the

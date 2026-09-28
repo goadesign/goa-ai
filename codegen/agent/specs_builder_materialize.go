@@ -17,6 +17,7 @@ type (
 	// HTTP transport types copy the complete shape so null values remain visible
 	// to generated validation.
 	nestedTypeLocalizer struct {
+		jsonContract  specJSONContract
 		transport     bool
 		sourceTypes   map[goaexpr.UserType]goaexpr.UserType
 		localBySource map[goaexpr.UserType]*localizedType
@@ -212,7 +213,7 @@ func (b *toolSpecBuilder) materializeNestedTransportTypes(scope *codegen.NameSco
 	for _, localized := range locals {
 		ut := localized.generated
 		name := localized.declaration.Name()
-		validateFunc := b.planned.transportValidators[localized.source].Name()
+		validateFunc := b.planned.transportValidators[localized.declaration].Name()
 		key := "transport:" + name
 		if _, exists := b.types[key]; exists {
 			continue
@@ -247,12 +248,13 @@ func (b *toolSpecBuilder) materializeNestedTransportTypes(scope *codegen.NameSco
 // localizeNestedTypes copies att and replaces nested service types with types
 // that will be written in the selected output package. HTTP helper types also
 // receive JSON field names and pointer rules used by request decoding.
-func localizeNestedTypes(att *goaexpr.AttributeExpr, transport bool, sourceTypes map[goaexpr.UserType]goaexpr.UserType) (*goaexpr.AttributeExpr, []*localizedType) {
+func localizeNestedTypes(att *goaexpr.AttributeExpr, transport bool, sourceTypes map[goaexpr.UserType]goaexpr.UserType, contract specJSONContract) (*goaexpr.AttributeExpr, []*localizedType) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return att, nil
 	}
 	cloned := goaexpr.DupAtt(att)
 	localizer := &nestedTypeLocalizer{
+		jsonContract:  contract,
 		transport:     transport,
 		sourceTypes:   sourceTypes,
 		localBySource: make(map[goaexpr.UserType]*localizedType),
@@ -316,17 +318,20 @@ func (l *nestedTypeLocalizer) localType(userType goaexpr.UserType) goaexpr.UserT
 
 	name := localizedTypeName(userType)
 	if l.transport {
+		if l.jsonContract == specJSONNativeImage {
+			name += "NativeImage"
+		}
 		name += "Transport"
 	}
 	base := stripStructPkgMeta(goaexpr.DupAtt(userType.Attribute()))
 	if l.transport {
-		normalizeModelJSONTransportAttrRecursive(base)
+		l.jsonContract.normalizeTransportAttribute(base, make(map[goaexpr.UserType]struct{}))
 	}
 	generated := &goaexpr.UserTypeExpr{
 		AttributeExpr: base,
 		TypeName:      name,
 	}
-	local := &localizedType{source: source, generated: generated}
+	local := &localizedType{source: source, generated: generated, jsonContract: l.jsonContract}
 	l.localBySource[source] = local
 	l.locals = append(l.locals, local)
 	return generated

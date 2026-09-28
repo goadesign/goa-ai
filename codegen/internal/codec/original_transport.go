@@ -6,7 +6,6 @@ package codec
 import (
 	"fmt"
 	"maps"
-	"path"
 
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/expr"
@@ -39,7 +38,7 @@ func (p *Plan) addOriginal(key, preferredName string, attribute *expr.AttributeE
 			unionsByLocal: make(map[*expr.Union]*plannedUnion),
 		}
 	}
-	transport, err := p.copyOriginalTransport(attribute, layout.Owner())
+	transport, err := p.copyOriginalTransport(attribute, layout)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +70,7 @@ func (p *Plan) addOriginal(key, preferredName string, attribute *expr.AttributeE
 	}); err != nil {
 		return nil, err
 	}
-	if err := p.requireValueImports(EncodeAndDecode, attribute); err != nil {
+	if err := p.requireValueImports(EncodeAndDecode, layout); err != nil {
 		return nil, err
 	}
 	if err := value.planTypes(); err != nil {
@@ -83,15 +82,7 @@ func (p *Plan) addOriginal(key, preferredName string, attribute *expr.AttributeE
 	if err := value.planTransforms(); err != nil {
 		return nil, err
 	}
-	for _, imp := range layout.CompleteImportPreferences() {
-		if imp.Path == p.pkg.ImportPath() {
-			continue
-		}
-		if err := p.pkg.ReserveGeneratedImport(codegen.NewImport(imp.Name, imp.Path)); err != nil {
-			return nil, err
-		}
-		p.locatedImportPaths[imp.Path] = struct{}{}
-	}
+
 	p.values = append(p.values, value)
 	p.valuesByKey[key] = value
 	return value, nil
@@ -99,7 +90,7 @@ func (p *Plan) addOriginal(key, preferredName string, attribute *expr.AttributeE
 
 // copyOriginalTransport copies each occurrence without deep-copying named
 // subgraphs. Registering the named shell before descent closes recursive graphs.
-func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, owner string) (*expr.AttributeExpr, error) {
+func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, layout *codegen.GoTypePlan) (*expr.AttributeExpr, error) {
 	copied := *attribute
 	copied.Meta = maps.Clone(attribute.Meta)
 	stripPackageMetadata(&copied)
@@ -108,13 +99,7 @@ func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, owner string
 		if actual == expr.Empty {
 			return &copied, nil
 		}
-		if location := codegen.UserTypeLocation(actual); location != nil {
-			owner = path.Join(p.generation.GenPkg(), location.RelImportPath)
-		}
-		source, err := p.generation.Package(owner).Type(actual)
-		if err != nil {
-			return nil, err
-		}
+		source := layout.TypeDeclaration()
 		if planned := p.originals.types[source]; planned != nil {
 			copied.Type = planned.userType
 			return &copied, nil
@@ -139,15 +124,19 @@ func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, owner string
 		}
 		p.originals.types[source] = planned
 		p.originals.typesByLocal[local] = planned
-		local.AttributeExpr, err = p.copyOriginalTransport(actual.Attribute(), owner)
+		definition, err := originalDefinitionLayout(layout, actual.Attribute())
+		if err != nil {
+			return nil, err
+		}
+		local.AttributeExpr, err = p.copyOriginalTransport(actual.Attribute(), definition)
 		if err != nil {
 			return nil, err
 		}
 		copied.Type = local
 	case *expr.Object:
 		fields := make(expr.Object, 0, len(*actual))
-		for _, field := range *actual {
-			child, err := p.copyOriginalTransport(field.Attribute, owner)
+		for index, field := range *actual {
+			child, err := p.copyOriginalTransport(field.Attribute, layout.Fields()[index])
 			if err != nil {
 				return nil, err
 			}
@@ -162,7 +151,7 @@ func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, owner string
 	case *expr.Array:
 		array := *actual
 		var err error
-		array.ElemType, err = p.copyOriginalTransport(actual.ElemType, owner)
+		array.ElemType, err = p.copyOriginalTransport(actual.ElemType, layout.Elem())
 		if err != nil {
 			return nil, err
 		}
@@ -170,20 +159,17 @@ func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, owner string
 	case *expr.Map:
 		mapping := *actual
 		var err error
-		mapping.KeyType, err = p.copyOriginalTransport(actual.KeyType, owner)
+		mapping.KeyType, err = p.copyOriginalTransport(actual.KeyType, layout.Key())
 		if err != nil {
 			return nil, err
 		}
-		mapping.ElemType, err = p.copyOriginalTransport(actual.ElemType, owner)
+		mapping.ElemType, err = p.copyOriginalTransport(actual.ElemType, layout.Elem())
 		if err != nil {
 			return nil, err
 		}
 		copied.Type = &mapping
 	case *expr.Union:
-		source, err := p.generation.Package(owner).Union(attribute)
-		if err != nil {
-			return nil, err
-		}
+		source := layout.UnionDeclaration()
 		if planned := p.originals.unions[source]; planned != nil {
 			copied.Type = planned.attribute.Type
 			return &copied, nil
@@ -191,7 +177,7 @@ func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, owner string
 		union := *actual
 		union.Values = nil
 		copied.Type = &union
-		key := "original-union:" + owner + ":" + actual.Name()
+		key := "original-union:" + layout.Owner() + ":" + actual.Name()
 		order := nameOrder{packagePath: p.pkg.ImportPath(), key: key}
 		name, err := p.pkg.DeclareDependentName(codegen.NameType, source.Declaration(), "json", "Transport", order)
 		if err != nil {
@@ -205,8 +191,8 @@ func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, owner string
 		planned := &plannedUnion{key: key, attribute: &copied, name: name, kind: kind}
 		p.originals.unions[source] = planned
 		p.originals.unionsByLocal[&union] = planned
-		for _, branch := range actual.Values {
-			child, err := p.copyOriginalTransport(branch.Attribute, owner)
+		for index, branch := range actual.Values {
+			child, err := p.copyOriginalTransport(branch.Attribute, layout.Branches()[index])
 			if err != nil {
 				return nil, err
 			}
@@ -214,6 +200,22 @@ func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, owner string
 		}
 	}
 	return &copied, nil
+}
+
+// originalDefinitionLayout selects the retained contents of a named original.
+// Repeated occurrences must have equivalent layouts before they can share one
+// private transport declaration; no package is inferred from schema metadata.
+func originalDefinitionLayout(layout *codegen.GoTypePlan, attribute *expr.AttributeExpr) (*codegen.GoTypePlan, error) {
+	matches := layout.PlansForOccurrence(attribute)
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("original type contents have no retained Go layout")
+	}
+	for _, candidate := range matches[1:] {
+		if !matches[0].Equivalent(candidate) {
+			return nil, fmt.Errorf("original type contents have incompatible retained Go layouts")
+		}
+	}
+	return matches[0], nil
 }
 
 // declarePrivateUnionBranch plans package-level symbols without adding public

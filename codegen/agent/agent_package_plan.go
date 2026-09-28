@@ -22,24 +22,25 @@ type (
 
 	// agentPackagePlan stores one generated agent package and its declarations.
 	agentPackagePlan struct {
-		pkg                 *goacodegen.GeneratedPackage
-		fixed               map[string]*goacodegen.NameDeclaration
-		configType          *goacodegen.NameDeclaration
-		structType          *goacodegen.NameDeclaration
-		constructor         *goacodegen.NameDeclaration
-		register            *goacodegen.NameDeclaration
-		usedOptions         *goacodegen.NameDeclaration
-		mcp                 map[string]*goacodegen.NameDeclaration
-		used                map[string]*plannedUsedToolsetNames
-		agentToolsConsumers map[string]*goacodegen.NameDeclaration
-		agentToolsImports   map[string]string
-		specsImportPaths    map[string]string
-		helperImportPaths   map[string]string
-		implementationPaths []string
-		configPaths         []string
-		registryPaths       []string
-		definitionAgentIDs  []string
-		registrySources     []*agentRegistrySourcesData
+		pkg                     *goacodegen.GeneratedPackage
+		fixed                   map[string]*goacodegen.NameDeclaration
+		configType              *goacodegen.NameDeclaration
+		structType              *goacodegen.NameDeclaration
+		constructor             *goacodegen.NameDeclaration
+		registrationConstructor *goacodegen.NameDeclaration
+		register                *goacodegen.NameDeclaration
+		usedOptions             *goacodegen.NameDeclaration
+		mcp                     map[string]*goacodegen.NameDeclaration
+		used                    map[string]*plannedUsedToolsetNames
+		agentToolsConsumers     map[string]*goacodegen.NameDeclaration
+		agentToolsImports       map[string]string
+		specsImportPaths        map[string]string
+		helperImportPaths       map[string]string
+		implementationPaths     []string
+		configPaths             []string
+		registryPaths           []string
+		definitionAgentIDs      []string
+		registrySources         []*agentRegistrySourcesData
 	}
 
 	// agentPackageFilesData contains the imports and package names used by the
@@ -267,6 +268,16 @@ func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
 		"New",
 		"",
 		p.order(agent.ID+":constructor"),
+	)
+	if err != nil {
+		return err
+	}
+	p.registrationConstructor, err = p.pkg.DeclareDependentName(
+		goacodegen.NameFunction,
+		p.structType,
+		"New",
+		"Registration",
+		p.order(agent.ID+":registration-constructor"),
 	)
 	if err != nil {
 		return err
@@ -599,17 +610,18 @@ func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentDa
 	agent.StructName = p.structType.Name()
 	agent.ConfigType = p.configType.Name()
 	agent.PackageNames = AgentPackageNames{
-		AgentID:             p.fixed[agentIDName].Name(),
-		WorkflowName:        p.fixed[workflowNameName].Name(),
-		DefaultTaskQueue:    p.fixed[defaultTaskQueueName].Name(),
-		PlanActivity:        p.fixed[planActivityName].Name(),
-		ResumeActivity:      p.fixed[resumeActivityName].Name(),
-		ExecuteToolActivity: p.fixed[executeToolActivityName].Name(),
-		Constructor:         p.constructor.Name(),
-		Definition:          p.fixed[definitionName].Name(),
-		DefinitionValue:     p.fixed[agentDefinitionValueName].Name(),
-		NewClient:           p.fixed[newClientName].Name(),
-		Register:            p.register.Name(),
+		AgentID:                 p.fixed[agentIDName].Name(),
+		WorkflowName:            p.fixed[workflowNameName].Name(),
+		DefaultTaskQueue:        p.fixed[defaultTaskQueueName].Name(),
+		PlanActivity:            p.fixed[planActivityName].Name(),
+		ResumeActivity:          p.fixed[resumeActivityName].Name(),
+		ExecuteToolActivity:     p.fixed[executeToolActivityName].Name(),
+		Constructor:             p.constructor.Name(),
+		RegistrationConstructor: p.registrationConstructor.Name(),
+		Definition:              p.fixed[definitionName].Name(),
+		DefinitionValue:         p.fixed[agentDefinitionValueName].Name(),
+		NewClient:               p.fixed[newClientName].Name(),
+		Register:                p.register.Name(),
 	}
 	if p.usedOptions != nil {
 		agent.PackageNames.UsedToolsetOptions = p.usedOptions.Name()

@@ -16,6 +16,25 @@ import (
 	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
+// ValidateSuccessfulToolResult checks successful result JSON and bounds against
+// the selected tool's existing codec and runtime rules. It returns nil when both
+// are valid, or the existing validation error otherwise.
+//
+// Callers first validate the successful envelope and its identity. Failure,
+// retry, and server-data validation remain with their existing owners. This
+// function does not encode or publish a result. Diagnostics use spec.Name;
+// callers add their accepted call identity when reporting an error.
+func ValidateSuccessfulToolResult(
+	spec tools.ToolSpec,
+	result rawjson.Message,
+	bounds *agent.Bounds,
+) error {
+	if _, err := decodeSuccessfulToolResult(spec, result); err != nil {
+		return err
+	}
+	return validateToolBoundsContract(spec, ToolCall{Name: spec.Name}, false, bounds)
+}
+
 // sanitizeAndValidateExecutorToolResult takes ownership of an executor-authored
 // failure before checking it. Executors own the failure classification, error,
 // recovery action, and field issues; correction input and examples are

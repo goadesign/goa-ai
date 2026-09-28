@@ -345,10 +345,14 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 		token,
 		toolUseID,
 	))
-	completions := make(chan error, 2)
+	type completionResult struct {
+		accepted bool
+		err      error
+	}
+	completions := make(chan completionResult, 2)
 	for _, store := range []*callAdmissionStore{firstStore, secondStore} {
 		go func(store *callAdmissionStore) {
-			completions <- store.Complete(
+			accepted, err := store.Complete(
 				ctx,
 				toolset,
 				toolUseID,
@@ -359,12 +363,16 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 				resultStreamID,
 				terminal,
 			)
+			completions <- completionResult{accepted: accepted, err: err}
 		}(store)
 	}
-	require.NoError(t, <-completions)
-	require.NoError(t, <-completions)
+	for range 2 {
+		completion := <-completions
+		require.NoError(t, completion.err)
+		assert.True(t, completion.accepted)
+	}
 	assert.EqualValues(t, 2, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+resultStreamID).Val())
-	err = firstStore.Complete(
+	accepted, err := firstStore.Complete(
 		ctx,
 		toolset,
 		toolUseID,
@@ -376,6 +384,7 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 		[]byte(`{"different":true}`),
 	)
 	require.ErrorIs(t, err, errCallTerminalConflict)
+	assert.False(t, accepted)
 	assert.EqualValues(t, 2, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+resultStreamID).Val())
 	replayed, _, err := firstStore.Ensure(
 		ctx, toolset, toolUseID, token, digest, time.Second, 5*time.Second,

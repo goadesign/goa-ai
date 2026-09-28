@@ -85,19 +85,10 @@ func decodeWorkflowCheckpoint(suspension *api.RunSuspension, definition AgentDef
 	if err != nil {
 		return nil, err
 	}
-	parentLookup := definition.spec
-	if parentSpec != nil {
-		parentLookup = func(name tools.Ident) (tools.ToolSpec, bool) {
-			if name == parentSpec.Name {
-				return *parentSpec, true
-			}
-			return definition.spec(name)
-		}
-	}
-	if err := validatePlannerResultPayloadsWithSpecs(
+	if err := validatePlannerResultPayloads(
 		plannerResultValidationProjection(checkpoint.Batch.Result),
 		checkpoint.Context.Tool,
-		parentLookup,
+		parentSpec,
 	); err != nil {
 		return nil, fmt.Errorf("validate suspended planner result: %w", err)
 	}
@@ -185,6 +176,14 @@ func validateCheckpointChild(call ToolCall, suspension *api.RunSuspension, defin
 	checkpoint, err := decodeWorkflowCheckpoint(suspension, child)
 	if err != nil {
 		return err
+	}
+	if checkpoint.SessionID != call.SessionID || checkpoint.Context.ParentRunID == "" ||
+		checkpoint.Context.ParentAgentID != call.AgentID || checkpoint.Context.ParentToolCallID != call.ToolCallID ||
+		checkpoint.Context.Tool != call.Name || !bytes.Equal(checkpoint.Context.ToolArgs, call.Payload) {
+		return fmt.Errorf("child suspension does not match parent tool call %q", call.ToolCallID)
+	}
+	if (call.Registry == nil) != (checkpoint.Context.ToolRegistry == nil) {
+		return fmt.Errorf("child suspension changed the selected contract for %q", call.Name)
 	}
 	if call.Registry != nil {
 		selected, err := registrycontract.Read(call.Registry)
@@ -592,7 +591,7 @@ func validateWorkflowRunInput(input *RunInput) error {
 		return err
 	}
 	if len(input.Labels) > 0 || len(input.Metadata) > 0 ||
-		input.Policy != nil || input.ParentRunID != "" || input.ParentAgentID != "" ||
+		input.Policy != nil || input.ParentAgentID != "" ||
 		input.ParentToolCallID != "" || input.Tool != "" || len(input.ToolArgs) > 0 ||
 		input.ToolRegistry != nil {
 		return errors.New("run continuation cannot include caller-supplied checkpoint state")

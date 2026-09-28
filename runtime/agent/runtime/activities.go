@@ -983,12 +983,10 @@ func (a *plannerActivityInvocation) planningError(err error) error {
 // changing durable state.
 func validatePlannerActivityResult(r *Runtime, lookup toolSpecLookup, result *planner.PlanResult, parentTool *tools.ToolSpec, synthesisOnly bool) error {
 	var parentName tools.Ident
-	parentLookup := lookup
 	if parentTool != nil {
 		parentName = parentTool.Name
-		parentLookup = func(name tools.Ident) (tools.ToolSpec, bool) { return *parentTool, name == parentName }
 	}
-	if err := validatePlannerResultPayloadsWithSpecs(result, parentName, parentLookup); err != nil {
+	if err := validatePlannerResultPayloads(result, parentName, parentTool); err != nil {
 		return planner.NewOutputContractError(err)
 	}
 	if err := validatePlannerToolCallIDs(result); err != nil {
@@ -1135,13 +1133,10 @@ func validatePlannerToolCallIDs(result *planner.PlanResult) error {
 	return nil
 }
 
-// validatePlannerResultPayloads enforces canonical tool JSON before Temporal
-// serializes planner activity output.
-func (r *Runtime) validatePlannerResultPayloads(result *planner.PlanResult, parentTool tools.Ident) error {
-	return validatePlannerResultPayloadsWithSpecs(result, parentTool, r.toolSpec)
-}
-
-func validatePlannerResultPayloadsWithSpecs(result *planner.PlanResult, parentTool tools.Ident, lookup toolSpecLookup) error {
+// validatePlannerResultPayloads checks result JSON against the selected parent
+// contract. Activities and workflows supply the same saved contract, so a later
+// registry replacement cannot change which result is accepted.
+func validatePlannerResultPayloads(result *planner.PlanResult, parentName tools.Ident, parentTool *tools.ToolSpec) error {
 	if result == nil {
 		return errors.New("planner returned a nil result")
 	}
@@ -1157,14 +1152,13 @@ func validatePlannerResultPayloadsWithSpecs(result *planner.PlanResult, parentTo
 		}
 	}
 	if result.FinalToolResult != nil {
-		if parentTool == "" {
+		if parentName == "" {
 			return errors.New("planner final tool result requires a parent tool")
 		}
-		spec, ok := lookup(parentTool)
-		if !ok {
-			return fmt.Errorf("planner final tool result references unregistered parent tool %q", parentTool)
+		if parentTool == nil {
+			return fmt.Errorf("planner final tool result references unregistered parent tool %q", parentName)
 		}
-		if err := validatePlannerFinalToolResult(spec, result.FinalToolResult); err != nil {
+		if err := validatePlannerFinalToolResult(*parentTool, result.FinalToolResult); err != nil {
 			return err
 		}
 	}

@@ -242,11 +242,11 @@ explains how to keep those responsibilities clear.
 | --- | --- |
 | [MCP servers](docs/dsl.md#mcp-server-definition) | Expose Goa service methods as MCP tools and resources, with static prompts and generated JSON-RPC adapters. |
 | [External tools](docs/dsl.md#mcp-backed-toolsets) | Consume MCP servers over stdio or HTTP using declared tool contracts. |
-| [Tool registries](docs/tool_search.md) | Consume a named toolset or a changing registry catalog. Generated contracts preserve confirmation, pagination, and exact execution across provider changes. Providers register definitions at startup or attach to a complete declaration saved beforehand, then renew exact leases without resending schemas. |
+| [Tool registries](docs/tool_search.md) | Consume a named toolset or a changing registry catalog. Generated contracts preserve confirmation, pagination, and exact execution across provider changes. Providers register definitions at startup or attach to a complete declaration saved beforehand, then renew exact leases without resending schemas. Applications can attach immutable catalog identity and use bounded scoped reads without changing declaration encoding or provider messages. Native retry lookups return saved registration or explicit absence. Provider completion reports whether the registry retained the submitted result or settled the execution deadline instead. Handlers can leave an unconfirmed call to registry recovery without inventing a failure or stopping other calls. |
 | [Deferred tool search](docs/tool_search.md) | Load definitions on demand using OpenAI native client search with BM25 or Claude hosted search. Consumers choose whole toolsets with `Deferred()` or exact compiled tools with `Deferred("search")`, keeping other tools immediately available. Claude replay preserves schema text through JSON escaping while still rejecting changed definitions. |
 | [Structured output](docs/runtime.md#typed-direct-completions) | Declare `Completion(...)` and get typed unary and streaming helpers. Use [typed tool output](docs/runtime.md#forced-typed-tool-output) when you want the same generated result contract with bounded model correction. |
-| [Standalone JSON codecs](docs/json_codecs.md) | Automatically generate typed encode/decode functions beside supported original Goa types, validating complete values and rejecting ambiguous or invalid JSON. |
-| [Specialist agents](docs/runtime.md#agent-as-tool-composition) | Expose compiled or dynamically configured agents as tools. Child workflows retain the selected configuration and typed result through updates and approval pauses, with linked progress and cancellation. |
+| [Standalone JSON codecs](docs/json_codecs.md) | Automatically generate typed encode/decode functions beside supported original Goa types using Goa’s planned shared or service-local declaration, validating complete values and rejecting ambiguous or invalid JSON. |
+| [Specialist agents](docs/runtime.md#agent-as-tool-composition) | Expose compiled or dynamically configured agents as tools. Child workflows retain the selected configuration and typed result through updates and approval pauses. A resumed child belongs to the continuing parent execution while preserving its original tool call, with linked progress and cancellation. |
 | [Human input and approval](docs/runtime.md#external-input-and-workflow-continuations) | Ask structured questions or require confirmation, save the pending state, and continue from the answer. |
 | [Evaluation suites](docs/evals.md) | Generate typed scenario hooks and check actual tool calls, results, and final answers. Preserve results across accepted continuations without counting earlier calls again. Add calibrated model judging for semantic checks. |
 | [Large tool results](docs/runtime.md#bounded-results) | Give models bounded results and runtime-managed pagination; keep rich UI data out of model requests with `ServerData`. |
@@ -283,7 +283,8 @@ that wait is cancelled or the map stops. Bedrock Responses also estimates GPT-6 
 image inputs from dimensions, while response usage remains the accounting total.
 
 Tools can mark typed evidence with `NativeImage()` to retain exact image sources
-in conversation history. An explicitly admitted host reader checks current access
+in conversation history. Marked evidence uses its declared Goa attribute names
+recursively in generated JSON, schemas, field metadata and examples. An explicitly admitted host reader checks current access
 and supplies native bytes only for actual count, summary and inference inputs.
 Each current tool declaration chooses its image items; retaining an old decoder
 does not mark new ordinary evidence. Model clients reject a second reader binding.
@@ -314,6 +315,23 @@ fingerprints stay unchanged; catalog, call, and retirement history must be
 preserved. Providers require the duration-only Renew callback and stop if their
 lease authority is lost. The preview guide states the conversion prerequisites;
 it does not yet supply a published converter.
+
+Registry result readers use `toolregistry.DecodeToolResultMessage` to reject
+unknown fields in fixed wire records while preserving raw tool values for their
+existing codecs. This tightens acceptance of external and retained messages;
+verify those messages before upgrading. Decoding alone does not establish a
+complete tool result. After envelope and identity validation, adapters can call
+`runtime.ValidateSuccessfulToolResult` to reuse the selected tool's existing
+semantic-result and bounds checks before forwarding a successful result.
+Server-data validation remains separate. See the [result envelope contract](docs/runtime.md#registry-result-envelope-decoding)
+for identity, retry, parser semantics, and tool-value validation responsibilities.
+
+Provider hosts can use `toolprovider.ServeAndWait` with the same arguments as
+`Serve` to join invocation-owned work before returning. `Serve` keeps its bounded
+settlement return. The joined call may wait longer for dependencies, preserves
+incomplete-settlement errors, and never releases a lease merely because late work
+finishes. See [provider execution](docs/runtime.md#registry-routed-provider-execution-service-side)
+for the lifecycle and sink cleanup responsibilities.
 
 ## Learn more
 

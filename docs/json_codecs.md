@@ -32,8 +32,13 @@ var Settings = Type("Settings", func() {
 var _ = Service("catalog", func() {})
 ```
 
-The package location in this example is optional. An unlocated type remains in
-the package Goa chooses for its service. Force metadata preserves its normal
+The package location in this example is optional. Goa may select an unlocated
+child for a shared package through a located containing type. Otherwise it remains
+in the package Goa chooses for its service. Codecs use the exact declaration and
+complete layout selected by Goa; imported schema expressions are not annotated.
+A nested type with its own explicit package keeps that owner and passes it to
+its unlocated descendants. Goa rejects ambiguous ownership and required import
+cycles before writing generated source. Force metadata preserves its normal
 service-name restrictions and requires an existing service emission context;
 the codec does not create a synthetic service or make unused types reachable.
 

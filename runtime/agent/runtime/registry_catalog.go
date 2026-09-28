@@ -128,6 +128,29 @@ func (c *RegistryCatalog) IncludeToolset(ctx context.Context, registry, name, ve
 	if version != "" && version != actualVersion {
 		return fmt.Errorf("registry %q toolset %q requires version %q, got %q", registry, name, version, actualVersion)
 	}
+	return c.includeResolved(registry, registered, resolved, deferred)
+}
+
+// IncludeResolved imports one complete owner-selected registration without a
+// second catalog read. The caller owns source selection; this catalog still
+// enforces the consuming definition, generated contract and tool identities.
+func (c *RegistryCatalog) IncludeResolved(registry string, registered *genregistry.ResolvedToolset, deferred bool) error {
+	if _, err := c.runtime.registryConnection(registry); err != nil {
+		return err
+	}
+	resolved, err := registrycontract.Resolve(registered)
+	if err != nil {
+		return fmt.Errorf("resolve registry %q selected toolset: %w", registry, err)
+	}
+	return c.includeResolved(registry, registered, resolved, deferred)
+}
+
+func (c *RegistryCatalog) includeResolved(registry string, registered *genregistry.ResolvedToolset, resolved *registrycontract.Resolution, deferred bool) error {
+	name := registered.Toolset.Name
+	actualVersion := ""
+	if registered.Toolset.Version != nil {
+		actualVersion = string(*registered.Toolset.Version)
+	}
 	if !c.sources.Allows(registry, name, actualVersion) {
 		return fmt.Errorf("registry %q toolset %q is outside this agent's declared consumption", registry, name)
 	}

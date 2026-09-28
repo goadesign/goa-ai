@@ -31,6 +31,22 @@ adds none of those domain fields. The model chooses the semantic identifier in
 the tool's ordinary arguments; it does not copy this private descriptor.
 Each emitted marked item describes one image and becomes one `ImagePart`.
 
+Marked evidence uses the declared Goa attribute names recursively. For example,
+`sourceDocumentId` stays `sourceDocumentId` in its generated JSON codec, raw-field
+validator, schemas, field metadata, nested examples, canonicalizer and source
+manifest. A supported shared original type can therefore decode those bytes with
+its automatically generated original codec. Ordinary arguments, results and
+unmarked evidence retain their model JSON names, including `source_document_id`
+for that same declared field. Reusing a nested or recursive type in both contexts
+does not change its original definition. The existing rule for omitting a
+server-data root example is unchanged.
+
+This selection adds no serialization option to the DSL or runtime and accepts no
+alternate spellings. Automatic original-codec support is unchanged: complete
+roots containing `Any`, custom Go representations or unsupported map keys remain
+skipped; supported descendants can still receive original codecs. Design packages
+need only the Goa and Goa-AI DSL imports.
+
 Generation emits the marker in `tools.ServerDataSpec` and the portable registry
 consumer contract. It also emits `NativeImageSources()` in marked toolset spec
 packages. This factory returns only the producer identifiers and their marked

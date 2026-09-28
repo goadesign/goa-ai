@@ -331,7 +331,7 @@ func TestPrepareContinuationValidatesGrandchildDefinitionBeforeEngineStart(t *te
 		ID: rootSuspension.ID, Data: data,
 	}))
 	middleDefinition := testAgentDefinition(
-		"middle.agent", "middle.workflow", "middle-q", []tools.ToolSpec{middleTool}, nil)
+		"middle.agent", "middle.workflow", "middle-q", []tools.ToolSpec{middleTool, rootTool}, nil)
 
 	removedLeafDefinition := testAgentDefinition(
 		"leaf.agent", "leaf.workflow", "leaf-q", nil, nil)
@@ -351,7 +351,7 @@ func TestPrepareContinuationValidatesGrandchildDefinitionBeforeEngineStart(t *te
 	require.Zero(t, eng.startCalls)
 
 	leafDefinition := testAgentDefinition(
-		"leaf.agent", "leaf.workflow", "leaf-q", []tools.ToolSpec{leafTool}, nil)
+		"leaf.agent", "leaf.workflow", "leaf-q", []tools.ToolSpec{leafTool, middleTool}, nil)
 
 	currentDefinition := testAgentDefinitionWithChildren(
 		"root.agent", "root.workflow", "root-q", []tools.ToolSpec{rootTool}, nil,
@@ -406,7 +406,7 @@ func TestPrepareContinuationRejectsDuplicateSavedChildCallBeforeEngineStart(t *t
 	definition := testAgentDefinitionWithChildren(
 		"parent.agent", "parent.workflow", "parent-q", []tools.ToolSpec{parentTool}, nil,
 		[]AgentDefinition{testAgentDefinition(
-			"child.agent", "child.workflow", "child-q", []tools.ToolSpec{childTool}, nil)})
+			"child.agent", "child.workflow", "child-q", []tools.ToolSpec{childTool, parentTool}, nil)})
 
 	_, err = runtime.MustClientFor(definition).PrepareContinuation(
 		t.Context(), "session-1", "parent-run", "successor", "turn-2",
@@ -513,8 +513,16 @@ func nestedChildSuspensionFixture(
 	rewriteSuspensionCheckpointAndPublic(t, suspension, func(checkpoint *workflowCheckpoint) {
 		call := ToolCall{
 			Name: tool.Name, ToolCallID: "child-call", ModelToolCallID: "model-child-call",
+			AgentID: agent.Ident(agentID), RunID: runID, SessionID: "session-1",
 			Payload: rawjson.Message(`{}`), ModelPayload: rawjson.Message(`{}`),
 		}
+		rewriteSuspensionCheckpoint(t, child, func(childCheckpoint *workflowCheckpoint) {
+			childCheckpoint.Context.ParentRunID = runID
+			childCheckpoint.Context.ParentAgentID = call.AgentID
+			childCheckpoint.Context.ParentToolCallID = call.ToolCallID
+			childCheckpoint.Context.Tool = call.Name
+			childCheckpoint.Context.ToolArgs = call.Payload
+		})
 		checkpoint.Batch = checkpointStepBatch{
 			Result: &PlanResult{ToolCalls: []ToolCall{call}},
 			Calls:  []ToolCall{call},

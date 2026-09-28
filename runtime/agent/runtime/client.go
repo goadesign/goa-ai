@@ -614,8 +614,12 @@ func (r *Runtime) buildStoredContinuationRunInput(
 	if err != nil {
 		return nil, nil, continuationContractError(err)
 	}
-	checkpoint, err := prepareContinuation(input, definition)
+	checkpoint, err := decodeWorkflowCheckpoint(suspension, definition)
 	if err != nil {
+		return nil, nil, continuationContractError(err)
+	}
+	input.ParentRunID = checkpoint.Context.ParentRunID
+	if err := validateContinuationAgainstCheckpoint(input, checkpoint, definition); err != nil {
 		return nil, nil, continuationContractError(err)
 	}
 	if checkpoint.PreviousRunID != predecessorRunID {

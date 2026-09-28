@@ -6,8 +6,10 @@ import (
 	agentsexpr "goa.design/goa-ai/expr/agent"
 )
 
-// Cursor declares which optional String field on the tool payload carries the
-// cursor for cursor-based pagination. Cursor must be used inside BoundedResult.
+// Cursor declares the String payload field used to request a later page.
+// Initial-query and replay tools use an optional field; a cursor-only
+// continuation named by ContinueWith requires it. Cursor must be used inside
+// BoundedResult.
 func Cursor(field string) {
 	bounds, ok := eval.Current().(*agentsexpr.ToolBoundsExpr)
 	if !ok {

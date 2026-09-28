@@ -57,10 +57,9 @@ func TestPlanRendersOneExactJSONContract(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
-	value, err := planned.Add("widgets.create.payload", "CreatePayload", serviceAttribute, EncodeAndDecode)
+	value, err := addCodecTestValue(t, planned, "widgets.create.payload", "CreatePayload", serviceAttribute, EncodeAndDecode)
 	require.NoError(t, err)
 	require.NoError(t, value.PlanTransportConstructor())
 	require.NoError(t, generation.Freeze())
@@ -103,10 +102,9 @@ func TestValueReportsExactTransportFields(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
-	value, err := planned.Add("widgets.create.payload", "CreatePayload", serviceAttribute, DecodeOnly)
+	value, err := addCodecTestValue(t, planned, "widgets.create.payload", "CreatePayload", serviceAttribute, DecodeOnly)
 	require.NoError(t, err)
 	require.NoError(t, value.PlanTransportConstructor())
 	require.NoError(t, generation.Freeze())
@@ -154,13 +152,12 @@ func TestPlanKeepsUnionSourceIdentity(t *testing.T) {
 		planned, err := NewPlan(
 			generation,
 			"example.com/gen/mcp_widgets/internal/codec",
-			"example.com/gen/widgets",
 		)
 		require.NoError(t, err)
 		attribute := codecTestAttribute()
-		first, err := planned.Add("widgets.first.payload", "CreatePayload", attribute, EncodeAndDecode)
+		first, err := addCodecTestValue(t, planned, "widgets.first.payload", "CreatePayload", attribute, EncodeAndDecode)
 		require.NoError(t, err)
-		copy, err := planned.Add("widgets.copy.payload", "CreatePayload", goaexpr.DupAtt(attribute), EncodeAndDecode)
+		copy, err := addCodecTestValue(t, planned, "widgets.copy.payload", "CreatePayload", goaexpr.DupAtt(attribute), EncodeAndDecode)
 		require.NoError(t, err)
 		require.Same(t, first.unions[0].name, copy.unions[0].name)
 	})
@@ -171,12 +168,11 @@ func TestPlanKeepsUnionSourceIdentity(t *testing.T) {
 		planned, err := NewPlan(
 			generation,
 			"example.com/gen/mcp_widgets/internal/codec",
-			"example.com/gen/widgets",
 		)
 		require.NoError(t, err)
-		_, err = planned.Add("widgets.first.payload", "CreatePayload", codecTestAttribute(), EncodeAndDecode)
+		_, err = addCodecTestValue(t, planned, "widgets.first.payload", "CreatePayload", codecTestAttribute(), EncodeAndDecode)
 		require.NoError(t, err)
-		_, err = planned.Add("widgets.second.payload", "CreatePayload", codecTestAttribute(), EncodeAndDecode)
+		_, err = addCodecTestValue(t, planned, "widgets.second.payload", "CreatePayload", codecTestAttribute(), EncodeAndDecode)
 		require.ErrorContains(t, err, "set TypeName")
 	})
 
@@ -186,12 +182,11 @@ func TestPlanKeepsUnionSourceIdentity(t *testing.T) {
 		planned, err := NewPlan(
 			generation,
 			"example.com/gen/mcp_widgets/internal/codec",
-			"example.com/gen/widgets",
 		)
 		require.NoError(t, err)
-		first, err := planned.Add("widgets.first.payload", "CreatePayload", codecTestAttribute(), EncodeAndDecode)
+		first, err := addCodecTestValue(t, planned, "widgets.first.payload", "CreatePayload", codecTestAttribute(), EncodeAndDecode)
 		require.NoError(t, err)
-		second, err := planned.Add("widgets.second.payload", "OtherPayload", codecTestAttribute(), EncodeAndDecode)
+		second, err := addCodecTestValue(t, planned, "widgets.second.payload", "OtherPayload", codecTestAttribute(), EncodeAndDecode)
 		require.NoError(t, err)
 		require.NotSame(t, first.unions[0].name, second.unions[0].name)
 	})
@@ -210,10 +205,9 @@ func TestGeneratedCodecBehavior(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
-	value, err := planned.Add("widgets.create.payload", "CreatePayload", serviceAttribute, EncodeAndDecode)
+	value, err := addCodecTestValue(t, planned, "widgets.create.payload", "CreatePayload", serviceAttribute, EncodeAndDecode)
 	require.NoError(t, err)
 	require.NoError(t, value.PlanTransportConstructor())
 	require.NoError(t, generation.Freeze())
@@ -258,10 +252,9 @@ func TestPlanUsesCodecPackageImportScope(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
-	value, err := planned.Add("widgets.create.payload", "CreatePayload", serviceAttribute, EncodeAndDecode)
+	value, err := addCodecTestValue(t, planned, "widgets.create.payload", "CreatePayload", serviceAttribute, EncodeAndDecode)
 	require.NoError(t, err)
 	require.NoError(t, generation.Freeze())
 	require.Equal(t, "json", unrelated.ImportName("example.com/custom/json"))
@@ -288,10 +281,9 @@ func TestPlanLetsServiceWriterResolvePrimitiveReference(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
-	value, err := planned.Add(
+	value, err := addCodecTestValue(t, planned,
 		"widgets.answer.result",
 		"AnswerResult",
 		&goaexpr.AttributeExpr{Type: goaexpr.String},
@@ -370,10 +362,9 @@ func renderImportPriorityCodec(t *testing.T, generatedFirst bool) string {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
-	value, err := planned.Add("widgets.collision.payload", "CollisionPayload", attribute, EncodeAndDecode)
+	value, err := addCodecTestValue(t, planned, "widgets.collision.payload", "CollisionPayload", attribute, EncodeAndDecode)
 	require.NoError(t, err)
 	require.NoError(t, generation.Freeze())
 	require.Equal(t, "shared", planned.pkg.ImportName("example.com/gen/shared"))
@@ -402,15 +393,14 @@ func TestPlanRejectsIncompleteLifecycle(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
 	attribute := codecTestAttribute()
-	_, err = planned.Add("widgets.create.payload", "CreatePayload", attribute, EncodeAndDecode)
+	_, err = addCodecTestValue(t, planned, "widgets.create.payload", "CreatePayload", attribute, EncodeAndDecode)
 	require.NoError(t, err)
-	_, err = planned.Add("widgets.create.payload", "OtherPayload", attribute, EncodeAndDecode)
+	_, err = addCodecTestValue(t, planned, "widgets.create.payload", "OtherPayload", attribute, EncodeAndDecode)
 	require.EqualError(t, err, `JSON value key "widgets.create.payload" is already planned`)
-	_, err = planned.Add("widgets.invalid", "Invalid", attribute, Direction(0))
+	_, err = addCodecTestValue(t, planned, "widgets.invalid", "Invalid", attribute, Direction(0))
 	require.EqualError(t, err, `plan JSON value "widgets.invalid": direction must select encoding, decoding, or typed construction`)
 	_, err = planned.Files("codec")
 	require.EqualError(t, err, "JSON codec files cannot be rendered before generation freeze")
@@ -424,13 +414,12 @@ func TestPlanKeepsNestedTypesLocalToEachValue(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
 	attribute := codecTestAttribute()
-	_, err = planned.Add("widgets.create.payload", "CreatePayload", attribute, EncodeAndDecode)
+	_, err = addCodecTestValue(t, planned, "widgets.create.payload", "CreatePayload", attribute, EncodeAndDecode)
 	require.NoError(t, err)
-	_, err = planned.Add("widgets.create.result", "CreateResult", attribute, EncodeAndDecode)
+	_, err = addCodecTestValue(t, planned, "widgets.create.result", "CreateResult", attribute, EncodeAndDecode)
 	require.NoError(t, err)
 }
 
@@ -451,10 +440,9 @@ func TestPlanHandlesRecursiveAndRepeatedTypes(t *testing.T) {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
-	value, err := planned.Add("widgets.walk.payload", "WalkPayload", attribute, EncodeAndDecode)
+	value, err := addCodecTestValue(t, planned, "widgets.walk.payload", "WalkPayload", attribute, EncodeAndDecode)
 	require.NoError(t, err)
 	require.NoError(t, generation.Freeze())
 	service := goacodegen.NewAttributeContext(false, false, true, "widgets", servicePackage.Scope())
@@ -596,7 +584,6 @@ func renderCollidingCodec(t *testing.T, reverse bool) string {
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
 	entries := []struct {
@@ -611,7 +598,7 @@ func renderCollidingCodec(t *testing.T, reverse bool) string {
 	}
 	values := make([]*Value, 0, len(entries))
 	for _, entry := range entries {
-		value, addErr := planned.Add(
+		value, addErr := addCodecTestValue(t, planned,
 			entry.key,
 			entry.name,
 			&goaexpr.AttributeExpr{Type: goaexpr.String},
@@ -649,10 +636,9 @@ func renderDirectionalCodec(t *testing.T, direction Direction) (string, *Value) 
 	planned, err := NewPlan(
 		generation,
 		"example.com/gen/mcp_widgets/internal/codec",
-		"example.com/gen/widgets",
 	)
 	require.NoError(t, err)
-	value, err := planned.Add("widgets.create.payload", "CreatePayload", serviceAttribute, direction)
+	value, err := addCodecTestValue(t, planned, "widgets.create.payload", "CreatePayload", serviceAttribute, direction)
 	require.NoError(t, err)
 	if direction == ConstructOnly {
 		require.NoError(t, value.PlanTransportConstructor())

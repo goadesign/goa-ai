@@ -32,6 +32,8 @@ type projectedRuntimePayload struct {
 	Query string `json:"query"`
 }
 
+const projectedResultNextCursor = "next-page"
+
 func newProjectedResultSpec() tools.ToolSpec {
 	payloadCodec := tools.JSONCodec[any]{
 		ToJSON: json.Marshal,
@@ -366,7 +368,7 @@ func TestExecuteToolActivityPropagatesBounds(t *testing.T) {
 
 func TestEncodeCanonicalToolResultProjectsBoundsIntoEncodedResult(t *testing.T) {
 	total := 9
-	cursor := "next-page"
+	cursor := projectedResultNextCursor
 	result, err := EncodeCanonicalToolResult(newProjectedResultSpec(), &projectedRuntimeResult{
 		Results: []string{"alpha"},
 	}, &agent.Bounds{
@@ -407,7 +409,7 @@ func TestEncodeCanonicalToolResultRejectsRuntimeRawJSONResult(t *testing.T) {
 
 func TestExecuteToolActivityProjectsBoundsIntoEncodedResult(t *testing.T) {
 	total := 9
-	cursor := "next-page"
+	cursor := projectedResultNextCursor
 	rt := &Runtime{toolsets: map[string]ToolsetRegistration{"svc.ts": {Execute: wrapExecute(func(ctx context.Context, call *ToolCall) (*planner.ToolResult, error) {
 		return &planner.ToolResult{
 			Name:       call.Name,

@@ -103,12 +103,12 @@ func TestServeGeneratedClaimUsesRegistryDecisionPastMessageDeadline(t *testing.T
 					completeCtx context.Context,
 					_, _, _, _, _ string,
 					_ toolregistry.ToolResultMessage,
-				) error {
+				) (bool, error) {
 					if err := completeCtx.Err(); err != nil {
-						return err
+						return false, err
 					}
 					completed.Add(1)
-					return nil
+					return true, nil
 				}
 				registration.Release = func(context.Context, string, string, string, string) error {
 					released.Add(1)

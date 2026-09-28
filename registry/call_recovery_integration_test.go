@@ -252,7 +252,7 @@ func TestOutputDeltasAreCountBoundedAndPostTerminalSuppressed(t *testing.T) {
 	)
 	resultJSON, err := json.Marshal(result)
 	require.NoError(t, err)
-	require.NoError(t, svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+	completion, err := svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                provider.ProviderID,
 		ProviderIncarnationID:     provider.ProviderIncarnationID,
@@ -261,7 +261,9 @@ func TestOutputDeltasAreCountBoundedAndPostTerminalSuppressed(t *testing.T) {
 		ResultJSON:                resultJSON,
 		RequestEventID:            requestEventID,
 		ProviderRegistrationToken: admission.RegistrationToken,
-	}))
+	})
+	require.NoError(t, err)
+	assert.True(t, completion.Accepted)
 	streamKey := pulseStreamKeyPrefix + toolregistry.ResultStreamID(call.ToolUseID)
 	before := rdb.XLen(ctx, streamKey).Val()
 	require.NoError(t, svc.PublishToolOutputDelta(ctx, deltaPayload))
@@ -422,7 +424,7 @@ func TestDrainingLeaseCompletesCallClaimedBeforeDrain(t *testing.T) {
 	)
 	resultJSON, err := json.Marshal(result)
 	require.NoError(t, err)
-	require.NoError(t, svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+	completion, err := svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
 		Toolset:                   toolset,
 		ProviderID:                provider.ProviderID,
 		ProviderIncarnationID:     provider.ProviderIncarnationID,
@@ -431,7 +433,9 @@ func TestDrainingLeaseCompletesCallClaimedBeforeDrain(t *testing.T) {
 		ResultJSON:                resultJSON,
 		RequestEventID:            requestEventID,
 		ProviderRegistrationToken: registration.RegistrationToken,
-	}))
+	})
+	require.NoError(t, err)
+	assert.True(t, completion.Accepted)
 }
 
 // Retirement forbids a first execution claim but retains the exact replay and
@@ -485,7 +489,7 @@ func TestRetiredLeasePreservesOnlyPreviouslyClaimedWork(t *testing.T) {
 			result, err := json.Marshal(toolregistry.NewToolResultMessage(
 				registration.RegistrationToken, call.ToolUseID, json.RawMessage(`{"ok":true}`)))
 			require.NoError(t, err)
-			require.NoError(t, svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
+			completion, err := svc.CompleteToolCall(ctx, &genregistry.CompleteToolCallPayload{
 				Toolset:                   provider.Name,
 				ProviderID:                provider.ProviderID,
 				ProviderIncarnationID:     provider.ProviderIncarnationID,
@@ -494,7 +498,9 @@ func TestRetiredLeasePreservesOnlyPreviouslyClaimedWork(t *testing.T) {
 				ToolUseID:                 call.ToolUseID,
 				RequestEventID:            eventID,
 				ResultJSON:                result,
-			}))
+			})
+			require.NoError(t, err)
+			assert.True(t, completion.Accepted)
 		})
 	}
 }

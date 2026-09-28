@@ -231,8 +231,9 @@ var _ = Service("registry", func() {
 	})
 
 	Method("CompleteToolCall", func() {
-		Description("Publish one canonical terminal result for an admitted call. The registry verifies the exact provider incarnation still owns an unexpired lease and claimed request event, then atomically stores the full terminal in the authoritative call record and appends it to bounded result history. If that exact dispatch lease disappears first, registry-owned settlement commits outcome_unknown because the effect may have occurred; execution ownership never transfers.")
+		Description("Submit one canonical terminal result for an admitted call. The registry verifies the exact provider incarnation still owns an unexpired lease and claimed request event, then atomically stores the full terminal in the authoritative call record and appends it to bounded result history. Accepted is true when those exact provider bytes are retained, including an identical replay, and false when the execution deadline settled the call as outcome_unknown instead. If that exact dispatch lease disappears first, registry-owned settlement commits outcome_unknown because the effect may have occurred; execution ownership never transfers.")
 		Payload(CompleteToolCallPayload)
+		Result(CompleteToolCallResult)
 		Error("validation_error")
 		Error("service_unavailable")
 		GRPC(func() {})
@@ -548,6 +549,12 @@ var CallResolvedToolPayload = Type("CallResolvedToolPayload", func() {
 		Example("1111111111111111111111111111111111111111111111111111111111111111")
 	})
 	Required("expected_registration_token")
+})
+
+var CompleteToolCallResult = Type("CompleteToolCallResult", func() {
+	Description("Whether the registry retained the exact submitted provider terminal. A deadline settlement is a successful operation with accepted=false, not permission to execute again.")
+	Field(1, "accepted", Boolean, "True for newly retained or identical provider terminal bytes; false when the execution deadline settled the call as outcome_unknown instead.")
+	Required("accepted")
 })
 
 var CompleteToolCallPayload = Type("CompleteToolCallPayload", func() {

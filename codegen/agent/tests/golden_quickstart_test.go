@@ -154,4 +154,16 @@ func TestQuickstart_IncludesProvidersSection_WhenGenerated(t *testing.T) {
 	require.NotContains(t, renewal, "RegistrationLease")
 	require.NotContains(t, renewal, "Tools:")
 	require.NotContains(t, renewal, "SchemaFingerprint")
+
+	// Completion distinguishes a retained provider result from deadline settlement.
+	_, completion, found := strings.Cut(content, "Complete: func(")
+	require.True(t, found, "the provider example must supply the required Complete callback")
+	completion, _, found = strings.Cut(completion, "PublishOutputDelta: func(")
+	require.True(t, found, "the provider example must retain its output callback")
+	completion = strings.Join(strings.Fields(completion), " ")
+	require.Contains(t, completion, "registrywire.ToolResultMessage) (bool, error)")
+	require.Contains(t, completion, "resultJSON, err := json.Marshal(result) if err != nil { return false, err }")
+	require.Contains(t, completion, "completion, err := registryClient.CompleteToolCall(ctx, &registry.CompleteToolCallPayload{")
+	require.Contains(t, completion, "}) if err != nil { return false, err } return completion.Accepted, nil")
+	require.NotContains(t, completion, "err == nil")
 }

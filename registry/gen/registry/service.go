@@ -133,14 +133,16 @@ type Service interface {
 	// Before returning either a republished or terminal call, the registry
 	// establishes the result stream so the caller can create a reader immediately.
 	RetryTool(context.Context, *RetryToolPayload) (res *CallToolResult, err error)
-	// Publish one canonical terminal result for an admitted call. The registry
+	// Submit one canonical terminal result for an admitted call. The registry
 	// verifies the exact provider incarnation still owns an unexpired lease and
 	// claimed request event, then atomically stores the full terminal in the
-	// authoritative call record and appends it to bounded result history. If that
-	// exact dispatch lease disappears first, registry-owned settlement commits
-	// outcome_unknown because the effect may have occurred; execution ownership
-	// never transfers.
-	CompleteToolCall(context.Context, *CompleteToolCallPayload) (err error)
+	// authoritative call record and appends it to bounded result history. Accepted
+	// is true when those exact provider bytes are retained, including an identical
+	// replay, and false when the execution deadline settled the call as
+	// outcome_unknown instead. If that exact dispatch lease disappears first,
+	// registry-owned settlement commits outcome_unknown because the effect may
+	// have occurred; execution ownership never transfers.
+	CompleteToolCall(context.Context, *CompleteToolCallPayload) (res *CompleteToolCallResult, err error)
 	// Publish one best-effort output fragment for a claimed live call. The
 	// registry verifies the exact provider lease and request-event claim, then
 	// atomically appends the delta only while the authoritative call record
@@ -343,6 +345,14 @@ type CompleteToolCallPayload struct {
 	RequestEventID string
 	// Exact registration token of the provider lease settling the claim.
 	ProviderRegistrationToken string
+}
+
+// CompleteToolCallResult is the result type of the registry service
+// CompleteToolCall method.
+type CompleteToolCallResult struct {
+	// True for newly retained or identical provider terminal bytes; false when the
+	// execution deadline settled the call as outcome_unknown instead.
+	Accepted bool
 }
 
 // Generated execution and presentation facts for one registry tool. The

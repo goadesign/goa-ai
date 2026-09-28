@@ -35,24 +35,29 @@ func NewClient(cc *grpc.ClientConn, opts ...grpc.CallOption) *Client {
 // registrypb.RegistryClient interface.
 func (c *Client) DeclareServiceToolset() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildDeclareServiceToolsetFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildDeclareServiceToolsetFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeDeclareServiceToolsetRequest,
 			DecodeDeclareServiceToolsetResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -60,24 +65,29 @@ func (c *Client) DeclareServiceToolset() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) AttachProvider() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildAttachProviderFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildAttachProviderFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeAttachProviderRequest,
 			DecodeAttachProviderResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -85,24 +95,29 @@ func (c *Client) AttachProvider() goa.Endpoint {
 // interface.
 func (c *Client) Register() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildRegisterFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildRegisterFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeRegisterRequest,
 			DecodeRegisterResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -110,24 +125,29 @@ func (c *Client) Register() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) RenewProvider() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildRenewProviderFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildRenewProviderFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeRenewProviderRequest,
 			DecodeRenewProviderResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -135,24 +155,29 @@ func (c *Client) RenewProvider() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) ReleaseProvider() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildReleaseProviderFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildReleaseProviderFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeReleaseProviderRequest,
 			nil)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -160,24 +185,29 @@ func (c *Client) ReleaseProvider() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) DrainProvider() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildDrainProviderFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildDrainProviderFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeDrainProviderRequest,
 			nil)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -185,47 +215,57 @@ func (c *Client) DrainProvider() goa.Endpoint {
 // interface.
 func (c *Client) Unregister() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildUnregisterFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildUnregisterFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeUnregisterRequest,
 			nil)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
 // Pong calls the "Pong" function in registrypb.RegistryClient interface.
 func (c *Client) Pong() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildPongFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildPongFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					// Decode a Goa error detail before returning a matching context error or falling back to Fault.
+					resp := goagrpc.DecodeError(err)
+					if eresp, ok := resp.(*goapb.ErrorResponse); ok {
+						return nil, goagrpc.NewServiceErrorWithCause(err, eresp)
+					}
+					if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+						return nil, ctxErr
+					}
+					return nil, goa.Fault("%s", err.Error())
+				}
+				return res, nil
+			},
 			EncodePongRequest,
 			nil)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			// Decode a Goa error detail before returning a matching context error or falling back to Fault.
-			resp := goagrpc.DecodeError(err)
-			if eresp, ok := resp.(*goapb.ErrorResponse); ok {
-				return nil, goagrpc.NewServiceError(eresp)
-			}
-			if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-				return nil, ctxErr
-			}
-			return nil, goa.Fault("%s", err.Error())
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -233,24 +273,29 @@ func (c *Client) Pong() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) RegisterAgentToolset() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildRegisterAgentToolsetFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildRegisterAgentToolsetFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeRegisterAgentToolsetRequest,
 			DecodeRegisterAgentToolsetResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -258,24 +303,29 @@ func (c *Client) RegisterAgentToolset() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) ReplaceAgentToolset() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildReplaceAgentToolsetFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildReplaceAgentToolsetFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeReplaceAgentToolsetRequest,
 			DecodeReplaceAgentToolsetResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -283,23 +333,28 @@ func (c *Client) ReplaceAgentToolset() goa.Endpoint {
 // interface.
 func (c *Client) ListToolsets() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildListToolsetsFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildListToolsetsFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					// Decode a Goa error detail before returning a matching context error or falling back to Fault.
+					resp := goagrpc.DecodeError(err)
+					if eresp, ok := resp.(*goapb.ErrorResponse); ok {
+						return nil, goagrpc.NewServiceErrorWithCause(err, eresp)
+					}
+					if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+						return nil, ctxErr
+					}
+					return nil, goa.Fault("%s", err.Error())
+				}
+				return res, nil
+			},
 			EncodeListToolsetsRequest,
 			DecodeListToolsetsResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			// Decode a Goa error detail before returning a matching context error or falling back to Fault.
-			resp := goagrpc.DecodeError(err)
-			if eresp, ok := resp.(*goapb.ErrorResponse); ok {
-				return nil, goagrpc.NewServiceError(eresp)
-			}
-			if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-				return nil, ctxErr
-			}
-			return nil, goa.Fault("%s", err.Error())
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -307,24 +362,29 @@ func (c *Client) ListToolsets() goa.Endpoint {
 // interface.
 func (c *Client) GetToolset() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildGetToolsetFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildGetToolsetFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeGetToolsetRequest,
 			DecodeGetToolsetResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -332,24 +392,29 @@ func (c *Client) GetToolset() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) ResolveToolset() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildResolveToolsetFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildResolveToolsetFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeResolveToolsetRequest,
 			DecodeResolveToolsetResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -357,47 +422,57 @@ func (c *Client) ResolveToolset() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) CheckAdmission() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildCheckAdmissionFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildCheckAdmissionFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeCheckAdmissionRequest,
 			DecodeCheckAdmissionResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
 // Search calls the "Search" function in registrypb.RegistryClient interface.
 func (c *Client) Search() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildSearchFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildSearchFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					// Decode a Goa error detail before returning a matching context error or falling back to Fault.
+					resp := goagrpc.DecodeError(err)
+					if eresp, ok := resp.(*goapb.ErrorResponse); ok {
+						return nil, goagrpc.NewServiceErrorWithCause(err, eresp)
+					}
+					if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+						return nil, ctxErr
+					}
+					return nil, goa.Fault("%s", err.Error())
+				}
+				return res, nil
+			},
 			EncodeSearchRequest,
 			DecodeSearchResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			// Decode a Goa error detail before returning a matching context error or falling back to Fault.
-			resp := goagrpc.DecodeError(err)
-			if eresp, ok := resp.(*goapb.ErrorResponse); ok {
-				return nil, goagrpc.NewServiceError(eresp)
-			}
-			if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-				return nil, ctxErr
-			}
-			return nil, goa.Fault("%s", err.Error())
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -405,24 +480,29 @@ func (c *Client) Search() goa.Endpoint {
 // interface.
 func (c *Client) CallTool() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildCallToolFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildCallToolFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeCallToolRequest,
 			DecodeCallToolResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -430,24 +510,29 @@ func (c *Client) CallTool() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) CallResolvedTool() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildCallResolvedToolFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildCallResolvedToolFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeCallResolvedToolRequest,
 			DecodeCallResolvedToolResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -455,24 +540,29 @@ func (c *Client) CallResolvedTool() goa.Endpoint {
 // interface.
 func (c *Client) RetryTool() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildRetryToolFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildRetryToolFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeRetryToolRequest,
 			DecodeRetryToolResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -480,24 +570,29 @@ func (c *Client) RetryTool() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) CompleteToolCall() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildCompleteToolCallFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildCompleteToolCallFunc(c.grpccli, c.opts...),
-			EncodeCompleteToolCallRequest,
-			nil)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
 				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+				return res, nil
+			},
+			EncodeCompleteToolCallRequest,
+			DecodeCompleteToolCallResponse)
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -505,24 +600,29 @@ func (c *Client) CompleteToolCall() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) PublishToolOutputDelta() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildPublishToolOutputDeltaFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildPublishToolOutputDeltaFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodePublishToolOutputDeltaRequest,
 			nil)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
@@ -530,49 +630,63 @@ func (c *Client) PublishToolOutputDelta() goa.Endpoint {
 // registrypb.RegistryClient interface.
 func (c *Client) ReportToolCallOverload() goa.Endpoint {
 	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildReportToolCallOverloadFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildReportToolCallOverloadFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					default:
+						if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+							return nil, ctxErr
+						}
+						return nil, goa.Fault("%s", err.Error())
+					}
+				}
+				return res, nil
+			},
 			EncodeReportToolCallOverloadRequest,
 			nil)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goa.Fault("%s", err.Error())
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
 }
 
 // ClaimToolCall calls the "ClaimToolCall" function in
 // registrypb.RegistryClient interface.
 func (c *Client) ClaimToolCall() goa.Endpoint {
-	endpoint := func(ctx context.Context, v any) (any, error) {
+	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildClaimToolCallFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
 		inv := goagrpc.NewInvoker(
-			BuildClaimToolCallFunc(c.grpccli, c.opts...),
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				// The request is already encoded. Retry this RPC call, then
+				// let the invoker decode its successful response once.
+				rpc := func(ctx context.Context, request any) (any, error) {
+					res, err := remote(ctx, request, opts...)
+					if err != nil {
+						resp := goagrpc.DecodeError(err)
+						switch message := resp.(type) {
+						case *goapb.ErrorResponse:
+							return nil, goagrpc.NewServiceErrorWithCause(err, message)
+						default:
+							if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+								return nil, ctxErr
+							}
+							return nil, goagrpc.NewTransportError(err)
+						}
+					}
+					return res, nil
+				}
+				return goa.RetryEndpoint(rpc)(ctx, request)
+			},
 			EncodeClaimToolCallRequest,
 			DecodeClaimToolCallResponse)
-		res, err := inv.Invoke(ctx, v)
-		if err != nil {
-			resp := goagrpc.DecodeError(err)
-			switch message := resp.(type) {
-			case *goapb.ErrorResponse:
-				return nil, goagrpc.NewServiceError(message)
-			default:
-				if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
-					return nil, ctxErr
-				}
-				return nil, goagrpc.NewTransportError(err)
-			}
-		}
-		return res, nil
+		return inv.Invoke(ctx, v)
 	}
-	return goa.RetryEndpoint(endpoint)
 }

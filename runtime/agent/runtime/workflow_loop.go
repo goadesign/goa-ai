@@ -128,7 +128,7 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 		if err := l.r.validateCompletionToolPlanResult(l.st.Result, completionTool(l.input)); err != nil {
 			return nil, err
 		}
-		program, err := l.r.normalizePlanResultContract(l.st.Result, l.base.RunContext.Tool)
+		program, err := l.r.normalizePlanResultContract(l.st.Result, l.base.RunContext, l.input.AgentID)
 		if err != nil {
 			return nil, err
 		}

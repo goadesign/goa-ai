@@ -211,7 +211,7 @@ func generate(t *testing.T, design func()) ([]*codegen.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	p, err := NewPlan(generation)
+	p, err := NewPlan(generation, services)
 	if err != nil {
 		return nil, err
 	}
@@ -256,6 +256,15 @@ func compileModule(t *testing.T, files []*codegen.File) string {
 	mod, err := os.ReadFile("../../../go.mod")
 	require.NoError(t, err)
 	mod = []byte(strings.Replace(string(mod), "module goa.design/goa-ai", "module codec.local", 1))
+	// Resolve the compiler selected by the outer test before isolating the
+	// generated module. Local workspace proof must compile the same compiler.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "go", "list", "-m", "-f", "{{.Dir}}", "goa.design/goa/v3")
+	selected, err := command.CombinedOutput()
+	require.NoError(t, err, string(selected))
+	mod = append(mod, []byte("\nreplace goa.design/goa/v3 => "+filepath.ToSlash(strings.TrimSpace(string(selected)))+"\n")...)
+
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), mod, 0o600)) // #nosec G703 -- root is t.TempDir, with a constant child name.
 	sum, err := os.ReadFile("../../../go.sum")
 	require.NoError(t, err)
@@ -274,6 +283,7 @@ func runGo(t *testing.T, root string, args ...string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", args...) // #nosec G204 -- arguments are fixed test commands, never external input.
 	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GOWORK=off")
 	output, err := cmd.CombinedOutput()
 	t.Logf("%s", output)
 	require.NoError(t, err, "%s", output)

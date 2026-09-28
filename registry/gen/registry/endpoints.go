@@ -260,7 +260,7 @@ func NewRetryToolEndpoint(s Service) goa.Endpoint {
 func NewCompleteToolCallEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*CompleteToolCallPayload)
-		return nil, s.CompleteToolCall(ctx, p)
+		return s.CompleteToolCall(ctx, p)
 	}
 }
 

@@ -131,6 +131,7 @@ func newTestServiceForServiceTests(pulseClient clientspulse.Client, streamManage
 		catalog:       catalog,
 		StreamManager: streamManager,
 		HealthTracker: healthTracker,
+		CatalogHealth: defaultTestCatalogHealth,
 		CallAdmissions: newCallAdmissionStore(
 			testRedisClient,
 			fmt.Sprintf("service-tests-%d", serviceTestSequence.Add(1)),
@@ -761,6 +762,7 @@ func TestNewServiceRejectsUnsafeRetentionAndLeaseDurations(t *testing.T) {
 				catalog:               newToolsetCatalog(newTestCatalogMap(), newTestTimeSource(time.Now())),
 				StreamManager:         newMockStreamManagerForService(),
 				HealthTracker:         newMockHealthTracker(),
+				CatalogHealth:         defaultTestCatalogHealth,
 				PulseClient:           mockpulse.NewClient(t),
 				ResultStreamTTL:       test.resultTTL,
 				ProviderLeaseDuration: test.providerLease,

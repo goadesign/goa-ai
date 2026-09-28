@@ -501,18 +501,18 @@ func (s *callAdmissionStore) InitializeResultStream(
 	return nil
 }
 
-// Complete atomically appends one terminal result and commits terminal state.
-// Ordinary completion uses the call token for provider authorization; stale
-// rejection supplies a distinct current provider token.
+// Complete submits one provider terminal under its exact dispatch authority.
+// It returns true when those bytes are retained, including identical replay,
+// and false when Redis settled the execution deadline instead.
 func (s *callAdmissionStore) Complete(
 	ctx context.Context,
 	toolset, toolUseID, callRegistrationToken, providerRegistrationToken,
 	providerLease, requestEventID, resultStreamID string,
 	payload []byte,
-) error {
+) (bool, error) {
 	key := s.callKey(toolUseID)
 	digest := sha256.Sum256(payload)
-	_, err := completeCallAdmissionScript.Run(
+	values, err := completeCallAdmissionScript.Run(
 		ctx,
 		s.redis,
 		[]string{
@@ -537,20 +537,34 @@ func (s *callAdmissionStore) Complete(
 	if err != nil {
 		switch {
 		case redis.HasErrorPrefix(err, "CALLADMISSIONCHANGED"):
-			return errCallAdmissionNotFound
+			return false, errCallAdmissionNotFound
 		case redis.HasErrorPrefix(err, "CALLCLAIMCHANGED"):
-			return errCallAdmissionConflict
+			return false, errCallAdmissionConflict
 		case redis.HasErrorPrefix(err, "DISPATCHCLAIMCHANGED"):
-			return errCallAdmissionConflict
+			return false, errCallAdmissionConflict
 		case redis.HasErrorPrefix(err, "PROVIDERLEASECHANGED"):
-			return errToolsetNotFound
+			return false, errToolsetNotFound
 		case redis.HasErrorPrefix(err, "TERMINALCONFLICT"):
-			return errCallTerminalConflict
+			return false, errCallTerminalConflict
 		default:
-			return fmt.Errorf("complete call admission: %w", err)
+			return false, fmt.Errorf("complete call admission: %w", err)
 		}
 	}
-	return nil
+	if len(values) != 2 {
+		return false, fmt.Errorf("complete call admission returned %d values", len(values))
+	}
+	disposition, ok := values[0].(int64)
+	if !ok {
+		return false, fmt.Errorf("complete call admission returned invalid disposition type %T", values[0])
+	}
+	switch disposition {
+	case 0, 1:
+		return true, nil
+	case 2:
+		return false, nil
+	default:
+		return false, fmt.Errorf("complete call admission returned invalid disposition %d", disposition)
+	}
 }
 
 // Claim atomically grants immutable dispatch ownership only while the exact

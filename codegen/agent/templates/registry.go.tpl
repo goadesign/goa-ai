@@ -28,18 +28,18 @@
 }
 {{- end }}
 
-// {{ .PackageNames.Register }} registers the generated agent components with the local runtime.
-// This helper registers only with the runtime in this process. It does not
-// publish the agent to a registry service.
-func {{ .PackageNames.Register }}(ctx {{ .ContextAlias }}.Context, rt *{{ .RuntimeAlias }}.Runtime, cfg {{ .ConfigType }}) error {
+// {{ .PackageNames.RegistrationConstructor }} creates the generated registration without
+// registering workers or toolsets. Applications may compose its immutable
+// Definition before creating a client and registering this same value.
+func {{ .PackageNames.RegistrationConstructor }}(rt *{{ .RuntimeAlias }}.Runtime, cfg {{ .ConfigType }}) ({{ .RuntimeAlias }}.AgentRegistration, error) {
     if rt == nil {
-        return {{ .ErrorsAlias }}.New("runtime is required")
+        return {{ .RuntimeAlias }}.AgentRegistration{}, {{ .ErrorsAlias }}.New("runtime is required")
     }
     {{ .AgentVar }}, err := {{ .PackageNames.Constructor }}(cfg)
     if err != nil {
-        return err
+        return {{ .RuntimeAlias }}.AgentRegistration{}, err
     }
-    if err := rt.RegisterAgent(ctx, {{ .RuntimeAlias }}.AgentRegistration{
+    return {{ .RuntimeAlias }}.AgentRegistration{
         Definition: {{ .PackageNames.Definition }}(),
         Planner: {{ .AgentVar }}.Planner,
         WorkflowHandler: rt.ExecuteWorkflow,
@@ -111,7 +111,18 @@ func {{ .PackageNames.Register }}(ctx {{ .ContextAlias }}.Context, rt *{{ .Runti
             },
 {{- end }}
         },
-    }); err != nil {
+    }, nil
+}
+
+// {{ .PackageNames.Register }} registers the generated agent components with the local runtime.
+// This helper registers only with the runtime in this process. It does not
+// publish the agent to a registry service.
+func {{ .PackageNames.Register }}(ctx {{ .ContextAlias }}.Context, rt *{{ .RuntimeAlias }}.Runtime, cfg {{ .ConfigType }}) error {
+    registration, err := {{ .PackageNames.RegistrationConstructor }}(rt, cfg)
+    if err != nil {
+        return err
+    }
+    if err := rt.RegisterAgent(ctx, registration); err != nil {
         return err
     }
 
