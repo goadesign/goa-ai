@@ -17,18 +17,18 @@ import (
 	"time"
 )
 
-// RegisterAlphaWorkerAgent registers the generated agent components with the local runtime.
-// This helper registers only with the runtime in this process. It does not
-// publish the agent to a registry service.
-func RegisterAlphaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg AlphaWorkerAgentConfig) error {
+// NewAlphaWorkerAgentRegistration creates the generated registration without
+// registering workers or toolsets. Applications may compose its immutable
+// Definition before creating a client and registering this same value.
+func NewAlphaWorkerAgentRegistration(rt *agentsruntime.Runtime, cfg AlphaWorkerAgentConfig) (agentsruntime.AgentRegistration, error) {
 	if rt == nil {
-		return errors.New("runtime is required")
+		return agentsruntime.AgentRegistration{}, errors.New("runtime is required")
 	}
 	agent, err := NewAlphaWorkerAgent(cfg)
 	if err != nil {
-		return err
+		return agentsruntime.AgentRegistration{}, err
 	}
-	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
+	return agentsruntime.AgentRegistration{
 		Definition:       Definition(),
 		Planner:          agent.Planner,
 		WorkflowHandler:  rt.ExecuteWorkflow,
@@ -57,7 +57,18 @@ func RegisterAlphaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cf
 			},
 		},
 		Policy: agentsruntime.RunPolicy{},
-	}); err != nil {
+	}, nil
+}
+
+// RegisterAlphaWorkerAgent registers the generated agent components with the local runtime.
+// This helper registers only with the runtime in this process. It does not
+// publish the agent to a registry service.
+func RegisterAlphaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg AlphaWorkerAgentConfig) error {
+	registration, err := NewAlphaWorkerAgentRegistration(rt, cfg)
+	if err != nil {
+		return err
+	}
+	if err := rt.RegisterAgent(ctx, registration); err != nil {
 		return err
 	}
 

@@ -13,7 +13,12 @@ func TestGeneratedRegistrationConstructorComposition(t *testing.T) {
 	files := buildCompleteGeneratedFiles(t, func() {
 		API("composition", func() {})
 		local := Toolset("records", func() {
-			Tool("inspect", "Inspect one record.", func() { Args(String); Return(String) })
+			Tool("inspect", "Inspect one record.", func() {
+				Args(func() {
+					Attribute("id", String, "Record identifier.")
+				})
+				Return(String)
+			})
 		})
 		Service("composition", func() {
 			Agent("reader", "Read records.", func() { Use(local) })

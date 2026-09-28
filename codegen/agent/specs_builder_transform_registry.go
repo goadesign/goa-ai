@@ -119,7 +119,7 @@ func (p *toolSpecsPackagePlan) setMethodTransformLayouts(servicePlan *service.Pl
 		}
 		names := p.tools[tool.Name]
 		if names.methodPayloadTransformPlan != nil {
-			serviceLayout, err := servicePlan.MethodPayloadLayout(tool.Method)
+			serviceLayout, err := servicePlan.MethodTypeLayout(tool.Method, tool.Method.Payload)
 			if err != nil {
 				return err
 			}
@@ -128,7 +128,7 @@ func (p *toolSpecsPackagePlan) setMethodTransformLayouts(servicePlan *service.Pl
 		var resultLayout *goacodegen.GoTypePlan
 		if names.toolResultTransformPlan != nil || len(names.serverDataTransformPlans) > 0 {
 			var err error
-			resultLayout, err = servicePlan.MethodResultLayout(tool.Method)
+			resultLayout, err = servicePlan.MethodTypeLayout(tool.Method, tool.Method.Result)
 			if err != nil {
 				return err
 			}

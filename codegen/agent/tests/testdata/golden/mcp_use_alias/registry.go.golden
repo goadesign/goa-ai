@@ -18,18 +18,18 @@ import (
 	"time"
 )
 
-// RegisterScribeAgent registers the generated agent components with the local runtime.
-// This helper registers only with the runtime in this process. It does not
-// publish the agent to a registry service.
-func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ScribeAgentConfig) error {
+// NewScribeAgentRegistration creates the generated registration without
+// registering workers or toolsets. Applications may compose its immutable
+// Definition before creating a client and registering this same value.
+func NewScribeAgentRegistration(rt *agentsruntime.Runtime, cfg ScribeAgentConfig) (agentsruntime.AgentRegistration, error) {
 	if rt == nil {
-		return errors.New("runtime is required")
+		return agentsruntime.AgentRegistration{}, errors.New("runtime is required")
 	}
 	agent, err := NewScribeAgent(cfg)
 	if err != nil {
-		return err
+		return agentsruntime.AgentRegistration{}, err
 	}
-	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
+	return agentsruntime.AgentRegistration{
 		Definition:       Definition(),
 		Planner:          agent.Planner,
 		WorkflowHandler:  rt.ExecuteWorkflow,
@@ -58,7 +58,18 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 			},
 		},
 		Policy: agentsruntime.RunPolicy{},
-	}); err != nil {
+	}, nil
+}
+
+// RegisterScribeAgent registers the generated agent components with the local runtime.
+// This helper registers only with the runtime in this process. It does not
+// publish the agent to a registry service.
+func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ScribeAgentConfig) error {
+	registration, err := NewScribeAgentRegistration(rt, cfg)
+	if err != nil {
+		return err
+	}
+	if err := rt.RegisterAgent(ctx, registration); err != nil {
 		return err
 	}
 	// Register MCP-backed toolsets using local executors and callers from config.

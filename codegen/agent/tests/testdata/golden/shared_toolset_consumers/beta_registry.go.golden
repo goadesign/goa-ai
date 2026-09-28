@@ -17,18 +17,18 @@ import (
 	"time"
 )
 
-// RegisterBetaWorkerAgent registers the generated agent components with the local runtime.
-// This helper registers only with the runtime in this process. It does not
-// publish the agent to a registry service.
-func RegisterBetaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg BetaWorkerAgentConfig) error {
+// NewBetaWorkerAgentRegistration creates the generated registration without
+// registering workers or toolsets. Applications may compose its immutable
+// Definition before creating a client and registering this same value.
+func NewBetaWorkerAgentRegistration(rt *agentsruntime.Runtime, cfg BetaWorkerAgentConfig) (agentsruntime.AgentRegistration, error) {
 	if rt == nil {
-		return errors.New("runtime is required")
+		return agentsruntime.AgentRegistration{}, errors.New("runtime is required")
 	}
 	agent, err := NewBetaWorkerAgent(cfg)
 	if err != nil {
-		return err
+		return agentsruntime.AgentRegistration{}, err
 	}
-	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
+	return agentsruntime.AgentRegistration{
 		Definition:       Definition(),
 		Planner:          agent.Planner,
 		WorkflowHandler:  rt.ExecuteWorkflow,
@@ -57,7 +57,18 @@ func RegisterBetaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg
 			},
 		},
 		Policy: agentsruntime.RunPolicy{},
-	}); err != nil {
+	}, nil
+}
+
+// RegisterBetaWorkerAgent registers the generated agent components with the local runtime.
+// This helper registers only with the runtime in this process. It does not
+// publish the agent to a registry service.
+func RegisterBetaWorkerAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg BetaWorkerAgentConfig) error {
+	registration, err := NewBetaWorkerAgentRegistration(rt, cfg)
+	if err != nil {
+		return err
+	}
+	if err := rt.RegisterAgent(ctx, registration); err != nil {
 		return err
 	}
 
