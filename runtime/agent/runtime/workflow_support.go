@@ -723,8 +723,8 @@ func (r *Runtime) missingFieldsQuestion(tool tools.Ident, fields []string) (stri
 	return question.String(), nil
 }
 
-// runPlanActivity schedules a plan/resume activity with the configured options.
-func (r *Runtime) runPlanActivity(
+// runPlanActivityOnce schedules one plan/resume activity and validates its result.
+func (r *Runtime) runPlanActivityOnce(
 	wfCtx engine.WorkflowContext,
 	activityName string,
 	options engine.ActivityOptions,
@@ -769,6 +769,10 @@ func (r *Runtime) runPlanActivity(
 		return nil, errors.New("runPlanActivity received published assistant text without a non-success outcome")
 	}
 	switch {
+	case out.ProviderFailure != nil:
+		if err := validateProviderFailureOutput(out); err != nil {
+			return nil, err
+		}
 	case out.OutputContractFailure != nil:
 		if out.Result != nil || out.ModelInvocationRecovery != nil || out.PlanningFailure != nil {
 			return nil, errors.New("runPlanActivity received OutputContractFailure with another result variant")
@@ -847,6 +851,9 @@ func (r *Runtime) runPlanActivity(
 		return out, boundedOutputContractError(out.OutputContractFailure)
 	}
 	if out.ModelInvocationRecovery != nil {
+		return out, nil
+	}
+	if out.ProviderFailure != nil {
 		return out, nil
 	}
 	if out.PlanningFailure != nil {

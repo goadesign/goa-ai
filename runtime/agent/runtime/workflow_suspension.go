@@ -30,22 +30,23 @@ import (
 
 type (
 	workflowCheckpoint struct {
-		Version        string
-		AgentID        string
-		SessionID      string
-		PreviousRunID  string
-		PreviousTurnID string
-		Policy         *PolicyOverrides
-		HistoryEndID   string
-		Context        checkpointRunContext
-		State          checkpointRunState
-		Batch          checkpointStepBatch
-		Pending        []checkpointPendingInput
-		RequiredTools  []tools.Ident
-		HasBudget      bool
-		HasHard        bool
-		BudgetLeft     time.Duration
-		HardLeft       time.Duration
+		Version          string
+		AgentID          string
+		SessionID        string
+		PreviousRunID    string
+		PreviousTurnID   string
+		Policy           *PolicyOverrides
+		HistoryEndID     string
+		Context          checkpointRunContext
+		State            checkpointRunState
+		Batch            checkpointStepBatch
+		Pending          []checkpointPendingInput
+		RequiredTools    []tools.Ident
+		HasBudget        bool
+		HasHard          bool
+		BudgetLeft       time.Duration
+		HardLeft         time.Duration
+		ProviderRecovery *providerRecoveryBudget `json:",omitempty"` //nolint:tagliatelle // Checkpoints retain Go field names.
 	}
 
 	checkpointRunContext struct {
@@ -352,11 +353,12 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			Finalize:                  finalize,
 			ResumePlannerAfterPending: batch.resumePlannerAfterPending,
 		},
-		Pending:    checkpointPending,
-		HasBudget:  !l.deadlines.Budget.IsZero(),
-		HasHard:    !l.deadlines.Hard.IsZero(),
-		BudgetLeft: remainingDuration(l.deadlines.Budget, now),
-		HardLeft:   remainingDuration(l.deadlines.Hard, now),
+		Pending:          checkpointPending,
+		HasBudget:        !l.deadlines.Budget.IsZero(),
+		HasHard:          !l.deadlines.Hard.IsZero(),
+		BudgetLeft:       remainingDuration(l.deadlines.Budget, now),
+		HardLeft:         remainingDuration(l.deadlines.Hard, now),
+		ProviderRecovery: l.base.providerRecovery,
 	}
 	requiredTools := requiredCheckpointToolNames(checkpoint)
 	checkpoint.RequiredTools = requiredTools
@@ -518,6 +520,7 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg Agen
 		HistoryEndID: historyEndID,
 		RunContext:   restoreCheckpointRunContext(checkpoint.Context, input),
 	}
+	base.providerRecovery = checkpoint.ProviderRecovery
 	state, err := r.restoreCheckpointState(checkpoint.State)
 	if err != nil {
 		return nil, err

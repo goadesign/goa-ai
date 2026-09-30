@@ -30,10 +30,11 @@ type (
 	// between activities of this workflow. The summary never replaces Messages
 	// and is not included in the session transcript or suspension checkpoint.
 	workflowConversation struct {
-		Messages       []*model.Message
-		HistoryEndID   string
-		RunContext     run.Context
-		HistoryContext *api.HistoryContext
+		Messages         []*model.Message
+		HistoryEndID     string
+		RunContext       run.Context
+		HistoryContext   *api.HistoryContext
+		providerRecovery *providerRecoveryBudget
 	}
 
 	workflowLoop struct {

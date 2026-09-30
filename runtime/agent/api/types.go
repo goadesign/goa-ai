@@ -142,6 +142,12 @@ type (
 		// not consume this budget.
 		TimeBudget time.Duration
 
+		// ProviderRetryBudget caps failed provider work and durable retry waits
+		// across this run and its external-input continuations. Zero disables
+		// provider recovery. Recovery never repeats accepted tool work or live
+		// model output and does not consume TimeBudget.
+		ProviderRetryBudget time.Duration `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+
 		// PlanTimeout overrides the per-turn plan/resume activity timeout.
 		PlanTimeout time.Duration
 
@@ -669,6 +675,14 @@ type (
 		// assistant text reached session subscribers. The workflow commits the
 		// published text before terminating with these standardized failure details.
 		PlanningFailure *run.Failure `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+
+		// ProviderFailure is a failed model invocation whose complete phase
+		// results prove that retry is safe: a temporary provider failure, clean
+		// shutdown, no accepted response, and no observed model output. It is
+		// exclusive with every other result variant. The workflow publishes
+		// failed-attempt usage before deciding whether its recovery budget allows
+		// another activity. An activity error alone never permits recovery.
+		ProviderFailure *run.Failure `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// ModelInvocationRecovery is present instead of OutputContractFailure
 		// when generated input validation or provider response validation

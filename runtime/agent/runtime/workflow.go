@@ -285,6 +285,9 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		RunContext:   runCtx,
 		HistoryEndID: historyEndID,
 	}
+	if input.Policy != nil && input.Policy.ProviderRetryBudget > 0 {
+		planInput.providerRecovery = &providerRecoveryBudget{Remaining: input.Policy.ProviderRetryBudget}
+	}
 	// Materialize one active cap state before planning so ordinary tools,
 	// recovery turns, and terminal finalization all observe the same run budget.
 	caps := initialCaps(reg.Policy)
@@ -360,6 +363,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		return nil, err
 	}
 	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, planInput, budgetDeadline)
+	preserveProviderRecoveryDeadlines(planInput, 0, &budgetDeadline, &hardDeadline)
 	if err != nil {
 		if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) &&
 			!budgetDeadline.IsZero() {
