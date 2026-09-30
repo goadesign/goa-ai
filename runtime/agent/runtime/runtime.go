@@ -623,6 +623,19 @@ func WithTiming(t Timing) RunOption {
 	})
 }
 
+// WithProviderRetryBudget enables durable recovery of proven temporary model
+// failures before output publication. The duration includes failed attempts and
+// retry waits across the run and its continuations, separately from active work.
+// Planners must keep side effects in runtime-owned tools, not planner code.
+func WithProviderRetryBudget(d time.Duration) RunOption {
+	return runOption(func(start *runStart) {
+		if start.input.Policy == nil {
+			start.input.Policy = &PolicyOverrides{}
+		}
+		start.input.Policy.ProviderRetryBudget = d
+	})
+}
+
 // WithLimitTerminalPlans sets the complete terminal tool-call set used when
 // this run reaches a configured time, tool-call, or recovery-turn limit.
 func WithLimitTerminalPlans(plans LimitTerminalPlans) RunOption {

@@ -67,23 +67,24 @@ type (
 	// modelInvocationJournal keeps every model call made during one planner
 	// activity separate from user-visible event publication.
 	modelInvocationJournal struct {
-		runtime       *Runtime
-		runID         string
-		sessionID     string
-		responseID    string
-		mu            sync.Mutex
-		publishMu     sync.Mutex
-		invocations   map[modelInvocationID]*modelInvocationCandidate
-		order         []modelInvocationID
-		designated    modelInvocationID
-		selected      modelInvocationID
-		recovery      modelInvocationID
-		usage         model.TokenUsage
-		outputErr     error
-		publishedText strings.Builder
-		sealed        bool
-		sealedErr     error
-		sealDone      chan struct{}
+		runtime        *Runtime
+		runID          string
+		sessionID      string
+		responseID     string
+		mu             sync.Mutex
+		publishMu      sync.Mutex
+		invocations    map[modelInvocationID]*modelInvocationCandidate
+		order          []modelInvocationID
+		designated     modelInvocationID
+		selected       modelInvocationID
+		recovery       modelInvocationID
+		usage          model.TokenUsage
+		outputErr      error
+		publishedText  strings.Builder
+		outputObserved bool
+		sealed         bool
+		sealedErr      error
+		sealDone       chan struct{}
 	}
 )
 
@@ -366,6 +367,11 @@ func (j *modelInvocationJournal) recordModelChunk(
 	if candidate == nil {
 		j.mu.Unlock()
 		return errors.New("model chunk references an unknown invocation")
+	}
+	switch chunk.(type) {
+	case model.TextChunk, model.ThinkingChunk, model.ToolCallChunk, model.ToolCallDeltaChunk,
+		model.CompletionChunk, model.CompletionDeltaChunk:
+		j.outputObserved = true
 	}
 	if usage, ok := chunk.(model.UsageChunk); ok {
 		attributed := candidate.attributeUsage(usage.Usage)

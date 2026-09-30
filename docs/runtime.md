@@ -2100,6 +2100,32 @@ without repeating an external effect. An explicit model-output recovery or
 workflow continuation is a new planner activity and therefore receives a new
 response ID.
 
+Applications may opt into durable pre-output provider recovery with
+`runtime.WithProviderRetryBudget(duration)`. Planners must keep external side
+effects in runtime-owned tools. A failed activity is never replay permission:
+only a completed activity with `PlanActivityOutput.ProviderFailure` can request
+recovery. The activity verifies one fully finished model invocation, a typed
+retryable rate-limit or unavailable error, no accepted response or observed
+text/thinking/tool/structured-output chunk, and clean observer, validation,
+usage, context, and shutdown phases. Other failures remain terminal.
+
+The workflow publishes failed usage, waits on a durable timer, then schedules
+the same planning request as a new single-attempt activity with a new response
+ID. Completed tools and their outputs remain unchanged. Delays grow from about
+30 seconds to five minutes, distributed by run identity for deterministic
+replay. Cancellation stops waiting. Failed provider work and waits consume the
+separate finite recovery budget; successful work still consumes `TimeBudget`.
+External-input checkpoints retain the exact remaining recovery allowance,
+including zero when exhausted. No additional engine run timeout is introduced.
+Zero disables recovery and preserves existing behavior. Plan activities that
+made multiple model invocations do not receive retry permission.
+
+The added policy and optional checkpoint state preserve older checkpoints whose
+policy disables recovery. Recovery-enabled checkpoints require their matching
+remaining-budget record. New activity records and enabled checkpoints require
+the updated runtime; do not roll their workers or continuations back to an older
+runtime. Workflow version routing and worker retention remain engine-owned.
+
 Allowed text and thinking fragments are sent as soon as they arrive
 because delaying or combining them would remove the real-time behavior. Tool
 argument fragments remain inside the model validation boundary: partial JSON is

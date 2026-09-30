@@ -16,6 +16,7 @@ import (
 	"maps"
 	"reflect"
 	"slices"
+	"time"
 
 	"goa.design/goa-ai/internal/registrycontract"
 	agent "goa.design/goa-ai/runtime/agent"
@@ -507,6 +508,20 @@ func validateWorkflowCheckpoint(checkpoint *workflowCheckpoint) error {
 	if checkpoint.HasBudget && checkpoint.HardLeft < checkpoint.BudgetLeft {
 		return errors.New("run suspension checkpoint hard deadline precedes budget deadline")
 	}
+	var providerBudget time.Duration
+	if checkpoint.Policy != nil {
+		providerBudget = checkpoint.Policy.ProviderRetryBudget
+	}
+	if providerBudget < 0 {
+		return errors.New("run suspension checkpoint has negative provider recovery budget")
+	}
+	if (providerBudget > 0) != (checkpoint.ProviderRecovery != nil) {
+		return errors.New("run suspension checkpoint provider recovery state must match its policy")
+	}
+	if recovery := checkpoint.ProviderRecovery; recovery != nil &&
+		(recovery.Remaining < 0 || recovery.Remaining > providerBudget) {
+		return errors.New("run suspension checkpoint has invalid remaining provider recovery budget")
+	}
 	return nil
 }
 
@@ -583,6 +598,9 @@ func validateWorkflowRunInput(input *RunInput) error {
 	}
 	if input.Continuation == nil {
 		if input.Policy != nil {
+			if input.Policy.ProviderRetryBudget < 0 {
+				return errors.New("provider recovery budget must not be negative")
+			}
 			return validateMaxRecoveryTurns(input.Policy.MaxRecoveryTurns)
 		}
 		return nil

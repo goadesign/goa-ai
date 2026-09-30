@@ -5,10 +5,11 @@
 package run
 
 type (
-	// Failure captures the canonical terminal failure payload for a run.
+	// Failure captures canonical failure details for a run or one failed model
+	// invocation. An invocation failure may recover without failing the run.
 	//
 	// Contract:
-	// - Present only when the run ends in a failed terminal state.
+	// - A terminal run outcome includes Failure only when the run failed.
 	// - Message is stable and safe to render directly in UX surfaces.
 	// - DebugMessage is for operators, logs, and traces only.
 	Failure struct {

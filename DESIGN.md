@@ -29,7 +29,17 @@ tool or output validation cannot retract it. One execution-scoped response ID
 groups fragments from the same planner activity. Plan and Resume activities
 are single-attempt, so one response ID can never name output from two model
 executions. A later explicit planner turn receives a new response ID. The workflow's committed
-assistant-turn event uses that same ID. An accepted response stores its complete
+assistant-turn event uses that same ID.
+
+Provider recovery is explicitly enabled by a separate finite run allowance.
+The activity certifies one temporary failed model invocation with no observed
+model output and clean completed phases; an activity error is never permission
+to retry. Durable workflow timers schedule the identical pending planning
+request as a new single-attempt activity. Accepted tools and active-work limits
+remain intact; saved external-input checkpoints retain the remaining allowance.
+See [provider recovery](docs/runtime.md#streaming-planners) in the runtime reference.
+
+An accepted response stores its complete
 provider transcript and sends those exact ordered messages to stream consumers.
 A rejected response or ordinary failure
 reported before activity cancellation stores the exact text already delivered
