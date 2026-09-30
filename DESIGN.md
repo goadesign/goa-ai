@@ -1688,9 +1688,9 @@ disable storage, background execution, input truncation and implicit prompt
 cache writes. Unsupported structured output and cache-bearing requests fail
 before transport. Bedrock Responses exposes a declared local token estimate;
 direct OpenAI counting remains unsupported. The Bedrock estimator counts
-GPT-5.6 and GPT-6 Sol images from dimensions rather than their base64 transfer
+GPT-5.6, GPT-6 Sol, and GPT-6.1 Sol images from dimensions rather than their base64 transfer
 size, retaining the byte approximation for text, tools, and opaque reasoning.
-GPT-6 Sol uses an explicit local patch estimate; it does not claim the GPT-5.6
+GPT-6 Sol and GPT-6.1 Sol use an explicit local patch estimate; it does not claim the GPT-5.6
 billing rule or impose its provider limits. Provider usage remains the measured
 accounting total. Unknown image model families fail counting.
 Consumers requiring exact counts must resolve that requirement separately.

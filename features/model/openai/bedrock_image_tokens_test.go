@@ -30,17 +30,21 @@ func TestBedrockImageCountFormats(t *testing.T) {
 	// This complete one-pixel lossless WebP decodes through x/image/webp.
 	webpBytes, err := base64.StdEncoding.DecodeString("UklGRh4AAABXRUJQVlA4TBEAAAAvAAAAAAfQ//73v/+BiOh/AAA=")
 	require.NoError(t, err)
-	for _, test := range []struct {
-		name string
-		data []byte
-	}{
-		{"png", pngBytes.Bytes()}, {"jpeg", jpegBytes.Bytes()},
-		{"gif", gifBytes.Bytes()}, {"webp", webpBytes},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			count, err := bedrockImageTokenCount(bedrockTestModel, "data:image/"+test.name+";base64,"+base64.StdEncoding.EncodeToString(test.data))
-			require.NoError(t, err)
-			assert.Equal(t, 2, count)
+	for _, modelID := range []string{"global.openai.gpt-5.6-sol", "global.openai.gpt-5.6-terra", "global.openai.gpt-5.6-luna", "global.openai.gpt-6-sol", "global.openai.gpt-6.1-sol"} {
+		t.Run(modelID, func(t *testing.T) {
+			for _, test := range []struct {
+				name string
+				data []byte
+			}{
+				{"png", pngBytes.Bytes()}, {"jpeg", jpegBytes.Bytes()},
+				{"gif", gifBytes.Bytes()}, {"webp", webpBytes},
+			} {
+				t.Run(test.name, func(t *testing.T) {
+					count, err := bedrockImageTokenCount(modelID, "data:image/"+test.name+";base64,"+base64.StdEncoding.EncodeToString(test.data))
+					require.NoError(t, err)
+					assert.Equal(t, 2, count)
+				})
+			}
 		})
 	}
 }
@@ -95,9 +99,13 @@ func TestBedrockSolImageEstimateDoesNotImposeGPT56Limits(t *testing.T) {
 	binary.BigEndian.PutUint32(header[16:20], 65536)
 	binary.BigEndian.PutUint32(header[20:24], 512)
 	binary.BigEndian.PutUint32(header[29:33], crc32.ChecksumIEEE(header[12:29]))
-	count, err := bedrockImageTokenCount("global.openai.gpt-6-sol", "data:image/png;base64,"+base64.StdEncoding.EncodeToString(header))
-	require.NoError(t, err)
-	assert.Equal(t, 39322, count)
+	for _, modelID := range []string{"global.openai.gpt-6-sol", "global.openai.gpt-6.1-sol"} {
+		t.Run(modelID, func(t *testing.T) {
+			count, err := bedrockImageTokenCount(modelID, "data:image/png;base64,"+base64.StdEncoding.EncodeToString(header))
+			require.NoError(t, err)
+			assert.Equal(t, 39322, count)
+		})
+	}
 }
 
 func TestBedrockImageEstimateRejectsIntegerOverflow(t *testing.T) {
@@ -146,7 +154,7 @@ func TestBedrockImageCountExactDimensionFit(t *testing.T) {
 }
 
 func TestBedrockImageCountCapabilityAndMalformedImage(t *testing.T) {
-	for _, modelID := range []string{"global.openai.gpt-5.6-terra", "us.openai.gpt-5.6-sol", "us-gov.openai.gpt-5.6-luna", "openai.gpt-5.6-terra", "gpt-5.6-terra", "global.openai.gpt-6-sol", "us.openai.gpt-6-sol", "openai.gpt-6-sol", "gpt-6-sol"} {
+	for _, modelID := range []string{"global.openai.gpt-5.6-terra", "us.openai.gpt-5.6-sol", "us-gov.openai.gpt-5.6-luna", "openai.gpt-5.6-terra", "gpt-5.6-terra", "global.openai.gpt-6-sol", "us.openai.gpt-6-sol", "openai.gpt-6-sol", "gpt-6-sol", "global.openai.gpt-6.1-sol", "us.openai.gpt-6.1-sol", "us-gov.openai.gpt-6.1-sol", "openai.gpt-6.1-sol", "gpt-6.1-sol"} {
 		_, err := bedrockImageTokenCount(modelID, "data:image/jpeg;base64,invalid")
 		require.ErrorContains(t, err, "decode image dimensions")
 	}
