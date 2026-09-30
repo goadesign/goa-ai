@@ -855,7 +855,7 @@ fit within 65,535 pixels on each side, count 32-pixel patches, and round up the
 multiple valid images add their counts independently. PNG, JPEG, GIF, and WebP
 headers are decoded without altering the image sent for inference.
 
-GPT-6 Sol uses a local estimate of 32-pixel patches times 1.2, rounded up,
+GPT-6 Sol and GPT-6.1 Sol use a local estimate of 32-pixel patches times 1.2, rounded up,
 without applying GPT-5.6 image limits or resizing. This is an admission and
 compaction estimate, not a documented Sol billing formula or an upper bound.
 AWS validates the actual images; accounting uses the response usage.

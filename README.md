@@ -279,7 +279,7 @@ For models that estimate tokens before a call, the usage-reconciled adaptive
 limiter admits work from that estimate and corrects its local balance with
 tokens reported in the response. Missing usage stays unknown. Shared limiter
 startup waits for Redis capacity to reach the local replicated map and fails if
-that wait is cancelled or the map stops. Bedrock Responses also estimates GPT-6 Sol
+that wait is cancelled or the map stops. Bedrock Responses also estimates GPT-6 Sol and GPT-6.1 Sol
 image inputs from dimensions, while response usage remains the accounting total.
 
 Tools can mark typed evidence with `NativeImage()` to retain exact image sources
