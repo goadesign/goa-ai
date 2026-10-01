@@ -79,5 +79,8 @@ func TestGeneratedNamedUnionCollections(t *testing.T) {
 	fixture, err := os.ReadFile("testdata/named_union_collections_test.go")
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/types/named_union_collections_test.go"), fixture, 0o600)) // #nosec G703 -- root is the generated fixture's private directory.
+	// go test runs only a subset of vet analyzers; the complete vet catches
+	// generated union validators that end in unreachable code.
+	runGo(t, root, "vet", "./gen/...")
 	runGo(t, root, "test", "-count=1", "-run", "^TestNamedUnionCollections", "./gen/...")
 }
