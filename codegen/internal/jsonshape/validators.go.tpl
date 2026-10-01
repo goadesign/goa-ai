@@ -119,7 +119,9 @@ func {{ .Name }}(path string, value any, description string) error {
         }
     }
     {{- end }}
+    {{- if ne .Kind "union" }}
     return nil
+    {{- end }}
     {{- end }}
 }
 {{- end }}
