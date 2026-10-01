@@ -3788,12 +3788,21 @@ starting the workflow. Caller and worker use the same generated
 Input compatibility depends on what the continuation will do with the saved
 arguments:
 
-- Fully recorded historical inputs keep their accepted bytes. Current input
+- Completed historical inputs keep their accepted bytes. Current input
   codecs do not reinterpret these facts. Repeated saved copies must agree on
   the exact call ID, arguments and selected registry contract.
-- A successful result is not enough: results outside the batch's recorded
-  prefix still need current inputs for publication and typed result previews.
-  The recorded prefix must agree with published results in history.
+- A successful result alone is not enough. The recorded batch prefix must
+  agree with published history. Before transcript append, an existing
+  materialized result event must match the batch's result, server data and
+  exact call/run/agent/session/parent identity. Delayed transcript writes and
+  publication retries consume its canonical content and saved preview,
+  including an empty preview, without decoding old input or rendering a new
+  hint. Missing or inconsistent published events needed for transcript append
+  are rejected. Results without a materialized event still require current
+  input for typed materialization.
+- A recovered failure is history only when its exact recorded failure agrees
+  and no recovery consumer remains. Failures in a batch still waiting for
+  siblings can initiate recovery; their inputs remain current.
 - Pending execution, confirmation, external input, unfinished children and
   recovery still require current input codecs. Missing replies and unresolved
   calls cannot borrow another call's successful outcome.

@@ -264,11 +264,24 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 			return err
 		}
 	}
-	for _, record := range checkpoint.Batch.Records {
-		if record.ChildSuspension == nil {
-			if _, err := decodeCheckpointToolEvent(record.Result, record.Call, definition.spec); err != nil {
+	for i, record := range checkpoint.Batch.Records {
+		if record.ChildSuspension != nil {
+			if record.ResultRecord != nil {
+				return fmt.Errorf("unfinished child %q has a materialized result record", record.Call.ToolCallID)
+			}
+			continue
+		}
+		if record.ResultRecord != nil {
+			if err := validateCheckpointResultRecord(record, checkpoint, definition); err != nil {
 				return err
 			}
+			continue
+		}
+		if _, err := decodeCheckpointToolEvent(record.Result, record.Call, definition.spec); err != nil {
+			return err
+		}
+		if record.ResultPublished && i >= checkpoint.Batch.Recorded {
+			return fmt.Errorf("published result for call %q has no materialized result record", record.Call.ToolCallID)
 		}
 	}
 	for _, pending := range checkpoint.Pending {

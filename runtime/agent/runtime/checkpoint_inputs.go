@@ -22,7 +22,7 @@ type checkpointInputUses struct {
 }
 
 // validateCheckpointInputs keeps accepted historical arguments intact. Pending
-// execution, result publication, recovery and paging still need current inputs.
+// execution, result materialization, recovery and paging still need current inputs.
 func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDefinition) error {
 	uses := checkpointInputUses{byID: make(map[string]int), current: make(map[string]bool)}
 	events := make(map[string]*api.ToolEvent, len(checkpoint.State.ToolEvents))
@@ -35,23 +35,22 @@ func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDe
 	}
 	for _, output := range checkpoint.State.ToolOutputs {
 		outputs[output.ToolCallID] = output
-		if output.Failure == nil {
-			event, ok := events[output.ToolCallID]
-			if !ok || event.Name != output.Name || event.Failure != nil ||
-				!bytes.Equal(event.Result, output.Result) ||
-				!bytes.Equal(event.ServerData, output.ServerData) ||
-				!reflect.DeepEqual(event.Bounds, output.Bounds) {
-				return fmt.Errorf("saved output does not match recorded result for call %q", output.ToolCallID)
-			}
+		event, ok := events[output.ToolCallID]
+		if !ok || event.Name != output.Name ||
+			!reflect.DeepEqual(event.Failure, output.Failure) ||
+			!bytes.Equal(event.Result, output.Result) ||
+			!bytes.Equal(event.ServerData, output.ServerData) ||
+			!reflect.DeepEqual(event.Bounds, output.Bounds) {
+			return fmt.Errorf("saved output does not match recorded result for call %q", output.ToolCallID)
 		}
-		if err := uses.add(checkpointOutputCall(output), output.Failure != nil); err != nil {
+		if err := uses.add(checkpointOutputCall(output), false); err != nil {
 			return err
 		}
 	}
-	recorded := make(map[string]bool, len(checkpoint.Batch.Records))
+	historical := make(map[string]bool, len(checkpoint.Batch.Records))
 	for i, record := range checkpoint.Batch.Records {
 		id := record.Call.ToolCallID
-		if _, exists := recorded[id]; exists {
+		if _, exists := historical[id]; exists {
 			return fmt.Errorf("run suspension has duplicate saved tool call id %q", id)
 		}
 		complete := i < checkpoint.Batch.Recorded
@@ -66,20 +65,27 @@ func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDe
 				return fmt.Errorf("recorded batch call %q has inconsistent result provenance", id)
 			}
 		}
-		recorded[id] = complete
-		if err := uses.add(record.Call, !complete || record.Result.Failure != nil); err != nil {
+		// A validated materialized event already owns its preview. Publication
+		// retries and delayed transcript append consume that event, not Args.
+		// A batch still awaiting advanceStep can introduce recovery after its
+		// siblings finish. Fully accounted batches retain only PendingRecovery.
+		recoveryPending := !checkpoint.Batch.ResumePlannerAfterPending &&
+			record.Result != nil && record.Result.Failure != nil
+		historical[id] = record.ChildSuspension == nil &&
+			(complete || record.ResultRecord != nil) && !recoveryPending
+		if err := uses.add(record.Call, !historical[id]); err != nil {
 			return err
 		}
 	}
 	// Calls without recorded outcomes include unfinished children and lost
 	// replies. They cannot borrow a successful sibling's historical status.
 	for _, call := range checkpoint.Batch.Calls {
-		if err := uses.add(call, !recorded[call.ToolCallID]); err != nil {
+		if err := uses.add(call, !historical[call.ToolCallID]); err != nil {
 			return err
 		}
 	}
 	for _, call := range awaitToolRequests(checkpoint.Batch.AwaitItems) {
-		if err := uses.add(call, !recorded[call.ToolCallID]); err != nil {
+		if err := uses.add(call, !historical[call.ToolCallID]); err != nil {
 			return err
 		}
 	}

@@ -260,9 +260,11 @@ worker restarts, configure the **Temporal engine** and a **host-owned durable
 runtime store**. Goa-AI supplies the execution loop, cancellation, policy
 checks, saved continuations, and tool/child-workflow coordination.
 
-Saved continuations preserve fully recorded tool inputs as historical facts.
+Saved continuations preserve completed tool inputs as historical facts.
 Current input codecs still validate arguments needed for pending execution,
-result publication, recovery or pagination; result codecs remain current.
+result materialization, recovery or pagination; result codecs remain current.
+Delayed transcript writes consume the saved result event and its accepted
+preview, including an empty preview, without rendering old inputs again.
 An input-schema change alone therefore does not invalidate inert history.
 See [continuation compatibility](docs/runtime.md#external-input-and-workflow-continuations)
 for the checks that still apply.

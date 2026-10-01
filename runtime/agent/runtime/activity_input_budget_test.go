@@ -80,7 +80,10 @@ func TestToolResultContentTruncatesOversizedResults(t *testing.T) {
 		},
 	}
 
-	content, err := rt.toolResultContent(nil, tr)
+	record := materializedToolRecordForTest(t, rt, "service.agent",
+		&workflowConversation{RunContext: run.Context{RunID: "run-1"}},
+		ToolCall{Name: name, ToolCallID: tr.ToolCallID}, tr)
+	content, err := toolResultRecordContent(record)
 	require.NoError(t, err)
 	m, ok := content.(map[string]any)
 	require.True(t, ok, "oversized tool_result content must be projected, not raw JSON")

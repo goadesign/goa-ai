@@ -12,9 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
 // groupToolCallsByTimeout buckets calls by per-tool timeout override (with `*`
@@ -150,7 +148,7 @@ func (r *Runtime) appendUserToolRecordResults(
 		if err != nil {
 			return err
 		}
-		content, err := r.toolResultContent(&call, tr)
+		content, err := toolResultRecordContent(record)
 		if err != nil {
 			return err
 		}
@@ -279,45 +277,6 @@ func (r *Runtime) toolResultRequiresResume(call ToolCall, result *planner.ToolRe
 		return true
 	}
 	return result != nil && result.Failure != nil
-}
-
-func (r *Runtime) toolResultContent(call *ToolCall, tr *planner.ToolResult) (any, error) {
-	if tr == nil {
-		return nil, nil
-	}
-	var resultJSON rawjson.Message
-	if tr.Result != nil {
-		contractCall := ToolCall{Name: tr.Name}
-		if call != nil {
-			contractCall = *call
-		}
-		spec, ok, err := lookupCallSpec(contractCall, r.toolSpec)
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, fmt.Errorf("runtime: no result contract for tool %q", tr.Name)
-		}
-		raw, err := EncodeCanonicalToolResult(spec, tr.Result, tr.Bounds)
-		if err != nil {
-			return nil, fmt.Errorf("runtime: encode tool_result for %s: %w", tr.Name, err)
-		}
-		resultJSON = raw
-	}
-	errorMessage := ""
-	if tr.Failure != nil {
-		errorMessage = tr.Failure.Error.Error()
-	}
-	preview, err := formatToolResultPreviewForCall(context.Background(), r, call, tr)
-	if err != nil {
-		return nil, err
-	}
-	return transcript.ProjectToolResultContent(
-		resultJSON,
-		tr.Bounds,
-		preview,
-		errorMessage,
-	)
 }
 
 // appendToolOutputRecords records canonical planner tool outputs from paired

@@ -206,6 +206,7 @@ func TestCheckpointHistoryNestedChildKeepsPendingParentCurrent(t *testing.T) {
 
 	rewriteSuspensionCheckpoint(t, child, func(c *workflowCheckpoint) {
 		c.Batch.Recorded = 0
+		c.Batch.Records[0].ResultPublished = false
 		c.State.ToolOutputs = nil
 		c.State.ToolEvents = nil
 	})

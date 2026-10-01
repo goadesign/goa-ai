@@ -845,9 +845,14 @@ Saved tool inputs are validated according to their remaining consumers. A
 fully recorded historical call retains its accepted argument bytes; it is not
 decoded against a newer input schema merely to restore history. Exact call IDs
 correlate repeated checkpoint representations, and the batch's recorded prefix
-must agree with published results. Unrecorded results still need current inputs
-for typed publication and transcript rendering. Pending execution, confirmation,
-external input, unfinished children, recovery and paging reconstruction also
+must agree with published results. A materialized result event owns its canonical
+content and preview, even before publication or transcript append completes.
+Delayed transcript writes consume that exact event after validating its result,
+server data, call/run identity and checkpoint ownership. An empty preview is a
+valid saved value. Without a materialized event, current inputs are still needed
+for typed result materialization. Recovered failures are also history once their
+exact recorded outcome agrees and no recovery consumer remains. Pending execution,
+confirmation, external input, unfinished children, recovery and paging reconstruction also
 retain current input validation. Current result and server-data contracts,
 required tools, registry admission, checkpoint digests and ownership remain
 mandatory. This changes no stored format, accepted request bytes or provider
