@@ -72,10 +72,6 @@ func TestCheckpointRecoveredFailureHistory(t *testing.T) {
 			current := New(h.runtime.Store)
 			seedTestToolSpecs(current, spec)
 			_, err = decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(current, h.input.AgentID))
-			if !recovered {
-				require.ErrorContains(t, err, "obsolete input cannot execute")
-				return
-			}
 			require.NoError(t, err)
 			require.Equal(t, original, out.Suspension.Checkpoint)
 

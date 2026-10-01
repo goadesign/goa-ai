@@ -107,12 +107,6 @@ func TestCheckpointInputsRejectActiveOldArguments(t *testing.T) {
 			},
 		},
 		{
-			name: "pending recovery",
-			mutate: func(c *workflowCheckpoint) {
-				c.State.PendingRecovery = []*planner.ToolOutput{c.State.ToolOutputs[0]}
-			},
-		},
-		{
 			name: "unfinished child",
 			mutate: func(c *workflowCheckpoint) {
 				c.Batch.Recorded = 0

@@ -3798,16 +3798,20 @@ arguments:
   publication retries consume its canonical content and saved preview,
   including an empty preview, without decoding old input or rendering a new
   hint. Missing or inconsistent published events needed for transcript append
-  are rejected. Results without a materialized event still require current
-  input for typed materialization.
-- A recovered failure is history only when its exact recorded failure agrees
-  and no recovery consumer remains. Failures in a batch still waiting for
-  siblings can initiate recovery; their inputs remain current.
-- Pending execution, confirmation, external input, unfinished children and
-  recovery still require current input codecs. Missing replies and unresolved
+  are rejected. Successful results without a materialized event still require
+  current input for typed materialization.
+- Failed arguments remain evidence, including while recovery is pending or
+  the batch is waiting for siblings. Recovery IDs must select exact recorded
+  failures, and saved copies must agree on the failed input and outcome.
+  Failure materialization and previews do not decode those arguments. The
+  planner receives raw failure evidence; each fresh corrective call must
+  satisfy its current input contract before it can execute.
+- Pending execution, confirmation, external input and unfinished children
+  still require current input codecs. Missing replies and unresolved
   calls cannot borrow another call's successful outcome.
-- Paging inputs remain current because the runtime reconstructs queries and
-  consumes cursors from previous calls, including earlier pages of a chain.
+- Successful paging inputs remain current because the runtime reconstructs
+  queries and consumes cursors from previous calls, including earlier pages
+  of a chain. Failed outputs are excluded from paging reconstruction.
 
 All restored results, server data and bounds still satisfy their selected
 contracts. Required tools, current registry admission, exact call/result

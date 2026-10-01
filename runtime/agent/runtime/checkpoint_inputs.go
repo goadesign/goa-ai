@@ -22,11 +22,12 @@ type checkpointInputUses struct {
 }
 
 // validateCheckpointInputs keeps accepted historical arguments intact. Pending
-// execution, result materialization, recovery and paging still need current inputs.
+// execution, successful result materialization and paging need current inputs.
 func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDefinition) error {
 	uses := checkpointInputUses{byID: make(map[string]int), current: make(map[string]bool)}
 	events := make(map[string]*api.ToolEvent, len(checkpoint.State.ToolEvents))
 	outputs := make(map[string]*planner.ToolOutput, len(checkpoint.State.ToolOutputs))
+	failed := make(map[string]bool)
 	for _, event := range checkpoint.State.ToolEvents {
 		if _, exists := events[event.ToolCallID]; exists {
 			return fmt.Errorf("run suspension has duplicate result for call %q", event.ToolCallID)
@@ -35,6 +36,7 @@ func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDe
 	}
 	for _, output := range checkpoint.State.ToolOutputs {
 		outputs[output.ToolCallID] = output
+		failed[output.ToolCallID] = output.Failure != nil
 		event, ok := events[output.ToolCallID]
 		if !ok || event.Name != output.Name ||
 			!reflect.DeepEqual(event.Failure, output.Failure) ||
@@ -54,6 +56,9 @@ func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDe
 			return fmt.Errorf("run suspension has duplicate saved tool call id %q", id)
 		}
 		complete := i < checkpoint.Batch.Recorded
+		if event, exists := events[id]; exists && !reflect.DeepEqual(event, record.Result) {
+			return fmt.Errorf("saved batch result disagrees with recorded result for call %q", id)
+		}
 		if complete {
 			if record.ChildSuspension != nil || !record.ResultPublished || record.ScheduleRequired ||
 				record.CallRunID == "" || record.ResultRunID == "" ||
@@ -67,12 +72,11 @@ func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDe
 		}
 		// A validated materialized event already owns its preview. Publication
 		// retries and delayed transcript append consume that event, not Args.
-		// A batch still awaiting advanceStep can introduce recovery after its
-		// siblings finish. Fully accounted batches retain only PendingRecovery.
-		recoveryPending := !checkpoint.Batch.ResumePlannerAfterPending &&
-			record.Result != nil && record.Result.Failure != nil
+		// Failed outcomes skip typed success materialization and previews.
+		// Recovery gives the planner raw evidence, not another execution.
+		failed[id] = record.Result != nil && record.Result.Failure != nil
 		historical[id] = record.ChildSuspension == nil &&
-			(complete || record.ResultRecord != nil) && !recoveryPending
+			(complete || record.ResultRecord != nil || failed[id])
 		if err := uses.add(record.Call, !historical[id]); err != nil {
 			return err
 		}
@@ -103,20 +107,19 @@ func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDe
 			}
 		}
 	}
-	// Recovery outputs intentionally omit paging roots and run-log references.
-	// Compare the input facts they actually retain, then require the codec.
-	for _, output := range checkpoint.State.PendingRecovery {
-		call := checkpointOutputCall(output)
-		if index, exists := uses.byID[call.ToolCallID]; exists {
-			previous := uses.calls[index]
-			if previous.Name != call.Name || !bytes.Equal(previous.Payload, call.Payload) ||
-				previous.ModelToolCallID != call.ModelToolCallID ||
-				!reflect.DeepEqual(previous.Registry, call.Registry) {
-				return fmt.Errorf("saved recovery input disagrees for call %q", call.ToolCallID)
-			}
-			uses.current[call.ToolCallID] = true
-		} else if err := uses.add(call, true); err != nil {
-			return err
+	// Recovery selects exact recorded failures. Its saved copy intentionally
+	// omits paging roots and run-log references; compare only retained facts.
+	selected, err := selectRecoveryOutputs(checkpoint.State.ToolOutputs, recoveryToolCallIDs(checkpoint.State.PendingRecovery))
+	if err != nil {
+		return err
+	}
+	for i, output := range checkpoint.State.PendingRecovery {
+		previous := selected[i]
+		if previous.Name != output.Name || !bytes.Equal(previous.Payload, output.Payload) ||
+			previous.ModelToolCallID != output.ModelToolCallID ||
+			!reflect.DeepEqual(previous.Registry, output.Registry) ||
+			!reflect.DeepEqual(previous.Failure, output.Failure) {
+			return fmt.Errorf("saved recovery input or failure disagrees for call %q", output.ToolCallID)
 		}
 	}
 	for _, call := range uses.calls {
@@ -133,8 +136,10 @@ func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDe
 			return fmt.Errorf("tool %q is not in the current agent definition", call.Name)
 		}
 		// Paging reconstructs queries and consumes cursors from saved inputs,
-		// including earlier pages of a chain that has since been exhausted.
-		if uses.current[call.ToolCallID] || (spec.Bounds != nil && spec.Bounds.Paging != nil) {
+		// including earlier successful pages of an exhausted chain. Failed
+		// outputs are skipped before paging reads any input.
+		if uses.current[call.ToolCallID] ||
+			(!failed[call.ToolCallID] && spec.Bounds != nil && spec.Bounds.Paging != nil) {
 			if err := validateCheckpointToolRequest(call, definition); err != nil {
 				return err
 			}

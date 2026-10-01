@@ -849,11 +849,14 @@ must agree with published results. A materialized result event owns its canonica
 content and preview, even before publication or transcript append completes.
 Delayed transcript writes consume that exact event after validating its result,
 server data, call/run identity and checkpoint ownership. An empty preview is a
-valid saved value. Without a materialized event, current inputs are still needed
-for typed result materialization. Recovered failures are also history once their
-exact recorded outcome agrees and no recovery consumer remains. Pending execution,
-confirmation, external input, unfinished children, recovery and paging reconstruction also
-retain current input validation. Current result and server-data contracts,
+valid saved value. Without a materialized event, successful results still need
+current inputs for typed materialization. Failed arguments remain evidence even
+while recovery is pending: exact recorded failure data and call identity must
+agree, and every fresh correction is validated against its current input contract.
+Failure materialization, previews and paging do not decode failed arguments.
+Pending execution, confirmation, external input, unfinished children and
+successful paging reconstruction retain current input validation.
+Current result and server-data contracts,
 required tools, registry admission, checkpoint digests and ownership remain
 mandatory. This changes no stored format, accepted request bytes or provider
 metadata, and does not make arbitrary tool-contract or workflow-code changes

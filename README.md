@@ -262,9 +262,10 @@ checks, saved continuations, and tool/child-workflow coordination.
 
 Saved continuations preserve completed tool inputs as historical facts.
 Current input codecs still validate arguments needed for pending execution,
-result materialization, recovery or pagination; result codecs remain current.
+successful result materialization or pagination; result codecs remain current.
 Delayed transcript writes consume the saved result event and its accepted
 preview, including an empty preview, without rendering old inputs again.
+Recovery preserves failed arguments as evidence and validates each fresh correction.
 An input-schema change alone therefore does not invalidate inert history.
 See [continuation compatibility](docs/runtime.md#external-input-and-workflow-continuations)
 for the checks that still apply.
