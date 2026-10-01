@@ -260,6 +260,16 @@ worker restarts, configure the **Temporal engine** and a **host-owned durable
 runtime store**. Goa-AI supplies the execution loop, cancellation, policy
 checks, saved continuations, and tool/child-workflow coordination.
 
+Saved continuations preserve completed tool inputs as historical facts.
+Current input codecs still validate arguments needed for pending execution,
+successful result materialization or pagination; result codecs remain current.
+Delayed transcript writes consume the saved result event and its accepted
+preview, including an empty preview, without rendering old inputs again.
+Recovery preserves failed arguments as evidence and validates each fresh correction.
+An input-schema change alone therefore does not invalidate inert history.
+See [continuation compatibility](docs/runtime.md#external-input-and-workflow-continuations)
+for the checks that still apply.
+
 Choose model adapters for OpenAI, Anthropic, Amazon Bedrock, Google Vertex AI,
 or a model gateway. Provider capabilities differ; the [runtime guide](docs/runtime.md)
 covers their supported options. Optional integrations include MongoDB for

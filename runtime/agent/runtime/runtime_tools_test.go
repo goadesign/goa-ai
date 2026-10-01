@@ -543,7 +543,7 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 		}, nil
 	})}}, Bus: noopHooks{}}
 	seedTestToolset(rt, "svc.export", childSpec)
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
+	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte(`{}`)}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
@@ -569,7 +569,7 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 		return &planner.ToolResult{Name: call.Name}, nil
 	})}}, Bus: noopHooks{}}
 	seedTestToolset(rt, "svc.ts", toolSpec)
-	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
+	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte(`{}`)}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
 	// Planner supplies an explicit ToolCallID from the model

@@ -840,6 +840,29 @@ Before that deployment, they finish or cancel every workflow created by the old
 runtime and resolve or abandon every start whose engine result was uncertain.
 The new workers do not replay old active workflow histories or retry old
 uncertain start requests.
+
+Saved tool inputs are validated according to their remaining consumers. A
+fully recorded historical call retains its accepted argument bytes; it is not
+decoded against a newer input schema merely to restore history. Exact call IDs
+correlate repeated checkpoint representations, and the batch's recorded prefix
+must agree with published results. A materialized result event owns its canonical
+content and preview, even before publication or transcript append completes.
+Delayed transcript writes consume that exact event after validating its result,
+server data, call/run identity and checkpoint ownership. An empty preview is a
+valid saved value. Without a materialized event, successful results still need
+current inputs for typed materialization. Failed arguments remain evidence even
+while recovery is pending: exact recorded failure data and call identity must
+agree, and every fresh correction is validated against its current input contract.
+Failure materialization, previews and paging do not decode failed arguments.
+Pending execution, confirmation, external input, unfinished children and
+successful paging reconstruction retain current input validation.
+Current result and server-data contracts,
+required tools, registry admission, checkpoint digests and ownership remain
+mandatory. This changes no stored format, accepted request bytes or provider
+metadata, and does not make arbitrary tool-contract or workflow-code changes
+compatible. The detailed rules are in
+[External Input and Workflow Continuations](docs/runtime.md#external-input-and-workflow-continuations).
+
 Completed run history keeps the same meaning across this release. A host may
 still need to convert the physical records or collections so its new
 `storage.Store` can read them. That conversion must preserve each recorded

@@ -1794,7 +1794,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	wfCtx := &testWorkflowContext{
 		ctx:           context.Background(),
 		hookRuntime:   rt,
-		asyncResult:   ToolOutput{Payload: []byte("null")},
+		asyncResult:   ToolOutput{Payload: []byte(`{}`)},
 		planResult:    &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "done"}}}}},
 		hasPlanResult: true,
 	}

@@ -80,13 +80,12 @@ func TestServeAndWaitDelayedPhases(t *testing.T) {
 					gate := newJoinGate()
 					events := make(chan *streaming.Event, 1)
 					subscribed := make(chan struct{})
-					draining := make(chan context.Context, 1)
+					settling := make(chan context.Context, 1)
 					var releases, closes atomic.Int64
 					earlyFailure := errors.New("drain failed before joining")
 					lateFailure := errors.New("close finished after settlement")
 					registration := successfulRegistration()
 					registration.Drain = func(ctx context.Context, _, _, _, _ string, _ time.Duration) error {
-						draining <- ctx
 						if phase == testPhaseClose {
 							<-ctx.Done()
 							return earlyFailure
@@ -111,6 +110,9 @@ func TestServeAndWaitDelayedPhases(t *testing.T) {
 						return events
 					})
 					sink.SetClose(func(ctx context.Context) error {
+						// Close receives the shared settlement context. Drain's
+						// attempt context is canceled when its callback returns.
+						settling <- ctx
 						closes.Add(1)
 						if phase == testPhaseClose {
 							gate.hold(ctx)
@@ -203,8 +205,9 @@ func TestServeAndWaitDelayedPhases(t *testing.T) {
 						awaitJoinValue(t, gate.entered)
 						cancel()
 					}
-					settlementCtx := awaitJoinValue(t, draining)
+					settlementCtx := awaitJoinValue(t, settling)
 					awaitJoinValue(t, settlementCtx.Done())
+					require.ErrorIs(t, settlementCtx.Err(), context.DeadlineExceeded)
 					var err error
 					if entry.joins {
 						assertJoinHeld(t, result)
@@ -242,13 +245,9 @@ func TestServeAndWaitJoinsEveryWorker(t *testing.T) {
 	events := make(chan *streaming.Event, 2)
 	events <- testToolCallEvent(t, "first")
 	events <- testToolCallEvent(t, "second")
-	draining := make(chan context.Context, 1)
+	settling := make(chan context.Context, 1)
 	var releases atomic.Int64
 	registration := successfulRegistration()
-	registration.Drain = func(ctx context.Context, _, _, _, _ string, _ time.Duration) error {
-		draining <- ctx
-		return nil
-	}
 	registration.Release = func(context.Context, string, string, string, string) error {
 		releases.Add(1)
 		return nil
@@ -264,7 +263,10 @@ func TestServeAndWaitJoinsEveryWorker(t *testing.T) {
 	})
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
-	sink.SetClose(func(context.Context) error { return nil })
+	sink.SetClose(func(ctx context.Context) error {
+		settling <- ctx
+		return nil
+	})
 	sink.SetAck(func(context.Context, *streaming.Event) error { return nil })
 	stream := mockpulse.NewStream(t)
 	stream.SetNewSink(func(context.Context, string, ...streamopts.Sink) (pulse.Sink, error) {
@@ -284,7 +286,9 @@ func TestServeAndWaitJoinsEveryWorker(t *testing.T) {
 	awaitJoinValue(t, first.entered)
 	awaitJoinValue(t, second.entered)
 	cancel()
-	awaitJoinValue(t, awaitJoinValue(t, draining).Done())
+	settlementCtx := awaitJoinValue(t, settling)
+	awaitJoinValue(t, settlementCtx.Done())
+	require.ErrorIs(t, settlementCtx.Err(), context.DeadlineExceeded)
 	first.open()
 	awaitJoinValue(t, first.exited)
 	assertJoinHeld(t, result)

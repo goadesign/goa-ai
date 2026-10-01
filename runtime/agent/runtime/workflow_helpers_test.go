@@ -22,7 +22,43 @@ import (
 func appendUserToolResultsForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *workflowConversation, calls []ToolCall, results []*planner.ToolResult) {
 	t.Helper()
 	records := stepToolRecordsForTest(t, calls, results)
+	for i := range records {
+		records[i] = materializedToolRecordForTest(t, rt, agentID, base, records[i].call, records[i].result)
+	}
 	require.NoError(t, rt.appendUserToolRecordResults(t.Context(), agentID, base, records, ""))
+}
+
+// materializedToolRecordForTest uses the production event codec to construct the
+// immutable result that transcript-only fixtures previously rendered on demand.
+func materializedToolRecordForTest(t *testing.T, rt *Runtime, agentID agent.Ident, base *workflowConversation, call ToolCall, result *planner.ToolResult) stepToolRecord {
+	t.Helper()
+	call.AgentID = agentID
+	call.SessionID = base.RunContext.SessionID
+	call.ParentToolCallID = parentToolCallID(call, &base.RunContext)
+	if call.RunID == "" {
+		call.RunID = base.RunContext.RunID
+	}
+	var resultJSON rawjson.Message
+	if result.Failure == nil {
+		spec, ok, err := lookupCallSpec(call, rt.toolSpec)
+		require.NoError(t, err)
+		require.True(t, ok)
+		resultJSON, err = EncodeCanonicalToolResult(spec, result.Result, result.Bounds)
+		require.NoError(t, err)
+	}
+	preview, err := formatToolResultPreviewForCall(t.Context(), rt, &call, result)
+	require.NoError(t, err)
+	event := hooks.NewToolResultReceivedEvent(
+		base.RunContext.RunID, agentID, call.SessionID, call.RunID, call.Name,
+		call.ToolCallID, call.ParentToolCallID, resultJSON, result.ServerData,
+		preview, result.Bounds, 0, result.Telemetry, result.Failure,
+	)
+	record, err := prepareHookRecordInput(t.Context(), event, "")
+	require.NoError(t, err)
+	return stepToolRecord{
+		call: call, result: result, callRunID: call.RunID, resultRunID: event.RunID(),
+		resultJSON: resultJSON, resultPublished: true, resultRecord: record,
+	}
 }
 
 func stepToolRecordsForTest(t *testing.T, calls []ToolCall, results []*planner.ToolResult) []stepToolRecord {

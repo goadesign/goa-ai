@@ -488,15 +488,28 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 
+	// Recovery selects a failure already recorded in the cumulative history.
+	// Its compact copy omits run references, but retains the exact call facts.
+	setRecovery := func(checkpoint *workflowCheckpoint, action planner.RecoveryAction, catalog *RecoveryCatalog) {
+		output := recoveryOutput(spec.Name, "failed-call", action)
+		output.Payload = rawjson.Message(`{"query":"rejected"}`)
+		output.ModelToolCallID = "provider-failed"
+		checkpoint.State.PendingRecovery = []*planner.ToolOutput{output}
+		historical := *output
+		historical.CallRunID = checkpoint.PreviousRunID
+		historical.ResultRunID = checkpoint.PreviousRunID
+		checkpoint.State.ToolOutputs = []*planner.ToolOutput{&historical}
+		checkpoint.State.ToolEvents = []*api.ToolEvent{{
+			Name: output.Name, ToolCallID: output.ToolCallID, Failure: planner.CloneToolFailure(output.Failure),
+		}}
+		checkpoint.State.PendingRecoveryCatalog = catalog
+	}
 	newCorrectCallSuspension := func(t *testing.T, version string, catalog *RecoveryCatalog) *api.RunSuspension {
 		t.Helper()
 		suspension := suspensionContractFixture(t, spec.Name)
 		rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
 			checkpoint.Version = version
-			checkpoint.State.PendingRecovery = []*planner.ToolOutput{
-				recoveryOutput(spec.Name, "call-1", planner.RecoveryCorrectCall),
-			}
-			checkpoint.State.PendingRecoveryCatalog = catalog
+			setRecovery(checkpoint, planner.RecoveryCorrectCall, catalog)
 		})
 		suspension.Version = version
 		return suspension
@@ -516,10 +529,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 	t.Run("current checkpoint retains finish independently of model correction", func(t *testing.T) {
 		suspension := suspensionContractFixture(t, spec.Name)
 		rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
-			checkpoint.State.PendingRecovery = []*planner.ToolOutput{
-				recoveryOutput(spec.Name, "call-1", planner.RecoveryFinish),
-			}
-			checkpoint.State.PendingRecoveryCatalog = &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}
+			setRecovery(checkpoint, planner.RecoveryFinish, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}})
 		})
 		require.NoError(t, runtime.ValidateContinuation(suspension))
 		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
@@ -529,7 +539,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		state.PendingCorrection = pendingModelInvocationRecovery{recovery: ModelInvocationRecovery{UnadvertisedToolName: "unavailable"}}
 		outputs, catalog := toolRecovery(state.PendingRecovery)
 		require.True(t, finishRecovery(outputs))
-		require.Equal(t, "call-1", outputs[0].ToolCallID)
+		require.Equal(t, "failed-call", outputs[0].ToolCallID)
 		require.Equal(t, checkpoint.State.PendingRecoveryCatalog, catalog)
 		require.NotNil(t, modelInvocationRecovery(state.PendingCorrection))
 	})
@@ -555,12 +565,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 	t.Run("valid current version replan serialized catalog", func(t *testing.T) {
 		suspension := suspensionContractFixture(t, spec.Name)
 		rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
-			checkpoint.State.PendingRecovery = []*planner.ToolOutput{
-				recoveryOutput(spec.Name, "call-1", planner.RecoveryReplan),
-			}
-			checkpoint.State.PendingRecoveryCatalog = &RecoveryCatalog{
-				Tools: []tools.Ident{spec.Name},
-			}
+			setRecovery(checkpoint, planner.RecoveryReplan, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}})
 		})
 		require.NoError(t, runtime.ValidateContinuation(suspension))
 	})
