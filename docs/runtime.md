@@ -3781,13 +3781,42 @@ restores the original messages, policy, labels, nested-tool identity, remaining
 active-time budget, and exact call/result provenance; callers cannot override
 those values. The runtime loads the suspension by predecessor run ID and checks
 the checkpoint version, public pending requests, saved planner result, required
-labels, every saved payload and result, and every nested child suspension before
+labels, saved tool consumers, and every nested child suspension before
 starting the workflow. Caller and worker use the same generated
 `AgentDefinition`, including the definitions of every reachable child agent.
-Removing a tool or changing its generated codec deliberately makes a suspension
-that depends on the old contract incompatible. The workflow checks the saved
-input again before using it. If
-the response closes a tool call created by the previous
+
+Input compatibility depends on what the continuation will do with the saved
+arguments:
+
+- Fully recorded historical inputs keep their accepted bytes. Current input
+  codecs do not reinterpret these facts. Repeated saved copies must agree on
+  the exact call ID, arguments and selected registry contract.
+- A successful result is not enough: results outside the batch's recorded
+  prefix still need current inputs for publication and typed result previews.
+  The recorded prefix must agree with published results in history.
+- Pending execution, confirmation, external input, unfinished children and
+  recovery still require current input codecs. Missing replies and unresolved
+  calls cannot borrow another call's successful outcome.
+- Paging inputs remain current because the runtime reconstructs queries and
+  consumes cursors from previous calls, including earlier pages of a chain.
+
+All restored results, server data and bounds still satisfy their selected
+contracts. Required tools, current registry admission, exact call/result
+provenance, nested ownership, pending-response correlation and content digests
+remain enforced. Removing a required tool or changing a codec used by a
+remaining consumer can still make a suspension incompatible. For example, a
+removed input field may survive in a completed non-paging lookup's history,
+but the same field in a call awaiting approval is rejected before a new workflow
+starts.
+
+Preparation, submission of an existing prepared continuation and worker
+restoration use these same checks. Accepted historical arguments and provider
+metadata are never rewritten; neither checkpoint nor prepared-request formats
+change. Provider-specific retained tool definitions may impose additional
+compatibility rules. This input distinction does not establish compatibility
+for replaying active workflow histories across arbitrary code changes.
+
+If the response closes a tool call created by the previous
 workflow, the `tool_end` event belongs to the new result run and its required
 `call_run_id` identifies the run that emitted the matching `tool_start`.
 

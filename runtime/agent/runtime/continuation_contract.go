@@ -238,9 +238,8 @@ func childDefinitionForCall(call ToolCall, definition AgentDefinition) (AgentDef
 	return child, nil
 }
 
-// validateCheckpointToolValues proves that every concrete payload or result
-// the continuation can execute or give back to planner code still satisfies
-// the current registered codecs.
+// validateCheckpointToolValues checks current result consumers before deciding
+// which saved inputs still have an executable or typed consumer.
 func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition AgentDefinition) error {
 	calls, err := recordedToolCalls(checkpoint.State.ToolOutputs)
 	if err != nil {
@@ -265,15 +264,7 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 			return err
 		}
 	}
-	for _, call := range checkpoint.Batch.Calls {
-		if err := validateCheckpointToolRequest(call, definition); err != nil {
-			return err
-		}
-	}
 	for _, record := range checkpoint.Batch.Records {
-		if err := validateCheckpointToolRequest(record.Call, definition); err != nil {
-			return err
-		}
 		if record.ChildSuspension == nil {
 			if _, err := decodeCheckpointToolEvent(record.Result, record.Call, definition.spec); err != nil {
 				return err
@@ -282,22 +273,12 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 	}
 	for _, pending := range checkpoint.Pending {
 		if pending.Confirmation != nil {
-			if err := validateCheckpointToolRequest(pending.Confirmation.Call, definition); err != nil {
-				return err
-			}
 			if err := decodeToolValue(definition, pending.Confirmation.Call, pending.Confirmation.DeniedResult.RawMessage(), false); err != nil {
 				return fmt.Errorf("decode suspended denied result for %s: %w", pending.Confirmation.Call.Name, err)
 			}
 		}
-		if pending.Await != nil {
-			for _, call := range awaitToolRequests([]planner.AwaitItem{*pending.Await}) {
-				if err := validateCheckpointToolRequest(call, definition); err != nil {
-					return err
-				}
-			}
-		}
 	}
-	return nil
+	return validateCheckpointInputs(checkpoint, definition)
 }
 
 // validateCheckpointToolRequest decodes one saved executable payload through
@@ -314,16 +295,13 @@ func validateCheckpointToolRequest(call ToolCall, definition AgentDefinition) er
 	return nil
 }
 
-// validateCheckpointToolOutput decodes the canonical call and successful
-// result bytes retained for planner resume.
+// validateCheckpointToolOutput validates result bytes retained for planner
+// resume. Input consumers are checked across the complete checkpoint separately.
 func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDefinition) error {
 	if output == nil {
 		return errors.New("run suspension contains nil tool output")
 	}
 	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Payload: output.Payload, Registry: output.Registry}
-	if err := validateCheckpointToolRequest(call, definition); err != nil {
-		return fmt.Errorf("decode suspended tool payload for %s: %w", output.Name, err)
-	}
 	var spec *tools.ToolSpec
 	if output.Failure == nil {
 		registered, ok, err := lookupCallSpec(call, definition.spec)

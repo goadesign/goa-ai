@@ -496,6 +496,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 			checkpoint.State.PendingRecovery = []*planner.ToolOutput{
 				recoveryOutput(spec.Name, "call-1", planner.RecoveryCorrectCall),
 			}
+			checkpoint.State.PendingRecovery[0].Payload = checkpoint.Batch.Calls[0].Payload
 			checkpoint.State.PendingRecoveryCatalog = catalog
 		})
 		suspension.Version = version
@@ -519,6 +520,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 			checkpoint.State.PendingRecovery = []*planner.ToolOutput{
 				recoveryOutput(spec.Name, "call-1", planner.RecoveryFinish),
 			}
+			checkpoint.State.PendingRecovery[0].Payload = checkpoint.Batch.Calls[0].Payload
 			checkpoint.State.PendingRecoveryCatalog = &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}
 		})
 		require.NoError(t, runtime.ValidateContinuation(suspension))
@@ -558,6 +560,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 			checkpoint.State.PendingRecovery = []*planner.ToolOutput{
 				recoveryOutput(spec.Name, "call-1", planner.RecoveryReplan),
 			}
+			checkpoint.State.PendingRecovery[0].Payload = checkpoint.Batch.Calls[0].Payload
 			checkpoint.State.PendingRecoveryCatalog = &RecoveryCatalog{
 				Tools: []tools.Ident{spec.Name},
 			}
