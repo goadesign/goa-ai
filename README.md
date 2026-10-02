@@ -69,6 +69,11 @@ The Responses adapter preserves typed nested stream failures, including transien
 server-error metadata. Retry owners must still protect already-published output;
 classification does not replay streams. See the [provider stream contract](DESIGN.md#provider-stream-integrity-contract).
 
+Bedrock Fable 5.1 requests with forced `tool` or `any` choices fail locally as
+`model.RequestValidationError` before inference or counting. The adapter preserves
+the caller's selected model and choice; see the
+[Claude tool-choice contract](docs/runtime.md#thinking-and-tool-choice-on-claude).
+
 ## Quick start
 
 With **Go 1.26.0 or newer**, run the checked-in example:

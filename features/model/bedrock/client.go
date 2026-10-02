@@ -738,8 +738,8 @@ func resolveThinking(thinking *model.ThinkingOptions, toolChoice *model.ToolChoi
 	if thinking == nil || !thinking.Enable {
 		return thinkingConfig{}, nil
 	}
-	// Use adaptive thinking whenever the selected model accepts it. Adaptive
-	// mode supports forced tools and automatically reasons between tool calls.
+	// Use adaptive thinking whenever the selected model accepts it so the model
+	// chooses its reasoning budget. Tool-choice restrictions are checked separately.
 	if claudecaps.AdaptiveThinkingSupported(modelID) {
 		return thinkingConfig{
 			enable:   true,
@@ -1365,6 +1365,9 @@ func encodeTools(
 			"bedrock: model %q does not support forced tool choice mode %q",
 			modelID, choice.Mode,
 		)
+	}
+	if err := validateBedrockForcedToolChoice(modelID, choice); err != nil {
+		return nil, nil, nil, nil, err
 	}
 
 	cfg := brtypes.ToolConfiguration{

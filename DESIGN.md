@@ -203,6 +203,13 @@ Anthropic adapter encodes user-message `ImagePart` bytes as base64 image blocks
 for PNG, JPEG, GIF, and WebP, so direct Anthropic, Claude-on-Vertex, and
 Claude-on-Bedrock clients share one multimodal message contract.
 
+The Bedrock adapters also reject forced `tool` and `any` choices for Fable 5.1
+before inference or counting. This endpoint-specific check returns the existing
+`model.RequestValidationError` without inventing provider status, request ID, or
+usage. It neither changes the tool choice nor enables native structured output.
+Other models and hosts keep their existing request and error contracts; see
+[thinking and tool choice](docs/runtime.md#thinking-and-tool-choice-on-claude).
+
 Retained images use the request-only `ImageSourcePart{SourceKind, Data}` in saved
 messages. Generated `NativeImage` evidence metadata identifies admitted producers;
 source-only generated manifests keep historical kind codecs independent of
