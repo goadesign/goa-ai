@@ -2206,10 +2206,16 @@ side effect:
 
 - Worker-capable engines stage workflow and activity registrations until
   `runtime.Seal(ctx)` closes registration.
+- Runtime registration methods serialize validation, engine callbacks, and
+  metadata commit. Seal closes new admission immediately and waits for already
+  admitted registrations. Its context can end that wait or a wait behind another
+  Seal call without canceling the operation already running. Engine sealing stays
+  synchronous and serialized; errors permit another call, and success is cached.
+  See [registration and sealing](docs/runtime.md#registration-and-sealing).
 - In the Temporal engine, sealing is the activation boundary. It starts every
   registered worker with `worker.Start()`, retries startup failures until `ctx`
-  ends, and returns an error if activation never succeeds before the caller's
-  deadline.
+  ends, and returns an error when activation fails. SDK `Start` accepts no context,
+  so an initiating call may remain inside startup beyond its context deadline.
 - Once sealing returns `nil`, the runtime may safely start serving traffic
   because its workers are actively polling.
 - Temporal engines always construct their client from `ClientOptions` and

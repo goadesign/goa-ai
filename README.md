@@ -265,6 +265,11 @@ worker restarts, configure the **Temporal engine** and a **host-owned durable
 runtime store**. Goa-AI supplies the execution loop, cancellation, policy
 checks, saved continuations, and tool/child-workflow coordination.
 
+Finish registration before calling `runtime.Seal(ctx)`. Its context bounds waits
+for registration or another sealer; engine activation still runs synchronously.
+See [registration and sealing](docs/runtime.md#registration-and-sealing) for
+cached success, retry behavior, and the Temporal SDK startup limitation.
+
 Saved continuations preserve completed tool inputs as historical facts.
 Current input codecs still validate arguments needed for pending execution,
 successful result materialization or pagination; result codecs remain current.

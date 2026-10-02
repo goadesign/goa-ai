@@ -1185,10 +1185,31 @@ Start ──► PlanStart ──► Tool Calls? ──► Execute Tools ──�
 - **SessionID is required.** `Start` fails fast if `SessionID` is empty.
 - **RunID is required for sessionful work.** Supply `WithRunID`; the runtime
   creates an ID only for sessionless one-shot work.
-- **Agents must register before runs start.** Registration closes after the first
-  run to maintain worker determinism.
+- **Agents must register before sealing or starting runs.** The first `Seal`
+  call closes registration, including when its context has already ended.
 - **Tool results flow through codecs.** The runtime decodes results centrally and
   provides typed values to planners and hooks.
+
+### Registration and sealing
+
+Register agents, toolsets, registry clients, and agent-tool resolvers before
+calling `rt.Seal(ctx)`. Each registration stays serialized through validation,
+any engine callbacks, and metadata commit before another can proceed. A registration
+already admitted when sealing begins can finish; later valid registrations
+return `ErrRegistrationClosed`, even if that Seal caller's context ends.
+
+When Seal waits for an admitted registration or another Seal call, cancellation
+or a deadline returns the waiting caller's context error without canceling the
+operation already running. The engine sealer runs synchronously with the same
+context, one call at a time. An engine error leaves sealing available for a later
+call; a successful result is cached, so later calls return nil even with an
+already-ended context. Panics from the engine remain on the calling goroutine.
+
+This bounds the runtime's waits, not every engine's startup operation. Custom
+engine sealers must honor their context. Temporal SDK `worker.Start()` has no
+context parameter, so the caller initiating that startup can still wait past
+its deadline. Worker shutdown and fatal-error handling are separate engine
+contracts.
 
 ### Tool payload codecs and defaults (Feature)
 
