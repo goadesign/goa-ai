@@ -70,7 +70,7 @@ func (r *Runtime) RegisterRegistry(name string, client *genregistry.Client, puls
 	defer r.registrationMu.Unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.registrationClosed {
+	if r.registrationClosed.Load() {
 		return ErrRegistrationClosed
 	}
 	if _, exists := r.registries[name]; exists {

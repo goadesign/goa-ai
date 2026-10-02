@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/draw"
 	"image/png"
 	"math/rand/v2"
 	"sync/atomic"
@@ -42,8 +43,14 @@ func TestNativeImageLiteralPreparationAndClosedReplay(t *testing.T) {
 	var buffer bytes.Buffer
 	require.NoError(t, png.Encode(&buffer, pixels))
 	inline := model.ImagePart{Format: model.ImageFormatPNG, Bytes: buffer.Bytes()}
-	require.Equal(t, "d95ee95c69a6b1d4e0fda54eed97446d36f1ee3f3c0bb202b43d2c96786b25b4",
-		fmt.Sprintf("%x", sha256.Sum256(inline.Bytes)))
+	// PNG compression can change between Go versions. Decode this fixture
+	// to check its original bounds and every red, green, blue and alpha value.
+	decoded, err := png.Decode(bytes.NewReader(inline.Bytes))
+	require.NoError(t, err)
+	require.Equal(t, pixels.Bounds(), decoded.Bounds())
+	decodedPixels := image.NewNRGBA(decoded.Bounds())
+	draw.Draw(decodedPixels, decodedPixels.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
+	require.Equal(t, pixels.Pix, decodedPixels.Pix)
 	owner := newImageFixtureOwner(t)
 	retained := owner.bodies["photo-2"]
 	data, err := genpictures.ViewFixtureImageV1ServerDataCodec().ToJSON(&genpictures.ViewFixtureImageV1ServerData{

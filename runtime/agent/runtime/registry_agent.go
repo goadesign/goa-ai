@@ -65,7 +65,7 @@ func (r *Runtime) RegisterAgentToolResolver(executor agent.Ident, resolver Agent
 	defer r.registrationMu.Unlock()
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.registrationClosed {
+	if r.registrationClosed.Load() {
 		return ErrRegistrationClosed
 	}
 	if _, exists := r.agentToolResolvers[executor]; exists {
