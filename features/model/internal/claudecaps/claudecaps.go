@@ -68,9 +68,9 @@ func TemperatureSupported(modelID string) bool {
 }
 
 // AdaptiveThinkingSupported reports whether modelID accepts adaptive thinking.
-// Adapters choose adaptive mode whenever it is available because it supports
-// forced tool choice and interleaves reasoning automatically. Older 4.5
-// models require manual thinking with a token budget.
+// Adapters choose adaptive mode whenever it is available so the model chooses
+// its reasoning budget. Tool-choice restrictions are checked separately.
+// Older 4.5 models require manual thinking with a token budget.
 func AdaptiveThinkingSupported(modelID string) bool {
 	if IsFableGeneration(modelID) {
 		return true
@@ -136,11 +136,23 @@ func BedrockRuntimeTokenCountSupported(modelID string) bool {
 	return true
 }
 
-// ForcedToolChoiceUnsupported reports the one adaptive Claude model that
-// rejects tool_choice "any" and "tool". Current Fable and Mythos 5 models
-// support forced tools; Mythos Preview does not.
+// ForcedToolChoiceUnsupported identifies models that reject tool_choice "any"
+// and "tool" across Claude adapters. Endpoint-specific restrictions are checked
+// separately by the adapter that sends the request.
 func ForcedToolChoiceUnsupported(modelID string) bool {
 	return strings.Contains(modelID, "claude-mythos-preview")
+}
+
+// BedrockForcedToolChoiceUnsupported identifies models that reject forced tool
+// choice on Bedrock. AWS documents this restriction for Fable 5.1 on native
+// Messages, Converse, and counting. Other Fable versions are not inferred from
+// that contract.
+func BedrockForcedToolChoiceUnsupported(modelID string) bool {
+	if ForcedToolChoiceUnsupported(modelID) {
+		return true
+	}
+	gen, minor, hasMinor, ok := familyVersion(modelID, "claude-fable-")
+	return ok && gen == 5 && hasMinor && minor == 1
 }
 
 // ToolChangesSupported identifies the Claude generation documented to support

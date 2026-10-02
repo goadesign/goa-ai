@@ -936,11 +936,17 @@ unchanged.
 
 ### Thinking and tool choice on Claude
 
-Claude models with adaptive thinking accept tools and forced tool choice.
+Adaptive thinking and forced tool choice are separate model capabilities.
 Models with older manual thinking accept tools selected with `auto` or `none`,
 but reject forced choices (`any` or one named tool) while thinking is enabled.
-Mythos Preview is the exception among adaptive models: it also rejects forced
-tool choice. The Anthropic and Bedrock adapters resolve the model and the
+Mythos Preview also rejects forced tool choice. On Bedrock, Fable 5.1 rejects
+`any` and `tool` with or without an explicit thinking configuration, as documented
+in the [AWS tool-use contract](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages-tool-use.html).
+Both Bedrock adapters return `model.RequestValidationError` before inference or
+delegated counting for that combination. This local rejection carries no remote
+status, request ID, or usage and does not change the authored tool choice.
+Other Fable versions, direct Anthropic, and Vertex retain their existing checks.
+The Anthropic and Bedrock adapters resolve the model and the
 effective tool choice, including a private structured-output tool when needed,
 before sending the request. Unsupported combinations fail locally.
 

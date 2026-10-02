@@ -119,11 +119,43 @@ func TestForcedToolChoiceUnsupported(t *testing.T) {
 		{modelID: "us.anthropic.claude-mythos-preview-v1:0", want: true},
 		{modelID: "claude-mythos-5"},
 		{modelID: "claude-fable-5"},
+		{modelID: "claude-fable-5-1"},
 		{modelID: "claude-opus-5"},
 	}
 	for _, test := range tests {
 		t.Run(test.modelID, func(t *testing.T) {
 			assert.Equal(t, test.want, ForcedToolChoiceUnsupported(test.modelID))
+		})
+	}
+}
+
+func TestBedrockForcedToolChoiceUnsupported(t *testing.T) {
+	tests := []struct {
+		modelID string
+		want    bool
+	}{
+		{modelID: "anthropic.claude-fable-5-1", want: true},
+		{modelID: "us.anthropic.claude-fable-5-1", want: true},
+		{modelID: "eu.anthropic.claude-fable-5-1", want: true},
+		{modelID: "global.anthropic.claude-fable-5-1-v1:0", want: true},
+		{modelID: "claude-fable-5-1-20260901", want: true},
+		{modelID: "claude-mythos-preview", want: true},
+		{modelID: "us.anthropic.claude-mythos-preview-v1:0", want: true},
+		{modelID: "claude-fable-5"},
+		{modelID: "claude-fable-5-20260901"},
+		{modelID: "claude-fable-5-0"},
+		{modelID: "claude-fable-5-2"},
+		{modelID: "claude-fable-5-10"},
+		{modelID: "claude-fable-6-1"},
+		{modelID: "claude-fable-preview"},
+		{modelID: "claude-opus-5"},
+		{modelID: "claude-mythos-5-1"},
+		{modelID: "amazon.nova-pro-v1:0"},
+		{modelID: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.modelID, func(t *testing.T) {
+			assert.Equal(t, test.want, BedrockForcedToolChoiceUnsupported(test.modelID))
 		})
 	}
 }
