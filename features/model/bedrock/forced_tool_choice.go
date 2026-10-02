@@ -1,4 +1,4 @@
-// Bedrock adapters check the resolved model and authored tool choice before
+// Package bedrock checks the resolved model and authored tool choice before
 // inference or counting. Known endpoint restrictions return a local request
 // error without changing the choice or inventing an AWS response.
 package bedrock

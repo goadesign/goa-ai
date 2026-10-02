@@ -44,9 +44,11 @@ type (
 	}
 )
 
+const forcedChoiceCountOperation = "count"
+
 func TestBedrockFableForcedToolRejectedBeforeDispatch(t *testing.T) {
 	for _, native := range []bool{true, false} {
-		for _, operation := range []string{"complete", "stream", "count"} {
+		for _, operation := range []string{"complete", "stream", forcedChoiceCountOperation} {
 			for _, mode := range []model.ToolChoiceMode{model.ToolChoiceModeTool, model.ToolChoiceModeAny} {
 				for _, selection := range []string{"explicit", "default", "high", "small"} {
 					t.Run(forcedChoiceCaseName(native, operation, string(mode), selection), func(t *testing.T) {
@@ -84,7 +86,7 @@ func TestBedrockFableForcedToolRejectedBeforeDispatch(t *testing.T) {
 						client, err := model.NewClient(provider)
 						require.NoError(t, err)
 						err = invokeForcedChoiceClient(t, client, operation, request)
-						assert.ErrorAs(t, err, &local)
+						require.ErrorAs(t, err, &local)
 						assert.Empty(t, transport.bodies)
 						assert.Empty(t, counter.requests)
 					})
@@ -154,7 +156,7 @@ func TestBedrockForcedToolPreservesAcceptedRequests(t *testing.T) {
 		{name: "explicit wins over missing class", model: "us.anthropic.claude-fable-5-1", mode: model.ToolChoiceModeTool, explicitModel: "us.anthropic.claude-sonnet-4-6"},
 	}
 	for _, native := range []bool{true, false} {
-		for _, operation := range []string{"complete", "stream", "count"} {
+		for _, operation := range []string{"complete", "stream", forcedChoiceCountOperation} {
 			for _, test := range tests {
 				t.Run(forcedChoiceCaseName(native, operation, test.name), func(t *testing.T) {
 					transport := &forcedChoiceTransport{}
@@ -185,7 +187,7 @@ func TestBedrockForcedToolPreservesAcceptedRequests(t *testing.T) {
 						assert.Empty(t, counter.requests)
 						return
 					}
-					if operation == "count" && (native || test.name == "opus") {
+					if operation == forcedChoiceCountOperation && (native || test.name == "opus") {
 						require.NoError(t, err)
 						require.Len(t, counter.requests, 1)
 						counted := counter.requests[0]
@@ -218,7 +220,7 @@ func TestBedrockForcedToolPreservesAcceptedRequests(t *testing.T) {
 					require.Len(t, transport.bodies, 1)
 					requestBody := string(transport.bodies[0])
 					assert.Contains(t, transport.requests[0].URL.Path, strings.TrimPrefix(selected, "us."))
-					if operation != "count" {
+					if operation != forcedChoiceCountOperation {
 						assert.Contains(t, requestBody, "2048")
 					}
 					if test.mode != model.ToolChoiceModeNone {
@@ -247,7 +249,7 @@ func TestBedrockForcedToolPreservesAcceptedRequests(t *testing.T) {
 
 func TestBedrockForcedToolKeepsOtherClaudeHosts(t *testing.T) {
 	for _, vertex := range []bool{false, true} {
-		for _, operation := range []string{"complete", "stream", "count"} {
+		for _, operation := range []string{"complete", "stream", forcedChoiceCountOperation} {
 			for _, mode := range []model.ToolChoiceMode{model.ToolChoiceModeTool, model.ToolChoiceModeAny} {
 				host := "anthropic"
 				if vertex {
@@ -310,7 +312,7 @@ func TestBedrockForcedToolPreservesSelectionAndPriorErrors(t *testing.T) {
 		{name: "messages first", class: model.ModelClassHighReasoning, noMessages: true, want: "messages are required"},
 	}
 	for _, native := range []bool{true, false} {
-		for _, operation := range []string{"complete", "stream", "count"} {
+		for _, operation := range []string{"complete", "stream", forcedChoiceCountOperation} {
 			for _, test := range tests {
 				t.Run(forcedChoiceCaseName(native, operation, test.name), func(t *testing.T) {
 					transport := &forcedChoiceTransport{}
@@ -325,7 +327,7 @@ func TestBedrockForcedToolPreservesSelectionAndPriorErrors(t *testing.T) {
 						request.Messages = nil
 					}
 					err := invokeForcedChoiceProvider(t, provider, operation, request)
-					if native && operation == "count" && test.name == "preview" {
+					if native && operation == forcedChoiceCountOperation && test.name == "preview" {
 						require.NoError(t, err)
 						require.Len(t, counter.requests, 1)
 						assert.Equal(t, "anthropic.claude-mythos-preview-v1:0", counter.requests[0].Model)
@@ -335,15 +337,15 @@ func TestBedrockForcedToolPreservesSelectionAndPriorErrors(t *testing.T) {
 					want := test.want
 					if test.name != "unknown class" {
 						prefix := "bedrock: "
-						if native && operation != "count" {
+						if native && operation != forcedChoiceCountOperation {
 							prefix = "anthropic: "
 						}
-						if test.noMessages && native && operation == "count" {
+						if test.noMessages && native && operation == forcedChoiceCountOperation {
 							want = "high-reasoning model class requested but HighModel is not configured"
 						}
 						want = prefix + want
 					}
-					assert.EqualError(t, err, want)
+					require.EqualError(t, err, want)
 					var local *model.RequestValidationError
 					assert.NotErrorAs(t, err, &local)
 					assert.Empty(t, transport.bodies)
@@ -385,7 +387,7 @@ func TestBedrockForcedToolPreservesCountingAndEstimateInputs(t *testing.T) {
 
 func TestBedrockForcedToolKeepsNativeJSONUnsupported(t *testing.T) {
 	for _, native := range []bool{true, false} {
-		for _, operation := range []string{"complete", "stream", "count"} {
+		for _, operation := range []string{"complete", "stream", forcedChoiceCountOperation} {
 			t.Run(forcedChoiceCaseName(native, operation), func(t *testing.T) {
 				transport := &forcedChoiceTransport{}
 				counter := &forcedChoiceCounter{}
@@ -399,7 +401,7 @@ func TestBedrockForcedToolKeepsNativeJSONUnsupported(t *testing.T) {
 					Name: "result", Schema: rawjson.Message(`{"type":"object"}`),
 				}
 				err := invokeForcedChoiceProvider(t, provider, operation, request)
-				assert.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
+				require.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
 				var local *model.RequestValidationError
 				assert.NotErrorAs(t, err, &local)
 				assert.Empty(t, transport.bodies)
@@ -518,7 +520,7 @@ func invokeForcedChoiceProvider(t *testing.T, provider model.Provider, operation
 			require.NoError(t, stream.Close())
 		}
 		return err
-	case "count":
+	case forcedChoiceCountOperation:
 		counter, ok := provider.(model.TokenCounter)
 		require.True(t, ok)
 		_, err := counter.CountTokens(t.Context(), request)
@@ -541,7 +543,7 @@ func invokeForcedChoiceClient(t *testing.T, client model.Client, operation strin
 			require.NoError(t, stream.Close())
 		}
 		return err
-	case "count":
+	case forcedChoiceCountOperation:
 		_, err := client.CountTokens(t.Context(), request)
 		return err
 	default:
