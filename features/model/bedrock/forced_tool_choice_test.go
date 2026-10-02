@@ -180,7 +180,7 @@ func TestBedrockForcedToolPreservesAcceptedRequests(t *testing.T) {
 					}
 					err := invokeForcedChoiceProvider(t, provider, operation, request)
 					if !native && test.name == "fable none with tools" {
-						assert.EqualError(t, err, `bedrock: tool choice mode "none" is unsupported when tools are defined`)
+						require.EqualError(t, err, `bedrock: tool choice mode "none" is unsupported when tools are defined`)
 						var local *model.RequestValidationError
 						assert.NotErrorAs(t, err, &local)
 						assert.Empty(t, transport.bodies)
