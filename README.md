@@ -69,6 +69,11 @@ The Responses adapter preserves typed nested stream failures, including transien
 server-error metadata. Retry owners must still protect already-published output;
 classification does not replay streams. See the [provider stream contract](DESIGN.md#provider-stream-integrity-contract).
 
+Bedrock Fable 5.1 requests with forced `tool` or `any` choices fail locally as
+`model.RequestValidationError` before inference or counting. The adapter preserves
+the caller's selected model and choice; see the
+[Claude tool-choice contract](docs/runtime.md#thinking-and-tool-choice-on-claude).
+
 ## Quick start
 
 With **Go 1.26.0 or newer**, run the checked-in example:
@@ -244,7 +249,7 @@ explains how to keep those responsibilities clear.
 | [External tools](docs/dsl.md#mcp-backed-toolsets) | Consume MCP servers over stdio or HTTP using declared tool contracts. |
 | [Tool registries](docs/tool_search.md) | Consume a named toolset or a changing registry catalog. Generated contracts preserve confirmation, pagination, and exact execution across provider changes. Providers register definitions at startup or attach to a complete declaration saved beforehand, then renew exact leases without resending schemas. Applications can attach immutable catalog identity and use bounded scoped reads without changing declaration encoding or provider messages. Native retry lookups return saved registration or explicit absence. Provider completion reports whether the registry retained the submitted result or settled the execution deadline instead. Handlers can leave an unconfirmed call to registry recovery without inventing a failure or stopping other calls. |
 | [Deferred tool search](docs/tool_search.md) | Load definitions on demand using OpenAI native client search with BM25 or Claude hosted search. Consumers choose whole toolsets with `Deferred()` or exact compiled tools with `Deferred("search")`, keeping other tools immediately available. Claude replay preserves schema text through JSON escaping while still rejecting changed definitions. |
-| [Structured output](docs/runtime.md#typed-direct-completions) | Declare `Completion(...)` and get typed unary and streaming helpers. Use [typed tool output](docs/runtime.md#forced-typed-tool-output) when you want the same generated result contract with bounded model correction. |
+| [Structured output](docs/runtime.md#typed-direct-completions) | Declare `Completion(...)` and get typed unary and streaming helpers. Use [typed tool output](docs/runtime.md#forced-typed-tool-output) with explicit forced or automatic tool choice when you want the same generated result contract with bounded model correction. |
 | [Standalone JSON codecs](docs/json_codecs.md) | Automatically generate typed encode/decode functions beside supported original Goa types using Goa’s planned shared or service-local declaration, validating complete values and rejecting ambiguous or invalid JSON. |
 | [Specialist agents](docs/runtime.md#agent-as-tool-composition) | Expose compiled or dynamically configured agents as tools. Child workflows retain the selected configuration and typed result through updates and approval pauses. A resumed child belongs to the continuing parent execution while preserving its original tool call, with linked progress and cancellation. |
 | [Human input and approval](docs/runtime.md#external-input-and-workflow-continuations) | Ask structured questions or require confirmation, save the pending state, and continue from the answer. |
@@ -259,6 +264,11 @@ Use the in-memory engine for local development. For durable execution across
 worker restarts, configure the **Temporal engine** and a **host-owned durable
 runtime store**. Goa-AI supplies the execution loop, cancellation, policy
 checks, saved continuations, and tool/child-workflow coordination.
+
+Finish registration before calling `runtime.Seal(ctx)`. Its context bounds waits
+for registration or another sealer; engine activation still runs synchronously.
+See [registration and sealing](docs/runtime.md#registration-and-sealing) for
+cached success, retry behavior, and the Temporal SDK startup limitation.
 
 Saved continuations preserve completed tool inputs as historical facts.
 Current input codecs still validate arguments needed for pending execution,

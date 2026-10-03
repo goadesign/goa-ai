@@ -35,24 +35,38 @@ func TestJudgeRejectsNamedContractViolations(t *testing.T) {
 		{"duplicate rationale", `{"claim":{"label":"entailed","rationale":"First.","rationale":"Last."}}`, "duplicate JSON member"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			provider := &recordingClient{}
-			for range 4 {
-				provider.responses = append(provider.responses, toolResponse(test.payload))
-			}
-			judgments, err := newTestJudge(t, provider).Judge(t.Context(), "Evidence.", []aieval.Claim{{ID: "claim", Text: "Evidence."}}, "")
-			require.ErrorContains(t, err, "recovery_cap")
-			require.ErrorContains(t, err, test.cause)
-			assert.Nil(t, judgments)
-			var rejected *model.OutputValidationError
-			require.ErrorAs(t, err, &rejected)
-			retained, retainErr := rejected.RejectedResponse()
-			require.NoError(t, retainErr)
-			require.NotNil(t, retained)
-			require.Len(t, retained.ToolCalls(), 1)
-			assert.Equal(t, test.payload, string(retained.ToolCalls()[0].Payload), "returned error retains exact rejected bytes")
-			require.Len(t, provider.requests, 4)
-			for _, response := range provider.responses {
-				assert.Equal(t, test.payload, string(response.ToolCalls()[0].Payload), "never rewrite rejected model evidence")
+			for _, constructor := range []struct {
+				name string
+				new  func(model.Client, int, ...Option) (*Judge, error)
+			}{
+				{"forced", New},
+				{"automatic", NewAutomatic},
+			} {
+				t.Run(constructor.name, func(t *testing.T) {
+					provider := &recordingClient{}
+					for range 4 {
+						provider.responses = append(provider.responses, toolResponse(test.payload))
+					}
+					client, err := model.NewClient(provider)
+					require.NoError(t, err)
+					judge, err := constructor.new(client, 1024)
+					require.NoError(t, err)
+					judgments, err := judge.Judge(t.Context(), "Evidence.", []aieval.Claim{{ID: "claim", Text: "Evidence."}}, "")
+					require.ErrorContains(t, err, "recovery_cap")
+					require.ErrorContains(t, err, test.cause)
+					assert.Nil(t, judgments)
+					var rejected *model.OutputValidationError
+					require.ErrorAs(t, err, &rejected)
+					retained, retainErr := rejected.RejectedResponse()
+					require.NoError(t, retainErr)
+					require.NotNil(t, retained)
+					require.Len(t, retained.ToolCalls(), 1)
+					assert.Equal(t, test.payload, string(retained.ToolCalls()[0].Payload), "returned error retains exact rejected bytes")
+					require.Len(t, provider.requests, 4)
+					for _, response := range provider.responses {
+						assert.Equal(t, test.payload, string(response.ToolCalls()[0].Payload), "never rewrite rejected model evidence")
+					}
+				})
 			}
 		})
 	}

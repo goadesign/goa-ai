@@ -203,6 +203,13 @@ Anthropic adapter encodes user-message `ImagePart` bytes as base64 image blocks
 for PNG, JPEG, GIF, and WebP, so direct Anthropic, Claude-on-Vertex, and
 Claude-on-Bedrock clients share one multimodal message contract.
 
+The Bedrock adapters also reject forced `tool` and `any` choices for Fable 5.1
+before inference or counting. This endpoint-specific check returns the existing
+`model.RequestValidationError` without inventing provider status, request ID, or
+usage. It neither changes the tool choice nor enables native structured output.
+Other models and hosts keep their existing request and error contracts; see
+[thinking and tool choice](docs/runtime.md#thinking-and-tool-choice-on-claude).
+
 Retained images use the request-only `ImageSourcePart{SourceKind, Data}` in saved
 messages. Generated `NativeImage` evidence metadata identifies admitted producers;
 source-only generated manifests keep historical kind codecs independent of
@@ -231,22 +238,29 @@ framing that is absent from the completion contract.
 
 The separate `runtime/agent/tooloutput` package owns the case where an
 application deliberately permits the model to replace invalid ordinary-tool
-arguments. `Run[T]` accepts one typed `completion.Spec[T]`, normally returned
-by the generated `Spec<Name>()` factory. The spec exposes only the output name,
+arguments. `Run[T]` and `RunAutomatic[T]` accept one typed `completion.Spec[T]`,
+normally returned by the generated `Spec<Name>()` factory. The spec exposes only the output name,
 description, schema, example, and codec. The helper privately
 uses those fields as both the argument and result contract of one ordinary
 tool, so callers cannot add tool policy or execution behavior. A private
-in-memory agent advertises and forces only that tool, allows one successful
+in-memory agent advertises only that tool, allows one successful
 tool execution, and requires it to complete the run. The typed schema and codec
-remain the model boundary; malformed JSON and typed validation failures use the
-runtime's bounded correction flow. Provider failures and every non-argument
-failure remain terminal. The returned `T` is exactly the value decoded from
+remain the model boundary; malformed JSON, typed validation failures and
+eligible unadvertised-tool-name rejections use the runtime's bounded correction
+flow. Provider, cancellation and deadline failures remain terminal. The returned
+`T` is exactly the value decoded from
 the accepted arguments, so callers cannot insert domain execution or rewriting
 between accepted model output and the returned value.
 
+`Run` forces the named tool; `RunAutomatic` requests automatic selection but
+accepts only one validated call to that tool. Neither parses ordinary text as a
+result or switches output mechanisms. Cardinality applies to the accepted
+response: invalid arguments in an earlier multi-call response may use the same
+bounded correction flow, without executing any of those rejected calls.
+
 The private runtime also owns a per-call diagnostic receiver through its existing
-tracer interface. On failure, `Run` returns a `*tooloutput.RunError` whose
-`TerminalError()` exposes the exact cause that ended the call, before diagnostic
+tracer interface. On failure, either operation returns a `*tooloutput.RunError`
+whose `TerminalError()` exposes the exact cause that ended the call, before diagnostic
 observations were attached. Its text and `Unwrap` retain the original terminal
 and observed errors, with every nested cause rendered and available for
 `errors.Is` / `errors.As`. Observations do not determine execution policy and may
@@ -350,6 +364,11 @@ configuration. That limit is independent of claim count and remains unchanged
 across the existing bounded corrections. The judge owns response shape; the
 application owns permitted response work; providers enforce their own ceilings.
 No finite limit guarantees a completed judgment.
+
+`judge.New` uses forced tool output and `judge.NewAutomatic` explicitly selects
+automatic tool output. Both share the same judge implementation, prompt, schema,
+codec and correction policy. The application chooses the operation; no model
+capability guess or failure-driven fallback changes it.
 
 The private judge tool names each required property with its claim ID and places
 the full claim in that property's description. Code looks up results by name and
@@ -2209,10 +2228,16 @@ side effect:
 
 - Worker-capable engines stage workflow and activity registrations until
   `runtime.Seal(ctx)` closes registration.
+- Runtime registration methods serialize validation, engine callbacks, and
+  metadata commit. Seal closes new admission immediately and waits for already
+  admitted registrations. Its context can end that wait or a wait behind another
+  Seal call without canceling the operation already running. Engine sealing stays
+  synchronous and serialized; errors permit another call, and success is cached.
+  See [registration and sealing](docs/runtime.md#registration-and-sealing).
 - In the Temporal engine, sealing is the activation boundary. It starts every
   registered worker with `worker.Start()`, retries startup failures until `ctx`
-  ends, and returns an error if activation never succeeds before the caller's
-  deadline.
+  ends, and returns an error when activation fails. SDK `Start` accepts no context,
+  so an initiating call may remain inside startup beyond its context deadline.
 - Once sealing returns `nil`, the runtime may safely start serving traffic
   because its workers are actively polling.
 - Temporal engines always construct their client from `ClientOptions` and

@@ -35,6 +35,7 @@ import (
 	"maps"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"text/template"
 	"time"
 
@@ -158,23 +159,21 @@ type (
 		// Per-agent tool specs registered during agent registration for introspection.
 		agentToolSpecs map[agent.Ident][]tools.ToolSpec
 
-		// registrationMu serializes agent and toolset registration so one global
-		// tool name cannot change contract between validation and storage.
-		registrationMu sync.Mutex
+		// registrationMu keeps all four registration methods serialized from
+		// validation through engine callbacks and registry updates.
+		registrationMu contextLock
 
-		// registrationClosed prevents late agent/toolset registration after the
-		// runtime has been explicitly sealed or the first run has been submitted,
-		// avoiding dynamic handler registration on active workers.
-		registrationClosed bool
+		// registrationClosed rejects new registrations when Seal begins. An
+		// already-admitted registration may finish while Seal waits for it.
+		registrationClosed atomic.Bool
 
-		// activationComplete reports whether the runtime activation boundary has
-		// completed successfully. Failed Seal attempts leave registration closed
-		// but keep this false so callers may retry activation.
-		activationComplete bool
+		// activationComplete caches successful sealing. Failed calls leave this
+		// false so a later caller can invoke the engine sealer again.
+		activationComplete atomic.Bool
 
-		// sealMu serializes activation attempts so repeated Seal calls cannot race
-		// and a failed attempt may be retried deterministically.
-		sealMu sync.Mutex
+		// sealMu permits one engine sealer call at a time. Other Seal callers
+		// can end their wait when their own contexts end.
+		sealMu contextLock
 
 		// storageActivityRegistered tracks whether the runtime storage activity has
 		// been registered with the engine.
@@ -998,48 +997,45 @@ func WithHintOverrides(m map[tools.Ident]HintOverrideFunc) RuntimeOption {
 // Seal closes the registration phase and activates engines that stage worker
 // handlers until the runtime is fully configured. Worker deployments should call
 // Seal after registering all toolsets and agents, before serving traffic. When
-// the engine supports staged workers, Seal returns only after activation
-// succeeds or ctx ends.
+// waiting for registration or another Seal, callers can end their wait through
+// ctx. The engine sealer runs synchronously with that same context and must
+// honor it. Temporal SDK Start does not accept a context, so the caller starting
+// that worker can still wait past its deadline.
 //
 // Successful Seal calls are idempotent. The first call closes registration so
-// later RegisterAgent/RegisterToolset calls fail fast even if activation later
-// fails. Callers may retry Seal after a context-limited activation failure.
+// later registration calls fail even if this caller's wait or activation fails.
+// Already-admitted registration may finish. Callers may retry Seal after a
+// context-limited activation failure. A cached success returns nil even when
+// the new caller's context has ended.
 func (r *Runtime) Seal(ctx context.Context) error {
-	r.registrationMu.Lock()
-	defer r.registrationMu.Unlock()
-
-	r.mu.Lock()
-	alreadyActivated := r.activationComplete
-	r.registrationClosed = true
-	r.mu.Unlock()
-	if alreadyActivated {
+	r.registrationClosed.Store(true)
+	if r.activationComplete.Load() {
 		return nil
 	}
 
-	r.sealMu.Lock()
-	defer r.sealMu.Unlock()
-
-	r.mu.Lock()
-	if r.activationComplete {
-		r.mu.Unlock()
-		return nil
-	}
-	r.registrationClosed = true
-	if err := r.validateAgentExecutionSupportLocked(); err != nil {
-		r.mu.Unlock()
+	if err := r.sealMu.LockContext(ctx); err != nil {
+		if r.activationComplete.Load() {
+			return nil
+		}
 		return err
 	}
-	r.mu.Unlock()
+	defer r.sealMu.Unlock()
+	if r.activationComplete.Load() {
+		return nil
+	}
+	if err := r.validateSealedRegistration(ctx); err != nil {
+		return err
+	}
 
+	// Registration is now closed and complete. Call the engine without either
+	// registry lock, while keeping other engine sealer calls serialized.
 	if sealer, ok := r.Engine.(engine.RegistrationSealer); ok {
 		if err := sealer.SealRegistration(ctx); err != nil {
 			return err
 		}
 	}
 
-	r.mu.Lock()
-	r.activationComplete = true
-	r.mu.Unlock()
+	r.activationComplete.Store(true)
 	return nil
 }
 
@@ -1054,7 +1050,7 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	defer r.registrationMu.Unlock()
 
 	r.mu.RLock()
-	if r.registrationClosed {
+	if r.registrationClosed.Load() {
 		r.mu.RUnlock()
 		return ErrRegistrationClosed
 	}
@@ -1209,10 +1205,25 @@ func (r *Runtime) validateAgentExecutionSupportLocked() error {
 	return nil
 }
 
+// validateSealedRegistration waits for admitted registrations and checks their
+// complete registry before the engine starts polling.
+func (r *Runtime) validateSealedRegistration(ctx context.Context) error {
+	if err := r.registrationMu.LockContext(ctx); err != nil {
+		return err
+	}
+	defer r.registrationMu.Unlock()
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.validateAgentExecutionSupportLocked()
+}
+
+// RegisterAgent owns the registration lock during this call. Release the
+// registry state lock before calling the engine, then mark success so later
+// agent registrations reuse this activity.
 func (r *Runtime) ensureStorageActivityRegistered(ctx context.Context) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.storageActivityRegistered {
+		r.mu.Unlock()
 		return nil
 	}
 	timeout := defaultStorageActivityTimeout
@@ -1226,29 +1237,36 @@ func (r *Runtime) ensureStorageActivityRegistered(ctx context.Context) error {
 	if opts.StartToCloseTimeout == 0 {
 		opts.StartToCloseTimeout = timeout
 	}
+	r.mu.Unlock()
 	if err := r.Engine.RegisterStorageActivity(ctx, storageActivityName, opts, r.executeStorageCommand); err != nil {
 		return err
 	}
+	r.mu.Lock()
 	r.storageActivityRegistered = true
+	r.mu.Unlock()
 	return nil
 }
 
-// ensureAgentChildActivityRegistered installs the one runtime-owned activity
-// that prepares child inputs for all agent workflows.
+// RegisterAgent owns the registration lock during this call. The engine
+// installs the child-input activity without the registry state lock held;
+// only a successful call marks the activity registered.
 func (r *Runtime) ensureAgentChildActivityRegistered(ctx context.Context) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	if r.agentChildActivityRegistered {
+		r.mu.Unlock()
 		return nil
 	}
 	opts := engine.ActivityOptions{
 		StartToCloseTimeout: defaultAgentChildActivityTimeout,
 		RetryPolicy:         defaultRetriedActivityPolicy(),
 	}
+	r.mu.Unlock()
 	if err := r.Engine.RegisterAgentChildActivity(ctx, agentChildActivityName, opts, r.prepareAgentChildActivity); err != nil {
 		return err
 	}
+	r.mu.Lock()
 	r.agentChildActivityRegistered = true
+	r.mu.Unlock()
 	return nil
 }
 
@@ -1261,7 +1279,7 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	defer r.registrationMu.Unlock()
 
 	r.mu.RLock()
-	if r.registrationClosed {
+	if r.registrationClosed.Load() {
 		r.mu.RUnlock()
 		return ErrRegistrationClosed
 	}

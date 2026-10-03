@@ -7,11 +7,10 @@ package temporal
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/draw"
 	"image/png"
 	"math/rand/v2"
 	"sync"
@@ -138,8 +137,14 @@ func TestRuntimeLiteralImagePreparationAndReplay(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 512, config.Width)
 	require.Equal(t, 512, config.Height)
-	digest := sha256.Sum256(imageBytes)
-	require.Equal(t, "d95ee95c69a6b1d4e0fda54eed97446d36f1ee3f3c0bb202b43d2c96786b25b4", hex.EncodeToString(digest[:]))
+	// PNG compression can change between Go versions. Decode this fixture
+	// to check its original bounds and every red, green, blue and alpha value.
+	decoded, err := png.Decode(bytes.NewReader(imageBytes))
+	require.NoError(t, err)
+	require.Equal(t, pixels.Bounds(), decoded.Bounds())
+	decodedPixels := image.NewNRGBA(decoded.Bounds())
+	draw.Draw(decodedPixels, decodedPixels.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
+	require.Equal(t, pixels.Pix, decodedPixels.Pix)
 	messages := []*model.Message{
 		{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "earlier input"}}},
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "earlier answer"}}},

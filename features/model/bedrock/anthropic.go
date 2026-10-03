@@ -105,7 +105,7 @@ func NewAnthropicProvider(
 
 // Complete sends one canonical request through Anthropic Messages on Bedrock.
 func (c *anthropicBedrockProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	effective, err := c.prepareRequest(req)
+	effective, err := c.prepareInferenceRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (c *anthropicBedrockProvider) Complete(ctx context.Context, req *model.Requ
 // Stream sends one canonical streaming request through Anthropic Messages on
 // Bedrock and returns the Anthropic adapter's validated provider stream.
 func (c *anthropicBedrockProvider) Stream(ctx context.Context, req *model.Request) (model.Streamer, error) {
-	effective, err := c.prepareRequest(req)
+	effective, err := c.prepareInferenceRequest(req)
 	if err != nil {
 		return nil, err
 	}
@@ -143,6 +143,9 @@ func (c *anthropicBedrockProvider) CountTokens(ctx context.Context, req *model.R
 	if err != nil {
 		return model.TokenCount{}, err
 	}
+	if err := validateBedrockForcedToolChoice(resolved, effective.ToolChoice); err != nil {
+		return model.TokenCount{}, err
+	}
 	foundation, err := FoundationModelID(resolved)
 	if err != nil {
 		return model.TokenCount{}, fmt.Errorf("bedrock: resolve Anthropic counting model: %w", err)
@@ -150,6 +153,39 @@ func (c *anthropicBedrockProvider) CountTokens(ctx context.Context, req *model.R
 	countReq := *effective
 	countReq.Model = foundation
 	return c.counter.CountTokens(ctx, &countReq)
+}
+
+// prepareInferenceRequest preserves the Anthropic adapter's request and model
+// selection errors before checking Bedrock's additional forced-tool restriction.
+// Accepted requests remain unchanged for the shared Messages encoder.
+func (c *anthropicBedrockProvider) prepareInferenceRequest(req *model.Request) (*model.Request, error) {
+	effective, err := c.prepareRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	if !forcesToolUse(effective.ToolChoice) {
+		return effective, nil
+	}
+	if _, err := model.NewRequestContract(effective); err != nil {
+		return nil, err
+	}
+	if len(effective.Messages) == 0 {
+		return nil, errors.New("anthropic: messages are required")
+	}
+	resolved, err := modelid.Resolve(
+		"anthropic",
+		effective,
+		c.defaultModel,
+		c.highModel,
+		c.smallModel,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateBedrockForcedToolChoice(resolved, effective.ToolChoice); err != nil {
+		return nil, err
+	}
+	return effective, nil
 }
 
 // prepareRequest accepts only structured output that Anthropic Messages on
