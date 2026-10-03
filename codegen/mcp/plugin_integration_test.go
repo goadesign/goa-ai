@@ -488,6 +488,11 @@ replace goa.design/goa/v3 => %s
 	_, err = resourceTest.WriteString(resourceContentGeneratedTestSource)
 	require.NoError(t, err)
 	require.NoError(t, resourceTest.Close())
+	contentTest, err := generatedRoot.OpenFile("jsonrpc/mcp_fmt/client/content_contract_test.go", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	require.NoError(t, err)
+	_, err = contentTest.WriteString(contentContractGeneratedTestSource)
+	require.NoError(t, err)
+	require.NoError(t, contentTest.Close())
 	registerTest, err := generatedRoot.OpenFile(
 		"mcp_fmt/register_string_test.go",
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,

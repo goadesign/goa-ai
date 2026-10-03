@@ -2011,9 +2011,19 @@ Generated servers advertise only their implemented unary tools, fixed resource
 reads, and static prompts. Resource representations are selected at generation
 time: byte results become base64 blobs, text results with a text MIME type remain
 text, and JSON results use the generated codec. Empty content preserves its field.
-Generated client validators reject resource replies with both or neither text/blob
-fields; this flat wire union has no Goa discriminator. Optional tasks, subscriptions, and server-originated
-elicitation need dedicated producers and bindings before they can be advertised.
+Generated clients share one `ContentItem` type for tool and prompt replies. They
+preserve text, images, audio, resource links, embedded resources, annotations,
+icons and extension metadata. The generated decoder checks each selected kind's
+required fields, base64 data and embedded resource representation. Empty content
+remains present. MCP puts variant fields beside its discriminator; Goa's ordinary
+unions put the selected value in a separate field, so the MCP generator supplies
+these cross-field checks alongside Goa's existing field validators. Runtime
+callers apply the same content requirements and retain icons in tool errors.
+
+Generated servers still author only structured tool results and static text
+prompts. Rich authored results, parameterized prompts, tasks, subscriptions and
+server-produced additional input require their own typed service bindings before
+they can be advertised.
 See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
 [the upgrade plan](docs/mcp_protocol_upgrade_plan.md) for remaining proof and scope.
 

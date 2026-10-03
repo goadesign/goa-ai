@@ -1,6 +1,6 @@
 // Package codegen defines the MCP values that Goa turns into generated service
-// and transport types. The generator emits only the protocol branches that a Goa
-// service can produce, so generated runtime code does not inspect content kinds.
+// and transport types. Clients accept every current content kind; adapters emit
+// the results selected from each authored service contract at generation time.
 //
 //nolint:lll // Type definitions use complete literals so their wire shape is visible in one place.
 package codegen
@@ -32,7 +32,7 @@ func (b *mcpExprBuilder) buildMCPTypes() {
 		b.getOrCreateType("PromptInfo", b.buildPromptInfoType)
 		b.getOrCreateType("PromptArgument", b.buildPromptArgumentType)
 		b.getOrCreateType("PromptMessage", b.buildPromptMessageType)
-		b.getOrCreateType("MessageContent", b.buildMessageContentType)
+		b.getOrCreateType("ContentItem", b.buildContentItemType)
 	}
 }
 
@@ -218,10 +218,6 @@ func (b *mcpExprBuilder) buildToolsCallResultType() *expr.AttributeExpr {
 	}
 }
 
-func (b *mcpExprBuilder) buildContentItemType() *expr.AttributeExpr {
-	return b.buildTextContentType()
-}
-
 // Resource type builders
 
 func (b *mcpExprBuilder) buildResourcesListPayloadType() *expr.AttributeExpr {
@@ -316,6 +312,7 @@ func (b *mcpExprBuilder) buildResourceContentType() *expr.AttributeExpr {
 			{Name: "uri", Attribute: &expr.AttributeExpr{
 				Type:        expr.String,
 				Description: "Resource URI",
+				Validation:  &expr.ValidationExpr{Format: expr.FormatURI},
 			}},
 			{Name: "mimeType", Attribute: &expr.AttributeExpr{
 				Type:        expr.String,
@@ -329,6 +326,7 @@ func (b *mcpExprBuilder) buildResourceContentType() *expr.AttributeExpr {
 				Type:        expr.String,
 				Description: "Base64 binary content; present only when text is absent",
 			}},
+			{Name: "_meta", Attribute: contentMetaAttribute()},
 		},
 		Validation: &expr.ValidationExpr{
 			Required: []string{"uri"},
@@ -463,33 +461,12 @@ func (b *mcpExprBuilder) buildPromptMessageType() *expr.AttributeExpr {
 				},
 			}},
 			{Name: "content", Attribute: &expr.AttributeExpr{
-				Type:        b.getOrCreateType("MessageContent", b.buildMessageContentType),
+				Type:        b.getOrCreateType("ContentItem", b.buildContentItemType),
 				Description: "Message content",
 			}},
 		},
 		Validation: &expr.ValidationExpr{
 			Required: []string{"role", "content"},
 		},
-	}
-}
-
-func (b *mcpExprBuilder) buildMessageContentType() *expr.AttributeExpr {
-	return b.buildTextContentType()
-}
-
-// buildTextContentType defines the text content emitted by generated Goa tools
-// and prompts. Other MCP content branches require application data that Goa-AI
-// does not currently expose in authored service results.
-func (b *mcpExprBuilder) buildTextContentType() *expr.AttributeExpr {
-	return &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "type", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Content type",
-				Validation:  &expr.ValidationExpr{Values: []any{"text"}},
-			}},
-			{Name: "text", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Text content"}},
-		},
-		Validation: &expr.ValidationExpr{Required: []string{"type", "text"}},
 	}
 }

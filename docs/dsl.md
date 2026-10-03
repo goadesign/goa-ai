@@ -1480,6 +1480,13 @@ These declarations apply only to MCP method tools. They do not grant trust or
 change agent activity retry policies. The application chooses trust and bounded
 HTTP retries when constructing its caller; see [MCP callers](runtime.md#mcp-callers).
 
+Generated tool and prompt clients can receive all five MCP content kinds,
+including media, links and embedded resources with annotations, icons and
+extension metadata. Their shared `ContentItem` retains absent versus empty
+content and rejects malformed selected variants. Generated servers still return
+structured tool results and static text prompts; receiving rich content does
+not add an authored rich-result DSL.
+
 ### MCP Capabilities
 
 

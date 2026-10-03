@@ -55,11 +55,53 @@ const ServiceName = "mcp_assistant"
 // MethodKey key.
 var MethodNames = [7]string{"server/discover", "tools/list", "tools/call", "resources/list", "resources/read", "prompts/list", "prompts/get"}
 
+type ContentAnnotations struct {
+	// Roles that should see this content
+	Audience []string
+	// Importance from zero through one, inclusive, for this content item
+	Priority *float64
+	// Time this content last changed
+	LastModified *string
+}
+
+type ContentIcon struct {
+	// URI of the icon; decoding does not fetch it
+	Src string
+	// Optional image MIME type
+	MimeType *string
+	// Suggested dimensions or any for scalable icons
+	Sizes []string
+	// Optional light or dark theme
+	Theme *string
+}
+
 type ContentItem struct {
-	// Content type
+	// Selects the required content fields
 	Type string
-	// Text content
-	Text string
+	// Text for the text variant, including an empty string
+	Text *string
+	// Base64 bytes for image and audio variants
+	Data *string
+	// Required format for image or audio; optional format for resource links
+	MimeType *string
+	// Required identifier for resource links
+	Name *string
+	// Required address for resource links
+	URI *string
+	// Optional resource link display name
+	Title *string
+	// Optional resource link description
+	Description *string
+	// Raw bytes in the linked resource before base64 encoding
+	Size *float64
+	// Optional resource link icons
+	Icons []*ContentIcon
+	// Required text or binary contents for embedded resources
+	Resource *ResourceContent
+	// Optional audience and importance for this content
+	Annotations *ContentAnnotations
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // DiscoverPayload is the payload type of the mcp_assistant service
@@ -86,13 +128,6 @@ type DiscoverResult struct {
 	CacheScope string
 }
 
-type MessageContent struct {
-	// Content type
-	Type string
-	// Text content
-	Text string
-}
-
 type PromptArgument struct {
 	// Argument name
 	Name string
@@ -115,7 +150,7 @@ type PromptMessage struct {
 	// Message role
 	Role string
 	// Message content
-	Content *MessageContent
+	Content *ContentItem
 }
 
 // Prompt capabilities
@@ -181,6 +216,8 @@ type ResourceContent struct {
 	Text *string
 	// Base64 binary content; present only when text is absent
 	Blob *string
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 type ResourceInfo struct {
@@ -349,55 +386,63 @@ func MakeInternalError(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "internal_error", false, false, false)
 }
 
-// jsonContentItemTransport stores JSON fields until they have been validated.
-type jsonContentItemTransport struct {
-	// Content type
-	Type *string `json:"type"`
-	// Text content
-	Text *string `json:"text"`
+// jsonContentAnnotationsTransport stores JSON fields until they have been validated.
+type jsonContentAnnotationsTransport struct {
+	// Roles that should see this content
+	Audience []string `json:"audience,omitempty"`
+	// Importance from zero through one, inclusive, for this content item
+	Priority *float64 `json:"priority,omitempty"`
+	// Time this content last changed
+	LastModified *string `json:"lastModified,omitempty"`
 }
 
-// validatejsonContentItemTransport checks decoded JSON before it becomes a service value.
-func validatejsonContentItemTransport(value *jsonContentItemTransport) (err error) {
+// validatejsonContentAnnotationsTransport checks decoded JSON before it becomes a service value.
+func validatejsonContentAnnotationsTransport(value *jsonContentAnnotationsTransport) (err error) {
 	if value == nil {
 		return goa.MissingFieldError("body", "JSON value")
 	}
-	if value.Type == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	for _, e := range value.Audience {
+		if !(e == "user" || e == "assistant") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.audience[*]", e, []any{"user", "assistant"}))
+		}
 	}
-	if value.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
-	}
-	if value.Type != nil {
-		if !(*value.Type == "text") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *value.Type, []any{"text"}))
+	if value.Priority != nil {
+		if *value.Priority < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.priority", *value.Priority, 0, true))
+		}
+		if *value.Priority > 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.priority", *value.Priority, 1, false))
 		}
 	}
 	return err
 }
 
-// jsonMessageContentTransport stores JSON fields until they have been validated.
-type jsonMessageContentTransport struct {
-	// Content type
-	Type *string `json:"type"`
-	// Text content
-	Text *string `json:"text"`
+// jsonContentIconTransport stores JSON fields until they have been validated.
+type jsonContentIconTransport struct {
+	// URI of the icon; decoding does not fetch it
+	Src *string `json:"src"`
+	// Optional image MIME type
+	MimeType *string `json:"mimeType,omitempty"`
+	// Suggested dimensions or any for scalable icons
+	Sizes []string `json:"sizes,omitempty"`
+	// Optional light or dark theme
+	Theme *string `json:"theme,omitempty"`
 }
 
-// validatejsonMessageContentTransport checks decoded JSON before it becomes a service value.
-func validatejsonMessageContentTransport(value *jsonMessageContentTransport) (err error) {
+// validatejsonContentIconTransport checks decoded JSON before it becomes a service value.
+func validatejsonContentIconTransport(value *jsonContentIconTransport) (err error) {
 	if value == nil {
 		return goa.MissingFieldError("body", "JSON value")
 	}
-	if value.Type == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	if value.Src == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("src", "body"))
 	}
-	if value.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	if value.Src != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.src", *value.Src, goa.FormatURI))
 	}
-	if value.Type != nil {
-		if !(*value.Type == "text") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *value.Type, []any{"text"}))
+	if value.Theme != nil {
+		if !(*value.Theme == "light" || *value.Theme == "dark") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.theme", *value.Theme, []any{"light", "dark"}))
 		}
 	}
 	return err
@@ -455,38 +500,6 @@ func validatejsonPromptInfoTransport(value *jsonPromptInfoTransport) (err error)
 	return err
 }
 
-// jsonPromptMessageTransport stores JSON fields until they have been validated.
-type jsonPromptMessageTransport struct {
-	// Message role
-	Role *string `json:"role"`
-	// Message content
-	Content *jsonMessageContentTransport `json:"content"`
-}
-
-// validatejsonPromptMessageTransport checks decoded JSON before it becomes a service value.
-func validatejsonPromptMessageTransport(value *jsonPromptMessageTransport) (err error) {
-	if value == nil {
-		return goa.MissingFieldError("body", "JSON value")
-	}
-	if value.Role == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("role", "body"))
-	}
-	if value.Content == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
-	}
-	if value.Role != nil {
-		if !(*value.Role == "user" || *value.Role == "assistant") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.role", *value.Role, []any{"user", "assistant"}))
-		}
-	}
-	if value.Content != nil {
-		if err2 := validatejsonMessageContentTransport(value.Content); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return err
-}
-
 // jsonPromptsCapabilityTransport stores JSON fields until they have been validated.
 type jsonPromptsCapabilityTransport struct {
 }
@@ -497,29 +510,6 @@ func validatejsonPromptsCapabilityTransport(value *jsonPromptsCapabilityTranspor
 		return goa.MissingFieldError("body", "JSON value")
 	}
 
-	return err
-}
-
-// jsonResourceContentTransport stores JSON fields until they have been validated.
-type jsonResourceContentTransport struct {
-	// Resource URI
-	URI *string `json:"uri"`
-	// Content MIME type
-	MimeType *string `json:"mimeType,omitempty"`
-	// Text content; present only when blob is absent
-	Text *string `json:"text,omitempty"`
-	// Base64 binary content; present only when text is absent
-	Blob *string `json:"blob,omitempty"`
-}
-
-// validatejsonResourceContentTransport checks decoded JSON before it becomes a service value.
-func validatejsonResourceContentTransport(value *jsonResourceContentTransport) (err error) {
-	if value == nil {
-		return goa.MissingFieldError("body", "JSON value")
-	}
-	if value.URI == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
-	}
 	return err
 }
 
@@ -617,18 +607,31 @@ func validatejsonToolsCapabilityTransport(value *jsonToolsCapabilityTransport) (
 	return err
 }
 
-// validateContentItemOriginal checks the original typed value before JSON conversion.
-func validateContentItemOriginal(value *ContentItem) (err error) {
-	if !(value.Type == "text") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.type", value.Type, []any{"text"}))
+// validateContentAnnotationsOriginal checks the original typed value before JSON conversion.
+func validateContentAnnotationsOriginal(value *ContentAnnotations) (err error) {
+	for _, e := range value.Audience {
+		if !(e == "user" || e == "assistant") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.audience[*]", e, []any{"user", "assistant"}))
+		}
+	}
+	if value.Priority != nil {
+		if *value.Priority < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("value.priority", *value.Priority, 0, true))
+		}
+		if *value.Priority > 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("value.priority", *value.Priority, 1, false))
+		}
 	}
 	return err
 }
 
-// validateMessageContentOriginal checks the original typed value before JSON conversion.
-func validateMessageContentOriginal(value *MessageContent) (err error) {
-	if !(value.Type == "text") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.type", value.Type, []any{"text"}))
+// validateContentIconOriginal checks the original typed value before JSON conversion.
+func validateContentIconOriginal(value *ContentIcon) (err error) {
+	err = goa.MergeErrors(err, goa.ValidateFormat("value.src", value.Src, goa.FormatURI))
+	if value.Theme != nil {
+		if !(*value.Theme == "light" || *value.Theme == "dark") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.theme", *value.Theme, []any{"light", "dark"}))
+		}
 	}
 	return err
 }
@@ -643,141 +646,143 @@ func validatePromptInfoOriginal(value *PromptInfo) (err error) {
 	return err
 }
 
-// validatePromptMessageOriginal checks the original typed value before JSON conversion.
-func validatePromptMessageOriginal(value *PromptMessage) (err error) {
-	if value.Content == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("content", "value"))
+// EncodeContentAnnotations turns a service value into JSON using the field names in the Goa design.
+func EncodeContentAnnotations(in *ContentAnnotations) ([]byte, error) {
+	if err := checkContentAnnotationsValue(in); err != nil {
+		return nil, fmt.Errorf("encode ContentAnnotations JSON: %w", err)
 	}
-	if !(value.Role == "user" || value.Role == "assistant") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.role", value.Role, []any{"user", "assistant"}))
+	if err := validateContentAnnotationsOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate ContentAnnotations value: %w", err)
 	}
-	if value.Content != nil {
-		if err2 := validateMessageContentOriginal2(value.Content); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return err
-}
-
-// validateMessageContentOriginal2 checks the original typed value before JSON conversion.
-func validateMessageContentOriginal2(value *MessageContent) (err error) {
-	if !(value.Type == "text") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.type", value.Type, []any{"text"}))
-	}
-	return err
-}
-
-// EncodeContentItem turns a service value into JSON using the field names in the Goa design.
-func EncodeContentItem(in *ContentItem) ([]byte, error) {
-	if err := checkContentItemValue(in); err != nil {
-		return nil, fmt.Errorf("encode ContentItem JSON: %w", err)
-	}
-	if err := validateContentItemOriginal(in); err != nil {
-		return nil, fmt.Errorf("validate ContentItem value: %w", err)
-	}
-	var body *jsonContentItemTransport
+	var body *jsonContentAnnotationsTransport
 	{
-		body = &jsonContentItemTransport{
-			Type: &in.Type,
-			Text: &in.Text,
+		body = &jsonContentAnnotationsTransport{
+			Priority:     in.Priority,
+			LastModified: in.LastModified,
+		}
+		if in.Audience != nil {
+			body.Audience = make([]string, len(in.Audience))
+			for i, val := range in.Audience {
+				body.Audience[i] = val
+			}
 		}
 	}
-	if err := validatejsonContentItemTransport(body); err != nil {
-		return nil, fmt.Errorf("validate ContentItem JSON: %w", err)
+	if err := validatejsonContentAnnotationsTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ContentAnnotations JSON: %w", err)
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("encode ContentItem JSON: %w", err)
+		return nil, fmt.Errorf("encode ContentAnnotations JSON: %w", err)
 	}
 	return data, nil
 }
 
-// DecodeContentItem checks JSON field names from the Goa design and returns a service value.
-func DecodeContentItem(data []byte) (out *ContentItem, err error) {
+// DecodeContentAnnotations checks JSON field names from the Goa design and returns a service value.
+func DecodeContentAnnotations(data []byte) (out *ContentAnnotations, err error) {
 	root, err := readStrictJSON(data)
 	if err != nil {
-		return out, fmt.Errorf("decode ContentItem JSON: %w", err)
+		return out, fmt.Errorf("decode ContentAnnotations JSON: %w", err)
 	}
-	if err := validateContentItemJSONValue("", root, ""); err != nil {
-		return out, fmt.Errorf("decode ContentItem JSON: %w", err)
+	if err := validateContentAnnotationsJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ContentAnnotations JSON: %w", err)
 	}
-	var body *jsonContentItemTransport
+	var body *jsonContentAnnotationsTransport
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode ContentItem JSON: %w", err)
+		return out, fmt.Errorf("decode ContentAnnotations JSON: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		if err == nil {
-			return out, fmt.Errorf("decode ContentItem JSON: multiple JSON values")
+			return out, fmt.Errorf("decode ContentAnnotations JSON: multiple JSON values")
 		}
-		return out, fmt.Errorf("decode ContentItem JSON after first value: %w", err)
+		return out, fmt.Errorf("decode ContentAnnotations JSON after first value: %w", err)
 	}
-	if err := validatejsonContentItemTransport(body); err != nil {
-		return out, fmt.Errorf("validate ContentItem JSON: %w", err)
+	if err := validatejsonContentAnnotationsTransport(body); err != nil {
+		return out, fmt.Errorf("validate ContentAnnotations JSON: %w", err)
 	}
 	{
-		out = &ContentItem{
-			Type: *body.Type,
-			Text: *body.Text,
+		out = &ContentAnnotations{
+			Priority:     body.Priority,
+			LastModified: body.LastModified,
+		}
+		if body.Audience != nil {
+			out.Audience = make([]string, len(body.Audience))
+			for i, val := range body.Audience {
+				out.Audience[i] = val
+			}
 		}
 	}
 	return out, nil
 }
 
-// EncodeMessageContent turns a service value into JSON using the field names in the Goa design.
-func EncodeMessageContent(in *MessageContent) ([]byte, error) {
-	if err := checkMessageContentValue(in); err != nil {
-		return nil, fmt.Errorf("encode MessageContent JSON: %w", err)
+// EncodeContentIcon turns a service value into JSON using the field names in the Goa design.
+func EncodeContentIcon(in *ContentIcon) ([]byte, error) {
+	if err := checkContentIconValue(in); err != nil {
+		return nil, fmt.Errorf("encode ContentIcon JSON: %w", err)
 	}
-	if err := validateMessageContentOriginal(in); err != nil {
-		return nil, fmt.Errorf("validate MessageContent value: %w", err)
+	if err := validateContentIconOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate ContentIcon value: %w", err)
 	}
-	var body *jsonMessageContentTransport
+	var body *jsonContentIconTransport
 	{
-		body = &jsonMessageContentTransport{
-			Type: &in.Type,
-			Text: &in.Text,
+		body = &jsonContentIconTransport{
+			Src:      &in.Src,
+			MimeType: in.MimeType,
+			Theme:    in.Theme,
+		}
+		if in.Sizes != nil {
+			body.Sizes = make([]string, len(in.Sizes))
+			for i, val := range in.Sizes {
+				body.Sizes[i] = val
+			}
 		}
 	}
-	if err := validatejsonMessageContentTransport(body); err != nil {
-		return nil, fmt.Errorf("validate MessageContent JSON: %w", err)
+	if err := validatejsonContentIconTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ContentIcon JSON: %w", err)
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("encode MessageContent JSON: %w", err)
+		return nil, fmt.Errorf("encode ContentIcon JSON: %w", err)
 	}
 	return data, nil
 }
 
-// DecodeMessageContent checks JSON field names from the Goa design and returns a service value.
-func DecodeMessageContent(data []byte) (out *MessageContent, err error) {
+// DecodeContentIcon checks JSON field names from the Goa design and returns a service value.
+func DecodeContentIcon(data []byte) (out *ContentIcon, err error) {
 	root, err := readStrictJSON(data)
 	if err != nil {
-		return out, fmt.Errorf("decode MessageContent JSON: %w", err)
+		return out, fmt.Errorf("decode ContentIcon JSON: %w", err)
 	}
-	if err := validateMessageContentJSONValue("", root, ""); err != nil {
-		return out, fmt.Errorf("decode MessageContent JSON: %w", err)
+	if err := validateContentIconJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ContentIcon JSON: %w", err)
 	}
-	var body *jsonMessageContentTransport
+	var body *jsonContentIconTransport
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode MessageContent JSON: %w", err)
+		return out, fmt.Errorf("decode ContentIcon JSON: %w", err)
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		if err == nil {
-			return out, fmt.Errorf("decode MessageContent JSON: multiple JSON values")
+			return out, fmt.Errorf("decode ContentIcon JSON: multiple JSON values")
 		}
-		return out, fmt.Errorf("decode MessageContent JSON after first value: %w", err)
+		return out, fmt.Errorf("decode ContentIcon JSON after first value: %w", err)
 	}
-	if err := validatejsonMessageContentTransport(body); err != nil {
-		return out, fmt.Errorf("validate MessageContent JSON: %w", err)
+	if err := validatejsonContentIconTransport(body); err != nil {
+		return out, fmt.Errorf("validate ContentIcon JSON: %w", err)
 	}
 	{
-		out = &MessageContent{
-			Type: *body.Type,
-			Text: *body.Text,
+		out = &ContentIcon{
+			Src:      *body.Src,
+			MimeType: body.MimeType,
+			Theme:    body.Theme,
+		}
+		if body.Sizes != nil {
+			out.Sizes = make([]string, len(body.Sizes))
+			for i, val := range body.Sizes {
+				out.Sizes[i] = val
+			}
 		}
 	}
 	return out, nil
@@ -918,64 +923,6 @@ func DecodePromptInfo(data []byte) (out *PromptInfo, err error) {
 	return out, nil
 }
 
-// EncodePromptMessage turns a service value into JSON using the field names in the Goa design.
-func EncodePromptMessage(in *PromptMessage) ([]byte, error) {
-	if err := checkPromptMessageValue(in); err != nil {
-		return nil, fmt.Errorf("encode PromptMessage JSON: %w", err)
-	}
-	if err := validatePromptMessageOriginal(in); err != nil {
-		return nil, fmt.Errorf("validate PromptMessage value: %w", err)
-	}
-	var body *jsonPromptMessageTransport
-	{
-		body = &jsonPromptMessageTransport{
-			Role: &in.Role,
-		}
-		body.Content = encodeMessageContentToMessageContentTransport(in.Content)
-	}
-	if err := validatejsonPromptMessageTransport(body); err != nil {
-		return nil, fmt.Errorf("validate PromptMessage JSON: %w", err)
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode PromptMessage JSON: %w", err)
-	}
-	return data, nil
-}
-
-// DecodePromptMessage checks JSON field names from the Goa design and returns a service value.
-func DecodePromptMessage(data []byte) (out *PromptMessage, err error) {
-	root, err := readStrictJSON(data)
-	if err != nil {
-		return out, fmt.Errorf("decode PromptMessage JSON: %w", err)
-	}
-	if err := validatePromptMessageJSONValue("", root, ""); err != nil {
-		return out, fmt.Errorf("decode PromptMessage JSON: %w", err)
-	}
-	var body *jsonPromptMessageTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode PromptMessage JSON: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode PromptMessage JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode PromptMessage JSON after first value: %w", err)
-	}
-	if err := validatejsonPromptMessageTransport(body); err != nil {
-		return out, fmt.Errorf("validate PromptMessage JSON: %w", err)
-	}
-	{
-		out = &PromptMessage{
-			Role: *body.Role,
-		}
-		out.Content = decodeMessageContentTransportToMessageContent(body.Content)
-	}
-	return out, nil
-}
-
 // EncodePromptsCapability turns a service value into JSON using the field names in the Goa design.
 func EncodePromptsCapability(in *PromptsCapability) ([]byte, error) {
 	if err := checkPromptsCapabilityValue(in); err != nil {
@@ -1021,65 +968,6 @@ func DecodePromptsCapability(data []byte) (out *PromptsCapability, err error) {
 	}
 	{
 		out = &PromptsCapability{}
-	}
-	return out, nil
-}
-
-// EncodeResourceContent turns a service value into JSON using the field names in the Goa design.
-func EncodeResourceContent(in *ResourceContent) ([]byte, error) {
-	if err := checkResourceContentValue(in); err != nil {
-		return nil, fmt.Errorf("encode ResourceContent JSON: %w", err)
-	}
-	var body *jsonResourceContentTransport
-	{
-		body = &jsonResourceContentTransport{
-			URI:      &in.URI,
-			MimeType: in.MimeType,
-			Text:     in.Text,
-			Blob:     in.Blob,
-		}
-	}
-	if err := validatejsonResourceContentTransport(body); err != nil {
-		return nil, fmt.Errorf("validate ResourceContent JSON: %w", err)
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode ResourceContent JSON: %w", err)
-	}
-	return data, nil
-}
-
-// DecodeResourceContent checks JSON field names from the Goa design and returns a service value.
-func DecodeResourceContent(data []byte) (out *ResourceContent, err error) {
-	root, err := readStrictJSON(data)
-	if err != nil {
-		return out, fmt.Errorf("decode ResourceContent JSON: %w", err)
-	}
-	if err := validateResourceContentJSONValue("", root, ""); err != nil {
-		return out, fmt.Errorf("decode ResourceContent JSON: %w", err)
-	}
-	var body *jsonResourceContentTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode ResourceContent JSON: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode ResourceContent JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode ResourceContent JSON after first value: %w", err)
-	}
-	if err := validatejsonResourceContentTransport(body); err != nil {
-		return out, fmt.Errorf("validate ResourceContent JSON: %w", err)
-	}
-	{
-		out = &ResourceContent{
-			URI:      *body.URI,
-			MimeType: body.MimeType,
-			Text:     body.Text,
-			Blob:     body.Blob,
-		}
 	}
 	return out, nil
 }
@@ -1369,15 +1257,6 @@ func DecodeToolsCapability(data []byte) (out *ToolsCapability, err error) {
 	return out, nil
 }
 
-func decodeMessageContentTransportToMessageContent(v *jsonMessageContentTransport) *MessageContent {
-	res := &MessageContent{
-		Type: *v.Type,
-		Text: *v.Text,
-	}
-
-	return res
-}
-
 func decodePromptArgumentTransportToPromptArgument(v *jsonPromptArgumentTransport) *PromptArgument {
 	res := &PromptArgument{
 		Name:        *v.Name,
@@ -1402,15 +1281,6 @@ func decodeResourcesCapabilityTransportToResourcesCapability(v *jsonResourcesCap
 
 func decodeToolsCapabilityTransportToToolsCapability(v *jsonToolsCapabilityTransport) *ToolsCapability {
 	res := &ToolsCapability{}
-
-	return res
-}
-
-func encodeMessageContentToMessageContentTransport(v *MessageContent) *jsonMessageContentTransport {
-	res := &jsonMessageContentTransport{
-		Type: &v.Type,
-		Text: &v.Text,
-	}
 
 	return res
 }
@@ -1443,8 +1313,8 @@ func encodeToolsCapabilityToToolsCapabilityTransport(v *ToolsCapability) *jsonTo
 	return res
 }
 
-// validateContentItemJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateContentItemJSONValue(path string, value any, description string) error {
+// validateContentAnnotationsJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateContentAnnotationsJSONValue(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1463,32 +1333,64 @@ func validateContentItemJSONValue(path string, value any, description string) er
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "text":
-			if err := validateContentItemJSONValue2(
+		case "audience":
+			if err := validateContentAnnotationsJSONValue2(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Text content",
+				typed[key], "Roles that should see this content",
 			); err != nil {
 				return err
 			}
-		case "type":
-			if err := validateContentItemJSONValue3(
+		case "lastModified":
+			if err := validateContentAnnotationsJSONValue4(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Content type",
+				typed[key], "Time this content last changed",
+			); err != nil {
+				return err
+			}
+		case "priority":
+			if err := validateContentAnnotationsJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Importance from zero through one, inclusive, for this content item",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"text",
-				"type",
+				"audience",
+				"lastModified",
+				"priority",
 			})
 		}
 	}
 	return nil
 }
 
-// validateContentItemJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateContentItemJSONValue2(path string, value any, description string) error {
+// validateContentAnnotationsJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateContentAnnotationsJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateContentAnnotationsJSONValue3(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateContentAnnotationsJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateContentAnnotationsJSONValue3(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1503,8 +1405,8 @@ func validateContentItemJSONValue2(path string, value any, description string) e
 	return nil
 }
 
-// validateContentItemJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateContentItemJSONValue3(path string, value any, description string) error {
+// validateContentAnnotationsJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateContentAnnotationsJSONValue4(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1519,8 +1421,24 @@ func validateContentItemJSONValue3(path string, value any, description string) e
 	return nil
 }
 
-// validateMessageContentJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateMessageContentJSONValue(path string, value any, description string) error {
+// validateContentAnnotationsJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateContentAnnotationsJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "number", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "number", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateContentIconJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateContentIconJSONValue(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1539,32 +1457,48 @@ func validateMessageContentJSONValue(path string, value any, description string)
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "text":
-			if err := validateMessageContentJSONValue2(
+		case "mimeType":
+			if err := validateContentIconJSONValue2(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Text content",
+				typed[key], "Optional image MIME type",
 			); err != nil {
 				return err
 			}
-		case "type":
-			if err := validateMessageContentJSONValue3(
+		case "sizes":
+			if err := validateContentIconJSONValue3(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Content type",
+				typed[key], "Suggested dimensions or any for scalable icons",
+			); err != nil {
+				return err
+			}
+		case "src":
+			if err := validateContentIconJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "URI of the icon; decoding does not fetch it",
+			); err != nil {
+				return err
+			}
+		case "theme":
+			if err := validateContentIconJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Optional light or dark theme",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"text",
-				"type",
+				"mimeType",
+				"sizes",
+				"src",
+				"theme",
 			})
 		}
 	}
 	return nil
 }
 
-// validateMessageContentJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateMessageContentJSONValue2(path string, value any, description string) error {
+// validateContentIconJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateContentIconJSONValue2(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1579,8 +1513,64 @@ func validateMessageContentJSONValue2(path string, value any, description string
 	return nil
 }
 
-// validateMessageContentJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateMessageContentJSONValue3(path string, value any, description string) error {
+// validateContentIconJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateContentIconJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateContentIconJSONValue4(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateContentIconJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateContentIconJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateContentIconJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateContentIconJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateContentIconJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateContentIconJSONValue6(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1903,142 +1893,6 @@ func validatePromptInfoJSONValue8(path string, value any, description string) er
 	return nil
 }
 
-// validatePromptMessageJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validatePromptMessageJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "content":
-			if err := validatePromptMessageJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Message content",
-			); err != nil {
-				return err
-			}
-		case "role":
-			if err := validatePromptMessageJSONValue5(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Message role",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"content",
-				"role",
-			})
-		}
-	}
-	return nil
-}
-
-// validatePromptMessageJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validatePromptMessageJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "text":
-			if err := validatePromptMessageJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Text content",
-			); err != nil {
-				return err
-			}
-		case "type":
-			if err := validatePromptMessageJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Content type",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"text",
-				"type",
-			})
-		}
-	}
-	return nil
-}
-
-// validatePromptMessageJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validatePromptMessageJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validatePromptMessageJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validatePromptMessageJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validatePromptMessageJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validatePromptMessageJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
 // validatePromptsCapabilityJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validatePromptsCapabilityJSONValue(path string, value any, description string) error {
 	field := path
@@ -2062,130 +1916,6 @@ func validatePromptsCapabilityJSONValue(path string, value any, description stri
 		default:
 			return unknownJSONFieldError(path, key, []string{})
 		}
-	}
-	return nil
-}
-
-// validateResourceContentJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResourceContentJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "blob":
-			if err := validateResourceContentJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Base64 binary content; present only when text is absent",
-			); err != nil {
-				return err
-			}
-		case "mimeType":
-			if err := validateResourceContentJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Content MIME type",
-			); err != nil {
-				return err
-			}
-		case "text":
-			if err := validateResourceContentJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Text content; present only when blob is absent",
-			); err != nil {
-				return err
-			}
-		case "uri":
-			if err := validateResourceContentJSONValue5(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Resource URI",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"blob",
-				"mimeType",
-				"text",
-				"uri",
-			})
-		}
-	}
-	return nil
-}
-
-// validateResourceContentJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResourceContentJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateResourceContentJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResourceContentJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateResourceContentJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResourceContentJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateResourceContentJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResourceContentJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -2796,20 +2526,20 @@ func generatedJSONChildPath(path, key string, _ bool) string {
 	return path + "[" + strconv.Quote(key) + "]"
 }
 
-// checkContentItemValue checks text and cycles before conversion.
-func checkContentItemValue(in *ContentItem) error {
+// checkContentAnnotationsValue checks text and cycles before conversion.
+func checkContentAnnotationsValue(in *ContentAnnotations) error {
 	if in == nil {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkContentItemContentItemValue(in, "$", active); err != nil {
+	if err := checkContentAnnotationsContentAnnotationsValue(in, "$", active); err != nil {
 		return err
 	}
 	return nil
 }
 
-// checkContentItemContentItemValue checks one generated value on the active path.
-func checkContentItemContentItemValue(in *ContentItem, field string, active map[any]bool) error {
+// checkContentAnnotationsContentAnnotationsValue checks one generated value on the active path.
+func checkContentAnnotationsContentAnnotationsValue(in *ContentAnnotations, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -2819,30 +2549,36 @@ func checkContentItemContentItemValue(in *ContentItem, field string, active map[
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
-		if !utf8.ValidString(string(in.Type)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "type", false))
+		for index1, item1 := range in.Audience {
+			_ = index1
+			_ = item1
+			if !utf8.ValidString(string(item1)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "audience", false), strconv.Itoa(index1), true))
+			}
 		}
-		if !utf8.ValidString(string(in.Text)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
+		if in.LastModified != nil {
+			if !utf8.ValidString(string(*in.LastModified)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "lastModified", false))
+			}
 		}
 	}
 	return nil
 }
 
-// checkMessageContentValue checks text and cycles before conversion.
-func checkMessageContentValue(in *MessageContent) error {
+// checkContentIconValue checks text and cycles before conversion.
+func checkContentIconValue(in *ContentIcon) error {
 	if in == nil {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkMessageContentMessageContentValue(in, "$", active); err != nil {
+	if err := checkContentIconContentIconValue(in, "$", active); err != nil {
 		return err
 	}
 	return nil
 }
 
-// checkMessageContentMessageContentValue checks one generated value on the active path.
-func checkMessageContentMessageContentValue(in *MessageContent, field string, active map[any]bool) error {
+// checkContentIconContentIconValue checks one generated value on the active path.
+func checkContentIconContentIconValue(in *ContentIcon, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -2852,11 +2588,25 @@ func checkMessageContentMessageContentValue(in *MessageContent, field string, ac
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
-		if !utf8.ValidString(string(in.Type)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "type", false))
+		if !utf8.ValidString(string(in.Src)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "src", false))
 		}
-		if !utf8.ValidString(string(in.Text)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
+		if in.MimeType != nil {
+			if !utf8.ValidString(string(*in.MimeType)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
+			}
+		}
+		for index1, item1 := range in.Sizes {
+			_ = index1
+			_ = item1
+			if !utf8.ValidString(string(item1)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "sizes", false), strconv.Itoa(index1), true))
+			}
+		}
+		if in.Theme != nil {
+			if !utf8.ValidString(string(*in.Theme)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "theme", false))
+			}
 		}
 	}
 	return nil
@@ -2962,60 +2712,6 @@ func checkPromptInfoPromptArgumentValue(in *PromptArgument, field string, active
 	return nil
 }
 
-// checkPromptMessageValue checks text and cycles before conversion.
-func checkPromptMessageValue(in *PromptMessage) error {
-	if in == nil {
-		return fmt.Errorf("missing root value")
-	}
-	active := make(map[any]bool)
-	if err := checkPromptMessagePromptMessageValue(in, "$", active); err != nil {
-		return err
-	}
-	return nil
-}
-
-// checkPromptMessagePromptMessageValue checks one generated value on the active path.
-func checkPromptMessagePromptMessageValue(in *PromptMessage, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Role)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "role", false))
-		}
-		if err := checkPromptMessageMessageContentValue(in.Content, generatedJSONChildPath(field, "content", false), active); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// checkPromptMessageMessageContentValue checks one generated value on the active path.
-func checkPromptMessageMessageContentValue(in *MessageContent, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Type)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "type", false))
-		}
-		if !utf8.ValidString(string(in.Text)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
-		}
-	}
-	return nil
-}
-
 // checkPromptsCapabilityValue checks text and cycles before conversion.
 func checkPromptsCapabilityValue(in *PromptsCapability) error {
 	if in == nil {
@@ -3039,51 +2735,6 @@ func checkPromptsCapabilityPromptsCapabilityValue(in *PromptsCapability, field s
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
-	}
-	return nil
-}
-
-// checkResourceContentValue checks text and cycles before conversion.
-func checkResourceContentValue(in *ResourceContent) error {
-	if in == nil {
-		return fmt.Errorf("missing root value")
-	}
-	active := make(map[any]bool)
-	if err := checkResourceContentResourceContentValue(in, "$", active); err != nil {
-		return err
-	}
-	return nil
-}
-
-// checkResourceContentResourceContentValue checks one generated value on the active path.
-func checkResourceContentResourceContentValue(in *ResourceContent, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.URI)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
-		}
-		if in.MimeType != nil {
-			if !utf8.ValidString(string(*in.MimeType)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
-			}
-		}
-		if in.Text != nil {
-			if !utf8.ValidString(string(*in.Text)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
-			}
-		}
-		if in.Blob != nil {
-			if !utf8.ValidString(string(*in.Blob)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "blob", false))
-			}
-		}
 	}
 	return nil
 }

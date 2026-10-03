@@ -147,7 +147,7 @@ func toolCallError(message string) *ToolsCallResult {
 		ResultType: "complete",
 		Meta:       resultMeta(),
 		Content: []*ContentItem{
-			{Type: "text", Text: message},
+			{Type: "text", Text: stringPtr(message)},
 		},
 		IsError: boolPtr(true),
 	}
@@ -486,9 +486,9 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 
 		msgs = append(msgs, &PromptMessage{
 			Role: "user",
-			Content: &MessageContent{
+			Content: &ContentItem{
 				Type: "text",
-				Text: "Review the provided code and suggest improvements.",
+				Text: stringPtr("Review the provided code and suggest improvements."),
 			},
 		})
 

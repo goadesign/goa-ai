@@ -63,6 +63,20 @@ Local generated-client tests also verify empty blobs, byte aliases, malformed
 base64 and both/neither representation fields. The real HTTP integration suite
 covers the named image and empty binary resource alongside existing JSON reads.
 
+## Subsequent rich-content client verification
+
+Generated tool and prompt clients now preserve the five MCP content kinds,
+including resource-link icons and embedded-resource metadata. A compiled
+separate-module HTTP fixture verifies 38 positive and negative reply shapes
+through both generated methods, with two ordered content items in each valid
+reply. It checks empty content, malformed media, kind-specific required fields,
+annotation values, icon fields, metadata shape and text/blob representation.
+Each malformed response produces one request and fails decoding. Runtime tests
+also verify icon preservation and independent copies in tool errors.
+
+These are local client checks. The full referee baseline above has not been
+rerun, and rich server authoring is still required before release.
+
 ## Scenario results
 
 Success, failure, warning and skip columns count individual checks. Informational

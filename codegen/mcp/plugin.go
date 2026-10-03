@@ -153,7 +153,7 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 	if err := applyMCPHTTPRulesToJSONRPCMount(files, p.planned); err != nil {
 		return nil, err
 	}
-	if err := applyResourceContentValidation(files, p.planned); err != nil {
+	if err := applyMCPContentValidation(files, p.planned); err != nil {
 		return nil, err
 	}
 	return files, nil

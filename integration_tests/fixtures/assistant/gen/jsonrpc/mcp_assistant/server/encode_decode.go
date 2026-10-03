@@ -316,22 +316,50 @@ func marshalMcpassistantToolAnnotationsToToolAnnotationsResponseBody(v *mcpassis
 // type *ContentItemResponseBody from a value of type *mcpassistant.ContentItem.
 func marshalMcpassistantContentItemToContentItemResponseBody(v *mcpassistant.ContentItem) *ContentItemResponseBody {
 	res := &ContentItemResponseBody{
-		Type: v.Type,
-		Text: v.Text,
+		Type:        v.Type,
+		Text:        v.Text,
+		Data:        v.Data,
+		MimeType:    v.MimeType,
+		Name:        v.Name,
+		URI:         v.URI,
+		Title:       v.Title,
+		Description: v.Description,
+		Size:        v.Size,
+		Meta:        v.Meta,
+	}
+	if v.Icons != nil {
+		res.Icons = make([]*ContentIconResponseBody, len(v.Icons))
+		for i, val := range v.Icons {
+			if val == nil {
+				res.Icons[i] = nil
+				continue
+			}
+			res.Icons[i] = marshalMcpassistantContentIconToContentIconResponseBody(val)
+		}
+	}
+	if v.Resource != nil {
+		res.Resource = marshalMcpassistantResourceContentToResourceContentResponseBody(v.Resource)
+	}
+	if v.Annotations != nil {
+		res.Annotations = marshalMcpassistantContentAnnotationsToContentAnnotationsResponseBody(v.Annotations)
 	}
 
 	return res
 }
 
-// marshalMcpassistantResourceInfoToResourceInfoResponseBody builds a value of
-// type *ResourceInfoResponseBody from a value of type
-// *mcpassistant.ResourceInfo.
-func marshalMcpassistantResourceInfoToResourceInfoResponseBody(v *mcpassistant.ResourceInfo) *ResourceInfoResponseBody {
-	res := &ResourceInfoResponseBody{
-		URI:         v.URI,
-		Name:        v.Name,
-		Description: v.Description,
-		MimeType:    v.MimeType,
+// marshalMcpassistantContentIconToContentIconResponseBody builds a value of
+// type *ContentIconResponseBody from a value of type *mcpassistant.ContentIcon.
+func marshalMcpassistantContentIconToContentIconResponseBody(v *mcpassistant.ContentIcon) *ContentIconResponseBody {
+	res := &ContentIconResponseBody{
+		Src:      v.Src,
+		MimeType: v.MimeType,
+		Theme:    v.Theme,
+	}
+	if v.Sizes != nil {
+		res.Sizes = make([]string, len(v.Sizes))
+		for i, val := range v.Sizes {
+			res.Sizes[i] = val
+		}
 	}
 
 	return res
@@ -346,6 +374,39 @@ func marshalMcpassistantResourceContentToResourceContentResponseBody(v *mcpassis
 		MimeType: v.MimeType,
 		Text:     v.Text,
 		Blob:     v.Blob,
+		Meta:     v.Meta,
+	}
+
+	return res
+}
+
+// marshalMcpassistantContentAnnotationsToContentAnnotationsResponseBody builds
+// a value of type *ContentAnnotationsResponseBody from a value of type
+// *mcpassistant.ContentAnnotations.
+func marshalMcpassistantContentAnnotationsToContentAnnotationsResponseBody(v *mcpassistant.ContentAnnotations) *ContentAnnotationsResponseBody {
+	res := &ContentAnnotationsResponseBody{
+		Priority:     v.Priority,
+		LastModified: v.LastModified,
+	}
+	if v.Audience != nil {
+		res.Audience = make([]string, len(v.Audience))
+		for i, val := range v.Audience {
+			res.Audience[i] = val
+		}
+	}
+
+	return res
+}
+
+// marshalMcpassistantResourceInfoToResourceInfoResponseBody builds a value of
+// type *ResourceInfoResponseBody from a value of type
+// *mcpassistant.ResourceInfo.
+func marshalMcpassistantResourceInfoToResourceInfoResponseBody(v *mcpassistant.ResourceInfo) *ResourceInfoResponseBody {
+	res := &ResourceInfoResponseBody{
+		URI:         v.URI,
+		Name:        v.Name,
+		Description: v.Description,
+		MimeType:    v.MimeType,
 	}
 
 	return res
@@ -393,19 +454,7 @@ func marshalMcpassistantPromptMessageToPromptMessageResponseBody(v *mcpassistant
 		Role: v.Role,
 	}
 	if v.Content != nil {
-		res.Content = marshalMcpassistantMessageContentToMessageContentResponseBody(v.Content)
-	}
-
-	return res
-}
-
-// marshalMcpassistantMessageContentToMessageContentResponseBody builds a value
-// of type *MessageContentResponseBody from a value of type
-// *mcpassistant.MessageContent.
-func marshalMcpassistantMessageContentToMessageContentResponseBody(v *mcpassistant.MessageContent) *MessageContentResponseBody {
-	res := &MessageContentResponseBody{
-		Type: v.Type,
-		Text: v.Text,
+		res.Content = marshalMcpassistantContentItemToContentItemResponseBody(v.Content)
 	}
 
 	return res

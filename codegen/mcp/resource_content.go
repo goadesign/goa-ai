@@ -1,8 +1,8 @@
-// Package codegen adds the text-or-blob rule to generated MCP resource decoders.
-// Goa's normal unions include a discriminator, but MCP resource contents use
-// field presence instead. The generated decoder rejects ambiguous content before
-// returning it to the application; generated servers choose one field from the
-// authored service result type.
+// Package codegen checks MCP content variants in generated reply decoders.
+// Goa's normal unions put the selected fields inside a separate value object.
+// MCP keeps media fields beside the type and selects text or binary resource
+// contents by field presence. The decoder rejects invalid selected fields before
+// returning content to the application.
 package codegen
 
 import (
@@ -13,15 +13,19 @@ import (
 	goahttpcodegen "goa.design/goa/v3/http/codegen"
 )
 
-// applyResourceContentValidation adds the flat MCP content rule to the existing
+// applyMCPContentValidation adds the flat MCP content rule to the existing
 // Goa validators, preserving their type names, field checks and error paths.
-func applyResourceContentValidation(files []*codegen.File, services []*plannedMCPService) error {
-	paths := make(map[string]bool)
+func applyMCPContentValidation(files []*codegen.File, services []*plannedMCPService) error {
+	paths := make(map[string]map[string]bool)
 	for _, service := range services {
-		if len(service.adapterData.Resources) == 0 {
+		if len(service.adapterData.Resources) == 0 && len(service.adapterData.Tools) == 0 && len(service.adapterData.StaticPrompts) == 0 {
 			continue
 		}
-		paths[filepath.ToSlash(filepath.Join(codegen.Gendir, "jsonrpc", service.adapterData.mcpPathName, "client", "types.go"))] = false
+		validators := map[string]bool{"ResourceContent": false}
+		if len(service.adapterData.Tools) > 0 || len(service.adapterData.StaticPrompts) > 0 {
+			validators["ContentItem"] = false
+		}
+		paths[filepath.ToSlash(filepath.Join(codegen.Gendir, "jsonrpc", service.adapterData.mcpPathName, "client", "types.go"))] = validators
 	}
 	for _, file := range files {
 		filePath := filepath.ToSlash(file.Path)
@@ -33,6 +37,7 @@ func applyResourceContentValidation(files []*codegen.File, services []*plannedMC
 			return fmt.Errorf("MCP resource client %q has no source header", file.Path)
 		}
 		codegen.AddImport(header, codegen.SimpleImport("encoding/base64"))
+		codegen.AddImport(header, codegen.SimpleImport("encoding/json"))
 		for _, section := range file.SectionTemplates {
 			if section.Name != "client-validate" {
 				continue
@@ -41,19 +46,25 @@ func applyResourceContentValidation(files []*codegen.File, services []*plannedMC
 			if !ok {
 				return fmt.Errorf("MCP client validator in %q has unexpected data %T", file.Path, section.Data)
 			}
-			if data.Name != "ResourceContent" {
+			if _, ok := paths[filePath][data.Name]; !ok {
 				continue
 			}
-			data.ValidateDef += resourceContentValidation(`"body"`)
-			if data.NestedValidatorDeclaration != nil {
-				data.NestedValidateDef += resourceContentValidation("path")
+			validation := resourceContentValidation
+			if data.Name == "ContentItem" {
+				validation = contentItemValidation
 			}
-			paths[filePath] = true
+			data.ValidateDef += validation(`"body"`)
+			if data.NestedValidatorDeclaration != nil {
+				data.NestedValidateDef += validation("path")
+			}
+			paths[filePath][data.Name] = true
 		}
 	}
-	for filePath, found := range paths {
-		if !found {
-			return fmt.Errorf("goa did not generate the MCP resource content validator in %q", filePath)
+	for filePath, validators := range paths {
+		for name, found := range validators {
+			if !found {
+				return fmt.Errorf("goa did not generate MCP %s validation in %q", name, filePath)
+			}
 		}
 	}
 	return nil
@@ -72,5 +83,54 @@ if body.Blob != nil {
 		err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_content", "%%s.blob must contain base64 data", %s))
 	}
 }
-`, errorPath, errorPath)
+`, errorPath, errorPath) + contentMetadataValidation(errorPath)
+}
+
+// contentItemValidation checks fields whose presence depends on the content
+// discriminator. Goa's existing validator checks each field's type and values.
+func contentItemValidation(errorPath string) string {
+	return fmt.Sprintf(`
+// The selected content kind determines which fields the peer must supply.
+if body.Type != nil {
+switch *body.Type {
+case "text":
+ if body.Text == nil {
+  err = goa.MergeErrors(err, goa.MissingFieldError(%s + ".text", "content"))
+ }
+case "image", "audio":
+ if body.Data == nil {
+  err = goa.MergeErrors(err, goa.MissingFieldError(%s + ".data", "content"))
+ } else if _, decodeErr := base64.StdEncoding.DecodeString(*body.Data); decodeErr != nil {
+  err = goa.MergeErrors(err, goa.PermanentError("invalid_content", "%%s.data must contain base64 data", %s))
+ }
+ if body.MimeType == nil {
+  err = goa.MergeErrors(err, goa.MissingFieldError(%s + ".mimeType", "content"))
+ }
+case "resource_link":
+ if body.Name == nil {
+  err = goa.MergeErrors(err, goa.MissingFieldError(%s + ".name", "content"))
+ }
+ if body.URI == nil {
+  err = goa.MergeErrors(err, goa.MissingFieldError(%s + ".uri", "content"))
+ }
+case "resource":
+ if body.Resource == nil {
+  err = goa.MergeErrors(err, goa.MissingFieldError(%s + ".resource", "content"))
+ }
+}
+}
+`, errorPath, errorPath, errorPath, errorPath, errorPath, errorPath, errorPath) + contentMetadataValidation(errorPath)
+}
+
+// contentMetadataValidation rejects extension metadata that is not an object.
+// Its fields remain encoded JSON because each extension owns their meaning.
+func contentMetadataValidation(errorPath string) string {
+	return fmt.Sprintf(`
+if len(body.Meta) > 0 {
+ var metadata map[string]json.RawMessage
+ if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+  err = goa.MergeErrors(err, goa.InvalidFieldTypeError(%s + "._meta", string(body.Meta), "JSON object"))
+ }
+}
+`, errorPath)
 }

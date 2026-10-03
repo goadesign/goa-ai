@@ -6464,6 +6464,29 @@ including primitive values, arrays, and explicit null. Generated executors decod
 it using the declared result codec. Text content is never parsed as a substitute
 for a missing structured result.
 
+Generated direct clients preserve those same five kinds in a shared `ContentItem`
+for tool and prompt replies. `Text` and `Data` are presence pointers, so empty
+content is distinct from a missing required field. Resource links retain icons,
+annotations and extension metadata; embedded resources retain their own metadata.
+The generated decoder rejects missing kind-specific fields, invalid base64,
+invalid annotation values and ambiguous text/blob representations. Annotation
+priority bounds zero through one, inclusive, apply to each content item; there
+is no sum or operation-wide priority limit.
+
+This is a breaking generated Go contract: regenerate direct clients, replace
+references to the removed `MessageContent` with `ContentItem`, and dereference
+`Text` only after selecting a text item. Runtime `ResourceLink.Size` now preserves
+MCP's JSON number as `*float64`, and `Icons` retains the supplied descriptions.
+Decoding icons never fetches or renders their URIs. These client capabilities do
+not yet provide rich-content authoring on generated servers.
+
+Content types now contain raw JSON extension metadata. The generic standalone
+codec generator deliberately excludes custom raw JSON fields, so it no longer
+emits `EncodeContentItem`/`DecodeContentItem`, `EncodePromptMessage`/`DecodePromptMessage`
+or `EncodeResourceContent`/`DecodeResourceContent`. Use the generated MCP endpoint
+clients and servers to encode and decode protocol envelopes; their content
+validators enforce MCP's selected variant. No text-only codec alias remains.
+
 ### Interrupted HTTP responses
 
 Retries belong to the application's HTTP caller, inside one worker activity.

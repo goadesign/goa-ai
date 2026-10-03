@@ -417,22 +417,44 @@ type ToolAnnotationsResponseBody struct {
 
 // ContentItemResponseBody is used to define fields on response body types.
 type ContentItemResponseBody struct {
-	// Content type
+	// Selects the required content fields
 	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
-	// Text content
+	// Text for the text variant, including an empty string
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Base64 bytes for image and audio variants
+	Data *string `form:"data,omitempty" json:"data,omitempty" xml:"data,omitempty"`
+	// Required format for image or audio; optional format for resource links
+	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Required identifier for resource links
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Required address for resource links
+	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+	// Optional resource link display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Optional resource link description
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Raw bytes in the linked resource before base64 encoding
+	Size *float64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
+	// Optional resource link icons
+	Icons []*ContentIconResponseBody `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	// Required text or binary contents for embedded resources
+	Resource *ResourceContentResponseBody `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Optional audience and importance for this content
+	Annotations *ContentAnnotationsResponseBody `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
-// ResourceInfoResponseBody is used to define fields on response body types.
-type ResourceInfoResponseBody struct {
-	// Resource URI
-	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
-	// Resource name
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// Resource description
-	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
-	// Resource MIME type
+// ContentIconResponseBody is used to define fields on response body types.
+type ContentIconResponseBody struct {
+	// URI of the icon; decoding does not fetch it
+	Src *string `form:"src,omitempty" json:"src,omitempty" xml:"src,omitempty"`
+	// Optional image MIME type
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Suggested dimensions or any for scalable icons
+	Sizes []string `form:"sizes,omitempty" json:"sizes,omitempty" xml:"sizes,omitempty"`
+	// Optional light or dark theme
+	Theme *string `form:"theme,omitempty" json:"theme,omitempty" xml:"theme,omitempty"`
 }
 
 // ResourceContentResponseBody is used to define fields on response body types.
@@ -445,6 +467,31 @@ type ResourceContentResponseBody struct {
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
 	// Base64 binary content; present only when text is absent
 	Blob *string `form:"blob,omitempty" json:"blob,omitempty" xml:"blob,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// ContentAnnotationsResponseBody is used to define fields on response body
+// types.
+type ContentAnnotationsResponseBody struct {
+	// Roles that should see this content
+	Audience []string `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
+	// Importance from zero through one, inclusive, for this content item
+	Priority *float64 `form:"priority,omitempty" json:"priority,omitempty" xml:"priority,omitempty"`
+	// Time this content last changed
+	LastModified *string `form:"lastModified,omitempty" json:"lastModified,omitempty" xml:"lastModified,omitempty"`
+}
+
+// ResourceInfoResponseBody is used to define fields on response body types.
+type ResourceInfoResponseBody struct {
+	// Resource URI
+	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+	// Resource name
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Resource description
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Resource MIME type
+	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
 }
 
 // PromptInfoResponseBody is used to define fields on response body types.
@@ -472,15 +519,7 @@ type PromptMessageResponseBody struct {
 	// Message role
 	Role *string `form:"role,omitempty" json:"role,omitempty" xml:"role,omitempty"`
 	// Message content
-	Content *MessageContentResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
-}
-
-// MessageContentResponseBody is used to define fields on response body types.
-type MessageContentResponseBody struct {
-	// Content type
-	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
-	// Text content
-	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	Content *ContentItemResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
 }
 
 // NewServerDiscoverRequestBody builds the HTTP request body from the payload
@@ -1348,14 +1387,76 @@ func ValidateContentItemResponseBody(body *ContentItemResponseBody) (err error) 
 	if body.Type == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
 	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
-	}
 	if body.Type != nil {
-		if !(*body.Type == "text") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"text"}))
+		if !(*body.Type == "text" || *body.Type == "image" || *body.Type == "audio" || *body.Type == "resource_link" || *body.Type == "resource") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"text", "image", "audio", "resource_link", "resource"}))
 		}
 	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *body.URI, goa.FormatURI))
+	}
+	if body.Size != nil {
+		if *body.Size < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.size", *body.Size, 0, true))
+		}
+	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIconResponseBody(e, "body.icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Resource != nil {
+		if err2 := validateResourceContentResponseBody(body.Resource, "body.resource"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotationsResponseBody(body.Annotations, "body.annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	// The selected content kind determines which fields the peer must supply.
+	if body.Type != nil {
+		switch *body.Type {
+		case "text":
+			if body.Text == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".text", "content"))
+			}
+		case "image", "audio":
+			if body.Data == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".data", "content"))
+			} else if _, decodeErr := base64.StdEncoding.DecodeString(*body.Data); decodeErr != nil {
+				err = goa.MergeErrors(err, goa.PermanentError("invalid_content", "%s.data must contain base64 data", "body"))
+			}
+			if body.MimeType == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".mimeType", "content"))
+			}
+		case "resource_link":
+			if body.Name == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".name", "content"))
+			}
+			if body.URI == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".uri", "content"))
+			}
+		case "resource":
+			if body.Resource == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".resource", "content"))
+			}
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
 	return
 }
 
@@ -1365,12 +1466,203 @@ func validateContentItemResponseBody(body *ContentItemResponseBody, path string)
 	if body.Type == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
 	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", path))
-	}
 	if body.Type != nil {
-		if !(*body.Type == "text") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"text"}))
+		if !(*body.Type == "text" || *body.Type == "image" || *body.Type == "audio" || *body.Type == "resource_link" || *body.Type == "resource") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"text", "image", "audio", "resource_link", "resource"}))
+		}
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".uri", *body.URI, goa.FormatURI))
+	}
+	if body.Size != nil {
+		if *body.Size < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".size", *body.Size, 0, true))
+		}
+	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIconResponseBody(e, path+".icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Resource != nil {
+		if err2 := validateResourceContentResponseBody(body.Resource, path+".resource"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotationsResponseBody(body.Annotations, path+".annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	// The selected content kind determines which fields the peer must supply.
+	if body.Type != nil {
+		switch *body.Type {
+		case "text":
+			if body.Text == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".text", "content"))
+			}
+		case "image", "audio":
+			if body.Data == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".data", "content"))
+			} else if _, decodeErr := base64.StdEncoding.DecodeString(*body.Data); decodeErr != nil {
+				err = goa.MergeErrors(err, goa.PermanentError("invalid_content", "%s.data must contain base64 data", path))
+			}
+			if body.MimeType == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".mimeType", "content"))
+			}
+		case "resource_link":
+			if body.Name == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".name", "content"))
+			}
+			if body.URI == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".uri", "content"))
+			}
+		case "resource":
+			if body.Resource == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".resource", "content"))
+			}
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
+	return
+}
+
+// ValidateContentIconResponseBody runs the validations defined on ContentIcon
+func ValidateContentIconResponseBody(body *ContentIconResponseBody) (err error) {
+	if body.Src == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("src", "body"))
+	}
+	if body.Src != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.src", *body.Src, goa.FormatURI))
+	}
+	if body.Theme != nil {
+		if !(*body.Theme == "light" || *body.Theme == "dark") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.theme", *body.Theme, []any{"light", "dark"}))
+		}
+	}
+	return
+}
+
+// validateContentIconResponseBody checks ContentIcon and reports errors using
+// the path supplied by its caller
+func validateContentIconResponseBody(body *ContentIconResponseBody, path string) (err error) {
+	if body.Src == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("src", path))
+	}
+	if body.Src != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".src", *body.Src, goa.FormatURI))
+	}
+	if body.Theme != nil {
+		if !(*body.Theme == "light" || *body.Theme == "dark") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".theme", *body.Theme, []any{"light", "dark"}))
+		}
+	}
+	return
+}
+
+// ValidateResourceContentResponseBody runs the validations defined on
+// ResourceContent
+func ValidateResourceContentResponseBody(body *ResourceContentResponseBody) (err error) {
+	if body.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *body.URI, goa.FormatURI))
+	}
+	// Resource contents choose exactly one representation, including empty content.
+	if (body.Text == nil) == (body.Blob == nil) {
+		err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+".contents", "text/blob", "exactly one of text or blob"))
+	}
+	if body.Blob != nil {
+		if _, decodeErr := base64.StdEncoding.DecodeString(*body.Blob); decodeErr != nil {
+			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_content", "%s.blob must contain base64 data", "body"))
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
+	return
+}
+
+// validateResourceContentResponseBody checks ResourceContent and reports
+// errors using the path supplied by its caller
+func validateResourceContentResponseBody(body *ResourceContentResponseBody, path string) (err error) {
+	if body.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", path))
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".uri", *body.URI, goa.FormatURI))
+	}
+	// Resource contents choose exactly one representation, including empty content.
+	if (body.Text == nil) == (body.Blob == nil) {
+		err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+".contents", "text/blob", "exactly one of text or blob"))
+	}
+	if body.Blob != nil {
+		if _, decodeErr := base64.StdEncoding.DecodeString(*body.Blob); decodeErr != nil {
+			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_content", "%s.blob must contain base64 data", path))
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
+	return
+}
+
+// ValidateContentAnnotationsResponseBody runs the validations defined on
+// ContentAnnotations
+func ValidateContentAnnotationsResponseBody(body *ContentAnnotationsResponseBody) (err error) {
+	for _, e := range body.Audience {
+		if !(e == "user" || e == "assistant") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.audience[*]", e, []any{"user", "assistant"}))
+		}
+	}
+	if body.Priority != nil {
+		if *body.Priority < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.priority", *body.Priority, 0, true))
+		}
+		if *body.Priority > 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.priority", *body.Priority, 1, false))
+		}
+	}
+	return
+}
+
+// validateContentAnnotationsResponseBody checks ContentAnnotations and reports
+// errors using the path supplied by its caller
+func validateContentAnnotationsResponseBody(body *ContentAnnotationsResponseBody, path string) (err error) {
+	for _, e := range body.Audience {
+		if !(e == "user" || e == "assistant") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".audience[*]", e, []any{"user", "assistant"}))
+		}
+	}
+	if body.Priority != nil {
+		if *body.Priority < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".priority", *body.Priority, 0, true))
+		}
+		if *body.Priority > 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".priority", *body.Priority, 1, false))
 		}
 	}
 	return
@@ -1396,44 +1688,6 @@ func validateResourceInfoResponseBody(body *ResourceInfoResponseBody, path strin
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
 	}
-	return
-}
-
-// ValidateResourceContentResponseBody runs the validations defined on
-// ResourceContent
-func ValidateResourceContentResponseBody(body *ResourceContentResponseBody) (err error) {
-	if body.URI == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
-	}
-	// Resource contents choose exactly one representation, including empty content.
-	if (body.Text == nil) == (body.Blob == nil) {
-		err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+".contents", "text/blob", "exactly one of text or blob"))
-	}
-	if body.Blob != nil {
-		if _, decodeErr := base64.StdEncoding.DecodeString(*body.Blob); decodeErr != nil {
-			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_content", "%s.blob must contain base64 data", "body"))
-		}
-	}
-
-	return
-}
-
-// validateResourceContentResponseBody checks ResourceContent and reports
-// errors using the path supplied by its caller
-func validateResourceContentResponseBody(body *ResourceContentResponseBody, path string) (err error) {
-	if body.URI == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("uri", path))
-	}
-	// Resource contents choose exactly one representation, including empty content.
-	if (body.Text == nil) == (body.Blob == nil) {
-		err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+".contents", "text/blob", "exactly one of text or blob"))
-	}
-	if body.Blob != nil {
-		if _, decodeErr := base64.StdEncoding.DecodeString(*body.Blob); decodeErr != nil {
-			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_content", "%s.blob must contain base64 data", path))
-		}
-	}
-
 	return
 }
 
@@ -1507,7 +1761,7 @@ func ValidatePromptMessageResponseBody(body *PromptMessageResponseBody) (err err
 		}
 	}
 	if body.Content != nil {
-		if err2 := validateMessageContentResponseBody(body.Content, "body.content"); err2 != nil {
+		if err2 := validateContentItemResponseBody(body.Content, "body.content"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -1529,42 +1783,8 @@ func validatePromptMessageResponseBody(body *PromptMessageResponseBody, path str
 		}
 	}
 	if body.Content != nil {
-		if err2 := validateMessageContentResponseBody(body.Content, path+".content"); err2 != nil {
+		if err2 := validateContentItemResponseBody(body.Content, path+".content"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
-		}
-	}
-	return
-}
-
-// ValidateMessageContentResponseBody runs the validations defined on
-// MessageContent
-func ValidateMessageContentResponseBody(body *MessageContentResponseBody) (err error) {
-	if body.Type == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
-	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
-	}
-	if body.Type != nil {
-		if !(*body.Type == "text") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"text"}))
-		}
-	}
-	return
-}
-
-// validateMessageContentResponseBody checks MessageContent and reports errors
-// using the path supplied by its caller
-func validateMessageContentResponseBody(body *MessageContentResponseBody, path string) (err error) {
-	if body.Type == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
-	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", path))
-	}
-	if body.Type != nil {
-		if !(*body.Type == "text") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"text"}))
 		}
 	}
 	return

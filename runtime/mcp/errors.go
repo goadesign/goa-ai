@@ -145,7 +145,17 @@ func cloneContentBlocks(content []ContentBlock) []ContentBlock {
 			copy.Title = cloneString(value.Title)
 			copy.Description = cloneString(value.Description)
 			copy.MIMEType = cloneString(value.MIMEType)
-			copy.Size = cloneInt64(value.Size)
+			if value.Size != nil {
+				size := *value.Size
+				copy.Size = &size
+			}
+			copy.Icons = make([]Icon, len(value.Icons))
+			for i, icon := range value.Icons {
+				copy.Icons[i] = icon
+				copy.Icons[i].MIMEType = cloneString(icon.MIMEType)
+				copy.Icons[i].Theme = cloneString(icon.Theme)
+				copy.Icons[i].Sizes = append([]string(nil), icon.Sizes...)
+			}
 			copy.Annotations = cloneAnnotations(value.Annotations)
 			copy.Meta = cloneRaw(value.Meta)
 			cloned[i] = &copy
@@ -195,15 +205,6 @@ func cloneAnnotations(annotations *Annotations) *Annotations {
 
 // cloneString copies an optional string.
 func cloneString(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	return &copy
-}
-
-// cloneInt64 copies an optional integer.
-func cloneInt64(value *int64) *int64 {
 	if value == nil {
 		return nil
 	}

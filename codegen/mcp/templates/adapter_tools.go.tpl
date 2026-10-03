@@ -46,7 +46,7 @@ func toolCallError(message string) *ToolsCallResult {
         ResultType: "complete",
         Meta: resultMeta(),
         Content: []*ContentItem{
-            {Type: "text", Text: message},
+            {Type: "text", Text: stringPtr(message)},
         },
         IsError: boolPtr(true),
     }

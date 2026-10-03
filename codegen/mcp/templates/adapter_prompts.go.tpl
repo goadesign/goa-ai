@@ -40,9 +40,9 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
         {{ range .Messages }}
         msgs = append(msgs, &PromptMessage{
             Role: {{ quote .Role }},
-            Content: &MessageContent{
+            Content: &ContentItem{
                 Type: "text",
-                Text: {{ quote .Content }},
+                Text: stringPtr({{ quote .Content }}),
             },
         })
         {{ end }}

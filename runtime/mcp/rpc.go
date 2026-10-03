@@ -5,9 +5,11 @@ package mcp
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 )
 
 type (
@@ -64,7 +66,8 @@ type (
 		Title       *string         `json:"title"`
 		URI         *string         `json:"uri"`
 		Description *string         `json:"description"`
-		Size        *int64          `json:"size"`
+		Size        *float64        `json:"size"`
+		Icons       []Icon          `json:"icons"`
 		Resource    json.RawMessage `json:"resource"`
 		Annotations *Annotations    `json:"annotations"`
 		Meta        json.RawMessage `json:"_meta,omitempty"` //nolint:tagliatelle // MCP protocol field.
@@ -271,15 +274,32 @@ func normalizeContentBlock(item contentItem) (ContentBlock, error) {
 		if item.Data == nil || item.MIMEType == nil {
 			return nil, errors.New("image content requires data and mimeType")
 		}
+		if err := validateBase64(*item.Data); err != nil {
+			return nil, err
+		}
 		return &ImageContent{Data: *item.Data, MIMEType: *item.MIMEType, Annotations: item.Annotations, Meta: cloneRaw(item.Meta)}, nil
 	case "audio":
 		if item.Data == nil || item.MIMEType == nil {
 			return nil, errors.New("audio content requires data and mimeType")
 		}
+		if err := validateBase64(*item.Data); err != nil {
+			return nil, err
+		}
 		return &AudioContent{Data: *item.Data, MIMEType: *item.MIMEType, Annotations: item.Annotations, Meta: cloneRaw(item.Meta)}, nil
 	case "resource_link":
 		if item.Name == nil || item.URI == nil {
 			return nil, errors.New("resource link requires name and uri")
+		}
+		if err := validateContentURI(*item.URI); err != nil {
+			return nil, err
+		}
+		for _, icon := range item.Icons {
+			if err := validateContentURI(icon.Src); err != nil {
+				return nil, err
+			}
+			if icon.Theme != nil && *icon.Theme != "light" && *icon.Theme != "dark" {
+				return nil, errors.New("icon theme must be light or dark")
+			}
 		}
 		if item.Size != nil && *item.Size < 0 {
 			return nil, errors.New("resource link size must not be negative")
@@ -287,7 +307,7 @@ func normalizeContentBlock(item contentItem) (ContentBlock, error) {
 		return &ResourceLink{
 			Name: *item.Name, URI: *item.URI, Title: item.Title,
 			Description: item.Description, MIMEType: item.MIMEType, Size: item.Size,
-			Annotations: item.Annotations, Meta: cloneRaw(item.Meta),
+			Icons: item.Icons, Annotations: item.Annotations, Meta: cloneRaw(item.Meta),
 		}, nil
 	case "resource":
 		resource, err := normalizeResourceContents(item.Resource)
@@ -310,6 +330,9 @@ func normalizeResourceContents(raw json.RawMessage) (ResourceContents, error) {
 	if err := json.Unmarshal(raw, &resource); err != nil || resource.URI == nil {
 		return nil, errors.New("embedded resource requires a resource object with uri")
 	}
+	if err := validateContentURI(*resource.URI); err != nil {
+		return nil, err
+	}
 	if err := validateMeta(resource.Meta); err != nil {
 		return nil, err
 	}
@@ -318,6 +341,9 @@ func normalizeResourceContents(raw json.RawMessage) (ResourceContents, error) {
 	}
 	if resource.Text != nil {
 		return &TextResourceContents{URI: *resource.URI, MIMEType: resource.MIMEType, Text: *resource.Text, Meta: cloneRaw(resource.Meta)}, nil
+	}
+	if err := validateBase64(*resource.Blob); err != nil {
+		return nil, err
 	}
 	return &BlobResourceContents{URI: *resource.URI, MIMEType: resource.MIMEType, Blob: *resource.Blob, Meta: cloneRaw(resource.Meta)}, nil
 }
@@ -367,4 +393,22 @@ func normalizeCallResult(result toolsCallResult, support InputSupport) (CallResp
 		}
 	}
 	return response, nil
+}
+
+// validateBase64 checks the encoded bytes in one media or resource item. Empty
+// data remains valid; decoding does not impose an operation-wide size limit.
+func validateBase64(data string) error {
+	if _, err := base64.StdEncoding.DecodeString(data); err != nil {
+		return fmt.Errorf("content must contain base64 data: %w", err)
+	}
+	return nil
+}
+
+// validateContentURI checks one resource or icon address without opening it.
+func validateContentURI(uri string) error {
+	parsed, err := url.Parse(uri)
+	if err != nil || parsed.Scheme == "" {
+		return fmt.Errorf("content URI %q must be an absolute URI", uri)
+	}
+	return nil
 }

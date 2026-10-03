@@ -1,4 +1,4 @@
-// Package mcp represents every content block allowed in an MCP tool result.
+// Package mcp represents every content block allowed in an MCP result.
 // Transport clients decode the wire format into these values so callers keep
 // images, audio, resource links, and embedded resources without losing data.
 package mcp
@@ -71,11 +71,26 @@ type (
 		// MIMEType identifies the resource format.
 		MIMEType *string
 		// Size is the resource size in bytes.
-		Size *int64
+		Size *float64
+		// Icons are optional images supplied for the resource link.
+		Icons []Icon
 		// Annotations describe how the link should be presented.
 		Annotations *Annotations
 		// Meta preserves protocol extension data.
 		Meta json.RawMessage
+	}
+
+	// Icon describes an image URI supplied by an MCP peer. Decoding retains the
+	// description without fetching or rendering the image.
+	Icon struct {
+		// Src is the image URI.
+		Src string `json:"src"`
+		// MIMEType optionally identifies the image format.
+		MIMEType *string `json:"mimeType,omitempty"` //nolint:tagliatelle // MCP defines this wire field name.
+		// Sizes lists suggested dimensions or "any" for scalable images.
+		Sizes []string `json:"sizes,omitempty"`
+		// Theme optionally identifies the light or dark display theme.
+		Theme *string `json:"theme,omitempty"`
 	}
 
 	// EmbeddedResource contains resource data returned directly by an MCP tool.

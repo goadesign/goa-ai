@@ -78,7 +78,7 @@ runtime tests pass after moving current synthetic suspension fixtures to version
 | --- | --- | --- | --- |
 | Current discovery and unary tools | Implemented | Implemented | Generated executors and canonical specs |
 | Fixed text/JSON/binary resource reads and static prompts | Implemented | Generated typed clients; exact text/blob validation | No implicit conversion into agent tools |
-| Rich structured tool results | Generated declared JSON result | Five content kinds and exact structured JSON | Declared result codec |
+| Rich structured tool results | Generated declared JSON result | Generated tool/prompt and runtime clients preserve five content kinds, icons, metadata and exact structured JSON | Declared result codec |
 | Multi-round tool input | No producer advertised | Explicit unfinished result and successor request | Durable trusted form/URL/state-only continuation |
 | Tasks, subscriptions, parameterized prompts, URI templates | Not advertised | No extension claimed | Capability milestones remain separate |
 | OAuth and Apps | Host-owned dependencies; no built-in extension claimed | Host-built HTTP dependency | No grant/view ownership in the planner |
@@ -91,6 +91,33 @@ base64. The independent `resources-read-binary` scenario passed both operation
 and wire-schema checks on 2026-10-03. Compiled binary-only and mixed-resource
 clients and real generated HTTP scenarios passed. This completes the binary
 resource milestone; rich authored tool/prompt content remains separate.
+
+Generated tool and prompt clients now use one `ContentItem` representation for
+all five content kinds. The generated schema declares field types, audience
+values and per-item priority bounds; MCP-specific decoding checks fields whose
+presence depends on the discriminator and the embedded text/blob choice.
+Resource-link icons and embedded metadata survive decoding. Runtime consumers
+also validate base64 and retain icons when copying tool errors. These are
+consumer capabilities; rich authored results and method-backed prompts remain
+required producer work. The ordinary Goa union envelope differs from MCP's flat
+content envelope, so that producer design must explicitly own conversion rather
+than exposing untyped application callbacks.
+
+Open `_meta` data also makes these content-containing types ineligible for the
+generic standalone JSON helpers: `SupportsStandalone` excludes custom raw JSON
+fields. Repository callers use generated endpoints, not those helpers. The
+breaking upgrade removes the old standalone content/message/resource helpers;
+current consumers use the generated protocol endpoints. Rich authored methods
+must get a complete typed codec and protocol conversion rather than restoring
+text-only helpers or teaching service code to serialize MCP objects.
+
+For this client increment, build and lint passed. The initial default parallel
+race run failed a killed generated-test subprocess, two Temporal non-yielding
+workflow checks and a completion-order assertion. Each failed test passed when
+rerun sequentially with unchanged assertions and race instrumentation. The full
+race and quickstart suite then passed with `GOFLAGS="-p=1" make test`. Uncached
+HTTP scenarios and Docker-backed registry tests passed. These results do not
+establish the cause of the initial failures or full MCP conformance.
 
 This table reports implementation scope, not full conformance. Verification
 completed with Go 1.26.3: `make lint` (zero issues), `make test` (race-enabled root
@@ -402,7 +429,7 @@ For example, a method returning `[]int{2, 3}` changes from a text item containin
 
 Apply the same contract to `FromMCP` and `FromExternalMCP` typed executors. An external current-version server returning text only can be valid MCP, but cannot satisfy a declared typed-result toolset without an explicit mapping. Reject that mismatch clearly; do not infer JSON from arbitrary text. Preserve text-only results for direct `mcp.Caller` consumers, which do not declare that typed result contract.
 
-Keep the five existing runtime content kinds and their metadata. Add current resource-link icon metadata to the boundary representation and round-trip it. Do not add rich authored-media DSL APIs, icon-fetching code, or presentation logic merely because the wire permits them. Success output-schema validation does not require a tool-error result to match the success shape.
+Keep the five existing runtime content kinds and their metadata. Add current resource-link icon metadata to the boundary representation and round-trip it. Rich authored-media bindings are required by the user and remain a separate producer milestone. Decoding icons does not fetch images or add presentation logic. Success output-schema validation does not require a tool-error result to match the success shape.
 
 ### Decision 4: separate protocol rejection from tool rejection
 

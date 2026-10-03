@@ -1030,22 +1030,50 @@ func unmarshalToolAnnotationsResponseBodyToMcpassistantToolAnnotations(v *ToolAn
 // type *mcpassistant.ContentItem from a value of type *ContentItemResponseBody.
 func unmarshalContentItemResponseBodyToMcpassistantContentItem(v *ContentItemResponseBody) *mcpassistant.ContentItem {
 	res := &mcpassistant.ContentItem{
-		Type: *v.Type,
-		Text: *v.Text,
+		Type:        *v.Type,
+		Text:        v.Text,
+		Data:        v.Data,
+		MimeType:    v.MimeType,
+		Name:        v.Name,
+		URI:         v.URI,
+		Title:       v.Title,
+		Description: v.Description,
+		Size:        v.Size,
+		Meta:        v.Meta,
+	}
+	if v.Icons != nil {
+		res.Icons = make([]*mcpassistant.ContentIcon, len(v.Icons))
+		for i, val := range v.Icons {
+			if val == nil {
+				res.Icons[i] = nil
+				continue
+			}
+			res.Icons[i] = unmarshalContentIconResponseBodyToMcpassistantContentIcon(val)
+		}
+	}
+	if v.Resource != nil {
+		res.Resource = unmarshalResourceContentResponseBodyToMcpassistantResourceContent(v.Resource)
+	}
+	if v.Annotations != nil {
+		res.Annotations = unmarshalContentAnnotationsResponseBodyToMcpassistantContentAnnotations(v.Annotations)
 	}
 
 	return res
 }
 
-// unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo builds a value
-// of type *mcpassistant.ResourceInfo from a value of type
-// *ResourceInfoResponseBody.
-func unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo(v *ResourceInfoResponseBody) *mcpassistant.ResourceInfo {
-	res := &mcpassistant.ResourceInfo{
-		URI:         *v.URI,
-		Name:        *v.Name,
-		Description: v.Description,
-		MimeType:    v.MimeType,
+// unmarshalContentIconResponseBodyToMcpassistantContentIcon builds a value of
+// type *mcpassistant.ContentIcon from a value of type *ContentIconResponseBody.
+func unmarshalContentIconResponseBodyToMcpassistantContentIcon(v *ContentIconResponseBody) *mcpassistant.ContentIcon {
+	res := &mcpassistant.ContentIcon{
+		Src:      *v.Src,
+		MimeType: v.MimeType,
+		Theme:    v.Theme,
+	}
+	if v.Sizes != nil {
+		res.Sizes = make([]string, len(v.Sizes))
+		for i, val := range v.Sizes {
+			res.Sizes[i] = val
+		}
 	}
 
 	return res
@@ -1060,6 +1088,39 @@ func unmarshalResourceContentResponseBodyToMcpassistantResourceContent(v *Resour
 		MimeType: v.MimeType,
 		Text:     v.Text,
 		Blob:     v.Blob,
+		Meta:     v.Meta,
+	}
+
+	return res
+}
+
+// unmarshalContentAnnotationsResponseBodyToMcpassistantContentAnnotations
+// builds a value of type *mcpassistant.ContentAnnotations from a value of type
+// *ContentAnnotationsResponseBody.
+func unmarshalContentAnnotationsResponseBodyToMcpassistantContentAnnotations(v *ContentAnnotationsResponseBody) *mcpassistant.ContentAnnotations {
+	res := &mcpassistant.ContentAnnotations{
+		Priority:     v.Priority,
+		LastModified: v.LastModified,
+	}
+	if v.Audience != nil {
+		res.Audience = make([]string, len(v.Audience))
+		for i, val := range v.Audience {
+			res.Audience[i] = val
+		}
+	}
+
+	return res
+}
+
+// unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo builds a value
+// of type *mcpassistant.ResourceInfo from a value of type
+// *ResourceInfoResponseBody.
+func unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo(v *ResourceInfoResponseBody) *mcpassistant.ResourceInfo {
+	res := &mcpassistant.ResourceInfo{
+		URI:         *v.URI,
+		Name:        *v.Name,
+		Description: v.Description,
+		MimeType:    v.MimeType,
 	}
 
 	return res
@@ -1106,19 +1167,7 @@ func unmarshalPromptMessageResponseBodyToMcpassistantPromptMessage(v *PromptMess
 	res := &mcpassistant.PromptMessage{
 		Role: *v.Role,
 	}
-	res.Content = unmarshalMessageContentResponseBodyToMcpassistantMessageContent(v.Content)
-
-	return res
-}
-
-// unmarshalMessageContentResponseBodyToMcpassistantMessageContent builds a
-// value of type *mcpassistant.MessageContent from a value of type
-// *MessageContentResponseBody.
-func unmarshalMessageContentResponseBodyToMcpassistantMessageContent(v *MessageContentResponseBody) *mcpassistant.MessageContent {
-	res := &mcpassistant.MessageContent{
-		Type: *v.Type,
-		Text: *v.Text,
-	}
+	res.Content = unmarshalContentItemResponseBodyToMcpassistantContentItem(v.Content)
 
 	return res
 }

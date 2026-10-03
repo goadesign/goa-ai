@@ -416,22 +416,44 @@ type ToolAnnotationsResponseBody struct {
 
 // ContentItemResponseBody is used to define fields on response body types.
 type ContentItemResponseBody struct {
-	// Content type
+	// Selects the required content fields
 	Type string `form:"type" json:"type" xml:"type"`
-	// Text content
-	Text string `form:"text" json:"text" xml:"text"`
+	// Text for the text variant, including an empty string
+	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Base64 bytes for image and audio variants
+	Data *string `form:"data,omitempty" json:"data,omitempty" xml:"data,omitempty"`
+	// Required format for image or audio; optional format for resource links
+	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Required identifier for resource links
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Required address for resource links
+	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+	// Optional resource link display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Optional resource link description
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Raw bytes in the linked resource before base64 encoding
+	Size *float64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
+	// Optional resource link icons
+	Icons []*ContentIconResponseBody `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	// Required text or binary contents for embedded resources
+	Resource *ResourceContentResponseBody `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Optional audience and importance for this content
+	Annotations *ContentAnnotationsResponseBody `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
-// ResourceInfoResponseBody is used to define fields on response body types.
-type ResourceInfoResponseBody struct {
-	// Resource URI
-	URI string `form:"uri" json:"uri" xml:"uri"`
-	// Resource name
-	Name string `form:"name" json:"name" xml:"name"`
-	// Resource description
-	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
-	// Resource MIME type
+// ContentIconResponseBody is used to define fields on response body types.
+type ContentIconResponseBody struct {
+	// URI of the icon; decoding does not fetch it
+	Src string `form:"src" json:"src" xml:"src"`
+	// Optional image MIME type
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Suggested dimensions or any for scalable icons
+	Sizes []string `form:"sizes,omitempty" json:"sizes,omitempty" xml:"sizes,omitempty"`
+	// Optional light or dark theme
+	Theme *string `form:"theme,omitempty" json:"theme,omitempty" xml:"theme,omitempty"`
 }
 
 // ResourceContentResponseBody is used to define fields on response body types.
@@ -444,6 +466,31 @@ type ResourceContentResponseBody struct {
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
 	// Base64 binary content; present only when text is absent
 	Blob *string `form:"blob,omitempty" json:"blob,omitempty" xml:"blob,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// ContentAnnotationsResponseBody is used to define fields on response body
+// types.
+type ContentAnnotationsResponseBody struct {
+	// Roles that should see this content
+	Audience []string `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
+	// Importance from zero through one, inclusive, for this content item
+	Priority *float64 `form:"priority,omitempty" json:"priority,omitempty" xml:"priority,omitempty"`
+	// Time this content last changed
+	LastModified *string `form:"lastModified,omitempty" json:"lastModified,omitempty" xml:"lastModified,omitempty"`
+}
+
+// ResourceInfoResponseBody is used to define fields on response body types.
+type ResourceInfoResponseBody struct {
+	// Resource URI
+	URI string `form:"uri" json:"uri" xml:"uri"`
+	// Resource name
+	Name string `form:"name" json:"name" xml:"name"`
+	// Resource description
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Resource MIME type
+	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
 }
 
 // PromptInfoResponseBody is used to define fields on response body types.
@@ -471,15 +518,7 @@ type PromptMessageResponseBody struct {
 	// Message role
 	Role string `form:"role" json:"role" xml:"role"`
 	// Message content
-	Content *MessageContentResponseBody `form:"content" json:"content" xml:"content"`
-}
-
-// MessageContentResponseBody is used to define fields on response body types.
-type MessageContentResponseBody struct {
-	// Content type
-	Type string `form:"type" json:"type" xml:"type"`
-	// Text content
-	Text string `form:"text" json:"text" xml:"text"`
+	Content *ContentItemResponseBody `form:"content" json:"content" xml:"content"`
 }
 
 // NewServerDiscoverResponseBody builds the HTTP response body from the result
