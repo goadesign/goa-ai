@@ -41,6 +41,7 @@ type (
 		runtime     *Runtime
 		definition  AgentDefinition
 		runLabels   map[string]string
+		textOnly    bool
 		sources     RegistryTools
 		specs       map[tools.Ident]tools.ToolSpec
 		definitions map[tools.Ident]*model.ToolDefinition
@@ -160,6 +161,12 @@ func (c *RegistryCatalog) includeResolved(registry string, registered *genregist
 			return fmt.Errorf("registry %q toolset %q repeats tool %q already supplied to this agent", registry, name, tool)
 		}
 		spec := resolved.Specs[tool]
+		if c.textOnly {
+			if spec.RequiresUI || spec.Confirmation != nil || spec.TextOnly == nil {
+				continue
+			}
+			spec = spec.ForTextOnly()
+		}
 		if spec.IsAgentTool {
 			if _, allowed := c.definition.agents[agent.Ident(spec.AgentID)]; !allowed {
 				return fmt.Errorf("registry tool %q targets unconfigured Agent executor %q", tool, spec.AgentID)
@@ -240,6 +247,14 @@ func (r *Runtime) planningCatalog(ctx context.Context, input *PlanActivityInput)
 	}
 	catalog := r.newRegistryCatalog(registration.Definition)
 	catalog.runLabels = cloneLabels(input.RunContext.Labels)
+	catalog.textOnly = input.Policy != nil && input.Policy.TextOnly
+	if input.Policy != nil && input.Policy.TextOnly {
+		for name, spec := range catalog.specs {
+			if spec.TextOnly != nil {
+				catalog.specs[name] = spec.ForTextOnly()
+			}
+		}
+	}
 	if registration.Definition.registryTools != nil {
 		if err := registration.Definition.registryTools.Resolve(ctx, catalog); err != nil {
 			return nil, err

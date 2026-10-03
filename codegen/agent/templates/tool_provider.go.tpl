@@ -38,6 +38,7 @@ func NewProvider(svc {{ .ServiceTypeRef }}) *Provider {
 // and returns one success or failure with the same registration token and tool
 // use ID. The service method receives ctx and must stop when it is canceled.
 func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
+	ctx = runtime.WithTextOnlyContext(ctx, msg.Meta != nil && msg.Meta.TextOnly)
 	if msg.ToolUseID == "" {
 		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, "", "invalid_call", "tool_use_id is required"), nil
 	}
@@ -50,6 +51,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 	}
 {{- if .NeedsInject }}
 	meta := runtime.ToolCallMeta{
+		TextOnly: msg.Meta.TextOnly,
 		RunID:            msg.Meta.RunID,
 		SessionID:        msg.Meta.SessionID,
 		TurnID:           msg.Meta.TurnID,
@@ -63,6 +65,20 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- range .Tools }}
 {{- if .IsMethodBacked }}
 	case {{ .ConstName }}:
+{{- if or .RequiresUI .Confirmation }}
+        if msg.Meta.TextOnly {
+            return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "unsupported_interaction", "tool requires unsupported interaction"), nil
+        }
+{{- end }}
+        if msg.Meta.TextOnly {
+            spec, ok := Spec({{ .ConstName }})
+            if !ok {
+                return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_contract", "generated tool contract is missing"), nil
+            }
+            if _, err := spec.TextOnly.ExecutionCodec.FromJSON(msg.Payload); err != nil {
+                return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
+            }
+        }
 {{- if or .HasMethodPayload .Injected }}
 		args, err := {{ .PayloadCodecName }}().FromJSON(msg.Payload)
 {{- else }}
@@ -118,7 +134,14 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		}
 {{- end }}
 {{- end }}
-		if len(server) > 0 {
+		if msg.Meta.TextOnly {
+            for _, item := range server {
+                if item.Audience != "internal" && item.Audience != "evidence" {
+                    return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "output_contract_violation", "tool returned unsupported UI output"), nil
+                }
+            }
+        }
+        if len(server) > 0 {
 			return toolregistry.ToolResultMessage{
 				RegistrationToken: msg.RegistrationToken,
 				ToolUseID:          msg.ToolUseID,

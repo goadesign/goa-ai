@@ -235,6 +235,11 @@ message ConsumerContract {
 	// Worker and immutable application configuration used by a dynamically
 // registered Agent tool.
 	AgentToolTarget agent = 12;
+	// Whether executing this tool requires rendering or an interactive client
+// protocol.
+	optional bool requires_ui = 13;
+	// Generated model contract for execution using ordinary messages only.
+	TextOnlyToolContract text_only = 14;
 }
 // Precomputed word frequencies for local tool retrieval.
 message ToolSearchDocument {
@@ -350,6 +355,21 @@ message AgentToolTarget {
 	// Immutable application configuration reference retained with each accepted
 // tool call.
 	optional string configuration = 2;
+}
+
+message TextOnlyToolContract {
+	// Domain instructions without optional UI guidance.
+	optional string description = 1;
+	// Generated word counts for these domain instructions.
+	ToolSearchDocument search = 2;
+	// Exact model argument schema without UI-only controls.
+	optional bytes payload_schema = 3;
+	// Generated examples and field descriptions matching this schema.
+	ToolTypeMetadata payload = 4;
+	// Domain result guidance without claiming UI output.
+	optional string result_reminder = 5;
+	// Complete input schema requiring disabled rendering controls.
+	optional bytes execution_schema = 6;
 }
 
 message DeclareServiceToolsetResponse {
@@ -671,6 +691,8 @@ message ToolCallMeta {
 	// Run labels and runtime-supplied values fixed for this call. Providers use
 // them to fill fields declared with Inject; models never see them.
 	map<string, string> labels = 6;
+	// Accepted execution restriction prohibiting UI output or external interaction.
+	optional bool text_only = 7;
 }
 
 message CallToolResponse {

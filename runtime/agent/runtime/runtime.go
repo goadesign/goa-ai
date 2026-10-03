@@ -733,6 +733,18 @@ func WithRestrictToTool(id tools.Ident) RunOption {
 	})
 }
 
+// WithTextOnly accepts an immutable restriction to ordinary messages and domain
+// data for this run. The runtime propagates it to every child and continuation.
+func WithTextOnly(enabled bool) RunOption {
+	return runOption(func(start *runStart) {
+		in := &start.input
+		if in.Policy == nil {
+			in.Policy = &PolicyOverrides{}
+		}
+		in.Policy.TextOnly = enabled
+	})
+}
+
 // WithTagPolicyClauses sets explicit tag-policy clauses on the run policy.
 func WithTagPolicyClauses(clauses []TagPolicyClause) RunOption {
 	return runOption(func(start *runStart) {
@@ -1700,6 +1712,13 @@ func agentChildRunInput(definition AgentDefinition, request agentChildRequest) (
 	if err := validateRequiredLabels(definition, nested.Labels); err != nil {
 		return nil, err
 	}
+	policy := clonePolicyOverrides(request.policy)
+	if nested.TextOnly {
+		if policy == nil {
+			policy = &PolicyOverrides{}
+		}
+		policy.TextOnly = true
+	}
 	return &RunInput{
 		AgentID:          definition.route.ID,
 		RunID:            nested.RunID,
@@ -1711,7 +1730,7 @@ func agentChildRunInput(definition AgentDefinition, request agentChildRequest) (
 		Tool:             nested.Tool,
 		ToolArgs:         nested.ToolArgs,
 		ToolRegistry:     nested.ToolRegistry.Clone(),
-		Policy:           clonePolicyOverrides(request.policy),
+		Policy:           policy,
 		SeedEndID:        request.seedEndID,
 		Labels:           nested.Labels,
 	}, nil

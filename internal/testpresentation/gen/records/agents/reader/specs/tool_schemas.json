@@ -1,0 +1,125 @@
+{
+  "tools": [
+    {
+      "id": "records.erase",
+      "service": "records",
+      "toolset": "records.records",
+      "title": "Erase",
+      "description": "Erase selected records after confirmation.",
+      "confirmation": {
+        "prompt_template": "Erase the records?",
+        "denied_result_template": "{\"erased\":false}"
+      },
+      "payload": {
+        "name": "ErasePayload",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "type": "object"
+        }
+      },
+      "result": {
+        "name": "EraseResult",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "erased": {
+              "description": "Whether records were erased.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "erased"
+          ],
+          "type": "object"
+        }
+      }
+    },
+    {
+      "id": "records.read",
+      "service": "records",
+      "toolset": "records.records",
+      "title": "Read",
+      "description": "Read a bounded record count. Display the card when render_ui=true.",
+      "payload": {
+        "name": "ReadPayload",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "query": {
+              "description": "Record selection.",
+              "type": "string"
+            },
+            "render_ui": {
+              "description": "Show an interactive card.",
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "query"
+          ],
+          "type": "object"
+        }
+      },
+      "result": {
+        "name": "ReadResult",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "count": {
+              "description": "Number of records.",
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          "required": [
+            "count"
+          ],
+          "type": "object"
+        }
+      },
+      "server_data": [
+        {
+          "kind": "record.card",
+          "audience": "timeline",
+          "type": {
+            "name": "ReadRecordCardServerData",
+            "schema": {
+              "$schema": "https://json-schema.org/draft/2020-12/schema",
+              "additionalProperties": false,
+              "properties": {
+                "count": {
+                  "description": "Number shown in the card.",
+                  "format": "int64",
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "count"
+              ],
+              "type": "object"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "records.show",
+      "service": "records",
+      "toolset": "records.records",
+      "title": "Show",
+      "description": "Show an interactive record chart.",
+      "payload": {
+        "name": "ShowPayload",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "type": "object"
+        }
+      }
+    }
+  ]
+}

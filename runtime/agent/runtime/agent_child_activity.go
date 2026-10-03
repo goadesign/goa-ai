@@ -71,6 +71,12 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 		}
 		return nil, err
 	}
+	if input.Call.TextOnly {
+		if request.policy == nil {
+			request.policy = &PolicyOverrides{}
+		}
+		request.policy.TextOnly = true
+	}
 	if _, err := agentChildRunInput(cfg.Definition, request); err != nil {
 		return nil, err
 	}

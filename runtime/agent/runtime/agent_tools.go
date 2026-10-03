@@ -453,6 +453,7 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 // owns the exact call recorded in its history.
 func agentChildRunContext(call *ToolCall) run.Context {
 	return run.Context{
+		TextOnly:         call.TextOnly,
 		Tool:             call.Name,
 		RunID:            NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID),
 		SessionID:        call.SessionID,

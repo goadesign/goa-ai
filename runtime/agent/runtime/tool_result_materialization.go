@@ -69,6 +69,9 @@ func (r *Runtime) materializeToolResultData(
 	call ToolCall,
 	result *planner.ToolResult,
 ) (rawjson.Message, error) {
+	if call.TextOnly && (spec.RequiresUI || spec.Confirmation != nil || spec.TextOnly == nil) {
+		return nil, fmt.Errorf("tool %q is incompatible with text-only execution", call.Name)
+	}
 	if result == nil {
 		return nil, fmt.Errorf("nil tool result for %q (%s)", call.Name, call.ToolCallID)
 	}
@@ -92,10 +95,20 @@ func (r *Runtime) materializeToolResultData(
 		setMalformedToolResult(result, call, err)
 		return nil, nil
 	}
+	if call.TextOnly {
+		if err := toolserverdata.ValidateTextOnly(result.ServerData); err != nil {
+			return nil, fmt.Errorf("tool %q violated text-only execution: %w", call.Name, err)
+		}
+	}
 	serverData, err := toolserverdata.Apply(spec.CanonicalizeServerData, result.ServerData)
 	if err != nil {
 		setMalformedToolResult(result, call, fmt.Errorf("validate %s server data: %w", call.Name, err))
 		return nil, nil
+	}
+	if call.TextOnly {
+		if err := toolserverdata.ValidateTextOnly(serverData); err != nil {
+			return nil, fmt.Errorf("tool %q violated text-only execution: %w", call.Name, err)
+		}
 	}
 	result.ServerData = serverData
 	if err := validateToolResultContract(spec, call, result); err != nil {
@@ -293,6 +306,7 @@ func canonicalProvidedToolFailure(in *api.ProvidedToolFailure) *planner.ToolFail
 // correlation identifiers.
 func ToolCallMetaFromCall(call ToolCall) ToolCallMeta {
 	return ToolCallMeta{
+		TextOnly:         call.TextOnly,
 		RunID:            call.RunID,
 		SessionID:        call.SessionID,
 		TurnID:           call.TurnID,

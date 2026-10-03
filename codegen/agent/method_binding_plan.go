@@ -78,9 +78,7 @@ func planProviderImports(
 	if hasBoundsTool(tools) {
 		fixed = append(fixed, goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent"))
 	}
-	if hasInjectedMethodTool(tools) {
-		fixed = append(fixed, goacodegen.NewImport("runtime", "goa.design/goa-ai/runtime/agent/runtime"))
-	}
+	fixed = append(fixed, goacodegen.NewImport("runtime", "goa.design/goa-ai/runtime/agent/runtime"))
 	if err := requirePackageImports(pkg, fixed); err != nil {
 		return err
 	}
@@ -213,15 +211,6 @@ func hasServerDataTool(tools []*agent.ToolExpr) bool {
 			if data != nil && data.Source != nil && data.Source.MethodResultField != "" {
 				return true
 			}
-		}
-	}
-	return false
-}
-
-func hasInjectedMethodTool(tools []*agent.ToolExpr) bool {
-	for _, tool := range tools {
-		if tool.Method != nil && len(tool.InjectedFields) > 0 {
-			return true
 		}
 	}
 	return false

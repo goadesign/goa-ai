@@ -81,6 +81,26 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 		ExecutionPayloadSchema: slices.Clone(declaration.ExecutionPayloadSchema),
 		ExecutionPayloadCodec:  executionCodec,
 	}
+	spec.RequiresUI = contract.RequiresUI
+	if contract.TextOnly != nil {
+		text := contract.TextOnly
+		input, err := compileType(text.PayloadSchema, text.Payload)
+		if err != nil {
+			return tools.ToolSpec{}, fmt.Errorf("tool %q text-only arguments: %w", declaration.Name, err)
+		}
+		search := tools.SearchDocument{Length: text.Search.Length, Terms: maps.Clone(text.Search.Terms)}
+		if err := search.Validate(); err != nil {
+			return tools.ToolSpec{}, err
+		}
+		execution, err := schema.Codec(text.ExecutionSchema)
+		if err != nil {
+			return tools.ToolSpec{}, fmt.Errorf("text-only execution schema: %w", err)
+		}
+		spec.TextOnly = &tools.ModelContract{Description: text.Description, Search: search, Payload: input, ExecutionSchema: slices.Clone(text.ExecutionSchema), ExecutionCodec: execution}
+		if text.ResultReminder != nil {
+			spec.TextOnly.ResultReminder = *text.ResultReminder
+		}
+	}
 	if contract.Agent != nil {
 		spec.IsAgentTool = true
 		spec.AgentID = contract.Agent.Executor

@@ -6773,3 +6773,28 @@ cancellation remain outside `OutputValidationError`.
 | **Stream Event** | Typed runtime event delivered to a trusted host through a Sink. |
 | **Finalizer** | Aggregates child results into parent tool result for agent-as-tool (does not propagate artifacts). |
 | **Reminder** | Structured backstage guidance injected into planner prompts. |
+
+## Text-only execution
+
+`runtime.WithTextOnly(true)` accepts a run that supports ordinary assistant
+messages without interactive client protocols. The accepted policy is carried
+through tool calls, native child runs, checkpoints and recovery. Child policy
+combines the parent and child restrictions with Boolean OR; it cannot loosen
+its parent and does not alter siblings.
+
+Declare `RequiresUI()` on tools whose execution needs a rendered result or
+interactive client. Declare `UIOnly("renderUi")` for an optional Boolean control
+that must be disabled, and place optional rendering guidance in
+`UIInstructions(...)`. Code generation creates both model contracts from that
+one declaration. The text-only model decoder rejects the hidden control, while
+the execution decoder allows only its disabled value. Domain results and
+internal/provenance server data remain available.
+
+The runtime excludes UI and confirmation-required tools before advertising and
+execution. Registry tools require a generated text-only contract. Executors
+receive `ToolCall.TextOnly`, and `runtime.IsTextOnly(ctx)` exposes the same
+accepted restriction to domain producers. Check it before constructing UI
+output. UI server data from a completed text-only call fails before publication
+or persistence; it is not silently removed and the runtime does not repeat a
+completed side effect to repair the result. Questions use ordinary assistant
+responses instead of a structured wait.

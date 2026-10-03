@@ -136,6 +136,12 @@ func (r *Runtime) prepareRegistryAgentChild(ctx context.Context, call ToolCall) 
 		}
 		owned.Labels = mergeLabels(cloneLabels(call.Labels), config.Labels)
 		owned.Policy = clonePolicyOverrides(config.Policy)
+		if call.TextOnly {
+			if owned.Policy == nil {
+				owned.Policy = &PolicyOverrides{}
+			}
+			owned.Policy.TextOnly = true
+		}
 		owned.RenderedPrompts = clonePromptRenderEvents(config.RenderedPrompts)
 		if err := validateRequiredLabels(cfg.Definition, owned.Labels); err != nil {
 			return nil, err

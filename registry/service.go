@@ -33,6 +33,7 @@ type (
 			toolset, toolUseID, registrationToken, digest string,
 			executionTimeout, ttl time.Duration,
 			outcomeUnknownPayload []byte,
+			textOnly bool,
 		) (callAdmission, bool, error)
 		Reject(
 			ctx context.Context,
@@ -775,6 +776,7 @@ func (s *Service) routeUnpublishedToolCall(
 			executionTimeout,
 			s.resultStreamTTL,
 			outcomeUnknownPayload(registration.RegistrationToken, prepared.toolUseID),
+			prepared.meta.TextOnly,
 		)
 		if err != nil {
 			return nil, callDecisionError(err)
@@ -1101,6 +1103,7 @@ func prepareToolCallIdentity(
 ) (preparedToolCall, error) {
 	toolUseID := toolUseIDForCall(meta)
 	messageMeta := toolregistry.ToolCallMeta{
+		TextOnly:         meta.TextOnly,
 		RunID:            meta.RunID,
 		SessionID:        meta.SessionID,
 		TurnID:           derefString(meta.TurnID),
@@ -1162,6 +1165,12 @@ func (s *Service) validatePreparedToolCall(
 			prepared.tool,
 			prepared.toolset,
 		))
+	}
+	if prepared.meta.TextOnly {
+		schema, exists = registration.Toolset.textOnlySchemas[prepared.tool.String()]
+		if !exists {
+			return genregistry.MakeValidationError(errors.New("tool requires unsupported interaction or has no text-only execution contract"))
+		}
 	}
 	if err := validatePayload(schema, prepared.payload); err != nil {
 		return genregistry.MakeValidationError(fmt.Errorf(
