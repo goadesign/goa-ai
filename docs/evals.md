@@ -430,10 +430,11 @@ loudly instead of silently running nothing.
 ## How judging works
 
 `eval/judge` builds a judge from any `model.Client`, the same model-client
-interface the rest of Goa-AI uses, so it works with any configured provider.
-The application must supply a positive `maxOutputTokens` to `judge.New` and
-handle its construction error. This is the inclusive output-token limit for one
-complete model response, shared by every judgment and the tool JSON, not a
+interface the rest of Goa-AI uses. The configured provider must support the
+selected tool-choice operation.
+The application must supply a positive `maxOutputTokens` to `judge.New` or
+`judge.NewAutomatic` and handle its construction error. This is the inclusive
+output-token limit for one complete model response, shared by every judgment and the tool JSON, not a
 per-claim or whole-suite allowance. Each permitted correction receives the same
 limit. The judge never multiplies it by claim count, clips it to a provider
 ceiling, or increases it after failure. Provider limits still apply, and any
@@ -447,6 +448,13 @@ limit as the second argument, handle the returned error, and keep options such
 as `judge.WithModelClass(...)` after that argument. This constructor migration
 does not change generated suites, stored reports, or custom `eval.Judge`
 implementations.
+
+`judge.New` requests a forced named grading tool. `judge.NewAutomatic` requests
+automatic tool selection and still requires one accepted grading-tool call.
+Both use the same prompt, schema, codec, claims and reference handling. Text
+alone is an error, never a grade. Select the constructor explicitly for the
+configured provider; neither constructor changes models or falls back to another
+output mechanism. Existing forced-tool callers do not need to change.
 
 Custom judges implement this same batch contract:
 
@@ -519,8 +527,13 @@ The schema rejects unknown or missing claim names, unknown fields, invalid label
 and empty rationales. The judge's raw JSON codec also rejects duplicate decoded
 member names at every object depth, including escaped spellings of the same name,
 before map decoding could discard one decision. These invalid arguments use the
-runtime's existing bounded correction flow through `runtime/agent/tooloutput.Run`:
+runtime's existing bounded correction flow through `runtime/agent/tooloutput.Run`
+or `RunAutomatic`, according to the constructor:
 one initial call and at most three corrections, with the same response allowance.
+The accepted response must contain exactly one grading call. A rejected response
+with multiple calls and invalid arguments can be corrected into one valid call;
+none of the rejected calls executes. A schema-valid semantic judgment is returned
+unchanged and does not trigger correction.
 Provider and transport failures are not retried by the judge. There is no new
 native strict-output requirement or per-claim model call.
 

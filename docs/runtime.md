@@ -238,8 +238,15 @@ typed value through an ordinary tool and may replace invalid arguments. This is
 a different contract from a typed completion: the provider forces one named
 tool, while the agent runtime owns the bounded replacement turns.
 
-`Run` accepts a typed `completion.Spec[T]`, generated from a completion DSL
-declaration or built dynamically when the output schema depends on the request.
+Use `tooloutput.RunAutomatic[T]` when you explicitly want automatic provider
+tool selection with the same required typed result. The provider may return
+text, but text alone is never decoded as a result. The accepted response must
+call the supplied tool exactly once. This helper does not switch to forced tools
+or native structured output after a failure, and it does not select a model.
+The existing `Run` operation still forces its named tool.
+
+Both operations accept a typed `completion.Spec[T]`, generated from a completion
+DSL declaration or built dynamically when the output schema depends on the request.
 The spec contains only the output name, description, JSON schema, optional
 example, and codec paired with `T`. The helper privately constructs the
 ordinary `tools.ToolSpec` and uses the same typed contract for its arguments and
@@ -249,16 +256,20 @@ The arguments accepted from the model decode to exactly the value returned to
 the caller.
 
 Each call creates one in-memory runtime and one sessionless run. The model sees
-only the supplied tool and an exact forced choice for that tool. One successful
-tool call completes the run, and `MaxToolCalls` is one. Malformed tool JSON and
+only the supplied tool, with the choice fixed by the selected operation on every
+initial and correction request. One successful tool call completes the run, and
+`MaxToolCalls` is one. Malformed tool JSON and
 generated schema or typed validation failures receive the runtime's canonical
-bounded correction reminder. Provider failures, zero or multiple forced calls,
-and internal contract failures are terminal. `Run` rejects a request that
+bounded correction reminder. Cardinality is checked after argument validation:
+a response with multiple calls and invalid arguments can be corrected into one
+accepted call; none of the rejected calls executes. A validated response with
+zero or multiple calls cannot complete the operation. Provider failures and
+internal contract failures are terminal. Both operations reject a request that
 already sets `Tools`, `ToolChoice`, `StructuredOutput`, or `Stream` before
 inference.
 
-On failure, `Run` returns a `*tooloutput.RunError`. Its diagnostic text includes
-the terminal error followed by the original errors
+On failure, either operation returns a `*tooloutput.RunError`. Its diagnostic
+text includes the terminal error followed by the original errors
 observed by that private runtime. Its text includes full nested and joined cause
 messages, even when workflow records bound or omit those messages. The original
 objects remain accessible with `errors.Is` and `errors.As`; exact failure strings
@@ -282,7 +293,7 @@ token usage, and retained response stop reason/output-limit flag when available.
 Missing facts remain unknown. These facts do not imply that the original HTTP
 response is available, and tool arguments or response messages are not
 automatically rendered. Applications choose where to display or retain returned
-errors; `Run` neither configures global tracing nor enables body capture.
+errors; neither operation configures global tracing or enables body capture.
 
 The returned error is a frozen snapshot. Caller cancellation can return before a
 private activity finishes, so only observations already received are included;
@@ -313,7 +324,9 @@ Choose one generated entry point for each model interaction:
 - `completions.StreamComplete<Name>(...)` makes one provider-enforced streaming
   request;
 - `tooloutput.Run(..., completions.Spec<Name>())` runs the same typed contract
-  as one ordinary forced tool with bounded argument correction; and
+  as one ordinary forced tool with bounded argument correction;
+- `tooloutput.RunAutomatic(..., completions.Spec<Name>())` uses automatic tool
+  selection but still requires one accepted typed tool result; and
 - `<Name>Example()` returns only the authored example when no schema or codec is
   needed.
 

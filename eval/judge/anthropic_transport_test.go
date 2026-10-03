@@ -218,7 +218,10 @@ func (r *judgmentHTTPTransport) RoundTrip(request *http.Request) (*http.Response
 		arguments = r.argumentsByRequest[len(r.requests)]
 	}
 	r.requests = append(r.requests, observed)
-	name := observed.body.ToolChoice.Name
+	if len(observed.body.Tools) != 1 {
+		return nil, fmt.Errorf("expected one grading tool, got %d", len(observed.body.Tools))
+	}
+	name := observed.body.Tools[0].Name
 	contentType := "application/json"
 	var body []byte
 	if strings.HasSuffix(request.URL.Path, "/invoke-with-response-stream") {
