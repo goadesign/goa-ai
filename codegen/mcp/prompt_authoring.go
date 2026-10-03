@@ -104,10 +104,15 @@ type (
 		ResourceField    string
 		NestedConversion string
 		MetaField        string
+		CheckSize        bool
+		CheckPriority    bool
 	}
 )
 
-const promptResourceField = "resource"
+const (
+	promptResourceField = "resource"
+	promptResourceLink  = "resource_link"
+)
 
 // buildMethodPromptAdapters checks the authored shapes before generation adds
 // any functions. Every accepted field has one declared MCP representation.
@@ -189,7 +194,7 @@ func buildPromptContentConversion(attribute, target *expr.AttributeExpr, hasType
 				fields, required = []string{"text"}, []string{"text"}
 			case "image", "audio":
 				fields, required, bytesField = []string{"data", "mimeType"}, []string{"mimeType"}, "data"
-			case "resource_link":
+			case promptResourceLink:
 				fields, required = []string{"uri", "name", "title", "description", "mimeType", "size", "icons"}, []string{"uri", "name"}
 			case promptResourceField:
 				fields, required = []string{promptResourceField}, []string{promptResourceField}

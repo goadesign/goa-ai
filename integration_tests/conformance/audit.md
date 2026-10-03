@@ -196,3 +196,9 @@ focused race checks cover the final shared-converter changes, and uncached HTTP
 integration scenarios passed after regeneration. This is local implementation
 verification. The recorded referee baseline above remains unchanged; independent
 prompt producer conformance and server-produced additional input remain gates.
+
+The prompt HTTP fixture also rejects `NaN` and either infinity in authored
+resource sizes and annotation priorities. All six cases return a JSON-RPC
+internal error instead of breaking response encoding. Fresh MCP generator race
+tests and configured lint passed for this boundary fix. These are local tests;
+the independent prompt scenario remains outstanding.

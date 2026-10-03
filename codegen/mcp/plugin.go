@@ -226,6 +226,10 @@ func planMCPImports(
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("encoding/base64"))
 		data.serverImportPaths = append(data.serverImportPaths, "encoding/base64")
 	}
+	if data.NeedsPromptNumbers {
+		serverFixed = append(serverFixed, goacodegen.SimpleImport("math"))
+		data.serverImportPaths = append(data.serverImportPaths, "math")
+	}
 	if data.NeedsPromptMeta {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("fmt"))
 		data.serverImportPaths = append(data.serverImportPaths, "fmt")

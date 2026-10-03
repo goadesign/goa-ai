@@ -6479,7 +6479,9 @@ references to the removed `MessageContent` with `ContentItem`, and dereference
 MCP's JSON number as `*float64`, and `Icons` retains the supplied descriptions.
 Decoding icons never fetches or renders their URIs. Method-backed prompt
 services can also author these five kinds through typed Goa results; see
-[the prompt contract](dsl.md#method-backed-mcp-prompts). Rich tool presentation
+[the prompt contract](dsl.md#method-backed-mcp-prompts). The generated adapter
+rejects non-finite authored priorities and resource sizes before response
+encoding, so clients receive an internal-error response. Rich tool presentation
 remains separate work.
 
 Content types now contain raw JSON extension metadata. The generic standalone

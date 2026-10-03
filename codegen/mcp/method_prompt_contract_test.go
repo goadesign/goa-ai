@@ -11,6 +11,7 @@ import (
  "errors"
  "bytes"
  "io"
+ "math"
  "net/http"
  "net/http/httptest"
  "net/url"
@@ -124,6 +125,18 @@ func TestMethodBackedPrompts(t *testing.T) {
   _,err:=client.PromptsGet()(t.Context(),&genmcpprompts.PromptsGetPayload{Name:"review",Arguments:map[string]string{"code":"x"}})
   var failure *mcpruntime.Error
   if !errors.As(err,&failure)||failure.Code!=-32603{t.Fatalf("invalid service result=%s err=%v",source,err)}
+ }
+ for _,number:=range []float64{math.NaN(),math.Inf(1),math.Inf(-1)} {
+  for _,kind:=range []string{"size","priority"} {
+   service.result=&genprompts.AuthoredPromptResult{}
+   source:="{\"messages\":[{\"role\":\"user\",\"content\":{\"type\":\"resource_link\",\"value\":{\"uri\":\"doc://finite\",\"name\":\"finite\",\"size\":1}}}]}"
+   if kind=="priority" {source="{\"messages\":[{\"role\":\"user\",\"content\":{\"type\":\"text\",\"value\":{\"text\":\"x\",\"annotations\":{\"priority\":1}}}}]}"}
+   if err:=decodeAuthoredPrompt(source,service.result);err!=nil{t.Fatal(err)}
+   if kind=="size" {link,_:=service.result.Messages[0].Selected.AsResourceLink();link.Size=&number} else {text,_:=service.result.Messages[0].Selected.AsText();text.Annotations.Priority=&number}
+   _,err:=client.PromptsGet()(t.Context(),&genmcpprompts.PromptsGetPayload{Name:"review",Arguments:map[string]string{"code":"x"}})
+   var failure *mcpruntime.Error
+   if !errors.As(err,&failure)||failure.Code!=-32603{t.Fatalf("%s=%v err=%v",kind,number,err)}
+  }
  }
  for _,arguments:=range []string{"null", "[]", "{\"code\":7}", "{\"code\":null}"} {
   name:="review";if arguments=="null"{name="empty"}

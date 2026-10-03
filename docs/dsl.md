@@ -1522,7 +1522,9 @@ empty base64 string. Other required fields must use Goa `Required`.
 URI fields declare `Format(FormatURI)`. Annotation audience values permit only
 `user` and `assistant`; priority is a `Float64` between 0 and 1 inclusive for
 **each content item**, independent of other items. Resource-link `size` is a
-nonnegative `Float64` describing the resource's byte count. Icon objects declare
+nonnegative `Float64` describing the resource's byte count. Both numbers must
+be finite; a service result containing `NaN` or infinity returns an internal
+error before response encoding. Icon objects declare
 required `src` with URI format and optional `mimeType`, string `sizes`, and
 `theme` restricted to `light` or `dark`; object arrays use `ArrayOfRequired`.
 Open `_meta` objects use `Any` with `Meta("struct:field:type", "json.RawMessage",

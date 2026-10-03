@@ -54,6 +54,8 @@ type (
 		NeedsPromptBytes bool
 		// NeedsPromptMeta reports that authored prompt metadata needs object validation.
 		NeedsPromptMeta bool
+		// NeedsPromptNumbers reports that content needs finite JSON number checks.
+		NeedsPromptNumbers bool
 		// NeedsNoArgumentsValidation reports whether a tool has no payload.
 		NeedsNoArgumentsValidation bool
 		// NeedsBoolPtr reports that generated tool errors set MCP's optional flag.

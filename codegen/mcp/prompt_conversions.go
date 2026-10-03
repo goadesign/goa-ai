@@ -63,6 +63,13 @@ func promptConversionNeeds(data *AdapterData, conversion *promptContentConversio
 	for _, branch := range conversion.branches {
 		data.NeedsPromptBytes = data.NeedsPromptBytes || branch.bytesField != ""
 		data.NeedsPromptMeta = data.NeedsPromptMeta || branch.metaField
+		object := expr.AsObject(branch.attribute.Type)
+		if branch.name == promptResourceLink && object.Attribute("size") != nil {
+			data.NeedsPromptNumbers = true
+		}
+		if annotations := object.Attribute("annotations"); annotations != nil && expr.AsObject(annotations.Type).Attribute("priority") != nil {
+			data.NeedsPromptNumbers = true
+		}
 		if branch.nested != nil {
 			promptConversionNeeds(data, branch.nested)
 		}
@@ -224,6 +231,10 @@ func bindPromptContentConversion(data *AdapterData, conversion *promptContentCon
 			Getter: "As" + codegen.Goify(branch.name, true), Transform: code,
 		}
 		object := expr.AsObject(branch.attribute.Type)
+		rendered.CheckSize = branch.name == promptResourceLink && object.Attribute("size") != nil
+		if annotations := object.Attribute("annotations"); annotations != nil {
+			rendered.CheckPriority = expr.AsObject(annotations.Type).Attribute("priority") != nil
+		}
 		if branch.bytesField != "" {
 			rendered.BytesField = sourceScope.Field(object.Attribute(branch.bytesField), branch.bytesField, true)
 			rendered.TargetBytesField = targetScope.Field(expr.AsObject(conversion.target.Type).Attribute(branch.bytesField), branch.bytesField, true)

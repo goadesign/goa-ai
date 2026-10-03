@@ -110,7 +110,8 @@ base64 conversion for bytes and exactly one embedded text/blob variant. It
 retains normal aliases, renamed fields, and located types. Unsupported fields,
 opaque Go type replacements and weaker protocol constraints fail generation.
 Null and non-string arguments fail before service dispatch. Invalid results,
-including nil results and unset content branches, return protocol errors.
+including nil results, unset content branches and non-finite sizes or priorities,
+return protocol errors.
 Static prompts and valid prompt/tool composition remain available. These are
 successful prompt producers; additional-input production remains a separate gate.
 The compiled separate-module HTTP fixture verifies all five kinds, empty text
