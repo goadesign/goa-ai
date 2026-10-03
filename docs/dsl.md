@@ -1434,6 +1434,11 @@ Service("calculator", func() {
 })
 ```
 
+Only methods with `Tool`, `Resource`, `ResourceTemplate`, `Prompt`, or completion
+bindings enter the generated MCP catalog and executor. Other methods in the same
+service retain their ordinary HTTP or gRPC contract. For example, an HTTP-only
+`health` method can serve `/health` without becoming a model-callable tool.
+
 ### MCP resource content
 
 Resource methods have no payload and return the content for their declared URI.

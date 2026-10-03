@@ -46,7 +46,7 @@ func prepareMCPServicesFromRoot(
 				continue
 			}
 			mcp := mcpRoot.GetMCP(svc)
-			if err := validateMCPService(svc, mcp); err != nil {
+			if err := validateMCPResources(svc, mcp.Resources); err != nil {
 				return nil, err
 			}
 

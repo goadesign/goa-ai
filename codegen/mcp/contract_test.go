@@ -21,7 +21,7 @@ import (
 
 const readDocumentMethod = "ReadDocument"
 
-func TestPrepareServices_RejectsUnmappedMCPMethods(t *testing.T) {
+func TestPrepareServices_PreservesMethodsWithoutMCPDeclarations(t *testing.T) {
 	restore := resetMCPCodegenState(t)
 	defer restore()
 
@@ -39,9 +39,10 @@ func TestPrepareServices_RejectsUnmappedMCPMethods(t *testing.T) {
 
 	err := prepareServices([]eval.Root{root})
 
-	require.Error(t, err)
-	require.ErrorContains(t, err, `service "calc"`)
-	require.ErrorContains(t, err, "subtract")
+	require.NoError(t, err)
+	require.Same(t, methods["subtract"], svc.Method("subtract"))
+	require.Nil(t, root.Service("mcp_calc").Method("subtract"))
+	require.Len(t, mcpexpr.Root.GetMCP(svc).Tools, 1)
 }
 
 func TestPrepareServices_AttachesGeneratedMCPDesign(t *testing.T) {

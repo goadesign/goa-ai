@@ -29,6 +29,7 @@ import (
  "bytes"
  "context"
  "encoding/json"
+ "errors"
  "io"
  "net/http"
  "net/http/httptest"
@@ -37,6 +38,8 @@ import (
  "testing"
  genmcpfmt "generated.local/gen/mcp_fmt"
  genmcpfmtsrv "generated.local/gen/jsonrpc/mcp_fmt/server"
+ genfmt "generated.local/gen/fmt_"
+ genfmthttpsrv "generated.local/gen/http/fmt_/server"
  goahttp "goa.design/goa/v3/http"
  mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
@@ -46,6 +49,7 @@ func (f retryDoer) Do(r *http.Request) (*http.Response,error) { return f(r) }
 
 type echoService struct { calls int }
 func (s *echoService) Echo(context.Context) (string,error) {s.calls++;return "hello",nil}
+func (s *echoService) Health(context.Context) (string,error) {return "ready",nil}
 
 func TestGeneratedStatelessProtocol(t *testing.T) {
  service:=&echoService{}
@@ -53,7 +57,13 @@ func TestGeneratedStatelessProtocol(t *testing.T) {
  mux:=goahttp.NewMuxer()
  server:=genmcpfmtsrv.New(genmcpfmt.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil)
  genmcpfmtsrv.MountWithOrigins(mux,server,[]string{"https://allowed.test"})
+ ordinary:=genfmthttpsrv.New(genfmt.NewEndpoints(service),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil,nil)
+ genfmthttpsrv.Mount(mux,ordinary)
  endpoint:=httptest.NewServer(mux);defer endpoint.Close()
+ healthRequest,err:=http.NewRequestWithContext(t.Context(),"GET",endpoint.URL+"/health",nil);if err!=nil{t.Fatal(err)}
+ health,err:=endpoint.Client().Do(healthRequest);if err!=nil{t.Fatal(err)}
+ healthBody,readErr:=io.ReadAll(health.Body);closeErr:=health.Body.Close();if readErr!=nil||closeErr!=nil{t.Fatalf("read=%v close=%v",readErr,closeErr)}
+ if health.StatusCode!=200||strings.TrimSpace(string(healthBody))!="\"ready\"" {t.Fatalf("health status=%d body=%s",health.StatusCode,healthBody)}
  location,err:=url.Parse(endpoint.URL);if err!=nil{t.Fatal(err)}
  client:=NewClient(location.Scheme,location.Host,endpoint.Client(),goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
  caller,err:=NewCaller(client,mcpruntime.ClientInfo{Name:"test",Version:"1"},mcpruntime.InputSupport{},mcpruntime.HTTPRetryPolicy{});if err!=nil{t.Fatal(err)}
@@ -63,6 +73,10 @@ func TestGeneratedStatelessProtocol(t *testing.T) {
  discovery:=discovered.(*genmcpfmt.DiscoverResult)
  if discovery.ResultType!="complete"||len(discovery.SupportedVersions)!=1||discovery.SupportedVersions[0]!=mcpruntime.ProtocolVersion{t.Fatalf("discovery=%+v",discovery)}
  catalog,err:=client.ToolsList()(context.Background(),&genmcpfmt.ToolsListPayload{});if err!=nil{t.Fatal(err)}
+ if len(catalog.(*genmcpfmt.ToolsListResult).Tools)!=1||catalog.(*genmcpfmt.ToolsListResult).Tools[0].Name!="echo"{t.Fatal("ordinary HTTP method entered MCP catalog")}
+ _,unknownErr:=caller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"health",Payload:json.RawMessage("{}")})
+ var protocolError *mcpruntime.Error
+ if !errors.As(unknownErr,&protocolError)||protocolError.Code!=mcpruntime.JSONRPCInvalidParams{t.Fatalf("undeclared tool error=%v",unknownErr)}
  if catalog.(*genmcpfmt.ToolsListResult).CacheScope!="private"{t.Fatal("missing cache scope")}
  hints:=catalog.(*genmcpfmt.ToolsListResult).Tools[0].Annotations
  if hints==nil||hints.Title==nil||*hints.Title!="Echo"||hints.ReadOnlyHint==nil||!*hints.ReadOnlyHint||hints.DestructiveHint==nil||*hints.DestructiveHint||hints.IdempotentHint==nil||*hints.IdempotentHint||hints.OpenWorldHint==nil||*hints.OpenWorldHint {t.Fatalf("hints=%+v",hints)}
@@ -236,7 +250,7 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	formatterMethods["render"].Payload = &expr.AttributeExpr{Type: locatedRenderPayload}
 	selector, selectorMethods := testService("selector", "read_value", "read-value")
 	contextService, contextMethods := testService("context", "ping")
-	fmtService, fmtMethods := testService("fmt", "echo")
+	fmtService, fmtMethods := testService("fmt", "echo", "health")
 	prompts, _ := testService("prompts")
 	staticPrompts, _ := testService("static_prompts")
 	methodPrompts, promptMethods := testService("method_prompts", "review", "empty", "complete_style")
@@ -279,6 +293,9 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 		Path:     "/calculate",
 		Endpoint: httpEndpoint,
 	}}
+	ordinaryHTTP := root.API.HTTP.ServiceFor(fmtService, root.API.HTTP)
+	ordinaryEndpoint := ordinaryHTTP.EndpointFor(fmtMethods["health"])
+	ordinaryEndpoint.Routes = []*expr.RouteExpr{{Method: http.MethodGet, Path: "/health", Endpoint: ordinaryEndpoint}}
 	root.API.Name = "calc"
 	root.API.Version = "1.0"
 	root.API.GRPC = &expr.GRPCExpr{}
@@ -295,6 +312,9 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	httpService.Prepare()
 	httpEndpoint.Prepare()
 	httpEndpoint.Finalize()
+	ordinaryHTTP.Prepare()
+	ordinaryEndpoint.Prepare()
+	ordinaryEndpoint.Finalize()
 	expr.Root = root
 	eval.Reset()
 	require.NoError(t, eval.Register(root))
@@ -491,6 +511,12 @@ replace goa.design/goa/v3 => %s
 	selectorJSONRPCStream, err := generatedRoot.ReadFile("jsonrpc/mcp_selector/client/stream.go")
 	require.Error(t, err)
 	require.Empty(t, selectorJSONRPCStream)
+	ordinaryCodec, err := generatedRoot.ReadFile("mcp_fmt/internal/codec/codec.go")
+	require.NoError(t, err)
+	require.NotContains(t, string(ordinaryCodec), "Health")
+	ordinarySpecs, err := generatedRoot.ReadFile("fmt_/toolsets/fmt/specs.go")
+	require.NoError(t, err)
+	require.NotContains(t, string(ordinarySpecs), "Health")
 	selectorCaller, err := generatedRoot.ReadFile("jsonrpc/mcp_selector/client/caller.go")
 	require.NoError(t, err)
 	require.Contains(t, string(selectorCaller), `mcpselector "generated.local/gen/mcp_selector"`)

@@ -1983,8 +1983,9 @@ version and truthful client capabilities; `server/discover` reports capabilities
 without creating session state. The shared HTTP transport validates mirrored
 headers and exact response IDs for generated and imported clients.
 
-Generated adapters call unary Goa methods through generated argument and result
-codecs. Tool schemas and agent specs use the same generation-time JSON contract,
+Generated adapters call explicitly declared MCP methods through generated
+argument and result codecs. Ordinary methods in the same service retain their
+declared transports and do not enter MCP catalogs, codecs, or executors. Tool schemas and agent specs use the same generation-time JSON contract,
 including exact JSON field names, local recursive definitions, and union branches.
 Tools accept object arguments. Their structured results may be any declared JSON
 root kind; text is not a fallback decoder. Adapters emit OpenTelemetry spans and

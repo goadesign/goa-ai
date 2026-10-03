@@ -5,56 +5,10 @@ package codegen
 
 import (
 	"fmt"
-	"sort"
-	"strings"
 
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/expr"
 )
-
-// validateMCPService accepts only methods the generated MCP adapter can
-// represent without losing information.
-func validateMCPService(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr) error {
-	if err := validateMCPResources(svc, mcp.Resources); err != nil {
-		return err
-	}
-	mapped := make(map[string]struct{}, len(svc.Methods))
-	for _, tool := range mcp.Tools {
-		mapped[tool.Method.Name] = struct{}{}
-	}
-	for _, resource := range mcp.Resources {
-		mapped[resource.Method.Name] = struct{}{}
-	}
-	for _, template := range mcp.ResourceTemplates {
-		mapped[template.Method.Name] = struct{}{}
-	}
-	for _, prompt := range mcp.MethodPrompts {
-		mapped[prompt.Method.Name] = struct{}{}
-	}
-	for _, completion := range mcp.PromptCompletions {
-		mapped[completion.Method.Name] = struct{}{}
-	}
-	for _, completion := range mcp.ResourceCompletions {
-		mapped[completion.Method.Name] = struct{}{}
-	}
-	unmapped := make([]string, 0, len(svc.Methods))
-	for _, method := range svc.Methods {
-		if _, ok := mapped[method.Name]; ok {
-			continue
-		}
-		unmapped = append(unmapped, method.Name)
-	}
-	if len(unmapped) == 0 {
-		return nil
-	}
-
-	sort.Strings(unmapped)
-	return fmt.Errorf(
-		`service %q has methods not mapped to MCP constructs: %s`,
-		svc.Name,
-		strings.Join(unmapped, ", "),
-	)
-}
 
 // validateMCPResources rejects methods that cannot represent one fixed MCP
 // resource URI without hidden inputs.

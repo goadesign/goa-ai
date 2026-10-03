@@ -38,7 +38,8 @@ workflow, so a service method can also become an agent tool.
 
 - **Your schemas stay in sync.** A tool bound to a Goa method inherits its input
   and result types. Regenerate after a design change to update model schemas,
-  typed codecs, and service bindings together. HTTP/OpenAPI and gRPC/protobuf
+  typed codecs, and service bindings together. Ordinary methods can share an MCP-enabled service without entering its tool
+  catalog. HTTP/OpenAPI and gRPC/protobuf
   come from that same design when those transports are declared.
 - **Invalid tool calls get a path to recovery.** A missing field or wrong type
   produces clear correction guidance. Authored examples show the model a valid

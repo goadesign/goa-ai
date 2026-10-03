@@ -40,6 +40,17 @@ All three packages passed. The first attempt could not access Go's build cache; 
 
 ## Implementation progress
 
+Composition validation no longer requires every method in an MCP-enabled service
+to have an MCP declaration. Only declared operations enter MCP catalogs, codecs,
+agent specs and executors. Ordinary methods retain their authored transports.
+The previous restriction rejected an HTTP-only `health` method even though Goa
+already generated its independent service and route. No alternate registration
+or runtime dispatch mechanism is required. The compiled HTTP/MCP test mounts both generated servers, receives the ordinary
+HTTP result, excludes that method from the MCP catalog and generated contracts,
+and verifies rejection as an unknown MCP tool. Fresh generator/IR/expression race
+tests passed, including generated agent fixtures; configured lint has zero issues.
+
+
 The clone is based on remote main `f3f5203c1b5c5e5f30a9431172d9603ebe02a567`.
 Root and nested-module dependencies were upgraded and tidied. The Go protobuf
 plugins were checked against their latest released versions; their existing pins
