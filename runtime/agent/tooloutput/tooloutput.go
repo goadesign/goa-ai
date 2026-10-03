@@ -1,4 +1,4 @@
-// Package tooloutput runs one model request that must return a typed value by
+// Package tooloutput runs a model operation that must return a typed value by
 // calling one ordinary tool. The package builds a private in-memory agent for
 // each call, uses the agent runtime's bounded correction flow for invalid tool
 // arguments, and returns the payload accepted by the supplied generated codec.
@@ -21,10 +21,13 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-type outputPlanner struct {
-	request model.Request
-	tool    tools.Ident
-}
+type (
+	outputPlanner struct {
+		request model.Request
+		tool    tools.Ident
+		choice  model.ToolChoice
+	}
+)
 
 const (
 	modelID        = "tooloutput"
@@ -46,7 +49,49 @@ const (
 // causes for errors.Is/As, with full diagnostic text and available response facts.
 // Every failure is a *RunError; its TerminalError excludes earlier observations.
 // A successful correction returns the accepted value and nil error.
-func Run[T any](ctx context.Context, client model.Client, request *model.Request, spec completion.Spec[T]) (_ T, err error) {
+func Run[T any](ctx context.Context, client model.Client, request *model.Request, spec completion.Spec[T]) (T, error) {
+	return run(ctx, client, request, spec, model.ToolChoice{
+		Mode: model.ToolChoiceModeTool,
+		Name: string(spec.Name),
+	})
+}
+
+// RunAutomatic sends request with automatic tool choice and returns a typed
+// value only when the accepted response calls the supplied tool exactly once.
+// Text alone is not a result. Invalid arguments use the same bounded structural
+// corrections as Run; rejected responses execute no tools. A corrected response
+// may succeed even when an earlier invalid response contained multiple calls.
+// Provider failures are terminal, and this operation never falls back to forced
+// tools or native structured output. Every failure is a *RunError, as in Run.
+func RunAutomatic[T any](ctx context.Context, client model.Client, request *model.Request, spec completion.Spec[T]) (T, error) {
+	return run(ctx, client, request, spec, model.ToolChoice{Mode: model.ToolChoiceModeAuto})
+}
+
+// PlanStart asks the model for the required tool call on the first turn.
+func (p outputPlanner) PlanStart(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+	return p.plan(ctx, input.Messages, input.Reminders, input.Agent)
+}
+
+// PlanResume asks the model to replace invalid tool arguments. A finalization
+// request means the configured correction limit was reached without a valid
+// call, so the method returns a terminal error.
+func (p outputPlanner) PlanResume(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+	if input.Finalize != nil {
+		return nil, fmt.Errorf("tool output %q was not accepted before the correction limit", p.tool)
+	}
+	return p.plan(ctx, input.Messages, input.Reminders, input.Agent)
+}
+
+// run registers the supplied result contract in a private runtime and applies
+// the selected tool choice on every model turn. The caller receives only the
+// completed tool's decoded value or the runtime's failure diagnostics.
+func run[T any](
+	ctx context.Context,
+	client model.Client,
+	request *model.Request,
+	spec completion.Spec[T],
+	choice model.ToolChoice,
+) (_ T, err error) {
 	diagnostics := &runDiagnostics{}
 	// Apply the same frozen diagnostic snapshot to every failed exit, including
 	// registration and decoding after the private workflow has returned.
@@ -90,7 +135,7 @@ func Run[T any](ctx context.Context, client model.Client, request *model.Request
 		[]tools.Ident{privateSpec.Name},
 		nil,
 		nil)
-	planner := outputPlanner{request: *request, tool: privateSpec.Name}
+	planner := outputPlanner{request: *request, tool: privateSpec.Name, choice: choice}
 	if err := rt.RegisterAgent(ctx, agentruntime.AgentRegistration{
 		Definition:          definition,
 		Planner:             planner,
@@ -120,59 +165,6 @@ func Run[T any](ctx context.Context, client model.Client, request *model.Request
 	return value, nil
 }
 
-// PlanStart asks the model for the required tool call on the first turn.
-func (p outputPlanner) PlanStart(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
-	return p.plan(ctx, input.Messages, input.Reminders, input.Agent)
-}
-
-// PlanResume asks the model to replace invalid tool arguments. A finalization
-// request means the configured correction limit was reached without a valid
-// call, so the method returns a terminal error.
-func (p outputPlanner) PlanResume(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
-	if input.Finalize != nil {
-		return nil, fmt.Errorf("tool output %q was not accepted before the correction limit", p.tool)
-	}
-	return p.plan(ctx, input.Messages, input.Reminders, input.Agent)
-}
-
-func (p outputPlanner) plan(
-	ctx context.Context,
-	messages []*model.Message,
-	reminders []reminder.Reminder,
-	agentContext planner.PlannerContext,
-) (*planner.PlanResult, error) {
-	messages, err := reminder.InjectMessages(messages, reminders)
-	if err != nil {
-		return nil, fmt.Errorf("prepare tool output messages: %w", err)
-	}
-	client, ok := agentContext.PlannerModelClient(modelID)
-	if !ok {
-		return nil, errors.New("tool output model is not registered")
-	}
-	request := p.request
-	request.Messages = messages
-	request.Tools = agentContext.AdvertisedToolDefinitions()
-	request.ToolChoice = &model.ToolChoice{
-		Mode: model.ToolChoiceModeTool,
-		Name: p.tool.String(),
-	}
-	response, err := client.Complete(ctx, &request)
-	if err != nil {
-		return nil, err
-	}
-	calls := response.ToolCalls()
-	if len(calls) != 1 {
-		return nil, planner.NewOutputContractError(
-			fmt.Errorf("model returned %d calls for forced tool %q", len(calls), p.tool),
-		)
-	}
-	call, err := planner.ToolRequestFromModelCall(calls[0])
-	if err != nil {
-		return nil, err
-	}
-	return &planner.PlanResult{ToolCalls: []planner.ToolRequest{call}}, nil
-}
-
 func validateRequest(request *model.Request) error {
 	if request == nil {
 		return errors.New("tool output request is required")
@@ -193,7 +185,7 @@ func validateRequest(request *model.Request) error {
 }
 
 // privateToolSpec adapts a typed completion contract to the ordinary tool used
-// only inside Run. Keeping this construction private prevents callers from
+// only inside the private runtime. Callers receive its accepted value without
 // attaching executable behavior, policy, or result semantics to model output.
 func privateToolSpec[T any](spec completion.Spec[T]) tools.ToolSpec {
 	codec := tools.JSONCodec[any]{}
@@ -233,4 +225,46 @@ func privateToolSpec[T any](spec completion.Spec[T]) tools.ToolSpec {
 		ExecutionPayloadCodec:  codec,
 		Result:                 typeSpec,
 	}
+}
+
+// plan sends the advertised result tool with the selected request choice.
+// After argument validation succeeds, it accepts exactly one call for execution.
+func (p outputPlanner) plan(
+	ctx context.Context,
+	messages []*model.Message,
+	reminders []reminder.Reminder,
+	agentContext planner.PlannerContext,
+) (*planner.PlanResult, error) {
+	messages, err := reminder.InjectMessages(messages, reminders)
+	if err != nil {
+		return nil, fmt.Errorf("prepare tool output messages: %w", err)
+	}
+	client, ok := agentContext.PlannerModelClient(modelID)
+	if !ok {
+		return nil, errors.New("tool output model is not registered")
+	}
+	request := p.request
+	request.Messages = messages
+	request.Tools = agentContext.AdvertisedToolDefinitions()
+	request.ToolChoice = &p.choice
+	response, err := client.Complete(ctx, &request)
+	if err != nil {
+		return nil, err
+	}
+	calls := response.ToolCalls()
+	if len(calls) != 1 {
+		if p.choice.Mode == model.ToolChoiceModeAuto {
+			return nil, planner.NewOutputContractError(
+				fmt.Errorf("model returned %d calls for required tool %q with automatic tool choice", len(calls), p.tool),
+			)
+		}
+		return nil, planner.NewOutputContractError(
+			fmt.Errorf("model returned %d calls for forced tool %q", len(calls), p.tool),
+		)
+	}
+	call, err := planner.ToolRequestFromModelCall(calls[0])
+	if err != nil {
+		return nil, err
+	}
+	return &planner.PlanResult{ToolCalls: []planner.ToolRequest{call}}, nil
 }

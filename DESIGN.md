@@ -238,12 +238,12 @@ framing that is absent from the completion contract.
 
 The separate `runtime/agent/tooloutput` package owns the case where an
 application deliberately permits the model to replace invalid ordinary-tool
-arguments. `Run[T]` accepts one typed `completion.Spec[T]`, normally returned
-by the generated `Spec<Name>()` factory. The spec exposes only the output name,
+arguments. `Run[T]` and `RunAutomatic[T]` accept one typed `completion.Spec[T]`,
+normally returned by the generated `Spec<Name>()` factory. The spec exposes only the output name,
 description, schema, example, and codec. The helper privately
 uses those fields as both the argument and result contract of one ordinary
 tool, so callers cannot add tool policy or execution behavior. A private
-in-memory agent advertises and forces only that tool, allows one successful
+in-memory agent advertises only that tool, allows one successful
 tool execution, and requires it to complete the run. The typed schema and codec
 remain the model boundary; malformed JSON and typed validation failures use the
 runtime's bounded correction flow. Provider failures and every non-argument
@@ -251,9 +251,15 @@ failure remain terminal. The returned `T` is exactly the value decoded from
 the accepted arguments, so callers cannot insert domain execution or rewriting
 between accepted model output and the returned value.
 
+`Run` forces the named tool; `RunAutomatic` requests automatic selection but
+accepts only one validated call to that tool. Neither parses ordinary text as a
+result or switches output mechanisms. Cardinality applies to the accepted
+response: invalid arguments in an earlier multi-call response may use the same
+bounded correction flow, without executing any of those rejected calls.
+
 The private runtime also owns a per-call diagnostic receiver through its existing
-tracer interface. On failure, `Run` returns a `*tooloutput.RunError` whose
-`TerminalError()` exposes the exact cause that ended the call, before diagnostic
+tracer interface. On failure, either operation returns a `*tooloutput.RunError`
+whose `TerminalError()` exposes the exact cause that ended the call, before diagnostic
 observations were attached. Its text and `Unwrap` retain the original terminal
 and observed errors, with every nested cause rendered and available for
 `errors.Is` / `errors.As`. Observations do not determine execution policy and may
@@ -357,6 +363,11 @@ configuration. That limit is independent of claim count and remains unchanged
 across the existing bounded corrections. The judge owns response shape; the
 application owns permitted response work; providers enforce their own ceilings.
 No finite limit guarantees a completed judgment.
+
+`judge.New` uses forced tool output and `judge.NewAutomatic` explicitly selects
+automatic tool output. Both share the same judge implementation, prompt, schema,
+codec and correction policy. The application chooses the operation; no model
+capability guess or failure-driven fallback changes it.
 
 The private judge tool names each required property with its claim ID and places
 the full claim in that property's description. Code looks up results by name and

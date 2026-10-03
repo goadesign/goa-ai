@@ -1,4 +1,4 @@
-// Package judge classifies evaluation claims with a forced typed tool. Invalid
+// Package judge classifies evaluation claims with one required typed tool. Invalid
 // model arguments use the shared runtime correction flow before callers receive
 // a result.
 package judge
@@ -19,11 +19,13 @@ import (
 )
 
 type (
-	// Judge classifies semantic claims with one forced private tool.
+	// Judge classifies semantic claims with one private tool and returns only
+	// judgments accepted by its schema and codec.
 	Judge struct {
 		client          model.Client
 		modelClass      model.ModelClass
 		maxOutputTokens int
+		runOutput       func(context.Context, model.Client, *model.Request, completion.Spec[responseBody]) (responseBody, error)
 	}
 
 	// Option customizes a Judge.
@@ -67,23 +69,22 @@ Apply each claim's conditions and requirements as written. For a constraint on c
 Call the supplied grading tool exactly once. Each required property describes one claim; supply its label and a concise rationale in that property.`
 )
 
-// New creates a semantic judge backed by client. maxOutputTokens must be positive
-// and limits one complete model response, including all judgments. Every permitted
-// correction uses the same limit; the limit does not guarantee a complete response.
+// New creates a semantic judge backed by client using a forced named tool.
+// maxOutputTokens must be positive and limits one complete model response,
+// including all judgments. Every permitted correction uses the same limit;
+// the limit does not guarantee a complete response.
 // The judge uses the high-reasoning class unless WithModelClass selects another.
 func New(client model.Client, maxOutputTokens int, opts ...Option) (*Judge, error) {
-	if maxOutputTokens <= 0 {
-		return nil, errors.New("judge max output tokens must be positive")
-	}
-	judge := &Judge{
-		client:          client,
-		modelClass:      model.ModelClassHighReasoning,
-		maxOutputTokens: maxOutputTokens,
-	}
-	for _, opt := range opts {
-		opt(judge)
-	}
-	return judge, nil
+	return newJudge(client, maxOutputTokens, tooloutput.Run[responseBody], opts...)
+}
+
+// NewAutomatic creates a judge that requests automatic tool choice but accepts
+// only one validated grading-tool call. It uses the same claims, prompt, schema,
+// codec, output-token limit and bounded structural corrections as New. A model
+// that returns only text produces an error, not a grade. The caller selects this
+// operation explicitly; the judge never switches models or output mechanisms.
+func NewAutomatic(client model.Client, maxOutputTokens int, opts ...Option) (*Judge, error) {
+	return newJudge(client, maxOutputTokens, tooloutput.RunAutomatic[responseBody], opts...)
 }
 
 // WithModelClass selects the model class used by the private judge agent.
@@ -133,22 +134,27 @@ func (j *Judge) Judge(ctx context.Context, output string, claims []aieval.Claim,
 	return judgments, nil
 }
 
-func (j *Judge) run(ctx context.Context, payload []byte, spec completion.Spec[responseBody]) (responseBody, error) {
-	return tooloutput.Run[responseBody](ctx, j.client, &model.Request{
-		ModelClass: j.modelClass,
-		Messages: []*model.Message{
-			{
-				Role:  model.ConversationRoleSystem,
-				Parts: []model.Part{model.TextPart{Text: judgePrompt}},
-			},
-			{
-				Role:  model.ConversationRoleUser,
-				Parts: []model.Part{model.TextPart{Text: string(payload)}},
-			},
-		},
-		Temperature: 0,
-		MaxTokens:   j.maxOutputTokens,
-	}, spec)
+// newJudge validates the response allowance and installs the selected result
+// operation so both constructors return the same judge contract.
+func newJudge(
+	client model.Client,
+	maxOutputTokens int,
+	runOutput func(context.Context, model.Client, *model.Request, completion.Spec[responseBody]) (responseBody, error),
+	opts ...Option,
+) (*Judge, error) {
+	if maxOutputTokens <= 0 {
+		return nil, errors.New("judge max output tokens must be positive")
+	}
+	judge := &Judge{
+		client:          client,
+		modelClass:      model.ModelClassHighReasoning,
+		maxOutputTokens: maxOutputTokens,
+		runOutput:       runOutput,
+	}
+	for _, opt := range opts {
+		opt(judge)
+	}
+	return judge, nil
 }
 
 // judgmentToolSpec makes names and coverage part of the advertised schema. The
@@ -214,4 +220,24 @@ func decodeResponse(data []byte) (responseBody, error) {
 		return nil, err
 	}
 	return response, nil
+}
+
+// run sends the candidate and reference separately with the claim schema, then
+// returns only the typed result accepted by the selected tool-output operation.
+func (j *Judge) run(ctx context.Context, payload []byte, spec completion.Spec[responseBody]) (responseBody, error) {
+	return j.runOutput(ctx, j.client, &model.Request{
+		ModelClass: j.modelClass,
+		Messages: []*model.Message{
+			{
+				Role:  model.ConversationRoleSystem,
+				Parts: []model.Part{model.TextPart{Text: judgePrompt}},
+			},
+			{
+				Role:  model.ConversationRoleUser,
+				Parts: []model.Part{model.TextPart{Text: string(payload)}},
+			},
+		},
+		Temperature: 0,
+		MaxTokens:   j.maxOutputTokens,
+	}, spec)
 }
