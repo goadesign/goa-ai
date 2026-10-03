@@ -6477,8 +6477,10 @@ This is a breaking generated Go contract: regenerate direct clients, replace
 references to the removed `MessageContent` with `ContentItem`, and dereference
 `Text` only after selecting a text item. Runtime `ResourceLink.Size` now preserves
 MCP's JSON number as `*float64`, and `Icons` retains the supplied descriptions.
-Decoding icons never fetches or renders their URIs. These client capabilities do
-not yet provide rich-content authoring on generated servers.
+Decoding icons never fetches or renders their URIs. Method-backed prompt
+services can also author these five kinds through typed Goa results; see
+[the prompt contract](dsl.md#method-backed-mcp-prompts). Rich tool presentation
+remains separate work.
 
 Content types now contain raw JSON extension metadata. The generic standalone
 codec generator deliberately excludes custom raw JSON fields, so it no longer
@@ -6573,8 +6575,8 @@ selected old contracts for already accepted work. This upgrade does not rewrite
 catalog storage or retired-token history.
 
 Generated servers expose declared unary tools, fixed resource reads, and static
-prompts. They do not advertise subscriptions, tasks, or server-originated
-elicitation. Host credential handling remains application-owned. The remaining
+or method-backed prompts. They do not advertise subscriptions, tasks, or
+server-originated elicitation. Host credential handling remains application-owned. The remaining
 feature and conformance work is tracked in the
 [MCP upgrade plan](mcp_protocol_upgrade_plan.md).
 

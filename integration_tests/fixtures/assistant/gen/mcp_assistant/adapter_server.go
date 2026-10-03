@@ -448,7 +448,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 
 // Prompts handling
 
-// PromptsList returns the fixed prompts declared in the Goa design.
+// PromptsList describes the fixed prompts and service-owned prompt operations.
 func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*PromptsListResult, error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/list")
 	defer span.End()
@@ -468,7 +468,7 @@ func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*P
 	return res, nil
 }
 
-// PromptsGet returns the fixed messages for the named prompt.
+// PromptsGet returns fixed messages or calls the service with validated arguments.
 func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*PromptsGetResult, error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/get")
 	defer span.End()

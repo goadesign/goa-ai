@@ -132,3 +132,28 @@ func StaticPrompt(name, description string, messages ...string) {
 	}
 	mcp.Prompts = append(mcp.Prompts, prompt)
 }
+
+// Prompt exposes the current Goa method through MCP prompts/get. Its payload
+// must be an object of named strings. Its result must contain a messages array;
+// each message has a role and a content OneOf whose branches are text, image,
+// audio, resource_link, or resource. Each branch declares its content fields.
+// Image and audio data, and embedded resource blobs, use Bytes. Generated code
+// validates the result and converts bytes to base64 for the MCP response.
+//
+// Prompt must appear in a Method expression within an MCP service. It does not
+// call a model: the service supplies messages when a client selects the prompt.
+func Prompt(name, description string) {
+	method, ok := eval.Current().(*goaexpr.MethodExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	mcp := exprmcp.Root.GetMCP(method.Service)
+	if mcp == nil {
+		eval.IncompatibleDSL()
+		return
+	}
+	mcp.MethodPrompts = append(mcp.MethodPrompts, &exprmcp.MethodPromptExpr{
+		Name: name, Description: description, Method: method,
+	})
+}

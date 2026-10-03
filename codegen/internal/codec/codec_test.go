@@ -401,7 +401,7 @@ func TestPlanRejectsIncompleteLifecycle(t *testing.T) {
 	_, err = addCodecTestValue(t, planned, "widgets.create.payload", "OtherPayload", attribute, EncodeAndDecode)
 	require.EqualError(t, err, `JSON value key "widgets.create.payload" is already planned`)
 	_, err = addCodecTestValue(t, planned, "widgets.invalid", "Invalid", attribute, Direction(0))
-	require.EqualError(t, err, `plan JSON value "widgets.invalid": direction must select encoding, decoding, or typed construction`)
+	require.EqualError(t, err, `plan JSON value "widgets.invalid": direction must select encoding, decoding, typed construction, or typed validation`)
 	_, err = planned.Files("codec")
 	require.EqualError(t, err, "JSON codec files cannot be rendered before generation freeze")
 }

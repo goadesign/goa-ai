@@ -1,0 +1,245 @@
+// Package codegen plans and writes prompt conversions with Goa's saved service
+// declarations. Runtime code selects only the authored union branch; field
+// names, type references, binary encoding, and nested conversions are generated.
+package codegen
+
+import (
+	"fmt"
+
+	"goa.design/goa/v3/codegen"
+	goaservice "goa.design/goa/v3/codegen/service"
+	"goa.design/goa/v3/expr"
+)
+
+// planPromptConversions reserves functions and complete result imports before
+// Goa freezes names. The result schema has already passed the authoring checks.
+func planPromptConversions(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
+	if len(data.MethodPrompts) == 0 {
+		return nil
+	}
+	pkg := generation.Package(data.mcpImportPath)
+	var content *expr.AttributeExpr
+	for _, method := range prepared.mcpService.Methods {
+		if method.Name != "prompts/get" {
+			continue
+		}
+		messages := expr.AsArray(expr.AsObject(method.Result.Type).Attribute("messages").Type)
+		content = expr.AsObject(messages.ElemType.Type).Attribute("content")
+	}
+	if content == nil {
+		return fmt.Errorf("method-backed prompts require the generated prompts/get method")
+	}
+	imports := codegen.NewGeneratedImportPlan(pkg)
+	conversions := make(map[*expr.AttributeExpr]*promptContentConversion)
+	for index, prompt := range data.MethodPrompts {
+		layout, err := services.MethodTypeLayout(prompt.prompt.Method, prompt.prompt.Method.Result)
+		if err != nil {
+			return err
+		}
+		if err := imports.AddCompleteType(layout); err != nil {
+			return err
+		}
+		for _, importPath := range imports.Paths() {
+			if importPath != data.mcpImportPath {
+				data.serverImportPaths = append(data.serverImportPaths, importPath)
+			}
+		}
+		if existing := conversions[prompt.conversion.attribute]; existing != nil {
+			prompt.conversion = existing
+			continue
+		}
+		conversions[prompt.conversion.attribute] = prompt.conversion
+		if err := planPromptContentConversion(generation, pkg, prompt.conversion, content, layout, fmt.Sprintf("convertPrompt%dContent", index)); err != nil {
+			return err
+		}
+		promptConversionNeeds(data, prompt.conversion)
+	}
+	return nil
+}
+
+// promptConversionNeeds records the imports and metadata checks used by every
+// declared variant, including variants inside an embedded resource.
+func promptConversionNeeds(data *AdapterData, conversion *promptContentConversion) {
+	for _, branch := range conversion.branches {
+		data.NeedsPromptBytes = data.NeedsPromptBytes || branch.bytesField != ""
+		data.NeedsPromptMeta = data.NeedsPromptMeta || branch.metaField
+		if branch.nested != nil {
+			promptConversionNeeds(data, branch.nested)
+		}
+	}
+}
+
+// planPromptContentConversion records one converter and its field transforms.
+// Byte and nested-union fields have distinct protocol representations and are
+// emitted separately from ordinary Goa field conversions.
+func planPromptContentConversion(generation *codegen.Generation, pkg *codegen.GeneratedPackage, conversion *promptContentConversion, target *expr.AttributeExpr, resultLayout *codegen.GoTypePlan, name string) error {
+	conversion.target = target
+	declaration := codegen.NewExactName(codegen.NameFunction, name)
+	if err := pkg.DeclareName(declaration); err != nil {
+		return err
+	}
+	conversion.declaration = declaration
+	occurrences := resultLayout.PlansForOccurrence(conversion.attribute)
+	if len(occurrences) != 1 {
+		return fmt.Errorf("prompt content layout has %d occurrences", len(occurrences))
+	}
+	conversion.sourceLayout = occurrences[0]
+	conversion.unionAttribute = conversion.attribute
+	for {
+		named, ok := conversion.unionAttribute.Type.(expr.UserType)
+		if !ok {
+			break
+		}
+		conversion.unionAttribute = named.Attribute()
+	}
+	unionLayout := conversion.sourceLayout
+	if unionLayout.UnionDeclaration() == nil {
+		matches := resultLayout.PlansForOccurrence(conversion.unionAttribute)
+		if len(matches) != 1 {
+			return fmt.Errorf("prompt content must have one planned union definition")
+		}
+		unionLayout = matches[0]
+	}
+	conversion.unionLayout = unionLayout
+	conversion.sourcePackage = generation.Package(unionLayout.UnionDeclaration().PackagePath())
+	for index, branch := range conversion.branches {
+		object := expr.AsObject(branch.attribute.Type)
+		fields := make(expr.Object, 0, len(*object))
+		for _, field := range *object {
+			if field.Name == branch.bytesField || branch.nested != nil && field.Name == promptResourceField {
+				continue
+			}
+			fields = append(fields, field)
+		}
+		projection := &expr.AttributeExpr{Type: &fields, Validation: expr.EffectiveValidation(branch.attribute)}
+		transform, err := codegen.NewTransformPlan(projection, conversion.target, name, nil)
+		if err != nil {
+			return err
+		}
+		for helperIndex, helper := range transform.Helpers() {
+			helperDeclaration := codegen.NewExactName(codegen.NameFunction, fmt.Sprintf("%sBranch%dHelper%d", name, index, helperIndex))
+			if err := pkg.DeclareName(helperDeclaration); err != nil {
+				return err
+			}
+			if err := transform.BindHelperDeclaration(helper.ID, helperDeclaration); err != nil {
+				return err
+			}
+		}
+		branch.transform = transform
+		if branch.nested != nil {
+			if err := planPromptContentConversion(generation, pkg, branch.nested, expr.AsObject(target.Type).Attribute(promptResourceField), resultLayout, fmt.Sprintf("%sResource%d", name, index)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// bindPromptConversions supplies final service names and private codec fields.
+// The adapter then fills arguments without serializing and parsing them again.
+func bindPromptConversions(services *goaservice.ServicesData, planned *plannedMCPService) error {
+	data := planned.adapterData
+	sourceScope := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
+	targetScope := services.ServiceAttributor(planned.prepared.mcpService.Name, data.mcpImportPath)
+	for _, prompt := range data.MethodPrompts {
+		result := expr.AsObject(prompt.prompt.Method.Result.Type)
+		messagesAttribute := result.Attribute("messages")
+		message := expr.AsObject(expr.AsArray(messagesAttribute.Type).ElemType.Type)
+		prompt.MessagesField = sourceScope.Field(messagesAttribute, "messages", true)
+		prompt.RoleField = sourceScope.Field(message.Attribute("role"), "role", true)
+		prompt.ContentField = sourceScope.Field(message.Attribute("content"), "content", true)
+		if description := result.Attribute("description"); description != nil {
+			// Goa chooses a pointer for an optional description and a value
+			// for a required or defaulted one. Retain that declared field shape.
+			layout, err := planned.servicePlan.MethodTypeLayout(prompt.prompt.Method, prompt.prompt.Method.Result)
+			if err != nil {
+				return err
+			}
+			matches := layout.PlansForOccurrence(description)
+			if len(matches) != 1 {
+				return fmt.Errorf("prompt description must have one planned field")
+			}
+			prompt.DescriptionPointer = matches[0].IsPointer()
+			prompt.DescriptionField = sourceScope.Field(description, "description", true)
+		}
+		if prompt.HasPayload {
+			value := planned.methodCodecs[prompt.prompt.Method.Name].payload
+			transport, err := value.TransportTypeName(data.mcpImportPath, data.mcpPackage.ImportName)
+			if err != nil {
+				return err
+			}
+			prompt.PayloadTransportRef = transport
+			prompt.PayloadConstructor = value.TransportConstructorDeclaration().Name()
+			object := expr.AsObject(prompt.prompt.Method.Payload.Type)
+			for _, argument := range prompt.Arguments {
+				field, err := value.TransportField(object.Attribute(argument.Name), argument.Name, data.mcpImportPath, data.mcpPackage.ImportName)
+				if err != nil {
+					return err
+				}
+				argument.Selector, argument.TypeRef = field.Selector, field.ValueTypeRef
+			}
+		}
+		if prompt.conversion.data == nil {
+			if err := bindPromptContentConversion(data, prompt.conversion, sourceScope, targetScope); err != nil {
+				return err
+			}
+		}
+		prompt.ContentConversion = prompt.conversion.declaration.Name()
+	}
+	return nil
+}
+
+// bindPromptContentConversion renders the typed branch copies after all names
+// are final. A validated service value cannot select an undeclared branch.
+func bindPromptContentConversion(data *AdapterData, conversion *promptContentConversion, sourceScope, targetScope codegen.Attributor) error {
+	source := &codegen.AttributeContext{Scope: sourceScope, UseDefault: true}
+	target := &codegen.AttributeContext{Scope: targetScope, UseDefault: true}
+	linked := conversion.sourceLayout.Link(data.mcpImportPath, data.mcpPackage.ImportName)
+	conversion.data = &promptContentConversionData{
+		Name: conversion.declaration.Name(), SourceRef: linked.RefWithPointer(conversion.sourceLayout.IsPointer()), TargetRef: targetScope.Ref(conversion.target, ""),
+		HasType: expr.AsObject(conversion.target.Type).Attribute("type") != nil,
+	}
+	conversion.data.Value = "value"
+	unionRef := conversion.unionLayout.Link(data.mcpImportPath, data.mcpPackage.ImportName).RefWithPointer(conversion.sourceLayout.IsPointer())
+	if unionRef != conversion.data.SourceRef {
+		conversion.data.UnionRef = unionRef
+		conversion.data.Value = "selectedContent"
+	}
+	for _, branch := range conversion.branches {
+		sourceBranch, err := conversion.sourcePackage.UnionBranch(conversion.unionAttribute, branch.name)
+		if err != nil {
+			return err
+		}
+		if err := branch.transform.BindContexts(source, target); err != nil {
+			return err
+		}
+		code, helpers, err := branch.transform.Render("selected", "out", true)
+		if err != nil {
+			return err
+		}
+		conversion.data.Helpers = codegen.AppendHelpers(conversion.data.Helpers, helpers)
+		rendered := &promptContentBranchData{
+			Name:   branch.name,
+			Kind:   data.mcpPackage.ImportName(conversion.sourcePackage.ImportPath()) + "." + sourceBranch.KindConst(),
+			Getter: "As" + codegen.Goify(branch.name, true), Transform: code,
+		}
+		object := expr.AsObject(branch.attribute.Type)
+		if branch.bytesField != "" {
+			rendered.BytesField = sourceScope.Field(object.Attribute(branch.bytesField), branch.bytesField, true)
+			rendered.TargetBytesField = targetScope.Field(expr.AsObject(conversion.target.Type).Attribute(branch.bytesField), branch.bytesField, true)
+		}
+		if branch.metaField {
+			rendered.MetaField = sourceScope.Field(object.Attribute("_meta"), "_meta", true)
+		}
+		if branch.nested != nil {
+			rendered.ResourceField = sourceScope.Field(object.Attribute(promptResourceField), promptResourceField, true)
+			if err := bindPromptContentConversion(data, branch.nested, sourceScope, targetScope); err != nil {
+				return err
+			}
+			rendered.NestedConversion = branch.nested.declaration.Name()
+		}
+		conversion.data.Branches = append(conversion.data.Branches, rendered)
+	}
+	data.PromptConversions = append(data.PromptConversions, conversion.data)
+	return nil
+}

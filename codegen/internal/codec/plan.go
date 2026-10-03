@@ -27,23 +27,25 @@ type (
 
 	// Value records one service value and its private JSON representation.
 	Value struct {
-		plan              *Plan
-		key               string
-		preferredName     string
-		direction         Direction
-		service           *goaexpr.AttributeExpr
-		transport         *goaexpr.AttributeExpr
-		transportLayout   *goacodegen.GoTypePlan
-		types             []*plannedType
-		unions            []*plannedUnion
-		decode            *goacodegen.TransformPlan
-		encode            *goacodegen.TransformPlan
-		decodeDeclaration *goacodegen.NameDeclaration
-		encodeDeclaration *goacodegen.NameDeclaration
-		constructor       *goacodegen.NameDeclaration
-		serviceAttributor goacodegen.Attributor
-		standalone        *standalonePlan
-		originalLayout    *goacodegen.GoTypePlan
+		plan                *Plan
+		key                 string
+		preferredName       string
+		direction           Direction
+		service             *goaexpr.AttributeExpr
+		serviceLayout       *goacodegen.GoTypePlan
+		transport           *goaexpr.AttributeExpr
+		transportLayout     *goacodegen.GoTypePlan
+		types               []*plannedType
+		unions              []*plannedUnion
+		decode              *goacodegen.TransformPlan
+		encode              *goacodegen.TransformPlan
+		decodeDeclaration   *goacodegen.NameDeclaration
+		validateDeclaration *goacodegen.NameDeclaration
+		encodeDeclaration   *goacodegen.NameDeclaration
+		constructor         *goacodegen.NameDeclaration
+		serviceAttributor   goacodegen.Attributor
+		standalone          *standalonePlan
+		originalLayout      *goacodegen.GoTypePlan
 	}
 
 	// TransportField describes one top-level field in a private JSON type.
@@ -110,6 +112,8 @@ const (
 	EncodeAndDecode
 	// ConstructOnly generates a typed transport-to-service constructor without a raw JSON decoder.
 	ConstructOnly
+	// ValidateOnly checks a typed service value without encoding it as JSON.
+	ValidateOnly
 )
 
 // NewPlan creates a codec plan for one output package. Original-value codecs may
@@ -152,7 +156,7 @@ func (p *Plan) Add(
 	}
 	if !direction.valid() {
 		return nil, fmt.Errorf(
-			"plan JSON value %q: direction must select encoding, decoding, or typed construction",
+			"plan JSON value %q: direction must select encoding, decoding, typed construction, or typed validation",
 			key,
 		)
 	}
@@ -172,6 +176,7 @@ func (p *Plan) Add(
 		preferredName: preferredName,
 		direction:     direction,
 		service:       attribute,
+		serviceLayout: layout,
 		transport:     transport,
 	}
 	if err := value.declareTypes(localTypes); err != nil {
@@ -197,6 +202,28 @@ func (p *Plan) Add(
 // EncodeDeclaration returns the function that turns a service value into JSON.
 func (v *Value) EncodeDeclaration() *goacodegen.NameDeclaration {
 	return v.encodeDeclaration
+}
+
+// ValidationDeclaration returns the function that checks a service value.
+// It returns nil when no typed service-value validator was planned.
+func (v *Value) ValidationDeclaration() *goacodegen.NameDeclaration {
+	return v.validateDeclaration
+}
+
+// PlanValidation adds a typed result check to a value that already converts to
+// its private transport type. Callers use it when they do not need JSON bytes.
+func (v *Value) PlanValidation() error {
+	if v.validateDeclaration != nil {
+		return fmt.Errorf("validation for %q is already planned", v.key)
+	}
+	if v.encode == nil {
+		return fmt.Errorf("validation for %q requires a service-to-transport conversion", v.key)
+	}
+	v.validateDeclaration = goacodegen.NewPreferredName(
+		goacodegen.NameFunction, "Validate"+v.preferredName+"Value", goacodegen.ExportedName,
+		nameOrder{packagePath: v.plan.pkg.ImportPath(), key: v.key + ":validate"},
+	)
+	return v.plan.pkg.DeclareName(v.validateDeclaration)
 }
 
 // DecodeDeclaration returns the function that turns JSON into a service value.
@@ -323,7 +350,7 @@ func (o nameOrder) ComparePackageName(other goacodegen.PackageNameOrder) int {
 
 // valid reports whether the caller selected one supported generated direction.
 func (d Direction) valid() bool {
-	return d == EncodeOnly || d == DecodeOnly || d == EncodeAndDecode || d == ConstructOnly
+	return d == EncodeOnly || d == DecodeOnly || d == EncodeAndDecode || d == ConstructOnly || d == ValidateOnly
 }
 
 // encodes reports whether this value needs a service-to-JSON conversion.
@@ -566,7 +593,7 @@ func (v *Value) planTransforms() error {
 			}
 		}
 	}
-	if v.direction.encodes() {
+	if v.direction.encodes() || v.direction == ValidateOnly {
 		encode, err := goacodegen.NewTransformPlan(v.service, v.transport, "encode", nil)
 		if err != nil {
 			return err
@@ -575,6 +602,9 @@ func (v *Value) planTransforms() error {
 			return err
 		}
 		v.encode = encode
+		if v.direction == ValidateOnly {
+			return v.PlanValidation()
+		}
 		if v.originalLayout != nil {
 			var err error
 			v.encodeDeclaration, err = v.plan.pkg.DeclareDependentName(

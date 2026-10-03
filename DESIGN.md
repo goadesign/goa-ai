@@ -7,7 +7,7 @@ Build intelligent agents, MCP servers, and registry-integrated toolsets from you
 - **Agents**: Durable plan/execute loops with policy enforcement, memory, and streaming
 - **Typed Completions**: Service-owned structured assistant-output contracts with generated codecs and helpers
 - **Generated Evaluations**: Design-owned scenarios with typed application hooks, bounded execution, and trustworthy semantic judging
-- **MCP**: Unary tools, resources, and static prompts mapped from your Goa service over JSON-RPC HTTP
+- **MCP**: Unary tools, resources, and static or method-backed prompts mapped from your Goa service over JSON-RPC HTTP
 - **Registries**: Centralized tool catalogs with federation, caching, and semantic search
 - **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
 
@@ -2008,8 +2008,8 @@ The service owns preventing additional effects; missing hints, cancellation,
 malformed replies, and completed tool errors never authorize this retry path.
 
 Generated servers advertise only their implemented unary tools, fixed resource
-reads, and static prompts. Resource representations are selected at generation
-time: byte results become base64 blobs, text results with a text MIME type remain
+reads, and static or method-backed prompts. Resource representations are selected
+at generation time: byte results become base64 blobs, text results with a text MIME type remain
 text, and JSON results use the generated codec. Empty content preserves its field.
 Generated clients share one `ContentItem` type for tool and prompt replies. They
 preserve text, images, audio, resource links, embedded resources, annotations,
@@ -2020,10 +2020,17 @@ unions put the selected value in a separate field, so the MCP generator supplies
 these cross-field checks alongside Goa's existing field validators. Runtime
 callers apply the same content requirements and retain icons in tool errors.
 
-Generated servers still author only structured tool results and static text
-prompts. Rich authored results, parameterized prompts, tasks, subscriptions and
-server-produced additional input require their own typed service bindings before
-they can be advertised.
+Method-backed prompts use ordinary string-valued Goa payloads and typed message
+results. The generator constructs and validates payloads without a JSON round
+trip, validates service results, and converts declared content unions to MCP's
+flat content objects. Binary content stays bytes until the protocol conversion.
+Goa owns aliases, field names and located declarations; the generator retains
+those layouts and specializes each declared branch. Null or non-string prompt
+arguments fail at the raw protocol boundary before Go map decoding.
+
+Tools still author structured results. Rich tool presentation, URI templates,
+argument suggestions, tasks, subscriptions and server-produced additional input
+require their own typed service bindings before they can be advertised.
 See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
 [the upgrade plan](docs/mcp_protocol_upgrade_plan.md) for remaining proof and scope.
 

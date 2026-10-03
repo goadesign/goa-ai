@@ -74,7 +74,7 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*D
     {{- if .Resources }}
     capabilities.Resources = &ResourcesCapability{}
     {{- end }}
-    {{- if .StaticPrompts }}
+    {{- if or .StaticPrompts .MethodPrompts }}
     capabilities.Prompts = &PromptsCapability{}
     {{- end }}
     return &DiscoverResult{

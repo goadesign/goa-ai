@@ -238,7 +238,7 @@ func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[st
 	if err := json.Unmarshal(incoming.Result, &result); err != nil || (result.ResultType != resultComplete && result.ResultType != resultInputRequired) {
 		return nil, NewMalformedResponseError(errors.New("unsupported or absent resultType"))
 	}
-	if result.ResultType == resultInputRequired && outgoing.Header.Get("Mcp-Method") != methodToolsCall && outgoing.Header.Get("Mcp-Method") != "resources/read" && outgoing.Header.Get("Mcp-Method") != "prompts/get" {
+	if result.ResultType == resultInputRequired && outgoing.Header.Get("Mcp-Method") != methodToolsCall && outgoing.Header.Get("Mcp-Method") != "resources/read" && outgoing.Header.Get("Mcp-Method") != methodPromptsGet {
 		return nil, NewMalformedResponseError(errors.New("input_required is not permitted for this method"))
 	}
 	response.Body = io.NopCloser(bytes.NewReader(data))
@@ -320,7 +320,7 @@ func closeResponseWithError(response *http.Response, err error) error {
 func requestName(method string, params map[string]json.RawMessage) (*string, error) {
 	var field string
 	switch method {
-	case methodToolsCall, "prompts/get":
+	case methodToolsCall, methodPromptsGet:
 		field = "name"
 	case "resources/read":
 		field = "uri"

@@ -46,6 +46,14 @@ type (
 		Resources []*ResourceAdapter
 		// StaticPrompts contains the prompts written directly in the Goa design.
 		StaticPrompts []*StaticPromptAdapter
+		// MethodPrompts contains prompt operations implemented by service methods.
+		MethodPrompts []*MethodPromptAdapter
+		// PromptConversions contains the generated content and resource converters.
+		PromptConversions []*promptContentConversionData
+		// NeedsPromptBytes reports that a prompt produces binary content.
+		NeedsPromptBytes bool
+		// NeedsPromptMeta reports that authored prompt metadata needs object validation.
+		NeedsPromptMeta bool
 		// NeedsNoArgumentsValidation reports whether a tool has no payload.
 		NeedsNoArgumentsValidation bool
 		// NeedsBoolPtr reports that generated tool errors set MCP's optional flag.
@@ -78,6 +86,8 @@ type (
 		ResultEncode string
 		// ResultDecode converts MCP JSON into a validated service result.
 		ResultDecode string
+		// ResultValidate checks the typed result before MCP conversion.
+		ResultValidate string
 	}
 
 	// ClientCallerData contains the names and result shapes used by the generated
@@ -203,6 +213,10 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 	if err != nil {
 		return nil, err
 	}
+	prompts, err := g.buildMethodPromptAdapters()
+	if err != nil {
+		return nil, err
+	}
 	data := &AdapterData{
 		ServiceName:   g.originalService.Name,
 		ServiceGoName: codegen.Goify(g.originalService.Name, true),
@@ -211,7 +225,8 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 		Package:       codegen.SnakeCase(g.originalService.Name),
 		Tools:         tools,
 		Resources:     resources,
-		NeedsBoolPtr:  len(tools) > 0,
+		MethodPrompts: prompts,
+		NeedsBoolPtr:  len(tools)+len(prompts) > 0,
 	}
 
 	// Static prompts are handled directly in the adapter

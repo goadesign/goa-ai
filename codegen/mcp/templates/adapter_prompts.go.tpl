@@ -1,7 +1,7 @@
-{{- if .StaticPrompts }}
+{{- if or .StaticPrompts .MethodPrompts }}
 {{ comment "Prompts handling" }}
 
-// PromptsList returns the fixed prompts declared in the Goa design.
+// PromptsList describes the fixed prompts and service-owned prompt operations.
 func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*PromptsListResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/list")
     defer span.End()
@@ -16,13 +16,20 @@ func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*P
     {{ range .StaticPrompts }}
         { Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }}) },
     {{ end }}
+    {{ range .MethodPrompts }}
+        {Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }}), Arguments: []*PromptArgument{
+            {{ range .Arguments }}
+            {Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }}), Required: boolPtr({{ .Required }})},
+            {{ end }}
+        }},
+    {{ end }}
     }
     res := &PromptsListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Prompts: prompts}
 
     return res, nil
 }
 
-// PromptsGet returns the fixed messages for the named prompt.
+// PromptsGet returns fixed messages or calls the service with validated arguments.
 func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*PromptsGetResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/get")
     defer span.End()
@@ -54,6 +61,75 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 
         return res, nil
     {{ end }}
+    {{ range .MethodPrompts }}
+    case {{ quote .Name }}:
+        {{ if .HasPayload }}
+        for name := range p.Arguments {
+            switch name {
+            {{ range .Arguments }}
+            case {{ quote .Name }}:
+            {{ end }}
+            default:
+                failure := goa.PermanentError("invalid_params", "unknown argument %q for prompt %q", name, p.Name)
+                span.RecordError(failure)
+                span.SetStatus(codes.Error, failure.Error())
+                return nil, failure
+            }
+        }
+        body := &{{ .PayloadTransportRef }}{}
+        {{ range .Arguments }}
+        if value, present := p.Arguments[{{ quote .Name }}]; present {
+            typed := {{ .TypeRef }}(value)
+            body.{{ .Selector }} = &typed
+        }
+        {{ end }}
+        payload, err := {{ $.CodecPackage }}.{{ .PayloadConstructor }}(body)
+        if err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+        }
+        {{ else }}
+        if len(p.Arguments) > 0 {
+            failure := goa.PermanentError("invalid_params", "prompt %q does not accept arguments", p.Name)
+            span.RecordError(failure)
+            span.SetStatus(codes.Error, failure.Error())
+            return nil, failure
+        }
+        {{ end }}
+        result, err := a.service.{{ .ServiceMethodName }}(ctx{{ if .HasPayload }}, payload{{ end }})
+        if err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, a.mapError(err)
+        }
+        if err := {{ $.CodecPackage }}.{{ .Codec.ResultValidate }}(result); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, goa.PermanentError("internal_error", "%s", err.Error())
+        }
+        messages := make([]*PromptMessage, 0, len(result.{{ .MessagesField }}))
+        for _, message := range result.{{ .MessagesField }} {
+            content, err := {{ .ContentConversion }}(message.{{ .ContentField }})
+            if err != nil {
+                span.RecordError(err)
+                span.SetStatus(codes.Error, err.Error())
+                return nil, goa.PermanentError("internal_error", "%s", err.Error())
+            }
+            messages = append(messages, &PromptMessage{Role: string(message.{{ .RoleField }}), Content: content})
+        }
+        response := &PromptsGetResult{ResultType: "complete", Meta: resultMeta(), Messages: messages}
+        {{ if .DescriptionField }}
+        {{ if .DescriptionPointer }}
+        if result.{{ .DescriptionField }} != nil {
+            response.Description = stringPtr(string(*result.{{ .DescriptionField }}))
+        }
+        {{ else }}
+        response.Description = stringPtr(string(result.{{ .DescriptionField }}))
+        {{ end }}
+        {{ end }}
+        return response, nil
+    {{ end }}
     }
     failure := goa.PermanentError("invalid_params", "unknown prompt: %s", p.Name)
         span.RecordError(failure)
@@ -61,3 +137,58 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
         return nil, failure
 }
 {{- end }}
+
+{{ if .NeedsPromptMeta }}
+// validatePromptMeta accepts absent metadata or a JSON object. An authored
+// scalar, array, null, or invalid JSON result fails before the response is sent.
+func validatePromptMeta(raw json.RawMessage) error {
+    if len(raw) == 0 { return nil }
+    var fields map[string]json.RawMessage
+    if err := json.Unmarshal(raw, &fields); err != nil {
+        return fmt.Errorf("prompt metadata must be a JSON object: %w", err)
+    }
+    if fields == nil { return fmt.Errorf("prompt metadata must be a JSON object") }
+    return nil
+}
+{{ end }}
+
+{{ range .PromptConversions }}
+// {{ .Name }} checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func {{ .Name }}(value {{ .SourceRef }}) ({{ .TargetRef }}, error) {
+    {{ if .UnionRef }}selectedContent := {{ .UnionRef }}(value){{ end }}
+    if err := {{ .Value }}.Validate(); err != nil {
+        return nil, err
+    }
+    switch {{ .Value }}.Kind() {
+    {{ $conversion := . }}
+    {{ range .Branches }}
+    case {{ .Kind }}:
+        selected, _ := {{ $conversion.Value }}.{{ .Getter }}()
+        {{ if .MetaField }}
+        if err := validatePromptMeta(selected.{{ .MetaField }}); err != nil { return nil, err }
+        {{ end }}
+        {{ .Transform }}
+        {{ if $conversion.HasType }}out.Type = {{ quote .Name }}{{ end }}
+        {{ if .BytesField }}
+        encoded := base64.StdEncoding.EncodeToString(selected.{{ .BytesField }})
+        out.{{ .TargetBytesField }} = &encoded
+        {{ end }}
+        {{ if .NestedConversion }}
+        resource, err := {{ .NestedConversion }}(selected.{{ .ResourceField }})
+        if err != nil { return nil, err }
+        out.Resource = resource
+        {{ end }}
+        return out, nil
+    {{ end }}
+    default:
+        panic("prompt content reached conversion without validation")
+    }
+}
+{{ range .Helpers }}
+func {{ .Declaration.Name }}(v {{ .ParamTypeRef }}) {{ .ResultTypeRef }} {
+    {{ .Code }}
+    return res
+}
+{{ end }}
+{{ end }}

@@ -58,6 +58,23 @@ func ValidateHTTPRequest(request *http.Request, body []byte, bindings map[string
 		return &Error{Code: UnsupportedProtocolVersion, Message: "Unsupported protocol version", Data: data}
 	}
 
+	// Prompt arguments remain strings, including empty strings. Check their raw
+	// JSON types before a Go map can turn null into a zero string value.
+	if envelope.Method == methodPromptsGet {
+		if raw, present := params["arguments"]; present {
+			var arguments map[string]json.RawMessage
+			if json.Unmarshal(raw, &arguments) != nil || arguments == nil {
+				return &Error{Code: JSONRPCInvalidParams, Message: "prompt arguments must be an object of strings"}
+			}
+			for name, value := range arguments {
+				var argument string
+				if bytes.Equal(bytes.TrimSpace(value), []byte("null")) || json.Unmarshal(value, &argument) != nil {
+					return &Error{Code: JSONRPCInvalidParams, Message: fmt.Sprintf("prompt argument %q must be a string", name)}
+				}
+			}
+		}
+	}
+
 	name, err := requestName(envelope.Method, params)
 	if err != nil {
 		return &Error{Code: JSONRPCInvalidParams, Message: err.Error()}

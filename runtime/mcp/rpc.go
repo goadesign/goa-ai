@@ -85,6 +85,7 @@ type (
 const (
 	rpcVersion          = "2.0"
 	methodToolsCall     = "tools/call"
+	methodPromptsGet    = "prompts/get"
 	resultComplete      = "complete"
 	resultInputRequired = "input_required"
 	elicitationForm     = "form"

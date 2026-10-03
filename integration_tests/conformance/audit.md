@@ -181,3 +181,18 @@ lists the scenario as an extension, pending or added after release.
 | `request-metadata` | Scored | 4 | 0 | 1 | 3 |
 | `sep-2322-client-request-state` | Scored | 0 | 5 | 0 | 0 |
 | `tools_call` | Scored | 2 | 0 | 0 | 0 |
+
+## Subsequent method-backed prompt verification
+
+Method-backed prompts now accept ordinary Goa string payloads and return typed
+messages with all five content kinds. A compiled separate-module HTTP fixture
+checks defaults, explicit values, multiple names for one method, prompt/tool
+composition, located aliases and renamed fields. Raw null and non-string
+arguments fail before service dispatch. Invalid service results return protocol
+internal errors rather than successful messages or a dropped connection.
+
+Build, configured lint, the serial root race suite and quickstart passed. Fresh
+focused race checks cover the final shared-converter changes, and uncached HTTP
+integration scenarios passed after regeneration. This is local implementation
+verification. The recorded referee baseline above remains unchanged; independent
+prompt producer conformance and server-produced additional input remain gates.

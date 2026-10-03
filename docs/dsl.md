@@ -201,7 +201,7 @@ different audiences and link child runs via run handles rather than flattening r
 
 ## Prompt Management in v1
 
-Goa-AI v1 does **not** define a mandatory prompt declaration DSL (`Prompt(...)`, `Prompts(...)`, etc.).
+Goa-AI v1 does **not** require an agent prompt declaration DSL. The MCP `Prompt` declaration below exposes service-owned messages to an MCP client; it does not configure the agent prompt registry.
 Prompt management is intentionally runtime-driven:
 
 - Register baseline prompt specs via `Runtime.PromptRegistry.Register(prompt.PromptSpec{...})`.
@@ -477,6 +477,7 @@ an estimate is not a context-window guarantee or a billing count.
 | `MCP(name, version)`       | Inside `Service`                   | Enables MCP protocol for the service           |
 | `Tool(name, description)`           | Inside `Method` (with MCP enabled) | Marks method as MCP tool                       |
 | `Resource(name, uri, mime)`         | Inside `Method`                    | Marks method as MCP resource provider          |
+| `Prompt(name, description)` | Inside `Method` (with MCP enabled) | Exposes typed, parameterized MCP messages |
 | `StaticPrompt(name, desc, msgs...)` | Inside `Service` (with MCP)        | Defines static MCP prompt template             |
 
 Every service that calls `MCP(...)` must also use Goa's service-level
@@ -1455,6 +1456,88 @@ present empty `text`. The generated direct client rejects resource replies that
 contain both fields or neither field. The service returns ordinary typed data;
 it does not encode base64 itself or construct protocol content.
 
+### Method-backed MCP prompts
+
+Declare `Prompt(name, description)` on an ordinary unary Goa method. Its payload
+contains named strings, and its result contains ordered messages. The client
+selects the prompt and supplies its arguments; the service produces the messages.
+The adapter does not call a model or change the agent prompt registry.
+
+```go
+var ReviewText = Type("ReviewText", func() {
+    Attribute("text", String, "Message text")
+    Required("text")
+})
+var ReviewMessage = Type("ReviewMessage", func() {
+    Attribute("role", String, "Message author", func() {
+        Enum("user", "assistant")
+    })
+    OneOf("content", "Selected message content", func() {
+        Attribute("text", ReviewText, "Text content")
+    })
+    Required("role", "content")
+})
+
+Service("reviews", func() {
+    MCP("reviews", "1.0")
+    JSONRPC(func() { POST("/reviews") })
+    Method("review", func() {
+        Payload(func() {
+            Attribute("code", String, "Source code to review", func() {
+                MinLength(1)
+            })
+            Required("code")
+        })
+        Result(func() {
+            Attribute("description", String, "Prompt purpose")
+            Attribute("messages", ArrayOfRequired(ReviewMessage), "Ordered messages")
+        })
+        Prompt("review", "Review source code")
+    })
+})
+```
+
+`prompts/list` describes argument names, descriptions and required fields without
+calling the service. `prompts/get` applies the payload's Goa defaults and
+validation, then calls the method once. Unknown argument names, null values and
+non-string values are invalid parameters. Empty strings remain strings; their
+validity comes from the authored payload validation.
+
+Messages use `ArrayOfRequired` to reject null entries. Their required role permits
+`user`, `assistant`, or a declared subset. Content uses `OneOf` with one or more
+of the following branch names. Each branch is an object with these fields:
+
+| Branch | Required fields | Optional fields |
+| --- | --- | --- |
+| `text` | `text: String` | `annotations`, `_meta` |
+| `image`, `audio` | `data: Bytes`, `mimeType: String` | `annotations`, `_meta` |
+| `resource_link` | `uri: String`, `name: String` | `title`, `description`, `mimeType`, `size`, `icons`, `annotations`, `_meta` |
+| `resource` | `resource: OneOf` | `annotations`, `_meta` |
+
+The embedded `resource` selects a `text` object with required `uri` and `text`,
+or a `blob` object with required `uri` and declared `blob: Bytes`. Both permit
+`mimeType` and `_meta`. A byte field may be nil or empty; both produce a present
+empty base64 string. Other required fields must use Goa `Required`.
+
+URI fields declare `Format(FormatURI)`. Annotation audience values permit only
+`user` and `assistant`; priority is a `Float64` between 0 and 1 inclusive for
+**each content item**, independent of other items. Resource-link `size` is a
+nonnegative `Float64` describing the resource's byte count. Icon objects declare
+required `src` with URI format and optional `mimeType`, string `sizes`, and
+`theme` restricted to `light` or `dark`; object arrays use `ArrayOfRequired`.
+Open `_meta` objects use `Any` with `Meta("struct:field:type", "json.RawMessage",
+"encoding/json")`, because each extension owns its fields. Other Go field type
+replacements are rejected; use ordinary Goa named or located types.
+
+Generation rejects unsupported fields or missing protocol constraints rather
+than losing data. The service returns generated Goa union values and raw bytes;
+the adapter produces MCP's flat content objects and base64. Invalid service
+results return a protocol internal error. Optional `messages` permits an empty
+message sequence; requiring a nonempty sequence remains an authored domain rule.
+A method may also be a tool when its tool contract is valid. Static prompts keep
+their fixed role/text pairs. Server-produced requests for additional input remain
+tracked separately in the [upgrade plan](mcp_protocol_upgrade_plan.md).
+
 ### MCP tool behavior hints
 
 Declare standard MCP annotations inside the method's `Tool` block:
@@ -1483,9 +1566,8 @@ HTTP retries when constructing its caller; see [MCP callers](runtime.md#mcp-call
 Generated tool and prompt clients can receive all five MCP content kinds,
 including media, links and embedded resources with annotations, icons and
 extension metadata. Their shared `ContentItem` retains absent versus empty
-content and rejects malformed selected variants. Generated servers still return
-structured tool results and static text prompts; receiving rich content does
-not add an authored rich-result DSL.
+content and rejects malformed selected variants. Method-backed prompts author
+these kinds through typed Goa results. Generated tools still return structured results; rich tool presentation is separate work.
 
 ### MCP Capabilities
 
@@ -1494,6 +1576,7 @@ not add an authored rich-result DSL.
 | ---------------------------- | ---------------------------------- |
 | `Tool(name, desc)` in Method | `tools/list`, `tools/call`         |
 | `Resource(name, uri, mime)`  | `resources/list`, `resources/read` |
+| `Prompt(name, desc)` in Method | `prompts/list`, `prompts/get` with typed arguments and messages |
 | `StaticPrompt(...)`          | `prompts/list`, `prompts/get`      |
 
 

@@ -25,6 +25,9 @@ func validateMCPService(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr) error {
 	for _, resource := range mcp.Resources {
 		mapped[resource.Method.Name] = struct{}{}
 	}
+	for _, prompt := range mcp.MethodPrompts {
+		mapped[prompt.Method.Name] = struct{}{}
+	}
 	unmapped := make([]string, 0, len(svc.Methods))
 	for _, method := range svc.Methods {
 		if _, ok := mapped[method.Name]; ok {

@@ -91,6 +91,9 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planMCPPackagePaths(servicePlan, prepared, adapter); err != nil {
 			return err
 		}
+		if err := planPromptConversions(plan.Generation(), servicePlan, prepared, adapter); err != nil {
+			return err
+		}
 		if err := declareMCPNames(plan.Generation(), adapter); err != nil {
 			return err
 		}
@@ -141,6 +144,9 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 			return nil, err
 		}
 		files = append(files, codecFiles...)
+		if err := bindPromptConversions(services, planned); err != nil {
+			return nil, err
+		}
 		if caller := clientCallerFile(planned.adapterData); caller != nil {
 			files = append(files, caller)
 		}
@@ -199,7 +205,7 @@ func planMCPImports(
 		goacodegen.SimpleImport("go.opentelemetry.io/otel"),
 		goacodegen.SimpleImport("go.opentelemetry.io/otel/codes"),
 	}
-	data.serverImportPaths = []string{
+	data.serverImportPaths = append(data.serverImportPaths,
 		"context",
 		"encoding/json",
 		data.serviceImportPath,
@@ -207,7 +213,7 @@ func planMCPImports(
 		"goa.design/goa-ai/runtime/mcp",
 		"go.opentelemetry.io/otel",
 		"go.opentelemetry.io/otel/codes",
-	}
+	)
 	for _, resource := range data.Resources {
 		if !resource.BinaryResult {
 			continue
@@ -215,6 +221,14 @@ func planMCPImports(
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("encoding/base64"))
 		data.serverImportPaths = append(data.serverImportPaths, "encoding/base64")
 		break
+	}
+	if data.NeedsPromptBytes {
+		serverFixed = append(serverFixed, goacodegen.SimpleImport("encoding/base64"))
+		data.serverImportPaths = append(data.serverImportPaths, "encoding/base64")
+	}
+	if data.NeedsPromptMeta {
+		serverFixed = append(serverFixed, goacodegen.SimpleImport("fmt"))
+		data.serverImportPaths = append(data.serverImportPaths, "fmt")
 	}
 	if data.NeedsNoArgumentsValidation {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("fmt"))
@@ -356,6 +370,13 @@ func bindUserServiceMethods(service *goaservice.Data, planned *plannedMCPService
 		}
 		resource.ServiceMethodName = method.VarName
 	}
+	for _, prompt := range planned.adapterData.MethodPrompts {
+		method := service.Method(prompt.prompt.Method.Name)
+		if method == nil {
+			return fmt.Errorf("goa did not plan prompt method %q", prompt.prompt.Method.Name)
+		}
+		prompt.ServiceMethodName = method.VarName
+	}
 	return nil
 }
 
@@ -438,6 +459,20 @@ func planMCPCodecs(
 		}
 		methodCodecs[method.Name] = values
 	}
+	for _, prompt := range data.MethodPrompts {
+		data.NeedsServerCodec = true
+		values := methodCodecs[prompt.prompt.Method.Name]
+		if values.result.ValidationDeclaration() == nil {
+			if err := values.result.PlanValidation(); err != nil {
+				return nil, nil, err
+			}
+		}
+		if values.payload != nil && values.payload.TransportConstructorDeclaration() == nil {
+			if err := values.payload.PlanTransportConstructor(); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 	data.CodecImportPath = codecImportPath
 	data.CodecPackage = codecPackageName
 	return planned, methodCodecs, nil
@@ -481,6 +516,9 @@ func bindMCPCodecData(data *AdapterData, methods map[string]*plannedMethodCodec)
 	for _, resource := range data.Resources {
 		resource.Codec = methodCodecData(methods[resource.userMethodName])
 	}
+	for _, prompt := range data.MethodPrompts {
+		prompt.Codec = methodCodecData(methods[prompt.prompt.Method.Name])
+	}
 }
 
 // methodCodecData returns the final generated names for one service method.
@@ -498,6 +536,9 @@ func methodCodecData(planned *plannedMethodCodec) *MethodCodecData {
 		}
 	}
 	if planned.result != nil {
+		if declaration := planned.result.ValidationDeclaration(); declaration != nil {
+			data.ResultValidate = declaration.Name()
+		}
 		if declaration := planned.result.EncodeDeclaration(); declaration != nil {
 			data.ResultEncode = declaration.Name()
 		}
@@ -522,6 +563,15 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 		if resource.userMethodName == methodName && !resource.TextResult && !resource.BinaryResult {
 			resultEncode = true
 		}
+	}
+	for _, prompt := range data.MethodPrompts {
+		if prompt.prompt.Method.Name != methodName {
+			continue
+		}
+		if payloadEncode || resultEncode {
+			return codecDirection(payloadEncode, payloadDecode), codecDirection(resultEncode, resultDecode)
+		}
+		return jsoncodec.ConstructOnly, jsoncodec.ValidateOnly
 	}
 	return codecDirection(payloadEncode, payloadDecode), codecDirection(resultEncode, resultDecode)
 }
@@ -562,6 +612,9 @@ func mappedMCPMethods(prepared *preparedMCPService) []*expr.MethodExpr {
 	for _, resource := range prepared.mcp.Resources {
 		add(resource.Method)
 	}
+	for _, prompt := range prepared.mcp.MethodPrompts {
+		add(prompt.Method)
+	}
 	return methods
 }
 
@@ -579,6 +632,11 @@ func declareMCPNames(generation *goacodegen.Generation, data *AdapterData) error
 		goacodegen.NewExactName(goacodegen.NameFunction, "resultMeta"),
 	} {
 		if err := mcpPackage.DeclareName(declaration); err != nil {
+			return err
+		}
+	}
+	if data.NeedsPromptMeta {
+		if err := mcpPackage.DeclareName(goacodegen.NewExactName(goacodegen.NameFunction, "validatePromptMeta")); err != nil {
 			return err
 		}
 	}

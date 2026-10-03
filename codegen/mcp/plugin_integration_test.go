@@ -239,10 +239,23 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	fmtService, fmtMethods := testService("fmt", "echo")
 	prompts, _ := testService("prompts")
 	staticPrompts, _ := testService("static_prompts")
+	methodPrompts, promptMethods := testService("method_prompts", "review", "empty")
+	promptTypes := methodPromptFixture(promptMethods)
+	simplePrompt, simpleMethods := testService("simple_prompt", "build")
+	simpleText := promptFixtureType("SimpleText", &expr.Object{{Name: "text", Attribute: &expr.AttributeExpr{Type: expr.String}}}, "text")
+	simpleContent := promptFixtureType("SimpleContent", &expr.Union{TypeName: "SimpleChoice", Values: []*expr.NamedAttributeExpr{{Name: "text", Attribute: &expr.AttributeExpr{Type: simpleText}}}})
+	simpleContent.Meta = expr.MetaExpr{"struct:pkg:path": {"prompt/shared"}}
+	simpleMessage := promptFixtureType("SimpleMessage", &expr.Object{
+		{Name: "role", Attribute: &expr.AttributeExpr{Type: expr.String, Validation: &expr.ValidationExpr{Values: []any{"user"}}}},
+		{Name: "content", Attribute: &expr.AttributeExpr{Type: simpleContent}},
+	}, "role", "content")
+	simpleResult := promptFixtureType("SimpleResult", &expr.Object{{Name: "messages", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: simpleMessage}, NonNullableElems: true}}}})
+	simpleMethods["build"].Result = &expr.AttributeExpr{Type: simpleResult}
+	promptTypes = append(promptTypes, simpleText, simpleContent, simpleMessage, simpleResult)
 	resources, resourceMethods := testService("resources", "read_document")
 	blobs, blobMethods := testService("blobs", "read_image")
 	blobMethods["read_image"].Result = &expr.AttributeExpr{Type: expr.Bytes}
-	root := testRootExpr([]*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources, blobs}, []*expr.HTTPServiceExpr{
+	root := testRootExpr([]*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources, blobs, methodPrompts, simplePrompt}, []*expr.HTTPServiceExpr{
 		jsonrpcService(service, "/calc"),
 		jsonrpcService(formatter, "/formatter"),
 		jsonrpcService(selector, "/selector"),
@@ -250,6 +263,8 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 		jsonrpcService(fmtService, "/fmt"),
 		jsonrpcService(prompts, "/prompts"),
 		jsonrpcService(staticPrompts, "/static-prompts"),
+		jsonrpcService(methodPrompts, "/method-prompts"),
+		jsonrpcService(simplePrompt, "/simple-prompt"),
 		jsonrpcService(resources, "/resources"),
 		jsonrpcService(blobs, "/blobs"),
 	})
@@ -266,8 +281,9 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	root.API.RandomizerFactory = expr.NewDeterministicRandomizerFactory()
 	root.Types = append(root.Types, namedTypes...)
 	root.Types = append(root.Types, locatedRenderPayload)
+	root.Types = append(root.Types, promptTypes...)
 	root.WalkSets(func(eval.ExpressionSet) {})
-	for _, current := range []*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources, blobs} {
+	for _, current := range []*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources, blobs, methodPrompts, simplePrompt} {
 		for _, method := range current.Methods {
 			method.Prepare()
 		}
@@ -316,6 +332,20 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 		Tools: []*mcpexpr.ToolExpr{
 			{Name: "echo", Method: fmtMethods["echo"], Annotations: &mcpexpr.ToolAnnotationsExpr{Title: new("Echo"), ReadOnlyHint: new(true), DestructiveHint: new(false), IdempotentHint: new(false), OpenWorldHint: new(false)}},
 		},
+	})
+	mcpexpr.Root.RegisterMCP(simplePrompt, &mcpexpr.MCPExpr{
+		Name: "simple-prompt", Version: "1",
+		MethodPrompts: []*mcpexpr.MethodPromptExpr{{Name: "simple", Description: "Return one text message", Method: simpleMethods["build"]}},
+	})
+	mcpexpr.Root.RegisterMCP(methodPrompts, &mcpexpr.MCPExpr{
+		Name: "method-prompts", Version: "1.0.0",
+		MethodPrompts: []*mcpexpr.MethodPromptExpr{
+			{Name: "review", Description: "Review source code", Method: promptMethods["review"]},
+			{Name: "review-copy", Description: "Select the same review operation", Method: promptMethods["review"]},
+			{Name: "empty", Description: "Return an empty message sequence", Method: promptMethods["empty"]},
+		},
+		Tools:   []*mcpexpr.ToolExpr{{Name: "empty-messages", Description: "Return the authored message record", Method: promptMethods["empty"]}},
+		Prompts: []*mcpexpr.PromptExpr{{Name: "fixed", Messages: []*mcpexpr.MessageExpr{{Role: "assistant", Content: "Fixed instructions"}}}},
 	})
 	mcpexpr.Root.RegisterMCP(prompts, &mcpexpr.MCPExpr{
 		Name:    "prompts",
@@ -502,6 +532,11 @@ replace goa.design/goa/v3 => %s
 	_, err = registerTest.WriteString(registerStringGeneratedTestSource)
 	require.NoError(t, err)
 	require.NoError(t, registerTest.Close())
+	promptTest, err := generatedRoot.OpenFile("jsonrpc/mcp_method_prompts/client/method_prompt_test.go", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	require.NoError(t, err)
+	_, err = promptTest.WriteString(methodPromptGeneratedTestSource)
+	require.NoError(t, err)
+	require.NoError(t, promptTest.Close())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, "go", "test", "-mod=mod", "./gen/...")

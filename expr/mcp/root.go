@@ -74,6 +74,9 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	var prompts eval.ExpressionSet
 	var messages eval.ExpressionSet
 	for _, m := range r.MCPServers {
+		for _, p := range m.MethodPrompts {
+			prompts = append(prompts, p)
+		}
 		for _, p := range m.Prompts {
 			prompts = append(prompts, p)
 			for _, msg := range p.Messages {

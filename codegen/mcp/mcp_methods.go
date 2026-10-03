@@ -112,5 +112,5 @@ func (b *mcpExprBuilder) buildPromptsGetMethod() *expr.MethodExpr {
 
 // hasPrompts checks if there are any prompts defined
 func (b *mcpExprBuilder) hasPrompts() bool {
-	return len(b.mcp.Prompts) > 0
+	return len(b.mcp.Prompts)+len(b.mcp.MethodPrompts) > 0
 }

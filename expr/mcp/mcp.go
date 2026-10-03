@@ -33,9 +33,10 @@ type (
 		// Resources is the collection of resource expressions exposed
 		// by this server.
 		Resources []*ResourceExpr
-		// Prompts is the collection of static prompt expressions
-		// exposed by this server.
+		// Prompts contains fixed message sequences declared at service level.
 		Prompts []*PromptExpr
+		// MethodPrompts contains prompt operations implemented by service methods.
+		MethodPrompts []*MethodPromptExpr
 		// Service is the Goa service expression this MCP server is
 		// bound to.
 		Service *expr.ServiceExpr
@@ -100,6 +101,17 @@ type (
 		// Messages is the collection of message templates in this
 		// prompt.
 		Messages []*MessageExpr
+	}
+
+	// MethodPromptExpr binds a named MCP prompt to a typed Goa operation.
+	MethodPromptExpr struct {
+		eval.Expression
+		// Name is the prompt identifier sent by the client.
+		Name string
+		// Description explains when the client should select this prompt.
+		Description string
+		// Method owns the prompt's arguments and returned messages.
+		Method *expr.MethodExpr
 	}
 
 	// MessageExpr defines a single message within a prompt template.
@@ -171,6 +183,18 @@ func (m *MCPExpr) Validate() error {
 	}
 	promptNames := make(map[string]struct{}, len(m.Prompts))
 	for _, p := range m.Prompts {
+		if _, exists := promptNames[p.Name]; p.Name != "" && exists {
+			verr.Add(p, "prompt name %q is used more than once", p.Name)
+		}
+		promptNames[p.Name] = struct{}{}
+		if err := p.Validate(); err != nil {
+			var ve *eval.ValidationErrors
+			if errors.As(err, &ve) {
+				verr.Merge(ve)
+			}
+		}
+	}
+	for _, p := range m.MethodPrompts {
 		if _, exists := promptNames[p.Name]; p.Name != "" && exists {
 			verr.Add(p, "prompt name %q is used more than once", p.Name)
 		}

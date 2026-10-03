@@ -77,10 +77,10 @@ runtime tests pass after moving current synthetic suspension fixtures to version
 | Capability | Generated server | Direct client | Agent host |
 | --- | --- | --- | --- |
 | Current discovery and unary tools | Implemented | Implemented | Generated executors and canonical specs |
-| Fixed text/JSON/binary resource reads and static prompts | Implemented | Generated typed clients; exact text/blob validation | No implicit conversion into agent tools |
+| Fixed text/JSON/binary resource reads and static/method-backed prompts | Implemented | Generated typed clients; exact text/blob validation | No implicit conversion into agent tools |
 | Rich structured tool results | Generated declared JSON result | Generated tool/prompt and runtime clients preserve five content kinds, icons, metadata and exact structured JSON | Declared result codec |
 | Multi-round tool input | No producer advertised | Explicit unfinished result and successor request | Durable trusted form/URL/state-only continuation |
-| Tasks, subscriptions, parameterized prompts, URI templates | Not advertised | No extension claimed | Capability milestones remain separate |
+| Tasks, subscriptions, URI templates | Not advertised | No extension claimed | Capability milestones remain separate |
 | OAuth and Apps | Host-owned dependencies; no built-in extension claimed | Host-built HTTP dependency | No grant/view ownership in the planner |
 
 Binary resources now use the existing `Resource` DSL and ordinary Goa byte
@@ -90,7 +90,7 @@ Generated direct clients reject both/neither text/blob fields and malformed
 base64. The independent `resources-read-binary` scenario passed both operation
 and wire-schema checks on 2026-10-03. Compiled binary-only and mixed-resource
 clients and real generated HTTP scenarios passed. This completes the binary
-resource milestone; rich authored tool/prompt content remains separate.
+resource milestone; rich authored tool content remains separate.
 
 Generated tool and prompt clients now use one `ContentItem` representation for
 all five content kinds. The generated schema declares field types, audience
@@ -98,16 +98,38 @@ values and per-item priority bounds; MCP-specific decoding checks fields whose
 presence depends on the discriminator and the embedded text/blob choice.
 Resource-link icons and embedded metadata survive decoding. Runtime consumers
 also validate base64 and retain icons when copying tool errors. These are
-consumer capabilities; rich authored results and method-backed prompts remain
+consumer capabilities; rich authored tool presentation remains
 required producer work. The ordinary Goa union envelope differs from MCP's flat
 content envelope, so that producer design must explicitly own conversion rather
 than exposing untyped application callbacks.
+
+Method-backed prompts now use the `Prompt` method DSL with ordinary Goa string
+payloads and message results. The generator emits typed payload construction,
+Goa result checks, and specialized conversion of all five content kinds, with
+base64 conversion for bytes and exactly one embedded text/blob variant. It
+retains normal aliases, renamed fields, and located types. Unsupported fields,
+opaque Go type replacements and weaker protocol constraints fail generation.
+Null and non-string arguments fail before service dispatch. Invalid results,
+including nil results and unset content branches, return protocol errors.
+Static prompts and valid prompt/tool composition remain available. These are
+successful prompt producers; additional-input production remains a separate gate.
+The compiled separate-module HTTP fixture verifies all five kinds, empty text
+and bytes, ordered roles, defaults and explicit arguments, multiple prompt names
+on one operation, and prompt/tool composition. It also compiles a prompts-only
+service with a located named union and verifies renamed service fields and a
+located role alias. Raw malformed requests cannot invoke the service. Nil results,
+null messages, unset branches and invalid content return protocol errors.
+The full serial race suite and quickstart passed; fresh focused race tests cover
+the final shared-converter changes. Build, configured lint and uncached generated
+HTTP scenarios passed. The frozen referee baseline has not been rerun for prompts;
+independent producer conformance remains a release gate.
+
 
 Open `_meta` data also makes these content-containing types ineligible for the
 generic standalone JSON helpers: `SupportsStandalone` excludes custom raw JSON
 fields. Repository callers use generated endpoints, not those helpers. The
 breaking upgrade removes the old standalone content/message/resource helpers;
-current consumers use the generated protocol endpoints. Rich authored methods
+current consumers use the generated protocol endpoints. Rich authored tool methods
 must get a complete typed codec and protocol conversion rather than restoring
 text-only helpers or teaching service code to serialize MCP objects.
 

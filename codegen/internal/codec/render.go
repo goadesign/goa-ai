@@ -65,8 +65,10 @@ type (
 	valueData struct {
 		Name              string
 		ServiceRef        string
+		ServicePointer    bool
 		TransportRef      string
 		Validator         string
+		Validate          string
 		Constructor       string
 		Encode            string
 		Decode            string
@@ -253,7 +255,7 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 		data.Constructor = v.constructor.Name()
 	}
 	var helpers []*goacodegen.TransformFunctionData
-	if v.direction.encodes() {
+	if v.encode != nil {
 		if err := v.encode.BindContexts(serviceContext, transportContext); err != nil {
 			return nil, nil, fmt.Errorf("link JSON value %q encoder: %w", v.key, err)
 		}
@@ -261,7 +263,13 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 		if err != nil {
 			return nil, nil, fmt.Errorf("render JSON value %q encoder: %w", v.key, err)
 		}
-		data.Encode = v.encodeDeclaration.Name()
+		if v.encodeDeclaration != nil {
+			data.Encode = v.encodeDeclaration.Name()
+		}
+		if v.validateDeclaration != nil {
+			data.Validate = v.validateDeclaration.Name()
+			data.ServicePointer = v.serviceLayout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName).ReferenceIsPointer()
+		}
 		data.EncodeTransform = transform
 		helpers = append(helpers, encodeHelpers...)
 	}
@@ -501,6 +509,25 @@ func {{ .Encode }}(in {{ .ServiceRef }}) ([]byte, error) {
 		return nil, {{ $.Imports.Fmt }}.Errorf("encode {{ .Name }} JSON: %w", err)
 	}
 	return data, nil
+}
+{{ end }}
+
+{{ if .Validate }}
+// {{ .Validate }} checks a service value against its declared field validation.
+func {{ .Validate }}(in {{ .ServiceRef }}) error {
+ {{ if .ServicePointer }}
+ if in == nil {
+  return {{ $.Imports.Goa }}.MissingFieldError("result", {{ printf "%q" .Name }})
+ }
+ {{ end }}
+ var body {{ .TransportRef }}
+ {
+  {{ .EncodeTransform }}
+ }
+ if err := {{ .Validator }}(body); err != nil {
+  return {{ $.Imports.Fmt }}.Errorf("validate {{ .Name }} value: %w", err)
+ }
+ return nil
 }
 {{ end }}
 
