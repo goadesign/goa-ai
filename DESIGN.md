@@ -555,6 +555,16 @@ have already emitted append-only text. Tool activities retain retries because
 their stable call identities let tool owners return stored results without
 repeating side effects.
 
+Text-only runs accept one saved execution restriction. Generated tool contracts
+omit optional UI arguments and instructions; tools requiring UI or confirmation
+cannot enter that run. Producers retain domain results and internal evidence,
+while the runtime rejects UI output before publication or persistence. Native
+children inherit the parent's restriction or their own stricter restriction;
+an incompatible child invocation fails before its model input is saved. Recovery
+uses the accepted policy rather than current application configuration. See
+[Text-only execution](docs/runtime.md#text-only-execution) for declarations and
+runtime integration.
+
 The runtime keeps execution policy and planner intent separate:
 
 | Completed step | Next state |

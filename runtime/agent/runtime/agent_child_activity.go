@@ -7,9 +7,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-
 	"errors"
 	"fmt"
+
 	"github.com/google/uuid"
 
 	"goa.design/goa-ai/runtime/agent/api"
@@ -76,6 +76,20 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 			request.policy = &PolicyOverrides{}
 		}
 		request.policy.TextOnly = true
+	}
+	// A selected child can require ordinary messages even when its parent allows
+	// UI output. Check that child's invocation before saving its model input.
+	if request.policy != nil && request.policy.TextOnly {
+		spec, exists, err := lookupCallSpec(input.Call, r.toolSpec)
+		if err != nil {
+			return nil, engine.MarkActivityErrorNonRetryable(err)
+		}
+		if !exists || spec.RequiresUI || spec.Confirmation != nil || spec.TextOnly == nil {
+			return nil, engine.MarkActivityErrorNonRetryable(fmt.Errorf("agent tool %q is incompatible with text-only child execution", input.Call.Name))
+		}
+		if _, err := spec.TextOnly.ExecutionCodec.FromJSON(input.Call.Payload); err != nil {
+			return nil, engine.MarkActivityErrorNonRetryable(fmt.Errorf("agent tool %q text-only child input: %w", input.Call.Name, err))
+		}
 	}
 	if _, err := agentChildRunInput(cfg.Definition, request); err != nil {
 		return nil, err

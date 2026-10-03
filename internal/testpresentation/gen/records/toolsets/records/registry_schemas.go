@@ -27,8 +27,8 @@ func ToolSchemas() []*genregistry.ToolSchema {
 	declarations := registryDeclarations{}
 	return []*genregistry.ToolSchema{
 		declarations.schema1(),
-		declarations.schema9(),
-		declarations.schema23(),
+		declarations.schema7(),
+		declarations.schema21(),
 	}
 } // schema1 constructs one generated schema declaration.
 func (declarations registryDeclarations) schema1() *genregistry.ToolSchema {
@@ -47,18 +47,8 @@ func (declarations registryDeclarations) schema1() *genregistry.ToolSchema {
 				Terms:  map[string]int{"after": 1, "confirmation": 1, "erase": 3, "records": 2, "selected": 1},
 			},
 			RequiresUI: false,
-			TextOnly: &genregistry.TextOnlyToolContract{
-				ExecutionSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}"),
-				Description:     "Erase selected records after confirmation.",
-				Search: &genregistry.ToolSearchDocument{
-					Length: 8,
-					Terms:  map[string]int{"after": 1, "confirmation": 1, "erase": 3, "records": 2, "selected": 1},
-				},
-				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}"),
-				Payload:       declarations.metadata7(),
-			},
-			Payload: declarations.metadata2(),
-			Result:  declarations.metadata4(),
+			Payload:    declarations.metadata2(),
+			Result:     declarations.metadata4(),
 			Confirmation: &genregistry.ToolConfirmation{
 				PromptTemplate:       "Erase the records?",
 				DeniedResultTemplate: "{\"erased\":false}",
@@ -121,28 +111,8 @@ func (registryDeclarations) field6() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// metadata7 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata7() *genregistry.ToolTypeMetadata {
-	registryText1 := "ErasePayload"
-	return &genregistry.ToolTypeMetadata{
-		Name:                     &registryText1,
-		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}"),
-		Fields: []*genregistry.ToolFieldMetadata{
-			declarations.field8(),
-		},
-	}
-}
-
-// field8 constructs one generated field declaration.
-func (registryDeclarations) field8() *genregistry.ToolFieldMetadata {
-	registryText1 := "object"
-	return &genregistry.ToolFieldMetadata{
-		JSONType: &registryText1,
-	}
-}
-
-// schema9 constructs one generated schema declaration.
-func (declarations registryDeclarations) schema9() *genregistry.ToolSchema {
+// schema7 constructs one generated schema declaration.
+func (declarations registryDeclarations) schema7() *genregistry.ToolSchema {
 	registryText1 := "Read a bounded record count. Display the card when render_ui=true."
 	return &genregistry.ToolSchema{
 		Name:                   "records.read",
@@ -166,46 +136,46 @@ func (declarations registryDeclarations) schema9() *genregistry.ToolSchema {
 					Terms:  map[string]int{"a": 1, "bounded": 1, "count": 1, "read": 3, "record": 1, "records": 1},
 				},
 				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"query\":{\"description\":\"Record selection.\",\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}"),
-				Payload:       declarations.metadata20(),
+				Payload:       declarations.metadata18(),
 			},
-			Payload: declarations.metadata10(),
-			Result:  declarations.metadata14(),
+			Payload: declarations.metadata8(),
+			Result:  declarations.metadata12(),
 			ServerData: []*genregistry.ToolServerData{
 				{
 					Kind:     "record.card",
 					Audience: "timeline",
 					Schema:   []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"count\":{\"description\":\"Number shown in the card.\",\"format\":\"int64\",\"type\":\"integer\"}},\"required\":[\"count\"],\"type\":\"object\"}"),
-					Type:     declarations.metadata17(),
+					Type:     declarations.metadata15(),
 				},
 			},
 		},
 	}
 }
 
-// metadata10 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata10() *genregistry.ToolTypeMetadata {
+// metadata8 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata8() *genregistry.ToolTypeMetadata {
 	registryText1 := "ReadPayload"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
 		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"query\":{\"description\":\"Record selection.\",\"type\":\"string\"},\"render_ui\":{\"description\":\"Show an interactive card.\",\"type\":\"boolean\"}},\"required\":[\"query\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
+			declarations.field9(),
+			declarations.field10(),
 			declarations.field11(),
-			declarations.field12(),
-			declarations.field13(),
 		},
 	}
 }
 
-// field11 constructs one generated field declaration.
-func (registryDeclarations) field11() *genregistry.ToolFieldMetadata {
+// field9 constructs one generated field declaration.
+func (registryDeclarations) field9() *genregistry.ToolFieldMetadata {
 	registryText1 := "object"
 	return &genregistry.ToolFieldMetadata{
 		JSONType: &registryText1,
 	}
 }
 
-// field12 constructs one generated field declaration.
-func (registryDeclarations) field12() *genregistry.ToolFieldMetadata {
+// field10 constructs one generated field declaration.
+func (registryDeclarations) field10() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Record selection."
 	return &genregistry.ToolFieldMetadata{
@@ -217,8 +187,8 @@ func (registryDeclarations) field12() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// field13 constructs one generated field declaration.
-func (registryDeclarations) field13() *genregistry.ToolFieldMetadata {
+// field11 constructs one generated field declaration.
+func (registryDeclarations) field11() *genregistry.ToolFieldMetadata {
 	registryText1 := "boolean"
 	registryText2 := "Show an interactive card."
 	return &genregistry.ToolFieldMetadata{
@@ -230,29 +200,29 @@ func (registryDeclarations) field13() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// metadata14 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata14() *genregistry.ToolTypeMetadata {
+// metadata12 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata12() *genregistry.ToolTypeMetadata {
 	registryText1 := "ReadResult"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
 		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"count\":{\"description\":\"Number of records.\",\"format\":\"int64\",\"type\":\"integer\"}},\"required\":[\"count\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
-			declarations.field15(),
-			declarations.field16(),
+			declarations.field13(),
+			declarations.field14(),
 		},
 	}
 }
 
-// field15 constructs one generated field declaration.
-func (registryDeclarations) field15() *genregistry.ToolFieldMetadata {
+// field13 constructs one generated field declaration.
+func (registryDeclarations) field13() *genregistry.ToolFieldMetadata {
 	registryText1 := "object"
 	return &genregistry.ToolFieldMetadata{
 		JSONType: &registryText1,
 	}
 }
 
-// field16 constructs one generated field declaration.
-func (registryDeclarations) field16() *genregistry.ToolFieldMetadata {
+// field14 constructs one generated field declaration.
+func (registryDeclarations) field14() *genregistry.ToolFieldMetadata {
 	registryText1 := "integer"
 	registryText2 := "Number of records."
 	return &genregistry.ToolFieldMetadata{
@@ -264,29 +234,29 @@ func (registryDeclarations) field16() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// metadata17 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata17() *genregistry.ToolTypeMetadata {
+// metadata15 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata15() *genregistry.ToolTypeMetadata {
 	registryText1 := "ReadRecordCardServerData"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
 		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"count\":{\"description\":\"Number shown in the card.\",\"format\":\"int64\",\"type\":\"integer\"}},\"required\":[\"count\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
-			declarations.field18(),
-			declarations.field19(),
+			declarations.field16(),
+			declarations.field17(),
 		},
 	}
 }
 
-// field18 constructs one generated field declaration.
-func (registryDeclarations) field18() *genregistry.ToolFieldMetadata {
+// field16 constructs one generated field declaration.
+func (registryDeclarations) field16() *genregistry.ToolFieldMetadata {
 	registryText1 := "object"
 	return &genregistry.ToolFieldMetadata{
 		JSONType: &registryText1,
 	}
 }
 
-// field19 constructs one generated field declaration.
-func (registryDeclarations) field19() *genregistry.ToolFieldMetadata {
+// field17 constructs one generated field declaration.
+func (registryDeclarations) field17() *genregistry.ToolFieldMetadata {
 	registryText1 := "integer"
 	registryText2 := "Number shown in the card."
 	return &genregistry.ToolFieldMetadata{
@@ -298,29 +268,29 @@ func (registryDeclarations) field19() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// metadata20 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata20() *genregistry.ToolTypeMetadata {
+// metadata18 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata18() *genregistry.ToolTypeMetadata {
 	registryText1 := "ReadPayload"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
 		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"query\":{\"description\":\"Record selection.\",\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
-			declarations.field21(),
-			declarations.field22(),
+			declarations.field19(),
+			declarations.field20(),
 		},
 	}
 }
 
-// field21 constructs one generated field declaration.
-func (registryDeclarations) field21() *genregistry.ToolFieldMetadata {
+// field19 constructs one generated field declaration.
+func (registryDeclarations) field19() *genregistry.ToolFieldMetadata {
 	registryText1 := "object"
 	return &genregistry.ToolFieldMetadata{
 		JSONType: &registryText1,
 	}
 }
 
-// field22 constructs one generated field declaration.
-func (registryDeclarations) field22() *genregistry.ToolFieldMetadata {
+// field20 constructs one generated field declaration.
+func (registryDeclarations) field20() *genregistry.ToolFieldMetadata {
 	registryText1 := "string"
 	registryText2 := "Record selection."
 	return &genregistry.ToolFieldMetadata{
@@ -332,8 +302,8 @@ func (registryDeclarations) field22() *genregistry.ToolFieldMetadata {
 	}
 }
 
-// schema23 constructs one generated schema declaration.
-func (declarations registryDeclarations) schema23() *genregistry.ToolSchema {
+// schema21 constructs one generated schema declaration.
+func (declarations registryDeclarations) schema21() *genregistry.ToolSchema {
 	registryText1 := "Show an interactive record chart."
 	return &genregistry.ToolSchema{
 		Name:                   "records.show",
@@ -349,55 +319,25 @@ func (declarations registryDeclarations) schema23() *genregistry.ToolSchema {
 				Terms:  map[string]int{"an": 1, "chart": 1, "interactive": 1, "record": 1, "records": 1, "show": 3},
 			},
 			RequiresUI: true,
-			TextOnly: &genregistry.TextOnlyToolContract{
-				ExecutionSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}"),
-				Description:     "Show an interactive record chart.",
-				Search: &genregistry.ToolSearchDocument{
-					Length: 8,
-					Terms:  map[string]int{"an": 1, "chart": 1, "interactive": 1, "record": 1, "records": 1, "show": 3},
-				},
-				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}"),
-				Payload:       declarations.metadata26(),
-			},
-			Payload: declarations.metadata24(),
+			Payload:    declarations.metadata22(),
 		},
 	}
 }
 
-// metadata24 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata24() *genregistry.ToolTypeMetadata {
+// metadata22 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata22() *genregistry.ToolTypeMetadata {
 	registryText1 := "ShowPayload"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
 		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
-			declarations.field25(),
+			declarations.field23(),
 		},
 	}
 }
 
-// field25 constructs one generated field declaration.
-func (registryDeclarations) field25() *genregistry.ToolFieldMetadata {
-	registryText1 := "object"
-	return &genregistry.ToolFieldMetadata{
-		JSONType: &registryText1,
-	}
-}
-
-// metadata26 constructs one generated metadata declaration.
-func (declarations registryDeclarations) metadata26() *genregistry.ToolTypeMetadata {
-	registryText1 := "ShowPayload"
-	return &genregistry.ToolTypeMetadata{
-		Name:                     &registryText1,
-		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}"),
-		Fields: []*genregistry.ToolFieldMetadata{
-			declarations.field27(),
-		},
-	}
-}
-
-// field27 constructs one generated field declaration.
-func (registryDeclarations) field27() *genregistry.ToolFieldMetadata {
+// field23 constructs one generated field declaration.
+func (registryDeclarations) field23() *genregistry.ToolFieldMetadata {
 	registryText1 := "object"
 	return &genregistry.ToolFieldMetadata{
 		JSONType: &registryText1,

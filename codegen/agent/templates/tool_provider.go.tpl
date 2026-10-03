@@ -69,7 +69,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
         if msg.Meta.TextOnly {
             return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "unsupported_interaction", "tool requires unsupported interaction"), nil
         }
-{{- end }}
+{{- else }}
         if msg.Meta.TextOnly {
             spec, ok := Spec({{ .ConstName }})
             if !ok {
@@ -79,6 +79,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
                 return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
             }
         }
+{{- end }}
 {{- if or .HasMethodPayload .Injected }}
 		args, err := {{ .PayloadCodecName }}().FromJSON(msg.Payload)
 {{- else }}

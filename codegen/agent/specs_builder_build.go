@@ -72,6 +72,10 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 				return nil, err
 			}
 		}
+		if tool.RequiresUI || tool.Confirmation != nil {
+			textOnlyPayload = nil
+			textOnlyExecution = nil
+		}
 		if payload != nil && len(tool.Injected) > 0 {
 			// Custom executors use this function to decode the input and fill fields
 			// supplied by the server.

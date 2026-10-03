@@ -77,6 +77,7 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
         Name:        {{ .ConstName }},
         Description: {{ printf "%q" .Description }},
         RequiresUI: {{ .RequiresUI }},
+        {{- if .TextOnlyPayload }}
         TextOnly: &tools.ModelContract{
             ExecutionSchema: tools.RawJSON({{ printf "%q" .TextOnlyExecution.ExecutionSchemaJSON }}),
             ExecutionCodec: {{ .TextOnlyExecution.GenericCodec }},
@@ -96,6 +97,7 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
                 Codec: {{ .TextOnlyPayload.GenericCodec }},
             },
         },
+        {{- end }}
         Search: tools.SearchDocument{
             Length: {{ .Search.Length }},
             Terms: map[string]int{

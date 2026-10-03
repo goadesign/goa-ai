@@ -17,6 +17,8 @@ import (
 )
 
 func TestTextOnlyGeneratedContracts(t *testing.T) {
+	assert.Nil(t, genrecords.SpecShow().TextOnly)
+	assert.Nil(t, genrecords.SpecErase().TextOnly)
 	ordinary := genrecords.SpecRead()
 	text := ordinary.ForTextOnly()
 	assert.Contains(t, ordinary.Description, "card")
