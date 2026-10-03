@@ -1433,6 +1433,31 @@ Service("calculator", func() {
 })
 ```
 
+### MCP tool behavior hints
+
+Declare standard MCP annotations inside the method's `Tool` block:
+
+```go
+Tool("add", "Add two numbers", func() {
+    ToolTitle("Add numbers")
+    ReadOnlyHint(true)
+    DestructiveHint(false)
+    IdempotentHint(true)
+    OpenWorldHint(false)
+})
+```
+
+The generated catalog preserves omitted hints and explicit false values.
+`ReadOnlyHint` says the tool leaves its environment unchanged. `IdempotentHint`
+says repeating identical arguments has no additional effects; its service
+implementation must enforce that promise. `DestructiveHint` describes removal
+or replacement of existing data. `OpenWorldHint` describes interaction with
+external entities. `ToolTitle` supplies a display name.
+
+These declarations apply only to MCP method tools. They do not grant trust or
+change agent activity retry policies. The application chooses trust and bounded
+HTTP retries when constructing its caller; see [MCP callers](runtime.md#mcp-callers).
+
 ### MCP Capabilities
 
 

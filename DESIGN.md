@@ -2000,6 +2000,12 @@ original arguments and opaque state in a version-10 checkpoint, publishes typed
 host input requests, and validates the exact answers before the next activity.
 Only a finished call enters completed tool history. MCP network rounds allow one
 activity attempt; an engine retry must not silently duplicate remote work.
+Inside that activity, explicit host trust and a per-round HTTP attempt allowance
+permit retrying a lost SSE response only for tools declared read-only or
+idempotent. Generated callers use precomputed design hints; imported callers
+read credential-scoped catalogs. A retry changes only the network request ID.
+The service owns preventing additional effects; missing hints, cancellation,
+malformed replies, and completed tool errors never authorize this retry path.
 
 Generated servers advertise only their implemented unary tools, fixed resource
 reads, and static prompts. Optional tasks, subscriptions, and server-originated

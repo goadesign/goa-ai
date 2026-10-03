@@ -52,6 +52,22 @@ type (
 		Description string
 		// Method is the Goa service method that implements this tool.
 		Method *expr.MethodExpr
+		// Annotations describes the tool behavior declared by its service author.
+		Annotations *ToolAnnotationsExpr
+	}
+
+	// ToolAnnotationsExpr records optional MCP tool behavior hints at design time.
+	ToolAnnotationsExpr struct {
+		// Title is the display name advertised to clients.
+		Title *string
+		// ReadOnlyHint states that the tool does not change its environment.
+		ReadOnlyHint *bool
+		// DestructiveHint states that the tool may remove or replace existing data.
+		DestructiveHint *bool
+		// IdempotentHint states that repeating arguments has no additional effects.
+		IdempotentHint *bool
+		// OpenWorldHint states that the tool interacts with external entities.
+		OpenWorldHint *bool
 	}
 
 	// ResourceExpr defines an MCP resource that the server exposes for access.

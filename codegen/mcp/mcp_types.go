@@ -132,6 +132,10 @@ func (b *mcpExprBuilder) buildToolInfoType() *expr.AttributeExpr {
 				Type:        expr.String,
 				Description: "Tool description",
 			}},
+			{Name: "annotations", Attribute: &expr.AttributeExpr{
+				Type:        b.getOrCreateType("ToolAnnotations", b.buildToolAnnotationsType),
+				Description: "Optional behavior hints; clients must trust the server before acting on them",
+			}},
 			{Name: "inputSchema", Attribute: &expr.AttributeExpr{
 				Type:        expr.Any,
 				Description: "JSON Schema for tool input",
@@ -151,6 +155,18 @@ func (b *mcpExprBuilder) buildToolInfoType() *expr.AttributeExpr {
 			Required: []string{"name", "inputSchema"},
 		},
 	}
+}
+
+// buildToolAnnotationsType preserves omitted hints and explicit false values
+// so each client can apply the defaults defined by the MCP protocol.
+func (b *mcpExprBuilder) buildToolAnnotationsType() *expr.AttributeExpr {
+	return &expr.AttributeExpr{Type: &expr.Object{
+		{Name: "title", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Human-readable tool display name"}},
+		{Name: "readOnlyHint", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "Whether the tool leaves its environment unchanged; absent means false"}},
+		{Name: "destructiveHint", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "Whether the tool may remove or replace data; absent means true"}},
+		{Name: "idempotentHint", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "Whether repeating arguments has no additional effects; absent means false"}},
+		{Name: "openWorldHint", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "Whether the tool interacts with external entities; absent means true"}},
+	}}
 }
 
 func (b *mcpExprBuilder) buildToolsCallPayloadType() *expr.AttributeExpr {

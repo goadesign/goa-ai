@@ -392,10 +392,26 @@ type ToolInfoResponseBody struct {
 	Name string `form:"name" json:"name" xml:"name"`
 	// Tool description
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Optional behavior hints; clients must trust the server before acting on them
+	Annotations *ToolAnnotationsResponseBody `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
 	// JSON Schema for tool input
 	InputSchema json.RawMessage `form:"inputSchema" json:"inputSchema" xml:"inputSchema"`
 	// JSON Schema for structured tool output
 	OutputSchema json.RawMessage `form:"outputSchema,omitempty" json:"outputSchema,omitempty" xml:"outputSchema,omitempty"`
+}
+
+// ToolAnnotationsResponseBody is used to define fields on response body types.
+type ToolAnnotationsResponseBody struct {
+	// Human-readable tool display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Whether the tool leaves its environment unchanged; absent means false
+	ReadOnlyHint *bool `form:"readOnlyHint,omitempty" json:"readOnlyHint,omitempty" xml:"readOnlyHint,omitempty"`
+	// Whether the tool may remove or replace data; absent means true
+	DestructiveHint *bool `form:"destructiveHint,omitempty" json:"destructiveHint,omitempty" xml:"destructiveHint,omitempty"`
+	// Whether repeating arguments has no additional effects; absent means false
+	IdempotentHint *bool `form:"idempotentHint,omitempty" json:"idempotentHint,omitempty" xml:"idempotentHint,omitempty"`
+	// Whether the tool interacts with external entities; absent means true
+	OpenWorldHint *bool `form:"openWorldHint,omitempty" json:"openWorldHint,omitempty" xml:"openWorldHint,omitempty"`
 }
 
 // ContentItemResponseBody is used to define fields on response body types.

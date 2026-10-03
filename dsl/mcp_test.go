@@ -294,3 +294,47 @@ func runMCPDSLWithError(t *testing.T, dsl func()) error {
 	}
 	return eval.RunDSL()
 }
+
+func TestMCPToolBehaviorHints(t *testing.T) {
+	runMCPDSL(t, func() {
+		API("test", func() {})
+		Service("records", func() {
+			MCP("records", "1")
+			JSONRPC(func() {
+				POST("/mcp")
+			})
+			Method("read", func() {
+				Result(String)
+				Tool("read", "Read a record", func() {
+					ToolTitle("Read record")
+					ReadOnlyHint(true)
+					DestructiveHint(false)
+					IdempotentHint(true)
+					OpenWorldHint(false)
+				})
+			})
+			Method("write", func() {
+				Tool("write", "Write a record")
+			})
+		})
+	})
+	tools := mcpexpr.Root.MCPServers["records"].Tools
+	require.Len(t, tools, 2)
+	require.NotNil(t, tools[0].Annotations)
+	require.Equal(t, "Read record", *tools[0].Annotations.Title)
+	require.True(t, *tools[0].Annotations.ReadOnlyHint)
+	require.False(t, *tools[0].Annotations.DestructiveHint)
+	require.True(t, *tools[0].Annotations.IdempotentHint)
+	require.False(t, *tools[0].Annotations.OpenWorldHint)
+	require.Nil(t, tools[1].Annotations)
+}
+
+func TestMCPHintRejectsServiceContext(t *testing.T) {
+	err := runMCPDSLWithError(t, func() {
+		API("test", func() {})
+		Service("records", func() {
+			ReadOnlyHint(true)
+		})
+	})
+	require.Error(t, err)
+}

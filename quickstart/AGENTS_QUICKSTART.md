@@ -271,7 +271,7 @@ remoteClient := <mcp_jsonrpc_client_pkg>.NewClient(/* your endpoints */)
 
 // 2. Identify this program and declare only input modes this host can answer.
 clientInfo := mcpruntime.ClientInfo{Name: "<client_name>", Version: "<client_version>"}
-caller, err := <mcp_jsonrpc_client_pkg>.NewCaller(remoteClient, clientInfo, mcpruntime.InputSupport{})
+caller, err := <mcp_jsonrpc_client_pkg>.NewCaller(remoteClient, clientInfo, mcpruntime.InputSupport{}, mcpruntime.HTTPRetryPolicy{})
 if err != nil {
     return err
 }

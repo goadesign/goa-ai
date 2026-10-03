@@ -447,7 +447,7 @@ clientInfo := mcpruntime.ClientInfo{
     Name:    "<client_name>",
     Version: "<client_version>",
 }
-caller, err := <mcp_jsonrpc_client_pkg>.NewCaller(ctx, remoteClient, clientInfo)
+caller, err := <mcp_jsonrpc_client_pkg>.NewCaller(remoteClient, clientInfo, mcpruntime.InputSupport{}, mcpruntime.HTTPRetryPolicy{})
 if err != nil {
     return fmt.Errorf("initialize MCP caller: %w", err)
 }

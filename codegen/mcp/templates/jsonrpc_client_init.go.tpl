@@ -7,17 +7,23 @@ func {{ .Transport.ClientInitDeclaration.Name }}(
 	dec func(*http.Response) goahttp.Decoder,
 	restoreBody bool,
 ) *{{ .Transport.ClientStructDeclaration.Name }} {
-	doer = mcpruntime.NewHTTPTransport(doer, mcpruntime.ClientInfo{}, map[string][]mcpruntime.HeaderBinding{
+	doer = mcpruntime.NewHTTPTransport(doer, mcpruntime.ClientInfo{}, map[string]mcpruntime.ToolBinding{
         {{- range .Tools }}
-        {{- if .Headers }}
+        {{- if or .Headers .ReadOnly .Idempotent }}
         {{ printf "%q" .Name }}: {
+            {{- if .ReadOnly }}ReadOnly: true,{{ end }}
+            {{- if .Idempotent }}Idempotent: true,{{ end }}
+            {{- if .Headers }}
+            Headers: []mcpruntime.HeaderBinding{
             {{- range .Headers }}
             {Name: {{ printf "%q" .Name }}, Type: {{ printf "%q" .Type }}, Path: []string{ {{ range .Path }}{{ printf "%q" . }}, {{ end }} }},
+            {{- end }}
+            },
             {{- end }}
         },
         {{- end }}
         {{- end }}
-    }, mcpruntime.InputSupport{})
+    }, mcpruntime.InputSupport{}, mcpruntime.HTTPRetryPolicy{})
 	return &{{ .Transport.ClientStructDeclaration.Name }}{
 		Doer:                doer,
 		{{- range .Transport.Endpoints }}

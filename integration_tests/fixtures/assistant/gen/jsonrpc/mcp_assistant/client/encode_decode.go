@@ -1004,6 +1004,24 @@ func unmarshalToolInfoResponseBodyToMcpassistantToolInfo(v *ToolInfoResponseBody
 		InputSchema:  v.InputSchema,
 		OutputSchema: v.OutputSchema,
 	}
+	if v.Annotations != nil {
+		res.Annotations = unmarshalToolAnnotationsResponseBodyToMcpassistantToolAnnotations(v.Annotations)
+	}
+
+	return res
+}
+
+// unmarshalToolAnnotationsResponseBodyToMcpassistantToolAnnotations builds a
+// value of type *mcpassistant.ToolAnnotations from a value of type
+// *ToolAnnotationsResponseBody.
+func unmarshalToolAnnotationsResponseBodyToMcpassistantToolAnnotations(v *ToolAnnotationsResponseBody) *mcpassistant.ToolAnnotations {
+	res := &mcpassistant.ToolAnnotations{
+		Title:           v.Title,
+		ReadOnlyHint:    v.ReadOnlyHint,
+		DestructiveHint: v.DestructiveHint,
+		IdempotentHint:  v.IdempotentHint,
+		OpenWorldHint:   v.OpenWorldHint,
+	}
 
 	return res
 }

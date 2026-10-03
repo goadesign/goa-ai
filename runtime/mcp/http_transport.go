@@ -1,7 +1,7 @@
 // Package mcp owns MCP's HTTP binding for generated and handwritten clients. It
 // derives request headers from typed bindings, validates response IDs, and reads
-// one final JSON or request-scoped event-stream response. It never resumes or
-// repeats a disconnected request.
+// one final JSON or request-scoped event-stream response. Explicit host trust
+// and tool behavior declarations control bounded retries after stream loss.
 package mcp
 
 import (
@@ -17,6 +17,10 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"goa.design/goa-ai/internal/mcpprotocol"
 	"goa.design/goa/v3/jsonrpc"
@@ -34,25 +38,39 @@ type (
 		}
 		clientInfo   ClientInfo
 		inputSupport InputSupport
-		headers      map[string][]HeaderBinding
+		tools        map[string]ToolBinding
+		retry        HTTPRetryPolicy
 	}
 )
 
 // NewHTTPTransport wraps an already-built HTTP dependency. Each request derives
 // metadata and headers; no initialization or connection state is created.
+// A negative retry attempt count panics; caller constructors return validation errors.
 func NewHTTPTransport(next interface {
 	Do(*http.Request) (*http.Response, error)
-}, info ClientInfo, headers map[string][]HeaderBinding, support InputSupport) *HTTPTransport {
+}, info ClientInfo, tools map[string]ToolBinding, support InputSupport, retry HTTPRetryPolicy) *HTTPTransport {
+	if err := retry.Validate(); err != nil {
+		panic(err)
+	}
 	if existing, ok := next.(*HTTPTransport); ok {
 		next = existing.next
 	}
-	return &HTTPTransport{next: next, clientInfo: info, headers: headers, inputSupport: support}
+	return &HTTPTransport{next: next, clientInfo: info, tools: tools, inputSupport: support, retry: retry}
 }
 
 // Do sends one request with its own metadata and validates the response before
 // a generated decoder sees it. Protocol errors retain their code and raw data
 // instead of being replaced by a generic HTTP status error.
 func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err error) {
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(original.Context(), "mcp.http.request")
+	defer span.End()
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+	original = original.Clone(ctx)
 	body, readErr := io.ReadAll(original.Body)
 	closeErr := original.Body.Close()
 	if err := errors.Join(readErr, closeErr); err != nil {
@@ -98,8 +116,6 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		return nil, NewInternalError(err)
 	}
 	outgoing := original.Clone(original.Context())
-	outgoing.Body = io.NopCloser(bytes.NewReader(body))
-	outgoing.ContentLength = int64(len(body))
 	outgoing.GetBody = nil
 	outgoing.Header.Set("Content-Type", "application/json")
 	outgoing.Header.Set("Accept", "application/json, text/event-stream")
@@ -113,7 +129,7 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		outgoing.Header.Set("Mcp-Name", mcpprotocol.EncodeHeaderValue(*name))
 	}
 	if request.Method == methodToolsCall {
-		if err := setParameterHeaders(outgoing.Header, params["arguments"], t.headers[*name]); err != nil {
+		if err := setParameterHeaders(outgoing.Header, params["arguments"], t.tools[*name].Headers); err != nil {
 			return nil, err
 		}
 	}
@@ -121,11 +137,46 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 	if request.Method == methodToolsCall {
 		defer func() { err = unknownToolOutcome(err) }()
 	}
-	response, err = t.next.Do(outgoing)
+	// A lost response permits repeated execution only when the host trusts the
+	// tool's declaration. The same arguments, input answers and server state stay
+	// fixed; each retry receives a new network request ID.
+	attempts := 1
+	if request.Method == methodToolsCall && t.retry.TrustToolAnnotations {
+		binding := t.tools[*name]
+		if binding.ReadOnly || binding.Idempotent {
+			attempts = max(1, t.retry.MaxAttempts)
+		}
+	}
+	span.SetAttributes(attribute.String("rpc.method", request.Method))
+	for attempt := 1; ; attempt++ {
+		attemptRequest := outgoing.Clone(outgoing.Context())
+		attemptRequest.Body = io.NopCloser(bytes.NewReader(body))
+		attemptRequest.ContentLength = int64(len(body))
+		response, err = t.send(attemptRequest, request.HasID, envelope)
+		var interrupted *interruptedResponseError
+		if err == nil || !errors.As(err, &interrupted) || interrupted.httpStatus != http.StatusOK || original.Context().Err() != nil || attempt == attempts {
+			return response, err
+		}
+		span.AddEvent("mcp.response_interrupted", trace.WithAttributes(attribute.Int("attempt", attempt)))
+		envelope["id"], err = json.Marshal(uuid.NewString())
+		if err != nil {
+			return nil, NewInternalError(err)
+		}
+		body, err = json.Marshal(envelope)
+		if err != nil {
+			return nil, NewInternalError(err)
+		}
+	}
+}
+
+// send consumes and validates one HTTP response. A lost SSE response is marked
+// separately so the caller can apply trust and attempt limits before repeating.
+func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[string]json.RawMessage) (*http.Response, error) {
+	response, err := t.next.Do(outgoing)
 	if err != nil {
 		return nil, err
 	}
-	if !request.HasID {
+	if !hasID {
 		if response.StatusCode != http.StatusAccepted {
 			return nil, closeResponseWithError(response, fmt.Errorf("mcp notification HTTP status %d", response.StatusCode))
 		}
@@ -150,10 +201,14 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		data, err = io.ReadAll(response.Body)
 	case "text/event-stream":
 		data, err = readEventStream(response.Body)
+		var interrupted *interruptedResponseError
+		if errors.As(err, &interrupted) {
+			interrupted.httpStatus = response.StatusCode
+		}
 	default:
 		err = NewMalformedResponseError(fmt.Errorf("unsupported content type %q", mediaType))
 	}
-	closeErr = response.Body.Close()
+	closeErr := response.Body.Close()
 	if err := errors.Join(err, closeErr); err != nil {
 		return nil, err
 	}
@@ -183,7 +238,7 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 	if err := json.Unmarshal(incoming.Result, &result); err != nil || (result.ResultType != resultComplete && result.ResultType != resultInputRequired) {
 		return nil, NewMalformedResponseError(errors.New("unsupported or absent resultType"))
 	}
-	if result.ResultType == resultInputRequired && request.Method != methodToolsCall && request.Method != "resources/read" && request.Method != "prompts/get" {
+	if result.ResultType == resultInputRequired && outgoing.Header.Get("Mcp-Method") != methodToolsCall && outgoing.Header.Get("Mcp-Method") != "resources/read" && outgoing.Header.Get("Mcp-Method") != "prompts/get" {
 		return nil, NewMalformedResponseError(errors.New("input_required is not permitted for this method"))
 	}
 	response.Body = io.NopCloser(bytes.NewReader(data))
@@ -192,20 +247,45 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 	return response, nil
 }
 
-// readEventStream consumes comments and notifications until one final response.
-// An independent server request or a stream that ends early is a protocol error.
+// readEventStream consumes comments and notifications until a complete response
+// event. A lost stream discards unfinished event data; a fully framed malformed
+// message fails validation instead of permitting a retry.
 func readEventStream(body io.Reader) ([]byte, error) {
 	reader := bufio.NewReader(body)
-	var data strings.Builder
+	var line, data strings.Builder
+	first := true
+	skipLF := false
 	for {
-		line, err := reader.ReadString('\n')
-		if err != nil && !errors.Is(err, io.EOF) {
-			return nil, NewMalformedResponseError(err)
+		value, _, err := reader.ReadRune()
+		if errors.Is(err, io.EOF) {
+			return nil, &interruptedResponseError{cause: errors.New("event stream ended before the request response")}
 		}
-		line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
-		if line == "" || errors.Is(err, io.EOF) {
+		if err != nil {
+			return nil, &interruptedResponseError{cause: err}
+		}
+		if first {
+			first = false
+			if value == '\uFEFF' {
+				continue
+			}
+		}
+		if skipLF && value == '\n' {
+			skipLF = false
+			continue
+		}
+		skipLF = value == '\r'
+		if value != '\r' && value != '\n' {
+			line.WriteRune(value)
+			continue
+		}
+
+		// CR, LF and CRLF each end one line. Only a blank line delivers the
+		// buffered event; EOF never turns unfinished bytes into a response.
+		text := line.String()
+		line.Reset()
+		if text == "" {
 			if data.Len() > 0 {
-				encoded := []byte(data.String())
+				encoded := []byte(strings.TrimSuffix(data.String(), "\n"))
 				var message rpcMessage
 				if decodeErr := json.Unmarshal(encoded, &message); decodeErr != nil {
 					return nil, NewMalformedResponseError(decodeErr)
@@ -221,14 +301,12 @@ func readEventStream(body io.Reader) ([]byte, error) {
 				}
 				data.Reset()
 			}
-		} else if value, ok := strings.CutPrefix(line, "data:"); ok {
-			if data.Len() > 0 {
-				data.WriteByte('\n')
-			}
-			data.WriteString(strings.TrimPrefix(value, " "))
+			continue
 		}
-		if errors.Is(err, io.EOF) {
-			return nil, NewMalformedResponseError(errors.New("event stream ended before the request response"))
+		field, content, _ := strings.Cut(text, ":")
+		if field == "data" {
+			data.WriteString(strings.TrimPrefix(content, " "))
+			data.WriteByte('\n')
 		}
 	}
 }

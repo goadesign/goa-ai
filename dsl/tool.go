@@ -26,7 +26,7 @@ import (
 // Tool takes two required arguments and one optional DSL function:
 //   - name: the tool identifier
 //   - description: a concise summary presented to the LLM
-//   - dsl (optional): configuration block (only for toolset tools, ignored for method tools)
+//   - dsl (optional): configuration block (argument/result settings for toolsets; behavior hints for MCP methods)
 //
 // Inside toolsets, the DSL function can use:
 //   - Args: defines the input parameter schema
@@ -130,6 +130,9 @@ func Tool(name string, args ...any) {
 		}
 		tool.Expression = parent
 		mcp.Tools = append(mcp.Tools, tool)
+		if dslf != nil {
+			eval.Execute(dslf, tool)
+		}
 	default:
 		eval.IncompatibleDSL()
 		return

@@ -23,11 +23,14 @@ type Caller struct {
 
 // NewCaller checks application identity and binds it to each request. It does
 // not contact the server or require a discovery request before invoking a tool.
-func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport) (mcpruntime.Caller, error) {
+func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport, retry mcpruntime.HTTPRetryPolicy) (mcpruntime.Caller, error) {
+	if err := retry.Validate(); err != nil {
+		return nil, err
+	}
 	if err := info.Validate(); err != nil {
 		return nil, err
 	}
-	transport := mcpruntime.NewHTTPTransport(client.Doer, info, map[string][]mcpruntime.HeaderBinding{}, support)
+	transport := mcpruntime.NewHTTPTransport(client.Doer, info, map[string]mcpruntime.ToolBinding{}, support, retry)
 	return &Caller{client: client, transport: transport}, nil
 }
 

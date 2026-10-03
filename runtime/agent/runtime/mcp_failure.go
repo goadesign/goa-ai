@@ -29,7 +29,7 @@ func MCPCallFailure(name tools.Ident, err error) *planner.ToolResult {
 		var rpcErr *mcp.Error
 		switch {
 		case errors.As(err, &unknown):
-			kind = planner.FailureTimeout
+			kind = planner.FailureUnavailable
 		case errors.As(err, &malformed):
 			kind = planner.FailureMalformedResult
 			action = planner.RecoveryFinish

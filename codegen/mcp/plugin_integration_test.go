@@ -41,6 +41,9 @@ import (
  mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
+type retryDoer func(*http.Request) (*http.Response,error)
+func (f retryDoer) Do(r *http.Request) (*http.Response,error) { return f(r) }
+
 type echoService struct { calls int }
 func (s *echoService) Echo(context.Context) (string,error) {s.calls++;return "hello",nil}
 
@@ -53,7 +56,7 @@ func TestGeneratedStatelessProtocol(t *testing.T) {
  endpoint:=httptest.NewServer(mux);defer endpoint.Close()
  location,err:=url.Parse(endpoint.URL);if err!=nil{t.Fatal(err)}
  client:=NewClient(location.Scheme,location.Host,endpoint.Client(),goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
- caller,err:=NewCaller(client,mcpruntime.ClientInfo{Name:"test",Version:"1"},mcpruntime.InputSupport{});if err!=nil{t.Fatal(err)}
+ caller,err:=NewCaller(client,mcpruntime.ClientInfo{Name:"test",Version:"1"},mcpruntime.InputSupport{},mcpruntime.HTTPRetryPolicy{});if err!=nil{t.Fatal(err)}
  result,err:=caller.CallTool(context.Background(),mcpruntime.CallRequest{Tool:"echo",Payload:json.RawMessage("{}")});if err!=nil{t.Fatal(err)}
  if string(result.StructuredContent)!="\"hello\"" || len(result.Content)!=0 || service.calls!=1 {t.Fatalf("result=%+v calls=%d",result,service.calls)}
  discovered,err:=client.ServerDiscover()(context.Background(),&genmcpfmt.DiscoverPayload{});if err!=nil{t.Fatal(err)}
@@ -61,6 +64,22 @@ func TestGeneratedStatelessProtocol(t *testing.T) {
  if discovery.ResultType!="complete"||len(discovery.SupportedVersions)!=1||discovery.SupportedVersions[0]!=mcpruntime.ProtocolVersion{t.Fatalf("discovery=%+v",discovery)}
  catalog,err:=client.ToolsList()(context.Background(),&genmcpfmt.ToolsListPayload{});if err!=nil{t.Fatal(err)}
  if catalog.(*genmcpfmt.ToolsListResult).CacheScope!="private"{t.Fatal("missing cache scope")}
+ hints:=catalog.(*genmcpfmt.ToolsListResult).Tools[0].Annotations
+ if hints==nil||hints.Title==nil||*hints.Title!="Echo"||hints.ReadOnlyHint==nil||!*hints.ReadOnlyHint||hints.DestructiveHint==nil||*hints.DestructiveHint||hints.IdempotentHint==nil||*hints.IdempotentHint||hints.OpenWorldHint==nil||*hints.OpenWorldHint {t.Fatalf("hints=%+v",hints)}
+ var ids []string
+ doer:=retryDoer(func(request *http.Request)(*http.Response,error){
+  body,err:=io.ReadAll(request.Body);if err!=nil{return nil,err};if err:=request.Body.Close();err!=nil{return nil,err}
+  var envelope struct{ID string};if err:=json.Unmarshal(body,&envelope);err!=nil{return nil,err}
+  ids=append(ids,envelope.ID)
+  request.Body=io.NopCloser(bytes.NewReader(body))
+  response,err:=endpoint.Client().Do(request);if err!=nil{return nil,err}
+  if len(ids)==1 {if err:=response.Body.Close();err!=nil{return nil,err};response.Header.Set("Content-Type","text/event-stream");response.Body=io.NopCloser(strings.NewReader(": accepted\n\n"))}
+  return response,nil
+ })
+ retryClient:=NewClient(location.Scheme,location.Host,doer,goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
+ retryCaller,err:=NewCaller(retryClient,mcpruntime.ClientInfo{Name:"test",Version:"1"},mcpruntime.InputSupport{},mcpruntime.HTTPRetryPolicy{MaxAttempts:2,TrustToolAnnotations:true});if err!=nil{t.Fatal(err)}
+ retried,err:=retryCaller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"echo",Payload:json.RawMessage("{}")});if err!=nil{t.Fatal(err)}
+ if string(retried.StructuredContent)!="\"hello\""||service.calls!=3||len(ids)!=2||ids[0]==ids[1] {t.Fatalf("result=%+v calls=%d ids=%v",retried,service.calls,ids)}
 
  for _,origins:=range [][]string{{"https://allowed.test"},{""},{"https://evil.test"},{"https://allowed.test","https://evil.test"}} {
   request,err:=http.NewRequestWithContext(t.Context(),"POST",endpoint.URL+"/fmt",strings.NewReader("{\"jsonrpc\":\"2.0\",\"id\":\"origin\",\"method\":\"server/discover\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"));if err!=nil{t.Fatal(err)}
@@ -292,7 +311,7 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 		Name:    "fmt",
 		Version: "1.0.0",
 		Tools: []*mcpexpr.ToolExpr{
-			{Name: "echo", Method: fmtMethods["echo"]},
+			{Name: "echo", Method: fmtMethods["echo"], Annotations: &mcpexpr.ToolAnnotationsExpr{Title: new("Echo"), ReadOnlyHint: new(true), DestructiveHint: new(false), IdempotentHint: new(false), OpenWorldHint: new(false)}},
 		},
 	})
 	mcpexpr.Root.RegisterMCP(prompts, &mcpexpr.MCPExpr{

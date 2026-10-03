@@ -99,6 +99,12 @@ type (
 		Name string
 		// Description explains the tool to MCP clients.
 		Description string
+		// Annotations contains the behavior hints advertised by this tool.
+		Annotations *mcpexpr.ToolAnnotationsExpr
+		// ReadOnly is the design-time promise used by the generated HTTP binding.
+		ReadOnly bool
+		// Idempotent is the design-time promise that repeated arguments have no additional effects.
+		Idempotent bool
 		// ServiceMethodName is Goa's final Go name for the original service method.
 		ServiceMethodName string
 		// HasPayload reports whether the Goa method accepts a payload.
@@ -250,9 +256,15 @@ func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 		adapter := &ToolAdapter{
 			Name:           tool.Name,
 			Description:    tool.Description,
+			Annotations:    tool.Annotations,
 			HasPayload:     hasRealPayload,
 			HasResult:      hasMCPValue(tool.Method.Result),
 			userMethodName: tool.Method.Name,
+		}
+
+		if tool.Annotations != nil {
+			adapter.ReadOnly = tool.Annotations.ReadOnlyHint != nil && *tool.Annotations.ReadOnlyHint
+			adapter.Idempotent = tool.Annotations.IdempotentHint != nil && *tool.Annotations.IdempotentHint
 		}
 
 		// Set payload type reference only for real payloads

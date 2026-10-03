@@ -6431,8 +6431,9 @@ implement `server/discover`; clients can call tools without discovery first.
 
 HTTP callers accept JSON or a request-scoped event stream. They preserve exact
 response IDs and protocol error codes and data, including HTTP 400 and 404
-responses. A sent tool request that loses its usable response returns
-`OutcomeUnknownError`; it cannot safely be replayed. They load every catalog
+responses. Without an explicitly trusted safe tool declaration and a retry
+allowance, a sent tool request that loses its usable response returns
+`OutcomeUnknownError`. They load every catalog
 page for the current caller, validate tool schemas using JSON Schema 2020-12, and derive mirrored headers from valid
 `x-mcp-header` annotations. Invalid annotations on another tool do not prevent
 calling a valid tool. Caller constructors receive an already-built HTTP client
@@ -6453,13 +6454,54 @@ input and waits for exit, killing and reaping the process if the supplied contex
 ends. The application chooses that shutdown deadline.
 
 Generated JSON-RPC clients use the same transport implementation. Their tool
-caller is constructed with `NewCaller(client, clientInfo, inputSupport)`.
+caller is constructed with `NewCaller(client, clientInfo, inputSupport, retryPolicy)`.
+The generated client supplies precomputed tool bindings from the same design
+that defines the server catalog.
 
 `CallResponse.Content` contains typed text, image, audio, resource-link, or
 embedded-resource blocks. `StructuredContent` retains the exact JSON value,
 including primitive values, arrays, and explicit null. Generated executors decode
 it using the declared result codec. Text content is never parsed as a substitute
 for a missing structured result.
+
+### Interrupted HTTP responses
+
+Retries belong to the application's HTTP caller, inside one worker activity.
+Configure `HTTPRetryPolicy` on `HTTPOptions.RetryPolicy` or pass it to the
+generated `NewCaller`:
+
+```go
+retryPolicy := mcp.HTTPRetryPolicy{
+    MaxAttempts: 2,
+    TrustToolAnnotations: true,
+}
+```
+
+`MaxAttempts` counts POSTs for one request round, including the first. Zero
+selects one attempt; negative values are rejected. A later host-input round gets
+its own allowance. This setting does not change run-wide tool budgets or enable
+worker retries. MCP activities still execute at most once after worker loss.
+
+Enable `TrustToolAnnotations` only for a server whose behavior declarations the
+application trusts. A trusted `readOnlyHint: true` or `idempotentHint: true`
+permits retrying an SSE response that ends before its final message. Missing
+hints and explicit false values do not permit it. `destructiveHint: false`
+alone does not authorize retry. Generated callers use design-time hints;
+imported callers read them in the current authorization context.
+
+Every retry keeps the exact arguments, host answers, and opaque request state,
+uses a fresh JSON-RPC ID, and sends a new POST. There is no GET resumption or
+`Last-Event-ID`. Cancellation, malformed messages, HTTP or JSON-RPC errors, and
+complete tool-error results do not trigger this retry path. Exhaustion retains
+`OutcomeUnknownError` and stops runtime recovery. A lost response is classified
+as unavailable; a real deadline expiry is classified as timeout.
+
+The annotations describe server behavior; they do not enforce it. An idempotent
+service must own preventing additional effects for identical arguments. Request
+IDs only correlate responses and do not supply business-operation identity.
+The released changelog's unconditional reissue wording remains a conformance
+question; this policy does not claim that maintainers have clarified it. See the
+[upgrade plan](mcp_protocol_upgrade_plan.md#interrupted-http-responses-and-operation-ownership).
 
 ### Unfinished calls and host input
 

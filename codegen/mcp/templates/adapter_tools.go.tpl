@@ -20,6 +20,15 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
             {
                 Name: {{ quote .Name }},
                 Description: stringPtr({{ quote .Description }}),
+                {{- with .Annotations }}
+                Annotations: &ToolAnnotations{
+                    {{- if ne .Title nil }}Title: stringPtr({{ quote .Title }}),{{ end }}
+                    {{- if ne .ReadOnlyHint nil }}ReadOnlyHint: boolPtr({{ .ReadOnlyHint }}),{{ end }}
+                    {{- if ne .DestructiveHint nil }}DestructiveHint: boolPtr({{ .DestructiveHint }}),{{ end }}
+                    {{- if ne .IdempotentHint nil }}IdempotentHint: boolPtr({{ .IdempotentHint }}),{{ end }}
+                    {{- if ne .OpenWorldHint nil }}OpenWorldHint: boolPtr({{ .OpenWorldHint }}),{{ end }}
+                },
+                {{- end }}
                 InputSchema: json.RawMessage({{ quote .InputSchema }}),
                 {{- if .HasResult }}
                 OutputSchema: json.RawMessage({{ quote .OutputSchema }}),

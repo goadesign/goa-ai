@@ -1,6 +1,6 @@
 # Upgrade goa-ai to MCP 2026-07-28
 
-Research and implementation plan, prepared 2026-10-02 and revised after tracing framework composition. The core implementation is complete in the isolated clone; release gates remain explicit below. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
+Research and implementation plan, prepared 2026-10-02 and revised 2026-10-03 after tracing framework composition and prevailing retry implementations. The core implementation is complete in the isolated clone; release gates remain explicit below. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
 
 ## Outcome and scope
 
@@ -59,8 +59,10 @@ answers preserve exact server request IDs and opaque state across successor runs
 and worker replacement. Every HTTP round uses a fresh UUID, including after a
 caller is reconstructed in a new worker. They do not publish final tool results prematurely or
 charge a new model tool call. Generated MCP activity registration allows one
-attempt. A sent tool call with no usable response returns `OutcomeUnknownError`
-and finishes recovery instead of permitting an unproven replay.
+attempt. Explicit endpoint trust and a read-only or idempotent declaration can
+authorize bounded retries inside one HTTP round. Otherwise a lost tool response
+returns `OutcomeUnknownError` and finishes recovery. The detailed policy and
+source-backed research are recorded below.
 
 Verified so far: standalone generated service modules, real generated-server
 protocol/tools/resources/prompts scenarios, exact form and URL contracts,
@@ -606,7 +608,7 @@ These are dependency-ordered work packages for one breaking release. Intermediat
 2. Extend activity input/output, workflow batch records, checkpoint validation/restoration, and host delivery so an unfinished call has no success result, no `tool_end`, and no planner resume before completion. Validate payload/engine storage budgets at their actual lifetime without creating a new run-wide limit.
 3. Implement form schema validation and accept/decline/cancel response handling through an actual configured trusted host. Keep local tool confirmation, planner questions, and post-success clarification independent. Bind responses to exact run/suspension/tool/input IDs and current authenticated context.
 4. Resume through activity I/O with original parameters, new RPC ID, exact opaque state, and only the corresponding input responses. Restore the registered caller in the worker composition root; never checkpoint a client or credential. Handle further rounds and state-only results deliberately.
-5. Propagate deadlines/cancellation across suspension and successor workflows. Preserve one logical domain invocation and its policy accounting. Classify uncertain outcomes without replay; verify engine retry configuration and crash behavior as well as transport behavior.
+5. Propagate deadlines/cancellation across suspension and successor workflows. Preserve one logical domain invocation and its policy accounting. Apply the explicit trusted-tool HTTP policy to interrupted response streams; stop uncertain non-repeatable outcomes; verify engine retry configuration and crash behavior as well as transport behavior.
 6. Keep transcript, hooks, host stream conversion, child-run links, and evidence collection faithful: one unfinished call before input, one final typed result afterward. Test an unrelated parallel call to prove continuation state does not escape its owning invocation.
 7. Give direct generated clients an honest unfinished outcome and a protocol-owned way to fulfill supported input without a model-visible replay method. Their host integration must obey the same semantics; do not duplicate the protocol algorithm in each generated package.
 8. Advance the affected checkpoint schema as one breaking contract where required. Inventory and drain affected old suspensions/workflows before cutover; no old schema reader, mode switch, or automatic coercion enters the new runtime.
@@ -697,6 +699,7 @@ Run focused package/generator tests while iterating, including `./runtime/mcp`, 
 
 | Value | Owner and purpose | Units, boundary, lifetime | Required counterexample |
 | --- | --- | --- | --- |
+| HTTP `MaxAttempts` | Application bounds repeated POST dispatches after unexpected SSE interruption | Counts the first attempt; zero selects one; negative is rejected; applies to one HTTP request round | Two host-input rounds may each use two attempts without exceeding either round's allowance |
 | Mirrored integer range | MCP HTTP binding preserves exact interoperability with JavaScript header consumers | Inclusive `[-9007199254740991, 9007199254740991]`; one annotated field in one HTTP request | A larger integer in an unannotated field or a stdio tool remains valid if its declared codec permits it |
 | Generated `ttlMs: 0` | Server result declares no freshness claim | Integer milliseconds; a result is fresh only before its receipt time plus TTL; zero allows no subsequent freshness interval | Multiple pages/results do not share a cumulative TTL or quota |
 | Existing HTTP timeout | Caller/application transport policy | One HTTP request, not a complete agent run or all transport calls | Several individually valid calls may exceed that duration in aggregate |
@@ -706,23 +709,88 @@ Test both integer endpoints immediately below, at, and above the bound, fraction
 
 The header integer bound is required by the external contract; it is not a general MCP numeric or run-wide limit. [Header constraints](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#schema-extension). Do not copy existing model-schema byte limits into unrelated MCP catalogs, turn header limits into argument limits, or invent positive cache/shutdown durations in tests before their design gate passes.
 
-### Interrupted requests: a material unresolved contract
+### Interrupted HTTP responses and operation ownership
 
-The released changelog says clients must reissue a request after a broken SSE response stream with a new ID. The transport/cancellation pages say a disconnect cancels the request, but cannot establish whether a domain side effect already happened. JSON-RPC request IDs correlate replies; they are not deduplication keys. [Released retry change](https://modelcontextprotocol.io/specification/2026-07-28/changelog), [disconnect behavior](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/cancellation#transport-specific-cancellation).
+Research on October 3 traced current source paths rather than inferring retries
+from option names. The official Go v1.8.0, TypeScript v2.3.0, Python v2.3.0, and
+C# clients reconnect response streams using event IDs where available. Without
+resumption evidence, they surface failure or leave a pending request to time
+out; the inspected paths do not automatically reissue `tools/call` with a new
+ID. TypeScript separately retries a pre-dispatch header mismatch. VS Code retries
+specific session failures and URL elicitation. FastMCP exposes optional
+server-side retry middleware; its client drives explicit host-input rounds.
+These paths do not establish an ecosystem-wide annotation-based replay policy.
 
-The inspected [SSE retry scenario](https://github.com/modelcontextprotocol/conformance/blob/main/src/scenarios/client/sse-retry.ts) explicitly excludes the new revision and still tests old GET/session/resumption behavior. The [released requirement set](https://github.com/modelcontextprotocol/conformance/blob/main/requirements/2026-07-28.yaml) therefore cannot be used as proof that arbitrary interrupted tool replay is safe. Pin and recheck the relevant current cases during implementation.
+Sources: [Go transport](https://github.com/modelcontextprotocol/go-sdk/blob/v1.8.0/mcp/streamable.go),
+[TypeScript transport](https://github.com/modelcontextprotocol/typescript-sdk/blob/v2.3.0/packages/client/src/client/streamableHttp.ts),
+[Python transport](https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/src/mcp/client/streamable_http.py),
+[C# transport](https://github.com/modelcontextprotocol/csharp-sdk/blob/c40ee044fd415c70da5176c749cb5ef02f2b59f6/src/ModelContextProtocol.Core/Client/StreamableHttpClientSessionTransport.cs),
+[VS Code tool retries](https://github.com/microsoft/vscode/blob/45373f06ff77cc97a7754a376548d8937fb3af54/src/vs/workbench/contrib/mcp/common/mcpServer.ts),
+[FastMCP middleware](https://github.com/PrefectHQ/fastmcp/blob/affd31d52a345c02fe037b2367f4e5bb4100aa28/fastmcp_slim/fastmcp/server/middleware/error_handling.py).
 
-This conflicts with the repository requirement that completion of accepted side effects be server-owned and not depend on client retries. Do not silently claim full conformance while either ignoring the published requirement or replaying arbitrary side effects.
+The released changelog says clients MUST reissue a broken SSE response request
+with a new ID. The dated transport page removes response resumption and treats
+disconnect as cancellation. The inspected implementations do not establish that
+the requirement means unconditional automatic execution retries. This difference
+remains unresolved: do not claim full conformance or describe our policy as an
+authoritative protocol clarification. [Released wording](https://modelcontextprotocol.io/specification/2026-07-28/changelog),
+[transport rules](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http).
 
-Before implementation release:
+Tool annotations already describe repeatability: `readOnlyHint` and
+`idempotentHint` default to false. `destructiveHint: false` is not a repeatability
+promise. Maintainers identify retry decisions as a use for trusted hints while
+stating that hints do not enforce server behavior. [Maintainer explanation](https://blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations/).
 
-1. Establish the intended requirement with current authoritative protocol clarification/conformance cases: unconditional automatic replay versus the mechanics of an explicit retry.
-2. For each supported retry path, prove whether rejection occurred before dispatch or whether the domain operation supplies an owner-enforced idempotence contract. A new JSON-RPC ID alone is insufficient.
-3. Prove with a synthetic side-effecting tool that losing the final response cannot duplicate the effect. Preserve a distinct interrupted/unknown-outcome failure when the result cannot be proven.
-4. Inspect generated activity retry settings, runtime defaults, engine overrides, and worker-loss behavior along the actual MCP execution path. An all-zero engine policy leaves its defaults in force; a returned classified tool failure does not prove crash safety. Establish safe attempt ownership without weakening other tool categories.
-5. If satisfying the protocol requires a new caller obligation or public operation identity, reopen that design decision. Do not invent a global MCP deduplication store, opaque model-owned retry token, or shared cross-service persistence to hide the conflict.
+**Implemented policy and complete path:**
 
-The plan's safe default is no blind automatic tool replay and no restart/replay after stdio process loss. Header-refresh retry is a separate case, allowed only after a confirmed pre-dispatch rejection. This is a release blocker for a blanket conformance claim, not a reason to retain the old session protocol.
+1. A service author declares the five standard hints in its method's `Tool`
+   block. Typed design expressions generate the optional `ToolAnnotations`
+   catalog object, preserving omission and false. The same design precomputes
+   HTTP tool bindings; runtime code does not rediscover static tool behavior.
+2. An imported caller reads the selected tool's repeatability hints and header
+   bindings from all catalog pages under the current authorization context.
+   It does not share trust decisions or catalog state across credentials.
+3. The application constructs its caller with `HTTPRetryPolicy`. The default is
+   one attempt. Explicit endpoint trust plus a read-only or idempotent declaration
+   can authorize a finite attempt count for one HTTP request round.
+4. The shared HTTP transport retries only unexpected SSE interruption before a
+   final response. It preserves exact arguments, host answers, and opaque state,
+   changes only the request ID, and sends another POST. It never resumes a stream.
+5. Cancellation, malformed messages, HTTP/JSON-RPC errors, completed tool errors,
+   untrusted hints, and absent safe hints do not cause these retries. Exhaustion
+   returns `OutcomeUnknownError`; runtime recovery stops. A missing response is
+   unavailable, while observed deadline expiry remains timeout.
+6. Generated MCP worker activities retain one total attempt. Worker replacement
+   cannot blindly rerun an uncertain operation. Host-input continuation is a new
+   explicit protocol round with its own HTTP allowance, not another model call.
+7. The service owns preventing additional business effects for identical arguments.
+   Hints and JSON-RPC IDs supply no deduplication guarantee. No shared store,
+   model-owned retry token, or new operation-identity protocol is introduced.
+
+The public settings are needed because the existing engine retry policy governs
+whole activities, cannot read remote behavior declarations, and cannot distinguish
+lost responses from returned tool failures. Tool bindings carry only the facts
+needed for headers and repeatability; full schemas and codecs remain owned by
+the existing generated or discovered contracts. Trust is fixed by the application
+for its endpoint, never selected by the agent model.
+
+Verification covers trusted and untrusted declarations; omitted and false hints;
+attempt counts zero, one, two, and three; negative configuration; cancellation;
+truncated events, malformed fully framed messages, and completed-error responses; fresh IDs with unchanged parameters;
+compiled generated catalogs/callers; and real HTTP with one owner-enforced effect
+across two dispatches. Two host-input rounds can each use two attempts, proving
+the per-round allowance is not a run-wide limit. A non-idempotent synthetic tool
+still has one dispatch after its effect completes and the reply is lost.
+
+An EOF before the event's terminating blank line is stream loss, even when
+pending bytes look like incomplete JSON. A fully framed malformed event fails
+validation without retry. Framing tests cover LF, CRLF, and CR lines, a leading
+UTF-8 byte-order mark, multiple data lines, and fully framed empty data. This follows the [SSE framing rules](https://html.spec.whatwg.org/multipage/server-sent-events.html#event-stream-interpretation).
+
+The pinned official SSE retry scenario still excludes the new revision and tests
+removed session resumption. Resolving the changelog/implementation discrepancy
+remains a gate for a blanket conformance claim; it does not justify restoring the
+old protocol or replaying arbitrary side effects. Stdio process loss is not retried.
 
 ### Publication and deployment
 

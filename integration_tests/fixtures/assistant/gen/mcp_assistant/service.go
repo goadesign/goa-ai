@@ -255,11 +255,26 @@ type ServerCapabilities struct {
 	Prompts *PromptsCapability
 }
 
+type ToolAnnotations struct {
+	// Human-readable tool display name
+	Title *string
+	// Whether the tool leaves its environment unchanged; absent means false
+	ReadOnlyHint *bool
+	// Whether the tool may remove or replace data; absent means true
+	DestructiveHint *bool
+	// Whether repeating arguments has no additional effects; absent means false
+	IdempotentHint *bool
+	// Whether the tool interacts with external entities; absent means true
+	OpenWorldHint *bool
+}
+
 type ToolInfo struct {
 	// Tool name
 	Name string
 	// Tool description
 	Description *string
+	// Optional behavior hints; clients must trust the server before acting on them
+	Annotations *ToolAnnotations
 	// JSON Schema for tool input
 	InputSchema json.RawMessage
 	// JSON Schema for structured tool output
@@ -558,6 +573,29 @@ type jsonServerCapabilitiesTransport struct {
 
 // validatejsonServerCapabilitiesTransport checks decoded JSON before it becomes a service value.
 func validatejsonServerCapabilitiesTransport(value *jsonServerCapabilitiesTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+
+	return err
+}
+
+// jsonToolAnnotationsTransport stores JSON fields until they have been validated.
+type jsonToolAnnotationsTransport struct {
+	// Human-readable tool display name
+	Title *string `json:"title,omitempty"`
+	// Whether the tool leaves its environment unchanged; absent means false
+	ReadOnlyHint *bool `json:"readOnlyHint,omitempty"`
+	// Whether the tool may remove or replace data; absent means true
+	DestructiveHint *bool `json:"destructiveHint,omitempty"`
+	// Whether repeating arguments has no additional effects; absent means false
+	IdempotentHint *bool `json:"idempotentHint,omitempty"`
+	// Whether the tool interacts with external entities; absent means true
+	OpenWorldHint *bool `json:"openWorldHint,omitempty"`
+}
+
+// validatejsonToolAnnotationsTransport checks decoded JSON before it becomes a service value.
+func validatejsonToolAnnotationsTransport(value *jsonToolAnnotationsTransport) (err error) {
 	if value == nil {
 		return goa.MissingFieldError("body", "JSON value")
 	}
@@ -1213,6 +1251,67 @@ func DecodeServerCapabilities(data []byte) (out *ServerCapabilities, err error) 
 		}
 		if body.Prompts != nil {
 			out.Prompts = decodePromptsCapabilityTransportToPromptsCapability(body.Prompts)
+		}
+	}
+	return out, nil
+}
+
+// EncodeToolAnnotations turns a service value into JSON using the field names in the Goa design.
+func EncodeToolAnnotations(in *ToolAnnotations) ([]byte, error) {
+	if err := checkToolAnnotationsValue(in); err != nil {
+		return nil, fmt.Errorf("encode ToolAnnotations JSON: %w", err)
+	}
+	var body *jsonToolAnnotationsTransport
+	{
+		body = &jsonToolAnnotationsTransport{
+			Title:           in.Title,
+			ReadOnlyHint:    in.ReadOnlyHint,
+			DestructiveHint: in.DestructiveHint,
+			IdempotentHint:  in.IdempotentHint,
+			OpenWorldHint:   in.OpenWorldHint,
+		}
+	}
+	if err := validatejsonToolAnnotationsTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ToolAnnotations JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ToolAnnotations JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeToolAnnotations checks JSON field names from the Goa design and returns a service value.
+func DecodeToolAnnotations(data []byte) (out *ToolAnnotations, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ToolAnnotations JSON: %w", err)
+	}
+	if err := validateToolAnnotationsJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ToolAnnotations JSON: %w", err)
+	}
+	var body *jsonToolAnnotationsTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ToolAnnotations JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ToolAnnotations JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ToolAnnotations JSON after first value: %w", err)
+	}
+	if err := validatejsonToolAnnotationsTransport(body); err != nil {
+		return out, fmt.Errorf("validate ToolAnnotations JSON: %w", err)
+	}
+	{
+		out = &ToolAnnotations{
+			Title:           body.Title,
+			ReadOnlyHint:    body.ReadOnlyHint,
+			DestructiveHint: body.DestructiveHint,
+			IdempotentHint:  body.IdempotentHint,
+			OpenWorldHint:   body.OpenWorldHint,
 		}
 	}
 	return out, nil
@@ -2348,6 +2447,154 @@ func validateServerCapabilitiesJSONValue4(path string, value any, description st
 	return nil
 }
 
+// validateToolAnnotationsJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolAnnotationsJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "destructiveHint":
+			if err := validateToolAnnotationsJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the tool may remove or replace data; absent means true",
+			); err != nil {
+				return err
+			}
+		case "idempotentHint":
+			if err := validateToolAnnotationsJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether repeating arguments has no additional effects; absent means false",
+			); err != nil {
+				return err
+			}
+		case "openWorldHint":
+			if err := validateToolAnnotationsJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the tool interacts with external entities; absent means true",
+			); err != nil {
+				return err
+			}
+		case "readOnlyHint":
+			if err := validateToolAnnotationsJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the tool leaves its environment unchanged; absent means false",
+			); err != nil {
+				return err
+			}
+		case "title":
+			if err := validateToolAnnotationsJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Human-readable tool display name",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"destructiveHint",
+				"idempotentHint",
+				"openWorldHint",
+				"readOnlyHint",
+				"title",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolAnnotationsJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolAnnotationsJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolAnnotationsJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolAnnotationsJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolAnnotationsJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolAnnotationsJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolAnnotationsJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolAnnotationsJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolAnnotationsJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolAnnotationsJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
 // validateToolsCapabilityJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolsCapabilityJSONValue(path string, value any, description string) error {
 	field := path
@@ -2954,6 +3201,38 @@ func checkServerCapabilitiesPromptsCapabilityValue(in *PromptsCapability, field 
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+	}
+	return nil
+}
+
+// checkToolAnnotationsValue checks text and cycles before conversion.
+func checkToolAnnotationsValue(in *ToolAnnotations) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkToolAnnotationsToolAnnotationsValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkToolAnnotationsToolAnnotationsValue checks one generated value on the active path.
+func checkToolAnnotationsToolAnnotationsValue(in *ToolAnnotations, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if in.Title != nil {
+			if !utf8.ValidString(string(*in.Title)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "title", false))
+			}
+		}
 	}
 	return nil
 }

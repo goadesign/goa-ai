@@ -290,6 +290,24 @@ func marshalMcpassistantToolInfoToToolInfoResponseBody(v *mcpassistant.ToolInfo)
 		InputSchema:  v.InputSchema,
 		OutputSchema: v.OutputSchema,
 	}
+	if v.Annotations != nil {
+		res.Annotations = marshalMcpassistantToolAnnotationsToToolAnnotationsResponseBody(v.Annotations)
+	}
+
+	return res
+}
+
+// marshalMcpassistantToolAnnotationsToToolAnnotationsResponseBody builds a
+// value of type *ToolAnnotationsResponseBody from a value of type
+// *mcpassistant.ToolAnnotations.
+func marshalMcpassistantToolAnnotationsToToolAnnotationsResponseBody(v *mcpassistant.ToolAnnotations) *ToolAnnotationsResponseBody {
+	res := &ToolAnnotationsResponseBody{
+		Title:           v.Title,
+		ReadOnlyHint:    v.ReadOnlyHint,
+		DestructiveHint: v.DestructiveHint,
+		IdempotentHint:  v.IdempotentHint,
+		OpenWorldHint:   v.OpenWorldHint,
+	}
 
 	return res
 }

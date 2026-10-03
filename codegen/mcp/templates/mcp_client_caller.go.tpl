@@ -6,21 +6,28 @@ type Caller struct {
 
 // NewCaller checks application identity and binds it to each request. It does
 // not contact the server or require a discovery request before invoking a tool.
-func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport) (mcpruntime.Caller, error) {
+func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport, retry mcpruntime.HTTPRetryPolicy) (mcpruntime.Caller, error) {
+    if err := retry.Validate(); err != nil { return nil, err }
     if err := info.Validate(); err != nil {
         return nil, err
     }
-    transport := mcpruntime.NewHTTPTransport(client.Doer, info, map[string][]mcpruntime.HeaderBinding{
+    transport := mcpruntime.NewHTTPTransport(client.Doer, info, map[string]mcpruntime.ToolBinding{
         {{- range .Tools }}
-        {{- if .Headers }}
+        {{- if or .Headers .ReadOnly .Idempotent }}
         {{ printf "%q" .Name }}: {
+            {{- if .ReadOnly }}ReadOnly: true,{{ end }}
+            {{- if .Idempotent }}Idempotent: true,{{ end }}
+            {{- if .Headers }}
+            Headers: []mcpruntime.HeaderBinding{
             {{- range .Headers }}
             {Name: {{ printf "%q" .Name }}, Type: {{ printf "%q" .Type }}, Path: []string{ {{ range .Path }}{{ printf "%q" . }}, {{ end }} }},
+            {{- end }}
+            },
             {{- end }}
         },
         {{- end }}
         {{- end }}
-    }, support)
+    }, support, retry)
     return &Caller{client: client, transport: transport}, nil
 }
 

@@ -31,7 +31,8 @@ func TestMCPCallFailure(t *testing.T) {
 		{"missing method", &mcp.Error{Code: mcp.JSONRPCMethodNotFound, Message: "missing"}, planner.FailureInvalidCall, planner.RecoveryReplan},
 		{"other protocol error", &mcp.Error{Code: mcp.JSONRPCInternalError, Message: "failed"}, planner.FailureInternal, planner.RecoveryFinish},
 		{"unavailable", errors.New("offline"), planner.FailureUnavailable, planner.RecoveryFinish},
-		{"unknown outcome", mcp.NewOutcomeUnknownError(errors.New("lost reply")), planner.FailureTimeout, planner.RecoveryFinish},
+		{"unknown deadline", mcp.NewOutcomeUnknownError(context.DeadlineExceeded), planner.FailureTimeout, planner.RecoveryFinish},
+		{"unknown outcome", mcp.NewOutcomeUnknownError(errors.New("lost reply")), planner.FailureUnavailable, planner.RecoveryFinish},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

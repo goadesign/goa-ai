@@ -5,6 +5,8 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -100,4 +102,84 @@ func TestHeaderAnnotationsIgnoreExampleValues(t *testing.T) {
 		_, err := mcpprotocol.CompileHeaderBindings(json.RawMessage(contract))
 		assert.Error(t, err, contract)
 	}
+}
+
+func TestHTTPCallerRetriesTrustedIdempotentTool(t *testing.T) {
+	for _, trust := range []bool{false, true} {
+		t.Run(fmt.Sprint(trust), func(t *testing.T) {
+			var ids []string
+			var parameters []json.RawMessage
+			effects := 0
+			stored := false
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				var message struct {
+					ID     json.RawMessage
+					Method string
+					Params json.RawMessage
+				}
+				if !assert.NoError(t, json.NewDecoder(req.Body).Decode(&message)) {
+					return
+				}
+				if message.Method == "tools/list" {
+					w.Header().Set("Content-Type", "application/json")
+					result := json.RawMessage(`{"resultType":"complete","ttlMs":0,"cacheScope":"private","tools":[{"name":"ensure_record","annotations":{"readOnlyHint":false,"idempotentHint":true},"inputSchema":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false},"outputSchema":{"type":"integer"}}]}`)
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": message.ID, "result": result}))
+					return
+				}
+				assert.Equal(t, "tools/call", message.Method)
+				var id string
+				if !assert.NoError(t, json.Unmarshal(message.ID, &id)) {
+					return
+				}
+				ids = append(ids, id)
+				parameters = append(parameters, message.Params)
+				// The tool owns creating one record for the supplied stable identifier.
+				// Repeated dispatch returns that same record without another stored effect.
+				if !stored {
+					stored = true
+					effects++
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				if len(ids) == 1 {
+					_, err := io.WriteString(w, ": accepted\n\n")
+					assert.NoError(t, err)
+					return
+				}
+				_, err := fmt.Fprintf(w, "data: {\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"resultType\":\"complete\",\"content\":[],\"structuredContent\":42}}\n\n", message.ID)
+				assert.NoError(t, err)
+			}))
+			defer server.Close()
+			caller, err := NewHTTPCaller(HTTPOptions{Endpoint: server.URL, Client: server.Client(), ClientInfo: ClientInfo{Name: "test", Version: "1"}, RetryPolicy: HTTPRetryPolicy{MaxAttempts: 2, TrustToolAnnotations: trust}})
+			require.NoError(t, err)
+			response, err := caller.CallTool(t.Context(), CallRequest{Tool: "ensure_record", Payload: json.RawMessage(`{"id":"record-1"}`)})
+			if trust {
+				require.NoError(t, err)
+				assert.JSONEq(t, `42`, string(response.StructuredContent))
+				require.Len(t, ids, 2)
+				assert.NotEqual(t, ids[0], ids[1])
+				assert.Equal(t, parameters[0], parameters[1])
+			} else {
+				var unknown *OutcomeUnknownError
+				require.ErrorAs(t, err, &unknown)
+				assert.Len(t, ids, 1)
+			}
+			assert.Equal(t, 1, effects)
+		})
+	}
+}
+
+func TestDecodeToolAnnotationsRejectsInvalidDeclarations(t *testing.T) {
+	for _, raw := range []string{`null`, `[]`, `{"readOnlyHint":null}`, `{"idempotentHint":"true"}`, `{"destructiveHint":0}`, `{"openWorldHint":null}`, `{"title":42}`} {
+		t.Run(raw, func(t *testing.T) {
+			_, err := decodeToolAnnotations(json.RawMessage(raw))
+			assert.Error(t, err)
+		})
+	}
+	hints, err := decodeToolAnnotations(json.RawMessage(`{"readOnlyHint":false,"idempotentHint":true,"destructiveHint":false,"openWorldHint":false,"title":"Ensure record"}`))
+	require.NoError(t, err)
+	require.NotNil(t, hints.ReadOnlyHint)
+	assert.False(t, *hints.ReadOnlyHint)
+	require.NotNil(t, hints.IdempotentHint)
+	assert.True(t, *hints.IdempotentHint)
+	assert.Equal(t, "Ensure record", *hints.Title)
 }

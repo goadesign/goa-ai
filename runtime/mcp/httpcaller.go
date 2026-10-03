@@ -1,9 +1,10 @@
 // Package mcp sends stateless MCP tool requests over HTTP. Each invocation carries
-// its own protocol metadata and returns one validated result without replaying an
-// operation after a transport failure.
+// its own protocol metadata and returns one validated result. Explicit trust and
+// behavior hints control retries after an interrupted SSE response.
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -28,12 +29,22 @@ type (
 		ClientInfo ClientInfo
 		// InputSupport names the interactions the host can fulfill.
 		InputSupport InputSupport
+		// RetryPolicy controls retries after stream loss at this endpoint.
+		RetryPolicy HTTPRetryPolicy
 	}
 	// remoteToolContract retains only the selected, credential-scoped catalog contract.
 	remoteToolContract struct {
-		headers []HeaderBinding
+		binding ToolBinding
 		input   *schema.Schema
 		output  *schema.Schema
+	}
+	// remoteToolAnnotations preserves declared hints from a third-party catalog.
+	remoteToolAnnotations struct {
+		Title           *string `json:"title"`
+		ReadOnlyHint    *bool   `json:"readOnlyHint"`    //nolint:tagliatelle // MCP wire name.
+		DestructiveHint *bool   `json:"destructiveHint"` //nolint:tagliatelle // MCP wire name.
+		IdempotentHint  *bool   `json:"idempotentHint"`  //nolint:tagliatelle // MCP wire name.
+		OpenWorldHint   *bool   `json:"openWorldHint"`   //nolint:tagliatelle // MCP wire name.
 	}
 	// HTTPCaller invokes MCP tools over stateless HTTP requests.
 	HTTPCaller struct {
@@ -47,6 +58,9 @@ const ProtocolVersion = mcpprotocol.Version
 
 // NewHTTPCaller checks the endpoint and identity without sending network requests.
 func NewHTTPCaller(opts HTTPOptions) (*HTTPCaller, error) {
+	if err := opts.RetryPolicy.Validate(); err != nil {
+		return nil, err
+	}
 	if err := opts.ClientInfo.Validate(); err != nil {
 		return nil, err
 	}
@@ -58,11 +72,11 @@ func NewHTTPCaller(opts HTTPOptions) (*HTTPCaller, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &HTTPCaller{endpoint: endpoint.String(), transport: NewHTTPTransport(client, opts.ClientInfo, nil, opts.InputSupport)}, nil
+	return &HTTPCaller{endpoint: endpoint.String(), transport: NewHTTPTransport(client, opts.ClientInfo, nil, opts.InputSupport, opts.RetryPolicy)}, nil
 }
 
 // CallTool loads header annotations for this authorization context, sends the
-// tool arguments once, and returns either a finished result or a request for input.
+// tool arguments with the host's retry policy, and returns a result or request for input.
 func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
 	contract, err := c.toolContract(ctx, req.Tool)
 	if err != nil {
@@ -75,7 +89,7 @@ func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallRespons
 	if err := jsonschema.Validate(contract.input, payload); err != nil {
 		return CallResponse{}, &Error{Code: JSONRPCInvalidParams, Message: fmt.Sprintf("MCP tool arguments: %v", err)}
 	}
-	transport := NewHTTPTransport(c.transport.next, c.transport.clientInfo, map[string][]HeaderBinding{req.Tool: contract.headers}, c.transport.inputSupport)
+	transport := NewHTTPTransport(c.transport.next, c.transport.clientInfo, map[string]ToolBinding{req.Tool: contract.binding}, c.transport.inputSupport, c.transport.retry)
 	var result toolsCallResult
 	if err := transport.call(ctx, c.endpoint, methodToolsCall, toolParams(req), &result); err != nil {
 		return CallResponse{}, err
@@ -108,6 +122,7 @@ func (c *HTTPCaller) toolContract(ctx context.Context, name string) (*remoteTool
 		var catalog struct {
 			ResultType string `json:"resultType"` //nolint:tagliatelle // MCP defines this wire field name.
 			Tools      *[]struct {
+				Annotations  json.RawMessage `json:"annotations"`
 				Name         string          `json:"name"`
 				InputSchema  json.RawMessage `json:"inputSchema"`  //nolint:tagliatelle // MCP defines this wire field name.
 				OutputSchema json.RawMessage `json:"outputSchema"` //nolint:tagliatelle // MCP defines this wire field name.
@@ -154,7 +169,16 @@ func (c *HTTPCaller) toolContract(ctx context.Context, name string) (*remoteTool
 					continue
 				}
 			}
-			selected = &remoteToolContract{headers: bindings, input: input, output: output}
+			binding := ToolBinding{Headers: bindings}
+			annotations, err := decodeToolAnnotations(tool.Annotations)
+			if err != nil {
+				return nil, NewMalformedResponseError(err)
+			}
+			if annotations != nil {
+				binding.ReadOnly = annotations.ReadOnlyHint != nil && *annotations.ReadOnlyHint
+				binding.Idempotent = annotations.IdempotentHint != nil && *annotations.IdempotentHint
+			}
+			selected = &remoteToolContract{binding: binding, input: input, output: output}
 		}
 		if catalog.NextCursor == nil {
 			if selectedError != nil {
@@ -171,4 +195,30 @@ func (c *HTTPCaller) toolContract(ctx context.Context, name string) (*remoteTool
 		seen[*catalog.NextCursor] = true
 		cursor = catalog.NextCursor
 	}
+}
+
+// decodeToolAnnotations validates optional hints from an external catalog before
+// the client uses them to authorize repeated execution. Null is not a boolean
+// declaration; unknown extension fields remain outside this client's decisions.
+func decodeToolAnnotations(raw json.RawMessage) (*remoteToolAnnotations, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return nil, errors.New("tool annotations must be an object")
+	}
+	for name, value := range fields {
+		switch name {
+		case "title", "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint":
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return nil, fmt.Errorf("tool annotation %q must not be null", name)
+			}
+		}
+	}
+	var annotations remoteToolAnnotations
+	if err := json.Unmarshal(raw, &annotations); err != nil {
+		return nil, fmt.Errorf("tool annotations: %w", err)
+	}
+	return &annotations, nil
 }
