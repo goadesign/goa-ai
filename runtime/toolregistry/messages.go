@@ -27,6 +27,8 @@ type (
 	// Providers may use this metadata to scope data access and persistence (for example,
 	// applying session-scoped policies without polluting tool payload schemas).
 	ToolCallMeta struct {
+		// TextOnly is the accepted execution restriction supplied by the runtime.
+		TextOnly  bool   `json:"text_only,omitempty"`
 		RunID     string `json:"run_id"`
 		SessionID string `json:"session_id"`
 		TurnID    string `json:"turn_id,omitempty"`

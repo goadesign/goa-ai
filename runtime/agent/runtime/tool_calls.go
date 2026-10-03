@@ -106,6 +106,9 @@ func collectToolCallIDs(calls []ToolCall) []string {
 }
 
 func (e *toolBatchExec) normalizeToolCall(call ToolCall) ToolCall {
+	if e.runCtx != nil {
+		call.TextOnly = e.runCtx.TextOnly
+	}
 	if call.RunID == "" {
 		call.RunID = e.runID
 	}
@@ -269,6 +272,9 @@ func (e *toolBatchExec) synthesizeCanceledExecution(ctx context.Context, call To
 // calls with a model correlation ID may expose correction evidence because
 // runtime-authored calls can contain private execution fields in Payload.
 func canonicalizeAndValidateWorkflowToolResult(spec tools.ToolSpec, call ToolCall, tr *planner.ToolResult) error {
+	if call.TextOnly {
+		spec = spec.ForTextOnly()
+	}
 	if tr != nil && tr.Failure != nil {
 		tr.Failure = planner.CloneToolFailure(tr.Failure)
 	}
@@ -427,6 +433,14 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			}
 			continue
 		}
+		if call.TextOnly {
+			call.Payload, err = prepareTextOnlyExecutionPayload(spec, call.Payload)
+			if err != nil {
+				executionErr = errors.Join(executionErr, err)
+				continue
+			}
+			b.calls[i] = call
+		}
 		var toolsetName string
 		var ts ToolsetRegistration
 		var hasTS bool
@@ -513,7 +527,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		// Inline service tools execute within the workflow loop.
 		if hasTS && ts.Inline {
 			start := wfCtx.Now()
-			ctxInline := engine.WithWorkflowContext(ctx, wfCtx)
+			ctxInline := engine.WithWorkflowContext(run.WithTextOnlyContext(ctx, call.TextOnly), wfCtx)
 			executorCall := cloneToolCall(call)
 			execResult, err := ts.Execute(ctxInline, &executorCall)
 			if err != nil {
@@ -531,7 +545,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 				continue
 			}
 			duration := wfCtx.Now().Sub(start)
-			result, resultJSON, clarification, err := e.r.materializeToolExecutionResult(ctx, call, execResult)
+			result, resultJSON, clarification, err := e.r.materializeToolExecutionResult(ctxInline, call, execResult)
 			if err != nil {
 				executionErr = errors.Join(executionErr, err)
 				continue
@@ -556,6 +570,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 
 		// Activity path (service-backed tools).
 		toolInput := ToolInput{
+			TextOnly:         call.TextOnly,
 			Registry:         call.Registry.Clone(),
 			AgentID:          e.agentID,
 			RunID:            e.runID,

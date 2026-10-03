@@ -33,7 +33,7 @@ func TestContinuationActionBindsExactChainWithoutExposingCursor(t *testing.T) {
 		"opaque-next-page",
 	)}
 
-	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	actions, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	require.NoError(t, err)
 	require.Len(t, actions, 1)
 	assert.Contains(t, actions[0].description, `{"limit":10,"query":"alarms"}`)
@@ -157,7 +157,7 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 	outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), testResolvedPlanInput(t, rt, input), rt.toolSpecs)
 	require.NoError(t, err)
 	require.Len(t, outputs, 2)
-	actions, err := rt.availableContinuationActions(agentID, outputs)
+	actions, err := rt.availableContinuationActions(agentID, outputs, false)
 	require.NoError(t, err)
 	require.Len(t, actions, 1)
 	assert.Equal(t, continuationActionName(continuation.Name, sourceID), actions[0].modelName)
@@ -196,7 +196,7 @@ func TestContinuationActionRetainsCanonicalQueryPayload(t *testing.T) {
 		`{"query":"alarms","limit":10}`,
 		"second-page",
 	)}
-	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	actions, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	require.NoError(t, err)
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 		Name:            actions[0].modelName,
@@ -262,7 +262,7 @@ func TestContinuationActionBindsAndEncodesWithExecutionCodec(t *testing.T) {
 
 	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
 		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms","limit":10}`, "second-page"),
-	})
+	}, false)
 	require.NoError(t, err)
 	require.Len(t, actions, 1)
 	calls, err := rt.compilePlannerToolCalls([]planner.ToolRequest{{
@@ -290,7 +290,7 @@ func TestContinuationActionSupportsSourceWithoutModelFields(t *testing.T) {
 	rt.agentToolSpecs["svc.agent"][0] = search
 	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
 		sourceContinuationOutput(search.Name, "source-1", `{"injected":"secret"}`, "next"),
-	})
+	}, false)
 
 	require.NoError(t, err)
 	require.Len(t, actions, 1)
@@ -309,7 +309,7 @@ func TestAutomaticContinuationAdvancesOnlyEmptyLiveChains(t *testing.T) {
 		empty,
 		sourceContinuationOutput(search.Name, "source-data", `{"query":"june"}`, "june-next"),
 	}
-	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	actions, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	require.NoError(t, err)
 
 	result, automatic := rt.automaticContinuationPlan(run.Context{
@@ -332,7 +332,7 @@ func TestAutomaticContinuationLeavesNonEmptyPagesForModelDecision(t *testing.T) 
 	rt, search, _ := continuationTestRuntime()
 	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
 		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
-	})
+	}, false)
 	require.NoError(t, err)
 
 	result, automatic := rt.automaticContinuationPlan(run.Context{
@@ -355,7 +355,7 @@ func TestContinuationActionNameStaysStableAsChainAdvances(t *testing.T) {
 		`{"query":"alarms"}`,
 		"first",
 	))
-	first, err := rt.availableContinuationActions("svc.agent", outputs)
+	first, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	require.NoError(t, err)
 
 	outputs = append(outputs, &planner.ToolOutput{
@@ -365,7 +365,7 @@ func TestContinuationActionNameStaysStableAsChainAdvances(t *testing.T) {
 		Payload:                    rawjson.Message(`{"cursor":"first"}`),
 		Bounds:                     &agent.Bounds{Returned: 10, Truncated: true, NextCursor: pointer("second")},
 	})
-	second, err := rt.availableContinuationActions("svc.agent", outputs)
+	second, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	require.NoError(t, err)
 	require.Len(t, second, 1)
 	assert.Equal(t, first[0].modelName, second[0].modelName)
@@ -414,7 +414,7 @@ func TestContinuationActionsKeepParallelChainsIndependent(t *testing.T) {
 		sourceContinuationOutput(search.Name, "source-1", `{"query":"may"}`, "same-cursor"),
 		sourceContinuationOutput(search.Name, "source-2", `{"query":"june"}`, "same-cursor"),
 	}
-	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	actions, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	require.NoError(t, err)
 	require.Len(t, actions, 2)
 	assert.NotEqual(t, actions[0].modelName, actions[1].modelName)
@@ -449,7 +449,7 @@ func TestContinuationCompletionRemovesOnlyCompletedChain(t *testing.T) {
 		},
 	}
 
-	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	actions, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	require.NoError(t, err)
 	require.Len(t, actions, 1)
 	assert.Contains(t, actions[0].description, `"june"`)
@@ -467,7 +467,7 @@ func TestContinuationHistoryRejectsMissingCorrelation(t *testing.T) {
 		Bounds:          &agent.Bounds{Truncated: false},
 	}}
 
-	_, err := rt.availableContinuationActions("svc.agent", outputs)
+	_, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	assert.ErrorContains(t, err, "history has no source tool call id")
 }
 
@@ -486,7 +486,7 @@ func TestContinuationHistoryIgnoresStandalonePlannerContinuation(t *testing.T) {
 		},
 	}}
 
-	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	actions, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	require.NoError(t, err)
 	assert.Empty(t, actions)
 }
@@ -506,7 +506,7 @@ func TestContinuationHistoryRejectsWrongCursor(t *testing.T) {
 		},
 	}
 
-	_, err := rt.availableContinuationActions("svc.agent", outputs)
+	_, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	assert.ErrorContains(t, err, "with the wrong cursor")
 }
 
@@ -525,7 +525,7 @@ func TestContinuationHistoryRejectsCursorWithoutProgress(t *testing.T) {
 		},
 	}
 
-	_, err := rt.availableContinuationActions("svc.agent", outputs)
+	_, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	assert.ErrorContains(t, err, "did not advance")
 }
 
@@ -577,7 +577,7 @@ func TestBindContinuationRejectsDuplicateActionCalls(t *testing.T) {
 	rt, search, _ := continuationTestRuntime()
 	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
 		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
-	})
+	}, false)
 	require.NoError(t, err)
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{
 		{Name: actions[0].modelName, Payload: rawjson.Message(`{}`), ModelToolCallID: "model-call-1"},
@@ -599,7 +599,7 @@ func TestContinuationActionsAreAdvertisedInsteadOfCanonicalTool(t *testing.T) {
 	rt, search, _ := continuationTestRuntime()
 	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
 		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
-	})
+	}, false)
 	require.NoError(t, err)
 	hidden := &simplePlannerContext{rt: rt, agent: "svc.agent"}
 	visible := &simplePlannerContext{rt: rt, agent: "svc.agent", continuationActions: actions}
@@ -615,7 +615,7 @@ func TestBindContinuationAcceptsPlannerAuthoredCanonicalTool(t *testing.T) {
 	rt, search, continuation := continuationTestRuntime()
 	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
 		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
-	})
+	}, false)
 	require.NoError(t, err)
 
 	canonical := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
@@ -635,7 +635,7 @@ func TestBindContinuationRejectsPlannerAuthoredGeneratedAction(t *testing.T) {
 	rt, search, _ := continuationTestRuntime()
 	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
 		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
-	})
+	}, false)
 	require.NoError(t, err)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
@@ -654,7 +654,7 @@ func TestBindContinuationRejectsPayloadDifferentFromModelCall(t *testing.T) {
 	rt, search, _ := continuationTestRuntime()
 	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
 		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
-	})
+	}, false)
 	require.NoError(t, err)
 
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
@@ -681,7 +681,7 @@ func TestBindContinuationRejectsModelAuthoredCanonicalToolAndArguments(t *testin
 	rt, search, continuation := continuationTestRuntime()
 	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
 		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
-	})
+	}, false)
 	require.NoError(t, err)
 
 	canonical := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{

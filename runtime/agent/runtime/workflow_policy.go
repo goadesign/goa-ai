@@ -46,6 +46,11 @@ func (r *Runtime) applyPerRunOverrides(ctx context.Context, input *RunInput, can
 		return nil, err
 	}
 	for i, call := range candidates {
+		if runPolicy.textOnly && r.toolConfirmation != nil {
+			if _, requires := r.toolConfirmation.Confirm[call.Name]; requires {
+				return nil, planner.NewOutputContractError(fmt.Errorf("tool %q requires confirmation", call.Name))
+			}
+		}
 		if runPolicy.allowsTool(call.Name, toolPolicyFactsFromMetadata(metas[i])) {
 			continue
 		}

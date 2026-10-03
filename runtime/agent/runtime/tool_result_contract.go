@@ -163,6 +163,9 @@ func validateToolClarificationContract(call ToolCall, tr *planner.ToolResult, cl
 	if clarification == nil {
 		return nil
 	}
+	if call.TextOnly {
+		return fmt.Errorf("text-only tools cannot request structured clarification")
+	}
 	if tr == nil {
 		return fmt.Errorf("tool %q clarification is invalid: missing tool result (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}

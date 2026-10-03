@@ -13,6 +13,7 @@ import (
 	"fmt"
 
 	images "goa.design/goa-ai/internal/testimage/gen/images"
+	run "goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/toolregistry"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -57,6 +58,7 @@ func NewProvider(svc images.Service) *Provider {
 // and returns one success or failure with the same registration token and tool
 // use ID. The service method receives ctx and must stop when it is canceled.
 func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
+	ctx = run.WithTextOnlyContext(ctx, msg.Meta != nil && msg.Meta.TextOnly)
 	if msg.ToolUseID == "" {
 		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, "", "invalid_call", "tool_use_id is required"), nil
 	}
@@ -70,6 +72,20 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 
 	switch msg.Tool {
 	case View:
+		if msg.Meta.TextOnly {
+			spec, ok := Spec(View)
+			if !ok {
+				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_contract", "generated tool contract is missing"), nil
+			}
+			decoded, err := spec.TextOnly.ExecutionCodec.FromJSON(msg.Payload)
+			if err != nil {
+				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
+			}
+			msg.Payload, err = spec.TextOnly.ExecutionCodec.ToJSON(decoded)
+			if err != nil {
+				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
+			}
+		}
 		args, err := ViewPayloadCodec().FromJSON(msg.Payload)
 		if err != nil {
 			if issues := toolregistry.ValidationIssues(err); len(issues) > 0 {
@@ -100,6 +116,13 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 					Audience: "evidence",
 					Data:     dataJSON,
 				})
+			}
+		}
+		if msg.Meta.TextOnly {
+			for _, item := range server {
+				if item.Audience != "internal" && item.Audience != "evidence" {
+					return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "output_contract_violation", "tool returned unsupported UI output"), nil
+				}
 			}
 		}
 		if len(server) > 0 {

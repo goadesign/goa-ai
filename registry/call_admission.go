@@ -511,6 +511,23 @@ func (s *callAdmissionStore) Complete(
 	payload []byte,
 ) (bool, error) {
 	key := s.callKey(toolUseID)
+	acceptedPolicy, err := s.redis.HGet(ctx, key, "text_only").Result()
+	if err != nil && !errors.Is(err, redis.Nil) {
+		return false, fmt.Errorf("read accepted call policy: %w", err)
+	}
+	switch acceptedPolicy {
+	case "", "false":
+	case "true":
+		result, err := toolregistry.DecodeToolResultMessage(payload)
+		if err != nil {
+			return false, err
+		}
+		if err := toolregistry.ValidateTextOnlyResult(result); err != nil {
+			return false, err
+		}
+	default:
+		return false, fmt.Errorf("stored text-only policy %q is invalid", acceptedPolicy)
+	}
 	digest := sha256.Sum256(payload)
 	values, err := completeCallAdmissionScript.Run(
 		ctx,

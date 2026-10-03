@@ -67,8 +67,8 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	}
 	typeName := planned.publicDeclaration.Name()
 	key := "name:" + typeName
-	if usage == usageModelPayload {
-		key += ":model-input"
+	if usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution {
+		key += ":" + string(usage)
 	}
 
 	defineType := false
@@ -79,7 +79,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	)
 	b.materializeNestedLocalTypes(scope, planned.publicTypes, publicPtr, publicDefaults)
 	tt, defLine, fullRef := b.buildTypeDefinition(typeName, planned.public, scope, defineType, publicPtr, publicDefaults)
-	if usage == usageModelPayload {
+	if usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution {
 		defLine = ""
 	}
 	b.collectUnionSumTypes(scope, tt)
@@ -111,7 +111,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		return nil, fmt.Errorf("build %s %s schema: %w", owner.QualifiedName, usage, err)
 	}
 	var executionSchemaBytes []byte
-	if usage == usagePayload {
+	if usage == usagePayload || usage == usageTextOnlyExecution {
 		executionSchemaBytes = append([]byte(nil), schemaWithoutRootExampleBytes...)
 	}
 	if usage == usagePayload && len(owner.ModelHiddenPayloadFields) > 0 {
@@ -259,6 +259,21 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		DecodeTransform:              decodeBody,
 		EncodeTransform:              encodeBody,
 	}
+	// Text-only inputs cannot request UI output. Initialize each known control
+	// after decoding so executors receive false even when its JSON field is absent.
+	if usage == usageTextOnlyPayload || usage == usageTextOnlyExecution {
+		for _, name := range owner.UIOnlyFields {
+			attribute := planned.public.Find(name)
+			fields := planned.publicLayout.PlansForOccurrence(attribute)
+			if len(fields) != 1 || fields[0].FieldName(true) == "" {
+				return nil, fmt.Errorf("UIOnly field %q has no unique Go field layout", name)
+			}
+			info.DisabledUIFields = append(info.DisabledUIFields, &disabledUIField{
+				Name:    fields[0].FieldName(true),
+				Pointer: fields[0].IsPointer(),
+			})
+		}
+	}
 	// Accept empty JSON for payloads that are empty structs (no fields).
 	if usage == usagePayload && isEmptyStruct(att) {
 		info.AcceptEmpty = true
@@ -286,6 +301,10 @@ func (p *toolSpecsPackagePlan) typeFor(owner *contractTypeOwner, usage typeUsage
 		return names.payloadType
 	case usageModelPayload:
 		return names.modelPayloadType
+	case usageTextOnlyPayload:
+		return names.textOnlyPayloadType
+	case usageTextOnlyExecution:
+		return names.textOnlyExecutionType
 	case usageResult:
 		return names.resultType
 	case usageServerData:

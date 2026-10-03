@@ -24,6 +24,12 @@ type (
 		// Description provides a human-readable explanation of what the
 		// tool does.
 		Description string
+		// RequiresUI excludes this tool from runs using ordinary messages only.
+		RequiresUI bool
+		// UIOnlyFields names optional Boolean arguments disabled in text-only runs.
+		UIOnlyFields []string
+		// UIInstructions contains guidance included only when UI output is supported.
+		UIInstructions string
 
 		// Tags are labels for categorizing and filtering this tool.
 		Tags []string
@@ -91,10 +97,13 @@ type (
 		// ResultReminder is an optional system reminder that is injected into
 		// the conversation after the tool result is returned. It provides
 		// backstage guidance to the model about how to interpret or present
-		// the result (for example, "The user sees a rendered graph of this
-		// data"). The reminder is wrapped in <system-reminder> tags by the
-		// runtime.
+		// the result. The reminder is wrapped in <system-reminder> tags by the
+		// runtime and remains available in text-only runs.
 		ResultReminder string
+
+		// UIResultReminder is static guidance after a tool result that applies only
+		// when the run supports interactive output.
+		UIResultReminder string
 
 		// Confirmation configures design-time confirmation requirements for this tool.
 		// When non-nil, the runtime requests an external confirmation before executing
@@ -512,6 +521,24 @@ func targetDefiningField(targets []injectTarget, name string) (injectTarget, boo
 func (t *ToolExpr) validateShapes() error {
 	verr := new(eval.ValidationErrors)
 	validateToolConfirmation(t, verr)
+	args := t.Args
+	if (args == nil || args.Type == nil || args.Type == goaexpr.Empty) && t.Method != nil {
+		args = t.Method.Payload
+	}
+	seenUIFields := make(map[string]bool, len(t.UIOnlyFields))
+	for _, name := range t.UIOnlyFields {
+		if seenUIFields[name] {
+			verr.Add(t, "UIOnly field %q is declared more than once", name)
+		}
+		seenUIFields[name] = true
+		var field *goaexpr.AttributeExpr
+		if args != nil {
+			field = args.Find(name)
+		}
+		if field == nil || field.Type != goaexpr.Boolean || args.IsRequired(name) || field.DefaultValue == true {
+			verr.Add(t, "UIOnly field %q must be an optional Boolean disabled by default", name)
+		}
+	}
 	check := func(where string, att *goaexpr.AttributeExpr) {
 		validateContractShape(t, where, att, verr)
 	}

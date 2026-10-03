@@ -1,5 +1,5 @@
 {{- range .Types }}
-    {{- if and .GenerateCodec (ne .Usage "model-payload") }}
+    {{- if and .GenerateCodec (ne .Usage "model-payload") (ne .Usage "text-only-payload") (ne .Usage "text-only-execution") }}
 // {{ .ExportedCodec }} returns a fresh codec for {{ if .Pointer }}*{{ end }}{{ .FullRef }}.
     {{- if .InjectDecodeFunc }}
 // Prefer {{ .InjectDecodeFunc }} when decoding tool calls: FromJSON alone
@@ -278,6 +278,9 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     _ = in
     var out {{ if .Pointer }}*{{ end }}{{ .FullRef }}
 {{ .DecodeTransform }}
+    {{- range .DisabledUIFields }}
+    out.{{ .Name }} = {{ if .Pointer }}new(bool){{ else }}false{{ end }}
+    {{- end }}
     return out, nil
     {{- else }}
     var v {{ .FullRef }}

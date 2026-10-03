@@ -91,12 +91,23 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// Policy decisions merge additional labels into input.Labels in place during
 	// the run loop; the terminal RunCompleted event must carry the run-scoped
 	// labels as provided at start, so capture them before the loop runs.
+	textOnly := input.Policy != nil && input.Policy.TextOnly
+	input.Labels = cloneLabels(input.Labels)
+	if textOnly && input.Labels == nil {
+		input.Labels = make(map[string]string)
+	}
+	if textOnly {
+		input.Labels["runtime.text_only"] = "true"
+	} else {
+		delete(input.Labels, "runtime.text_only")
+	}
 	startLabels := cloneLabels(input.Labels)
 	predecessorRunID := ""
 	if checkpoint != nil {
 		predecessorRunID = checkpoint.PreviousRunID
 	}
 	runCtx := run.Context{
+		TextOnly:         textOnly,
 		RunID:            input.RunID,
 		SessionID:        input.SessionID,
 		TurnID:           input.TurnID,

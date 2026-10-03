@@ -80,6 +80,8 @@ type (
 	// access to business context (RunID, SessionID, TurnID, correlation IDs)
 	// without relying on context values.
 	ToolCallMeta struct {
+		// TextOnly is derived from the accepted run policy and disables UI interaction.
+		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
 		// RunID is the durable workflow execution identifier of the run that
 		// owns this tool call. It remains stable across retries and is used to
 		// correlate runtime records and telemetry.

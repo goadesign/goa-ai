@@ -117,6 +117,9 @@ type (
 	// PolicyOverrides configures per-run policy constraints. All fields are optional;
 	// zero values mean no override.
 	PolicyOverrides struct {
+		// TextOnly restricts this accepted run to ordinary messages and domain data.
+		// Child runs inherit it and cannot restore interactive UI capabilities.
+		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
 		// RestrictToTool restricts tool execution to the given tool identifier.
 		RestrictToTool tools.Ident
 
@@ -539,6 +542,8 @@ type (
 	// workflow execution. Planner implementations cannot construct this type
 	// through their PlanResult contract.
 	ToolCall struct {
+		// TextOnly is derived from the accepted run policy and disables UI interaction.
+		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
 		// Registry retains the exact registered contract selected for this call.
 		// It is runtime-owned and absent for statically compiled tools.
 		Registry *tools.RegistryBinding
@@ -937,6 +942,8 @@ type (
 	// ToolInput carries the execution payload for one tool call from workflow
 	// code to its activity. The workflow retains model-authored transcript data.
 	ToolInput struct {
+		// TextOnly is derived from the accepted run policy and disables UI interaction.
+		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
 		// Registry carries the selected registration into the execution activity.
 		// Static tool calls leave it absent.
 		Registry *tools.RegistryBinding

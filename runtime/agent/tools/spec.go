@@ -52,6 +52,10 @@ type (
 		Name Ident
 		// Description provides human-readable context for planners and tooling.
 		Description string
+		// RequiresUI excludes this tool from runs that support ordinary messages only.
+		RequiresUI bool
+		// TextOnly is the generated model contract without optional UI capabilities.
+		TextOnly *ModelContract
 		// Search contains generated word counts for the name, title, and
 		// description. Local tools prepare these at code generation time.
 		Search SearchDocument
@@ -141,6 +145,22 @@ type (
 		Result TypeSpec
 	}
 
+	// ModelContract contains one precomputed tool description, search document,
+	// argument schema, and decoder selected for the accepted run policy.
+	ModelContract struct {
+		// Description explains domain behavior without optional UI guidance.
+		Description string
+		// Search contains the generated words from this description.
+		Search SearchDocument
+		// Payload accepts only arguments legal for this model contract.
+		Payload TypeSpec
+		// ExecutionSchema accepts paging and server fields with UI controls disabled.
+		ExecutionSchema RawJSON
+		// ExecutionCodec validates complete inputs before text-only tools execute.
+		ExecutionCodec JSONCodec[any]
+		// ResultReminder explains domain results without claiming UI output.
+		ResultReminder string
+	}
 	// ServerDataSpec describes one server-only payload emitted alongside a tool
 	// result. Server data is never sent to model providers.
 	ServerDataSpec struct {

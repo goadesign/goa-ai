@@ -21,6 +21,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -95,6 +96,110 @@ func TestRegistryAgentPreparationRetainsSelectedConfiguration(t *testing.T) {
 	other := testRegistryAgentDefinition(testRegistrySources{})
 	_, err = childDefinitionForCall(call, other)
 	require.ErrorContains(t, err, "not in the current definition")
+}
+
+func TestRegistryAgentTextOnlyChildInvocationContract(t *testing.T) {
+	cases := []struct {
+		name       string
+		requiresUI bool
+		confirm    bool
+		contract   bool
+	}{
+		{name: "compatible", contract: true},
+		{name: "requires UI", requiresUI: true},
+		{name: "requires confirmation", confirm: true},
+		{name: "missing text-only contract"},
+	}
+	for _, tc := range cases {
+		for _, textOnly := range []bool{false, true} {
+			name := tc.name + "/ordinary child"
+			if textOnly {
+				name = tc.name + "/text-only child"
+			}
+			t.Run(name, func(t *testing.T) {
+				resolution := testNativeRegistryResolution("revision/1")
+				declaration := resolution.Toolset.Tools[0]
+				description := "Read values. Display a card."
+				declaration.Description = &description
+				consumer := declaration.ConsumerContract
+				consumer.RequiresUI = tc.requiresUI
+				if tc.confirm {
+					consumer.Confirmation = &genregistry.ToolConfirmation{
+						PromptTemplate: "Read {{ json .value }}?", DeniedResultTemplate: `{"value":0}`,
+					}
+				}
+				if tc.contract {
+					consumer.TextOnly = &genregistry.TextOnlyToolContract{
+						Description: "Read values.", Search: consumer.Search,
+						PayloadSchema: declaration.PayloadSchema, Payload: consumer.Payload,
+						ExecutionSchema: declaration.ExecutionPayloadSchema,
+					}
+				}
+				resolved, err := registrycontract.Resolve(resolution)
+				require.NoError(t, err)
+				call := testNativeRegistryCall(t, "revision/1")
+				call.Registry, err = resolved.Select(testRegistryName, call.Name)
+				require.NoError(t, err)
+
+				child := testAgentDefinition("generic.agent", "generic.workflow", "generic.queue", nil, nil)
+				parent := testRegistryAgentDefinition(testRegistrySources{}).WithAgentExecutors(&child)
+				rt := New(newTestStore(), WithEngine(&stubEngine{}))
+				rt.agents[parent.route.ID] = AgentRegistration{Definition: parent}
+				config := &AgentToolConfiguration{
+					Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Read this value."}}}},
+					Policy:   &PolicyOverrides{TextOnly: textOnly},
+				}
+				require.NoError(t, rt.RegisterAgentToolResolver(child.route.ID, func(context.Context, string, *ToolCall) (*AgentToolConfiguration, error) {
+					return config, nil
+				}))
+				parentRun := run.Context{RunID: call.RunID, SessionID: call.SessionID, TurnID: call.TurnID}
+				position := testToolHistory(t, rt, call.AgentID, parentRun, nil)
+				output, err := rt.prepareAgentChildActivity(t.Context(), &api.AgentChildActivityInput{Call: call, ParentRun: parentRun, HistoryEndID: position})
+				rejected := textOnly && !tc.contract
+				if rejected {
+					assert.Nil(t, output)
+					require.ErrorContains(t, err, "incompatible with text-only child execution")
+					assert.True(t, engine.IsActivityErrorNonRetryable(err))
+					_, seedErr := rt.Store.ListRunSeedRecords(t.Context(), agentChildRunContext(&call).RunID, storage.EmptySeedEndID, "", 1)
+					require.ErrorIs(t, seedErr, storage.ErrSeedNotFound)
+				} else {
+					require.NoError(t, err)
+					require.NotNil(t, output.Success)
+					assert.Equal(t, textOnly, output.Success.Policy.TextOnly)
+				}
+				assert.Equal(t, textOnly, config.Policy.TextOnly)
+				assert.False(t, call.TextOnly)
+
+				// A resumed child's saved policy must be checked before the planner
+				// receives its parent tool, even if preparation was already accepted.
+				planning := New(newTestStore())
+				seen := false
+				planning.agents[child.route.ID] = AgentRegistration{Definition: child, Planner: &stubPlanner{
+					start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+						seen = true
+						if textOnly {
+							assert.Equal(t, "Read values.", input.ParentTool.Description)
+						} else {
+							assert.Contains(t, input.ParentTool.Description, "card")
+						}
+						return &planner.PlanResult{FinalToolResult: &planner.FinalToolResult{Result: rawjson.Message(`{"value":1}`)}}, nil
+					},
+				}}
+				nested := agentChildRunContext(&call)
+				_, err = planning.PlanStartActivity(t.Context(), seedTestPlanInput(t, planning, PlanActivityInput{
+					AgentID: child.route.ID, RunID: nested.RunID, RunContext: nested, Policy: &PolicyOverrides{TextOnly: textOnly},
+				}, nil))
+				if rejected {
+					require.ErrorContains(t, err, "incompatible with text-only child execution")
+					assert.True(t, engine.IsActivityErrorNonRetryable(err))
+					assert.False(t, seen)
+				} else {
+					require.NoError(t, err)
+					assert.True(t, seen)
+				}
+			})
+		}
+	}
 }
 
 func TestRegistryAgentPlannerReceivesOriginalResultContract(t *testing.T) {

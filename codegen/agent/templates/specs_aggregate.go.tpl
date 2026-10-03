@@ -73,7 +73,7 @@ func {{ .MetadataFunc }}() []{{ .PolicyPackageName }}.ToolMetadata {
         {
             ID:          {{ $.ToolsPackageName }}.Ident({{ printf "%q" .Tool.QualifiedName }}),
             Title:       {{ printf "%q" .Tool.Title }},
-            Description: {{ printf "%q" .Tool.Description }},
+            Description: {{ printf "%q" (print .Tool.Description .Tool.UIInstructions) }},
             Tags: []string{
             {{- range .Tool.Tags }}
                 {{ printf "%q" . }},
@@ -95,7 +95,7 @@ func {{ .MetadataByNameFunc }}(name {{ .ToolsPackageName }}.Ident) ({{ .PolicyPa
         return {{ $.PolicyPackageName }}.ToolMetadata{
             ID:          {{ $.ToolsPackageName }}.Ident({{ printf "%q" .Tool.QualifiedName }}),
             Title:       {{ printf "%q" .Tool.Title }},
-            Description: {{ printf "%q" .Tool.Description }},
+            Description: {{ printf "%q" (print .Tool.Description .Tool.UIInstructions) }},
             Tags: []string{
             {{- range .Tool.Tags }}
                 {{ printf "%q" . }},

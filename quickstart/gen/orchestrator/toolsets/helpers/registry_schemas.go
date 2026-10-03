@@ -43,6 +43,17 @@ func (declarations registryDeclarations) schema1() *genregistry.ToolSchema {
 				Length: 7,
 				Terms:  map[string]int{"a": 1, "answer": 3, "helpers": 1, "question": 1, "simple": 1},
 			},
+			RequiresUI: false,
+			TextOnly: &genregistry.TextOnlyToolContract{
+				ExecutionSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"question\":{\"description\":\"User question to answer\",\"type\":\"string\"}},\"required\":[\"question\"],\"type\":\"object\"}"),
+				Description:     "Answer a simple question",
+				Search: &genregistry.ToolSearchDocument{
+					Length: 7,
+					Terms:  map[string]int{"a": 1, "answer": 3, "helpers": 1, "question": 1, "simple": 1},
+				},
+				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"example\":{\"question\":\"What is the capital of Japan?\"},\"properties\":{\"question\":{\"description\":\"User question to answer\",\"type\":\"string\"}},\"required\":[\"question\"],\"type\":\"object\"}"),
+				Payload:       declarations.metadata8(),
+			},
 			Payload: declarations.metadata2(),
 			Result:  declarations.metadata5(),
 		},
@@ -112,6 +123,41 @@ func (registryDeclarations) field7() *genregistry.ToolFieldMetadata {
 	return &genregistry.ToolFieldMetadata{
 		Path: []*genregistry.ToolFieldPathSegment{
 			{Segment: genregistry.NewToolFieldSegmentField("text")},
+		},
+		JSONType:    &registryText1,
+		Description: &registryText2,
+	}
+}
+
+// metadata8 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata8() *genregistry.ToolTypeMetadata {
+	registryText1 := "AnswerPayload"
+	return &genregistry.ToolTypeMetadata{
+		Name:                     &registryText1,
+		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"question\":{\"description\":\"User question to answer\",\"type\":\"string\"}},\"required\":[\"question\"],\"type\":\"object\"}"),
+		ExampleJSON:              []byte("{\"question\":\"What is the capital of Japan?\"}"),
+		Fields: []*genregistry.ToolFieldMetadata{
+			declarations.field9(),
+			declarations.field10(),
+		},
+	}
+}
+
+// field9 constructs one generated field declaration.
+func (registryDeclarations) field9() *genregistry.ToolFieldMetadata {
+	registryText1 := "object"
+	return &genregistry.ToolFieldMetadata{
+		JSONType: &registryText1,
+	}
+}
+
+// field10 constructs one generated field declaration.
+func (registryDeclarations) field10() *genregistry.ToolFieldMetadata {
+	registryText1 := "string"
+	registryText2 := "User question to answer"
+	return &genregistry.ToolFieldMetadata{
+		Path: []*genregistry.ToolFieldPathSegment{
+			{Segment: genregistry.NewToolFieldSegmentField("question")},
 		},
 		JSONType:    &registryText1,
 		Description: &registryText2,

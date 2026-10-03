@@ -630,7 +630,9 @@ func (r *Runtime) applyMissingFieldsPolicy(
 	turnID string,
 	deadlines *runDeadlines,
 ) (*RunOutput, *planner.AwaitItem, error) {
-	if reg.Policy.OnMissingFields == "" {
+	// Text-only runs let the planner ask about missing information in its next
+	// ordinary message instead of creating an external-input exchange.
+	if base.RunContext.TextOnly || reg.Policy.OnMissingFields == "" {
 		return nil, nil, nil
 	}
 	// Find the first same-tool correction with generated missing-field issues.

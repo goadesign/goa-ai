@@ -18,13 +18,16 @@ type (
 	compiledToolPolicy struct {
 		callerRestrictToTool tools.Ident
 		tagClauses           []api.TagPolicyClause
+		textOnly             bool
 	}
 
 	// toolPolicyFacts carries the static tool facts needed by compiledToolPolicy.
 	// Advertising obtains them from ToolSpec while execution-time filtering obtains
 	// them from canonical policy metadata; both paths share the same predicate.
 	toolPolicyFacts struct {
-		tags []string
+		tags             []string
+		requiresUI       bool
+		textOnlyContract bool
 	}
 )
 
@@ -35,6 +38,7 @@ func compileToolPolicy(overrides *PolicyOverrides) compiledToolPolicy {
 	}
 	return compiledToolPolicy{
 		callerRestrictToTool: overrides.RestrictToTool,
+		textOnly:             overrides.TextOnly,
 		tagClauses:           cloneTagPolicyClauses(overrides.TagClauses),
 	}
 }
@@ -71,7 +75,7 @@ func cloneTagPolicyClauses(clauses []api.TagPolicyClause) []api.TagPolicyClause 
 
 // isZero reports whether the compiled policy has no effect.
 func (p compiledToolPolicy) isZero() bool {
-	return p.callerRestrictToTool == "" && len(p.tagClauses) == 0
+	return !p.textOnly && p.callerRestrictToTool == "" && len(p.tagClauses) == 0
 }
 
 // allowsTool reports whether the named tool with the provided tags passes the
@@ -81,6 +85,9 @@ func (p compiledToolPolicy) allowsTool(name tools.Ident, facts toolPolicyFacts) 
 		return true
 	}
 	if p.callerRestrictToTool != "" && name != p.callerRestrictToTool {
+		return false
+	}
+	if p.textOnly && (facts.requiresUI || !facts.textOnlyContract) {
 		return false
 	}
 	return TagPolicyAllows(p.tagClauses, facts.tags)
@@ -118,6 +125,13 @@ func advertisedDefinitions(specs []tools.ToolSpec, policy compiledToolPolicy, co
 			continue
 		}
 		base := compiled[spec.Name]
+		if policy.textOnly {
+			var err error
+			base, err = model.NewToolDefinitionFromSpec(spec.ForTextOnly())
+			if err != nil {
+				panic(fmt.Sprintf("runtime: tool %q text-only contract: %v", spec.Name, err))
+			}
+		}
 		if base == nil {
 			panic(fmt.Sprintf("runtime: tool %q has no compiled model definition", spec.Name))
 		}
@@ -132,7 +146,9 @@ func advertisedDefinitions(specs []tools.ToolSpec, policy compiledToolPolicy, co
 // planner-visible advertising decisions.
 func toolPolicyFactsFromSpec(spec tools.ToolSpec) toolPolicyFacts {
 	return toolPolicyFacts{
-		tags: spec.Tags,
+		tags:             spec.Tags,
+		requiresUI:       spec.RequiresUI || spec.Confirmation != nil,
+		textOnlyContract: spec.TextOnly != nil,
 	}
 }
 
@@ -140,7 +156,9 @@ func toolPolicyFactsFromSpec(spec tools.ToolSpec) toolPolicyFacts {
 // facts for execution-time filtering decisions.
 func toolPolicyFactsFromMetadata(meta policy.ToolMetadata) toolPolicyFacts {
 	return toolPolicyFacts{
-		tags: meta.Tags,
+		tags:             meta.Tags,
+		requiresUI:       meta.RequiresUI,
+		textOnlyContract: meta.TextOnlyContract,
 	}
 }
 

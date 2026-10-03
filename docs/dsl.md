@@ -274,7 +274,8 @@ on agent/tool contracts.
 | `Cursor(name)`                                | Inside `BoundedResult(func() { ... })` | Declares which payload field carries the paging cursor (optional)                                   |
 | `ContinueWith(tool, cursor)`                  | Inside `BoundedResult(func() { ... })` | Delegates paging to a sibling continuation tool whose cursor is bound by the runtime                 |
 | `NextCursor(name)`                            | Inside `BoundedResult(func() { ... })` | Declares the projected result field name for the next-page cursor (optional)                        |
-| `ResultReminder(text)`                        | Inside `Tool`                          | Static system reminder injected after tool result                                                   |
+| `ResultReminder(text)`                        | Inside `Tool`                          | Static result guidance in ordinary and text-only runs                                               |
+| `UIResultReminder(text)`                      | Inside `Tool`                          | Static result guidance only when interactive output is supported                                    |
 | `Confirmation(dsl)`                           | Inside `Tool`                          | Declares that tool execution must be explicitly approved out-of-band                                |
 | `TerminalRun()`                               | Inside `Tool`                          | Marks tool as terminal: run completes immediately after execution                                   |
 | `Bookkeeping()`                               | Inside `Tool`                          | Marks control-plane work that consumes no `MaxToolCalls` budget and does not force another planner turn |
@@ -1170,7 +1171,9 @@ Keep the built-in contracts canonical:
 
 `ResultReminder` configures a static system reminder that is injected into the conversation
 after the tool result is returned. Use this to provide backstage guidance to the model about
-how to interpret or present the result to the user.
+how to interpret or present the result to the user. This guidance remains in
+text-only runs. Declare guidance that assumes interactive output with
+`UIResultReminder`; ordinary contracts combine both reminders with a newline.
 
 The reminder text is automatically wrapped in `<system-reminder>` tags by the runtime. Do not
 include the tags in the text.
@@ -1184,7 +1187,8 @@ support rate limiting, per-run caps, and can be added or removed based on runtim
 Tool("get_time_series", "Get Time Series", func() {
     Args(GetTimeSeriesToolArgs)
     Return(GetTimeSeriesToolReturn)
-    ResultReminder("The user sees a rendered graph of this data in the UI.")
+    ResultReminder("Report the data with its time range.")
+    UIResultReminder("The user sees a rendered graph of this data in the UI.")
 })
 ```
 
@@ -1733,3 +1737,15 @@ Notes:
 - Compatibility uses Goa's type system (names and structure, including `Extend`)
 - For nested shapes, keep pointers in user types for validators/codecs
 - Mapping lives in executors; transforms are conveniences when types align
+
+## Optional presentation
+
+`RequiresUI()` excludes a tool from text-only runs. `UIOnly("renderUi")` hides an
+optional Boolean argument and disables it during execution. `UIInstructions(...)`
+adds rendering guidance only to the ordinary tool contract.
+`ResultReminder(...)` supplies result guidance in both contracts; use
+`UIResultReminder(...)` for guidance that assumes the user sees interactive
+output. Ordinary contracts combine both reminders with a separating newline,
+while text-only contracts retain only `ResultReminder`. Omitted UI controls
+decode to an explicit false value, including optional pointer fields. See
+[text-only execution](runtime.md#text-only-execution) for the runtime contract.

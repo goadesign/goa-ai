@@ -59,6 +59,7 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 	var registryMeta *toolregistry.ToolCallMeta
 	if meta != nil {
 		registryMeta = &toolregistry.ToolCallMeta{
+			TextOnly:         meta.TextOnly,
 			RunID:            meta.RunID,
 			SessionID:        meta.SessionID,
 			TurnID:           meta.TurnID,

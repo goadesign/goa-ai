@@ -81,7 +81,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, wireInput *PlanActivity
 		if err != nil {
 			return nil, err
 		}
-		continuationActions, err = r.availableContinuationActions(input.AgentID, historicalOutputs)
+		continuationActions, err = r.availableContinuationActions(input.AgentID, historicalOutputs, input.RunContext.TextOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -206,7 +206,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, wireInput *PlanActivit
 	}
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !synthesisOnly {
-		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs)
+		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs, input.RunContext.TextOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -546,6 +546,20 @@ func (r *Runtime) preparePlannerActivity(
 	for _, name := range dynamicNames {
 		if !slices.ContainsFunc(advertisedSpecs, func(spec tools.ToolSpec) bool { return spec.Name == name }) {
 			advertisedSpecs = append(advertisedSpecs, catalog.specs[name])
+		}
+	}
+	if input.Policy != nil && input.Policy.TextOnly {
+		for i, spec := range advertisedSpecs {
+			if spec.TextOnly != nil {
+				advertisedSpecs[i] = spec.ForTextOnly()
+			}
+		}
+		if parentTool != nil {
+			if parentTool.RequiresUI || parentTool.Confirmation != nil || parentTool.TextOnly == nil {
+				return nil, engine.MarkActivityErrorNonRetryable(fmt.Errorf("agent tool %q is incompatible with text-only child execution", parentTool.Name))
+			}
+			selected := parentTool.ForTextOnly()
+			parentTool = &selected
 		}
 	}
 	events := newPlannerEvents(input.AgentID, input.RunID, input.RunContext.SessionID)
@@ -1388,6 +1402,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// retains the model-authored call and owns any later correction evidence.
 	raw := append(rawjson.Message(nil), req.Payload...)
 	call := ToolCall{
+		TextOnly:         req.TextOnly,
 		Registry:         req.Registry.Clone(),
 		Name:             req.ToolName,
 		Payload:          raw,
@@ -1439,6 +1454,14 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 	}
 
+	if call.TextOnly {
+		call.Payload, err = prepareTextOnlyExecutionPayload(spec, call.Payload)
+		if err != nil {
+			return nil, engine.MarkActivityErrorNonRetryable(err)
+		}
+		raw = call.Payload
+	}
+
 	// For non DecodeInExecutor toolsets, validate payloads eagerly using the
 	// generated codecs so we can surface structured correction contracts. Executors
 	// still receive the execution payload and may decode again as needed.
@@ -1453,6 +1476,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 	}
 
+	ctx = run.WithTextOnlyContext(ctx, call.TextOnly)
 	meta := ToolCallMetaFromCall(call)
 	start := time.Now()
 	executorCall := cloneToolCall(call)
@@ -1471,6 +1495,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	result, resultJSON, clarification, err := r.materializeActivityToolExecutionResult(ctx, call, execResult)
 	if err != nil {
+		if call.TextOnly {
+			return nil, engine.MarkActivityErrorNonRetryable(err)
+		}
 		return nil, err
 	}
 	out := &ToolOutput{

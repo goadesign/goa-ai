@@ -111,7 +111,12 @@ type (
 		Payload *typeData
 		// ModelPayload uses the model's smaller input shape when continuation
 		// execution requires arguments the model is not allowed to supply.
-		ModelPayload *typeData
+		ModelPayload        *typeData
+		RequiresUI          bool
+		TextOnlyDescription string
+		TextOnlySearch      toolcontracts.SearchDocument
+		TextOnlyPayload     *typeData
+		TextOnlyExecution   *typeData
 		// Type metadata for the tool's output result.
 		Result *typeData
 		// HasResult reports whether the tool returns a value.
@@ -130,6 +135,8 @@ type (
 		// ResultReminder is an optional system reminder injected into the
 		// conversation after the tool result is returned.
 		ResultReminder string
+		// TextOnlyResultReminder preserves domain guidance without UI guidance.
+		TextOnlyResultReminder string
 		// Confirmation configures design-time confirmation requirements for this tool.
 		Confirmation *ToolConfirmationData
 	}
@@ -233,6 +240,14 @@ type (
 		MethodResultAttr         *goaexpr.AttributeExpr
 		Bounds                   *ToolBoundsData
 		ModelHiddenPayloadFields []string
+		// UIOnlyFields names optional Boolean inputs initialized false in text-only decoders.
+		UIOnlyFields []string
+	}
+
+	// disabledUIField records the Go representation of one UI Boolean input.
+	disabledUIField struct {
+		Name    string
+		Pointer bool
 	}
 
 	// typeData holds all metadata needed to generate a type definition, schema,
@@ -327,6 +342,8 @@ type (
 		// DecodeTransform is Go code that initializes "out" (public type) from "in"
 		// (transport type) using Goa's GoTransform conventions.
 		DecodeTransform string
+		// DisabledUIFields names finalized Go fields initialized false after decoding.
+		DisabledUIFields []*disabledUIField
 		// EncodeTransform is Go code that initializes "out" (transport type) from "in"
 		// (public type) using Goa's GoTransform conventions.
 		EncodeTransform string
@@ -399,8 +416,10 @@ const (
 	contractTypeOwnerTool       contractTypeOwnerKind = "tool"
 	contractTypeOwnerCompletion contractTypeOwnerKind = "completion"
 
-	usagePayload      typeUsage = "payload"
-	usageModelPayload typeUsage = "model-payload"
-	usageResult       typeUsage = "result"
-	usageServerData   typeUsage = "server-data"
+	usagePayload           typeUsage = "payload"
+	usageModelPayload      typeUsage = "model-payload"
+	usageTextOnlyPayload   typeUsage = "text-only-payload"
+	usageTextOnlyExecution typeUsage = "text-only-execution"
+	usageResult            typeUsage = "result"
+	usageServerData        typeUsage = "server-data"
 )

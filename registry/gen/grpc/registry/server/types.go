@@ -32,11 +32,9 @@ func NewDeclareServiceToolsetPayload(message *registrypb.DeclareServiceToolsetRe
 			v.Tags[i] = val
 		}
 	}
-	if message.Tools != nil {
-		v.Tools = make([]*registry.ToolSchema, len(message.Tools))
-		for i, val := range message.Tools {
-			v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
-		}
+	v.Tools = make([]*registry.ToolSchema, len(message.Tools))
+	for i, val := range message.Tools {
+		v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 	}
 	return v
 }
@@ -99,11 +97,9 @@ func NewRegisterPayload(message *registrypb.RegisterRequest) *registry.RegisterP
 			v.Tags[i] = val
 		}
 	}
-	if message.Tools != nil {
-		v.Tools = make([]*registry.ToolSchema, len(message.Tools))
-		for i, val := range message.Tools {
-			v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
-		}
+	v.Tools = make([]*registry.ToolSchema, len(message.Tools))
+	for i, val := range message.Tools {
+		v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 	}
 	return v
 }
@@ -230,11 +226,9 @@ func NewRegisterAgentToolsetPayload(message *registrypb.RegisterAgentToolsetRequ
 			v.Tags[i] = val
 		}
 	}
-	if message.Tools != nil {
-		v.Tools = make([]*registry.ToolSchema, len(message.Tools))
-		for i, val := range message.Tools {
-			v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
-		}
+	v.Tools = make([]*registry.ToolSchema, len(message.Tools))
+	for i, val := range message.Tools {
+		v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 	}
 	return v
 }
@@ -269,11 +263,9 @@ func NewReplaceAgentToolsetPayload(message *registrypb.ReplaceAgentToolsetReques
 			v.Tags[i] = val
 		}
 	}
-	if message.Tools != nil {
-		v.Tools = make([]*registry.ToolSchema, len(message.Tools))
-		for i, val := range message.Tools {
-			v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
-		}
+	v.Tools = make([]*registry.ToolSchema, len(message.Tools))
+	for i, val := range message.Tools {
+		v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 	}
 	return v
 }
@@ -738,6 +730,11 @@ func validateregistry_registry_ConsumerContract_Target_consumerContract_Context_
 			err = goa.MergeErrors(err, err2)
 		}
 	}
+	if consumerContract.TextOnly != nil {
+		if err2 := validateregistry_registry_TextOnlyToolContract_Target_textOnly_Context_text_5F_only(consumerContract.TextOnly); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
 	return
 }
 
@@ -1016,6 +1013,47 @@ func validateregistry_registry_AgentToolTarget_At_agent(agent *registrypb.AgentT
 	if agent.Configuration != nil {
 		if utf8.RuneCountInString(*agent.Configuration) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("agent.configuration", *agent.Configuration, utf8.RuneCountInString(*agent.Configuration), 1, true))
+		}
+	}
+	return
+}
+
+// validateregistry_registry_TextOnlyToolContract_Target_textOnly_Context_text_5F_only
+// runs the validations defined on TextOnlyToolContract.
+func validateregistry_registry_TextOnlyToolContract_Target_textOnly_Context_text_5F_only(textOnly *registrypb.TextOnlyToolContract) (err error) {
+	if textOnly.Description == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("description", "text_only"))
+	}
+	if textOnly.Search == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("search", "text_only"))
+	}
+	if textOnly.PayloadSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("payload_schema", "text_only"))
+	}
+	if textOnly.Payload == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("payload", "text_only"))
+	}
+	if textOnly.ExecutionSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("execution_schema", "text_only"))
+	}
+	if textOnly.Search != nil {
+		if err2 := validateregistry_registry_ToolSearchDocument_At_search(textOnly.Search); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if textOnly.PayloadSchema != nil {
+		if len(textOnly.PayloadSchema) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("text_only.payload_schema", textOnly.PayloadSchema, len(textOnly.PayloadSchema), 1, true))
+		}
+	}
+	if textOnly.Payload != nil {
+		if err2 := validateregistry_registry_ToolTypeMetadata_At_payload(textOnly.Payload); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if textOnly.ExecutionSchema != nil {
+		if len(textOnly.ExecutionSchema) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("text_only.execution_schema", textOnly.ExecutionSchema, len(textOnly.ExecutionSchema), 1, true))
 		}
 	}
 	return
@@ -1994,6 +2032,9 @@ func transformProtoConsumerContractToConsumerContract(v *registrypb.ConsumerCont
 		Title:          *v.Title,
 		ResultReminder: v.ResultReminder,
 	}
+	if v.RequiresUi != nil {
+		res.RequiresUI = *v.RequiresUi
+	}
 	if v.Search != nil {
 		res.Search = transformProtoToolSearchDocumentToToolSearchDocument(v.Search)
 	}
@@ -2038,6 +2079,12 @@ func transformProtoConsumerContractToConsumerContract(v *registrypb.ConsumerCont
 	if v.Agent != nil {
 		res.Agent = transformProtoAgentToolTargetToAgentToolTarget(v.Agent)
 	}
+	if v.RequiresUi == nil {
+		res.RequiresUI = false
+	}
+	if v.TextOnly != nil {
+		res.TextOnly = transformProtoTextOnlyToolContractToTextOnlyToolContract(v.TextOnly)
+	}
 
 	return res
 }
@@ -2049,13 +2096,11 @@ func transformProtoToolSearchDocumentToToolSearchDocument(v *registrypb.ToolSear
 	res := &registry.ToolSearchDocument{
 		Length: int(*v.Length),
 	}
-	if v.Terms != nil {
-		res.Terms = make(map[string]int, len(v.Terms))
-		for key, val := range v.Terms {
-			tk := key
-			tv := int(val)
-			res.Terms[tk] = tv
-		}
+	res.Terms = make(map[string]int, len(v.Terms))
+	for key, val := range v.Terms {
+		tk := key
+		tv := int(val)
+		res.Terms[tk] = tv
 	}
 
 	return res
@@ -2149,11 +2194,9 @@ func transformProtoToolUnionBranchToToolUnionBranch(v *registrypb.ToolUnionBranc
 	res := &registry.ToolUnionBranch{
 		Value: *v.Value,
 	}
-	if v.Discriminator != nil {
-		res.Discriminator = make([]*registry.ToolFieldPathSegment, len(v.Discriminator))
-		for i, val := range v.Discriminator {
-			res.Discriminator[i] = transformProtoToolFieldPathSegmentToToolFieldPathSegment(val)
-		}
+	res.Discriminator = make([]*registry.ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		res.Discriminator[i] = transformProtoToolFieldPathSegmentToToolFieldPathSegment(val)
 	}
 
 	return res
@@ -2229,6 +2272,26 @@ func transformProtoAgentToolTargetToAgentToolTarget(v *registrypb.AgentToolTarge
 	return res
 }
 
+// transformProtoTextOnlyToolContractToTextOnlyToolContract builds a value of
+// type *registry.TextOnlyToolContract from a value of type
+// *registrypb.TextOnlyToolContract.
+func transformProtoTextOnlyToolContractToTextOnlyToolContract(v *registrypb.TextOnlyToolContract) *registry.TextOnlyToolContract {
+	res := &registry.TextOnlyToolContract{
+		Description:     *v.Description,
+		PayloadSchema:   v.PayloadSchema,
+		ResultReminder:  v.ResultReminder,
+		ExecutionSchema: v.ExecutionSchema,
+	}
+	if v.Search != nil {
+		res.Search = transformProtoToolSearchDocumentToToolSearchDocument(v.Search)
+	}
+	if v.Payload != nil {
+		res.Payload = transformProtoToolTypeMetadataToToolTypeMetadata(v.Payload)
+	}
+
+	return res
+}
+
 // transformToolsetToProtoToolset builds a value of type *registrypb.Toolset
 // from a value of type *registry.Toolset.
 func transformToolsetToProtoToolset(v *registry.Toolset) *registrypb.Toolset {
@@ -2288,6 +2351,7 @@ func transformConsumerContractToProtoConsumerContract(v *registry.ConsumerContra
 		Kind:           &v.Kind,
 		Title:          &v.Title,
 		ResultReminder: v.ResultReminder,
+		RequiresUi:     &v.RequiresUI,
 	}
 	if v.Search != nil {
 		res.Search = transformToolSearchDocumentToProtoToolSearchDocument(v.Search)
@@ -2330,6 +2394,9 @@ func transformConsumerContractToProtoConsumerContract(v *registry.ConsumerContra
 	}
 	if v.Agent != nil {
 		res.Agent = transformAgentToolTargetToProtoAgentToolTarget(v.Agent)
+	}
+	if v.TextOnly != nil {
+		res.TextOnly = transformTextOnlyToolContractToProtoTextOnlyToolContract(v.TextOnly)
 	}
 
 	return res
@@ -2511,6 +2578,26 @@ func transformAgentToolTargetToProtoAgentToolTarget(v *registry.AgentToolTarget)
 	return res
 }
 
+// transformTextOnlyToolContractToProtoTextOnlyToolContract builds a value of
+// type *registrypb.TextOnlyToolContract from a value of type
+// *registry.TextOnlyToolContract.
+func transformTextOnlyToolContractToProtoTextOnlyToolContract(v *registry.TextOnlyToolContract) *registrypb.TextOnlyToolContract {
+	res := &registrypb.TextOnlyToolContract{
+		Description:     &v.Description,
+		PayloadSchema:   v.PayloadSchema,
+		ResultReminder:  v.ResultReminder,
+		ExecutionSchema: v.ExecutionSchema,
+	}
+	if v.Search != nil {
+		res.Search = transformToolSearchDocumentToProtoToolSearchDocument(v.Search)
+	}
+	if v.Payload != nil {
+		res.Payload = transformToolTypeMetadataToProtoToolTypeMetadata(v.Payload)
+	}
+
+	return res
+}
+
 // transformToolsetInfoToProtoToolsetInfo builds a value of type
 // *registrypb.ToolsetInfo from a value of type *registry.ToolsetInfo.
 func transformToolsetInfoToProtoToolsetInfo(v *registry.ToolsetInfo) *registrypb.ToolsetInfo {
@@ -2545,6 +2632,9 @@ func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *regis
 		ToolCallID:       *v.ToolCallId,
 		ParentToolCallID: v.ParentToolCallId,
 	}
+	if v.TextOnly != nil {
+		res.TextOnly = *v.TextOnly
+	}
 	if v.Labels != nil {
 		res.Labels = make(map[string]string, len(v.Labels))
 		for key, val := range v.Labels {
@@ -2552,6 +2642,9 @@ func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *regis
 			tv := val
 			res.Labels[tk] = tv
 		}
+	}
+	if v.TextOnly == nil {
+		res.TextOnly = false
 	}
 
 	return res

@@ -192,6 +192,8 @@ type (
 		injectedFieldValidations   map[string]*goacodegen.ValidationPlan
 		payloadType                *plannedSpecType
 		modelPayloadType           *plannedSpecType
+		textOnlyPayloadType        *plannedSpecType
+		textOnlyExecutionType      *plannedSpecType
 		resultType                 *plannedSpecType
 		serverDataTypes            map[string]*plannedSpecType
 		methodPayloadTransformPlan *goacodegen.TransformPlan

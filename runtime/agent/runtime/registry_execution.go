@@ -42,7 +42,7 @@ func (r *Runtime) executeRegistryTool(ctx context.Context, call *ToolCall) (*Too
 	result, err := executor.Execute(ctx, &toolregistry.ToolCallMeta{
 		RunID: call.RunID, SessionID: call.SessionID, TurnID: call.TurnID,
 		ToolCallID: call.ToolCallID, ParentToolCallID: call.ParentToolCallID,
-		Labels: cloneLabels(call.Labels),
+		Labels: cloneLabels(call.Labels), TextOnly: call.TextOnly,
 	}, call)
 	if err != nil {
 		return nil, err
@@ -59,7 +59,7 @@ func (c resolvedRegistryClient) CallTool(ctx context.Context, toolset string, to
 		Meta: &genregistry.ToolCallMeta{
 			RunID: meta.RunID, SessionID: meta.SessionID, ToolCallID: meta.ToolCallID,
 			TurnID: &meta.TurnID, ParentToolCallID: &meta.ParentToolCallID,
-			Labels: cloneLabels(meta.Labels),
+			Labels: cloneLabels(meta.Labels), TextOnly: meta.TextOnly,
 		},
 	})
 	if err != nil {
