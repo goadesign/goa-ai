@@ -147,6 +147,10 @@ func toolSpecShape(spec tools.ToolSpec) tools.ToolSpec {
 // nested-agent routing maps while retaining immutable functions and templates.
 func cloneToolsetRegistration(reg ToolsetRegistration) ToolsetRegistration {
 	reg.Specs = cloneToolSpecs(reg.Specs)
+	if reg.ActivityRetryPolicy != nil {
+		policy := *reg.ActivityRetryPolicy
+		reg.ActivityRetryPolicy = &policy
+	}
 	reg.CallHints = maps.Clone(reg.CallHints)
 	reg.ResultHints = maps.Clone(reg.ResultHints)
 	if reg.AgentTool != nil {

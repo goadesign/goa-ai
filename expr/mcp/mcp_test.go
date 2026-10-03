@@ -53,17 +53,6 @@ func TestMCPExpr_Validate(t *testing.T) {
 			errMsg:  "MCP server version is required",
 		},
 		{
-			name: "unsupported protocol version",
-			mcp: &MCPExpr{
-				Name:            "test-server",
-				Version:         "1.0.0",
-				ProtocolVersion: "2099-01-01",
-				Service:         &expr.ServiceExpr{Name: "test-service"},
-			},
-			wantErr: true,
-			errMsg:  `protocol version must be "2025-06-18"`,
-		},
-		{
 			name: "duplicate tool name",
 			mcp: &MCPExpr{
 				Name:    "test-server",
@@ -131,20 +120,6 @@ func TestMCPExpr_Validate(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestMCPExpr_Finalize(t *testing.T) {
-	t.Run("sets default protocol version", func(t *testing.T) {
-		m := &MCPExpr{}
-		m.Finalize()
-		require.Equal(t, "2025-06-18", m.ProtocolVersion)
-	})
-
-	t.Run("preserves authored protocol version", func(t *testing.T) {
-		m := &MCPExpr{ProtocolVersion: "2099-01-01"}
-		m.Finalize()
-		require.Equal(t, "2099-01-01", m.ProtocolVersion)
-	})
 }
 
 func TestToolExpr_Validate(t *testing.T) {
@@ -326,10 +301,33 @@ func TestResourceExpr_Validate(t *testing.T) {
 				},
 			},
 			wantErr: true,
-			errMsg:  `resource "test-resource" uses MIME type "text/plain" but method "read" does not return a string`,
+			errMsg:  `resource "test-resource" uses MIME type "text/plain" but method "read" does not return a string or bytes`,
 		},
 		{
-			name: "unsupported MIME type",
+			name: "binary MIME with string result",
+			resource: &ResourceExpr{
+				Name: "test-resource", URI: "asset://logo", MimeType: "image/png",
+				Method: &expr.MethodExpr{Name: "read", Result: &expr.AttributeExpr{Type: expr.String}},
+			},
+			wantErr: true,
+			errMsg:  `does not return bytes`,
+		},
+		{
+			name: "binary alias",
+			resource: &ResourceExpr{
+				Name: "test-resource", URI: "asset://logo", MimeType: "image/png",
+				Method: &expr.MethodExpr{Name: "read", Result: &expr.AttributeExpr{Type: &expr.UserTypeExpr{TypeName: "Image", AttributeExpr: &expr.AttributeExpr{Type: expr.Bytes}}}},
+			},
+		},
+		{
+			name: "byte-valued text resource",
+			resource: &ResourceExpr{
+				Name: "test-resource", URI: "asset://readme", MimeType: "text/plain",
+				Method: &expr.MethodExpr{Name: "read", Result: &expr.AttributeExpr{Type: expr.Bytes}},
+			},
+		},
+		{
+			name: "binary resource",
 			resource: &ResourceExpr{
 				Name:     "test-resource",
 				URI:      "file:///test",
@@ -339,8 +337,7 @@ func TestResourceExpr_Validate(t *testing.T) {
 					Result: &expr.AttributeExpr{Type: expr.Bytes},
 				},
 			},
-			wantErr: true,
-			errMsg:  `resource "test-resource" MIME type "image/png" is not supported`,
+			wantErr: false,
 		},
 	}
 

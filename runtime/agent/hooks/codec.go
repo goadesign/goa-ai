@@ -21,6 +21,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 )
 
 type (
@@ -307,6 +308,22 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			p.Title,
 			p.Questions,
 		)
+
+	case AwaitMCPInput:
+		var p AwaitMCPInputEvent
+		if err := json.Unmarshal(input.Payload, &p); err != nil {
+			return nil, fmt.Errorf("decode %s payload: %w", AwaitMCPInput, err)
+		}
+		if p.Input.ToolName == "" || p.Input.ToolCallID == "" {
+			return nil, fmt.Errorf("decode %s: missing tool identity", AwaitMCPInput)
+		}
+		requests := &mcp.InputRequired{Requests: p.Input.Requests}
+		if len(p.Input.Requests) > 0 {
+			if err := requests.Validate(mcp.InputSupport{Form: true, URL: true}); err != nil {
+				return nil, fmt.Errorf("decode %s input requests: %w", AwaitMCPInput, err)
+			}
+		}
+		evt = NewAwaitMCPInputEvent(input.RunID, input.AgentID, input.SessionID, p.Input)
 
 	case AwaitConfirmation:
 		var p AwaitConfirmationEvent

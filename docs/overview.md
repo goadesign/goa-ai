@@ -424,7 +424,9 @@ Per‑turn enforcement of:
 | **Agent‑as‑tool**   | Child workflow executes the nested agent with linked streams and run links           |
 | **MCP toolsets**    | Generated wrappers preserve JSON schemas and typed transport failures across HTTP and stdio |
 
-MCP callers in `runtime/mcp` support two transports:
+MCP callers use the framework-owned `2026-07-28` revision. Each request
+supplies its version and actual capabilities without an initialization handshake.
+Callers in `runtime/mcp` support two transports:
 
 - **`StdioCaller`** — Spawns MCP server as subprocess, communicates via stdin/stdout
 - **`HTTPCaller`** — Sends JSON-RPC over HTTP and accepts JSON or event-stream responses
@@ -602,8 +604,7 @@ the toolsets with the runtime.
 
 | Function | Purpose |
 |----------|---------|
-| `MCP(name, version, opts...)` | Enable MCP support for a service |
-| `ProtocolVersion(string)` | Configure MCP protocol version |
+| `MCP(name, version)` | Enable MCP support for a service |
 | `Resource(name, uri, mimeType)` | Mark method as MCP resource provider |
 | `StaticPrompt(name, desc, messages...)` | Add static prompt template |
 

@@ -315,6 +315,11 @@ type (
 		// Used by the runtime for JSON marshaling/unmarshaling and schema validation.
 		Specs []tools.ToolSpec
 
+		// ActivityRetryPolicy overrides the agent policy for this executable binding.
+		// Nil uses the agent policy. Remote MCP bindings use one total attempt so
+		// an uncertain network outcome cannot repeat a side effect automatically.
+		ActivityRetryPolicy *engine.RetryPolicy
+
 		// TaskQueue optionally overrides the queue used when scheduling this toolset's activities.
 		TaskQueue string
 
@@ -1274,6 +1279,14 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	r.mu.RUnlock()
 	if ts.Name == "" {
 		return errors.New("toolset name is required")
+	}
+	if ts.ActivityRetryPolicy != nil {
+		if ts.Inline {
+			return errors.New("inline toolset cannot configure activity retries")
+		}
+		if err := engine.ValidateWorkflowLaunchSettings(0, *ts.ActivityRetryPolicy); err != nil {
+			return fmt.Errorf("toolset retry policy: %w", err)
+		}
 	}
 	if err := validateToolsetSpecs(ts); err != nil {
 		return err

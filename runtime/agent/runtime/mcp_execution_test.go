@@ -1,0 +1,189 @@
+// This file verifies that a remote input request survives worker replacement
+// without publishing a final result or charging another model tool call.
+package runtime
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
+)
+
+func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
+	for _, mode := range []string{"form", "state", "clarification"} {
+		t.Run(mode, func(t *testing.T) {
+			stateOnly := mode == "state"
+			spec := newAnyJSONSpec("remote.tools.lookup")
+			definition := testAgentDefinition("test.agent", "test.workflow", "test.queue", []tools.ToolSpec{spec}, nil)
+			registration := AgentRegistration{Definition: definition, ExecuteToolActivity: "execute", ResumeActivityName: "resume"}
+			rt := New(newTestStore())
+			round := 0
+			install := func(rt *Runtime) {
+				rt.agents["test.agent"] = registration
+				seedTestToolset(rt, "remote.tools", spec)
+				binding := rt.toolsets["remote.tools"]
+				binding.Execute = func(_ context.Context, call *ToolCall) (*ToolExecutionResult, error) {
+					round++
+					assert.JSONEq(t, `{"query":"original"}`, string(call.Payload))
+					if round > 1 {
+						require.NotNil(t, call.MCPContinuation)
+						assert.Equal(t, fmt.Sprintf("opaque state %d", round-1), *call.MCPContinuation.RequestState)
+						if !stateOnly {
+							assert.JSONEq(t, `{"action":"accept","content":{"choice":"yes"}}`, string(call.MCPContinuation.InputResponses["same-request-id"]))
+						}
+					}
+					if round == 3 {
+						result := Executed(&planner.ToolResult{Name: call.Name, Result: struct {
+							Answer int `json:"answer"`
+						}{Answer: 42}})
+						if mode == "clarification" {
+							result.Clarification = &ToolClarification{ID: "after-result", Question: "Show the answer?"}
+						}
+						return result, nil
+					}
+					state := fmt.Sprintf("opaque state %d", round)
+					input := &mcp.InputRequired{RequestState: &state}
+					if !stateOnly {
+						input.Requests = map[string]mcp.InputRequest{"same-request-id": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{"choice":{"type":"string"}},"required":["choice"]}}`)}}
+					}
+					return AwaitMCPInput(input), nil
+				}
+				rt.toolsets["remote.tools"] = binding
+			}
+			install(rt)
+			firstInput := &RunInput{AgentID: "test.agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
+			seedRunMeta(t, rt, firstInput)
+			wfCtx := &testWorkflowContext{ctx: t.Context(), hookRuntime: rt, runtime: rt}
+			first, err := rt.runLoop(wfCtx, registration, firstInput, &workflowConversation{RunContext: run.Context{RunID: "run-1", SessionID: "session-1", TurnID: "turn-1", Attempt: 1}}, &PlanResult{ToolCalls: []ToolCall{{Name: spec.Name, ToolCallID: "original-call", Payload: rawjson.Message(`{"query":"original"}`)}}}, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, "turn-1", nil)
+			require.NoError(t, err)
+			require.NotNil(t, first.Suspension)
+			events, err := rt.ListRunEvents(t.Context(), "run-1", "", 100)
+			require.NoError(t, err)
+			assert.Equal(t, 0, countRunEventsByType(events, hooks.ToolResultReceived))
+			assert.Equal(t, 1, countRunEventsByType(events, hooks.AwaitMCPInput))
+			suspension := first.Suspension
+			for successor := 2; successor <= 3; successor++ {
+				rt = New(rt.Store)
+				install(rt)
+				checkpoint, err := decodeWorkflowCheckpoint(suspension, definition)
+				require.NoError(t, err)
+				answers := map[string]json.RawMessage(nil)
+				if !stateOnly {
+					answers = map[string]json.RawMessage{"same-request-id": json.RawMessage(`{"action":"accept","content":{"choice":"yes"}}`)}
+				}
+				input := &RunInput{AgentID: "test.agent", RunID: fmt.Sprintf("run-%d", successor), SessionID: "session-1", TurnID: fmt.Sprintf("turn-%d", successor), Continuation: &api.RunContinuationInput{Suspension: suspension, Response: &api.PendingInputResponse{MCP: &api.MCPInputResponse{ToolCallID: suspension.Pending[0].MCP.ToolCallID, Responses: answers}}}}
+				require.NoError(t, restoreContinuationRunInput(input, checkpoint))
+				seedRunMeta(t, rt, input)
+				wfCtx = &testWorkflowContext{ctx: t.Context(), hookRuntime: rt, runtime: rt, plannerOutput: &PlanActivityOutput{PublicationBatchID: testPublicationBatchID, Result: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}}}}
+				endID := seedTestContinuationHistory(t, rt, input, checkpoint)
+				out, err := rt.resumeSuspendedWorkflow(wfCtx, registration, input, checkpoint, endID)
+				require.NoError(t, err)
+				require.NotNil(t, out)
+				if successor == 2 {
+					require.Equal(t, successor, round)
+					require.NotNil(t, out.Suspension)
+					suspension = out.Suspension
+				} else {
+					if mode == "clarification" {
+						require.NotNil(t, out.Suspension)
+						require.Len(t, out.Suspension.Pending, 1)
+						assert.Equal(t, "after-result", out.Suspension.Pending[0].Await.Clarification.ID)
+						next := &RunInput{AgentID: input.AgentID, RunID: "run-4", SessionID: input.SessionID, TurnID: "turn-4", Continuation: &api.RunContinuationInput{Suspension: out.Suspension, Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "after-result", Answer: "yes"}}}}
+						rt = New(rt.Store)
+						install(rt)
+						checkpoint, err := prepareContinuation(next, definition)
+						require.NoError(t, err)
+						require.NoError(t, restoreContinuationRunInput(next, checkpoint))
+						seedRunMeta(t, rt, next)
+						wfCtx = &testWorkflowContext{ctx: t.Context(), hookRuntime: rt, runtime: rt, plannerOutput: wfCtx.plannerOutput}
+						out, err = rt.resumeSuspendedWorkflow(wfCtx, registration, next, checkpoint, seedTestContinuationHistory(t, rt, next, checkpoint))
+						require.NoError(t, err)
+					}
+					assert.Nil(t, out.Suspension)
+					assert.Equal(t, "done", out.Final.Text())
+					require.Len(t, wfCtx.lastPlannerCall.Input.ToolOutputs, 1)
+					assert.Equal(t, "run-1", wfCtx.lastPlannerCall.Input.ToolOutputs[0].CallRunID)
+					assert.Equal(t, "run-3", wfCtx.lastPlannerCall.Input.ToolOutputs[0].ResultRunID)
+					outputs, err := rt.loadPlannerToolOutputs(t.Context(), wfCtx.lastPlannerCall.Input.ToolOutputs)
+					require.NoError(t, err)
+					require.Len(t, outputs, 1)
+					assert.Nil(t, outputs[0].Failure)
+					assert.JSONEq(t, `{"answer":42}`, string(outputs[0].Result))
+				}
+			}
+			assert.Equal(t, 3, round)
+		})
+	}
+}
+
+func TestMCPBindingRetryPolicyIsOwned(t *testing.T) {
+	rt := New(newTestStore())
+	policy := &engine.RetryPolicy{MaxAttempts: 1}
+	reg := ToolsetRegistration{Name: "remote", Specs: []tools.ToolSpec{newAnyJSONSpec("remote.lookup")}, ActivityRetryPolicy: policy, Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) { return nil, nil }}
+	require.NoError(t, rt.RegisterToolset(reg))
+	policy.MaxAttempts = 10
+	assert.Equal(t, 1, rt.toolsets["remote"].ActivityRetryPolicy.MaxAttempts)
+}
+
+// A remote binding owns one attempt even if the agent's normal tools allow retries.
+func TestMCPActivityRetryDoesNotChangeLocalTools(t *testing.T) {
+	for _, remote := range []bool{false, true} {
+		t.Run(fmt.Sprintf("remote=%t", remote), func(t *testing.T) {
+			spec := newAnyJSONSpec("lookup")
+			rt := New(newTestStore())
+			seedTestToolset(rt, "lookup", spec)
+			binding := rt.toolsets["lookup"]
+			if remote {
+				binding.ActivityRetryPolicy = &engine.RetryPolicy{MaxAttempts: 1}
+			}
+			rt.toolsets["lookup"] = binding
+			ctx := run.Context{RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
+			wf := &testWorkflowContext{ctx: t.Context(), asyncResult: ToolOutput{Payload: []byte(`{}`)}}
+			_, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{MaxAttempts: 5}}, "test.agent", &ctx, testToolHistory(t, rt, "test.agent", ctx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "call-1", Payload: []byte(`{}`)}}, 0, nil, time.Time{})
+			require.NoError(t, err)
+			want := 5
+			if remote {
+				want = 1
+			}
+			assert.Equal(t, want, wf.lastToolCall.Options.RetryPolicy.MaxAttempts)
+		})
+	}
+}
+
+// Parallel remote calls may use the same server input ID. The host response and
+// opaque server state remain bound to the runtime's original tool-call ID.
+func TestMCPCheckpointCorrelatesParallelCalls(t *testing.T) {
+	requests := map[string]mcp.InputRequest{"choice": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"]}}`)}}
+	firstState, secondState := "first-state", "second-state"
+	first := ToolCall{Name: "remote.lookup", ToolCallID: "call-1", Payload: []byte(`{"key":"first"}`)}
+	second := ToolCall{Name: first.Name, ToolCallID: "call-2", Payload: []byte(`{"key":"second"}`)}
+	inputs := []*mcp.InputRequired{{RequestState: &firstState, Requests: requests}, {RequestState: &secondState, Requests: requests}}
+	checkpoint := &workflowCheckpoint{Batch: checkpointStepBatch{Calls: []ToolCall{first, second}, Records: []checkpointToolRecord{{Call: first, MCPInput: inputs[0]}, {Call: second, MCPInput: inputs[1]}}}, Pending: []checkpointPendingInput{{MCP: pendingMCPInput(first, inputs[0])}, {MCP: pendingMCPInput(second, inputs[1])}}}
+	require.NoError(t, validateCheckpointMCPInputs(checkpoint))
+	for _, mutate := range []func(*workflowCheckpoint){
+		func(c *workflowCheckpoint) { c.Pending[0].MCP.ToolCallID = "call-2" },
+		func(c *workflowCheckpoint) { c.Batch.Records[0].Call.Payload = []byte(`{"key":"changed"}`) },
+		func(c *workflowCheckpoint) { c.Pending = c.Pending[:1] },
+	} {
+		raw, err := json.Marshal(checkpoint)
+		require.NoError(t, err)
+		var changed workflowCheckpoint
+		require.NoError(t, json.Unmarshal(raw, &changed))
+		mutate(&changed)
+		require.Error(t, validateCheckpointMCPInputs(&changed))
+	}
+}

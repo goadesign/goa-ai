@@ -94,14 +94,7 @@ func TestGeneratedDeferredTools(t *testing.T) {
 		return nil, fmt.Errorf("catalog inspection must not execute a tool")
 	})
 	require.NoError(t, genlazy.RegisterUsedToolsets(t.Context(), rt, genlazy.WithRecordsExecutor(executor)))`
-			if source != "local" {
-				configuration = ", MCPCallers: map[string]mcpruntime.Caller{\"records\": caller}"
-				registration = ""
-				runtimes = `rt,
-		runtime.New(storageinmem.New(), runtime.WithEngine(engineinmem.New())),
-		runtime.New(storageinmem.New(), runtime.WithEngine(engineinmem.New())),
-		runtime.New(storageinmem.New(), runtime.WithEngine(engineinmem.New()))`
-			}
+
 			testSource := strings.ReplaceAll(deferredConsumerTestSource, "MCP_CONFIGURATION", configuration)
 			testSource = strings.ReplaceAll(testSource, "REGISTER_LOCAL", registration)
 			testSource = strings.ReplaceAll(testSource, "CONSUMER_RUNTIMES", runtimes)
@@ -132,7 +125,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/runtime"
 	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 	"goa.design/goa-ai/runtime/agent/tools"
-	mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
 type checkingPlanner struct { deferred []string }
@@ -169,10 +161,6 @@ func (checkingPlanner) PlanResume(context.Context, *planner.PlanResumeInput) (*p
 func TestGeneratedLoadingChoice(t *testing.T) {
 	rt := runtime.New(storageinmem.New(), runtime.WithEngine(engineinmem.New()))
 	runtimes := []*runtime.Runtime{CONSUMER_RUNTIMES}
-	caller := mcpruntime.CallerFunc(func(context.Context, mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-		return mcpruntime.CallResponse{}, fmt.Errorf("catalog inspection must not call MCP")
-	})
-	require.NotNil(t, caller)
 	require.NoError(t, genlazy.RegisterLazyAgent(t.Context(), runtimes[0], genlazy.LazyAgentConfig{
 		Planner: checkingPlanner{deferred: []string{"records.search", "records.lookup"}}MCP_CONFIGURATION,
 	}))

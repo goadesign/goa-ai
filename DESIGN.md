@@ -1108,7 +1108,7 @@ writers must not overlap. How the host reaches that state depends on its
 database and deployment environment.
 
 Continuation preparation accepts only the current suspension schema,
-`goa-ai.run-suspension.v9`, which references an exact saved history position.
+`goa-ai.run-suspension.v10`, which references an exact saved history position.
 Every accepted recovery plan that waits for input retains its actual advertised
 catalog, including authorized alternatives to a
 failed tool, preserving the catalog contract introduced in version eight.
@@ -1949,7 +1949,7 @@ for details and the SDK source-compatibility change.
   error instead of fabricating success after the required side effect did not
   occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
   because they assign different outcomes to the same exhausted limits.
-  Completion-aware suspensions use `goa-ai.run-suspension.v9`. The saved policy
+  Completion-aware suspensions use `goa-ai.run-suspension.v10`. The saved policy
   is required, and a checkpoint with another version fails at that typed
   boundary.
 - **Provider reasoning stream contract**: when a caller enables thinking
@@ -1964,7 +1964,7 @@ Enable MCP protocol for a service with `MCP`:
 
 ```go
 Service("calculator", func() {
-    MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+    MCP("calc", "1.0.0")
     JSONRPC(func() {
         POST("/mcp")
     })
@@ -1976,34 +1976,46 @@ Service("calculator", func() {
 })
 ```
 
-### Protocol version
+### Protocol and ownership
 
-Set the MCP protocol version in your design using the DSL option on `MCP`:
+MCP uses the framework-owned `2026-07-28` revision. Every request carries its
+version and truthful client capabilities; `server/discover` reports capabilities
+without creating session state. The shared HTTP transport validates mirrored
+headers and exact response IDs for generated and imported clients.
 
-```go
-MCP("assistant-mcp", "1.0.0", ProtocolVersion("2025-06-18"))
-```
+Generated adapters call unary Goa methods through generated argument and result
+codecs. Tool schemas and agent specs use the same generation-time JSON contract,
+including exact JSON field names, local recursive definitions, and union branches.
+Tools accept object arguments. Their structured results may be any declared JSON
+root kind; text is not a fallback decoder. Adapters emit OpenTelemetry spans and
+use the optional `ErrorMapper` to map authored-service errors.
 
-The generator emits a constant `DefaultProtocolVersion` in `gen/mcp_<service>/protocol_version.go`.
+The application composition root constructs HTTP dependencies and callers, then
+registers one generated MCP executor for each runtime binding. Agent registration
+owns agent definitions. It does not construct callers or register duplicate
+executables. The same binding can serve multiple agents and aliases.
 
-### Adapter options
+An unfinished remote call returns `input_required`. The runtime stores its
+original arguments and opaque state in a version-10 checkpoint, publishes typed
+host input requests, and validates the exact answers before the next activity.
+Only a finished call enters completed tool history. MCP network rounds allow one
+activity attempt; an engine retry must not silently duplicate remote work.
+Inside that activity, explicit host trust and a per-round HTTP attempt allowance
+permit retrying a lost SSE response only for tools declared read-only or
+idempotent. Generated callers use precomputed design hints; imported callers
+read credential-scoped catalogs. A retry changes only the network request ID.
+The service owns preventing additional effects; missing hints, cancellation,
+malformed replies, and completed tool errors never authorize this retry path.
 
-The generated `MCPAdapterOptions` provides configuration hooks:
-
-- Logger: `func(ctx context.Context, event string, details any)` to observe adapter lifecycle.
-- ErrorMapper: `func(error) error` replaces an authored-service error before
-  the adapter returns it as tool error content or a resource-read JSON-RPC
-  error.
-
-## Transport
-
-Generated MCP tools and resources are unary JSON-RPC methods. The HTTP caller
-accepts responses encoded as JSON or as an HTTP event stream. Goa-AI does not
-generate MCP subscriptions, notifications, or streaming resources.
-
-The preview removes the former MCP subscription and notification APIs. See
-[the preview upgrade guide](docs/runtime.md#preview-upgrade-guide) for the
-complete list and the replacement for each supported use case.
+Generated servers advertise only their implemented unary tools, fixed resource
+reads, and static prompts. Resource representations are selected at generation
+time: byte results become base64 blobs, text results with a text MIME type remain
+text, and JSON results use the generated codec. Empty content preserves its field.
+Generated client validators reject resource replies with both or neither text/blob
+fields; this flat wire union has no Goa discriminator. Optional tasks, subscriptions, and server-originated
+elicitation need dedicated producers and bindings before they can be advertised.
+See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
+[the upgrade plan](docs/mcp_protocol_upgrade_plan.md) for remaining proof and scope.
 
 ## Agent run lifecycle streaming contract
 

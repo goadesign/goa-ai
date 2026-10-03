@@ -31,6 +31,7 @@ type (
 	// originMountEndpoint lists the HTTP routes mounted for one method.
 	originMountEndpoint struct {
 		Routes []originMountRoute
+		Method struct{ Name string }
 	}
 
 	// originMountRoute is one generated MCP HTTP route.
@@ -63,11 +64,11 @@ func TestMCPServerMountRendersExplicitOriginPolicy(t *testing.T) {
 		}},
 	}
 
-	rendered := renderTemplateSection(t, "jsonrpc_server_mount", data)
+	rendered := renderTemplateSection(t, "jsonrpc_server_mount", mcpTransportData{Transport: data})
 
 	require.Contains(t, rendered, "func MountWithOrigins(")
 	require.Contains(t, rendered, "origins []string")
-	require.Contains(t, rendered, "_, ok := allowedOrigins[origin]")
+	require.Contains(t, rendered, "_, ok := allowedOrigins[origins[0]]")
 	require.NotContains(t, rendered, "r.Host")
 	testutil.AssertGo(t, "testdata/golden/origin_contract/server_mount.go.golden", rendered)
 }

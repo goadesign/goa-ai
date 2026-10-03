@@ -13,62 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRunnerInitializesBeforeRequests(t *testing.T) {
-	type observedRequest struct {
-		method          string
-		hasID           bool
-		protocolVersion string
-	}
-	var observed []observedRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		var message map[string]json.RawMessage
-		if !assert.NoError(t, json.NewDecoder(req.Body).Decode(&message)) {
-			return
-		}
-		var method string
-		if !assert.NoError(t, json.Unmarshal(message["method"], &method)) {
-			return
-		}
-		_, hasID := message["id"]
-		observed = append(observed, observedRequest{
-			method:          method,
-			hasID:           hasID,
-			protocolVersion: req.Header.Get("MCP-Protocol-Version"),
-		})
-
-		switch method {
-		case initializeMethod:
-			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18"}}`))
-			assert.NoError(t, err)
-		case initializedMethod:
-			w.WriteHeader(http.StatusAccepted)
-		case "ping":
-			w.Header().Set("Content-Type", "application/json")
-			_, err := w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
-			assert.NoError(t, err)
-		default:
-			http.Error(w, "unexpected method", http.StatusBadRequest)
-		}
-	}))
-	t.Cleanup(server.Close)
-
-	runner := NewRunner()
-	var err error
-	runner.baseURL, err = url.Parse(server.URL)
-	require.NoError(t, err)
-	require.NoError(t, runner.ensureInitialized())
-	_, err = runner.executeJSONRPC("ping", nil, nil, false)
-	require.NoError(t, err)
-
-	require.Equal(t, []observedRequest{
-		{method: initializeMethod, hasID: true},
-		{method: initializedMethod, protocolVersion: "2025-06-18"},
-		{method: "ping", hasID: true, protocolVersion: "2025-06-18"},
-	}, observed)
-}
-
-func TestExecuteJSONRPCOmitsAbsentParams(t *testing.T) {
+func TestRunnerRequestsCarryIndependentMetadata(t *testing.T) {
 	var messages []map[string]json.RawMessage
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		var message map[string]json.RawMessage
@@ -76,23 +21,58 @@ func TestExecuteJSONRPCOmitsAbsentParams(t *testing.T) {
 			return
 		}
 		messages = append(messages, message)
+		assert.Equal(t, "2026-07-28", req.Header.Get("MCP-Protocol-Version"))
+		assert.Equal(t, "tools/list", req.Header.Get("MCP-Method"))
+		assert.Equal(t, "application/json, text/event-stream", req.Header.Get("Accept"))
 		w.Header().Set("Content-Type", "application/json")
-		_, err := w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{}}`))
+		_, err := w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete"}}`))
 		assert.NoError(t, err)
 	}))
 	t.Cleanup(server.Close)
-
 	runner := NewRunner()
 	var err error
 	runner.baseURL, err = url.Parse(server.URL)
 	require.NoError(t, err)
-	_, err = runner.executeJSONRPC("tools/list", nil, nil, false)
-	require.NoError(t, err)
-	_, err = runner.executeJSONRPC("tools/list", map[string]any{}, nil, false)
-	require.NoError(t, err)
+	for _, input := range []map[string]any{nil, {}, {"cursor": "next"}} {
+		_, err = runner.executeJSONRPC("tools/list", input, nil, false)
+		require.NoError(t, err)
+	}
+	require.Len(t, messages, 3)
+	for _, message := range messages {
+		assert.JSONEq(t, `"tools/list"`, string(message["method"]))
+		assert.JSONEq(t, `1`, string(message["id"]))
+		var params map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(message["params"], &params))
+		var meta map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal(params["_meta"], &meta))
+		assert.JSONEq(t, `"2026-07-28"`, string(meta["io.modelcontextprotocol/protocolVersion"]))
+		assert.JSONEq(t, `{}`, string(meta["io.modelcontextprotocol/clientCapabilities"]))
+	}
+	var last map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(messages[2]["params"], &last))
+	assert.JSONEq(t, `"next"`, string(last["cursor"]))
+}
 
-	require.NotContains(t, messages[0], "params")
-	require.JSONEq(t, `{}`, string(messages[1]["params"]))
+func TestRunnerPreservesExplicitInvalidMetadata(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var message struct {
+			Params map[string]json.RawMessage `json:"params"`
+		}
+		if !assert.NoError(t, json.NewDecoder(req.Body).Decode(&message)) {
+			return
+		}
+		assert.JSONEq(t, `null`, string(message.Params["_meta"]))
+		assert.Equal(t, "mismatch", req.Header.Get("MCP-Method"))
+		_, err := w.Write([]byte(`{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing metadata"}}`))
+		assert.NoError(t, err)
+	}))
+	t.Cleanup(server.Close)
+	runner := NewRunner()
+	var err error
+	runner.baseURL, err = url.Parse(server.URL)
+	require.NoError(t, err)
+	_, err = runner.executeJSONRPC("tools/list", map[string]any{"_meta": nil}, map[string]string{"MCP-Method": "mismatch"}, false)
+	assert.ErrorContains(t, err, "-32602")
 }
 
 func TestCleanGeneratedExampleArtifacts(t *testing.T) {

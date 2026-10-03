@@ -21,7 +21,7 @@ func TestGenerateMCPTransport_RendersUnaryToolsCall(t *testing.T) {
 			{Name: "add", Method: methods["add"]},
 		},
 	}
-	data, err := newAdapterGenerator(
+	data, err := newAdapterGenerator(testSchemaAPI(),
 		svc,
 		mcp,
 	).buildAdapterData()
@@ -36,26 +36,25 @@ func TestGenerateMCPTransport_RendersUnaryToolsCall(t *testing.T) {
 	rendered := renderGeneratedFile(t, files[0])
 
 	require.Contains(t, rendered, "func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error)")
-	require.Contains(t, rendered, "return final, nil")
-	require.Contains(t, rendered, "return toolCallError(a.mapError(err).Error()), nil")
+	require.Contains(t, rendered, `ResultType: "complete"`)
+	require.Contains(t, rendered, "return toolCallError(failure.Error()), nil")
 	require.NotContains(t, rendered, "ToolsCallServerStream")
 	require.NotContains(t, rendered, "StreamBridge")
 	require.NotContains(t, rendered, "SendAndClose")
 }
 
-func TestGenerateMCPTransport_RendersMCP202506ToolResults(t *testing.T) {
+func TestGenerateMCPTransport_RendersCurrentToolResults(t *testing.T) {
 	rendered := renderTemplateSection(t, "adapter_tools", &AdapterData{
 		CodecPackage: "codec",
 		Tools: []*ToolAdapter{
 			{
-				Name:                "summarize",
-				Description:         "Summarize one document",
-				ServiceMethodName:   "Summarize",
-				HasPayload:          true,
-				HasResult:           true,
-				InputSchema:         `{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}`,
-				OutputSchema:        `{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`,
-				HasStructuredResult: true,
+				Name:              "summarize",
+				Description:       "Summarize one document",
+				ServiceMethodName: "Summarize",
+				HasPayload:        true,
+				HasResult:         true,
+				InputSchema:       `{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}`,
+				OutputSchema:      `{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`,
 				Codec: &MethodCodecData{
 					PayloadDecode: "DecodeSummarizePayload",
 					ResultEncode:  "EncodeSummarizeResult",

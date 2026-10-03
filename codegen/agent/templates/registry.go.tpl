@@ -126,46 +126,6 @@ func {{ .PackageNames.Register }}(ctx {{ .ContextAlias }}.Context, rt *{{ .Runti
         return err
     }
 
-    {{- if .MCPToolsets }}
-    // Register MCP-backed toolsets using local executors and callers from config.
-    if cfg.MCPCallers == nil {
-        return {{ .FmtAlias }}.Errorf("mcp callers are required for agent %s", {{ printf "%q" .ID }})
-    }
-    {{- range .MCPToolsets }}
-    {
-        caller := cfg.MCPCallers[{{ .MCP.ConstName }}]
-        if caller == nil {
-            return {{ $.FmtAlias }}.Errorf("mcp caller for %s is required", {{ .MCP.ConstName }})
-        }
-        exec := {{ .AgentPackageHelperAlias }}.{{ .MCPExecutorConstructor }}(caller)
-        // Register this remote toolset without exposing its generated service caller.
-        reg := {{ $.RuntimeAlias }}.ToolsetRegistration{
-            Name: {{ printf "%q" .QualifiedName }},
-            // Decode calls and results with the schemas generated for this toolset.
-            Specs: {{ .AgentPackageSpecsAlias }}.Specs(),
-            ToolMetadataLookup: {{ .AgentPackageSpecsAlias }}.MetadataByName,
-            Execute: func(ctx {{ $.ContextAlias }}.Context, call *{{ $.RuntimeAlias }}.ToolCall) (*{{ $.RuntimeAlias }}.ToolExecutionResult, error) {
-                if call == nil {
-                    return nil, {{ $.FmtAlias }}.Errorf("tool request is nil")
-                }
-                meta := {{ $.RuntimeAlias }}.ToolCallMetaFromCall(*call)
-                result, err := exec.Execute(ctx, &meta, call)
-                if err != nil {
-                    return nil, err
-                }
-                if result == nil {
-                    return nil, {{ $.FmtAlias }}.Errorf("executor returned nil execution result")
-                }
-                return result, nil
-            },
-        }
-        if err := rt.RegisterToolset(reg); err != nil {
-            return err
-        }
-    }
-    {{- end }}
-    {{- end }}
-
     // Application code registers toolsets that call Goa service methods.
     // Generated helpers register toolsets provided by another agent.
     return nil
@@ -177,7 +137,7 @@ type {{ .PackageNames.UsedToolsetOptions }} struct {
     resultMaterializers map[string]{{ .RuntimeAlias }}.ResultMaterializer
 }
 
-// {{ .PackageNames.RegisterUsedToolsets }} registers all non-MCP Used toolsets for this agent with
+// {{ .PackageNames.RegisterUsedToolsets }} registers the used toolsets for this agent with
 // the local runtime. Provide executors for each required toolset and optional
 // result materializers through typed generated options.
 //
@@ -209,12 +169,15 @@ func {{ .PackageNames.RegisterUsedToolsets }}(ctx {{ .ContextAlias }}.Context, r
     if len(missing) > 0 {
         return {{ .FmtAlias }}.Errorf("missing executors for toolsets: %v", missing)
     }
-    // Register non-MCP used toolsets that are not provided by agent-as-tool exports.
+    // Register used toolsets that are not provided by agent-as-tool exports.
     {{- range .DirectToolsets }}
     {
         exec := cfg.executors[{{ .RegistrationNameConst }}]
         reg := {{ $.RuntimeAlias }}.ToolsetRegistration{
             Name:               {{ .RegistrationNameConst }},
+{{- if .MCP }}
+            ActivityRetryPolicy: &{{ $.EngineAlias }}.RetryPolicy{MaxAttempts: 1},
+{{- end }}
             Specs:              {{ .AgentPackageSpecsAlias }}.Specs(),
             ToolMetadataLookup: {{ .AgentPackageSpecsAlias }}.MetadataByName,
             ResultMaterializer: cfg.resultMaterializers[{{ .RegistrationNameConst }}],

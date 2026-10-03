@@ -26,6 +26,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 )
 
 type (
@@ -106,6 +107,7 @@ type (
 		Duration         time.Duration
 		Clarification    *ToolClarification
 		ChildSuspension  *api.RunSuspension
+		MCPInput         *mcp.InputRequired
 		RequiresResume   bool
 	}
 
@@ -113,6 +115,7 @@ type (
 		Confirmation *checkpointConfirmation
 		Await        *planner.AwaitItem
 		Child        *checkpointChildContinuation
+		MCP          *api.PendingMCPInput
 		CallRunID    string
 	}
 
@@ -186,6 +189,10 @@ func (l *workflowLoop) publishPendingInputPrompts(pending []*api.PendingInput) e
 	ctx := l.wfCtx.Context()
 	for i, input := range pending {
 		switch input.Kind {
+		case api.PendingInputKindMCP:
+			if err := l.r.publishHook(ctx, hooks.NewAwaitMCPInputEvent(l.input.RunID, l.input.AgentID, l.input.SessionID, *input.MCP), l.turnID); err != nil {
+				return err
+			}
 		case api.PendingInputKindConfirmation:
 			confirmation := input.Confirmation
 			if confirmation == nil {
@@ -244,7 +251,7 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			return nil, nil, nil, err
 		}
 		var encodedResult *api.ToolEvent
-		if record.childSuspension == nil {
+		if record.childSuspension == nil && record.mcpInput == nil {
 			encoded, err := encodeToolEvent(record.result, record.call, l.r.toolSpec)
 			if err != nil {
 				return nil, nil, nil, err
@@ -266,6 +273,7 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			Duration:         record.duration,
 			Clarification:    record.clarification,
 			ChildSuspension:  record.childSuspension,
+			MCPInput:         record.mcpInput,
 			RequiresResume:   record.requiresResume,
 		})
 	}
@@ -711,13 +719,13 @@ func (r *Runtime) restoreCheckpointBatch(checkpoint checkpointStepBatch, input *
 	records := make([]stepToolRecord, 0, len(checkpoint.Records))
 	for _, record := range checkpoint.Records {
 		var decoded *planner.ToolResult
-		if record.ChildSuspension == nil {
+		if record.ChildSuspension == nil && record.MCPInput == nil {
 			var err error
 			decoded, err = decodeCheckpointToolEvent(record.Result, record.Call, r.toolSpec)
 			if err != nil {
 				return stepBatch{}, err
 			}
-		} else {
+		} else if record.ChildSuspension != nil {
 			decoded = &planner.ToolResult{Name: record.Call.Name, ToolCallID: record.Call.ToolCallID}
 		}
 		records = append(records, stepToolRecord{
@@ -735,6 +743,7 @@ func (r *Runtime) restoreCheckpointBatch(checkpoint checkpointStepBatch, input *
 			duration:         record.Duration,
 			clarification:    record.Clarification,
 			childSuspension:  record.ChildSuspension,
+			mcpInput:         record.MCPInput,
 			requiresResume:   record.RequiresResume,
 		})
 	}
@@ -804,6 +813,9 @@ func publicPendingInputs(pending []checkpointPendingInput) ([]*api.PendingInput,
 		if item.Child != nil {
 			variants++
 		}
+		if item.MCP != nil {
+			variants++
+		}
 		if item.Confirmation != nil {
 			variants++
 		}
@@ -812,6 +824,14 @@ func publicPendingInputs(pending []checkpointPendingInput) ([]*api.PendingInput,
 		}
 		if variants != 1 {
 			return nil, fmt.Errorf("run suspension pending input %d has %d variants", i, variants)
+		}
+		if item.MCP != nil {
+			input := &api.PendingInput{Kind: api.PendingInputKindMCP, MCP: item.MCP}
+			if err := validatePendingInput(input); err != nil {
+				return nil, err
+			}
+			items = append(items, input)
+			continue
 		}
 		if item.Child != nil {
 			if item.Child.Suspension == nil || len(item.Child.Suspension.Pending) == 0 {
@@ -876,6 +896,9 @@ func (l *workflowLoop) consumePendingInput(batch *stepBatch, pending *[]checkpoi
 func (l *workflowLoop) consumeCheckpointInput(batch *stepBatch, pending checkpointPendingInput, response *api.PendingInputResponse) ([]checkpointPendingInput, error) {
 	if response == nil {
 		return nil, errors.New("run continuation response is required")
+	}
+	if pending.MCP != nil {
+		return l.applyMCPContinuation(batch, pending.MCP, response.MCP)
 	}
 	if pending.Child != nil {
 		return l.applyChildContinuation(batch, pending.Child, response)

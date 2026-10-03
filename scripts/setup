@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This script installs the exact protobuf compiler and Go generators used by
+# This script installs the exact protobuf compiler and Go developer tools used by
 # local development and CI. Version-controlled files own every version so a
 # clean checkout always regenerates the same code.
 

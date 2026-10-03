@@ -365,7 +365,7 @@ func TestHealthTrackerZeroLeaseReregistrationRejectsOldPong(t *testing.T) {
 func newDirectHealthTracker(ctx context.Context, catalog *toolsetCatalog) *healthTracker {
 	closed := make(chan struct{})
 	close(closed)
-	schedulerCtx, cancelScheduler := context.WithCancel(ctx) //nolint:gosec // Tests cancel through Close when needed.
+	schedulerCtx, cancelScheduler := context.WithCancel(ctx)
 	return &healthTracker{
 		catalog:            catalog,
 		leaseScope:         "test",

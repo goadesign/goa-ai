@@ -474,8 +474,7 @@ an estimate is not a context-window guarantee or a billing count.
 
 | Function                            | Context                            | Purpose                                        |
 | ----------------------------------- | ---------------------------------- | ---------------------------------------------- |
-| `MCP(name, version, opts...)`       | Inside `Service`                   | Enables MCP protocol for the service           |
-| `ProtocolVersion(version)`          | Option for `MCP`                   | Sets MCP protocol version (e.g., "2025-06-18") |
+| `MCP(name, version)`       | Inside `Service`                   | Enables MCP protocol for the service           |
 | `Tool(name, description)`           | Inside `Method` (with MCP enabled) | Marks method as MCP tool                       |
 | `Resource(name, uri, mime)`         | Inside `Method`                    | Marks method as MCP resource provider          |
 | `StaticPrompt(name, desc, msgs...)` | Inside `Service` (with MCP)        | Defines static MCP prompt template             |
@@ -1406,7 +1405,7 @@ Enable MCP protocol for a service with `MCP`:
 
 ```go
 Service("calculator", func() {
-    MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+    MCP("calc", "1.0.0")
 
     JSONRPC(func() {
         POST("/mcp")
@@ -1429,10 +1428,57 @@ Service("calculator", func() {
     })
 
     StaticPrompt("greeting", "Friendly greeting",
-        "system", "You are a helpful assistant",
+        "assistant", "You are a helpful assistant",
         "user", "Hello!")
 })
 ```
+
+### MCP resource content
+
+Resource methods have no payload and return the content for their declared URI.
+A `Bytes` result becomes base64 in the protocol's `blob` field, with the MIME
+type declared by `Resource`. Named byte types use the same representation.
+A string with a `text/` MIME type becomes `text` unchanged. Other result types
+with an `application/json` MIME type become `text` encoded by the generated
+result codec.
+
+```go
+Method("logo", func() {
+    Description("Read the service logo")
+    Result(Bytes)
+    Resource("logo", "asset://logo", "image/png")
+})
+```
+
+Empty byte results produce a present empty `blob`; empty strings produce a
+present empty `text`. The generated direct client rejects resource replies that
+contain both fields or neither field. The service returns ordinary typed data;
+it does not encode base64 itself or construct protocol content.
+
+### MCP tool behavior hints
+
+Declare standard MCP annotations inside the method's `Tool` block:
+
+```go
+Tool("add", "Add two numbers", func() {
+    ToolTitle("Add numbers")
+    ReadOnlyHint(true)
+    DestructiveHint(false)
+    IdempotentHint(true)
+    OpenWorldHint(false)
+})
+```
+
+The generated catalog preserves omitted hints and explicit false values.
+`ReadOnlyHint` says the tool leaves its environment unchanged. `IdempotentHint`
+says repeating identical arguments has no additional effects; its service
+implementation must enforce that promise. `DestructiveHint` describes removal
+or replacement of existing data. `OpenWorldHint` describes interaction with
+external entities. `ToolTitle` supplies a display name.
+
+These declarations apply only to MCP method tools. They do not grant trust or
+change agent activity retry policies. The application chooses trust and bounded
+HTTP retries when constructing its caller; see [MCP callers](runtime.md#mcp-callers).
 
 ### MCP Capabilities
 
@@ -1576,7 +1622,7 @@ For each service/agent combination, `goa gen` produces:
 - `agent.go` — registers workflows/activities/toolsets; exports `const AgentID agent.Ident`
 - `workflow.go` — implements the durable run loop
 - `activities.go` — thin wrappers calling runtime activities
-- `config.go` — runtime options bundle; includes `MCPCallers` map when MCP toolsets are used
+- `config.go` — runtime options bundle; supplies the planner; executable toolsets are composed separately
 
 ### Toolset Owner Packages (`gen/<svc>/toolsets/<toolset>/`)
 
@@ -1611,7 +1657,8 @@ Generated when an agent exports toolsets (agent-as-tool). Export packages provid
 ### MCP Packages
 
 When a service declares MCP (`MCP(...)`), `goa gen` emits JSON-RPC client/server code under
-`gen/jsonrpc/<service>/...` and runtime registration helpers in the service package.
+`gen/jsonrpc/mcp_<service>/...`. Canonical tool contracts and an MCP executor
+are generated under `gen/<service>/toolsets/<server-name>/`.
 
 MCP services must declare their service-level JSON-RPC `POST` route explicitly.
 For migration from the former MCP subscription, notification, dynamic-prompt,
@@ -1636,7 +1683,7 @@ if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{
 }
 
 // MCP toolset wiring
-caller, err := mcp.NewHTTPCaller(ctx, mcp.HTTPOptions{
+caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
     Endpoint: "https://assistant.example.com/mcp",
     ClientInfo: mcp.ClientInfo{
         Name:    "my-agent",
@@ -1646,7 +1693,7 @@ caller, err := mcp.NewHTTPCaller(ctx, mcp.HTTPOptions{
 if err != nil {
     log.Fatal(err)
 }
-if err := mcpassistant.RegisterAssistantToolset(ctx, rt, caller); err != nil {
+if err := chat.RegisterUsedToolsets(ctx, rt, chat.WithAssistantExecutor(genassistantmcp.NewMCPExecutor(caller))); err != nil {
     log.Fatal(err)
 }
 
@@ -1673,7 +1720,8 @@ expected time budgets and tool limits.
 **Use `BoundedResult()` for large views** — Mark tools that return potentially large lists,
 graphs, or windows as bounded. Services own trimming; the runtime propagates bounds metadata.
 
-**Let codegen manage MCP registration** — Avoid hand-written glue for consistent codecs.
+**Compose executable toolsets explicitly** — Use generated MCP executors and executor
+options to register each shared runtime binding once. See [MCP callers](runtime.md#mcp-callers).
 
 **Use display hint templates** — `CallHintTemplate` and `ResultHintTemplate` improve UI feedback
 during tool execution.

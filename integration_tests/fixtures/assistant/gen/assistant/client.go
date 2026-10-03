@@ -15,27 +15,31 @@ import (
 
 // Client is the "assistant" service client.
 type Client struct {
-	ListDocumentsEndpoint    goa.Endpoint
-	SystemInfoEndpoint       goa.Endpoint
-	AnalyzeSentimentEndpoint goa.Endpoint
-	ExtractKeywordsEndpoint  goa.Endpoint
-	SummarizeTextEndpoint    goa.Endpoint
-	SearchEndpoint           goa.Endpoint
-	ExecuteCodeEndpoint      goa.Endpoint
-	ProcessBatchEndpoint     goa.Endpoint
+	ListDocumentsEndpoint       goa.Endpoint
+	SystemInfoEndpoint          goa.Endpoint
+	BinaryResourceEndpoint      goa.Endpoint
+	EmptyBinaryResourceEndpoint goa.Endpoint
+	AnalyzeSentimentEndpoint    goa.Endpoint
+	ExtractKeywordsEndpoint     goa.Endpoint
+	SummarizeTextEndpoint       goa.Endpoint
+	SearchEndpoint              goa.Endpoint
+	ExecuteCodeEndpoint         goa.Endpoint
+	ProcessBatchEndpoint        goa.Endpoint
 }
 
 // NewClient initializes a "assistant" service client given the endpoints.
-func NewClient(listDocuments, systemInfo, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch goa.Endpoint) *Client {
+func NewClient(listDocuments, systemInfo, binaryResource, emptyBinaryResource, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch goa.Endpoint) *Client {
 	return &Client{
-		ListDocumentsEndpoint:    listDocuments,
-		SystemInfoEndpoint:       systemInfo,
-		AnalyzeSentimentEndpoint: analyzeSentiment,
-		ExtractKeywordsEndpoint:  extractKeywords,
-		SummarizeTextEndpoint:    summarizeText,
-		SearchEndpoint:           search,
-		ExecuteCodeEndpoint:      executeCode,
-		ProcessBatchEndpoint:     processBatch,
+		ListDocumentsEndpoint:       listDocuments,
+		SystemInfoEndpoint:          systemInfo,
+		BinaryResourceEndpoint:      binaryResource,
+		EmptyBinaryResourceEndpoint: emptyBinaryResource,
+		AnalyzeSentimentEndpoint:    analyzeSentiment,
+		ExtractKeywordsEndpoint:     extractKeywords,
+		SummarizeTextEndpoint:       summarizeText,
+		SearchEndpoint:              search,
+		ExecuteCodeEndpoint:         executeCode,
+		ProcessBatchEndpoint:        processBatch,
 	}
 }
 
@@ -57,6 +61,28 @@ func (c *Client) SystemInfo(ctx context.Context) (res *SystemInfoResult, err err
 		return
 	}
 	return ires.(*SystemInfoResult), nil
+}
+
+// BinaryResource calls the "binary_resource" endpoint of the "assistant"
+// service.
+func (c *Client) BinaryResource(ctx context.Context) (res Image, err error) {
+	var ires any
+	ires, err = c.BinaryResourceEndpoint(ctx, nil)
+	if err != nil {
+		return
+	}
+	return ires.(Image), nil
+}
+
+// EmptyBinaryResource calls the "empty_binary_resource" endpoint of the
+// "assistant" service.
+func (c *Client) EmptyBinaryResource(ctx context.Context) (res []byte, err error) {
+	var ires any
+	ires, err = c.EmptyBinaryResourceEndpoint(ctx, nil)
+	if err != nil {
+		return
+	}
+	return ires.([]byte), nil
 }
 
 // AnalyzeSentiment calls the "analyze_sentiment" endpoint of the "assistant"

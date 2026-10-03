@@ -7,7 +7,18 @@
 
 package assistant
 
-import "context"
+import (
+	bytes "bytes"
+	"context"
+	json "encoding/json"
+	fmt "fmt"
+	io "io"
+	sort "sort"
+	strconv "strconv"
+	utf8 "unicode/utf8"
+
+	goa "goa.design/goa/v3/pkg"
+)
 
 // AI Assistant service for the supported MCP protocol surface
 type Service interface {
@@ -15,6 +26,10 @@ type Service interface {
 	ListDocuments(context.Context) (res *Documents, err error)
 	// Return system info
 	SystemInfo(context.Context) (res *SystemInfoResult, err error)
+	// Read the synthetic binary resource used by independent MCP verification
+	BinaryResource(context.Context) (res Image, err error)
+	// Read an existing binary resource whose content is empty
+	EmptyBinaryResource(context.Context) (res []byte, err error)
 	// Analyze sentiment of text
 	AnalyzeSentiment(context.Context, *AnalyzeSentimentPayload) (res *AnalyzeSentimentResult, err error)
 	// Extract keywords from text
@@ -43,7 +58,7 @@ const ServiceName = "assistant"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [8]string{"list_documents", "system_info", "analyze_sentiment", "extract_keywords", "summarize_text", "search", "execute_code", "process_batch"}
+var MethodNames = [10]string{"list_documents", "system_info", "binary_resource", "empty_binary_resource", "analyze_sentiment", "extract_keywords", "summarize_text", "search", "execute_code", "process_batch"}
 
 // AnalyzeSentimentPayload is the payload type of the assistant service
 // analyze_sentiment method.
@@ -94,6 +109,9 @@ type ExtractKeywordsResult struct {
 	// Extracted keywords
 	Keywords []string
 }
+
+// Image is the result type of the assistant service binary_resource method.
+type Image []byte
 
 // ProcessBatchPayload is the payload type of the assistant service
 // process_batch method.
@@ -152,4 +170,437 @@ type SystemInfoResult struct {
 	Name *string
 	// System version
 	Version *string
+}
+
+// jsonDocumentsTransport stores JSON fields until they have been validated.
+type jsonDocumentsTransport struct {
+	// Document entries
+	Items []string `json:"items"`
+}
+
+// validatejsonDocumentsTransport checks decoded JSON before it becomes a service value.
+func validatejsonDocumentsTransport(value *jsonDocumentsTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Items == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("items", "body"))
+	}
+	return err
+}
+
+// jsonImageTransport stores JSON fields until they have been validated.
+type jsonImageTransport []byte
+
+// validatejsonImageTransport checks decoded JSON before it becomes a service value.
+func validatejsonImageTransport(value jsonImageTransport) (err error) {
+
+	return err
+}
+
+// validateDocumentsOriginal checks the original typed value before JSON conversion.
+func validateDocumentsOriginal(value *Documents) (err error) {
+	if value.Items == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("items", "value"))
+	}
+	return err
+}
+
+// EncodeDocuments turns a service value into JSON using the field names in the Goa design.
+func EncodeDocuments(in *Documents) ([]byte, error) {
+	if err := checkDocumentsValue(in); err != nil {
+		return nil, fmt.Errorf("encode Documents JSON: %w", err)
+	}
+	if err := validateDocumentsOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate Documents value: %w", err)
+	}
+	var body *jsonDocumentsTransport
+	{
+		body = &jsonDocumentsTransport{}
+		body.Items = make([]string, len(in.Items))
+		for i, val := range in.Items {
+			body.Items[i] = val
+		}
+	}
+	if err := validatejsonDocumentsTransport(body); err != nil {
+		return nil, fmt.Errorf("validate Documents JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode Documents JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeDocuments checks JSON field names from the Goa design and returns a service value.
+func DecodeDocuments(data []byte) (out *Documents, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode Documents JSON: %w", err)
+	}
+	if err := validateDocumentsJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode Documents JSON: %w", err)
+	}
+	var body *jsonDocumentsTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode Documents JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode Documents JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode Documents JSON after first value: %w", err)
+	}
+	if err := validatejsonDocumentsTransport(body); err != nil {
+		return out, fmt.Errorf("validate Documents JSON: %w", err)
+	}
+	{
+		out = &Documents{}
+		out.Items = make([]string, len(body.Items))
+		for i, val := range body.Items {
+			out.Items[i] = val
+		}
+	}
+	return out, nil
+}
+
+// EncodeImage turns a service value into JSON using the field names in the Goa design.
+func EncodeImage(in Image) ([]byte, error) {
+	if err := checkImageValue(in); err != nil {
+		return nil, fmt.Errorf("encode Image JSON: %w", err)
+	}
+	var body jsonImageTransport
+	{
+		body = jsonImageTransport(in)
+	}
+	if err := validatejsonImageTransport(body); err != nil {
+		return nil, fmt.Errorf("validate Image JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode Image JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeImage checks JSON field names from the Goa design and returns a service value.
+func DecodeImage(data []byte) (out Image, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode Image JSON: %w", err)
+	}
+	if err := validateImageJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode Image JSON: %w", err)
+	}
+	var body jsonImageTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode Image JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode Image JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode Image JSON after first value: %w", err)
+	}
+	if err := validatejsonImageTransport(body); err != nil {
+		return out, fmt.Errorf("validate Image JSON: %w", err)
+	}
+	{
+		out = Image(body)
+	}
+	return out, nil
+}
+
+// validateDocumentsJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateDocumentsJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "items":
+			if err := validateDocumentsJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Document entries",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"items",
+			})
+		}
+	}
+	return nil
+}
+
+// validateDocumentsJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateDocumentsJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateDocumentsJSONValue3(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateDocumentsJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateDocumentsJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateImageJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateImageJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// readStrictJSON checks syntax and nesting before walking for duplicate keys,
+// and preserves integer text for the generated type checks.
+func readStrictJSON(data []byte) (any, error) {
+	if err := validateJSONText(data); err != nil {
+		return nil, err
+	}
+	if !json.Valid(data) {
+		return nil, fmt.Errorf("invalid JSON syntax or nesting")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return readJSONValue(decoder)
+}
+
+// readJSONValue checks duplicate decoded keys before storing any object member.
+func readJSONValue(decoder *json.Decoder) (any, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	switch token {
+	case json.Delim('{'):
+		object := make(map[string]any)
+		for decoder.More() {
+			token, err := decoder.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := token.(string)
+			if !ok {
+				return nil, fmt.Errorf("object member name must be a string")
+			}
+			if _, exists := object[key]; exists {
+				return nil, fmt.Errorf("duplicate JSON member %q", key)
+			}
+			value, err := readJSONValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			object[key] = value
+		}
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+		return object, nil
+	case json.Delim('['):
+		array := make([]any, 0)
+		for decoder.More() {
+			value, err := readJSONValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			array = append(array, value)
+		}
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+		return array, nil
+	default:
+		if _, delimiter := token.(json.Delim); delimiter {
+			return nil, fmt.Errorf("unexpected JSON delimiter %v", token)
+		}
+		return token, nil
+	}
+}
+
+// validateJSONText rejects invalid UTF-8 and unpaired UTF-16 escapes before
+// encoding/json can silently replace them. JSON grammar remains decoder-owned.
+func validateJSONText(data []byte) error {
+	if !utf8.Valid(data) {
+		return fmt.Errorf("invalid UTF-8 in JSON")
+	}
+	for i := 0; i < len(data); i++ {
+		if data[i] != '"' {
+			continue
+		}
+		i++
+		for ; i < len(data) && data[i] != '"'; i++ {
+			if data[i] != '\\' {
+				continue
+			}
+			i++
+			if i >= len(data) || data[i] != 'u' {
+				continue
+			}
+			if i+4 >= len(data) {
+				return fmt.Errorf("incomplete Unicode escape")
+			}
+			code, err := strconv.ParseUint(string(data[i+1:i+5]), 16, 16)
+			if err != nil {
+				return fmt.Errorf("invalid Unicode escape: %w", err)
+			}
+			i += 4
+			if code >= 0xdc00 && code <= 0xdfff {
+				return fmt.Errorf("unpaired low Unicode surrogate")
+			}
+			if code < 0xd800 || code > 0xdbff {
+				continue
+			}
+			if i+6 >= len(data) || data[i+1] != '\\' || data[i+2] != 'u' {
+				return fmt.Errorf("unpaired high Unicode surrogate")
+			}
+			low, err := strconv.ParseUint(string(data[i+3:i+7]), 16, 16)
+			if err != nil || low < 0xdc00 || low > 0xdfff {
+				return fmt.Errorf("unpaired high Unicode surrogate")
+			}
+			i += 6
+		}
+	}
+	return nil
+}
+
+// invalidGeneratedFieldTypeError is the value-codec adapter for shared checks.
+func invalidGeneratedFieldTypeError(field, expected, actual, _ string) error {
+	return fmt.Errorf("%s: expected %s, got %s", field, expected, actual)
+}
+
+// unknownJSONFieldError reports exact authored names, without case folding.
+func unknownJSONFieldError(path, key string, _ []string) error {
+	return fmt.Errorf("%s: unknown JSON field %q", path, key)
+}
+
+// decodedJSONType describes values produced only by the strict JSON reader.
+func decodedJSONType(value any) string {
+	switch value.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case string:
+		return "string"
+	case json.Number:
+		return "number"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	default:
+		return "invalid JSON value"
+	}
+}
+
+// generatedJSONChildPath appends an unambiguous quoted member or array index.
+func generatedJSONChildPath(path, key string, _ bool) string {
+	return path + "[" + strconv.Quote(key) + "]"
+}
+
+// checkDocumentsValue checks text and cycles before conversion.
+func checkDocumentsValue(in *Documents) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkDocumentsDocumentsValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkDocumentsDocumentsValue checks one generated value on the active path.
+func checkDocumentsDocumentsValue(in *Documents, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Items {
+			_ = index1
+			_ = item1
+			if !utf8.ValidString(string(item1)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "items", false), strconv.Itoa(index1), true))
+			}
+		}
+	}
+	return nil
+}
+
+// checkImageValue checks text and cycles before conversion.
+func checkImageValue(in Image) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkImageImageValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkImageImageValue checks one generated value on the active path.
+func checkImageImageValue(in Image, field string, active map[any]bool) error {
+	return nil
 }

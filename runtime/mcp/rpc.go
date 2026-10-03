@@ -14,7 +14,7 @@ type (
 	rpcRequest struct {
 		JSONRPC string `json:"jsonrpc"`
 		Method  string `json:"method"`
-		ID      uint64 `json:"id"`
+		ID      any    `json:"id"`
 		Params  any    `json:"params"`
 	}
 
@@ -39,37 +39,20 @@ type (
 		Error   json.RawMessage `json:"error"`
 	}
 
-	rpcReply struct {
-		JSONRPC string          `json:"jsonrpc"`
-		Result  json.RawMessage `json:"result,omitempty"`
-		Error   *rpcError       `json:"error,omitempty"`
-		ID      json.RawMessage `json:"id"`
-	}
-
 	rpcError struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-	}
-
-	initializeResult struct {
-		ProtocolVersion string              `json:"protocolVersion"` //nolint:tagliatelle // MCP protocol field.
-		ServerInfo      *serverInfo         `json:"serverInfo"`      //nolint:tagliatelle // MCP protocol field.
-		Capabilities    *serverCapabilities `json:"capabilities"`
-	}
-
-	serverInfo struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
-	}
-
-	serverCapabilities struct {
-		Tools *struct{} `json:"tools"`
+		Code    int             `json:"code"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data,omitempty"`
 	}
 
 	toolsCallResult struct {
-		Content           *[]contentItem  `json:"content"`
-		StructuredContent json.RawMessage `json:"structuredContent,omitempty"` //nolint:tagliatelle // MCP protocol field.
-		IsError           bool            `json:"isError"`                     //nolint:tagliatelle // MCP protocol field.
+		ResultType        string                  `json:"resultType"`    //nolint:tagliatelle // MCP defines this wire field name.
+		InputRequests     map[string]InputRequest `json:"inputRequests"` //nolint:tagliatelle // MCP defines this wire field name.
+		RequestState      *string                 `json:"requestState"`  //nolint:tagliatelle // MCP defines this wire field name.
+		Meta              json.RawMessage         `json:"_meta"`         //nolint:tagliatelle // MCP defines this wire field name.
+		Content           *[]contentItem          `json:"content"`
+		StructuredContent json.RawMessage         `json:"structuredContent,omitempty"` //nolint:tagliatelle // MCP protocol field.
+		IsError           bool                    `json:"isError"`                     //nolint:tagliatelle // MCP protocol field.
 	}
 
 	contentItem struct {
@@ -97,10 +80,33 @@ type (
 )
 
 const (
-	rpcVersion           = "2.0"
-	rpcMethodInitialize  = "initialize"
-	rpcMethodInitialized = "notifications/initialized"
+	rpcVersion          = "2.0"
+	methodToolsCall     = "tools/call"
+	resultComplete      = "complete"
+	resultInputRequired = "input_required"
+	elicitationForm     = "form"
 )
+
+// UnmarshalJSON rejects null control fields before Go can confuse them with
+// absence or false. StructuredContent keeps null as an intentional JSON result.
+func (r *toolsCallResult) UnmarshalJSON(data []byte) error {
+	type wireResult toolsCallResult
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+		return errors.New("tool result must be an object")
+	}
+	for _, name := range []string{"content", "inputRequests", "requestState", "isError"} {
+		if bytes.Equal(bytes.TrimSpace(fields[name]), []byte("null")) {
+			return fmt.Errorf("tool result %s cannot be null", name)
+		}
+	}
+	var decoded wireResult
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*r = toolsCallResult(decoded)
+	return nil
+}
 
 func (e *rpcError) Error() string {
 	if e == nil {
@@ -174,6 +180,7 @@ func (m rpcMessage) responseError() (*rpcError, error) {
 	var fields struct {
 		Code    json.RawMessage `json:"code"`
 		Message json.RawMessage `json:"message"`
+		Data    json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(m.Error, &fields); err != nil {
 		return nil, NewMalformedResponseError(errors.New("invalid JSON-RPC response error"))
@@ -192,56 +199,43 @@ func (m rpcMessage) responseError() (*rpcError, error) {
 	if bytes.Equal(bytes.TrimSpace(fields.Message), []byte("null")) || json.Unmarshal(fields.Message, &message) != nil {
 		return nil, NewMalformedResponseError(errors.New("JSON-RPC response error message must be a string"))
 	}
-	return &rpcError{Code: code, Message: message}, nil
+	return &rpcError{Code: code, Message: message, Data: cloneRaw(fields.Data)}, nil
 }
 
 func (e *rpcError) callerError() *Error {
 	if e == nil {
 		return nil
 	}
-	return &Error{Code: e.Code, Message: e.Message}
-}
-
-// validateInitializeResult checks the server identity and the tool support
-// required by both handwritten callers before they accept the MCP session.
-func validateInitializeResult(result initializeResult) error {
-	if result.ProtocolVersion == "" {
-		return errors.New("mcp: initialize response protocolVersion is required")
-	}
-	if result.ProtocolVersion != DefaultProtocolVersion {
-		return fmt.Errorf(
-			"mcp: server selected protocol version %q, client supports %q",
-			result.ProtocolVersion,
-			DefaultProtocolVersion,
-		)
-	}
-	if result.ServerInfo == nil {
-		return errors.New("mcp: initialize response serverInfo is required")
-	}
-	if result.ServerInfo.Name == "" {
-		return errors.New("mcp: initialize response serverInfo.name is required")
-	}
-	if result.ServerInfo.Version == "" {
-		return errors.New("mcp: initialize response serverInfo.version is required")
-	}
-	if result.Capabilities == nil {
-		return errors.New("mcp: initialize response capabilities are required")
-	}
-	if result.Capabilities.Tools == nil {
-		return errors.New("mcp: initialize response tools capability is required")
-	}
-	return nil
+	return &Error{Code: e.Code, Message: e.Message, Data: cloneRaw(e.Data)}
 }
 
 func normalizeToolResult(result toolsCallResult) (CallResponse, error) {
+	if err := validateMeta(result.Meta); err != nil {
+		return CallResponse{}, NewMalformedResponseError(err)
+	}
+	switch result.ResultType {
+	case resultInputRequired:
+		if result.InputRequests == nil && result.RequestState == nil {
+			return CallResponse{}, NewMalformedResponseError(errors.New("input_required needs inputRequests or requestState"))
+		}
+		if result.Content != nil || len(result.StructuredContent) > 0 || result.IsError {
+			return CallResponse{}, NewMalformedResponseError(errors.New("unfinished tool result contains final content"))
+		}
+		for id, request := range result.InputRequests {
+			if id == "" || request.Method == "" || len(request.Params) == 0 {
+				return CallResponse{}, NewMalformedResponseError(errors.New("invalid input request"))
+			}
+		}
+		return CallResponse{InputRequired: &InputRequired{Requests: result.InputRequests, RequestState: result.RequestState}}, nil
+	case resultComplete:
+		if result.InputRequests != nil || result.RequestState != nil {
+			return CallResponse{}, NewMalformedResponseError(errors.New("complete result contains unfinished state"))
+		}
+	default:
+		return CallResponse{}, NewMalformedResponseError(fmt.Errorf("unsupported resultType %q", result.ResultType))
+	}
 	if result.Content == nil {
 		return CallResponse{}, NewMalformedResponseError(errors.New("tool response is missing content"))
-	}
-	if len(result.StructuredContent) > 0 {
-		var object map[string]json.RawMessage
-		if err := json.Unmarshal(result.StructuredContent, &object); err != nil || object == nil {
-			return CallResponse{}, NewMalformedResponseError(errors.New("structuredContent must be a JSON object"))
-		}
 	}
 	content := make([]ContentBlock, len(*result.Content))
 	for i, raw := range *result.Content {
@@ -359,4 +353,18 @@ func validateMeta(meta json.RawMessage) error {
 // cloneRaw gives each returned content value ownership of its encoded metadata.
 func cloneRaw(raw json.RawMessage) json.RawMessage {
 	return append(json.RawMessage(nil), raw...)
+}
+
+// normalizeCallResult validates host support after decoding the wire result.
+func normalizeCallResult(result toolsCallResult, support InputSupport) (CallResponse, error) {
+	response, err := normalizeToolResult(result)
+	if err != nil {
+		return CallResponse{}, err
+	}
+	if response.InputRequired != nil {
+		if err := response.InputRequired.Validate(support); err != nil {
+			return CallResponse{}, NewMalformedResponseError(err)
+		}
+	}
+	return response, nil
 }

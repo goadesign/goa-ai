@@ -1,9 +1,9 @@
 // Define flags for MCP endpoints (if any). Pass values via your cmd main.
 {{- if .HasMCP }}
 var (
-    {{- range .Agents }}
-        {{- range .MCPToolsets }}
-    {{ .EndpointVar }} = {{ $.FlagAlias }}.String({{ printf "%q" .FlagName }}, "", "MCP {{ .QualifiedName }} HTTP endpoint (e.g., http://127.0.0.1:8080/rpc)")
+    {{- range .Toolsets }}
+        {{- if .MCP }}
+    {{ .MCP.EndpointVar }} = {{ $.FlagAlias }}.String({{ printf "%q" .MCP.FlagName }}, "", "MCP {{ .Toolset.QualifiedName }} HTTP endpoint (e.g., http://127.0.0.1:8080/rpc)")
         {{- end }}
     {{- end }}
 )
@@ -16,48 +16,73 @@ func New(ctx {{ .ContextAlias }}.Context, store {{ .StorageAlias }}.Store) (*{{ 
     rt := {{ .AgentRuntimeAlias }}.New(store)
     cleanup := func() {}
 
-    // Register agents with example planners. Replace with your own planner impls.
-    {{- range .Agents }}
-    {{- $a := . }}
+    // Register each executable once. Agent definitions may share these bindings.
+    {{- range .Toolsets }}
     {
-        cfg := {{ .Alias }}.{{ .Agent.ConfigType }}{ Planner: {{ .PlannerAlias }}.New() }
-        {{- if .HasRegistrySources }}
-        // Before the first run, call rt.RegisterRegistry for the declared sources
-        // with the registry service client and its result-stream client.
+        {{- if .MCP }}
+        caller, err := {{ $.MCPRuntimeAlias }}.NewHTTPCaller({{ $.MCPRuntimeAlias }}.HTTPOptions{
+            Endpoint: *{{ .MCP.EndpointVar }},
+            ClientInfo: {{ $.MCPRuntimeAlias }}.ClientInfo{Name: {{ printf "%q" $.Service.Service.Name }}, Version: {{ printf "%q" $.ClientVersion }}},
+        })
+        if err != nil { return nil, nil, err }
+        exec := {{ .ExecutorAlias }}.{{ .Toolset.MCPExecutorConstructor }}(caller)
+        {{- else }}
+        exec := {{ $.AgentRuntimeAlias }}.ToolCallExecutorFunc({{ .ExecutorAlias }}.Execute)
         {{- end }}
-        {{- if .MCPToolsets }}
-        // Configure MCP callers for external toolsets.
-        cfg.MCPCallers = map[string]{{ $.MCPRuntimeAlias }}.Caller{}
-        {{- range .MCPToolsets }}
-        if {{ .EndpointVar }} != nil && *{{ .EndpointVar }} != "" {
-            caller, err := {{ $.MCPRuntimeAlias }}.NewHTTPCaller(ctx, {{ $.MCPRuntimeAlias }}.HTTPOptions{
-                Endpoint: *{{ .EndpointVar }},
-                ClientInfo: {{ $.MCPRuntimeAlias }}.ClientInfo{Name: {{ printf "%q" $.Service.Service.Name }}, Version: {{ printf "%q" $.ClientVersion }}},
-            })
-            if err != nil { return nil, nil, err }
-            cfg.MCPCallers[{{ $a.Alias }}.{{ .ConstName }}] = caller
-        } else {
-            cfg.MCPCallers[{{ $a.Alias }}.{{ .ConstName }}] = {{ $.MCPRuntimeAlias }}.CallerFunc(func(ctx {{ $.ContextAlias }}.Context, req {{ $.MCPRuntimeAlias }}.CallRequest) ({{ $.MCPRuntimeAlias }}.CallResponse, error) {
-                return {{ $.MCPRuntimeAlias }}.CallResponse{}, {{ $.FmtAlias }}.Errorf("configure MCP caller for %s via -{{ .FlagName }} flag", {{ printf "%q" .QualifiedName }})
-            })
+        registration := {{ $.AgentRuntimeAlias }}.ToolsetRegistration{
+            Name: {{ printf "%q" .Toolset.QualifiedName }},
+{{- if .MCP }}
+            ActivityRetryPolicy: &{{ $.EngineAlias }}.RetryPolicy{MaxAttempts: 1},
+{{- end }}
+            Specs: {{ .SpecsAlias }}.Specs(),
+            ToolMetadataLookup: {{ .SpecsAlias }}.MetadataByName,
+            Execute: func(ctx {{ $.ContextAlias }}.Context, call *{{ $.AgentRuntimeAlias }}.ToolCall) (*{{ $.AgentRuntimeAlias }}.ToolExecutionResult, error) {
+                meta := {{ $.AgentRuntimeAlias }}.ToolCallMetaFromCall(*call)
+                return exec.Execute(ctx, &meta, call)
+            },
         }
+        {{- $hasCallHints := false -}}
+        {{- $hasResultHints := false -}}
+        {{- range .Toolset.Tools }}
+        {{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
+        {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
         {{- end }}
+        {{- if $hasCallHints }}
+        callHints, err := {{ $.HintsAlias }}.CompileHintTemplates(map[{{ $.ToolsAlias }}.Ident]string{
+            {{- range .Toolset.Tools }}
+            {{- if .CallHintTemplate }}
+            {{ printf "%q" .QualifiedName }}: {{ printf "%q" .CallHintTemplate }},
+            {{- end }}
+            {{- end }}
+        }, nil)
+        if err != nil { return nil, nil, err }
+        registration.CallHints = callHints
+        {{- end }}
+        {{- if $hasResultHints }}
+        resultHints, err := {{ $.HintsAlias }}.CompileHintTemplates(map[{{ $.ToolsAlias }}.Ident]string{
+            {{- range .Toolset.Tools }}
+            {{- if .ResultHintTemplate }}
+            {{ printf "%q" .QualifiedName }}: {{ printf "%q" .ResultHintTemplate }},
+            {{- end }}
+            {{- end }}
+        }, nil)
+        if err != nil { return nil, nil, err }
+        registration.ResultHints = resultHints
+        {{- end }}
+        if err := rt.RegisterToolset(registration); err != nil { return nil, nil, err }
+    }
+    {{- end }}
+
+    // Register agents with example planners. Replace with your own planner implementations.
+    {{- range .Agents }}
+    {
+        cfg := {{ .Alias }}.{{ .Agent.ConfigType }}{Planner: {{ .PlannerAlias }}.New()}
+        {{- if .HasRegistrySources }}
+        // Connect each declared registry before the first run.
         {{- end }}
         if err := {{ .Alias }}.{{ .Agent.PackageNames.Register }}(ctx, rt, cfg); err != nil {
             return nil, nil, err
         }
-        {{- if .ExampleToolsets }}
-        // Register the application-owned example executors.
-        if err := {{ .Alias }}.{{ .Agent.PackageNames.RegisterUsedToolsets }}(ctx, rt,
-            {{- range .ExampleToolsets }}
-            {{ $a.Alias }}.{{ .Toolset.ExecutorOption }}(
-                {{ $.AgentRuntimeAlias }}.ToolCallExecutorFunc({{ .ExecutorAlias }}.Execute),
-            ),
-            {{- end }}
-        ); err != nil {
-            return nil, nil, err
-        }
-        {{- end }}
     }
     {{- end }}
 

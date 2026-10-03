@@ -8,10 +8,8 @@ import (
 	"path/filepath"
 	"slices"
 
-	"goa.design/goa-ai/codegen/shared"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
-	goaexpr "goa.design/goa/v3/expr"
 )
 
 // generateAgentFiles appends the agent, tool specification, completion, and
@@ -339,12 +337,10 @@ func mcpExecutorFile(plan *toolsetHelperPackagePlan) (*codegen.File, error) {
 			return nil, fmt.Errorf("toolset %q MCP spec for %q is missing", toolset.QualifiedName, tool.QualifiedName)
 		}
 		tools = append(tools, mcpExecutorToolData{
-			LocalName:        tool.Name,
-			ConstName:        entry.ConstName,
-			SpecVar:          entry.SpecVar,
-			HasResult:        entry.HasResult,
-			StructuredResult: entry.HasResult && goaexpr.AsObject(tool.Return.Type) != nil,
-			TextResult:       entry.HasResult && shared.IsStringType(tool.Return.Type),
+			LocalName: tool.Name,
+			ConstName: entry.ConstName,
+			SpecVar:   entry.SpecVar,
+			HasResult: entry.HasResult,
 		})
 	}
 	data := mcpExecutorFileData{

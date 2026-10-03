@@ -1,52 +1,50 @@
 scenarios:
-  - name: initialize_handshake
-    pre:
-      auto_initialize: false
+  - name: stateless_discovery
     steps:
-      - name: initialize
-        op: Initialize
-        input:
-          protocolVersion: "2025-06-18"
-          capabilities: {}
-          clientInfo: { name: "integration-runner", version: "1.0.0" }
+      - name: catalog_before_discovery
+        op: ToolsList
+        expect:
+          status: success
+          result: { resultType: complete, ttlMs: 0, cacheScope: private }
+      - name: discover
+        op: ServerDiscover
         expect:
           status: success
           result:
-            protocolVersion: "2025-06-18"
-            serverInfo: { name: "assistant-mcp", version: "1.0.0" }
-            capabilities:
-              tools: {}
-              resources: {}
-              prompts: {}
-      - name: initialized_notification
-        op: NotificationsInitialized
+            resultType: complete
+            supportedVersions: ["2026-07-28"]
+            capabilities: { tools: {}, resources: {}, prompts: {} }
+            ttlMs: 0
+            cacheScope: private
+      - name: catalog_after_discovery
+        op: ToolsList
         expect:
           status: success
-      - name: ping_with_negotiated_version
-        op: Ping
-        expect:
-          status: success
-
-  - name: initialize_missing_version
-    pre:
-      auto_initialize: false
+          result: { resultType: complete }
+  - name: missing_metadata
     steps:
-      - name: initialize
-        op: Initialize
+      - op: ToolsList
+        input: { _meta: null }
+        expect: { status: error, error: { code: -32602 } }
+  - name: unsupported_version
+    steps:
+      - op: ToolsList
         input:
-          capabilities: {}
-          clientInfo: { name: "integration-runner", version: "1.0.0" }
-        expect:
-          status: error
-          error: { code: -32602 }
-
-  - name: unknown_jsonrpc_method
-    pre:
-      auto_initialize: true
+          _meta:
+            io.modelcontextprotocol/protocolVersion: "2025-06-18"
+            io.modelcontextprotocol/clientCapabilities: {}
+        headers: { MCP-Protocol-Version: "2025-06-18" }
+        expect: { status: error, error: { code: -32022 } }
+  - name: header_mismatch
     steps:
-      - name: call_unknown_method
-        op: unknown/method
-        input: {}
-        expect:
-          status: error
-          error: { code: -32601 }
+      - op: ToolsList
+        headers: { MCP-Method: "tools/call" }
+        expect: { status: error, error: { code: -32020 } }
+  - name: unknown_method
+    steps:
+      - op: unknown/method
+        expect: { status: error, error: { code: -32601 } }
+  - name: removed_initialize
+    steps:
+      - op: initialize
+        expect: { status: error, error: { code: -32601 } }

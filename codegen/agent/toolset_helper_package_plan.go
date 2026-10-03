@@ -80,52 +80,59 @@ const (
 // name before Goa freezes the generation.
 func planToolsetHelperPackages(generation *goacodegen.Generation, design *agentir.Design, specs *toolSpecsPlan, servicePlan *service.Plan) (*toolsetHelperPackagesPlan, error) {
 	planned := &toolsetHelperPackagesPlan{byPath: make(map[string]*toolsetHelperPackagePlan)}
+	var references []*agentir.ToolsetRef
 	for _, agent := range design.Agents {
-		references := append(append([]*agentir.ToolsetRef{}, agent.UsedToolsets...), agent.ExportedToolsets...)
-		for _, reference := range references {
-			tools, err := toolExpressionsForReference(specs.mcp, reference)
-			if err != nil {
+		references = append(references, agent.UsedToolsets...)
+		references = append(references, agent.ExportedToolsets...)
+	}
+	for _, reference := range design.ServiceExports {
+		if reference.Provider != nil && reference.Provider.Kind == agentexpr.ProviderMCP {
+			references = append(references, reference)
+		}
+	}
+	for _, reference := range references {
+		tools, err := toolExpressionsForReference(specs.mcp, reference)
+		if err != nil {
+			return nil, err
+		}
+		mcpBacked := reference.Provider != nil && reference.Provider.Kind == agentexpr.ProviderMCP
+		methodBacked := !mcpBacked && hasMethodTool(tools)
+		if !methodBacked && !mcpBacked {
+			continue
+		}
+		if existing := planned.byPath[reference.PackageImportPath]; existing != nil {
+			if existing.reference.Definition != reference.Definition || toolsetProviderKind(existing.reference) != toolsetProviderKind(reference) {
+				return nil, fmt.Errorf("helper package %q has incompatible toolset references", reference.PackageImportPath)
+			}
+			continue
+		}
+		pkg, err := generation.ClaimPackage(reference.PackageImportPath)
+		if err != nil {
+			return nil, fmt.Errorf("plan toolset %q helper package: %w", reference.QualifiedName, err)
+		}
+		packagePlan := &toolsetHelperPackagePlan{
+			pkg:       pkg,
+			reference: reference,
+			fixed:     make(map[string]*goacodegen.NameDeclaration),
+			tools:     make(map[string]*plannedHelperToolNames),
+		}
+		if methodBacked {
+			if err := packagePlan.declareToolNames(reference.Agent, tools); err != nil {
+				return nil, fmt.Errorf("plan toolset %q helper names: %w", reference.QualifiedName, err)
+			}
+			if err := packagePlan.planMethodImports(servicePlan, tools); err != nil {
 				return nil, err
 			}
-			mcpBacked := reference.Provider != nil && reference.Provider.Kind == agentexpr.ProviderMCP
-			methodBacked := !mcpBacked && hasMethodTool(tools)
-			if !methodBacked && !mcpBacked {
-				continue
-			}
-			if existing := planned.byPath[reference.PackageImportPath]; existing != nil {
-				if existing.reference.Definition != reference.Definition || toolsetProviderKind(existing.reference) != toolsetProviderKind(reference) {
-					return nil, fmt.Errorf("helper package %q has incompatible toolset references", reference.PackageImportPath)
-				}
-				continue
-			}
-			pkg, err := generation.ClaimPackage(reference.PackageImportPath)
-			if err != nil {
-				return nil, fmt.Errorf("plan toolset %q helper package: %w", reference.QualifiedName, err)
-			}
-			packagePlan := &toolsetHelperPackagePlan{
-				pkg:       pkg,
-				reference: reference,
-				fixed:     make(map[string]*goacodegen.NameDeclaration),
-				tools:     make(map[string]*plannedHelperToolNames),
-			}
-			if methodBacked {
-				if err := packagePlan.declareToolNames(agent, tools); err != nil {
-					return nil, fmt.Errorf("plan toolset %q helper names: %w", reference.QualifiedName, err)
-				}
-				if err := packagePlan.planMethodImports(servicePlan, tools); err != nil {
-					return nil, err
-				}
-			}
-			if mcpBacked {
-				if err := packagePlan.declareMCPNames(agent); err != nil {
-					return nil, err
-				}
-				if err := packagePlan.planMCPImports(); err != nil {
-					return nil, err
-				}
-			}
-			planned.byPath[reference.PackageImportPath] = packagePlan
 		}
+		if mcpBacked {
+			if err := packagePlan.declareMCPNames(); err != nil {
+				return nil, err
+			}
+			if err := packagePlan.planMCPImports(); err != nil {
+				return nil, err
+			}
+		}
+		planned.byPath[reference.PackageImportPath] = packagePlan
 	}
 	return planned, nil
 }
@@ -221,7 +228,7 @@ func (p *toolsetHelperPackagePlan) declareToolNames(agent *agentir.Agent, tools 
 }
 
 // declareMCPNames records the MCP constructor and its private failure helper.
-func (p *toolsetHelperPackagePlan) declareMCPNames(agent *agentir.Agent) error {
+func (p *toolsetHelperPackagePlan) declareMCPNames() error {
 	if err := declareExactNames(p.pkg, p.fixed, map[goacodegen.PackageNameKind][]string{
 		goacodegen.NameFunction: {helperFailedMCPToolResultName},
 	}); err != nil {
@@ -230,7 +237,7 @@ func (p *toolsetHelperPackagePlan) declareMCPNames(agent *agentir.Agent) error {
 	var err error
 	p.mcpConstructor, err = p.declarePreferred(
 		goacodegen.NameFunction,
-		"New"+goacodegen.Goify(agent.Name, true)+goacodegen.Goify(p.reference.Slug, true)+"MCPExecutor",
+		"NewMCPExecutor",
 		goacodegen.ExportedName,
 		"mcp-constructor",
 	)
@@ -293,10 +300,9 @@ func (p *toolsetHelperPackagePlan) planMCPImports() error {
 		goacodegen.SimpleImport("context"), goacodegen.SimpleImport("encoding/json"), goacodegen.SimpleImport("errors"),
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/planner"),
 		goacodegen.NewImport("runtime", "goa.design/goa-ai/runtime/agent/runtime"),
-		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/telemetry"),
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
 		goacodegen.NewImport("mcpruntime", "goa.design/goa-ai/runtime/mcp"),
-		goacodegen.NewImport(p.reference.SpecsPackageName, p.reference.SpecsImportPath),
+		goacodegen.NewImport("gen"+p.reference.SpecsPackageName, p.reference.SpecsImportPath),
 	}
 	if err := requirePackageImports(p.pkg, imports); err != nil {
 		return err
@@ -308,7 +314,7 @@ func (p *toolsetHelperPackagePlan) planMCPImports() error {
 
 // link builds each helper package once and copies only the constructor names
 // needed by agent registration into its references.
-func (p *toolsetHelperPackagesPlan) link(data *GeneratorData, services *service.ServicesData) error {
+func (p *toolsetHelperPackagesPlan) link(data *GeneratorData, services *service.ServicesData, specs *toolSpecsPlan) error {
 	for _, serviceData := range data.Services {
 		for _, agent := range serviceData.Agents {
 			for _, toolset := range agent.AllToolsets {
@@ -329,7 +335,19 @@ func (p *toolsetHelperPackagesPlan) link(data *GeneratorData, services *service.
 	}
 	for path, planned := range p.byPath {
 		if planned.toolset == nil {
-			return fmt.Errorf("helper package %q was not linked to its toolset", path)
+			contract := specs.byDir[planned.reference.SpecsDir]
+			if contract == nil || contract.render == nil {
+				return fmt.Errorf("helper package %q has no contract", path)
+			}
+			toolset := *contract.render
+			toolset.Kind = toolsetKindFromIR(planned.reference.Kind)
+			toolset.QualifiedName = planned.reference.QualifiedName
+			toolset.PackageName = planned.reference.PackageName
+			toolset.PackageImportPath = planned.reference.PackageImportPath
+			toolset.Dir = planned.reference.Dir
+			if err := planned.link(&toolset, services); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

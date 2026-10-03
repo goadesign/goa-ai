@@ -10,6 +10,14 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
+type (
+	// mcpTransportData adds tool headers to Goa's finalized transport names.
+	mcpTransportData struct {
+		Transport any
+		Tools     []*ToolAdapter
+	}
+)
+
 const headerSection = "source-header"
 const exampleMCPStubSection = "example-mcp-stub"
 
@@ -26,15 +34,34 @@ func applyMCPHTTPRulesToJSONRPCMount(files []*codegen.File, services []*plannedM
 			"server.go",
 		))] = service
 	}
+	clients := make(map[string]*plannedMCPService, len(services))
+	for _, service := range services {
+		clients[filepath.ToSlash(filepath.Join(codegen.Gendir, "jsonrpc", service.adapterData.mcpPathName, "client", "client.go"))] = service
+	}
 	for _, f := range files {
 		if f == nil {
+			continue
+		}
+		if service, ok := clients[filepath.ToSlash(f.Path)]; ok {
+			header := findHeaderSection(f)
+			if header == nil {
+				return fmt.Errorf("MCP client %q has no source header", f.Path)
+			}
+			codegen.AddImport(header, service.adapterData.jsonrpcClientImports.Imports()...)
+			for _, section := range f.SectionTemplates {
+				if section.Name != "jsonrpc-client-init" {
+					continue
+				}
+				section.Source = mcpTemplates.Read("jsonrpc_client_init")
+				section.Data = mcpTransportData{Transport: section.Data, Tools: service.adapterData.Tools}
+			}
 			continue
 		}
 		service, ok := paths[filepath.ToSlash(f.Path)]
 		if !ok {
 			continue
 		}
-		header := findSection(f, headerSection)
+		header := findHeaderSection(f)
 		if header == nil {
 			return fmt.Errorf("JSON-RPC server %q has no source header", f.Path)
 		}
@@ -44,10 +71,15 @@ func applyMCPHTTPRulesToJSONRPCMount(files []*codegen.File, services []*plannedM
 			if s == nil {
 				continue
 			}
-			if s.Name == "jsonrpc-server-mount" {
+			switch s.Name {
+			case "jsonrpc-server-mount":
 				s.Source = mcpTemplates.Read("jsonrpc_server_mount")
+				s.Data = mcpTransportData{Transport: s.Data, Tools: service.adapterData.Tools}
 				found = true
-				break
+			case "jsonrpc-server-handler":
+				s.Source = mcpTemplates.Read("jsonrpc_server_handler")
+			case "jsonrpc-server-encode-error":
+				s.Source = mcpTemplates.Read("jsonrpc_server_encode_error")
 			}
 		}
 		if !found {
@@ -64,7 +96,7 @@ func applyMCPHTTPRulesToJSONRPCMount(files []*codegen.File, services []*plannedM
 // generateMCPTransport generates files that adapt MCP protocol methods to the
 // original service implementation.
 func generateMCPTransport(_ string, svc *expr.ServiceExpr, data *AdapterData) []*codegen.File {
-	var files []*codegen.File
+	files := make([]*codegen.File, 0, 1)
 
 	// Write the server adapter in the generated MCP service package.
 	adapterPath := filepath.Join(codegen.Gendir, data.mcpPathName, "adapter_server.go")
@@ -113,18 +145,5 @@ func generateMCPTransport(_ string, svc *expr.ServiceExpr, data *AdapterData) []
 		},
 	})
 
-	// Generate protocol version constant in MCP package
-	versionPath := filepath.Join(codegen.Gendir, data.mcpPathName, "protocol_version.go")
-	versionImports := []*codegen.ImportSpec{}
-	files = append(files, &codegen.File{
-		Path: versionPath,
-		SectionTemplates: []*codegen.SectionTemplate{
-			codegen.Header("MCP protocol version", pkgName, versionImports),
-			{
-				Name:   "mcp-protocol-version",
-				Source: fmt.Sprintf("const DefaultProtocolVersion = %q\n", data.ProtocolVersion),
-			},
-		},
-	})
 	return files
 }

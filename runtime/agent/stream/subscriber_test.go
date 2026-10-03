@@ -8,12 +8,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 )
 
 type mockSink struct {
@@ -708,4 +710,28 @@ func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 	require.Equal(t, EventToolEnd, sink.events[0].Type())
 	require.Equal(t, EventWorkflow, sink.events[1].Type())
 	require.Equal(t, EventRunStreamEnd, sink.events[2].Type())
+}
+
+// A session host receives unfinished remote input when its stream profile
+// selects that event; profiles that omit it receive no fabricated tool event.
+func TestMCPInputUsesHostStreamProfile(t *testing.T) {
+	input := api.PendingMCPInput{ToolName: "remote.lookup", ToolCallID: "call-1", Requests: map[string]mcp.InputRequest{"approve": {Method: "elicitation/create", Params: json.RawMessage(`{"mode":"url","message":"Approve","url":"https://example.test/approve"}`)}}}
+	for _, host := range []bool{false, true} {
+		profile := StreamProfile{Workflow: true}
+		if host {
+			profile = RuntimeHostProfile()
+		}
+		sink := &mockSink{}
+		sub, err := NewSubscriber(sink, profile)
+		require.NoError(t, err)
+		require.NoError(t, sub.HandleEvent(t.Context(), hooks.NewAwaitMCPInputEvent("run-1", "service.agent", "session-1", input)))
+		if !host {
+			require.Empty(t, sink.events)
+			continue
+		}
+		require.Len(t, sink.events, 1)
+		event, ok := sink.events[0].(AwaitMCPInput)
+		require.True(t, ok)
+		require.Equal(t, input, event.Data)
+	}
 }

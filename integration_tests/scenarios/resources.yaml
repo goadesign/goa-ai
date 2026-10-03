@@ -1,7 +1,5 @@
 scenarios:
   - name: resources_list
-    pre:
-      auto_initialize: true
     steps:
       - name: list
         op: ResourcesList
@@ -11,10 +9,10 @@ scenarios:
             resources:
               - { uri: "doc://list", name: "documents", mimeType: "application/json" }
               - { uri: "system://info", name: "system_info", mimeType: "application/json" }
+              - { uri: "test://empty-binary", name: "empty_binary", mimeType: "application/octet-stream" }
+              - { uri: "test://static-binary", name: "binary", mimeType: "image/png" }
 
   - name: resources_read_documents
-    pre:
-      auto_initialize: true
     steps:
       - name: read
         op: ResourcesRead
@@ -26,8 +24,6 @@ scenarios:
               - { uri: "doc://list", mimeType: "application/json", text: '{"items":["guide.md","reference.md"]}' }
 
   - name: resources_read_system_info
-    pre:
-      auto_initialize: true
     steps:
       - name: read
         op: ResourcesRead
@@ -39,8 +35,6 @@ scenarios:
               - { uri: "system://info", mimeType: "application/json", text: '{"name":"assistant","version":"1.0.0"}' }
 
   - name: resources_list_rejects_cursor
-    pre:
-      auto_initialize: true
     steps:
       - name: list
         op: ResourcesList
@@ -50,8 +44,6 @@ scenarios:
           error: { code: -32602 }
 
   - name: resources_read_unknown_uri
-    pre:
-      auto_initialize: true
     steps:
       - name: read
         op: ResourcesRead
@@ -59,3 +51,25 @@ scenarios:
         expect:
           status: error
           error: { code: -32602 }
+
+  - name: resources_read_binary
+    steps:
+      - name: read
+        op: ResourcesRead
+        input: { uri: "test://static-binary" }
+        expect:
+          status: success
+          result:
+            contents:
+              - { uri: "test://static-binary", mimeType: "image/png", blob: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC" }
+
+  - name: resources_read_empty_binary
+    steps:
+      - name: read
+        op: ResourcesRead
+        input: { uri: "test://empty-binary" }
+        expect:
+          status: success
+          result:
+            contents:
+              - { uri: "test://empty-binary", mimeType: "application/octet-stream", blob: "" }

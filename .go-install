@@ -1,3 +1,4 @@
 # Go tools installed by scripts/setup and verified by make tools.
 google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.12
 google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
+github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.14.0

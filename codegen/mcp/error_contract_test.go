@@ -49,7 +49,7 @@ func TestMCPDispatchMethodsDeclareAndMapProtocolErrors(t *testing.T) {
 	}
 	require.Empty(t, mcpService.Errors)
 	for _, methodName := range []string{"initialize", "notifications/initialized", "ping"} {
-		require.Empty(t, mcpService.Method(methodName).Errors, methodName)
+		require.Nil(t, mcpService.Method(methodName), methodName)
 	}
 
 	httpService := builder.buildHTTPService(mcpService, "/rpc")

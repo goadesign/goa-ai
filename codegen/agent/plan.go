@@ -62,7 +62,7 @@ func (p *Plan) Link() error {
 		}
 	}
 	if p.helpers != nil {
-		if err := p.helpers.link(data, p.service.Services()); err != nil {
+		if err := p.helpers.link(data, p.service.Services(), p.specs); err != nil {
 			return err
 		}
 	}

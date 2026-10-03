@@ -78,46 +78,7 @@ func (p *mcpExamplePlugin) generate(
 	if err != nil {
 		return nil, err
 	}
-	return removeMCPClientCommands(p.exampleRoot, mcpServices, files), nil
-}
-
-// removeMCPClientCommands removes command-line clients for servers that expose
-// MCP. One command invocation cannot initialize a session and then perform a
-// separate MCP operation, so advertising those commands would be misleading.
-func removeMCPClientCommands(
-	root *expr.RootExpr,
-	services []exampleMCPService,
-	files []*codegen.File,
-) []*codegen.File {
-	mcpNames := make(map[string]struct{}, len(services))
-	for _, service := range services {
-		mcpNames["mcp_"+service.service.Name] = struct{}{}
-	}
-	servers := make(map[string]struct{})
-	for _, server := range root.API.Servers {
-		for _, service := range server.Services {
-			if _, ok := mcpNames[service]; ok {
-				servers[codegen.SnakeCase(codegen.Goify(server.Name, true))] = struct{}{}
-				break
-			}
-		}
-	}
-	kept := files[:0]
-	for _, file := range files {
-		path := filepath.ToSlash(file.Path)
-		remove := false
-		for server := range servers {
-			if strings.HasPrefix(path, "cmd/"+server+"-cli/") ||
-				strings.HasPrefix(path, "gen/jsonrpc/cli/"+server+"/") {
-				remove = true
-				break
-			}
-		}
-		if !remove {
-			kept = append(kept, file)
-		}
-	}
-	return kept
+	return files, nil
 }
 
 // bindExampleMCPServices copies the final constructor, interface, package, and
@@ -195,7 +156,7 @@ func generateExampleAdapterStubs(
 		if f == nil {
 			return nil, fmt.Errorf("expected MCP example stub %q for service %q", stubPath, svc.Name)
 		}
-		header := findSection(f, headerSection)
+		header := findHeaderSection(f)
 		if header == nil {
 			return nil, fmt.Errorf("example stub %q for service %q is missing %q", f.Path, svc.Name, headerSection)
 		}
@@ -263,10 +224,11 @@ func exampleStubImportAlias(header *codegen.SectionTemplate, service exampleMCPS
 	)
 }
 
-// findSection returns the first section with the given name in file f.
-func findSection(f *codegen.File, name string) *codegen.SectionTemplate {
+// findHeaderSection returns the generated file header so callers can add imports
+// without changing the declarations emitted by Goa.
+func findHeaderSection(f *codegen.File) *codegen.SectionTemplate {
 	for _, s := range f.SectionTemplates {
-		if s.Name == name {
+		if s.Name == headerSection {
 			return s
 		}
 	}

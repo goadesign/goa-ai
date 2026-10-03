@@ -1578,7 +1578,7 @@ directly:
   `codegen.CapsData.MaxRecoveryTurns`.
 
 These names and their serialized field names are intentionally breaking.
-Suspensions written by this runtime use `goa-ai.run-suspension.v9`. Earlier
+Suspensions written by this runtime use `goa-ai.run-suspension.v10`. Earlier
 versions cannot resume on this runtime. Version nine references an exact saved
 history position; see [Runtime Store](#runtime-store-storagestore) for preparation
 and checkpoint upgrade requirements. It retains the recovery contract introduced
@@ -3929,7 +3929,7 @@ For MCP services:
 - Remove `AllowedResourceURIs`, `DeniedResourceURIs`,
   `StructuredStreamJSON`, and `ProtocolVersionOverride` from generated
   `MCPAdapterOptions`. Enforce resource authorization in the Goa service, return
-  the declared result shape, and set the protocol version in the design.
+  the declared result shape. The framework owns the protocol revision.
 - Replace `SSECaller` and `NewSSECaller` with `HTTPCaller` and
   `NewHTTPCaller`. The HTTP caller accepts a normal JSON response or an HTTP
   event-stream response for a unary call.
@@ -4179,13 +4179,13 @@ For runtime storage and workflow adapters:
 - Stop setting `policy.CapsState.ExpiresAt`. The workflow owns its budget and
   hard deadlines directly.
 - Treat saved suspensions from versions before
-  `goa-ai.run-suspension.v9` as incompatible. They cannot be resumed by this
+  `goa-ai.run-suspension.v10` as incompatible. They cannot be resumed by this
   runtime.
 
 Install the Goa revision required by this module before regenerating:
 
 ```bash
-go install goa.design/goa/v3/cmd/goa@v3.32.0
+go install goa.design/goa/v3/cmd/goa@v3.32.1-0.20261002212739-eccc91aee2e5
 ```
 
 For a release that changes generated or persisted runtime shapes:
@@ -4201,7 +4201,7 @@ For a release that changes generated or persisted runtime shapes:
    new work.
 
 Completed run history keeps the same meaning. Suspensions restored for
-continuation must use the current `goa-ai.run-suspension.v9` contract. Historical
+continuation must use the current `goa-ai.run-suspension.v10` contract. Historical
 reporting does not restore private checkpoint state; see
 [Runtime Store](#runtime-store-storagestore). A host may still need to convert
 its physical records or collections so the new store can read them. That
@@ -4217,8 +4217,8 @@ workflow still requires attachment by exact ID. Deploy every workflow starter
 together before admission resumes. A queryable execution without the reserved
 recipe memo is a conflict; the runtime never infers its original start request.
 
-`goa-ai.run-suspension.v9` is the only accepted suspension schema for
-continuation restoration. Version eight and earlier are rejected without an
+`goa-ai.run-suspension.v10` is the only accepted suspension schema for
+continuation restoration. Version nine and earlier are rejected without an
 omission fallback. Before coordinated
 worker upgrade, finish old-format saved work under its owning runtime; if any
 must remain unfinished, obtain a separate host-owned preservation decision.
@@ -6424,80 +6424,136 @@ lifecycle contract is in [GenAI observability](../DESIGN.md#genai-observability-
 
 ## MCP Callers
 
-The `runtime/mcp` package provides callers for stdio and HTTP MCP servers. Both
-callers perform the MCP initialize handshake when they are created and require
-the application's name and version.
+`runtime/mcp` invokes tools using MCP `2026-07-28`. Each request supplies its
+protocol version and actual client capabilities in `params._meta`. There is no
+initialization handshake, negotiated version, or session ID. Generated servers
+implement `server/discover`; clients can call tools without discovery first.
 
-### StdioCaller
-
-Spawns an MCP server as a subprocess and communicates via stdin/stdout:
-
-```go
-import "goa.design/goa-ai/runtime/mcp"
-
-caller, err := mcp.NewStdioCaller(ctx, mcp.StdioOptions{
-    Command: "npx",
-    Args:    []string{"-y", "@modelcontextprotocol/server-filesystem"},
-    Env:     []string{"HOME=" + os.Getenv("HOME")},
-    ClientInfo: mcp.ClientInfo{
-        Name:    "my-agent",
-        Version: "1.0.0",
-    },
-})
-if err != nil {
-    log.Fatal(err)
-}
-defer caller.Close()
-```
-
-### HTTPCaller
-
-Sends JSON-RPC requests to an MCP HTTP endpoint. The server may return each
-response as JSON or as an HTTP event stream; the same caller handles both
-formats.
+HTTP callers accept JSON or a request-scoped event stream. They preserve exact
+response IDs and protocol error codes and data, including HTTP 400 and 404
+responses. Without an explicitly trusted safe tool declaration and a retry
+allowance, a sent tool request that loses its usable response returns
+`OutcomeUnknownError`. They load every catalog
+page for the current caller, validate tool schemas using JSON Schema 2020-12, and derive mirrored headers from valid
+`x-mcp-header` annotations. Invalid annotations on another tool do not prevent
+calling a valid tool. Caller constructors receive an already-built HTTP client
+so the application owns credentials and transport configuration.
 
 ```go
-caller, err := mcp.NewHTTPCaller(ctx, mcp.HTTPOptions{
+caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
     Endpoint: "https://mcp-server.example.com/mcp",
-    ClientInfo: mcp.ClientInfo{
-        Name:    "my-agent",
-        Version: "1.0.0",
-    },
-})
-if err != nil {
-    log.Fatal(err)
-}
-```
-
-Both callers implement the `mcp.Caller` interface. They return typed transport,
-protocol, malformed-response, and tool-execution errors without retrying or
-turning error text into control flow. Generated MCP executors classify those
-errors into the canonical `planner.ToolFailure` contract.
-
-```go
-type Caller interface {
-    CallTool(ctx context.Context, req CallRequest) (CallResponse, error)
-}
-
-type CallRequest struct {
-    Tool    string
-    Payload json.RawMessage
-}
-
-type CallResponse struct {
-    Content           []string
-    StructuredContent json.RawMessage
-}
-```
-
-A Goa-generated MCP client exposes the same caller contract:
-
-```go
-caller, err := mcpservice.NewCaller(ctx, client, mcp.ClientInfo{
-    Name:    "my-agent",
-    Version: "1.0.0",
+    Client: authenticatedHTTPClient,
+    ClientInfo: mcp.ClientInfo{Name: "my-agent", Version: "1.0.0"},
 })
 ```
+
+For a subprocess, use `NewStdioCaller(ctx, StdioOptions{...})`. Each message
+carries the same request metadata. Canceling a call sends its actual request ID;
+a late response cannot finish another call. `caller.Close(ctx)` closes standard
+input and waits for exit, killing and reaping the process if the supplied context
+ends. The application chooses that shutdown deadline.
+
+Generated JSON-RPC clients use the same transport implementation. Their tool
+caller is constructed with `NewCaller(client, clientInfo, inputSupport, retryPolicy)`.
+The generated client supplies precomputed tool bindings from the same design
+that defines the server catalog.
+
+`CallResponse.Content` contains typed text, image, audio, resource-link, or
+embedded-resource blocks. `StructuredContent` retains the exact JSON value,
+including primitive values, arrays, and explicit null. Generated executors decode
+it using the declared result codec. Text content is never parsed as a substitute
+for a missing structured result.
+
+### Interrupted HTTP responses
+
+Retries belong to the application's HTTP caller, inside one worker activity.
+Configure `HTTPRetryPolicy` on `HTTPOptions.RetryPolicy` or pass it to the
+generated `NewCaller`:
+
+```go
+retryPolicy := mcp.HTTPRetryPolicy{
+    MaxAttempts: 2,
+    TrustToolAnnotations: true,
+}
+```
+
+`MaxAttempts` counts POSTs for one request round, including the first. Zero
+selects one attempt; negative values are rejected. A later host-input round gets
+its own allowance. This setting does not change run-wide tool budgets or enable
+worker retries. MCP activities still execute at most once after worker loss.
+
+Enable `TrustToolAnnotations` only for a server whose behavior declarations the
+application trusts. A trusted `readOnlyHint: true` or `idempotentHint: true`
+permits retrying an SSE response that ends before its final message. Missing
+hints and explicit false values do not permit it. `destructiveHint: false`
+alone does not authorize retry. Generated callers use design-time hints;
+imported callers read them in the current authorization context.
+
+Every retry keeps the exact arguments, host answers, and opaque request state,
+uses a fresh JSON-RPC ID, and sends a new POST. There is no GET resumption or
+`Last-Event-ID`. Cancellation, malformed messages, HTTP or JSON-RPC errors, and
+complete tool-error results do not trigger this retry path. Exhaustion retains
+`OutcomeUnknownError` and stops runtime recovery. A lost response is classified
+as unavailable; a real deadline expiry is classified as timeout.
+
+The annotations describe server behavior; they do not enforce it. An idempotent
+service must own preventing additional effects for identical arguments. Request
+IDs only correlate responses and do not supply business-operation identity.
+The released changelog's unconditional reissue wording remains a conformance
+question; this policy does not claim that maintainers have clarified it. See the
+[upgrade plan](mcp_protocol_upgrade_plan.md#interrupted-http-responses-and-operation-ownership).
+
+### Unfinished calls and host input
+
+An `input_required` result leaves the tool unfinished. `CallResponse.InputRequired`
+contains the server's exact input IDs, elicitation requests, and optional opaque
+request state. Configure `InputSupport{Form: true, URL: true}` only when the host
+can present those interactions and return trusted answers. A form uses the
+protocol's flat primitive schema. URL consent, decline, and cancel carry no form
+content.
+
+Generated MCP executors return this unfinished outcome to the agent runtime.
+The runtime saves the original tool arguments and opaque state in a version-10
+run suspension, then publishes `await_mcp_input` to the trusted host. The host
+resumes the exact saved suspension with `PendingInputResponse.MCP`, containing
+the tool call ID and a response for each requested input ID. The runtime validates
+the answers and executes the next round of the same call. The model never authors
+transport IDs or server state. A state-only round has an empty request map; the
+host decides when to resume it with an empty response map. No completed tool event
+or model-visible result is recorded until the remote call finishes.
+
+### Executable ownership and upgrade
+
+Compose one generated `NewMCPExecutor(caller)` per runtime binding, then pass it
+to the generated `RegisterUsedToolsets` executor option. Multiple agents can use
+that binding with different model-visible catalogs. Agent configuration supplies
+the planner; it no longer contains `MCPCallers` or `WithMCPCaller`. Generated MCP
+registrations allow one activity attempt, so workflow retries do not silently
+repeat an external side effect.
+
+This is a breaking upgrade. Remove the DSL `ProtocolVersion` option and
+regenerate all packages. Deploy clients and servers using the same current
+protocol. Drain version-9 suspended runs before installing the new runtime;
+version-9 checkpoints are rejected, with no legacy reader or conversion path.
+Rollback requires restoring the previous binaries and their matching generated
+contracts; version-10 suspensions cannot be resumed by the previous runtime.
+The registry's independent wire protocol does not change.
+Regenerated schemas may have different descriptions or local definitions, so
+compare the generated `ToolSchemas()` records and declaration fingerprints before
+updating registry-backed providers or consumers. `DeclareServiceToolset` preserves
+an immutable declaration; it returns `admission_conflict` for a changed one. For
+service providers, use the existing `Register` contract with a new deployment
+admission revision and the generated fingerprint. For native Agent declarations,
+use `ReplaceAgentToolset` with the exact current registration token. Coordinate
+that declaration change with matching providers and consumers, and retain the
+selected old contracts for already accepted work. This upgrade does not rewrite
+catalog storage or retired-token history.
+
+Generated servers expose declared unary tools, fixed resource reads, and static
+prompts. They do not advertise subscriptions, tasks, or server-originated
+elicitation. Host credential handling remains application-owned. The remaining
+feature and conformance work is tracked in the
+[MCP upgrade plan](mcp_protocol_upgrade_plan.md).
 
 ## Stream Profiles
 

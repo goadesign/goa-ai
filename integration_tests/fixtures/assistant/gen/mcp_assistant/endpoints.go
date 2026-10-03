@@ -15,38 +15,32 @@ import (
 
 // Endpoints wraps the "mcp_assistant" service endpoints.
 type Endpoints struct {
-	Initialize               goa.Endpoint
-	NotificationsInitialized goa.Endpoint
-	Ping                     goa.Endpoint
-	ToolsList                goa.Endpoint
-	ToolsCall                goa.Endpoint
-	ResourcesList            goa.Endpoint
-	ResourcesRead            goa.Endpoint
-	PromptsList              goa.Endpoint
-	PromptsGet               goa.Endpoint
+	ServerDiscover goa.Endpoint
+	ToolsList      goa.Endpoint
+	ToolsCall      goa.Endpoint
+	ResourcesList  goa.Endpoint
+	ResourcesRead  goa.Endpoint
+	PromptsList    goa.Endpoint
+	PromptsGet     goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "mcp_assistant" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		Initialize:               NewInitializeEndpoint(s),
-		NotificationsInitialized: NewNotificationsInitializedEndpoint(s),
-		Ping:                     NewPingEndpoint(s),
-		ToolsList:                NewToolsListEndpoint(s),
-		ToolsCall:                NewToolsCallEndpoint(s),
-		ResourcesList:            NewResourcesListEndpoint(s),
-		ResourcesRead:            NewResourcesReadEndpoint(s),
-		PromptsList:              NewPromptsListEndpoint(s),
-		PromptsGet:               NewPromptsGetEndpoint(s),
+		ServerDiscover: NewServerDiscoverEndpoint(s),
+		ToolsList:      NewToolsListEndpoint(s),
+		ToolsCall:      NewToolsCallEndpoint(s),
+		ResourcesList:  NewResourcesListEndpoint(s),
+		ResourcesRead:  NewResourcesReadEndpoint(s),
+		PromptsList:    NewPromptsListEndpoint(s),
+		PromptsGet:     NewPromptsGetEndpoint(s),
 	}
 }
 
 // Use applies the given middleware to all the "mcp_assistant" service
 // endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
-	e.Initialize = m(e.Initialize)
-	e.NotificationsInitialized = m(e.NotificationsInitialized)
-	e.Ping = m(e.Ping)
+	e.ServerDiscover = m(e.ServerDiscover)
 	e.ToolsList = m(e.ToolsList)
 	e.ToolsCall = m(e.ToolsCall)
 	e.ResourcesList = m(e.ResourcesList)
@@ -55,28 +49,12 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.PromptsGet = m(e.PromptsGet)
 }
 
-// NewInitializeEndpoint returns an endpoint function that calls the method
-// "initialize" of service "mcp_assistant".
-func NewInitializeEndpoint(s Service) goa.Endpoint {
+// NewServerDiscoverEndpoint returns an endpoint function that calls the method
+// "server/discover" of service "mcp_assistant".
+func NewServerDiscoverEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*InitializePayload)
-		return s.Initialize(ctx, p)
-	}
-}
-
-// NewNotificationsInitializedEndpoint returns an endpoint function that calls
-// the method "notifications/initialized" of service "mcp_assistant".
-func NewNotificationsInitializedEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		return nil, s.NotificationsInitialized(ctx)
-	}
-}
-
-// NewPingEndpoint returns an endpoint function that calls the method "ping" of
-// service "mcp_assistant".
-func NewPingEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		return s.Ping(ctx)
+		p := req.(*DiscoverPayload)
+		return s.ServerDiscover(ctx, p)
 	}
 }
 

@@ -7,18 +7,8 @@
 
 package server
 
-// InitializeMcpAssistantPath returns the URL path to the mcp_assistant service initialize HTTP endpoint.
-func InitializeMcpAssistantPath() string {
-	return "/rpc"
-}
-
-// NotificationsInitializedMcpAssistantPath returns the URL path to the mcp_assistant service notifications/initialized HTTP endpoint.
-func NotificationsInitializedMcpAssistantPath() string {
-	return "/rpc"
-}
-
-// PingMcpAssistantPath returns the URL path to the mcp_assistant service ping HTTP endpoint.
-func PingMcpAssistantPath() string {
+// ServerDiscoverMcpAssistantPath returns the URL path to the mcp_assistant service server/discover HTTP endpoint.
+func ServerDiscoverMcpAssistantPath() string {
 	return "/rpc"
 }
 

@@ -6,14 +6,15 @@ These tests generate a small Goa application and exercise its generated Model Co
 
 The assistant fixture declares the MCP surface currently supported by `goa-ai`:
 
-- the `initialize` request followed by the `notifications/initialized` notification;
-- the negotiated `MCP-Protocol-Version` header on that notification and later requests;
+- stateless `server/discover` and calls before discovery;
+- per-request protocol/capability metadata and mirrored headers;
+- unsupported-version and header-mismatch errors, with no version fallback;
 - unary `tools/list` and `tools/call` operations;
 - payload-free resources with fixed URIs through `resources/list` and `resources/read`;
 - argument-free static prompts through `prompts/list` and `prompts/get`; and
 - JSON-RPC error codes, including `-32602` for unknown tool names, resource URIs, and prompt names.
 
-The fixture does not cover dynamic prompts, arbitrary server notifications, resource subscriptions, query-bearing resource URIs, tool streaming, server-sent event responses, or a generated CLI. Those modes are not part of the supported generated MCP server contract.
+The fixture does not cover dynamic prompts, arbitrary server notifications, resource subscriptions, query-bearing resource URIs, tool streaming, server-sent event responses, or task execution. Those modes are not part of the supported generated MCP server contract.
 
 ## Run the tests
 
@@ -61,3 +62,7 @@ scenarios:
 ```
 
 Expected result objects are subset matches. This keeps scenarios focused on the protocol fields they intend to prove while allowing generated responses to include additional contract fields.
+
+Independent official-harness drivers, their pinned revision, exact results, and
+remaining conformance gaps are documented in
+[Independent MCP verification](conformance/README.md).

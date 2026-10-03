@@ -3,6 +3,7 @@
 package api
 
 import (
+	"encoding/json"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
@@ -17,6 +18,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 )
 
 type (
@@ -269,6 +271,8 @@ type (
 	// PendingInput describes one exact external input requested by the runtime.
 	// Exactly one payload field must be set and must match Kind.
 	PendingInput struct {
+		// MCP is set for input needed by an unfinished remote tool invocation.
+		MCP *PendingMCPInput
 		// Kind selects the required response shape.
 		Kind PendingInputKind
 
@@ -279,6 +283,24 @@ type (
 		// tools. Tool-bound awaits carry the runtime ToolCallID used by callers
 		// and the provider ModelToolCallID retained for transcript reconstruction.
 		Await *planner.AwaitItem
+	}
+
+	// PendingMCPInput contains host interactions for one unfinished tool call.
+	// Server state remains in the trusted checkpoint and never reaches a model.
+	PendingMCPInput struct {
+		// ToolName names the remote tool being completed.
+		ToolName tools.Ident
+		// ToolCallID distinguishes concurrent invocations of the same tool.
+		ToolCallID string
+		// Requests preserves the server's exact interaction IDs and contracts.
+		Requests map[string]mcp.InputRequest
+	}
+	// MCPInputResponse supplies one host response for each requested interaction.
+	MCPInputResponse struct {
+		// ToolCallID selects the exact pending invocation from the suspension.
+		ToolCallID string
+		// Responses maps server IDs to accepted input, decline, or cancellation.
+		Responses map[string]json.RawMessage
 	}
 
 	// PendingConfirmation describes one tool call that cannot execute until a
@@ -306,6 +328,8 @@ type (
 	// PendingInputResponse supplies exactly one response to the first pending
 	// request in a RunSuspension. Exactly one field must be set.
 	PendingInputResponse struct {
+		// MCP supplies host answers for the exact unfinished invocation.
+		MCP *MCPInputResponse
 		// Clarification supplies free-form user text.
 		Clarification *ClarificationAnswer
 
@@ -539,6 +563,9 @@ type (
 	// workflow execution. Planner implementations cannot construct this type
 	// through their PlanResult contract.
 	ToolCall struct {
+		// MCPContinuation carries runtime-owned input for a later round of this
+		// invocation. It is never advertised as a model-authored argument.
+		MCPContinuation *mcp.CallContinuation
 		// Registry retains the exact registered contract selected for this call.
 		// It is runtime-owned and absent for statically compiled tools.
 		Registry *tools.RegistryBinding
@@ -937,6 +964,9 @@ type (
 	// ToolInput carries the execution payload for one tool call from workflow
 	// code to its activity. The workflow retains model-authored transcript data.
 	ToolInput struct {
+		// MCPContinuation supplies only the answers and opaque state saved for
+		// this unfinished invocation. The original tool arguments stay in Payload.
+		MCPContinuation *mcp.CallContinuation
 		// Registry carries the selected registration into the execution activity.
 		// Static tool calls leave it absent.
 		Registry *tools.RegistryBinding
@@ -1010,6 +1040,9 @@ type (
 
 	// ToolOutput is returned by tool executors after invoking the tool implementation.
 	ToolOutput struct {
+		// MCPInput is an unfinished outcome, mutually exclusive with every final
+		// result field. The workflow saves it before requesting host interaction.
+		MCPInput *mcp.InputRequired
 		// Payload is the tool result encoded as JSON. The runtime decodes it using the registered tool codec.
 		Payload rawjson.Message
 
@@ -1168,6 +1201,9 @@ const (
 	// PendingInputKindClarification requires a Clarification response.
 	PendingInputKindClarification PendingInputKind = "clarification"
 
+	// PendingInputKindMCP requires host input for an unfinished MCP invocation.
+	PendingInputKindMCP PendingInputKind = "mcp_input"
+
 	// PendingInputKindConfirmation requires a Confirmation response.
 	PendingInputKindConfirmation PendingInputKind = "confirmation"
 
@@ -1178,7 +1214,9 @@ const (
 	// Version 8 retains the advertised catalog for every accepted recovery plan
 	// that waits for input. Failed tool names cannot reconstruct other choices
 	// advertised during that plan. Earlier versions are rejected.
-	RunSuspensionVersion = "goa-ai.run-suspension.v9"
+	// Version 10 also retains unfinished MCP arguments, host requests, and opaque
+	// server state. Earlier checkpoint versions are rejected without conversion.
+	RunSuspensionVersion = "goa-ai.run-suspension.v10"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

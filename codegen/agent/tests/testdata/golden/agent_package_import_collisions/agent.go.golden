@@ -9,14 +9,14 @@ package scribe
 
 import (
 	specs "generated.local/gen/alpha/agents/scribe/specs"
-	agent3 "goa.design/goa-ai/runtime/agent"
+	agent2 "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 // AgentID is the fully-qualified identifier for this agent.
-const AgentID agent3.Ident = "alpha.scribe"
+const AgentID agent2.Ident = "alpha.scribe"
 
 // Workflow and activity identifiers for this agent.
 const (

@@ -451,7 +451,10 @@ Replace `Use(Records, Deferred)` with `Use(Records, func() { Deferred() })`,
 and wrap other `func()` callback assignments the same way. Calls to `Deferred()`
 remain valid.
 
-Regenerate providers and consumers with Goa v3.32.0. Replace generated
+Regenerate providers and consumers with the Goa revision pinned in this module.
+Compare regenerated schema records and fingerprints against saved declarations;
+the MCP upgrade also aligns shared schema metadata. Follow the
+[declaration cutover requirements](runtime.md#executable-ownership-and-upgrade). Replace generated
 startup `Discover` calls, `RegistryToolsets` inputs, and dynamic executor wiring
 with `RegisterRegistry`. Publish generated `ToolSchemas()` records before
 turning on dynamic consumers. Upgrade the registry to serve `ResolveToolset`

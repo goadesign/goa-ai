@@ -14,22 +14,20 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// InitializeRequestBody is the type of the "mcp_assistant" service
-// "initialize" endpoint HTTP request body.
-type InitializeRequestBody struct {
-	// MCP protocol version
-	ProtocolVersion *string `form:"protocolVersion,omitempty" json:"protocolVersion,omitempty" xml:"protocolVersion,omitempty"`
-	// Client information
-	ClientInfo *ClientInfoRequestBody `form:"clientInfo,omitempty" json:"clientInfo,omitempty" xml:"clientInfo,omitempty"`
-	// Client capabilities
-	Capabilities *ClientCapabilitiesRequestBody `form:"capabilities,omitempty" json:"capabilities,omitempty" xml:"capabilities,omitempty"`
+// ServerDiscoverRequestBody is the type of the "mcp_assistant" service
+// "server/discover" endpoint HTTP request body.
+type ServerDiscoverRequestBody struct {
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // ToolsListRequestBody is the type of the "mcp_assistant" service "tools/list"
 // endpoint HTTP request body.
 type ToolsListRequestBody struct {
-	// Pagination cursor
+	// Opaque cursor from a prior catalog page
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // ToolsCallRequestBody is the type of the "mcp_assistant" service "tools/call"
@@ -39,13 +37,17 @@ type ToolsCallRequestBody struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Tool arguments
 	Arguments json.RawMessage `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // ResourcesListRequestBody is the type of the "mcp_assistant" service
 // "resources/list" endpoint HTTP request body.
 type ResourcesListRequestBody struct {
-	// Pagination cursor
+	// Opaque cursor from a prior catalog page
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // ResourcesReadRequestBody is the type of the "mcp_assistant" service
@@ -53,13 +55,17 @@ type ResourcesListRequestBody struct {
 type ResourcesReadRequestBody struct {
 	// Resource URI
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // PromptsListRequestBody is the type of the "mcp_assistant" service
 // "prompts/list" endpoint HTTP request body.
 type PromptsListRequestBody struct {
-	// Pagination cursor
+	// Opaque cursor from a prior catalog page
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // PromptsGetRequestBody is the type of the "mcp_assistant" service
@@ -69,17 +75,25 @@ type PromptsGetRequestBody struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Prompt arguments
 	Arguments map[string]string `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
-// InitializeResponseBody is the type of the "mcp_assistant" service
-// "initialize" endpoint HTTP response body.
-type InitializeResponseBody struct {
-	// MCP protocol version
-	ProtocolVersion string `form:"protocolVersion" json:"protocolVersion" xml:"protocolVersion"`
-	// Server capabilities
+// ServerDiscoverResponseBody is the type of the "mcp_assistant" service
+// "server/discover" endpoint HTTP response body.
+type ServerDiscoverResponseBody struct {
+	// Protocol revisions implemented by this release
+	SupportedVersions []string `form:"supportedVersions" json:"supportedVersions" xml:"supportedVersions"`
+	// Operations declared by this service
 	Capabilities *ServerCapabilitiesResponseBody `form:"capabilities" json:"capabilities" xml:"capabilities"`
-	// Server information
-	ServerInfo *ServerInfoResponseBody `form:"serverInfo" json:"serverInfo" xml:"serverInfo"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType string `form:"resultType" json:"resultType" xml:"resultType"`
+	// Milliseconds this one response may be cached
+	TTLMs int64 `form:"ttlMs" json:"ttlMs" xml:"ttlMs"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope string `form:"cacheScope" json:"cacheScope" xml:"cacheScope"`
 }
 
 // ToolsListResponseBody is the type of the "mcp_assistant" service
@@ -89,6 +103,14 @@ type ToolsListResponseBody struct {
 	Tools []*ToolInfoResponseBody `form:"tools" json:"tools" xml:"tools"`
 	// Cursor for the next page
 	NextCursor *string `form:"nextCursor,omitempty" json:"nextCursor,omitempty" xml:"nextCursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType string `form:"resultType" json:"resultType" xml:"resultType"`
+	// Milliseconds this one response may be cached
+	TTLMs int64 `form:"ttlMs" json:"ttlMs" xml:"ttlMs"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope string `form:"cacheScope" json:"cacheScope" xml:"cacheScope"`
 }
 
 // ToolsCallResponseBody is the type of the "mcp_assistant" service
@@ -100,6 +122,10 @@ type ToolsCallResponseBody struct {
 	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
 	// Structured tool result
 	StructuredContent json.RawMessage `form:"structuredContent,omitempty" json:"structuredContent,omitempty" xml:"structuredContent,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType string `form:"resultType" json:"resultType" xml:"resultType"`
 }
 
 // ResourcesListResponseBody is the type of the "mcp_assistant" service
@@ -109,6 +135,14 @@ type ResourcesListResponseBody struct {
 	Resources []*ResourceInfoResponseBody `form:"resources" json:"resources" xml:"resources"`
 	// Cursor for the next page
 	NextCursor *string `form:"nextCursor,omitempty" json:"nextCursor,omitempty" xml:"nextCursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType string `form:"resultType" json:"resultType" xml:"resultType"`
+	// Milliseconds this one response may be cached
+	TTLMs int64 `form:"ttlMs" json:"ttlMs" xml:"ttlMs"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope string `form:"cacheScope" json:"cacheScope" xml:"cacheScope"`
 }
 
 // ResourcesReadResponseBody is the type of the "mcp_assistant" service
@@ -116,6 +150,14 @@ type ResourcesListResponseBody struct {
 type ResourcesReadResponseBody struct {
 	// Resource contents
 	Contents []*ResourceContentResponseBody `form:"contents" json:"contents" xml:"contents"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType string `form:"resultType" json:"resultType" xml:"resultType"`
+	// Milliseconds this one response may be cached
+	TTLMs int64 `form:"ttlMs" json:"ttlMs" xml:"ttlMs"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope string `form:"cacheScope" json:"cacheScope" xml:"cacheScope"`
 }
 
 // PromptsListResponseBody is the type of the "mcp_assistant" service
@@ -125,6 +167,14 @@ type PromptsListResponseBody struct {
 	Prompts []*PromptInfoResponseBody `form:"prompts" json:"prompts" xml:"prompts"`
 	// Cursor for the next page
 	NextCursor *string `form:"nextCursor,omitempty" json:"nextCursor,omitempty" xml:"nextCursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType string `form:"resultType" json:"resultType" xml:"resultType"`
+	// Milliseconds this one response may be cached
+	TTLMs int64 `form:"ttlMs" json:"ttlMs" xml:"ttlMs"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope string `form:"cacheScope" json:"cacheScope" xml:"cacheScope"`
 }
 
 // PromptsGetResponseBody is the type of the "mcp_assistant" service
@@ -134,6 +184,10 @@ type PromptsGetResponseBody struct {
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
 	// Prompt messages
 	Messages []*PromptMessageResponseBody `form:"messages" json:"messages" xml:"messages"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType string `form:"resultType" json:"resultType" xml:"resultType"`
 }
 
 // ToolsListInvalidParamsResponseBody is the type of the "mcp_assistant"
@@ -332,24 +386,32 @@ type ResourcesCapabilityResponseBody struct {
 type PromptsCapabilityResponseBody struct {
 }
 
-// ServerInfoResponseBody is used to define fields on response body types.
-type ServerInfoResponseBody struct {
-	// Server name
-	Name string `form:"name" json:"name" xml:"name"`
-	// Server version
-	Version string `form:"version" json:"version" xml:"version"`
-}
-
 // ToolInfoResponseBody is used to define fields on response body types.
 type ToolInfoResponseBody struct {
 	// Tool name
 	Name string `form:"name" json:"name" xml:"name"`
 	// Tool description
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Optional behavior hints; clients must trust the server before acting on them
+	Annotations *ToolAnnotationsResponseBody `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
 	// JSON Schema for tool input
 	InputSchema json.RawMessage `form:"inputSchema" json:"inputSchema" xml:"inputSchema"`
 	// JSON Schema for structured tool output
 	OutputSchema json.RawMessage `form:"outputSchema,omitempty" json:"outputSchema,omitempty" xml:"outputSchema,omitempty"`
+}
+
+// ToolAnnotationsResponseBody is used to define fields on response body types.
+type ToolAnnotationsResponseBody struct {
+	// Human-readable tool display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Whether the tool leaves its environment unchanged; absent means false
+	ReadOnlyHint *bool `form:"readOnlyHint,omitempty" json:"readOnlyHint,omitempty" xml:"readOnlyHint,omitempty"`
+	// Whether the tool may remove or replace data; absent means true
+	DestructiveHint *bool `form:"destructiveHint,omitempty" json:"destructiveHint,omitempty" xml:"destructiveHint,omitempty"`
+	// Whether repeating arguments has no additional effects; absent means false
+	IdempotentHint *bool `form:"idempotentHint,omitempty" json:"idempotentHint,omitempty" xml:"idempotentHint,omitempty"`
+	// Whether the tool interacts with external entities; absent means true
+	OpenWorldHint *bool `form:"openWorldHint,omitempty" json:"openWorldHint,omitempty" xml:"openWorldHint,omitempty"`
 }
 
 // ContentItemResponseBody is used to define fields on response body types.
@@ -378,8 +440,10 @@ type ResourceContentResponseBody struct {
 	URI string `form:"uri" json:"uri" xml:"uri"`
 	// Content MIME type
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
-	// Text content
-	Text string `form:"text" json:"text" xml:"text"`
+	// Text content; present only when blob is absent
+	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Base64 binary content; present only when text is absent
+	Blob *string `form:"blob,omitempty" json:"blob,omitempty" xml:"blob,omitempty"`
 }
 
 // PromptInfoResponseBody is used to define fields on response body types.
@@ -418,29 +482,25 @@ type MessageContentResponseBody struct {
 	Text string `form:"text" json:"text" xml:"text"`
 }
 
-// ClientInfoRequestBody is used to define fields on request body types.
-type ClientInfoRequestBody struct {
-	// Client name
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// Client version
-	Version *string `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
-}
-
-// ClientCapabilitiesRequestBody is used to define fields on request body types.
-type ClientCapabilitiesRequestBody struct {
-}
-
-// NewInitializeResponseBody builds the HTTP response body from the result of
-// the "initialize" endpoint of the "mcp_assistant" service.
-func NewInitializeResponseBody(res *mcpassistant.InitializeResult) *InitializeResponseBody {
-	body := &InitializeResponseBody{
-		ProtocolVersion: res.ProtocolVersion,
+// NewServerDiscoverResponseBody builds the HTTP response body from the result
+// of the "server/discover" endpoint of the "mcp_assistant" service.
+func NewServerDiscoverResponseBody(res *mcpassistant.DiscoverResult) *ServerDiscoverResponseBody {
+	body := &ServerDiscoverResponseBody{
+		Meta:       res.Meta,
+		ResultType: res.ResultType,
+		TTLMs:      res.TTLMs,
+		CacheScope: res.CacheScope,
+	}
+	if res.SupportedVersions != nil {
+		body.SupportedVersions = make([]string, len(res.SupportedVersions))
+		for i, val := range res.SupportedVersions {
+			body.SupportedVersions[i] = val
+		}
+	} else {
+		body.SupportedVersions = []string{}
 	}
 	if res.Capabilities != nil {
 		body.Capabilities = marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody(res.Capabilities)
-	}
-	if res.ServerInfo != nil {
-		body.ServerInfo = marshalMcpassistantServerInfoToServerInfoResponseBody(res.ServerInfo)
 	}
 	return body
 }
@@ -450,6 +510,10 @@ func NewInitializeResponseBody(res *mcpassistant.InitializeResult) *InitializeRe
 func NewToolsListResponseBody(res *mcpassistant.ToolsListResult) *ToolsListResponseBody {
 	body := &ToolsListResponseBody{
 		NextCursor: res.NextCursor,
+		Meta:       res.Meta,
+		ResultType: res.ResultType,
+		TTLMs:      res.TTLMs,
+		CacheScope: res.CacheScope,
 	}
 	if res.Tools != nil {
 		body.Tools = make([]*ToolInfoResponseBody, len(res.Tools))
@@ -472,6 +536,8 @@ func NewToolsCallResponseBody(res *mcpassistant.ToolsCallResult) *ToolsCallRespo
 	body := &ToolsCallResponseBody{
 		IsError:           res.IsError,
 		StructuredContent: res.StructuredContent,
+		Meta:              res.Meta,
+		ResultType:        res.ResultType,
 	}
 	if res.Content != nil {
 		body.Content = make([]*ContentItemResponseBody, len(res.Content))
@@ -493,6 +559,10 @@ func NewToolsCallResponseBody(res *mcpassistant.ToolsCallResult) *ToolsCallRespo
 func NewResourcesListResponseBody(res *mcpassistant.ResourcesListResult) *ResourcesListResponseBody {
 	body := &ResourcesListResponseBody{
 		NextCursor: res.NextCursor,
+		Meta:       res.Meta,
+		ResultType: res.ResultType,
+		TTLMs:      res.TTLMs,
+		CacheScope: res.CacheScope,
 	}
 	if res.Resources != nil {
 		body.Resources = make([]*ResourceInfoResponseBody, len(res.Resources))
@@ -512,7 +582,12 @@ func NewResourcesListResponseBody(res *mcpassistant.ResourcesListResult) *Resour
 // NewResourcesReadResponseBody builds the HTTP response body from the result
 // of the "resources/read" endpoint of the "mcp_assistant" service.
 func NewResourcesReadResponseBody(res *mcpassistant.ResourcesReadResult) *ResourcesReadResponseBody {
-	body := &ResourcesReadResponseBody{}
+	body := &ResourcesReadResponseBody{
+		Meta:       res.Meta,
+		ResultType: res.ResultType,
+		TTLMs:      res.TTLMs,
+		CacheScope: res.CacheScope,
+	}
 	if res.Contents != nil {
 		body.Contents = make([]*ResourceContentResponseBody, len(res.Contents))
 		for i, val := range res.Contents {
@@ -533,6 +608,10 @@ func NewResourcesReadResponseBody(res *mcpassistant.ResourcesReadResult) *Resour
 func NewPromptsListResponseBody(res *mcpassistant.PromptsListResult) *PromptsListResponseBody {
 	body := &PromptsListResponseBody{
 		NextCursor: res.NextCursor,
+		Meta:       res.Meta,
+		ResultType: res.ResultType,
+		TTLMs:      res.TTLMs,
+		CacheScope: res.CacheScope,
 	}
 	if res.Prompts != nil {
 		body.Prompts = make([]*PromptInfoResponseBody, len(res.Prompts))
@@ -554,6 +633,8 @@ func NewPromptsListResponseBody(res *mcpassistant.PromptsListResult) *PromptsLis
 func NewPromptsGetResponseBody(res *mcpassistant.PromptsGetResult) *PromptsGetResponseBody {
 	body := &PromptsGetResponseBody{
 		Description: res.Description,
+		Meta:        res.Meta,
+		ResultType:  res.ResultType,
 	}
 	if res.Messages != nil {
 		body.Messages = make([]*PromptMessageResponseBody, len(res.Messages))
@@ -696,14 +777,12 @@ func NewPromptsGetInternalErrorResponseBody(res *goa.ServiceError) *PromptsGetIn
 	return body
 }
 
-// NewInitializePayload builds a mcp_assistant service initialize endpoint
-// payload.
-func NewInitializePayload(body *InitializeRequestBody) *mcpassistant.InitializePayload {
-	v := &mcpassistant.InitializePayload{
-		ProtocolVersion: *body.ProtocolVersion,
+// NewServerDiscoverDiscoverPayload builds a mcp_assistant service
+// server/discover endpoint payload.
+func NewServerDiscoverDiscoverPayload(body *ServerDiscoverRequestBody) *mcpassistant.DiscoverPayload {
+	v := &mcpassistant.DiscoverPayload{
+		Meta: body.Meta,
 	}
-	v.ClientInfo = unmarshalClientInfoRequestBodyToMcpassistantClientInfo(body.ClientInfo)
-	v.Capabilities = unmarshalClientCapabilitiesRequestBodyToMcpassistantClientCapabilities(body.Capabilities)
 
 	return v
 }
@@ -711,15 +790,12 @@ func NewInitializePayload(body *InitializeRequestBody) *mcpassistant.InitializeP
 // NewToolsListPayload builds a mcp_assistant service tools/list endpoint
 // payload.
 func NewToolsListPayload(body *ToolsListRequestBody) *mcpassistant.ToolsListPayload {
-	res := &mcpassistant.ToolsListPayload{}
-	if body != nil {
-		v := &mcpassistant.PaginatedRequestParams{
-			Cursor: body.Cursor,
-		}
-		res.Params = v
+	v := &mcpassistant.ToolsListPayload{
+		Cursor: body.Cursor,
+		Meta:   body.Meta,
 	}
 
-	return res
+	return v
 }
 
 // NewToolsCallPayload builds a mcp_assistant service tools/call endpoint
@@ -728,6 +804,7 @@ func NewToolsCallPayload(body *ToolsCallRequestBody) *mcpassistant.ToolsCallPayl
 	v := &mcpassistant.ToolsCallPayload{
 		Name:      *body.Name,
 		Arguments: body.Arguments,
+		Meta:      body.Meta,
 	}
 
 	return v
@@ -736,22 +813,20 @@ func NewToolsCallPayload(body *ToolsCallRequestBody) *mcpassistant.ToolsCallPayl
 // NewResourcesListPayload builds a mcp_assistant service resources/list
 // endpoint payload.
 func NewResourcesListPayload(body *ResourcesListRequestBody) *mcpassistant.ResourcesListPayload {
-	res := &mcpassistant.ResourcesListPayload{}
-	if body != nil {
-		v := &mcpassistant.PaginatedRequestParams{
-			Cursor: body.Cursor,
-		}
-		res.Params = v
+	v := &mcpassistant.ResourcesListPayload{
+		Cursor: body.Cursor,
+		Meta:   body.Meta,
 	}
 
-	return res
+	return v
 }
 
 // NewResourcesReadPayload builds a mcp_assistant service resources/read
 // endpoint payload.
 func NewResourcesReadPayload(body *ResourcesReadRequestBody) *mcpassistant.ResourcesReadPayload {
 	v := &mcpassistant.ResourcesReadPayload{
-		URI: *body.URI,
+		URI:  *body.URI,
+		Meta: body.Meta,
 	}
 
 	return v
@@ -760,15 +835,12 @@ func NewResourcesReadPayload(body *ResourcesReadRequestBody) *mcpassistant.Resou
 // NewPromptsListPayload builds a mcp_assistant service prompts/list endpoint
 // payload.
 func NewPromptsListPayload(body *PromptsListRequestBody) *mcpassistant.PromptsListPayload {
-	res := &mcpassistant.PromptsListPayload{}
-	if body != nil {
-		v := &mcpassistant.PaginatedRequestParams{
-			Cursor: body.Cursor,
-		}
-		res.Params = v
+	v := &mcpassistant.PromptsListPayload{
+		Cursor: body.Cursor,
+		Meta:   body.Meta,
 	}
 
-	return res
+	return v
 }
 
 // NewPromptsGetPayload builds a mcp_assistant service prompts/get endpoint
@@ -776,6 +848,7 @@ func NewPromptsListPayload(body *PromptsListRequestBody) *mcpassistant.PromptsLi
 func NewPromptsGetPayload(body *PromptsGetRequestBody) *mcpassistant.PromptsGetPayload {
 	v := &mcpassistant.PromptsGetPayload{
 		Name: *body.Name,
+		Meta: body.Meta,
 	}
 	if body.Arguments != nil {
 		v.Arguments = make(map[string]string, len(body.Arguments))
@@ -789,22 +862,20 @@ func NewPromptsGetPayload(body *PromptsGetRequestBody) *mcpassistant.PromptsGetP
 	return v
 }
 
-// ValidateInitializeRequestBody runs the validations defined on
-// InitializeRequestBody
-func ValidateInitializeRequestBody(body *InitializeRequestBody) (err error) {
-	if body.ProtocolVersion == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("protocolVersion", "body"))
+// ValidateServerDiscoverRequestBody runs the validations defined on
+// ServerDiscoverRequestBody
+func ValidateServerDiscoverRequestBody(body *ServerDiscoverRequestBody) (err error) {
+	if body.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
 	}
-	if body.ClientInfo == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("clientInfo", "body"))
-	}
-	if body.Capabilities == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("capabilities", "body"))
-	}
-	if body.ClientInfo != nil {
-		if err2 := validateClientInfoRequestBody(body.ClientInfo, "body.clientInfo"); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
+	return
+}
+
+// ValidateToolsListRequestBody runs the validations defined on
+// ToolsListRequestBody
+func ValidateToolsListRequestBody(body *ToolsListRequestBody) (err error) {
+	if body.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
 	}
 	return
 }
@@ -815,6 +886,18 @@ func ValidateToolsCallRequestBody(body *ToolsCallRequestBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
+	if body.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
+	}
+	return
+}
+
+// ValidateResourcesListRequestBody runs the validations defined on
+// ResourcesListRequestBody
+func ValidateResourcesListRequestBody(body *ResourcesListRequestBody) (err error) {
+	if body.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
+	}
 	return
 }
 
@@ -824,9 +907,21 @@ func ValidateResourcesReadRequestBody(body *ResourcesReadRequestBody) (err error
 	if body.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
 	}
+	if body.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
+	}
 	if body.URI != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *body.URI, goa.FormatURI))
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.uri", *body.URI, "^[a-zA-Z][a-zA-Z0-9+.-]*:.*"))
+	}
+	return
+}
+
+// ValidatePromptsListRequestBody runs the validations defined on
+// PromptsListRequestBody
+func ValidatePromptsListRequestBody(body *PromptsListRequestBody) (err error) {
+	if body.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
 	}
 	return
 }
@@ -837,28 +932,8 @@ func ValidatePromptsGetRequestBody(body *PromptsGetRequestBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
-	return
-}
-
-// ValidateClientInfoRequestBody runs the validations defined on ClientInfo
-func ValidateClientInfoRequestBody(body *ClientInfoRequestBody) (err error) {
-	if body.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
-	}
-	if body.Version == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
-	}
-	return
-}
-
-// validateClientInfoRequestBody checks ClientInfo and reports errors using the
-// path supplied by its caller
-func validateClientInfoRequestBody(body *ClientInfoRequestBody, path string) (err error) {
-	if body.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
-	}
-	if body.Version == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("version", path))
+	if body.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
 	}
 	return
 }

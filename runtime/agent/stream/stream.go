@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
@@ -303,6 +304,12 @@ type (
 	AwaitClarification struct {
 		Base
 		Data AwaitClarificationPayload
+	}
+
+	// AwaitMCPInput exposes the current host requests for an unfinished remote call.
+	AwaitMCPInput struct {
+		Base
+		Data api.PendingMCPInput
 	}
 
 	// AwaitConfirmation streams an operator confirmation request from the runtime.
@@ -634,6 +641,8 @@ type (
 		ToolEnd bool
 		// AwaitClarification controls emission of await_clarification events.
 		AwaitClarification bool
+		// AwaitMCPInput controls emission of unfinished remote call input requests.
+		AwaitMCPInput bool
 		// AwaitConfirmation controls emission of await_confirmation events.
 		AwaitConfirmation bool
 		// AwaitQuestions controls emission of await_questions events.
@@ -668,6 +677,7 @@ func RuntimeHostProfile() StreamProfile {
 		ToolOutputDelta:    true,
 		ToolEnd:            true,
 		AwaitClarification: true,
+		AwaitMCPInput:      true,
 		AwaitConfirmation:  true,
 		AwaitQuestions:     true,
 		AwaitExternalTools: true,
@@ -738,6 +748,9 @@ const (
 
 	// EventAwaitClarification streams when a planner requests human clarification.
 	EventAwaitClarification EventType = "await_clarification"
+
+	// EventAwaitMCPInput identifies an unfinished remote call input request.
+	EventAwaitMCPInput EventType = "await_mcp_input"
 
 	// EventAwaitConfirmation streams when the runtime requests operator confirmation.
 	EventAwaitConfirmation EventType = "await_confirmation"

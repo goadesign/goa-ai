@@ -30,12 +30,10 @@ type (
 		registrationConstructor *goacodegen.NameDeclaration
 		register                *goacodegen.NameDeclaration
 		usedOptions             *goacodegen.NameDeclaration
-		mcp                     map[string]*goacodegen.NameDeclaration
 		used                    map[string]*plannedUsedToolsetNames
 		agentToolsConsumers     map[string]*goacodegen.NameDeclaration
 		agentToolsImports       map[string]string
 		specsImportPaths        map[string]string
-		helperImportPaths       map[string]string
 		implementationPaths     []string
 		configPaths             []string
 		registryPaths           []string
@@ -186,12 +184,10 @@ func planAgentPackages(generation *goacodegen.Generation, design *agentir.Design
 		packagePlan := &agentPackagePlan{
 			pkg:                 pkg,
 			fixed:               make(map[string]*goacodegen.NameDeclaration),
-			mcp:                 make(map[string]*goacodegen.NameDeclaration),
 			used:                make(map[string]*plannedUsedToolsetNames),
 			agentToolsConsumers: make(map[string]*goacodegen.NameDeclaration),
 			agentToolsImports:   make(map[string]string),
 			specsImportPaths:    make(map[string]string),
-			helperImportPaths:   make(map[string]string),
 			definitionAgentIDs:  reachableAgentIDs(agent),
 		}
 		packagePlan.registrySources = planRegistrySources(agent, packagePlan.definitionAgentIDs)
@@ -293,9 +289,6 @@ func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
 		return err
 	}
 
-	if err := p.declareMCPNames(agent); err != nil {
-		return err
-	}
 	if err := p.declareUsedToolsetNames(agent); err != nil {
 		return err
 	}
@@ -338,17 +331,8 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 		agent.Expr.RunPolicy.History.Mode == agentexpr.HistoryModeCompress {
 		p.configPaths = append(p.configPaths, modelImportPath, runtimeImportPath)
 	}
-	if agentHasMCPToolset(agent) {
-		p.configPaths = append(p.configPaths, "fmt", mcpRuntimeImportPath)
-	}
 	if agentHasDirectHints(agent) {
 		p.registryPaths = append(p.registryPaths, toolsImportPath, hintsImportPath)
-	}
-	for _, reference := range append(append([]*agentir.ToolsetRef{}, agent.UsedToolsets...), agent.ExportedToolsets...) {
-		if reference.Provider != nil && reference.Provider.Kind == agentexpr.ProviderMCP &&
-			reference.PackageImportPath != "" {
-			p.registryPaths = append(p.registryPaths, reference.PackageImportPath)
-		}
 	}
 	for _, reference := range agent.UsedToolsets {
 		if reference.AgentToolsImportPath == "" && reference.SpecsImportPath != "" {
@@ -424,13 +408,6 @@ func plannedImport(preferred, importPath string, explicit bool) *goacodegen.Impo
 // agent registry so their aliases are chosen with the package's declarations.
 func (p *agentPackagePlan) declareSpecsImports(agent *agentir.Agent) error {
 	for _, reference := range append(append([]*agentir.ToolsetRef{}, agent.UsedToolsets...), agent.ExportedToolsets...) {
-		needsHelper := reference.Provider != nil && reference.Provider.Kind == agentexpr.ProviderMCP
-		if needsHelper && reference.PackageImportPath != "" {
-			if err := p.pkg.ReserveGeneratedImport(goacodegen.NewImport(reference.PackageName, reference.PackageImportPath)); err != nil {
-				return err
-			}
-			p.helperImportPaths[reference.QualifiedName] = reference.PackageImportPath
-		}
 		if reference.AgentToolsImportPath != "" || reference.SpecsImportPath == "" {
 			continue
 		}
@@ -455,30 +432,6 @@ func (p *agentPackagePlan) declareFixedNames(names map[goacodegen.PackageNameKin
 			}
 			p.fixed[name] = declaration
 		}
-	}
-	return nil
-}
-
-// declareMCPNames records one constant for each distinct MCP route used by the agent.
-func (p *agentPackagePlan) declareMCPNames(agent *agentir.Agent) error {
-	for _, reference := range append(append([]*agentir.ToolsetRef{}, agent.UsedToolsets...), agent.ExportedToolsets...) {
-		if reference.Provider == nil || reference.Provider.Kind != agentexpr.ProviderMCP {
-			continue
-		}
-		meta := reference.Provider.MCP
-		if p.mcp[meta.QualifiedName] != nil {
-			continue
-		}
-		declaration, err := p.declarePreferred(
-			goacodegen.NameConstant,
-			meta.ConstName,
-			goacodegen.ExportedName,
-			agent.ID+":mcp:"+meta.QualifiedName,
-		)
-		if err != nil {
-			return err
-		}
-		p.mcp[meta.QualifiedName] = declaration
 	}
 	return nil
 }
@@ -633,14 +586,8 @@ func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentDa
 	}
 	agent.packageFiles = files
 	for _, toolset := range agent.AllToolsets {
-		if importPath := p.helperImportPaths[toolset.QualifiedName]; importPath != "" {
-			toolset.AgentPackageHelperAlias = p.pkg.ImportName(importPath)
-		}
 		if importPath := p.specsImportPaths[toolset.QualifiedName]; importPath != "" {
 			toolset.AgentPackageSpecsAlias = p.pkg.ImportName(importPath)
-		}
-		if toolset.MCP != nil {
-			toolset.MCP.ConstName = p.mcp[toolset.MCP.QualifiedName].Name()
 		}
 		if names := p.used[toolset.QualifiedName]; names != nil {
 			toolset.RegistrationNameConst = names.routeConstant.Name()
@@ -721,10 +668,6 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 		Imports:      p.linkImports(p.configPaths),
 		ErrorsAlias:  p.pkg.ImportName("errors"),
 		PlannerAlias: p.pkg.ImportName(plannerImportPath),
-	}
-	if importPathIncluded(p.configPaths, "fmt") {
-		config.FmtAlias = p.pkg.ImportName("fmt")
-		config.MCPRuntimeAlias = p.pkg.ImportName(mcpRuntimeImportPath)
 	}
 	if importPathIncluded(p.configPaths, modelImportPath) {
 		config.ModelAlias = p.pkg.ImportName(modelImportPath)
@@ -825,23 +768,13 @@ func (p *agentPackagePlan) linkImports(paths []string) []*goacodegen.ImportSpec 
 func registersUsedToolset(reference *agentir.ToolsetRef) bool {
 	return reference.AgentToolsImportPath == "" &&
 		(reference.Provider == nil ||
-			reference.Provider.Kind != agentexpr.ProviderMCP && reference.Provider.Kind != agentexpr.ProviderRegistry)
+			reference.Provider.Kind != agentexpr.ProviderRegistry)
 }
 
 // referenceHasHints reports whether generated registration installs call or result hints.
 func referenceHasHints(reference *agentir.ToolsetRef) bool {
 	for _, tool := range toolsetContract(reference).Tools {
 		if tool.CallHintTemplate != "" || tool.ResultHintTemplate != "" {
-			return true
-		}
-	}
-	return false
-}
-
-// agentHasMCPToolset reports whether the agent config accepts an MCP caller.
-func agentHasMCPToolset(agent *agentir.Agent) bool {
-	for _, reference := range append(append([]*agentir.ToolsetRef{}, agent.UsedToolsets...), agent.ExportedToolsets...) {
-		if reference.Provider != nil && reference.Provider.Kind == agentexpr.ProviderMCP {
 			return true
 		}
 	}
