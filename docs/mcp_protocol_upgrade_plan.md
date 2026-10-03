@@ -116,7 +116,7 @@ The interrupted-SSE retry interpretation, external deployment inventory and
 cutover, and website documentation ownership remain release gates. The requested
 website content directory is absent from this repository; local API/runtime,
 README, architecture, quickstart, and integration documentation are updated.
-No PR or release has been created.
+No release or deployment has been performed. Review proceeds through a draft PR while these release gates remain open.
 
 Shared-schema changes can also change registry declaration identity. The
 `shared_toolset_consumers` golden now includes the authored description on its
@@ -521,7 +521,7 @@ The repository proves these local consumers, not all downstream deployments. Bef
 
 ## Dependency upgrade and implementation authorization
 
-Implementation is authorized against current remote `main`; PR creation remains on hold. Preserve the newly merged forced and automatic typed-output operations while replacing MCP. Update every root runtime/test/tool dependency to current compatible releases, retain a newer explicitly pinned Goa/Pulse revision when the latest release is older, and update their active upstream revisions when necessary for generator contracts. Record the exact resolved versions in committed module files rather than fetching moving revisions at build time.
+Implementation and PR publication are authorized against current remote `main`. Preserve the newly merged forced and automatic typed-output operations while replacing MCP. Update every root runtime/test/tool dependency to current compatible releases, retain a newer explicitly pinned Goa/Pulse revision when the latest release is older, and update their active upstream revisions when necessary for generator contracts. Record the exact resolved versions in committed module files rather than fetching moving revisions at build time.
 
 Update all nested modules (`quickstart`, `integration_tests/fixtures/assistant`, and `integration_tests/fixtures/eval_consumer`) with the same dependency generation. Their local goa-ai replace directives continue to point to this checkout; do not replace them with an older published framework build. Update pinned Go code-generation tools together with their owning modules and regenerate fixtures. Verify provider SDK API changes with synthetic transport tests, generator changes with compiled emitted packages, and Temporal changes with workflow/replay tests. No application-dependent behavior or new production library is justified solely by refreshing dependencies.
 
@@ -738,7 +738,7 @@ This is a breaking wire and generated-Go API change. Both locally generated side
 
 ### Publication and clone cleanup
 
-The isolated branch contains the implementation, regenerated consumers, dependency upgrades, tests, and this revised plan. Publish the verified branch for review. The user has explicitly asked not to create a PR yet; do not open one until that instruction changes. Publication of a branch does not satisfy the release gates above.
+The isolated branch contains the implementation, regenerated consumers, dependency upgrades, tests, and this revised plan. Publish verified changes through a draft review PR and keep its description aligned with the current implementation and evidence. Commits and pushes may continue on that PR. Publication does not satisfy the release gates above.
 
 Keep the isolated clone until the work is complete and published without losing review work. After the task's PR is merged, use its actual base branch, verify a clean worktree and no commits in `git log @{upstream}..`, and remove the exact clone directory `/Users/raphael/src/goa-ai-mcp-upgrade`. If it contains uncommitted or unpushed work, stop and preserve it. This implements the user's cleanup request; do not delete the original shared checkout or delete the plan before publication.
 
