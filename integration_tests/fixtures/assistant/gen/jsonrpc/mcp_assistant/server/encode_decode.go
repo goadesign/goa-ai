@@ -174,6 +174,37 @@ func DecodeResourcesReadRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 	}
 }
 
+// DecodeResourcesTemplatesListRequest returns a decoder for requests sent to
+// the mcp_assistant resources/templates/list endpoint.
+func DecodeResourcesTemplatesListRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.ResourceTemplatesListPayload, error) {
+	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.ResourceTemplatesListPayload, error) {
+		r.Body = io.NopCloser(bytes.NewReader(req.Params))
+		var payload *mcpassistant.ResourceTemplatesListPayload
+		var (
+			body ResourcesTemplatesListRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateResourcesTemplatesListRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewResourcesTemplatesListResourceTemplatesListPayload(&body)
+
+		return payload, nil
+	}
+}
+
 // DecodePromptsListRequest returns a decoder for requests sent to the
 // mcp_assistant prompts/list endpoint.
 func DecodePromptsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.PromptsListPayload, error) {
@@ -447,6 +478,20 @@ func marshalMcpassistantContentAnnotationsToContentAnnotationsResponseBody(v *mc
 func marshalMcpassistantResourceInfoToResourceInfoResponseBody(v *mcpassistant.ResourceInfo) *ResourceInfoResponseBody {
 	res := &ResourceInfoResponseBody{
 		URI:         v.URI,
+		Name:        v.Name,
+		Description: v.Description,
+		MimeType:    v.MimeType,
+	}
+
+	return res
+}
+
+// marshalMcpassistantResourceTemplateInfoToResourceTemplateInfoResponseBody
+// builds a value of type *ResourceTemplateInfoResponseBody from a value of
+// type *mcpassistant.ResourceTemplateInfo.
+func marshalMcpassistantResourceTemplateInfoToResourceTemplateInfoResponseBody(v *mcpassistant.ResourceTemplateInfo) *ResourceTemplateInfoResponseBody {
+	res := &ResourceTemplateInfoResponseBody{
+		URITemplate: v.URITemplate,
 		Name:        v.Name,
 		Description: v.Description,
 		MimeType:    v.MimeType,

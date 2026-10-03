@@ -72,8 +72,10 @@ Verified on 2026-10-03 with the pinned referee:
 | Server / `dns-rebinding-protection` | 2 passed | Configured localhost browser Origin accepted; attack Origin rejected |
 | Server / `resources-read-binary` | 2 passed after binary-resource implementation | Real generated adapter returns a complete synthetic PNG; its wire schema passes. Empty binary content and aliases also have local generated-client/HTTP checks. |
 | Server / `prompts-list`, `prompts-get-simple`, `prompts-get-with-args`, `prompts-get-embedded-resource`, `prompts-get-with-image` | 10 passed after typed-prompt implementation | Actual generated producers preserve argument text, the embedded URI, and ordered image/text messages. Each scenario passes its operation and wire-schema check. |
-| Server / `completion-complete` | 2 passed after prompt-completion implementation | A typed service returns two suggestions and their total through the generated endpoint. URI-template suggestions remain unverified. |
+| Server / `completion-complete` | 2 passed after prompt-completion implementation | A typed service returns two suggestions and their total through the generated endpoint. Template-variable suggestions have local generated HTTP checks; this referee scenario selects a prompt. |
 | Server / `caching` | 7 passed, 1 failed; overall failure | URI-template listing is not implemented or advertised. Fixed-resource and other tested cache fields pass. |
+| Server / `resources-templates-read` | 2 passed after resource-template implementation | The typed service receives the exact expanded URI through the generated adapter. Lossy and overlapping declarations have local HTTP checks. |
+| Server / `caching` after resource-template implementation | 8 passed | Template listing now returns the required cache fields through the generated endpoint. The earlier baseline failure remains in the full audit. |
 
 The custom-header driver's second call omits the optional `verbose` property.
 The harness's suggested JSON null conflicts with its own `type: boolean` schema;

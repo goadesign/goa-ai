@@ -6577,13 +6577,19 @@ selected old contracts for already accepted work. This upgrade does not rewrite
 catalog storage or retired-token history.
 
 Generated servers expose declared unary tools, fixed resource reads, and static
-or method-backed prompts, plus prompt argument suggestions when a
-`PromptCompletion` binding exists. Generated clients call `completion/complete`
+or method-backed prompts, plus parameterized URI reads and prompt/resource suggestions when their
+`ResourceTemplate`, `PromptCompletion` or `ResourceCompletion` bindings exist. Generated clients call `completion/complete`
 with a typed reference, argument and optional prior context. Suggestions retain
 service order; malformed context fails before service dispatch, and oversized or
 invalid output returns an internal error. The 100-value bound belongs to each
 response array, while totals and later responses remain independent. See
 [the suggestion contract](dsl.md#mcp-prompt-argument-suggestions).
+URI templates guide discovery; one typed reader owns non-fixed URI lookup and
+current authorization. It receives the exact URI and returns ordered typed
+text/blob contents. No inferred variables or first-matching-template dispatch
+are exposed. RFC 6570 parsing and variable collection run during generation;
+resource reads do not use the parser. See
+[the resource contract](dsl.md#parameterized-mcp-resources).
 They do not advertise subscriptions, tasks, or
 server-originated elicitation. Host credential handling remains application-owned. The remaining
 feature and conformance work is tracked in the

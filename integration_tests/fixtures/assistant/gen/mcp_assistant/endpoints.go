@@ -15,27 +15,29 @@ import (
 
 // Endpoints wraps the "mcp_assistant" service endpoints.
 type Endpoints struct {
-	ServerDiscover     goa.Endpoint
-	ToolsList          goa.Endpoint
-	ToolsCall          goa.Endpoint
-	ResourcesList      goa.Endpoint
-	ResourcesRead      goa.Endpoint
-	PromptsList        goa.Endpoint
-	PromptsGet         goa.Endpoint
-	CompletionComplete goa.Endpoint
+	ServerDiscover         goa.Endpoint
+	ToolsList              goa.Endpoint
+	ToolsCall              goa.Endpoint
+	ResourcesList          goa.Endpoint
+	ResourcesRead          goa.Endpoint
+	ResourcesTemplatesList goa.Endpoint
+	PromptsList            goa.Endpoint
+	PromptsGet             goa.Endpoint
+	CompletionComplete     goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "mcp_assistant" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		ServerDiscover:     NewServerDiscoverEndpoint(s),
-		ToolsList:          NewToolsListEndpoint(s),
-		ToolsCall:          NewToolsCallEndpoint(s),
-		ResourcesList:      NewResourcesListEndpoint(s),
-		ResourcesRead:      NewResourcesReadEndpoint(s),
-		PromptsList:        NewPromptsListEndpoint(s),
-		PromptsGet:         NewPromptsGetEndpoint(s),
-		CompletionComplete: NewCompletionCompleteEndpoint(s),
+		ServerDiscover:         NewServerDiscoverEndpoint(s),
+		ToolsList:              NewToolsListEndpoint(s),
+		ToolsCall:              NewToolsCallEndpoint(s),
+		ResourcesList:          NewResourcesListEndpoint(s),
+		ResourcesRead:          NewResourcesReadEndpoint(s),
+		ResourcesTemplatesList: NewResourcesTemplatesListEndpoint(s),
+		PromptsList:            NewPromptsListEndpoint(s),
+		PromptsGet:             NewPromptsGetEndpoint(s),
+		CompletionComplete:     NewCompletionCompleteEndpoint(s),
 	}
 }
 
@@ -47,6 +49,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ToolsCall = m(e.ToolsCall)
 	e.ResourcesList = m(e.ResourcesList)
 	e.ResourcesRead = m(e.ResourcesRead)
+	e.ResourcesTemplatesList = m(e.ResourcesTemplatesList)
 	e.PromptsList = m(e.PromptsList)
 	e.PromptsGet = m(e.PromptsGet)
 	e.CompletionComplete = m(e.CompletionComplete)
@@ -94,6 +97,15 @@ func NewResourcesReadEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*ResourcesReadPayload)
 		return s.ResourcesRead(ctx, p)
+	}
+}
+
+// NewResourcesTemplatesListEndpoint returns an endpoint function that calls
+// the method "resources/templates/list" of service "mcp_assistant".
+func NewResourcesTemplatesListEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ResourceTemplatesListPayload)
+		return s.ResourcesTemplatesList(ctx, p)
 	}
 }
 

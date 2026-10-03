@@ -91,7 +91,10 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planMCPPackagePaths(servicePlan, prepared, adapter); err != nil {
 			return err
 		}
-		if err := planPromptConversions(plan.Generation(), servicePlan, prepared, adapter); err != nil {
+		if err := planResourceReader(plan.Generation(), servicePlan, prepared, adapter); err != nil {
+			return err
+		}
+		if err := planContentConversions(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
 		if err := planCompletionConversions(plan.Generation(), servicePlan, prepared, adapter); err != nil {
@@ -147,7 +150,10 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 			return nil, err
 		}
 		files = append(files, codecFiles...)
-		if err := bindPromptConversions(services, planned); err != nil {
+		if err := bindResourceReader(services, planned); err != nil {
+			return nil, err
+		}
+		if err := bindContentConversions(services, planned); err != nil {
 			return nil, err
 		}
 		if err := bindCompletionConversions(services, planned); err != nil {
@@ -228,15 +234,15 @@ func planMCPImports(
 		data.serverImportPaths = append(data.serverImportPaths, "encoding/base64")
 		break
 	}
-	if data.NeedsPromptBytes {
+	if data.NeedsContentBytes {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("encoding/base64"))
 		data.serverImportPaths = append(data.serverImportPaths, "encoding/base64")
 	}
-	if data.NeedsPromptNumbers {
+	if data.NeedsContentNumbers {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("math"))
 		data.serverImportPaths = append(data.serverImportPaths, "math")
 	}
-	if data.NeedsPromptMeta {
+	if data.NeedsContentMeta {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("fmt"))
 		data.serverImportPaths = append(data.serverImportPaths, "fmt")
 	}
@@ -483,9 +489,23 @@ func planMCPCodecs(
 			}
 		}
 	}
-	for _, completion := range data.PromptCompletions {
+	if reader := data.ResourceReader; reader != nil {
 		data.NeedsServerCodec = true
-		values := methodCodecs[completion.authored.Method.Name]
+		values := methodCodecs[reader.method.Name]
+		if values.result.ValidationDeclaration() == nil {
+			if err := values.result.PlanValidation(); err != nil {
+				return nil, nil, err
+			}
+		}
+		if values.payload.TransportConstructorDeclaration() == nil {
+			if err := values.payload.PlanTransportConstructor(); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	for _, completion := range data.Completions {
+		data.NeedsServerCodec = true
+		values := methodCodecs[completion.method.Name]
 		if values.result.ValidationDeclaration() == nil {
 			if err := values.result.PlanValidation(); err != nil {
 				return nil, nil, err
@@ -597,8 +617,14 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 		}
 		return jsoncodec.ConstructOnly, jsoncodec.ValidateOnly
 	}
-	for _, completion := range data.PromptCompletions {
-		if completion.authored.Method.Name == methodName {
+	if reader := data.ResourceReader; reader != nil && reader.method.Name == methodName {
+		if payloadEncode || resultEncode {
+			return codecDirection(payloadEncode, payloadDecode), codecDirection(resultEncode, resultDecode)
+		}
+		return jsoncodec.ConstructOnly, jsoncodec.ValidateOnly
+	}
+	for _, completion := range data.Completions {
+		if completion.method.Name == methodName {
 			if payloadEncode || resultEncode {
 				return codecDirection(payloadEncode, payloadDecode), codecDirection(resultEncode, resultDecode)
 			}
@@ -644,10 +670,16 @@ func mappedMCPMethods(prepared *preparedMCPService) []*expr.MethodExpr {
 	for _, resource := range prepared.mcp.Resources {
 		add(resource.Method)
 	}
+	for _, template := range prepared.mcp.ResourceTemplates {
+		add(template.Method)
+	}
 	for _, prompt := range prepared.mcp.MethodPrompts {
 		add(prompt.Method)
 	}
 	for _, completion := range prepared.mcp.PromptCompletions {
+		add(completion.Method)
+	}
+	for _, completion := range prepared.mcp.ResourceCompletions {
 		add(completion.Method)
 	}
 	return methods
@@ -670,8 +702,8 @@ func declareMCPNames(generation *goacodegen.Generation, data *AdapterData) error
 			return err
 		}
 	}
-	if data.NeedsPromptMeta {
-		if err := mcpPackage.DeclareName(goacodegen.NewExactName(goacodegen.NameFunction, "validatePromptMeta")); err != nil {
+	if data.NeedsContentMeta {
+		if err := mcpPackage.DeclareName(goacodegen.NewExactName(goacodegen.NameFunction, "validateContentMeta")); err != nil {
 			return err
 		}
 	}

@@ -18,7 +18,7 @@ import (
 func applyMCPContentValidation(files []*codegen.File, services []*plannedMCPService) error {
 	paths := make(map[string]map[string]bool)
 	for _, service := range services {
-		if len(service.adapterData.Resources) == 0 && len(service.adapterData.Tools) == 0 && len(service.adapterData.StaticPrompts) == 0 && len(service.adapterData.MethodPrompts) == 0 {
+		if len(service.adapterData.Resources) == 0 && service.adapterData.ResourceReader == nil && len(service.adapterData.Tools) == 0 && len(service.adapterData.StaticPrompts) == 0 && len(service.adapterData.MethodPrompts) == 0 {
 			continue
 		}
 		validators := map[string]bool{"ResourceContent": false}

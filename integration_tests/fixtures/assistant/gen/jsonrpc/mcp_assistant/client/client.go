@@ -177,6 +177,30 @@ func (c *Client) ResourcesRead() goa.Endpoint {
 	}
 }
 
+// ResourcesTemplatesList returns an endpoint that makes JSON-RPC requests to
+// the mcp_assistant service resources/templates/list method.
+func (c *Client) ResourcesTemplatesList() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeResourcesTemplatesListRequest(c.encoder)
+		decodeResponse = DecodeResourcesTemplatesListResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildResourcesTemplatesListRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.Doer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("mcp_assistant", "resources/templates/list", err)
+		}
+		return decodeResponse(resp, requestID)
+	}
+}
+
 // PromptsList returns an endpoint that makes JSON-RPC requests to the
 // mcp_assistant service prompts/list method.
 func (c *Client) PromptsList() goa.Endpoint {

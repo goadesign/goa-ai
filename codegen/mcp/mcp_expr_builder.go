@@ -118,7 +118,7 @@ func (b *mcpExprBuilder) userTypeAttr(name string, builder func() *expr.Attribut
 			}})
 			attribute.Validation.Required = append(attribute.Validation.Required, "resultType")
 			switch name {
-			case "DiscoverResult", "ToolsListResult", "ResourcesListResult", "PromptsListResult", "ResourcesReadResult":
+			case "DiscoverResult", "ToolsListResult", "ResourcesListResult", "ResourceTemplatesListResult", "PromptsListResult", "ResourcesReadResult":
 				minimum := float64(0)
 				*object = append(*object,
 					&expr.NamedAttributeExpr{Name: "ttlMs", Attribute: &expr.AttributeExpr{Type: expr.Int64, Description: "Milliseconds this one response may be cached", Validation: &expr.ValidationExpr{Minimum: &minimum}}},

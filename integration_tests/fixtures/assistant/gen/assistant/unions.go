@@ -336,3 +336,164 @@ func (u *Resource) UnmarshalJSON(data []byte) error {
 	}
 	return nil
 }
+
+// TemplateRepresentation holds exactly one of its branch values.
+type TemplateRepresentation struct {
+	kind TemplateRepresentationKind
+	text *TemplateText
+	blob *TemplateBlob
+}
+
+// TemplateRepresentationKind records which TemplateRepresentation branch is selected.
+type TemplateRepresentationKind string
+
+const (
+	// TemplateRepresentationKindText identifies the text branch.
+	TemplateRepresentationKindText TemplateRepresentationKind = "text"
+	// TemplateRepresentationKindBlob identifies the blob branch.
+	TemplateRepresentationKindBlob TemplateRepresentationKind = "blob"
+)
+
+// Kind returns the selected branch.
+func (u TemplateRepresentation) Kind() TemplateRepresentationKind {
+	return u.kind
+}
+
+// NewTemplateRepresentationText constructs TemplateRepresentation with the text branch set.
+func NewTemplateRepresentationText(v *TemplateText) TemplateRepresentation {
+	return TemplateRepresentation{
+		kind: TemplateRepresentationKindText,
+		text: v,
+	}
+}
+
+// AsText returns the value when the text branch is selected.
+func (u TemplateRepresentation) AsText() (_ *TemplateText, ok bool) {
+	if u.kind != TemplateRepresentationKindText {
+		return
+	}
+	return u.text, true
+}
+
+// SetText selects the text branch and stores v.
+func (u *TemplateRepresentation) SetText(v *TemplateText) {
+	*u = TemplateRepresentation{
+		kind: TemplateRepresentationKindText,
+		text: v,
+	}
+}
+
+// NewTemplateRepresentationBlob constructs TemplateRepresentation with the blob branch set.
+func NewTemplateRepresentationBlob(v *TemplateBlob) TemplateRepresentation {
+	return TemplateRepresentation{
+		kind: TemplateRepresentationKindBlob,
+		blob: v,
+	}
+}
+
+// AsBlob returns the value when the blob branch is selected.
+func (u TemplateRepresentation) AsBlob() (_ *TemplateBlob, ok bool) {
+	if u.kind != TemplateRepresentationKindBlob {
+		return
+	}
+	return u.blob, true
+}
+
+// SetBlob selects the blob branch and stores v.
+func (u *TemplateRepresentation) SetBlob(v *TemplateBlob) {
+	*u = TemplateRepresentation{
+		kind: TemplateRepresentationKindBlob,
+		blob: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u TemplateRepresentation) Validate() error {
+	switch u.kind {
+	case "":
+		return goa.InvalidEnumValueError("type", "", []any{
+			string(TemplateRepresentationKindText),
+			string(TemplateRepresentationKindBlob),
+		})
+	case TemplateRepresentationKindText:
+		if u.text == nil {
+			return goa.MissingFieldError("value", "TemplateRepresentation")
+		}
+		return nil
+	case TemplateRepresentationKindBlob:
+		if u.blob == nil {
+			return goa.MissingFieldError("value", "TemplateRepresentation")
+		}
+		return nil
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{
+			string(TemplateRepresentationKindText),
+			string(TemplateRepresentationKindBlob),
+		})
+	}
+}
+
+// MarshalJSON marshals the union into the canonical {type,value} JSON shape.
+func (u TemplateRepresentation) MarshalJSON() ([]byte, error) {
+	if err := u.Validate(); err != nil {
+		return nil, err
+	}
+	var (
+		value any
+	)
+	switch u.kind {
+	case TemplateRepresentationKindText:
+		value = u.text
+	case TemplateRepresentationKindBlob:
+		value = u.blob
+	default:
+		return nil, fmt.Errorf("unexpected TemplateRepresentation kind %q", u.kind)
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{
+		Type:  string(u.kind),
+		Value: value,
+	})
+}
+
+// UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
+func (u *TemplateRepresentation) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "TemplateRepresentation")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(TemplateRepresentationKindText):
+		var v *TemplateText
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetText(v)
+	case string(TemplateRepresentationKindBlob):
+		var v *TemplateBlob
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetBlob(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "TemplateRepresentation")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(TemplateRepresentationKindText),
+			string(TemplateRepresentationKindBlob),
+		})
+	}
+	return nil
+}

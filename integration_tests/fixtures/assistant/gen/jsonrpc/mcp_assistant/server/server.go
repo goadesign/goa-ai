@@ -64,6 +64,9 @@ type Server struct {
 	ResourcesList func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// ResourcesRead is the handler for the resources/read method.
 	ResourcesRead func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
+	// ResourcesTemplatesList is the handler for the resources/templates/list
+	// method.
+	ResourcesTemplatesList func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// PromptsList is the handler for the prompts/list method.
 	PromptsList func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 	// PromptsGet is the handler for the prompts/get method.
@@ -92,21 +95,23 @@ func New(
 			"tools/call",
 			"resources/list",
 			"resources/read",
+			"resources/templates/list",
 			"prompts/list",
 			"prompts/get",
 			"completion/complete",
 		},
-		ServerDiscover:     NewServerDiscoverHandler(endpoints.ServerDiscover, mux, decoder, encoder, errhandler),
-		ToolsList:          NewToolsListHandler(endpoints.ToolsList, mux, decoder, encoder, errhandler),
-		ToolsCall:          NewToolsCallHandler(endpoints.ToolsCall, mux, decoder, encoder, errhandler),
-		ResourcesList:      NewResourcesListHandler(endpoints.ResourcesList, mux, decoder, encoder, errhandler),
-		ResourcesRead:      NewResourcesReadHandler(endpoints.ResourcesRead, mux, decoder, encoder, errhandler),
-		PromptsList:        NewPromptsListHandler(endpoints.PromptsList, mux, decoder, encoder, errhandler),
-		PromptsGet:         NewPromptsGetHandler(endpoints.PromptsGet, mux, decoder, encoder, errhandler),
-		CompletionComplete: NewCompletionCompleteHandler(endpoints.CompletionComplete, mux, decoder, encoder, errhandler),
-		decoder:            decoder,
-		encoder:            encoder,
-		errhandler:         errhandler,
+		ServerDiscover:         NewServerDiscoverHandler(endpoints.ServerDiscover, mux, decoder, encoder, errhandler),
+		ToolsList:              NewToolsListHandler(endpoints.ToolsList, mux, decoder, encoder, errhandler),
+		ToolsCall:              NewToolsCallHandler(endpoints.ToolsCall, mux, decoder, encoder, errhandler),
+		ResourcesList:          NewResourcesListHandler(endpoints.ResourcesList, mux, decoder, encoder, errhandler),
+		ResourcesRead:          NewResourcesReadHandler(endpoints.ResourcesRead, mux, decoder, encoder, errhandler),
+		ResourcesTemplatesList: NewResourcesTemplatesListHandler(endpoints.ResourcesTemplatesList, mux, decoder, encoder, errhandler),
+		PromptsList:            NewPromptsListHandler(endpoints.PromptsList, mux, decoder, encoder, errhandler),
+		PromptsGet:             NewPromptsGetHandler(endpoints.PromptsGet, mux, decoder, encoder, errhandler),
+		CompletionComplete:     NewCompletionCompleteHandler(endpoints.CompletionComplete, mux, decoder, encoder, errhandler),
+		decoder:                decoder,
+		encoder:                encoder,
+		errhandler:             errhandler,
 	}
 	// Install the request handler required by this service's methods.
 	// ServeHTTP handles ordinary JSON-RPC request bodies.
@@ -160,6 +165,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "resources/read":
 		if err := s.ResourcesRead(r.Context(), r, &request, w); err != nil {
 			s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "resources/read", err))
+		}
+	case "resources/templates/list":
+		if err := s.ResourcesTemplatesList(r.Context(), r, &request, w); err != nil {
+			s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "resources/templates/list", err))
 		}
 	case "prompts/list":
 		if err := s.PromptsList(r.Context(), r, &request, w); err != nil {
@@ -251,6 +260,7 @@ func withMCPTransport(h *Server, allowedOrigins map[string]struct{}, next http.H
 		case "tools/call":
 		case "resources/list":
 		case "resources/read":
+		case "resources/templates/list":
 		case "prompts/list":
 		case "prompts/get":
 		case "completion/complete":
@@ -584,6 +594,61 @@ func NewResourcesReadHandler(
 		// The response repeats the exact request ID.
 		// Build the response body with the fields and JSON names declared by the service.
 		body := NewResourcesReadResponseBody(res.(*mcpassistant.ResourcesReadResult))
+		response := jsonrpc.MakeSuccessResponse(req.ID, body)
+		if err := encoder(ctx, w).Encode(response); err != nil {
+			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))
+		}
+		return nil
+	}
+}
+
+// NewResourcesTemplatesListHandler creates a JSON-RPC handler which calls the
+// "mcp_assistant" service "resources/templates/list" endpoint.
+func NewResourcesTemplatesListHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+) func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error {
+	decodeParams := DecodeResourcesTemplatesListRequest(mux, decoder)
+	return func(ctx context.Context, r *http.Request, req *jsonrpc.RawRequest, w http.ResponseWriter) error {
+		ctx = context.WithValue(ctx, goa.MethodKey, "resources/templates/list")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "mcp_assistant")
+		params, err := decodeParams(r, req)
+		if err != nil {
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InvalidParams, err.Error(), nil, encoder, errhandler)
+			return nil
+		}
+		res, err := endpoint(ctx, params)
+		if err != nil {
+			var en goa.GoaErrorNamer
+			if errors.As(err, &en) {
+				switch en.GoaErrorName() {
+				case "invalid_params":
+					var res *goa.ServiceError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
+					}
+					body := NewResourcesTemplatesListInvalidParamsResponseBody(res)
+					data := struct {
+						Name string                                           `json:"name"`
+						Body *ResourcesTemplatesListInvalidParamsResponseBody `json:"body"`
+					}{
+						Name: "invalid_params",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32602, err.Error(), data, encoder, errhandler)
+					return nil
+				}
+			}
+			encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
+			return nil
+		}
+
+		// The response repeats the exact request ID.
+		// Build the response body with the fields and JSON names declared by the service.
+		body := NewResourcesTemplatesListResponseBody(res.(*mcpassistant.ResourceTemplatesListResult))
 		response := jsonrpc.MakeSuccessResponse(req.ID, body)
 		if err := encoder(ctx, w).Encode(response); err != nil {
 			errhandler(ctx, w, fmt.Errorf("failed to encode JSON-RPC response: %w", err))

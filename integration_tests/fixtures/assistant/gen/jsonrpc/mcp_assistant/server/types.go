@@ -59,6 +59,15 @@ type ResourcesReadRequestBody struct {
 	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
+// ResourcesTemplatesListRequestBody is the type of the "mcp_assistant" service
+// "resources/templates/list" endpoint HTTP request body.
+type ResourcesTemplatesListRequestBody struct {
+	// Opaque cursor from a prior catalog page
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
 // PromptsListRequestBody is the type of the "mcp_assistant" service
 // "prompts/list" endpoint HTTP request body.
 type PromptsListRequestBody struct {
@@ -163,6 +172,23 @@ type ResourcesListResponseBody struct {
 type ResourcesReadResponseBody struct {
 	// Resource contents
 	Contents []*ResourceContentResponseBody `form:"contents" json:"contents" xml:"contents"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType string `form:"resultType" json:"resultType" xml:"resultType"`
+	// Milliseconds this one response may be cached
+	TTLMs int64 `form:"ttlMs" json:"ttlMs" xml:"ttlMs"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope string `form:"cacheScope" json:"cacheScope" xml:"cacheScope"`
+}
+
+// ResourcesTemplatesListResponseBody is the type of the "mcp_assistant"
+// service "resources/templates/list" endpoint HTTP response body.
+type ResourcesTemplatesListResponseBody struct {
+	// Parameterized addresses advertised by this service
+	ResourceTemplates []*ResourceTemplateInfoResponseBody `form:"resourceTemplates" json:"resourceTemplates" xml:"resourceTemplates"`
+	// Cursor for another catalog page
+	NextCursor *string `form:"nextCursor,omitempty" json:"nextCursor,omitempty" xml:"nextCursor,omitempty"`
 	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
 	// This response contains a finished result
@@ -313,6 +339,25 @@ type ResourcesReadInvalidParamsResponseBody struct {
 // service "resources/read" endpoint HTTP response body for the
 // "internal_error" error.
 type ResourcesReadInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name string `form:"name" json:"name" xml:"name"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID string `form:"id" json:"id" xml:"id"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message string `form:"message" json:"message" xml:"message"`
+	// Is the error temporary?
+	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
+	// Is the error a timeout?
+	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
+	// Is the error a server-side fault?
+	Fault bool `form:"fault" json:"fault" xml:"fault"`
+}
+
+// ResourcesTemplatesListInvalidParamsResponseBody is the type of the
+// "mcp_assistant" service "resources/templates/list" endpoint HTTP response
+// body for the "invalid_params" error.
+type ResourcesTemplatesListInvalidParamsResponseBody struct {
 	// Name is the name of this class of errors.
 	Name string `form:"name" json:"name" xml:"name"`
 	// ID is a unique identifier for this particular occurrence of the problem.
@@ -562,6 +607,19 @@ type ResourceInfoResponseBody struct {
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
 }
 
+// ResourceTemplateInfoResponseBody is used to define fields on response body
+// types.
+type ResourceTemplateInfoResponseBody struct {
+	// RFC 6570 template expanded by the client
+	URITemplate string `form:"uriTemplate" json:"uriTemplate" xml:"uriTemplate"`
+	// Resource template name
+	Name string `form:"name" json:"name" xml:"name"`
+	// Resources available through this template
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Hint for the resource content type
+	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+}
+
 // PromptInfoResponseBody is used to define fields on response body types.
 type PromptInfoResponseBody struct {
 	// Prompt name
@@ -749,6 +807,32 @@ func NewResourcesReadResponseBody(res *mcpassistant.ResourcesReadResult) *Resour
 	return body
 }
 
+// NewResourcesTemplatesListResponseBody builds the HTTP response body from the
+// result of the "resources/templates/list" endpoint of the "mcp_assistant"
+// service.
+func NewResourcesTemplatesListResponseBody(res *mcpassistant.ResourceTemplatesListResult) *ResourcesTemplatesListResponseBody {
+	body := &ResourcesTemplatesListResponseBody{
+		NextCursor: res.NextCursor,
+		Meta:       res.Meta,
+		ResultType: res.ResultType,
+		TTLMs:      res.TTLMs,
+		CacheScope: res.CacheScope,
+	}
+	if res.ResourceTemplates != nil {
+		body.ResourceTemplates = make([]*ResourceTemplateInfoResponseBody, len(res.ResourceTemplates))
+		for i, val := range res.ResourceTemplates {
+			if val == nil {
+				body.ResourceTemplates[i] = nil
+				continue
+			}
+			body.ResourceTemplates[i] = marshalMcpassistantResourceTemplateInfoToResourceTemplateInfoResponseBody(val)
+		}
+	} else {
+		body.ResourceTemplates = []*ResourceTemplateInfoResponseBody{}
+	}
+	return body
+}
+
 // NewPromptsListResponseBody builds the HTTP response body from the result of
 // the "prompts/list" endpoint of the "mcp_assistant" service.
 func NewPromptsListResponseBody(res *mcpassistant.PromptsListResult) *PromptsListResponseBody {
@@ -894,6 +978,21 @@ func NewResourcesReadInternalErrorResponseBody(res *goa.ServiceError) *Resources
 	return body
 }
 
+// NewResourcesTemplatesListInvalidParamsResponseBody builds the HTTP response
+// body from the result of the "resources/templates/list" endpoint of the
+// "mcp_assistant" service.
+func NewResourcesTemplatesListInvalidParamsResponseBody(res *goa.ServiceError) *ResourcesTemplatesListInvalidParamsResponseBody {
+	body := &ResourcesTemplatesListInvalidParamsResponseBody{
+		Name:      res.Name,
+		ID:        res.ID,
+		Message:   res.Message,
+		Temporary: res.Temporary,
+		Timeout:   res.Timeout,
+		Fault:     res.Fault,
+	}
+	return body
+}
+
 // NewPromptsListInvalidParamsResponseBody builds the HTTP response body from
 // the result of the "prompts/list" endpoint of the "mcp_assistant" service.
 func NewPromptsListInvalidParamsResponseBody(res *goa.ServiceError) *PromptsListInvalidParamsResponseBody {
@@ -1021,6 +1120,17 @@ func NewResourcesReadPayload(body *ResourcesReadRequestBody) *mcpassistant.Resou
 	return v
 }
 
+// NewResourcesTemplatesListResourceTemplatesListPayload builds a mcp_assistant
+// service resources/templates/list endpoint payload.
+func NewResourcesTemplatesListResourceTemplatesListPayload(body *ResourcesTemplatesListRequestBody) *mcpassistant.ResourceTemplatesListPayload {
+	v := &mcpassistant.ResourceTemplatesListPayload{
+		Cursor: body.Cursor,
+		Meta:   body.Meta,
+	}
+
+	return v
+}
+
 // NewPromptsListPayload builds a mcp_assistant service prompts/list endpoint
 // payload.
 func NewPromptsListPayload(body *PromptsListRequestBody) *mcpassistant.PromptsListPayload {
@@ -1117,6 +1227,15 @@ func ValidateResourcesReadRequestBody(body *ResourcesReadRequestBody) (err error
 	if body.URI != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *body.URI, goa.FormatURI))
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.uri", *body.URI, "^[a-zA-Z][a-zA-Z0-9+.-]*:.*"))
+	}
+	return
+}
+
+// ValidateResourcesTemplatesListRequestBody runs the validations defined on
+// ResourcesTemplatesListRequestBody
+func ValidateResourcesTemplatesListRequestBody(body *ResourcesTemplatesListRequestBody) (err error) {
+	if body.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
 	}
 	return
 }

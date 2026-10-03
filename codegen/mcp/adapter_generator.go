@@ -44,20 +44,26 @@ type (
 		Tools []*ToolAdapter
 		// Resources contains the Goa methods exposed as MCP resources.
 		Resources []*ResourceAdapter
+		// ResourceTemplates contains the advertised parameterized addresses.
+		ResourceTemplates []*resourceTemplateAdapter
+		// ResourceReader owns reads that are not fixed resource bindings.
+		ResourceReader *resourceReaderAdapter
 		// StaticPrompts contains the prompts written directly in the Goa design.
 		StaticPrompts []*StaticPromptAdapter
 		// MethodPrompts contains prompt operations implemented by service methods.
 		MethodPrompts []*MethodPromptAdapter
-		// PromptCompletions contains typed providers for known prompt arguments.
-		PromptCompletions []*promptCompletionAdapter
-		// PromptConversions contains the generated content and resource converters.
-		PromptConversions []*promptContentConversionData
-		// NeedsPromptBytes reports that a prompt produces binary content.
-		NeedsPromptBytes bool
-		// NeedsPromptMeta reports that authored prompt metadata needs object validation.
-		NeedsPromptMeta bool
-		// NeedsPromptNumbers reports that content needs finite JSON number checks.
-		NeedsPromptNumbers bool
+		// CompletionReferences contains the argument names accepted by each reference.
+		CompletionReferences []*completionReferenceAdapter
+		// Completions contains typed providers for known prompt and resource arguments.
+		Completions []*completionAdapter
+		// ContentConversions contains the shared generated content and resource converters.
+		ContentConversions []*contentConversionData
+		// NeedsContentBytes reports that authored content includes binary bytes.
+		NeedsContentBytes bool
+		// NeedsContentMeta reports that authored metadata needs object validation.
+		NeedsContentMeta bool
+		// NeedsContentNumbers reports that content needs finite JSON number checks.
+		NeedsContentNumbers bool
 		// NeedsNoArgumentsValidation reports whether a tool has no payload.
 		NeedsNoArgumentsValidation bool
 		// NeedsBoolPtr reports that generated tool errors set MCP's optional flag.
@@ -221,21 +227,32 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 	if err != nil {
 		return nil, err
 	}
-	completions, err := g.buildPromptCompletionAdapters()
+	templates, err := buildResourceTemplateAdapters(g.mcp.ResourceTemplates)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := g.buildResourceReaderAdapter()
+	if err != nil {
+		return nil, err
+	}
+	completions, err := g.buildCompletionAdapters()
 	if err != nil {
 		return nil, err
 	}
 	data := &AdapterData{
-		ServiceName:       g.originalService.Name,
-		ServiceGoName:     codegen.Goify(g.originalService.Name, true),
-		MCPName:           g.mcp.Name,
-		MCPVersion:        g.mcp.Version,
-		Package:           codegen.SnakeCase(g.originalService.Name),
-		Tools:             tools,
-		Resources:         resources,
-		MethodPrompts:     prompts,
-		PromptCompletions: completions,
-		NeedsBoolPtr:      len(tools)+len(prompts) > 0,
+		ServiceName:          g.originalService.Name,
+		ServiceGoName:        codegen.Goify(g.originalService.Name, true),
+		MCPName:              g.mcp.Name,
+		MCPVersion:           g.mcp.Version,
+		Package:              codegen.SnakeCase(g.originalService.Name),
+		Tools:                tools,
+		Resources:            resources,
+		ResourceTemplates:    templates,
+		ResourceReader:       reader,
+		MethodPrompts:        prompts,
+		Completions:          completions,
+		CompletionReferences: g.buildCompletionReferences(templates),
+		NeedsBoolPtr:         len(tools)+len(prompts) > 0,
 	}
 
 	// Static prompts are handled directly in the adapter

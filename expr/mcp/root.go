@@ -69,6 +69,11 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 			resources = append(resources, rsrc)
 		}
 	}
+	for _, server := range r.MCPServers {
+		for _, template := range server.ResourceTemplates {
+			resources = append(resources, template)
+		}
+	}
 	walk(resources)
 
 	var prompts eval.ExpressionSet
@@ -89,6 +94,11 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	var completions eval.ExpressionSet
 	for _, server := range r.MCPServers {
 		for _, completion := range server.PromptCompletions {
+			completions = append(completions, completion)
+		}
+	}
+	for _, server := range r.MCPServers {
+		for _, completion := range server.ResourceCompletions {
 			completions = append(completions, completion)
 		}
 	}

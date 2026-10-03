@@ -1,25 +1,31 @@
-{{- if .PromptCompletions }}
-// CompletionComplete selects a declared prompt argument and asks its service
+{{- if .Completions }}
+// CompletionComplete selects a declared prompt or resource argument and asks its service
 // method for suggestions. Missing bindings return an empty list for a valid
 // argument; unknown names fail before any service method runs.
 func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionCompletePayload) (*CompletionCompleteResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.completion/complete")
     defer span.End()
-    if p.Ref.Type != "ref/prompt" || p.Ref.Name == nil {
+    var reference string
+    switch {
+    case p.Ref.Type == "ref/prompt" && p.Ref.Name != nil:
+        reference = *p.Ref.Name
+    case p.Ref.Type == "ref/resource" && p.Ref.URI != nil:
+        reference = *p.Ref.URI
+    default:
         failure := goa.PermanentError("invalid_params", "unknown completion reference")
         span.RecordError(failure)
         span.SetStatus(codes.Error, failure.Error())
         return nil, failure
     }
-    switch *p.Ref.Name {
-    {{ range .MethodPrompts }}
-    case {{ quote .Name }}:
+    switch {
+    {{ range .CompletionReferences }}
+    case p.Ref.Type == {{ quote .Type }} && reference == {{ quote .Name }}:
         switch p.Argument.Name {
         {{ range .Arguments }}
-        case {{ quote .Name }}:
+        case {{ quote . }}:
         {{ end }}
         default:
-            failure := goa.PermanentError("invalid_params", "unknown prompt argument: %s", p.Argument.Name)
+            failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
             span.RecordError(failure)
             span.SetStatus(codes.Error, failure.Error())
             return nil, failure
@@ -28,7 +34,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
             for name := range p.Context.Arguments {
                 switch name {
                 {{ range .Arguments }}
-                case {{ quote .Name }}:
+                case {{ quote . }}:
                 {{ end }}
                 default:
                     failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
@@ -40,13 +46,13 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
         }
     {{ end }}
     default:
-        failure := goa.PermanentError("invalid_params", "unknown prompt: %s", *p.Ref.Name)
+        failure := goa.PermanentError("invalid_params", "unknown completion reference: %s", reference)
         span.RecordError(failure)
         span.SetStatus(codes.Error, failure.Error())
         return nil, failure
     }
-    {{ range .PromptCompletions }}
-    if *p.Ref.Name == {{ quote .Prompt }} && p.Argument.Name == {{ quote .Argument }} {
+    {{ range .Completions }}
+    if p.Ref.Type == {{ quote .ReferenceType }} && reference == {{ quote .Reference }} && p.Argument.Name == {{ quote .Argument }} {
         // The private constructor applies the method's defaults and validation
         // to already-decoded protocol values before the service receives them.
         body := &{{ .PayloadTransportRef }}{}
@@ -82,7 +88,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
     {{ end }}
     return &CompletionCompleteResult{ResultType: "complete", Meta: resultMeta(), Completion: &CompletionSuggestion{Values: []string{}}}, nil
 }
-{{ range .PromptCompletions }}
+{{ range .Completions }}
 {{ range .Helpers }}
 {{ .Source }}
 {{ end }}

@@ -1,0 +1,128 @@
+// Package codegen plans the one typed service method that owns parameterized resource
+// reads. It uses Goa's final field names and the same text/blob conversion used
+// by embedded prompt resources; the service receives no inferred variables.
+package codegen
+
+import (
+	"fmt"
+
+	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
+	"goa.design/goa/v3/codegen"
+	goaservice "goa.design/goa/v3/codegen/service"
+	"goa.design/goa/v3/expr"
+)
+
+type (
+	// resourceReaderAdapter contains the private constructor and result copy.
+	resourceReaderAdapter struct {
+		// ServiceMethodName is the final service method name.
+		ServiceMethodName string
+		// PayloadTransportRef is the private decoded-input type.
+		PayloadTransportRef string
+		// PayloadConstructor validates input and constructs the service payload.
+		PayloadConstructor string
+		// URI is the private input field retaining the client's exact address.
+		URI *jsoncodec.TransportField
+		// ContentsField is the service result's ordered content array.
+		ContentsField string
+		// ContentField is the selected text/blob union on one result item.
+		ContentField string
+		// ContentConversion copies that union to the flat MCP resource shape.
+		ContentConversion string
+		// Codec names the generated result validator.
+		Codec *MethodCodecData
+
+		method     *expr.MethodExpr
+		conversion *contentConversion
+	}
+)
+
+// buildResourceReaderAdapter rejects service fields that conversion would lose.
+func (g *adapterGenerator) buildResourceReaderAdapter() (*resourceReaderAdapter, error) {
+	if len(g.mcp.ResourceTemplates) == 0 {
+		return nil, nil
+	}
+	declaration := g.mcp.ResourceTemplates[0]
+	if err := declaration.Validate(); err != nil {
+		return nil, err
+	}
+	method := declaration.Method
+	if err := checkContentGoType(method.Payload); err != nil {
+		return nil, err
+	}
+	if err := checkContentGoType(method.Result); err != nil {
+		return nil, err
+	}
+	contents := expr.AsArray(expr.AsObject(method.Result.Type).Attribute("contents").Type)
+	content := expr.AsObject(contents.ElemType.Type).Attribute("content")
+	builder := newMCPExprBuilder(g.originalService, g.mcp)
+	target := builder.getOrCreateType("ResourceContent", builder.buildResourceContentType)
+	conversion, err := buildContentConversion(content, &expr.AttributeExpr{Type: target}, false)
+	if err != nil {
+		return nil, fmt.Errorf("resource reader %q: %w", method.Name, err)
+	}
+	return &resourceReaderAdapter{method: method, conversion: conversion}, nil
+}
+
+// planResourceReader records final type dependencies before Goa freezes names.
+func planResourceReader(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
+	reader := data.ResourceReader
+	if reader == nil {
+		return nil
+	}
+	layout, err := services.MethodTypeLayout(reader.method, reader.method.Result)
+	if err != nil {
+		return err
+	}
+	pkg := generation.Package(data.mcpImportPath)
+	imports := codegen.NewGeneratedImportPlan(pkg)
+	if err := imports.AddCompleteType(layout); err != nil {
+		return err
+	}
+	for _, importPath := range imports.Paths() {
+		if importPath != data.mcpImportPath {
+			data.serverImportPaths = append(data.serverImportPaths, importPath)
+		}
+	}
+	target := expr.AsArray(expr.AsObject(prepared.mcpService.Method("resources/read").Result.Type).Attribute("contents").Type).ElemType
+	if err := planContentConversion(generation, pkg, reader.conversion, target, layout, "convertResourceContent"); err != nil {
+		return err
+	}
+	contentConversionNeeds(data, reader.conversion)
+	return nil
+}
+
+// bindResourceReader uses the saved field layout to construct a typed request
+// and copy validated content without JSON serialization or URI normalization.
+func bindResourceReader(services *goaservice.ServicesData, planned *plannedMCPService) error {
+	data := planned.adapterData
+	reader := data.ResourceReader
+	if reader == nil {
+		return nil
+	}
+	reader.ServiceMethodName = services.Get(planned.prepared.userService.Name).Method(reader.method.Name).VarName
+	values := planned.methodCodecs[reader.method.Name]
+	reader.Codec = methodCodecData(values)
+	var err error
+	reader.PayloadTransportRef, err = values.payload.TransportTypeName(data.mcpImportPath, data.mcpPackage.ImportName)
+	if err != nil {
+		return err
+	}
+	reader.PayloadConstructor = values.payload.TransportConstructorDeclaration().Name()
+	payload := expr.AsObject(reader.method.Payload.Type)
+	reader.URI, err = values.payload.TransportField(payload.Attribute("uri"), "uri", data.mcpImportPath, data.mcpPackage.ImportName)
+	if err != nil {
+		return err
+	}
+	source := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
+	target := services.ServiceAttributor(planned.prepared.mcpService.Name, data.mcpImportPath)
+	contents := expr.AsObject(reader.method.Result.Type).Attribute("contents")
+	reader.ContentsField = source.Field(contents, "contents", true)
+	content := expr.AsObject(expr.AsArray(contents.Type).ElemType.Type).Attribute("content")
+	reader.ContentField = source.Field(content, "content", true)
+	if err := bindContentConversion(data, reader.conversion, source, target); err != nil {
+		return err
+	}
+	reader.ContentConversion = reader.conversion.declaration.Name()
+	return nil
+}

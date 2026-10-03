@@ -40,6 +40,8 @@ type Service interface {
 	ImagePrompt(context.Context) (res *RefereePromptResult, err error)
 	// Return synthetic suggestions for the partial first prompt argument
 	SuggestArgument(context.Context, *SuggestArgumentPayload) (res *SuggestArgumentResult, err error)
+	// Read synthetic parameterized resources by their exact URI
+	ReadResource(context.Context, *ReadResourcePayload) (res *ReadResourceResult, err error)
 	// Analyze sentiment of text
 	AnalyzeSentiment(context.Context, *AnalyzeSentimentPayload) (res *AnalyzeSentimentResult, err error)
 	// Extract keywords from text
@@ -68,7 +70,7 @@ const ServiceName = "assistant"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [15]string{"list_documents", "system_info", "binary_resource", "empty_binary_resource", "simple_prompt", "argument_prompt", "resource_prompt", "image_prompt", "suggest_argument", "analyze_sentiment", "extract_keywords", "summarize_text", "search", "execute_code", "process_batch"}
+var MethodNames = [16]string{"list_documents", "system_info", "binary_resource", "empty_binary_resource", "simple_prompt", "argument_prompt", "resource_prompt", "image_prompt", "suggest_argument", "read_resource", "analyze_sentiment", "extract_keywords", "summarize_text", "search", "execute_code", "process_batch"}
 
 // AnalyzeSentimentPayload is the payload type of the assistant service
 // analyze_sentiment method.
@@ -152,6 +154,20 @@ type ProcessBatchPayload struct {
 type ProcessBatchResult struct {
 	// Operation status
 	OK *bool
+}
+
+// ReadResourcePayload is the payload type of the assistant service
+// read_resource method.
+type ReadResourcePayload struct {
+	// Exact requested resource identifier
+	Address string
+}
+
+// ReadResourceResult is the result type of the assistant service read_resource
+// method.
+type ReadResourceResult struct {
+	// Ordered resource contents
+	Parts []*TemplateItem
 }
 
 type RefereeEmbeddedText struct {
@@ -254,6 +270,29 @@ type SystemInfoResult struct {
 	Name *string
 	// System version
 	Version *string
+}
+
+type TemplateBlob struct {
+	// Resource identifier
+	URI string
+	// Content media type
+	MimeType *string
+	// Binary resource contents
+	Blob []byte
+}
+
+type TemplateItem struct {
+	// Selected resource representation
+	Selected TemplateRepresentation
+}
+
+type TemplateText struct {
+	// Resource identifier
+	URI string
+	// Content media type
+	MimeType *string
+	// Resource contents
+	Text string
 }
 
 // jsonDocumentsTransport stores JSON fields until they have been validated.
@@ -455,6 +494,93 @@ func validatejsonRefereePromptTextTransport(value *jsonRefereePromptTextTranspor
 	return err
 }
 
+// jsonTemplateBlobTransport stores JSON fields until they have been validated.
+type jsonTemplateBlobTransport struct {
+	// Resource identifier
+	URI *string `json:"uri"`
+	// Content media type
+	MimeType *string `json:"mimeType,omitempty"`
+	// Binary resource contents
+	Blob []byte `json:"blob,omitempty"`
+}
+
+// validatejsonTemplateBlobTransport checks decoded JSON before it becomes a service value.
+func validatejsonTemplateBlobTransport(value *jsonTemplateBlobTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.URI, goa.FormatURI))
+	}
+	return err
+}
+
+// jsonTemplateItemTransport stores JSON fields until they have been validated.
+type jsonTemplateItemTransport struct {
+	// Selected resource representation
+	Selected *jsonTemplateRepresentationTransport `json:"content"`
+}
+
+// validatejsonTemplateItemTransport checks decoded JSON before it becomes a service value.
+func validatejsonTemplateItemTransport(value *jsonTemplateItemTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Selected == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
+	}
+	if value.Selected != nil {
+		switch string(value.Selected.Kind()) {
+		case "text":
+			actual, _ := value.Selected.AsText()
+			if actual != nil {
+				if err2 := validatejsonTemplateTextTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "blob":
+			actual, _ := value.Selected.AsBlob()
+			if actual != nil {
+				if err2 := validatejsonTemplateBlobTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// jsonTemplateTextTransport stores JSON fields until they have been validated.
+type jsonTemplateTextTransport struct {
+	// Resource identifier
+	URI *string `json:"uri"`
+	// Content media type
+	MimeType *string `json:"mimeType,omitempty"`
+	// Resource contents
+	Text *string `json:"text"`
+}
+
+// validatejsonTemplateTextTransport checks decoded JSON before it becomes a service value.
+func validatejsonTemplateTextTransport(value *jsonTemplateTextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	if value.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.URI, goa.FormatURI))
+	}
+	return err
+}
+
 // validateDocumentsOriginal checks the original typed value before JSON conversion.
 func validateDocumentsOriginal(value *Documents) (err error) {
 	if value.Items == nil {
@@ -600,6 +726,55 @@ func validateRefereePromptResourceOriginal3(value *RefereePromptResource) (err e
 
 // validateRefereeEmbeddedTextOriginal4 checks the original typed value before JSON conversion.
 func validateRefereeEmbeddedTextOriginal4(value *RefereeEmbeddedText) (err error) {
+	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
+	return err
+}
+
+// validateTemplateBlobOriginal checks the original typed value before JSON conversion.
+func validateTemplateBlobOriginal(value *TemplateBlob) (err error) {
+	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
+	return err
+}
+
+// validateTemplateItemOriginal checks the original typed value before JSON conversion.
+func validateTemplateItemOriginal(value *TemplateItem) (err error) {
+	if value.Selected.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "value"))
+	}
+	switch string(value.Selected.Kind()) {
+	case "text":
+		actual, _ := value.Selected.AsText()
+		if actual != nil {
+			if err2 := validateTemplateTextOriginal(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "blob":
+		actual, _ := value.Selected.AsBlob()
+		if actual != nil {
+			if err2 := validateTemplateBlobOriginal2(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateTemplateTextOriginal checks the original typed value before JSON conversion.
+func validateTemplateTextOriginal(value *TemplateText) (err error) {
+	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
+	return err
+}
+
+// validateTemplateBlobOriginal2 checks the original typed value before JSON conversion.
+func validateTemplateBlobOriginal2(value *TemplateBlob) (err error) {
+	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
+	return err
+}
+
+// validateTemplateTextOriginal2 checks the original typed value before JSON conversion.
+func validateTemplateTextOriginal2(value *TemplateText) (err error) {
 	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
 	return err
 }
@@ -898,6 +1073,155 @@ func (u *jsonResourceTransport) UnmarshalJSON(data []byte) error {
 		u.Text = value
 	default:
 		return goa.InvalidEnumValueError("type", raw.Type, []any{string(jsonResourceTransportKindText)})
+	}
+	return u.Validate()
+}
+
+// jsonTemplateRepresentationTransport stores exactly one selected Goa OneOf branch.
+type jsonTemplateRepresentationTransport struct {
+	kind jsonTemplateRepresentationTransportKind
+	Text *jsonTemplateTextTransport
+	Blob *jsonTemplateBlobTransport
+}
+
+// jsonTemplateRepresentationTransportKind identifies the selected branch of jsonTemplateRepresentationTransport.
+type jsonTemplateRepresentationTransportKind string
+
+const (
+	jsonTemplateRepresentationTransportKindText jsonTemplateRepresentationTransportKind = "text"
+	jsonTemplateRepresentationTransportKindBlob jsonTemplateRepresentationTransportKind = "blob"
+)
+
+// Kind returns the selected branch.
+func (u jsonTemplateRepresentationTransport) Kind() jsonTemplateRepresentationTransportKind {
+	return u.kind
+}
+
+// newjsonTemplateRepresentationTransportText creates jsonTemplateRepresentationTransport with its text branch selected.
+func newjsonTemplateRepresentationTransportText(value *jsonTemplateTextTransport) jsonTemplateRepresentationTransport {
+	return jsonTemplateRepresentationTransport{kind: jsonTemplateRepresentationTransportKindText, Text: value}
+}
+
+// AsText returns the text branch when it is selected.
+func (u jsonTemplateRepresentationTransport) AsText() (_ *jsonTemplateTextTransport, ok bool) {
+	if u.kind != jsonTemplateRepresentationTransportKindText {
+		return
+	}
+	return u.Text, true
+}
+
+// SetText selects the text branch.
+func (u *jsonTemplateRepresentationTransport) SetText(value *jsonTemplateTextTransport) {
+	u.kind = jsonTemplateRepresentationTransportKindText
+	u.Text = value
+}
+
+// newjsonTemplateRepresentationTransportBlob creates jsonTemplateRepresentationTransport with its blob branch selected.
+func newjsonTemplateRepresentationTransportBlob(value *jsonTemplateBlobTransport) jsonTemplateRepresentationTransport {
+	return jsonTemplateRepresentationTransport{kind: jsonTemplateRepresentationTransportKindBlob, Blob: value}
+}
+
+// AsBlob returns the blob branch when it is selected.
+func (u jsonTemplateRepresentationTransport) AsBlob() (_ *jsonTemplateBlobTransport, ok bool) {
+	if u.kind != jsonTemplateRepresentationTransportKindBlob {
+		return
+	}
+	return u.Blob, true
+}
+
+// SetBlob selects the blob branch.
+func (u *jsonTemplateRepresentationTransport) SetBlob(value *jsonTemplateBlobTransport) {
+	u.kind = jsonTemplateRepresentationTransportKindBlob
+	u.Blob = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u jsonTemplateRepresentationTransport) Validate() error {
+	switch u.kind {
+	case jsonTemplateRepresentationTransportKindText:
+		if u.Text == nil {
+			return goa.MissingFieldError("value", "jsonTemplateRepresentationTransport")
+		}
+		return nil
+	case jsonTemplateRepresentationTransportKindBlob:
+		if u.Blob == nil {
+			return goa.MissingFieldError("value", "jsonTemplateRepresentationTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "jsonTemplateRepresentationTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(jsonTemplateRepresentationTransportKindText), string(jsonTemplateRepresentationTransportKindBlob)})
+	}
+}
+
+// MarshalJSON writes the selected branch name and value.
+func (u jsonTemplateRepresentationTransport) MarshalJSON() ([]byte, error) {
+	if err := u.Validate(); err != nil {
+		return nil, err
+	}
+	var value any
+	switch u.kind {
+	case jsonTemplateRepresentationTransportKindText:
+		value = u.Text
+	case jsonTemplateRepresentationTransportKindBlob:
+		value = u.Blob
+	default:
+		return nil, fmt.Errorf("unexpected jsonTemplateRepresentationTransport branch %q", u.kind)
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{Type: string(u.kind), Value: value})
+}
+
+// UnmarshalJSON reads one complete branch name and value.
+func (u *jsonTemplateRepresentationTransport) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&raw); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("decode jsonTemplateRepresentationTransport JSON: multiple JSON values")
+		}
+		return err
+	}
+	if raw.Type == "" {
+		return goa.MissingFieldError("type", "jsonTemplateRepresentationTransport")
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "jsonTemplateRepresentationTransport")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(jsonTemplateRepresentationTransportKindText):
+		var value *jsonTemplateTextTransport
+		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		u.kind = jsonTemplateRepresentationTransportKindText
+		u.Text = value
+	case string(jsonTemplateRepresentationTransportKindBlob):
+		var value *jsonTemplateBlobTransport
+		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		u.kind = jsonTemplateRepresentationTransportKindBlob
+		u.Blob = value
+	default:
+		return goa.InvalidEnumValueError("type", raw.Type, []any{string(jsonTemplateRepresentationTransportKindText), string(jsonTemplateRepresentationTransportKindBlob)})
 	}
 	return u.Validate()
 }
@@ -1437,6 +1761,220 @@ func DecodeRefereePromptText(data []byte) (out *RefereePromptText, err error) {
 	return out, nil
 }
 
+// EncodeTemplateBlob turns a service value into JSON using the field names in the Goa design.
+func EncodeTemplateBlob(in *TemplateBlob) ([]byte, error) {
+	if err := checkTemplateBlobValue(in); err != nil {
+		return nil, fmt.Errorf("encode TemplateBlob JSON: %w", err)
+	}
+	if err := validateTemplateBlobOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate TemplateBlob value: %w", err)
+	}
+	var body *jsonTemplateBlobTransport
+	{
+		body = &jsonTemplateBlobTransport{
+			URI:      &in.URI,
+			MimeType: in.MimeType,
+			Blob:     in.Blob,
+		}
+	}
+	if err := validatejsonTemplateBlobTransport(body); err != nil {
+		return nil, fmt.Errorf("validate TemplateBlob JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode TemplateBlob JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeTemplateBlob checks JSON field names from the Goa design and returns a service value.
+func DecodeTemplateBlob(data []byte) (out *TemplateBlob, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode TemplateBlob JSON: %w", err)
+	}
+	if err := validateTemplateBlobJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode TemplateBlob JSON: %w", err)
+	}
+	var body *jsonTemplateBlobTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode TemplateBlob JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode TemplateBlob JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode TemplateBlob JSON after first value: %w", err)
+	}
+	if err := validatejsonTemplateBlobTransport(body); err != nil {
+		return out, fmt.Errorf("validate TemplateBlob JSON: %w", err)
+	}
+	{
+		out = &TemplateBlob{
+			URI:      *body.URI,
+			MimeType: body.MimeType,
+			Blob:     body.Blob,
+		}
+	}
+	return out, nil
+}
+
+// EncodeTemplateItem turns a service value into JSON using the field names in the Goa design.
+func EncodeTemplateItem(in *TemplateItem) ([]byte, error) {
+	if err := checkTemplateItemValue(in); err != nil {
+		return nil, fmt.Errorf("encode TemplateItem JSON: %w", err)
+	}
+	if err := validateTemplateItemOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate TemplateItem value: %w", err)
+	}
+	var body *jsonTemplateItemTransport
+	{
+		body = &jsonTemplateItemTransport{}
+		var contentValue jsonTemplateRepresentationTransport
+		switch string(in.Selected.Kind()) {
+		case "text":
+			actual, _ := in.Selected.AsText()
+			var obj *jsonTemplateTextTransport
+			if actual != nil {
+				obj = encodeTemplateTextToTemplateTextTransport(actual)
+			}
+			u := contentValue
+			u.SetText((*jsonTemplateTextTransport)(obj))
+			contentValue = u
+		case "blob":
+			actual, _ := in.Selected.AsBlob()
+			var obj *jsonTemplateBlobTransport
+			if actual != nil {
+				obj = encodeTemplateBlobToTemplateBlobTransport(actual)
+			}
+			u := contentValue
+			u.SetBlob((*jsonTemplateBlobTransport)(obj))
+			contentValue = u
+		}
+		body.Selected = &contentValue
+	}
+	if err := validatejsonTemplateItemTransport(body); err != nil {
+		return nil, fmt.Errorf("validate TemplateItem JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode TemplateItem JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeTemplateItem checks JSON field names from the Goa design and returns a service value.
+func DecodeTemplateItem(data []byte) (out *TemplateItem, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode TemplateItem JSON: %w", err)
+	}
+	if err := validateTemplateItemJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode TemplateItem JSON: %w", err)
+	}
+	var body *jsonTemplateItemTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode TemplateItem JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode TemplateItem JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode TemplateItem JSON after first value: %w", err)
+	}
+	if err := validatejsonTemplateItemTransport(body); err != nil {
+		return out, fmt.Errorf("validate TemplateItem JSON: %w", err)
+	}
+	{
+		out = &TemplateItem{}
+		switch string(body.Selected.Kind()) {
+		case "text":
+			actual, _ := body.Selected.AsText()
+			var obj *TemplateText
+			if actual != nil {
+				obj = decodeTemplateTextTransportToTemplateText(actual)
+			}
+			u := out.Selected
+			u.SetText((*TemplateText)(obj))
+			out.Selected = u
+		case "blob":
+			actual, _ := body.Selected.AsBlob()
+			var obj *TemplateBlob
+			if actual != nil {
+				obj = decodeTemplateBlobTransportToTemplateBlob(actual)
+			}
+			u := out.Selected
+			u.SetBlob((*TemplateBlob)(obj))
+			out.Selected = u
+		}
+	}
+	return out, nil
+}
+
+// EncodeTemplateText turns a service value into JSON using the field names in the Goa design.
+func EncodeTemplateText(in *TemplateText) ([]byte, error) {
+	if err := checkTemplateTextValue(in); err != nil {
+		return nil, fmt.Errorf("encode TemplateText JSON: %w", err)
+	}
+	if err := validateTemplateTextOriginal2(in); err != nil {
+		return nil, fmt.Errorf("validate TemplateText value: %w", err)
+	}
+	var body *jsonTemplateTextTransport
+	{
+		body = &jsonTemplateTextTransport{
+			URI:      &in.URI,
+			MimeType: in.MimeType,
+			Text:     &in.Text,
+		}
+	}
+	if err := validatejsonTemplateTextTransport(body); err != nil {
+		return nil, fmt.Errorf("validate TemplateText JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode TemplateText JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeTemplateText checks JSON field names from the Goa design and returns a service value.
+func DecodeTemplateText(data []byte) (out *TemplateText, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode TemplateText JSON: %w", err)
+	}
+	if err := validateTemplateTextJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode TemplateText JSON: %w", err)
+	}
+	var body *jsonTemplateTextTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode TemplateText JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode TemplateText JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode TemplateText JSON after first value: %w", err)
+	}
+	if err := validatejsonTemplateTextTransport(body); err != nil {
+		return out, fmt.Errorf("validate TemplateText JSON: %w", err)
+	}
+	{
+		out = &TemplateText{
+			URI:      *body.URI,
+			MimeType: body.MimeType,
+			Text:     *body.Text,
+		}
+	}
+	return out, nil
+}
+
 func decodeRefereeEmbeddedTextTransportToRefereeEmbeddedText(v *jsonRefereeEmbeddedTextTransport) *RefereeEmbeddedText {
 	res := &RefereeEmbeddedText{
 		URI:  *v.URI,
@@ -1564,6 +2102,26 @@ func decodeRefereePromptTextTransportToRefereePromptText(v *jsonRefereePromptTex
 func decodeRefereePromptTextTransportToRefereePromptText2(v *jsonRefereePromptTextTransport) *RefereePromptText {
 	res := &RefereePromptText{
 		Text: *v.Text,
+	}
+
+	return res
+}
+
+func decodeTemplateBlobTransportToTemplateBlob(v *jsonTemplateBlobTransport) *TemplateBlob {
+	res := &TemplateBlob{
+		URI:      *v.URI,
+		MimeType: v.MimeType,
+		Blob:     v.Blob,
+	}
+
+	return res
+}
+
+func decodeTemplateTextTransportToTemplateText(v *jsonTemplateTextTransport) *TemplateText {
+	res := &TemplateText{
+		URI:      *v.URI,
+		MimeType: v.MimeType,
+		Text:     *v.Text,
 	}
 
 	return res
@@ -1702,6 +2260,26 @@ func encodeRefereePromptTextToRefereePromptTextTransport(v *RefereePromptText) *
 func encodeRefereePromptTextToRefereePromptTextTransport2(v *RefereePromptText) *jsonRefereePromptTextTransport {
 	res := &jsonRefereePromptTextTransport{
 		Text: &v.Text,
+	}
+
+	return res
+}
+
+func encodeTemplateBlobToTemplateBlobTransport(v *TemplateBlob) *jsonTemplateBlobTransport {
+	res := &jsonTemplateBlobTransport{
+		URI:      &v.URI,
+		MimeType: v.MimeType,
+		Blob:     v.Blob,
+	}
+
+	return res
+}
+
+func encodeTemplateTextToTemplateTextTransport(v *TemplateText) *jsonTemplateTextTransport {
+	res := &jsonTemplateTextTransport{
+		URI:      &v.URI,
+		MimeType: v.MimeType,
+		Text:     &v.Text,
 	}
 
 	return res
@@ -2953,6 +3531,478 @@ func validateRefereePromptTextJSONValue2(path string, value any, description str
 	return nil
 }
 
+// validateTemplateBlobJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateBlobJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "blob":
+			if err := validateTemplateBlobJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Binary resource contents",
+			); err != nil {
+				return err
+			}
+		case "mimeType":
+			if err := validateTemplateBlobJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Content media type",
+			); err != nil {
+				return err
+			}
+		case "uri":
+			if err := validateTemplateBlobJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Resource identifier",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"blob",
+				"mimeType",
+				"uri",
+			})
+		}
+	}
+	return nil
+}
+
+// validateTemplateBlobJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateBlobJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTemplateBlobJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateBlobJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTemplateBlobJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateBlobJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTemplateItemJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateItemJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "content":
+			if err := validateTemplateItemJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Selected resource representation",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"content",
+			})
+		}
+	}
+	return nil
+}
+
+// validateTemplateItemJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateItemJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
+		}
+	}
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "text":
+		return validateTemplateItemJSONValue3(generatedJSONChildPath(path, "value", false), branch, "Text resource")
+	case "blob":
+		return validateTemplateItemJSONValue7(generatedJSONChildPath(path, "value", false), branch, "Binary resource")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
+}
+
+// validateTemplateItemJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateItemJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "mimeType":
+			if err := validateTemplateItemJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Content media type",
+			); err != nil {
+				return err
+			}
+		case "text":
+			if err := validateTemplateItemJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Resource contents",
+			); err != nil {
+				return err
+			}
+		case "uri":
+			if err := validateTemplateItemJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Resource identifier",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"mimeType",
+				"text",
+				"uri",
+			})
+		}
+	}
+	return nil
+}
+
+// validateTemplateItemJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateItemJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTemplateItemJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateItemJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTemplateItemJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateItemJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTemplateItemJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateItemJSONValue7(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "blob":
+			if err := validateTemplateItemJSONValue8(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Binary resource contents",
+			); err != nil {
+				return err
+			}
+		case "mimeType":
+			if err := validateTemplateItemJSONValue9(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Content media type",
+			); err != nil {
+				return err
+			}
+		case "uri":
+			if err := validateTemplateItemJSONValue10(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Resource identifier",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"blob",
+				"mimeType",
+				"uri",
+			})
+		}
+	}
+	return nil
+}
+
+// validateTemplateItemJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateItemJSONValue8(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTemplateItemJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateItemJSONValue9(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTemplateItemJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateItemJSONValue10(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTemplateTextJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateTextJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "mimeType":
+			if err := validateTemplateTextJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Content media type",
+			); err != nil {
+				return err
+			}
+		case "text":
+			if err := validateTemplateTextJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Resource contents",
+			); err != nil {
+				return err
+			}
+		case "uri":
+			if err := validateTemplateTextJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Resource identifier",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"mimeType",
+				"text",
+				"uri",
+			})
+		}
+	}
+	return nil
+}
+
+// validateTemplateTextJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateTextJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTemplateTextJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateTextJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTemplateTextJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTemplateTextJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
 // readStrictJSON checks syntax and nesting before walking for duplicate keys,
 // and preserves integer text for the generated type checks.
 func readStrictJSON(data []byte) (any, error) {
@@ -3565,6 +4615,167 @@ func checkRefereePromptTextRefereePromptTextValue(in *RefereePromptText, field s
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if !utf8.ValidString(string(in.Text)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
+		}
+	}
+	return nil
+}
+
+// checkTemplateBlobValue checks text and cycles before conversion.
+func checkTemplateBlobValue(in *TemplateBlob) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkTemplateBlobTemplateBlobValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkTemplateBlobTemplateBlobValue checks one generated value on the active path.
+func checkTemplateBlobTemplateBlobValue(in *TemplateBlob, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.URI)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
+		}
+		if in.MimeType != nil {
+			if !utf8.ValidString(string(*in.MimeType)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
+			}
+		}
+	}
+	return nil
+}
+
+// checkTemplateItemValue checks text and cycles before conversion.
+func checkTemplateItemValue(in *TemplateItem) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkTemplateItemTemplateItemValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkTemplateItemTemplateItemValue checks one generated value on the active path.
+func checkTemplateItemTemplateItemValue(in *TemplateItem, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if branch1, ok := in.Selected.AsText(); ok {
+			_ = branch1
+			if err := checkTemplateItemTemplateTextValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "content", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selected.AsBlob(); ok {
+			_ = branch1
+			if err := checkTemplateItemTemplateBlobValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "content", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkTemplateItemTemplateTextValue checks one generated value on the active path.
+func checkTemplateItemTemplateTextValue(in *TemplateText, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.URI)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
+		}
+		if in.MimeType != nil {
+			if !utf8.ValidString(string(*in.MimeType)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
+			}
+		}
+		if !utf8.ValidString(string(in.Text)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
+		}
+	}
+	return nil
+}
+
+// checkTemplateItemTemplateBlobValue checks one generated value on the active path.
+func checkTemplateItemTemplateBlobValue(in *TemplateBlob, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.URI)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
+		}
+		if in.MimeType != nil {
+			if !utf8.ValidString(string(*in.MimeType)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
+			}
+		}
+	}
+	return nil
+}
+
+// checkTemplateTextValue checks text and cycles before conversion.
+func checkTemplateTextValue(in *TemplateText) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkTemplateTextTemplateTextValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkTemplateTextTemplateTextValue checks one generated value on the active path.
+func checkTemplateTextTemplateTextValue(in *TemplateText, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.URI)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
+		}
+		if in.MimeType != nil {
+			if !utf8.ValidString(string(*in.MimeType)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
+			}
+		}
 		if !utf8.ValidString(string(in.Text)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
 		}

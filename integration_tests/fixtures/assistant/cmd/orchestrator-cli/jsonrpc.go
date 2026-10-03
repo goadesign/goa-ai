@@ -48,6 +48,8 @@ func doJSONRPC(ctx context.Context, scheme, host string, timeout int, debug bool
 			return writeEndpointResult(ctx, stdout, endpoint, payload)
 		case "resources-read":
 			return writeEndpointResult(ctx, stdout, endpoint, payload)
+		case "resources-templates-list":
+			return writeEndpointResult(ctx, stdout, endpoint, payload)
 		case "prompts-list":
 			return writeEndpointResult(ctx, stdout, endpoint, payload)
 		case "prompts-get":

@@ -71,13 +71,13 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*D
     {{- if .Tools }}
     capabilities.Tools = &ToolsCapability{}
     {{- end }}
-    {{- if .Resources }}
+    {{- if or .Resources .ResourceTemplates }}
     capabilities.Resources = &ResourcesCapability{}
     {{- end }}
     {{- if or .StaticPrompts .MethodPrompts }}
     capabilities.Prompts = &PromptsCapability{}
     {{- end }}
-    {{- if .PromptCompletions }}
+    {{- if .Completions }}
     capabilities.Completions = &CompletionsCapability{}
     {{- end }}
     return &DiscoverResult{

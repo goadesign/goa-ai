@@ -33,6 +33,8 @@ type Service interface {
 	ResourcesList(context.Context, *ResourcesListPayload) (res *ResourcesListResult, err error)
 	// Read a resource
 	ResourcesRead(context.Context, *ResourcesReadPayload) (res *ResourcesReadResult, err error)
+	// List URI templates clients can expand to select resources
+	ResourcesTemplatesList(context.Context, *ResourceTemplatesListPayload) (res *ResourceTemplatesListResult, err error)
 	// List available prompts
 	PromptsList(context.Context, *PromptsListPayload) (res *PromptsListResult, err error)
 	// Get a prompt by name
@@ -55,7 +57,7 @@ const ServiceName = "mcp_assistant"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [8]string{"server/discover", "tools/list", "tools/call", "resources/list", "resources/read", "prompts/list", "prompts/get", "completion/complete"}
+var MethodNames = [9]string{"server/discover", "tools/list", "tools/call", "resources/list", "resources/read", "resources/templates/list", "prompts/list", "prompts/get", "completion/complete"}
 
 type CompletionArgument struct {
 	// Declared argument currently being entered
@@ -291,6 +293,43 @@ type ResourceInfo struct {
 	Description *string
 	// Resource MIME type
 	MimeType *string
+}
+
+type ResourceTemplateInfo struct {
+	// RFC 6570 template expanded by the client
+	URITemplate string
+	// Resource template name
+	Name string
+	// Resources available through this template
+	Description *string
+	// Hint for the resource content type
+	MimeType *string
+}
+
+// ResourceTemplatesListPayload is the payload type of the mcp_assistant
+// service resources/templates/list method.
+type ResourceTemplatesListPayload struct {
+	// Opaque cursor from a prior catalog page
+	Cursor *string
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// ResourceTemplatesListResult is the result type of the mcp_assistant service
+// resources/templates/list method.
+type ResourceTemplatesListResult struct {
+	// Parameterized addresses advertised by this service
+	ResourceTemplates []*ResourceTemplateInfo
+	// Cursor for another catalog page
+	NextCursor *string
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType string
+	// Milliseconds this one response may be cached
+	TTLMs int64
+	// Whether this response may be reused across authorization contexts
+	CacheScope string
 }
 
 // Resource capabilities
@@ -703,6 +742,32 @@ func validatejsonResourceInfoTransport(value *jsonResourceInfoTransport) (err er
 	}
 	if value.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	return err
+}
+
+// jsonResourceTemplateInfoTransport stores JSON fields until they have been validated.
+type jsonResourceTemplateInfoTransport struct {
+	// RFC 6570 template expanded by the client
+	URITemplate *string `json:"uriTemplate"`
+	// Resource template name
+	Name *string `json:"name"`
+	// Resources available through this template
+	Description *string `json:"description,omitempty"`
+	// Hint for the resource content type
+	MimeType *string `json:"mimeType,omitempty"`
+}
+
+// validatejsonResourceTemplateInfoTransport checks decoded JSON before it becomes a service value.
+func validatejsonResourceTemplateInfoTransport(value *jsonResourceTemplateInfoTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.URITemplate == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uriTemplate", "body"))
 	}
 	if value.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
@@ -1514,6 +1579,65 @@ func DecodeResourceInfo(data []byte) (out *ResourceInfo, err error) {
 	{
 		out = &ResourceInfo{
 			URI:         *body.URI,
+			Name:        *body.Name,
+			Description: body.Description,
+			MimeType:    body.MimeType,
+		}
+	}
+	return out, nil
+}
+
+// EncodeResourceTemplateInfo turns a service value into JSON using the field names in the Goa design.
+func EncodeResourceTemplateInfo(in *ResourceTemplateInfo) ([]byte, error) {
+	if err := checkResourceTemplateInfoValue(in); err != nil {
+		return nil, fmt.Errorf("encode ResourceTemplateInfo JSON: %w", err)
+	}
+	var body *jsonResourceTemplateInfoTransport
+	{
+		body = &jsonResourceTemplateInfoTransport{
+			URITemplate: &in.URITemplate,
+			Name:        &in.Name,
+			Description: in.Description,
+			MimeType:    in.MimeType,
+		}
+	}
+	if err := validatejsonResourceTemplateInfoTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ResourceTemplateInfo JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ResourceTemplateInfo JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeResourceTemplateInfo checks JSON field names from the Goa design and returns a service value.
+func DecodeResourceTemplateInfo(data []byte) (out *ResourceTemplateInfo, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ResourceTemplateInfo JSON: %w", err)
+	}
+	if err := validateResourceTemplateInfoJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ResourceTemplateInfo JSON: %w", err)
+	}
+	var body *jsonResourceTemplateInfoTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ResourceTemplateInfo JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ResourceTemplateInfo JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ResourceTemplateInfo JSON after first value: %w", err)
+	}
+	if err := validatejsonResourceTemplateInfoTransport(body); err != nil {
+		return out, fmt.Errorf("validate ResourceTemplateInfo JSON: %w", err)
+	}
+	{
+		out = &ResourceTemplateInfo{
+			URITemplate: *body.URITemplate,
 			Name:        *body.Name,
 			Description: body.Description,
 			MimeType:    body.MimeType,
@@ -2988,6 +3112,130 @@ func validateResourceInfoJSONValue5(path string, value any, description string) 
 	return nil
 }
 
+// validateResourceTemplateInfoJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResourceTemplateInfoJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "description":
+			if err := validateResourceTemplateInfoJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Resources available through this template",
+			); err != nil {
+				return err
+			}
+		case "mimeType":
+			if err := validateResourceTemplateInfoJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Hint for the resource content type",
+			); err != nil {
+				return err
+			}
+		case "name":
+			if err := validateResourceTemplateInfoJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Resource template name",
+			); err != nil {
+				return err
+			}
+		case "uriTemplate":
+			if err := validateResourceTemplateInfoJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "RFC 6570 template expanded by the client",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"description",
+				"mimeType",
+				"name",
+				"uriTemplate",
+			})
+		}
+	}
+	return nil
+}
+
+// validateResourceTemplateInfoJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResourceTemplateInfoJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResourceTemplateInfoJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResourceTemplateInfoJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResourceTemplateInfoJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResourceTemplateInfoJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResourceTemplateInfoJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResourceTemplateInfoJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
 // validateResourcesCapabilityJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validateResourcesCapabilityJSONValue(path string, value any, description string) error {
 	field := path
@@ -3918,6 +4166,49 @@ func checkResourceInfoResourceInfoValue(in *ResourceInfo, field string, active m
 	if in != nil {
 		if !utf8.ValidString(string(in.URI)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
+		}
+		if !utf8.ValidString(string(in.Name)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "name", false))
+		}
+		if in.Description != nil {
+			if !utf8.ValidString(string(*in.Description)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "description", false))
+			}
+		}
+		if in.MimeType != nil {
+			if !utf8.ValidString(string(*in.MimeType)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
+			}
+		}
+	}
+	return nil
+}
+
+// checkResourceTemplateInfoValue checks text and cycles before conversion.
+func checkResourceTemplateInfoValue(in *ResourceTemplateInfo) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkResourceTemplateInfoResourceTemplateInfoValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkResourceTemplateInfoResourceTemplateInfoValue checks one generated value on the active path.
+func checkResourceTemplateInfoResourceTemplateInfoValue(in *ResourceTemplateInfo, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.URITemplate)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uriTemplate", false))
 		}
 		if !utf8.ValidString(string(in.Name)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "name", false))

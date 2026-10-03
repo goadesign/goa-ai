@@ -440,11 +440,58 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 
 		return res, nil
 	default:
-		failure := goa.PermanentError("invalid_params", "unknown resource: %s", p.URI)
+		body := &mcpcodec.ReadResourcePayloadTransport{}
+		uri := string(p.URI)
+		body.Address = &uri
+		payload, err := mcpcodec.NewReadResourcePayload(body)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+		}
+		result, err := a.service.ReadResource(ctx, payload)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err)
+		}
+		if err := mcpcodec.ValidateReadResourceResultValue(result); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		contents := make([]*ResourceContent, 0, len(result.Parts))
+		for _, item := range result.Parts {
+			content, err := convertResourceContent(item.Selected)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return nil, goa.PermanentError("internal_error", "%s", err.Error())
+			}
+			contents = append(contents, content)
+		}
+		return &ResourcesReadResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Contents: contents}, nil
+	}
+}
+
+// ResourcesTemplatesList returns the URI templates advertised by the service.
+// Templates guide discovery; the typed reader owns URI interpretation and access.
+func (a *MCPAdapter) ResourcesTemplatesList(ctx context.Context, p *ResourceTemplatesListPayload) (*ResourceTemplatesListResult, error) {
+	_, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/templates/list")
+	defer span.End()
+	if p.Cursor != nil {
+		failure := goa.PermanentError("invalid_params", "resources/templates/list does not accept a cursor")
 		span.RecordError(failure)
 		span.SetStatus(codes.Error, failure.Error())
 		return nil, failure
 	}
+	templates := []*ResourceTemplateInfo{
+		{URITemplate: "test://template/{id}/data", Name: "referee", Description: stringPtr("Read synthetic parameterized resources by their exact URI"), MimeType: stringPtr("text/plain")},
+		{URITemplate: "test://template/{id:3}/data", Name: "prefix", Description: stringPtr("Read synthetic parameterized resources by their exact URI"), MimeType: stringPtr("text/plain")},
+		{URITemplate: "test://binary/{id}", Name: "binary", Description: stringPtr("Read synthetic parameterized resources by their exact URI"), MimeType: stringPtr("application/octet-stream")},
+		{URITemplate: "test://reserved/{+path}{?fields*}", Name: "reserved", Description: stringPtr("Read synthetic parameterized resources by their exact URI"), MimeType: stringPtr("text/plain")},
+	}
+	return &ResourceTemplatesListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", ResourceTemplates: templates}, nil
 }
 
 // Prompts handling
@@ -705,6 +752,44 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 	return nil, failure
 }
 
+// convertResourceContent checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertResourceContent(value assistant.TemplateRepresentation) (*ResourceContent, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.TemplateRepresentationKindText:
+		selected, _ := value.AsText()
+
+		out := &ResourceContent{
+			URI:      selected.URI,
+			MimeType: selected.MimeType,
+			Text:     &selected.Text,
+		}
+
+		return out, nil
+
+	case assistant.TemplateRepresentationKindBlob:
+		selected, _ := value.AsBlob()
+
+		out := &ResourceContent{
+			URI:      selected.URI,
+			MimeType: selected.MimeType,
+		}
+
+		encoded := base64.StdEncoding.EncodeToString(selected.Blob)
+		out.Blob = &encoded
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
 // convertPrompt0ContentResource2 checks the selected service content branch and converts its fields
 // to MCP. An unset branch or missing selected value returns a validation error.
 func convertPrompt0ContentResource2(value assistant.Resource) (*ResourceContent, error) {
@@ -725,7 +810,7 @@ func convertPrompt0ContentResource2(value assistant.Resource) (*ResourceContent,
 		return out, nil
 
 	default:
-		panic("prompt content reached conversion without validation")
+		panic("content reached conversion without validation")
 	}
 }
 
@@ -779,25 +864,53 @@ func convertPrompt0Content(value assistant.Content) (*ContentItem, error) {
 		return out, nil
 
 	default:
-		panic("prompt content reached conversion without validation")
+		panic("content reached conversion without validation")
 	}
 }
 
-// CompletionComplete selects a declared prompt argument and asks its service
+// CompletionComplete selects a declared prompt or resource argument and asks its service
 // method for suggestions. Missing bindings return an empty list for a valid
 // argument; unknown names fail before any service method runs.
 func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionCompletePayload) (*CompletionCompleteResult, error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.completion/complete")
 	defer span.End()
-	if p.Ref.Type != "ref/prompt" || p.Ref.Name == nil {
+	var reference string
+	switch {
+	case p.Ref.Type == "ref/prompt" && p.Ref.Name != nil:
+		reference = *p.Ref.Name
+	case p.Ref.Type == "ref/resource" && p.Ref.URI != nil:
+		reference = *p.Ref.URI
+	default:
 		failure := goa.PermanentError("invalid_params", "unknown completion reference")
 		span.RecordError(failure)
 		span.SetStatus(codes.Error, failure.Error())
 		return nil, failure
 	}
-	switch *p.Ref.Name {
+	switch {
 
-	case "test_prompt_with_arguments":
+	case p.Ref.Type == "ref/prompt" && reference == "test_simple_prompt":
+		switch p.Argument.Name {
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	case p.Ref.Type == "ref/prompt" && reference == "test_prompt_with_arguments":
 		switch p.Argument.Name {
 
 		case "arg1":
@@ -805,7 +918,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 		case "arg2":
 
 		default:
-			failure := goa.PermanentError("invalid_params", "unknown prompt argument: %s", p.Argument.Name)
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
 			span.RecordError(failure)
 			span.SetStatus(codes.Error, failure.Error())
 			return nil, failure
@@ -827,13 +940,13 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 			}
 		}
 
-	case "test_prompt_with_embedded_resource":
+	case p.Ref.Type == "ref/prompt" && reference == "test_prompt_with_embedded_resource":
 		switch p.Argument.Name {
 
 		case "resourceUri":
 
 		default:
-			failure := goa.PermanentError("invalid_params", "unknown prompt argument: %s", p.Argument.Name)
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
 			span.RecordError(failure)
 			span.SetStatus(codes.Error, failure.Error())
 			return nil, failure
@@ -853,11 +966,11 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 			}
 		}
 
-	case "test_prompt_with_image":
+	case p.Ref.Type == "ref/prompt" && reference == "test_prompt_with_image":
 		switch p.Argument.Name {
 
 		default:
-			failure := goa.PermanentError("invalid_params", "unknown prompt argument: %s", p.Argument.Name)
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
 			span.RecordError(failure)
 			span.SetStatus(codes.Error, failure.Error())
 			return nil, failure
@@ -875,11 +988,13 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 			}
 		}
 
-	case "test_simple_prompt":
+	case p.Ref.Type == "ref/resource" && reference == "test://template/{id}/data":
 		switch p.Argument.Name {
 
+		case "id":
+
 		default:
-			failure := goa.PermanentError("invalid_params", "unknown prompt argument: %s", p.Argument.Name)
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
 			span.RecordError(failure)
 			span.SetStatus(codes.Error, failure.Error())
 			return nil, failure
@@ -887,6 +1002,90 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 		if p.Context != nil {
 			for name := range p.Context.Arguments {
 				switch name {
+
+				case "id":
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	case p.Ref.Type == "ref/resource" && reference == "test://template/{id:3}/data":
+		switch p.Argument.Name {
+
+		case "id":
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				case "id":
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	case p.Ref.Type == "ref/resource" && reference == "test://binary/{id}":
+		switch p.Argument.Name {
+
+		case "id":
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				case "id":
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	case p.Ref.Type == "ref/resource" && reference == "test://reserved/{+path}{?fields*}":
+		switch p.Argument.Name {
+
+		case "path":
+
+		case "fields":
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				case "path":
+
+				case "fields":
 
 				default:
 					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
@@ -898,13 +1097,103 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 		}
 
 	default:
-		failure := goa.PermanentError("invalid_params", "unknown prompt: %s", *p.Ref.Name)
+		failure := goa.PermanentError("invalid_params", "unknown completion reference: %s", reference)
 		span.RecordError(failure)
 		span.SetStatus(codes.Error, failure.Error())
 		return nil, failure
 	}
 
-	if *p.Ref.Name == "test_prompt_with_arguments" && p.Argument.Name == "arg1" {
+	if p.Ref.Type == "ref/prompt" && reference == "test_prompt_with_arguments" && p.Argument.Name == "arg1" {
+		// The private constructor applies the method's defaults and validation
+		// to already-decoded protocol values before the service receives them.
+		body := &mcpcodec.SuggestArgumentPayloadTransport{}
+		value := string(p.Argument.Value)
+		body.Value = &value
+		if p.Context != nil && p.Context.Arguments != nil {
+			body.Arguments = make(map[string]string, len(p.Context.Arguments))
+			for name, value := range p.Context.Arguments {
+				body.Arguments[string(name)] = string(value)
+			}
+		}
+		payload, err := mcpcodec.NewSuggestArgumentPayload(body)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+		}
+		result, err := a.service.SuggestArgument(ctx, payload)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err)
+		}
+		if err := mcpcodec.ValidateSuggestArgumentResultValue(result); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		out := &CompletionSuggestion{
+			Total:   result.Total,
+			HasMore: result.HasMore,
+		}
+		if result.Values != nil {
+			out.Values = make([]string, len(result.Values))
+			for i, val := range result.Values {
+				out.Values[i] = val
+			}
+		}
+		if len(out.Values) == 0 {
+			out.Values = []string{}
+		}
+		return &CompletionCompleteResult{ResultType: "complete", Meta: resultMeta(), Completion: out}, nil
+	}
+
+	if p.Ref.Type == "ref/resource" && reference == "test://template/{id}/data" && p.Argument.Name == "id" {
+		// The private constructor applies the method's defaults and validation
+		// to already-decoded protocol values before the service receives them.
+		body := &mcpcodec.SuggestArgumentPayloadTransport{}
+		value := string(p.Argument.Value)
+		body.Value = &value
+		if p.Context != nil && p.Context.Arguments != nil {
+			body.Arguments = make(map[string]string, len(p.Context.Arguments))
+			for name, value := range p.Context.Arguments {
+				body.Arguments[string(name)] = string(value)
+			}
+		}
+		payload, err := mcpcodec.NewSuggestArgumentPayload(body)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+		}
+		result, err := a.service.SuggestArgument(ctx, payload)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err)
+		}
+		if err := mcpcodec.ValidateSuggestArgumentResultValue(result); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		out := &CompletionSuggestion{
+			Total:   result.Total,
+			HasMore: result.HasMore,
+		}
+		if result.Values != nil {
+			out.Values = make([]string, len(result.Values))
+			for i, val := range result.Values {
+				out.Values[i] = val
+			}
+		}
+		if len(out.Values) == 0 {
+			out.Values = []string{}
+		}
+		return &CompletionCompleteResult{ResultType: "complete", Meta: resultMeta(), Completion: out}, nil
+	}
+
+	if p.Ref.Type == "ref/resource" && reference == "test://reserved/{+path}{?fields*}" && p.Argument.Name == "path" {
 		// The private constructor applies the method's defaults and validation
 		// to already-decoded protocol values before the service receives them.
 		body := &mcpcodec.SuggestArgumentPayloadTransport{}

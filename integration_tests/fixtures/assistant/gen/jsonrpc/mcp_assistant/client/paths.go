@@ -32,6 +32,11 @@ func ResourcesReadMcpAssistantPath() string {
 	return "/rpc"
 }
 
+// ResourcesTemplatesListMcpAssistantPath returns the URL path to the mcp_assistant service resources/templates/list HTTP endpoint.
+func ResourcesTemplatesListMcpAssistantPath() string {
+	return "/rpc"
+}
+
 // PromptsListMcpAssistantPath returns the URL path to the mcp_assistant service prompts/list HTTP endpoint.
 func PromptsListMcpAssistantPath() string {
 	return "/rpc"

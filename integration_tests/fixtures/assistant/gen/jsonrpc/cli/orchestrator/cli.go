@@ -23,7 +23,7 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
-		"mcp-assistant (server-discover|tools-list|tools-call|resources-list|resources-read|prompts-list|prompts-get|completion-complete)",
+		"mcp-assistant (server-discover|tools-list|tools-call|resources-list|resources-read|resources-templates-list|prompts-list|prompts-get|completion-complete)",
 	}
 }
 
@@ -79,6 +79,9 @@ func ParseEndpoint(
 		mcpAssistantResourcesReadFlags    = flag.NewFlagSet("resources-read", flag.ExitOnError)
 		mcpAssistantResourcesReadBodyFlag = new(cliStringFlag)
 
+		mcpAssistantResourcesTemplatesListFlags    = flag.NewFlagSet("resources-templates-list", flag.ExitOnError)
+		mcpAssistantResourcesTemplatesListBodyFlag = new(cliStringFlag)
+
 		mcpAssistantPromptsListFlags    = flag.NewFlagSet("prompts-list", flag.ExitOnError)
 		mcpAssistantPromptsListBodyFlag = new(cliStringFlag)
 
@@ -93,6 +96,7 @@ func ParseEndpoint(
 	mcpAssistantToolsCallFlags.Var(mcpAssistantToolsCallBodyFlag, "body", "")
 	mcpAssistantResourcesListFlags.Var(mcpAssistantResourcesListBodyFlag, "body", "")
 	mcpAssistantResourcesReadFlags.Var(mcpAssistantResourcesReadBodyFlag, "body", "")
+	mcpAssistantResourcesTemplatesListFlags.Var(mcpAssistantResourcesTemplatesListBodyFlag, "body", "")
 	mcpAssistantPromptsListFlags.Var(mcpAssistantPromptsListBodyFlag, "body", "")
 	mcpAssistantPromptsGetFlags.Var(mcpAssistantPromptsGetBodyFlag, "body", "")
 	mcpAssistantCompletionCompleteFlags.Var(mcpAssistantCompletionCompleteBodyFlag, "body", "")
@@ -103,6 +107,7 @@ func ParseEndpoint(
 	mcpAssistantToolsCallFlags.Usage = mcpAssistantToolsCallUsage
 	mcpAssistantResourcesListFlags.Usage = mcpAssistantResourcesListUsage
 	mcpAssistantResourcesReadFlags.Usage = mcpAssistantResourcesReadUsage
+	mcpAssistantResourcesTemplatesListFlags.Usage = mcpAssistantResourcesTemplatesListUsage
 	mcpAssistantPromptsListFlags.Usage = mcpAssistantPromptsListUsage
 	mcpAssistantPromptsGetFlags.Usage = mcpAssistantPromptsGetUsage
 	mcpAssistantCompletionCompleteFlags.Usage = mcpAssistantCompletionCompleteUsage
@@ -156,6 +161,9 @@ func ParseEndpoint(
 			case "resources-read":
 				epf = mcpAssistantResourcesReadFlags
 
+			case "resources-templates-list":
+				epf = mcpAssistantResourcesTemplatesListFlags
+
 			case "prompts-list":
 				epf = mcpAssistantPromptsListFlags
 
@@ -205,6 +213,9 @@ func ParseEndpoint(
 			case "resources-read":
 				endpoint = c.ResourcesRead()
 				data, err = mcpassistantc.BuildResourcesReadPayload(mcpAssistantResourcesReadBodyFlag.value)
+			case "resources-templates-list":
+				endpoint = c.ResourcesTemplatesList()
+				data, err = mcpassistantc.BuildResourcesTemplatesListPayload(mcpAssistantResourcesTemplatesListBodyFlag.value)
 			case "prompts-list":
 				endpoint = c.PromptsList()
 				data, err = mcpassistantc.BuildPromptsListPayload(mcpAssistantPromptsListBodyFlag.value)
@@ -235,6 +246,7 @@ func mcpAssistantUsage() {
 	fmt.Fprintln(os.Stderr, `    tools-call: Call a tool`)
 	fmt.Fprintln(os.Stderr, `    resources-list: List available resources`)
 	fmt.Fprintln(os.Stderr, `    resources-read: Read a resource`)
+	fmt.Fprintln(os.Stderr, `    resources-templates-list: List URI templates clients can expand to select resources`)
 	fmt.Fprintln(os.Stderr, `    prompts-list: List available prompts`)
 	fmt.Fprintln(os.Stderr, `    prompts-get: Get a prompt by name`)
 	fmt.Fprintln(os.Stderr, `    completion-complete: Return service-ranked suggestions for the argument currently being entered`)
@@ -330,6 +342,24 @@ func mcpAssistantResourcesReadUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant resources-read --body '{\n      \"_meta\": \"Praesentium eius.\",\n      \"uri\": \"http://raynorschiller.biz/kianna\"\n   }'")
+}
+
+func mcpAssistantResourcesTemplatesListUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant resources-templates-list", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `List URI templates clients can expand to select resources`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant resources-templates-list --body '{\n      \"_meta\": \"Nihil ratione esse in suscipit amet.\",\n      \"cursor\": \"Aliquam at in ut.\"\n   }'")
 }
 
 func mcpAssistantPromptsListUsage() {

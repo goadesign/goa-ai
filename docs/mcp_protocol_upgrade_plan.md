@@ -77,11 +77,11 @@ runtime tests pass after moving current synthetic suspension fixtures to version
 | Capability | Generated server | Direct client | Agent host |
 | --- | --- | --- | --- |
 | Current discovery and unary tools | Implemented | Implemented | Generated executors and canonical specs |
-| Fixed text/JSON/binary resource reads and static/method-backed prompts | Implemented | Generated typed clients; exact text/blob validation | No implicit conversion into agent tools |
+| Fixed text/JSON/binary reads, parameterized typed reads and static/method-backed prompts | Implemented | Generated typed clients; exact text/blob validation | No implicit conversion into agent tools |
 | Rich structured tool results | Generated declared JSON result | Generated tool/prompt and runtime clients preserve five content kinds, icons, metadata and exact structured JSON | Declared result codec |
-| Prompt argument completion | Typed `PromptCompletion` method bindings | Generated `completion/complete` clients with bounded non-null string values | Client/user interaction; no model or terminal-answer routing |
+| Prompt/resource argument completion | Typed `PromptCompletion` and `ResourceCompletion` method bindings | Generated `completion/complete` clients with bounded non-null string values | Client/user interaction; no model or terminal-answer routing |
 | Multi-round tool input | No producer advertised | Explicit unfinished result and successor request | Durable trusted form/URL/state-only continuation |
-| Tasks, subscriptions, URI templates | Not advertised | No extension claimed | Capability milestones remain separate |
+| Tasks, subscriptions | Not advertised | No extension claimed | Capability milestones remain separate |
 | OAuth and Apps | Host-owned dependencies; no built-in extension claimed | Host-built HTTP dependency | No grant/view ownership in the planner |
 
 Binary resources now use the existing `Resource` DSL and ordinary Goa byte
@@ -132,7 +132,7 @@ argument context, applies domain validation, and calls that method once.
 Typed result conversion retains suggestion order, optional totals and `hasMore`.
 Known arguments without a binding return `[]`; unknown names and malformed
 context fail before dispatch. Invalid output fails with an internal error rather
-than truncation. This completes prompt suggestions, not URI-template suggestions.
+than truncation. This first increment completed prompt suggestions; URI-template suggestions now share its path.
 The complete request path is generated HTTP client -> release-owned metadata
 and raw string-map checks -> Goa decoding -> generated typed constructor ->
 service method -> Goa result validation -> generated typed conversion -> client
@@ -149,8 +149,48 @@ unknown bindings, duplicates and absent/weaker array bounds. Build, the full ser
 package race tests cover the final shared string-map validation, and configured
 lint passed with zero issues. There is no deployed completion
 caller evidence for this newly introduced binding. The frozen referee passes both prompt-completion checks through the actual
-generated server. URI-template completion remains a release gate; the original
-full-suite baseline has not been rerun.
+generated server. URI-template completion now shares that generated path; its local and
+independent verification is recorded below. The original full-suite baseline
+has not been rerun.
+
+
+Resource templates now advertise RFC 6570 addresses through `ResourceTemplate`.
+One unary typed reader per service receives the exact URI and returns ordered
+text/blob contents; fixed resources retain exact dispatch. This replaces the
+plan's original variable-inversion premise. RFC 6570 prefix expansion loses
+information, and composite/adjacent variables can be ambiguous; the framework
+cannot truthfully recover every original value. Discovery templates therefore
+are not a routing or authorization mechanism. The service owns URI interpretation,
+existence and access, including valid addresses beyond the catalog. The parser
+is used only during design evaluation for syntax and completion-variable names,
+with no runtime URI-template parser or matcher dependency.
+
+`ResourceCompletion` shares typed input construction and result conversion with
+prompt completion. Exact declared references and prior variable names are
+validated before dispatch; unbound declared variables return empty suggestions.
+Resource reads do not occur during suggestion calls. Nil/invalid typed outputs
+fail rather than being repaired. Optional authored contents permit an existing
+resource with no items; required contents declare a non-empty constraint.
+Empty success never represents a missing resource.
+The independent template-read scenario passes 2/2 and caching now passes 8/8;
+prompt-completion regression passes 2/2. Compiled resource-only and mixed services
+verify located types, renamed fields, exact URI bytes, multiple contents, empty
+resources/blobs and protocol errors. Public DSL evaluation rejects invalid
+syntax, competing readers and unknown completion bindings. The regenerated
+integration suite, fresh affected race tests, build and configured lint passed.
+The complete `GOFLAGS=-p=1 make test` command passed, including the serial root
+race suite and quickstart. These targeted protocol checks do not establish
+full-suite conformance.
+
+The from-scratch alternative of inverting every template variable is unsound:
+RFC 6570 [prefix expansion](https://www.rfc-editor.org/rfc/rfc6570.html#section-2.4.1)
+discards suffixes, and adjacent/composite expressions may be ambiguous. A
+first-matching-template router would make declaration order decide ownership.
+The single typed reader instead owns the URI supplied by the protocol, with
+ordinary service code deciding domain interpretation and access. Fixed bindings
+have an exact address and retain their independent dispatch. No deployed caller
+uses this newly introduced declaration, and it adds no persisted state.
+
 
 
 Open `_meta` data also makes these content-containing types ineligible for the
@@ -549,8 +589,8 @@ The protocol revision and the set of optional capabilities are different decisio
 | Tools and direct/agent clients | Implemented with old envelopes and several result modes | Required upgrade: one current transport, canonical generated contracts, one structured typed-result path, and complete composition |
 | Binary resource reads | Implemented from Goa byte-valued results, including aliases and empty content | The existing Resource DSL selects the URI/MIME. Generation emits blobs and strict client decoding. Compiled modules, HTTP scenarios, and the independent binary-resource referee passed. |
 | Parameterized prompts | Implemented with ordinary string payloads and typed rich message results | Generated construction, Goa validation and declared union conversion preserve aliases and field names. Static prompts remain a distinct authoring form. Independent producer conformance remains outstanding. |
-| Resource templates | Current resources reject payloads and route only exact fixed URIs | Viable generated binding, currently absent. Map declared URI-template variables to typed service inputs, validate expansions and overlapping routes, and retain domain authorization. Requires a real URI-template contract; never reinterpret free-form URIs as filesystem authority. |
-| `completion/complete` | Prompt suggestions implemented through typed `PromptCompletion` bindings | Service owns ranked values; generated adapters own reference routing and validation. Compiled HTTP checks cover bounded arrays and exact context. URI-template suggestions and independent conformance remain outstanding; assistant `Completion(...)` stays separate. |
+| Resource templates | Current resources reject payloads and route only exact fixed URIs | Implemented through one generated typed reader. Pass the exact URI to one typed service reader; templates guide discovery and suggestions, while the service owns interpretation, existence and authorization. Prefix expansion can discard values and composite expansion can be ambiguous, so do not invert variables or select a first matching handler. Requires a real URI-template contract; never reinterpret free-form URIs as filesystem authority. |
+| `completion/complete` | Prompt suggestions implemented through typed `PromptCompletion` bindings | Service owns ranked values; generated adapters own reference routing and validation. Compiled HTTP checks cover bounded arrays and exact context. URI-template suggestions now use the same typed path; full-suite conformance remains outstanding; assistant `Completion(...)` stays separate. |
 | Additional input / form elicitation | Durable suspensions, ordered pending input, generated codecs, and host events exist; MCP caller/executor has no unfinished-call branch | Include the durable unfinished-call integration in the upgrade sequence. Advertise form support only with a real configured host and verified schema/response path. No-host callers reject honestly. |
 | URL elicitation | Host input can pause a run; no MCP URL consent/completion integration exists | Feasible host integration with consent, authenticated completion, and fresh-credential handling. Do not launch arbitrary URLs or return secrets through form answers. Advertise only the implemented mode. |
 | Progress | Shared callers can consume request-scoped SSE; agent hooks already carry execution progress | Add current request-ID/progress-token correlation in the transport. Any generated progress producer needs an explicit operation binding. Private agent events are not a public MCP payload. |
@@ -711,7 +751,7 @@ These are dependency-ordered work packages for one breaking release. Intermediat
 
 Every milestone below is required before this upgrade can release. Define the typed caller experience and complete generated fixture before editing each public contract. The current framework foundations are evidence of feasibility, not proof that the capability already exists.
 
-1. **Resource/prompt authoring:** prove byte-valued resource reads and parameterized prompt methods using existing Goa types. Bind static facts at generation time, including MIME, messages, arguments, and routing. Add URI templates and argument suggestions only with unambiguous variable/typed-input bindings; framework assistant `Completion` remains separate. Use generated transforms, not runtime payload coercion. Preserve fixed URI and static message outcomes.
+1. **Resource/prompt authoring:** prove byte-valued resource reads and parameterized prompt methods using existing Goa types. Bind static facts at generation time, including MIME, messages, arguments, and routing. Use URI templates for discovery and pass exact URI inputs to the service-owned reader; suggestions use declared variable names; framework assistant `Completion` remains separate. Use generated transforms, not runtime payload coercion. Preserve fixed URI and static message outcomes.
 2. **Subscriptions/progress:** identify the owning change/progress producer, authenticated selection, ordering, cancellation, and backpressure. Add request-scoped protocol events through a purpose-built generated binding and shared transport. Do not forward private session streams or install a generic global broadcaster. A subscription is a distinct operation, not streamed chunks of an otherwise unary tool/resource result.
 3. **Tasks consumer:** after declaring the extension, persist the exact remote task ID with its original invocation in trusted execution state. Schedule `tasks/get` through durable execution; polling observes server-owned work and must not reissue `tools/call`. Route task input through the same host path and use `tasks/update`/`tasks/cancel` with the required transport headers. Honor server polling guidance without inventing run-wide budgets.
 4. **Tasks server:** use an owned typed execution API over a durable workflow/job. Prove accepted-start recovery and readable task state before returning a handle. Derive identity from owner-authorized identifiers where possible; if a stable operation-to-successor mapping needs storage, only the initiating service owns it and exposes it through typed APIs. The adapter never reads another service's workflow tables. No universal scheduler, automatic taskification of unary methods, or global MCP deduplication store.

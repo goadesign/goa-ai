@@ -98,5 +98,7 @@ func refereePrompts() {
 			Attribute("hasMore", Boolean, "Whether further suggestions exist")
 		})
 		PromptCompletion("test_prompt_with_arguments", "arg1")
+		ResourceCompletion("test://template/{id}/data", "id")
+		ResourceCompletion("test://reserved/{+path}{?fields*}", "path")
 	})
 }

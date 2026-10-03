@@ -60,6 +60,15 @@ type ResourcesReadRequestBody struct {
 	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
+// ResourcesTemplatesListRequestBody is the type of the "mcp_assistant" service
+// "resources/templates/list" endpoint HTTP request body.
+type ResourcesTemplatesListRequestBody struct {
+	// Opaque cursor from a prior catalog page
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
 // PromptsListRequestBody is the type of the "mcp_assistant" service
 // "prompts/list" endpoint HTTP request body.
 type PromptsListRequestBody struct {
@@ -164,6 +173,23 @@ type ResourcesListResponseBody struct {
 type ResourcesReadResponseBody struct {
 	// Resource contents
 	Contents []*ResourceContentResponseBody `form:"contents,omitempty" json:"contents,omitempty" xml:"contents,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType *string `form:"resultType,omitempty" json:"resultType,omitempty" xml:"resultType,omitempty"`
+	// Milliseconds this one response may be cached
+	TTLMs *int64 `form:"ttlMs,omitempty" json:"ttlMs,omitempty" xml:"ttlMs,omitempty"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope *string `form:"cacheScope,omitempty" json:"cacheScope,omitempty" xml:"cacheScope,omitempty"`
+}
+
+// ResourcesTemplatesListResponseBody is the type of the "mcp_assistant"
+// service "resources/templates/list" endpoint HTTP response body.
+type ResourcesTemplatesListResponseBody struct {
+	// Parameterized addresses advertised by this service
+	ResourceTemplates []*ResourceTemplateInfoResponseBody `form:"resourceTemplates,omitempty" json:"resourceTemplates,omitempty" xml:"resourceTemplates,omitempty"`
+	// Cursor for another catalog page
+	NextCursor *string `form:"nextCursor,omitempty" json:"nextCursor,omitempty" xml:"nextCursor,omitempty"`
 	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
 	// This response contains a finished result
@@ -314,6 +340,25 @@ type ResourcesReadInvalidParamsResponseBody struct {
 // service "resources/read" endpoint HTTP response body for the
 // "internal_error" error.
 type ResourcesReadInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ResourcesTemplatesListInvalidParamsResponseBody is the type of the
+// "mcp_assistant" service "resources/templates/list" endpoint HTTP response
+// body for the "invalid_params" error.
+type ResourcesTemplatesListInvalidParamsResponseBody struct {
 	// Name is the name of this class of errors.
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// ID is a unique identifier for this particular occurrence of the problem.
@@ -563,6 +608,19 @@ type ResourceInfoResponseBody struct {
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
 }
 
+// ResourceTemplateInfoResponseBody is used to define fields on response body
+// types.
+type ResourceTemplateInfoResponseBody struct {
+	// RFC 6570 template expanded by the client
+	URITemplate *string `form:"uriTemplate,omitempty" json:"uriTemplate,omitempty" xml:"uriTemplate,omitempty"`
+	// Resource template name
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Resources available through this template
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Hint for the resource content type
+	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+}
+
 // PromptInfoResponseBody is used to define fields on response body types.
 type PromptInfoResponseBody struct {
 	// Prompt name
@@ -675,6 +733,17 @@ func NewResourcesReadRequestBody(p *mcpassistant.ResourcesReadPayload) *Resource
 	body := &ResourcesReadRequestBody{
 		URI:  p.URI,
 		Meta: p.Meta,
+	}
+	return body
+}
+
+// NewResourcesTemplatesListRequestBody builds the HTTP request body from the
+// payload of the "resources/templates/list" endpoint of the "mcp_assistant"
+// service.
+func NewResourcesTemplatesListRequestBody(p *mcpassistant.ResourceTemplatesListPayload) *ResourcesTemplatesListRequestBody {
+	body := &ResourcesTemplatesListRequestBody{
+		Cursor: p.Cursor,
+		Meta:   p.Meta,
 	}
 	return body
 }
@@ -907,6 +976,44 @@ func NewResourcesReadInvalidParams(body *ResourcesReadInvalidParamsResponseBody)
 // NewResourcesReadInternalError builds a mcp_assistant service resources/read
 // endpoint internal_error error.
 func NewResourcesReadInternalError(body *ResourcesReadInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewResourcesTemplatesListResourceTemplatesListResultOK builds a
+// "mcp_assistant" service "resources/templates/list" endpoint result from a
+// HTTP "OK" response.
+func NewResourcesTemplatesListResourceTemplatesListResultOK(body *ResourcesTemplatesListResponseBody) *mcpassistant.ResourceTemplatesListResult {
+	v := &mcpassistant.ResourceTemplatesListResult{
+		NextCursor: body.NextCursor,
+		Meta:       body.Meta,
+		ResultType: *body.ResultType,
+		TTLMs:      *body.TTLMs,
+		CacheScope: *body.CacheScope,
+	}
+	v.ResourceTemplates = make([]*mcpassistant.ResourceTemplateInfo, len(body.ResourceTemplates))
+	for i, val := range body.ResourceTemplates {
+		if val == nil {
+			v.ResourceTemplates[i] = nil
+			continue
+		}
+		v.ResourceTemplates[i] = unmarshalResourceTemplateInfoResponseBodyToMcpassistantResourceTemplateInfo(val)
+	}
+
+	return v
+}
+
+// NewResourcesTemplatesListInvalidParams builds a mcp_assistant service
+// resources/templates/list endpoint invalid_params error.
+func NewResourcesTemplatesListInvalidParams(body *ResourcesTemplatesListInvalidParamsResponseBody) *goa.ServiceError {
 	v := &goa.ServiceError{
 		Name:      *body.Name,
 		ID:        *body.ID,
@@ -1240,6 +1347,49 @@ func ValidateResourcesReadResponseBody(body *ResourcesReadResponseBody) (err err
 	return
 }
 
+// ValidateResourcesTemplatesListResponseBody runs the validations defined on
+// ResourcesTemplatesListResponseBody
+func ValidateResourcesTemplatesListResponseBody(body *ResourcesTemplatesListResponseBody) (err error) {
+	if body.ResourceTemplates == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resourceTemplates", "body"))
+	}
+	if body.ResultType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resultType", "body"))
+	}
+	if body.TTLMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ttlMs", "body"))
+	}
+	if body.CacheScope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cacheScope", "body"))
+	}
+	for _, e := range body.ResourceTemplates {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.resourceTemplates", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateResourceTemplateInfoResponseBody(e, "body.resourceTemplates[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.ResultType != nil {
+		if !(*body.ResultType == "complete") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resultType", *body.ResultType, []any{"complete"}))
+		}
+	}
+	if body.TTLMs != nil {
+		if *body.TTLMs < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.ttlMs", *body.TTLMs, 0, true))
+		}
+	}
+	if body.CacheScope != nil {
+		if !(*body.CacheScope == "public" || *body.CacheScope == "private") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.cacheScope", *body.CacheScope, []any{"public", "private"}))
+		}
+	}
+	return
+}
+
 // ValidatePromptsListResponseBody runs the validations defined on
 // PromptsListResponseBody
 func ValidatePromptsListResponseBody(body *PromptsListResponseBody) (err error) {
@@ -1455,6 +1605,30 @@ func ValidateResourcesReadInvalidParamsResponseBody(body *ResourcesReadInvalidPa
 // ValidateResourcesReadInternalErrorResponseBody runs the validations defined
 // on ResourcesReadInternalErrorResponseBody
 func ValidateResourcesReadInternalErrorResponseBody(body *ResourcesReadInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateResourcesTemplatesListInvalidParamsResponseBody runs the validations
+// defined on ResourcesTemplatesListInvalidParamsResponseBody
+func ValidateResourcesTemplatesListInvalidParamsResponseBody(body *ResourcesTemplatesListInvalidParamsResponseBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
@@ -1921,6 +2095,30 @@ func ValidateResourceInfoResponseBody(body *ResourceInfoResponseBody) (err error
 func validateResourceInfoResponseBody(body *ResourceInfoResponseBody, path string) (err error) {
 	if body.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	return
+}
+
+// ValidateResourceTemplateInfoResponseBody runs the validations defined on
+// ResourceTemplateInfo
+func ValidateResourceTemplateInfoResponseBody(body *ResourceTemplateInfoResponseBody) (err error) {
+	if body.URITemplate == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uriTemplate", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	return
+}
+
+// validateResourceTemplateInfoResponseBody checks ResourceTemplateInfo and
+// reports errors using the path supplied by its caller
+func validateResourceTemplateInfoResponseBody(body *ResourceTemplateInfoResponseBody, path string) (err error) {
+	if body.URITemplate == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uriTemplate", path))
 	}
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))

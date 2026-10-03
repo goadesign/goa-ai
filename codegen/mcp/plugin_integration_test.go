@@ -253,10 +253,12 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	simpleResult := promptFixtureType("SimpleResult", &expr.Object{{Name: "messages", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: simpleMessage}, NonNullableElems: true}}}})
 	simpleMethods["build"].Result = &expr.AttributeExpr{Type: simpleResult}
 	promptTypes = append(promptTypes, simpleText, simpleContent, simpleMessage, simpleResult)
+	templated, templateMethods := testService("templated", "read")
+	promptTypes = append(promptTypes, resourceReaderFixture(templateMethods["read"])...)
 	resources, resourceMethods := testService("resources", "read_document")
 	blobs, blobMethods := testService("blobs", "read_image")
 	blobMethods["read_image"].Result = &expr.AttributeExpr{Type: expr.Bytes}
-	root := testRootExpr([]*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources, blobs, methodPrompts, simplePrompt}, []*expr.HTTPServiceExpr{
+	root := testRootExpr([]*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources, blobs, methodPrompts, simplePrompt, templated}, []*expr.HTTPServiceExpr{
 		jsonrpcService(service, "/calc"),
 		jsonrpcService(formatter, "/formatter"),
 		jsonrpcService(selector, "/selector"),
@@ -268,6 +270,7 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 		jsonrpcService(simplePrompt, "/simple-prompt"),
 		jsonrpcService(resources, "/resources"),
 		jsonrpcService(blobs, "/blobs"),
+		jsonrpcService(templated, "/templated"),
 	})
 	httpService := root.API.HTTP.ServiceFor(service, root.API.HTTP)
 	httpEndpoint := httpService.EndpointFor(methods["add"])
@@ -284,7 +287,7 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	root.Types = append(root.Types, locatedRenderPayload)
 	root.Types = append(root.Types, promptTypes...)
 	root.WalkSets(func(eval.ExpressionSet) {})
-	for _, current := range []*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources, blobs, methodPrompts, simplePrompt} {
+	for _, current := range []*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources, blobs, methodPrompts, simplePrompt, templated} {
 		for _, method := range current.Methods {
 			method.Prepare()
 		}
@@ -377,6 +380,10 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 		Resources: []*mcpexpr.ResourceExpr{
 			{Name: "documents", URI: "doc://list", MimeType: "application/json", Method: resourceMethods["read_document"]},
 		},
+	})
+	mcpexpr.Root.RegisterMCP(templated, &mcpexpr.MCPExpr{
+		Name: "templated", Version: "1",
+		ResourceTemplates: []*mcpexpr.ResourceTemplateExpr{{Name: "items", URI: "test://items/{id:3}", MimeType: "text/plain", Method: templateMethods["read"]}},
 	})
 	mcpexpr.Root.RegisterMCP(blobs, &mcpexpr.MCPExpr{
 		Name: "blobs", Version: "1.0.0",
@@ -539,6 +546,11 @@ replace goa.design/goa/v3 => %s
 	_, err = promptTest.WriteString(methodPromptGeneratedTestSource)
 	require.NoError(t, err)
 	require.NoError(t, promptTest.Close())
+	readerTest, err := generatedRoot.OpenFile("jsonrpc/mcp_templated/client/resource_reader_test.go", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	require.NoError(t, err)
+	_, err = readerTest.WriteString(resourceReaderGeneratedTestSource)
+	require.NoError(t, err)
+	require.NoError(t, readerTest.Close())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, "go", "test", "-mod=mod", "./gen/...")

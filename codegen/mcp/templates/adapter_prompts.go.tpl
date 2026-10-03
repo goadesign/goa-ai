@@ -138,21 +138,21 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 }
 {{- end }}
 
-{{ if .NeedsPromptMeta }}
-// validatePromptMeta accepts absent metadata or a JSON object. An authored
+{{ if .NeedsContentMeta }}
+// validateContentMeta accepts absent metadata or a JSON object. An authored
 // scalar, array, null, or invalid JSON result fails before the response is sent.
-func validatePromptMeta(raw json.RawMessage) error {
+func validateContentMeta(raw json.RawMessage) error {
     if len(raw) == 0 { return nil }
     var fields map[string]json.RawMessage
     if err := json.Unmarshal(raw, &fields); err != nil {
-        return fmt.Errorf("prompt metadata must be a JSON object: %w", err)
+        return fmt.Errorf("content metadata must be a JSON object: %w", err)
     }
-    if fields == nil { return fmt.Errorf("prompt metadata must be a JSON object") }
+    if fields == nil { return fmt.Errorf("content metadata must be a JSON object") }
     return nil
 }
 {{ end }}
 
-{{ range .PromptConversions }}
+{{ range .ContentConversions }}
 // {{ .Name }} checks the selected service content branch and converts its fields
 // to MCP. An unset branch or missing selected value returns a validation error.
 func {{ .Name }}(value {{ .SourceRef }}) ({{ .TargetRef }}, error) {
@@ -166,7 +166,7 @@ func {{ .Name }}(value {{ .SourceRef }}) ({{ .TargetRef }}, error) {
     case {{ .Kind }}:
         selected, _ := {{ $conversion.Value }}.{{ .Getter }}()
         {{ if .MetaField }}
-        if err := validatePromptMeta(selected.{{ .MetaField }}); err != nil { return nil, err }
+        if err := validateContentMeta(selected.{{ .MetaField }}); err != nil { return nil, err }
         {{ end }}
         {{ .Transform }}
         {{ if .CheckSize }}
@@ -192,7 +192,7 @@ func {{ .Name }}(value {{ .SourceRef }}) ({{ .TargetRef }}, error) {
         return out, nil
     {{ end }}
     default:
-        panic("prompt content reached conversion without validation")
+        panic("content reached conversion without validation")
     }
 }
 {{ range .Helpers }}

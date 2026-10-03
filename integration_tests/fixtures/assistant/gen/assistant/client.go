@@ -24,6 +24,7 @@ type Client struct {
 	ResourcePromptEndpoint      goa.Endpoint
 	ImagePromptEndpoint         goa.Endpoint
 	SuggestArgumentEndpoint     goa.Endpoint
+	ReadResourceEndpoint        goa.Endpoint
 	AnalyzeSentimentEndpoint    goa.Endpoint
 	ExtractKeywordsEndpoint     goa.Endpoint
 	SummarizeTextEndpoint       goa.Endpoint
@@ -33,7 +34,7 @@ type Client struct {
 }
 
 // NewClient initializes a "assistant" service client given the endpoints.
-func NewClient(listDocuments, systemInfo, binaryResource, emptyBinaryResource, simplePrompt, argumentPrompt, resourcePrompt, imagePrompt, suggestArgument, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch goa.Endpoint) *Client {
+func NewClient(listDocuments, systemInfo, binaryResource, emptyBinaryResource, simplePrompt, argumentPrompt, resourcePrompt, imagePrompt, suggestArgument, readResource, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch goa.Endpoint) *Client {
 	return &Client{
 		ListDocumentsEndpoint:       listDocuments,
 		SystemInfoEndpoint:          systemInfo,
@@ -44,6 +45,7 @@ func NewClient(listDocuments, systemInfo, binaryResource, emptyBinaryResource, s
 		ResourcePromptEndpoint:      resourcePrompt,
 		ImagePromptEndpoint:         imagePrompt,
 		SuggestArgumentEndpoint:     suggestArgument,
+		ReadResourceEndpoint:        readResource,
 		AnalyzeSentimentEndpoint:    analyzeSentiment,
 		ExtractKeywordsEndpoint:     extractKeywords,
 		SummarizeTextEndpoint:       summarizeText,
@@ -146,6 +148,16 @@ func (c *Client) SuggestArgument(ctx context.Context, p *SuggestArgumentPayload)
 		return
 	}
 	return ires.(*SuggestArgumentResult), nil
+}
+
+// ReadResource calls the "read_resource" endpoint of the "assistant" service.
+func (c *Client) ReadResource(ctx context.Context, p *ReadResourcePayload) (res *ReadResourceResult, err error) {
+	var ires any
+	ires, err = c.ReadResourceEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ReadResourceResult), nil
 }
 
 // AnalyzeSentiment calls the "analyze_sentiment" endpoint of the "assistant"

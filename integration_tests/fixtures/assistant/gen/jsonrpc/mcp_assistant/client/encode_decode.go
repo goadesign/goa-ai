@@ -674,6 +674,136 @@ func DecodeResourcesReadResponse(decoder func(*http.Response) goahttp.Decoder, r
 	}
 }
 
+// BuildResourcesTemplatesListRequest instantiates a HTTP request object with
+// method and path set to call the "mcp_assistant" service
+// "resources/templates/list" endpoint
+func (c *Client) BuildResourcesTemplatesListRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: ResourcesTemplatesListMcpAssistantPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("mcp_assistant", "resources/templates/list", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeResourcesTemplatesListRequest returns an encoder for requests sent to
+// the mcp_assistant service resources/templates/list JSON-RPC method. The
+// encoder returns the request ID written into the JSON-RPC message.
+func EncodeResourcesTemplatesListRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) (string, error) {
+	return func(req *http.Request, v any) (string, error) {
+		p, ok := v.(*mcpassistant.ResourceTemplatesListPayload)
+		if !ok {
+			return "", goahttp.ErrInvalidType("mcp_assistant", "resources/templates/list", "*mcpassistant.ResourceTemplatesListPayload", v)
+		}
+		b := NewResourcesTemplatesListRequestBody(p)
+		body := &jsonrpc.Request{
+			JSONRPC: "2.0",
+			Method:  "resources/templates/list",
+			Params:  b,
+		}
+		requestID := uuid.New().String()
+		body.ID = requestID
+		if err := encoder(req).Encode(&body); err != nil {
+			return "", goahttp.ErrEncodingError("mcp_assistant", "resources/templates/list", err)
+		}
+		return requestID, nil
+	}
+}
+
+// DecodeResourcesTemplatesListResponse returns a decoder for responses
+// returned by the mcp_assistant service resources/templates/list JSON-RPC
+// method. The decoder rejects responses that do not repeat requestID.
+// restoreBody controls whether the response body should be restored after
+// having been read.
+func DecodeResourcesTemplatesListResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response, string) (any, error) {
+	return func(resp *http.Response, requestID string) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/templates/list", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "resources/templates/list", err))
+				}
+			}()
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/templates/list", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/templates/list", resp.StatusCode, string(body))
+		}
+
+		var jresp jsonrpc.RawResponse
+		if err := decoder(resp).Decode(&jresp); err != nil {
+			return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/templates/list", err)
+		}
+		if err := jresp.Validate(requestID); err != nil {
+			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "resources/templates/list", resp.StatusCode, err.Error())
+		}
+
+		if jresp.Error != nil {
+			serviceErrorName, serviceErrorBody, ok := jsonrpc.DecodeServiceErrorData(jresp.Error.Data)
+			if !ok {
+				return nil, jresp.Error
+			}
+			switch jresp.Error.Code {
+			case -32602:
+				switch serviceErrorName {
+				case "invalid_params":
+					resp.Body = io.NopCloser(bytes.NewReader(serviceErrorBody))
+					var (
+						body ResourcesTemplatesListInvalidParamsResponseBody
+						err  error
+					)
+					err = decoder(resp).Decode(&body)
+					if err != nil {
+						return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/templates/list", err)
+					}
+					err = ValidateResourcesTemplatesListInvalidParamsResponseBody(&body)
+					if err != nil {
+						return nil, goahttp.ErrValidationError("mcp_assistant", "resources/templates/list", err)
+					}
+					return nil, NewResourcesTemplatesListInvalidParams(&body)
+				default:
+					return nil, jresp.Error
+				}
+			default:
+				return nil, jresp.Error
+			}
+		}
+		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
+		var (
+			body ResourcesTemplatesListResponseBody
+			err  error
+		)
+		err = decoder(resp).Decode(&body)
+		if err != nil {
+			return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/templates/list", err)
+		}
+		err = ValidateResourcesTemplatesListResponseBody(&body)
+		if err != nil {
+			return nil, goahttp.ErrValidationError("mcp_assistant", "resources/templates/list", err)
+		}
+		res := NewResourcesTemplatesListResourceTemplatesListResultOK(&body)
+		return res, nil
+	}
+}
+
 // BuildPromptsListRequest instantiates a HTTP request object with method and
 // path set to call the "mcp_assistant" service "prompts/list" endpoint
 func (c *Client) BuildPromptsListRequest(ctx context.Context, v any) (*http.Request, error) {
@@ -1279,6 +1409,20 @@ func unmarshalContentAnnotationsResponseBodyToMcpassistantContentAnnotations(v *
 func unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo(v *ResourceInfoResponseBody) *mcpassistant.ResourceInfo {
 	res := &mcpassistant.ResourceInfo{
 		URI:         *v.URI,
+		Name:        *v.Name,
+		Description: v.Description,
+		MimeType:    v.MimeType,
+	}
+
+	return res
+}
+
+// unmarshalResourceTemplateInfoResponseBodyToMcpassistantResourceTemplateInfo
+// builds a value of type *mcpassistant.ResourceTemplateInfo from a value of
+// type *ResourceTemplateInfoResponseBody.
+func unmarshalResourceTemplateInfoResponseBodyToMcpassistantResourceTemplateInfo(v *ResourceTemplateInfoResponseBody) *mcpassistant.ResourceTemplateInfo {
+	res := &mcpassistant.ResourceTemplateInfo{
+		URITemplate: *v.URITemplate,
 		Name:        *v.Name,
 		Description: v.Description,
 		MimeType:    v.MimeType,

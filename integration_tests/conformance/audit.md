@@ -92,6 +92,23 @@ These targeted results supplement the original failing baseline. They do not
 change its recorded counts or establish URI-template completion or full-suite
 conformance.
 
+## Subsequent resource-template verification
+
+On 2026-10-03 at 23:27 UTC, the frozen `resources-templates-read` scenario
+passed 2/2 checks and `caching` passed 8/8. The prompt-completion regression
+passed 2/2. Each run selected `2026-07-28`; the referee pin and scenarios were
+unchanged. These checks call the actual generated fixture. Template listing
+resolves the baseline caching failure without changing the recorded baseline.
+Local generated HTTP tests additionally verify lossy and overlapping template
+URIs, exact percent encoding, multiple contents, empty blobs, fixed-resource
+preservation, invalid results, and unknown-resource errors. A separate compiled
+module verifies a resource-only service with located URI and union types,
+including a valid empty resource. Template-variable suggestions retain exact
+partial text, declared prior variables and totals above the per-array bound;
+unknown names fail before service dispatch. The referee's completion scenario
+selects a prompt, so resource suggestions currently have local independent-module
+and generated HTTP evidence rather than a dedicated referee scenario.
+
 ## Scenario results
 
 Success, failure, warning and skip columns count individual checks. Informational

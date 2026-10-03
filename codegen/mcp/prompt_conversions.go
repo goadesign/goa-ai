@@ -1,4 +1,4 @@
-// Package codegen plans and writes prompt conversions with Goa's saved service
+// Package codegen plans and writes content conversions with Goa's saved service
 // declarations. Runtime code selects only the authored union branch; field
 // names, type references, binary encoding, and nested conversions are generated.
 package codegen
@@ -11,9 +11,9 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
-// planPromptConversions reserves functions and complete result imports before
+// planContentConversions reserves functions and complete result imports before
 // Goa freezes names. The result schema has already passed the authoring checks.
-func planPromptConversions(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
+func planContentConversions(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
 	if len(data.MethodPrompts) == 0 {
 		return nil
 	}
@@ -30,7 +30,7 @@ func planPromptConversions(generation *codegen.Generation, services *goaservice.
 		return fmt.Errorf("method-backed prompts require the generated prompts/get method")
 	}
 	imports := codegen.NewGeneratedImportPlan(pkg)
-	conversions := make(map[*expr.AttributeExpr]*promptContentConversion)
+	conversions := make(map[*expr.AttributeExpr]*contentConversion)
 	for index, prompt := range data.MethodPrompts {
 		layout, err := services.MethodTypeLayout(prompt.prompt.Method, prompt.prompt.Method.Result)
 		if err != nil {
@@ -49,37 +49,37 @@ func planPromptConversions(generation *codegen.Generation, services *goaservice.
 			continue
 		}
 		conversions[prompt.conversion.attribute] = prompt.conversion
-		if err := planPromptContentConversion(generation, pkg, prompt.conversion, content, layout, fmt.Sprintf("convertPrompt%dContent", index)); err != nil {
+		if err := planContentConversion(generation, pkg, prompt.conversion, content, layout, fmt.Sprintf("convertPrompt%dContent", index)); err != nil {
 			return err
 		}
-		promptConversionNeeds(data, prompt.conversion)
+		contentConversionNeeds(data, prompt.conversion)
 	}
 	return nil
 }
 
-// promptConversionNeeds records the imports and metadata checks used by every
+// contentConversionNeeds records the imports and metadata checks used by every
 // declared variant, including variants inside an embedded resource.
-func promptConversionNeeds(data *AdapterData, conversion *promptContentConversion) {
+func contentConversionNeeds(data *AdapterData, conversion *contentConversion) {
 	for _, branch := range conversion.branches {
-		data.NeedsPromptBytes = data.NeedsPromptBytes || branch.bytesField != ""
-		data.NeedsPromptMeta = data.NeedsPromptMeta || branch.metaField
+		data.NeedsContentBytes = data.NeedsContentBytes || branch.bytesField != ""
+		data.NeedsContentMeta = data.NeedsContentMeta || branch.metaField
 		object := expr.AsObject(branch.attribute.Type)
-		if branch.name == promptResourceLink && object.Attribute("size") != nil {
-			data.NeedsPromptNumbers = true
+		if branch.name == contentResourceLink && object.Attribute("size") != nil {
+			data.NeedsContentNumbers = true
 		}
 		if annotations := object.Attribute("annotations"); annotations != nil && expr.AsObject(annotations.Type).Attribute("priority") != nil {
-			data.NeedsPromptNumbers = true
+			data.NeedsContentNumbers = true
 		}
 		if branch.nested != nil {
-			promptConversionNeeds(data, branch.nested)
+			contentConversionNeeds(data, branch.nested)
 		}
 	}
 }
 
-// planPromptContentConversion records one converter and its field transforms.
+// planContentConversion records one converter and its field transforms.
 // Byte and nested-union fields have distinct protocol representations and are
 // emitted separately from ordinary Goa field conversions.
-func planPromptContentConversion(generation *codegen.Generation, pkg *codegen.GeneratedPackage, conversion *promptContentConversion, target *expr.AttributeExpr, resultLayout *codegen.GoTypePlan, name string) error {
+func planContentConversion(generation *codegen.Generation, pkg *codegen.GeneratedPackage, conversion *contentConversion, target *expr.AttributeExpr, resultLayout *codegen.GoTypePlan, name string) error {
 	conversion.target = target
 	declaration := codegen.NewExactName(codegen.NameFunction, name)
 	if err := pkg.DeclareName(declaration); err != nil {
@@ -88,7 +88,7 @@ func planPromptContentConversion(generation *codegen.Generation, pkg *codegen.Ge
 	conversion.declaration = declaration
 	occurrences := resultLayout.PlansForOccurrence(conversion.attribute)
 	if len(occurrences) != 1 {
-		return fmt.Errorf("prompt content layout has %d occurrences", len(occurrences))
+		return fmt.Errorf("content layout has %d occurrences", len(occurrences))
 	}
 	conversion.sourceLayout = occurrences[0]
 	conversion.unionAttribute = conversion.attribute
@@ -103,7 +103,7 @@ func planPromptContentConversion(generation *codegen.Generation, pkg *codegen.Ge
 	if unionLayout.UnionDeclaration() == nil {
 		matches := resultLayout.PlansForOccurrence(conversion.unionAttribute)
 		if len(matches) != 1 {
-			return fmt.Errorf("prompt content must have one planned union definition")
+			return fmt.Errorf("content must have one planned union definition")
 		}
 		unionLayout = matches[0]
 	}
@@ -113,7 +113,7 @@ func planPromptContentConversion(generation *codegen.Generation, pkg *codegen.Ge
 		object := expr.AsObject(branch.attribute.Type)
 		fields := make(expr.Object, 0, len(*object))
 		for _, field := range *object {
-			if field.Name == branch.bytesField || branch.nested != nil && field.Name == promptResourceField {
+			if field.Name == branch.bytesField || branch.nested != nil && field.Name == contentResourceField {
 				continue
 			}
 			fields = append(fields, field)
@@ -134,7 +134,7 @@ func planPromptContentConversion(generation *codegen.Generation, pkg *codegen.Ge
 		}
 		branch.transform = transform
 		if branch.nested != nil {
-			if err := planPromptContentConversion(generation, pkg, branch.nested, expr.AsObject(target.Type).Attribute(promptResourceField), resultLayout, fmt.Sprintf("%sResource%d", name, index)); err != nil {
+			if err := planContentConversion(generation, pkg, branch.nested, expr.AsObject(target.Type).Attribute(contentResourceField), resultLayout, fmt.Sprintf("%sResource%d", name, index)); err != nil {
 				return err
 			}
 		}
@@ -142,9 +142,9 @@ func planPromptContentConversion(generation *codegen.Generation, pkg *codegen.Ge
 	return nil
 }
 
-// bindPromptConversions supplies final service names and private codec fields.
+// bindContentConversions supplies final service names and private codec fields.
 // The adapter then fills arguments without serializing and parsing them again.
-func bindPromptConversions(services *goaservice.ServicesData, planned *plannedMCPService) error {
+func bindContentConversions(services *goaservice.ServicesData, planned *plannedMCPService) error {
 	data := planned.adapterData
 	sourceScope := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
 	targetScope := services.ServiceAttributor(planned.prepared.mcpService.Name, data.mcpImportPath)
@@ -187,7 +187,7 @@ func bindPromptConversions(services *goaservice.ServicesData, planned *plannedMC
 			}
 		}
 		if prompt.conversion.data == nil {
-			if err := bindPromptContentConversion(data, prompt.conversion, sourceScope, targetScope); err != nil {
+			if err := bindContentConversion(data, prompt.conversion, sourceScope, targetScope); err != nil {
 				return err
 			}
 		}
@@ -196,13 +196,13 @@ func bindPromptConversions(services *goaservice.ServicesData, planned *plannedMC
 	return nil
 }
 
-// bindPromptContentConversion renders the typed branch copies after all names
+// bindContentConversion renders the typed branch copies after all names
 // are final. A validated service value cannot select an undeclared branch.
-func bindPromptContentConversion(data *AdapterData, conversion *promptContentConversion, sourceScope, targetScope codegen.Attributor) error {
+func bindContentConversion(data *AdapterData, conversion *contentConversion, sourceScope, targetScope codegen.Attributor) error {
 	source := &codegen.AttributeContext{Scope: sourceScope, UseDefault: true}
 	target := &codegen.AttributeContext{Scope: targetScope, UseDefault: true}
 	linked := conversion.sourceLayout.Link(data.mcpImportPath, data.mcpPackage.ImportName)
-	conversion.data = &promptContentConversionData{
+	conversion.data = &contentConversionData{
 		Name: conversion.declaration.Name(), SourceRef: linked.RefWithPointer(conversion.sourceLayout.IsPointer()), TargetRef: targetScope.Ref(conversion.target, ""),
 		HasType: expr.AsObject(conversion.target.Type).Attribute("type") != nil,
 	}
@@ -225,13 +225,13 @@ func bindPromptContentConversion(data *AdapterData, conversion *promptContentCon
 			return err
 		}
 		conversion.data.Helpers = codegen.AppendHelpers(conversion.data.Helpers, helpers)
-		rendered := &promptContentBranchData{
+		rendered := &contentBranchData{
 			Name:   branch.name,
 			Kind:   data.mcpPackage.ImportName(conversion.sourcePackage.ImportPath()) + "." + sourceBranch.KindConst(),
 			Getter: "As" + codegen.Goify(branch.name, true), Transform: code,
 		}
 		object := expr.AsObject(branch.attribute.Type)
-		rendered.CheckSize = branch.name == promptResourceLink && object.Attribute("size") != nil
+		rendered.CheckSize = branch.name == contentResourceLink && object.Attribute("size") != nil
 		if annotations := object.Attribute("annotations"); annotations != nil {
 			rendered.CheckPriority = expr.AsObject(annotations.Type).Attribute("priority") != nil
 		}
@@ -243,14 +243,14 @@ func bindPromptContentConversion(data *AdapterData, conversion *promptContentCon
 			rendered.MetaField = sourceScope.Field(object.Attribute("_meta"), "_meta", true)
 		}
 		if branch.nested != nil {
-			rendered.ResourceField = sourceScope.Field(object.Attribute(promptResourceField), promptResourceField, true)
-			if err := bindPromptContentConversion(data, branch.nested, sourceScope, targetScope); err != nil {
+			rendered.ResourceField = sourceScope.Field(object.Attribute(contentResourceField), contentResourceField, true)
+			if err := bindContentConversion(data, branch.nested, sourceScope, targetScope); err != nil {
 				return err
 			}
 			rendered.NestedConversion = branch.nested.declaration.Name()
 		}
 		conversion.data.Branches = append(conversion.data.Branches, rendered)
 	}
-	data.PromptConversions = append(data.PromptConversions, conversion.data)
+	data.ContentConversions = append(data.ContentConversions, conversion.data)
 	return nil
 }

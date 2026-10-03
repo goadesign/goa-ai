@@ -66,6 +66,7 @@ var _ = Service("assistant", func() {
 	)
 
 	refereePrompts()
+	refereeResourceTemplates()
 
 	// ---- Tools (for MCP tools/list and tools/call) ----
 

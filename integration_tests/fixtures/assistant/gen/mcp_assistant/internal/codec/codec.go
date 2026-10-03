@@ -553,6 +553,143 @@ func ValidateProcessBatchResultTransport(value *ProcessBatchResultTransport) (er
 	return err
 }
 
+// ReadResourcePayloadTransport stores JSON fields until they have been validated.
+type ReadResourcePayloadTransport struct {
+	// Exact requested resource identifier
+	Address *string `json:"uri"`
+}
+
+// ValidateReadResourcePayloadTransport checks decoded JSON before it becomes a service value.
+func ValidateReadResourcePayloadTransport(value *ReadResourcePayloadTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Address == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.Address != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.Address, goa.FormatURI))
+	}
+	return err
+}
+
+// ReadResourceResultTemplateBlobTransport stores JSON fields until they have been validated.
+type ReadResourceResultTemplateBlobTransport struct {
+	// Resource identifier
+	URI *string `json:"uri"`
+	// Content media type
+	MimeType *string `json:"mimeType,omitempty"`
+	// Binary resource contents
+	Blob []byte `json:"blob,omitempty"`
+}
+
+// ValidateReadResourceResultTemplateBlobTransport checks decoded JSON before it becomes a service value.
+func ValidateReadResourceResultTemplateBlobTransport(value *ReadResourceResultTemplateBlobTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.URI, goa.FormatURI))
+	}
+	return err
+}
+
+// ReadResourceResultTemplateItemTransport stores JSON fields until they have been validated.
+type ReadResourceResultTemplateItemTransport struct {
+	// Selected resource representation
+	Selected *ReadResourceResultTemplateRepresentationTransport `json:"content"`
+}
+
+// ValidateReadResourceResultTemplateItemTransport checks decoded JSON before it becomes a service value.
+func ValidateReadResourceResultTemplateItemTransport(value *ReadResourceResultTemplateItemTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Selected == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
+	}
+	if value.Selected != nil {
+		switch string(value.Selected.Kind()) {
+		case "text":
+			actual, _ := value.Selected.AsText()
+			if actual != nil {
+				if err2 := ValidateReadResourceResultTemplateTextTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "blob":
+			actual, _ := value.Selected.AsBlob()
+			if actual != nil {
+				if err2 := ValidateReadResourceResultTemplateBlobTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// ReadResourceResultTemplateTextTransport stores JSON fields until they have been validated.
+type ReadResourceResultTemplateTextTransport struct {
+	// Resource identifier
+	URI *string `json:"uri"`
+	// Content media type
+	MimeType *string `json:"mimeType,omitempty"`
+	// Resource contents
+	Text *string `json:"text"`
+}
+
+// ValidateReadResourceResultTemplateTextTransport checks decoded JSON before it becomes a service value.
+func ValidateReadResourceResultTemplateTextTransport(value *ReadResourceResultTemplateTextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	if value.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.URI, goa.FormatURI))
+	}
+	return err
+}
+
+// ReadResourceResultTransport stores JSON fields until they have been validated.
+type ReadResourceResultTransport struct {
+	// Ordered resource contents
+	Parts []*ReadResourceResultTemplateItemTransport `json:"contents"`
+}
+
+// ValidateReadResourceResultTransport checks decoded JSON before it becomes a service value.
+func ValidateReadResourceResultTransport(value *ReadResourceResultTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Parts == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("contents", "body"))
+	}
+	if len(value.Parts) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.contents", value.Parts, len(value.Parts), 1, true))
+	}
+	for _, e := range value.Parts {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.contents", "[*]"))
+		}
+		if e != nil {
+			if err2 := ValidateReadResourceResultTemplateItemTransport(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
 // ResourcePromptPayloadTransport stores JSON fields until they have been validated.
 type ResourcePromptPayloadTransport struct {
 	// Requested embedded resource identifier
@@ -1354,6 +1491,84 @@ func (u ImagePromptResultresourceTransport) Validate() error {
 	}
 }
 
+// ReadResourceResultTemplateRepresentationTransport stores exactly one selected Goa OneOf branch.
+type ReadResourceResultTemplateRepresentationTransport struct {
+	kind ReadResourceResultTemplateRepresentationTransportKind
+	Text *ReadResourceResultTemplateTextTransport
+	Blob *ReadResourceResultTemplateBlobTransport
+}
+
+// ReadResourceResultTemplateRepresentationTransportKind identifies the selected branch of ReadResourceResultTemplateRepresentationTransport.
+type ReadResourceResultTemplateRepresentationTransportKind string
+
+const (
+	ReadResourceResultTemplateRepresentationTransportKindText ReadResourceResultTemplateRepresentationTransportKind = "text"
+	ReadResourceResultTemplateRepresentationTransportKindBlob ReadResourceResultTemplateRepresentationTransportKind = "blob"
+)
+
+// Kind returns the selected branch.
+func (u ReadResourceResultTemplateRepresentationTransport) Kind() ReadResourceResultTemplateRepresentationTransportKind {
+	return u.kind
+}
+
+// NewReadResourceResultTemplateRepresentationTransportText creates ReadResourceResultTemplateRepresentationTransport with its text branch selected.
+func NewReadResourceResultTemplateRepresentationTransportText(value *ReadResourceResultTemplateTextTransport) ReadResourceResultTemplateRepresentationTransport {
+	return ReadResourceResultTemplateRepresentationTransport{kind: ReadResourceResultTemplateRepresentationTransportKindText, Text: value}
+}
+
+// AsText returns the text branch when it is selected.
+func (u ReadResourceResultTemplateRepresentationTransport) AsText() (_ *ReadResourceResultTemplateTextTransport, ok bool) {
+	if u.kind != ReadResourceResultTemplateRepresentationTransportKindText {
+		return
+	}
+	return u.Text, true
+}
+
+// SetText selects the text branch.
+func (u *ReadResourceResultTemplateRepresentationTransport) SetText(value *ReadResourceResultTemplateTextTransport) {
+	u.kind = ReadResourceResultTemplateRepresentationTransportKindText
+	u.Text = value
+}
+
+// NewReadResourceResultTemplateRepresentationTransportBlob creates ReadResourceResultTemplateRepresentationTransport with its blob branch selected.
+func NewReadResourceResultTemplateRepresentationTransportBlob(value *ReadResourceResultTemplateBlobTransport) ReadResourceResultTemplateRepresentationTransport {
+	return ReadResourceResultTemplateRepresentationTransport{kind: ReadResourceResultTemplateRepresentationTransportKindBlob, Blob: value}
+}
+
+// AsBlob returns the blob branch when it is selected.
+func (u ReadResourceResultTemplateRepresentationTransport) AsBlob() (_ *ReadResourceResultTemplateBlobTransport, ok bool) {
+	if u.kind != ReadResourceResultTemplateRepresentationTransportKindBlob {
+		return
+	}
+	return u.Blob, true
+}
+
+// SetBlob selects the blob branch.
+func (u *ReadResourceResultTemplateRepresentationTransport) SetBlob(value *ReadResourceResultTemplateBlobTransport) {
+	u.kind = ReadResourceResultTemplateRepresentationTransportKindBlob
+	u.Blob = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u ReadResourceResultTemplateRepresentationTransport) Validate() error {
+	switch u.kind {
+	case ReadResourceResultTemplateRepresentationTransportKindText:
+		if u.Text == nil {
+			return goa.MissingFieldError("value", "ReadResourceResultTemplateRepresentationTransport")
+		}
+		return nil
+	case ReadResourceResultTemplateRepresentationTransportKindBlob:
+		if u.Blob == nil {
+			return goa.MissingFieldError("value", "ReadResourceResultTemplateRepresentationTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "ReadResourceResultTemplateRepresentationTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(ReadResourceResultTemplateRepresentationTransportKindText), string(ReadResourceResultTemplateRepresentationTransportKindBlob)})
+	}
+}
+
 // ResourcePromptResultcontentTransport stores exactly one selected Goa OneOf branch.
 type ResourcePromptResultcontentTransport struct {
 	kind     ResourcePromptResultcontentTransportKind
@@ -2118,6 +2333,44 @@ func DecodeProcessBatchResult(data []byte) (out *assistant.ProcessBatchResult, e
 	return out, nil
 }
 
+// NewReadResourcePayload validates a decoded transport value and returns the service value.
+func NewReadResourcePayload(body *ReadResourcePayloadTransport) (out *assistant.ReadResourcePayload, err error) {
+	if err := ValidateReadResourcePayloadTransport(body); err != nil {
+		return out, fmt.Errorf("validate ReadResourcePayload JSON: %w", err)
+	}
+	{
+		out = &assistant.ReadResourcePayload{
+			Address: *body.Address,
+		}
+	}
+	return out, nil
+}
+
+// ValidateReadResourceResultValue checks a service value against its declared field validation.
+func ValidateReadResourceResultValue(in *assistant.ReadResourceResult) error {
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ReadResourceResult")
+	}
+
+	var body *ReadResourceResultTransport
+	{
+		body = &ReadResourceResultTransport{}
+		body.Parts = make([]*ReadResourceResultTemplateItemTransport, len(in.Parts))
+		for i, val := range in.Parts {
+			if val == nil {
+				body.Parts[i] = nil
+				continue
+			}
+			body.Parts[i] = encodeTemplateItemToReadResourceResultTemplateItemTransport(val)
+		}
+	}
+	if err := ValidateReadResourceResultTransport(body); err != nil {
+		return fmt.Errorf("validate ReadResourceResult value: %w", err)
+	}
+	return nil
+}
+
 // NewResourcePromptPayload validates a decoded transport value and returns the service value.
 func NewResourcePromptPayload(body *ResourcePromptPayloadTransport) (out *assistant.ResourcePromptPayload, err error) {
 	if err := ValidateResourcePromptPayloadTransport(body); err != nil {
@@ -2760,6 +3013,54 @@ func encodeRefereePromptTextToResourcePromptResultRefereePromptTextTransport(v *
 func encodeRefereePromptTextToSimplePromptResultRefereePromptTextTransport(v *assistant.RefereePromptText) *SimplePromptResultRefereePromptTextTransport {
 	res := &SimplePromptResultRefereePromptTextTransport{
 		Text: &v.Text,
+	}
+
+	return res
+}
+
+func encodeTemplateBlobToReadResourceResultTemplateBlobTransport(v *assistant.TemplateBlob) *ReadResourceResultTemplateBlobTransport {
+	res := &ReadResourceResultTemplateBlobTransport{
+		URI:      &v.URI,
+		MimeType: v.MimeType,
+		Blob:     v.Blob,
+	}
+
+	return res
+}
+
+func encodeTemplateItemToReadResourceResultTemplateItemTransport(v *assistant.TemplateItem) *ReadResourceResultTemplateItemTransport {
+	res := &ReadResourceResultTemplateItemTransport{}
+	var contentValue ReadResourceResultTemplateRepresentationTransport
+	switch string(v.Selected.Kind()) {
+	case "text":
+		actual, _ := v.Selected.AsText()
+		var obj *ReadResourceResultTemplateTextTransport
+		if actual != nil {
+			obj = encodeTemplateTextToReadResourceResultTemplateTextTransport(actual)
+		}
+		u := contentValue
+		u.SetText((*ReadResourceResultTemplateTextTransport)(obj))
+		contentValue = u
+	case "blob":
+		actual, _ := v.Selected.AsBlob()
+		var obj *ReadResourceResultTemplateBlobTransport
+		if actual != nil {
+			obj = encodeTemplateBlobToReadResourceResultTemplateBlobTransport(actual)
+		}
+		u := contentValue
+		u.SetBlob((*ReadResourceResultTemplateBlobTransport)(obj))
+		contentValue = u
+	}
+	res.Selected = &contentValue
+
+	return res
+}
+
+func encodeTemplateTextToReadResourceResultTemplateTextTransport(v *assistant.TemplateText) *ReadResourceResultTemplateTextTransport {
+	res := &ReadResourceResultTemplateTextTransport{
+		URI:      &v.URI,
+		MimeType: v.MimeType,
+		Text:     &v.Text,
 	}
 
 	return res

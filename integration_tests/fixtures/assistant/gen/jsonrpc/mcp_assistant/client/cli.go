@@ -157,6 +157,34 @@ func BuildResourcesReadPayload(mcpAssistantResourcesReadBody *string) (*mcpassis
 	return v, nil
 }
 
+// BuildResourcesTemplatesListPayload builds the payload for the mcp_assistant
+// resources/templates/list endpoint from CLI flags.
+func BuildResourcesTemplatesListPayload(mcpAssistantResourcesTemplatesListBody *string) (*mcpassistant.ResourceTemplatesListPayload, error) {
+	var err error
+	var body ResourcesTemplatesListRequestBody
+	{
+		if mcpAssistantResourcesTemplatesListBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*mcpAssistantResourcesTemplatesListBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"_meta\": \"Nihil ratione esse in suscipit amet.\",\n      \"cursor\": \"Aliquam at in ut.\"\n   }'")
+		}
+		if body.Meta == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &mcpassistant.ResourceTemplatesListPayload{
+		Cursor: body.Cursor,
+		Meta:   body.Meta,
+	}
+
+	return v, nil
+}
+
 // BuildPromptsListPayload builds the payload for the mcp_assistant
 // prompts/list endpoint from CLI flags.
 func BuildPromptsListPayload(mcpAssistantPromptsListBody *string) (*mcpassistant.PromptsListPayload, error) {

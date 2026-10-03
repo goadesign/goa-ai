@@ -1,23 +1,33 @@
-// Package codegen binds prompt-completion methods to generated payload
+// Package codegen binds prompt and resource completion methods to generated payload
 // constructors and result conversions. Names and field types are decided during
-// generation; runtime code only selects the requested prompt and argument.
+// generation; runtime code only selects the requested reference and argument.
 package codegen
 
 import (
 	"fmt"
 
 	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
-	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/codegen"
 	goaservice "goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/expr"
 )
 
 type (
-	// promptCompletionAdapter retains the one method selected by a DSL binding.
-	promptCompletionAdapter struct {
-		// Prompt is the declared prompt name selected by the client.
-		Prompt string
+	// completionReferenceAdapter contains argument names known during generation.
+	completionReferenceAdapter struct {
+		// Type selects the reference shape supplied by the client.
+		Type string
+		// Name is the prompt name or exact URI template.
+		Name string
+		// Arguments is the complete declared variable set for this reference.
+		Arguments []string
+	}
+	// completionAdapter retains the one method selected by a DSL binding.
+	completionAdapter struct {
+		// ReferenceType selects a prompt or resource reference.
+		ReferenceType string
+		// Reference is the exact declared prompt name or URI template.
+		Reference string
 		// Argument is the declared argument being completed.
 		Argument string
 		// ServiceMethodName is Goa's final service method name.
@@ -37,7 +47,7 @@ type (
 		// Helpers contains the typed conversion functions used by that copy.
 		Helpers []*codegen.TransformFunctionData
 
-		authored  *mcpexpr.PromptCompletionExpr
+		method    *expr.MethodExpr
 		transform *codegen.TransformPlan
 	}
 )
@@ -45,21 +55,21 @@ type (
 // planCompletionConversions registers complete result imports and transform
 // helper names before Goa freezes names. The target is the real protocol type.
 func planCompletionConversions(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
-	if len(data.PromptCompletions) == 0 {
+	if len(data.Completions) == 0 {
 		return nil
 	}
 	target := expr.AsObject(prepared.mcpService.Method("completion/complete").Result.Type).Attribute("completion")
 	pkg := generation.Package(data.mcpImportPath)
 	imports := codegen.NewGeneratedImportPlan(pkg)
-	for index, completion := range data.PromptCompletions {
-		layout, err := services.MethodTypeLayout(completion.authored.Method, completion.authored.Method.Result)
+	for index, completion := range data.Completions {
+		layout, err := services.MethodTypeLayout(completion.method, completion.method.Result)
 		if err != nil {
 			return err
 		}
 		if err := imports.AddCompleteType(layout); err != nil {
 			return err
 		}
-		transform, err := codegen.NewTransformPlan(completion.authored.Method.Result, target, "completion", nil)
+		transform, err := codegen.NewTransformPlan(completion.method.Result, target, "completion", nil)
 		if err != nil {
 			return err
 		}
@@ -90,8 +100,8 @@ func bindCompletionConversions(services *goaservice.ServicesData, planned *plann
 	targetScope := services.ServiceAttributor(planned.prepared.mcpService.Name, data.mcpImportPath)
 	source := &codegen.AttributeContext{Scope: sourceScope, UseDefault: true}
 	target := &codegen.AttributeContext{Scope: targetScope, UseDefault: true}
-	for _, completion := range data.PromptCompletions {
-		method := completion.authored.Method
+	for _, completion := range data.Completions {
+		method := completion.method
 		completion.ServiceMethodName = services.Get(planned.prepared.userService.Name).Method(method.Name).VarName
 		values := planned.methodCodecs[method.Name]
 		completion.Codec = methodCodecData(values)
@@ -121,21 +131,52 @@ func bindCompletionConversions(services *goaservice.ServicesData, planned *plann
 	return nil
 }
 
-// buildPromptCompletionAdapters rejects opaque field representations and keeps
+// buildCompletionAdapters rejects opaque field representations and keeps
 // only the typed binding needed to call the service for a selected argument.
-func (g *adapterGenerator) buildPromptCompletionAdapters() ([]*promptCompletionAdapter, error) {
-	adapters := make([]*promptCompletionAdapter, 0, len(g.mcp.PromptCompletions))
+func (g *adapterGenerator) buildCompletionAdapters() ([]*completionAdapter, error) {
+	adapters := make([]*completionAdapter, 0, len(g.mcp.PromptCompletions)+len(g.mcp.ResourceCompletions))
 	for _, completion := range g.mcp.PromptCompletions {
 		if err := completion.Validate(); err != nil {
 			return nil, err
 		}
-		if err := checkPromptGoType(completion.Method.Payload); err != nil {
+		if err := checkContentGoType(completion.Method.Payload); err != nil {
 			return nil, err
 		}
-		if err := checkPromptGoType(completion.Method.Result); err != nil {
+		if err := checkContentGoType(completion.Method.Result); err != nil {
 			return nil, err
 		}
-		adapters = append(adapters, &promptCompletionAdapter{Prompt: completion.Prompt, Argument: completion.Argument, authored: completion})
+		adapters = append(adapters, &completionAdapter{ReferenceType: "ref/prompt", Reference: completion.Prompt, Argument: completion.Argument, method: completion.Method})
+	}
+	for _, completion := range g.mcp.ResourceCompletions {
+		if err := completion.Validate(); err != nil {
+			return nil, err
+		}
+		if err := checkContentGoType(completion.Method.Payload); err != nil {
+			return nil, err
+		}
+		if err := checkContentGoType(completion.Method.Result); err != nil {
+			return nil, err
+		}
+		adapters = append(adapters, &completionAdapter{ReferenceType: "ref/resource", Reference: completion.URI, Argument: completion.Argument, method: completion.Method})
 	}
 	return adapters, nil
+}
+
+// buildCompletionReferences derives accepted names from authored declarations.
+// Runtime selection does not parse templates or rebuild prompt schemas.
+func (g *adapterGenerator) buildCompletionReferences(templates []*resourceTemplateAdapter) []*completionReferenceAdapter {
+	references := make([]*completionReferenceAdapter, 0, len(g.mcp.MethodPrompts)+len(templates))
+	for _, prompt := range g.mcp.MethodPrompts {
+		reference := &completionReferenceAdapter{Type: "ref/prompt", Name: prompt.Name}
+		if hasMCPValue(prompt.Method.Payload) {
+			for _, field := range *expr.AsObject(prompt.Method.Payload.Type) {
+				reference.Arguments = append(reference.Arguments, field.Name)
+			}
+		}
+		references = append(references, reference)
+	}
+	for _, template := range templates {
+		references = append(references, &completionReferenceAdapter{Type: "ref/resource", Name: template.URI, Arguments: template.Variables})
+	}
+	return references
 }

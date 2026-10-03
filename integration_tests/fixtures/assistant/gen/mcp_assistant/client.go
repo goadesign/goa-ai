@@ -15,27 +15,29 @@ import (
 
 // Client is the "mcp_assistant" service client.
 type Client struct {
-	ServerDiscoverEndpoint     goa.Endpoint
-	ToolsListEndpoint          goa.Endpoint
-	ToolsCallEndpoint          goa.Endpoint
-	ResourcesListEndpoint      goa.Endpoint
-	ResourcesReadEndpoint      goa.Endpoint
-	PromptsListEndpoint        goa.Endpoint
-	PromptsGetEndpoint         goa.Endpoint
-	CompletionCompleteEndpoint goa.Endpoint
+	ServerDiscoverEndpoint         goa.Endpoint
+	ToolsListEndpoint              goa.Endpoint
+	ToolsCallEndpoint              goa.Endpoint
+	ResourcesListEndpoint          goa.Endpoint
+	ResourcesReadEndpoint          goa.Endpoint
+	ResourcesTemplatesListEndpoint goa.Endpoint
+	PromptsListEndpoint            goa.Endpoint
+	PromptsGetEndpoint             goa.Endpoint
+	CompletionCompleteEndpoint     goa.Endpoint
 }
 
 // NewClient initializes a "mcp_assistant" service client given the endpoints.
-func NewClient(serverDiscover, toolsList, toolsCall, resourcesList, resourcesRead, promptsList, promptsGet, completionComplete goa.Endpoint) *Client {
+func NewClient(serverDiscover, toolsList, toolsCall, resourcesList, resourcesRead, resourcesTemplatesList, promptsList, promptsGet, completionComplete goa.Endpoint) *Client {
 	return &Client{
-		ServerDiscoverEndpoint:     serverDiscover,
-		ToolsListEndpoint:          toolsList,
-		ToolsCallEndpoint:          toolsCall,
-		ResourcesListEndpoint:      resourcesList,
-		ResourcesReadEndpoint:      resourcesRead,
-		PromptsListEndpoint:        promptsList,
-		PromptsGetEndpoint:         promptsGet,
-		CompletionCompleteEndpoint: completionComplete,
+		ServerDiscoverEndpoint:         serverDiscover,
+		ToolsListEndpoint:              toolsList,
+		ToolsCallEndpoint:              toolsCall,
+		ResourcesListEndpoint:          resourcesList,
+		ResourcesReadEndpoint:          resourcesRead,
+		ResourcesTemplatesListEndpoint: resourcesTemplatesList,
+		PromptsListEndpoint:            promptsList,
+		PromptsGetEndpoint:             promptsGet,
+		CompletionCompleteEndpoint:     completionComplete,
 	}
 }
 
@@ -104,6 +106,20 @@ func (c *Client) ResourcesRead(ctx context.Context, p *ResourcesReadPayload) (re
 		return
 	}
 	return ires.(*ResourcesReadResult), nil
+}
+
+// ResourcesTemplatesList calls the "resources/templates/list" endpoint of the
+// "mcp_assistant" service.
+// ResourcesTemplatesList may return the following errors:
+//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
+//   - error: internal error
+func (c *Client) ResourcesTemplatesList(ctx context.Context, p *ResourceTemplatesListPayload) (res *ResourceTemplatesListResult, err error) {
+	var ires any
+	ires, err = c.ResourcesTemplatesListEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ResourceTemplatesListResult), nil
 }
 
 // PromptsList calls the "prompts/list" endpoint of the "mcp_assistant" service.

@@ -1456,6 +1456,47 @@ present empty `text`. The generated direct client rejects resource replies that
 contain both fields or neither field. The service returns ordinary typed data;
 it does not encode base64 itself or construct protocol content.
 
+### Parameterized MCP resources
+
+`ResourceTemplate(name, uriTemplate, mimeType)` advertises an RFC 6570 address
+on an ordinary unary Goa method. All templates in one MCP service use the same
+reader method. Its payload contains only a required `uri: String`; the generated
+constructor preserves the client's exact URI, including percent encoding.
+
+Templates describe addresses clients can construct. They do not grant access,
+choose between competing handlers, or recover original variable values. For
+example, `{id:3}` may turn `abcdef` into `abc`, so the reader receives the URI
+containing `abc`. The reader owns interpretation, existence and current access.
+It may serve a valid URI that is not enumerated in a catalog. Fixed `Resource`
+bindings retain their exact dispatch before the parameterized reader.
+
+The result declares `contents: ArrayOfRequired(Item)`. Each item declares only
+one required `content` OneOf with `text` and/or `blob` object branches. Text
+requires `uri: String` with `Format(FormatURI)` and `text: String`; blob requires
+that URI and declares `blob: Bytes`. Both allow optional `mimeType` and raw
+`_meta` as in embedded prompt resources. The generator validates the typed result
+and copies every item in service order, converting bytes to base64. Renamed fields,
+named types and located declarations retain their Goa representation.
+
+Make `contents` optional when an existing resource can contain no items. Required
+contents must declare `MinLength(1)`. An empty successful resource returns the
+present wire array `[]`; an unknown resource must return `invalid_params`, never
+an empty success. Nil results, null items, unset variants and invalid content
+return `internal_error`. Ordinary Goa composition and the service own access
+checks; the framework never opens a filesystem path or fetches a supplied URI.
+
+Resource-capable services also expose `resources/templates/list`, returning
+an empty array when no templates are declared. The generated catalog has private
+zero-duration cache metadata and rejects cursors because it fits in one response.
+
+`ResourceCompletion(uriTemplate, variable)` binds a declared template variable
+to the same typed partial-value/prior-arguments/suggestions method contract as
+[PromptCompletion](#mcp-prompt-argument-suggestions). The client references the
+exact declared template. Variable names are derived during generation, including
+prefix and composite variables. Unknown templates, variables and prior names
+fail before dispatch; a declared variable without a provider returns `[]`.
+Completion does not expand a URI or read the resource.
+
 ### Method-backed MCP prompts
 
 Declare `Prompt(name, description)` on an ordinary unary Goa method. Its payload
@@ -1586,8 +1627,8 @@ It does not limit `total` to 100 or share an allowance across subsequent request
 A valid declared argument without a completion binding returns empty suggestions.
 The server advertises `completions` only when it has a binding. Applications
 configure authentication, rate limiting and suggestion access through their
-normal Goa service and HTTP composition. URI-template completion is still
-tracked in the [upgrade plan](mcp_protocol_upgrade_plan.md).
+normal Goa service and HTTP composition. URI-template variables use
+[ResourceCompletion](#parameterized-mcp-resources) with the same typed contract.
 
 ### MCP tool behavior hints
 
@@ -1629,6 +1670,8 @@ these kinds through typed Goa results. Generated tools still return structured r
 | `Resource(name, uri, mime)`  | `resources/list`, `resources/read` |
 | `Prompt(name, desc)` in Method | `prompts/list`, `prompts/get` with typed arguments and messages |
 | `StaticPrompt(...)`          | `prompts/list`, `prompts/get`      |
+| `ResourceTemplate(name, template, mime)` in Method | `resources/templates/list` and the service-owned URI reader |
+| `ResourceCompletion(template, variable)` in Method | `completion/complete` for declared template variables |
 | `PromptCompletion(prompt, argument)` in Method | `completion/complete` for declared prompt arguments |
 
 

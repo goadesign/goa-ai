@@ -33,12 +33,16 @@ type (
 		// Resources is the collection of resource expressions exposed
 		// by this server.
 		Resources []*ResourceExpr
+		// ResourceTemplates advertises parameterized addresses owned by one URI reader.
+		ResourceTemplates []*ResourceTemplateExpr
 		// Prompts contains fixed message sequences declared at service level.
 		Prompts []*PromptExpr
 		// MethodPrompts contains prompt operations implemented by service methods.
 		MethodPrompts []*MethodPromptExpr
 		// PromptCompletions binds known prompt arguments to suggestion methods.
 		PromptCompletions []*PromptCompletionExpr
+		// ResourceCompletions binds template variables to suggestion methods.
+		ResourceCompletions []*ResourceCompletionExpr
 		// Service is the Goa service expression this MCP server is
 		// bound to.
 		Service *expr.ServiceExpr
@@ -219,7 +223,9 @@ func (m *MCPExpr) Validate() error {
 			}
 		}
 	}
+	m.validateResourceTemplates(verr)
 	m.validatePromptCompletions(verr)
+	m.validateResourceCompletions(verr)
 	if len(verr.Errors) > 0 {
 		return verr
 	}

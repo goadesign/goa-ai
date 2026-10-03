@@ -1,6 +1,6 @@
-// Package codegen maps typed prompt results to MCP messages. Authors declare
-// content with Goa OneOf; the generated adapter selects its declared branch,
-// converts its fields, and returns MCP's flat object without JSON round trips.
+// Package codegen maps typed prompt messages and resource contents to MCP.
+// Authors declare content with Goa OneOf; the generated adapter selects its
+// declared branch and returns the flat protocol object without JSON round trips.
 package codegen
 
 import (
@@ -46,7 +46,7 @@ type (
 		ContentConversion string
 
 		prompt     *mcpexpr.MethodPromptExpr
-		conversion *promptContentConversion
+		conversion *contentConversion
 	}
 	// PromptArgumentAdapter describes one statically known prompt argument.
 	PromptArgumentAdapter struct {
@@ -61,8 +61,8 @@ type (
 		// TypeRef names the private string alias used by this field.
 		TypeRef string
 	}
-	// promptContentConversion plans one selected content or resource union.
-	promptContentConversion struct {
+	// contentConversion plans one selected content or resource union.
+	contentConversion struct {
 		attribute      *expr.AttributeExpr
 		target         *expr.AttributeExpr
 		declaration    *codegen.NameDeclaration
@@ -70,31 +70,31 @@ type (
 		unionLayout    *codegen.GoTypePlan
 		sourcePackage  *codegen.GeneratedPackage
 		unionAttribute *expr.AttributeExpr
-		branches       []*promptContentBranch
-		data           *promptContentConversionData
+		branches       []*contentBranch
+		data           *contentConversionData
 	}
-	// promptContentBranch retains one declared variant and its conversion plan.
-	promptContentBranch struct {
+	// contentBranch retains one declared variant and its conversion plan.
+	contentBranch struct {
 		name       string
 		attribute  *expr.AttributeExpr
 		transform  *codegen.TransformPlan
-		nested     *promptContentConversion
+		nested     *contentConversion
 		bytesField string
 		metaField  bool
 	}
-	// promptContentConversionData contains only final names and emitted Go code.
-	promptContentConversionData struct {
+	// contentConversionData contains only final names and emitted Go code.
+	contentConversionData struct {
 		Name      string
 		SourceRef string
 		UnionRef  string
 		Value     string
 		TargetRef string
 		HasType   bool
-		Branches  []*promptContentBranchData
+		Branches  []*contentBranchData
 		Helpers   []*codegen.TransformFunctionData
 	}
-	// promptContentBranchData writes one statically selected branch.
-	promptContentBranchData struct {
+	// contentBranchData writes one statically selected branch.
+	contentBranchData struct {
 		Name             string
 		Kind             string
 		Getter           string
@@ -110,8 +110,8 @@ type (
 )
 
 const (
-	promptResourceField = "resource"
-	promptResourceLink  = "resource_link"
+	contentResourceField = "resource"
+	contentResourceLink  = "resource_link"
 )
 
 // buildMethodPromptAdapters checks the authored shapes before generation adds
@@ -124,16 +124,16 @@ func (g *adapterGenerator) buildMethodPromptAdapters() ([]*MethodPromptAdapter, 
 		if err := prompt.Validate(); err != nil {
 			return nil, err
 		}
-		if err := checkPromptGoType(prompt.Method.Result); err != nil {
+		if err := checkContentGoType(prompt.Method.Result); err != nil {
 			return nil, fmt.Errorf("prompt %q result: %w", prompt.Name, err)
 		}
 		if hasMCPValue(prompt.Method.Payload) {
-			if err := checkPromptGoType(prompt.Method.Payload); err != nil {
+			if err := checkContentGoType(prompt.Method.Payload); err != nil {
 				return nil, fmt.Errorf("prompt %q arguments: %w", prompt.Name, err)
 			}
 		}
 		result := expr.AsObject(prompt.Method.Result.Type)
-		if err := checkPromptFields(prompt.Method.Result, []string{"description", "messages"}); err != nil {
+		if err := checkContentFields(prompt.Method.Result, []string{"description", "messages"}); err != nil {
 			return nil, fmt.Errorf("prompt %q result: %w", prompt.Name, err)
 		}
 		if description := result.Attribute("description"); description != nil && primitiveType(description.Type) != expr.String {
@@ -144,7 +144,7 @@ func (g *adapterGenerator) buildMethodPromptAdapters() ([]*MethodPromptAdapter, 
 			return nil, fmt.Errorf("prompt %q messages must use ArrayOfRequired so null messages are rejected", prompt.Name)
 		}
 		message := expr.AsObject(messages.ElemType.Type)
-		if err := checkPromptFields(messages.ElemType, []string{"role", "content"}); err != nil {
+		if err := checkContentFields(messages.ElemType, []string{"role", "content"}); err != nil {
 			return nil, fmt.Errorf("prompt %q message: %w", prompt.Name, err)
 		}
 		for _, name := range []string{"role", "content"} {
@@ -161,7 +161,7 @@ func (g *adapterGenerator) buildMethodPromptAdapters() ([]*MethodPromptAdapter, 
 				return nil, fmt.Errorf("prompt %q message role permits unsupported value %v", prompt.Name, value)
 			}
 		}
-		conversion, err := buildPromptContentConversion(message.Attribute("content"), &expr.AttributeExpr{Type: content}, true)
+		conversion, err := buildContentConversion(message.Attribute("content"), &expr.AttributeExpr{Type: content}, true)
 		if err != nil {
 			return nil, fmt.Errorf("prompt %q content: %w", prompt.Name, err)
 		}
@@ -177,14 +177,14 @@ func (g *adapterGenerator) buildMethodPromptAdapters() ([]*MethodPromptAdapter, 
 	return adapters, nil
 }
 
-// buildPromptContentConversion checks one union against its concrete content
+// buildContentConversion checks one union against its concrete content
 // fields. Binary fields keep bytes in the service and become base64 on the wire.
-func buildPromptContentConversion(attribute, target *expr.AttributeExpr, hasType bool) (*promptContentConversion, error) {
+func buildContentConversion(attribute, target *expr.AttributeExpr, hasType bool) (*contentConversion, error) {
 	union := expr.AsUnion(attribute.Type)
 	if union == nil || len(union.Values) == 0 {
 		return nil, fmt.Errorf("embedded resource must use a text/blob OneOf")
 	}
-	conversion := &promptContentConversion{attribute: attribute, target: target}
+	conversion := &contentConversion{attribute: attribute, target: target}
 	for _, branch := range union.Values {
 		var fields, required []string
 		var bytesField string
@@ -194,10 +194,10 @@ func buildPromptContentConversion(attribute, target *expr.AttributeExpr, hasType
 				fields, required = []string{"text"}, []string{"text"}
 			case "image", "audio":
 				fields, required, bytesField = []string{"data", "mimeType"}, []string{"mimeType"}, "data"
-			case promptResourceLink:
+			case contentResourceLink:
 				fields, required = []string{"uri", "name", "title", "description", "mimeType", "size", "icons"}, []string{"uri", "name"}
-			case promptResourceField:
-				fields, required = []string{promptResourceField}, []string{promptResourceField}
+			case contentResourceField:
+				fields, required = []string{contentResourceField}, []string{contentResourceField}
 			default:
 				return nil, fmt.Errorf("unsupported content branch %q", branch.Name)
 			}
@@ -212,7 +212,7 @@ func buildPromptContentConversion(attribute, target *expr.AttributeExpr, hasType
 				return nil, fmt.Errorf("unsupported embedded resource branch %q", branch.Name)
 			}
 		}
-		if err := checkPromptFields(branch.Attribute, fields); err != nil {
+		if err := checkContentFields(branch.Attribute, fields); err != nil {
 			return nil, fmt.Errorf("%s: %w", branch.Name, err)
 		}
 		object := expr.AsObject(branch.Attribute.Type)
@@ -221,7 +221,7 @@ func buildPromptContentConversion(attribute, target *expr.AttributeExpr, hasType
 				return nil, fmt.Errorf("%s.%s must be declared and required", branch.Name, name)
 			}
 		}
-		planned := &promptContentBranch{name: branch.Name, attribute: branch.Attribute, bytesField: bytesField, metaField: object.Attribute("_meta") != nil}
+		planned := &contentBranch{name: branch.Name, attribute: branch.Attribute, bytesField: bytesField, metaField: object.Attribute("_meta") != nil}
 		targetObject := expr.AsObject(target.Type)
 		for _, field := range *object {
 			if field.Name == bytesField {
@@ -230,15 +230,15 @@ func buildPromptContentConversion(attribute, target *expr.AttributeExpr, hasType
 				}
 				continue
 			}
-			if hasType && branch.Name == promptResourceField && field.Name == promptResourceField {
-				nested, err := buildPromptContentConversion(field.Attribute, targetObject.Attribute(promptResourceField), false)
+			if hasType && branch.Name == contentResourceField && field.Name == contentResourceField {
+				nested, err := buildContentConversion(field.Attribute, targetObject.Attribute(contentResourceField), false)
 				if err != nil {
 					return nil, err
 				}
 				planned.nested = nested
 				continue
 			}
-			if err := checkPromptFieldType(field.Attribute, targetObject.Attribute(field.Name)); err != nil {
+			if err := checkContentFieldType(field.Attribute, targetObject.Attribute(field.Name)); err != nil {
 				return nil, fmt.Errorf("%s.%s: %w", branch.Name, field.Name, err)
 			}
 		}
@@ -250,8 +250,8 @@ func buildPromptContentConversion(attribute, target *expr.AttributeExpr, hasType
 	return conversion, nil
 }
 
-// checkPromptFields rejects fields that would be silently lost during conversion.
-func checkPromptFields(attribute *expr.AttributeExpr, allowed []string) error {
+// checkContentFields rejects fields that would be silently lost during conversion.
+func checkContentFields(attribute *expr.AttributeExpr, allowed []string) error {
 	object := expr.AsObject(attribute.Type)
 	if object == nil {
 		return fmt.Errorf("must be an object")
@@ -264,9 +264,9 @@ func checkPromptFields(attribute *expr.AttributeExpr, allowed []string) error {
 	return nil
 }
 
-// checkPromptFieldType keeps author-defined names while requiring the declared
+// checkContentFieldType keeps author-defined names while requiring the declared
 // fields and validations needed by the MCP content contract.
-func checkPromptFieldType(source, target *expr.AttributeExpr) error {
+func checkContentFieldType(source, target *expr.AttributeExpr) error {
 	sourceObject, targetObject := expr.AsObject(source.Type), expr.AsObject(target.Type)
 	if targetObject != nil {
 		if sourceObject == nil {
@@ -276,7 +276,7 @@ func checkPromptFieldType(source, target *expr.AttributeExpr) error {
 		for _, field := range *targetObject {
 			allowed = append(allowed, field.Name)
 		}
-		if err := checkPromptFields(source, allowed); err != nil {
+		if err := checkContentFields(source, allowed); err != nil {
 			return err
 		}
 		for _, field := range *targetObject {
@@ -285,7 +285,7 @@ func checkPromptFieldType(source, target *expr.AttributeExpr) error {
 			}
 		}
 		for _, field := range *sourceObject {
-			if err := checkPromptFieldType(field.Attribute, targetObject.Attribute(field.Name)); err != nil {
+			if err := checkContentFieldType(field.Attribute, targetObject.Attribute(field.Name)); err != nil {
 				return fmt.Errorf("%s: %w", field.Name, err)
 			}
 		}
@@ -296,7 +296,7 @@ func checkPromptFieldType(source, target *expr.AttributeExpr) error {
 		if sourceArray == nil || targetArray.NonNullableElems && !sourceArray.NonNullableElems {
 			return fmt.Errorf("must use a matching ArrayOfRequired")
 		}
-		return checkPromptFieldType(sourceArray.ElemType, targetArray.ElemType)
+		return checkContentFieldType(sourceArray.ElemType, targetArray.ElemType)
 	}
 	if primitiveType(source.Type) != primitiveType(target.Type) {
 		return fmt.Errorf("must use %s", target.Type.Name())
@@ -347,9 +347,9 @@ func primitiveType(dataType expr.DataType) expr.DataType {
 	}
 }
 
-// checkPromptGoType rejects Go type replacements that bypass the authored
+// checkContentGoType rejects Go type replacements that bypass the authored
 // field contract. Ordinary Goa aliases and located types keep their schemas.
-func checkPromptGoType(attribute *expr.AttributeExpr) error {
+func checkContentGoType(attribute *expr.AttributeExpr) error {
 	return codegen.Walk(attribute, func(current *expr.AttributeExpr) error {
 		if len(current.Meta["struct:field:type"]) == 0 {
 			return nil
