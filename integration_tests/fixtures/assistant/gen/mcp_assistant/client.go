@@ -15,25 +15,27 @@ import (
 
 // Client is the "mcp_assistant" service client.
 type Client struct {
-	ServerDiscoverEndpoint goa.Endpoint
-	ToolsListEndpoint      goa.Endpoint
-	ToolsCallEndpoint      goa.Endpoint
-	ResourcesListEndpoint  goa.Endpoint
-	ResourcesReadEndpoint  goa.Endpoint
-	PromptsListEndpoint    goa.Endpoint
-	PromptsGetEndpoint     goa.Endpoint
+	ServerDiscoverEndpoint     goa.Endpoint
+	ToolsListEndpoint          goa.Endpoint
+	ToolsCallEndpoint          goa.Endpoint
+	ResourcesListEndpoint      goa.Endpoint
+	ResourcesReadEndpoint      goa.Endpoint
+	PromptsListEndpoint        goa.Endpoint
+	PromptsGetEndpoint         goa.Endpoint
+	CompletionCompleteEndpoint goa.Endpoint
 }
 
 // NewClient initializes a "mcp_assistant" service client given the endpoints.
-func NewClient(serverDiscover, toolsList, toolsCall, resourcesList, resourcesRead, promptsList, promptsGet goa.Endpoint) *Client {
+func NewClient(serverDiscover, toolsList, toolsCall, resourcesList, resourcesRead, promptsList, promptsGet, completionComplete goa.Endpoint) *Client {
 	return &Client{
-		ServerDiscoverEndpoint: serverDiscover,
-		ToolsListEndpoint:      toolsList,
-		ToolsCallEndpoint:      toolsCall,
-		ResourcesListEndpoint:  resourcesList,
-		ResourcesReadEndpoint:  resourcesRead,
-		PromptsListEndpoint:    promptsList,
-		PromptsGetEndpoint:     promptsGet,
+		ServerDiscoverEndpoint:     serverDiscover,
+		ToolsListEndpoint:          toolsList,
+		ToolsCallEndpoint:          toolsCall,
+		ResourcesListEndpoint:      resourcesList,
+		ResourcesReadEndpoint:      resourcesRead,
+		PromptsListEndpoint:        promptsList,
+		PromptsGetEndpoint:         promptsGet,
+		CompletionCompleteEndpoint: completionComplete,
 	}
 }
 
@@ -129,4 +131,19 @@ func (c *Client) PromptsGet(ctx context.Context, p *PromptsGetPayload) (res *Pro
 		return
 	}
 	return ires.(*PromptsGetResult), nil
+}
+
+// CompletionComplete calls the "completion/complete" endpoint of the
+// "mcp_assistant" service.
+// CompletionComplete may return the following errors:
+//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
+//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
+//   - error: internal error
+func (c *Client) CompletionComplete(ctx context.Context, p *CompletionCompletePayload) (res *CompletionCompleteResult, err error) {
+	var ires any
+	ires, err = c.CompletionCompleteEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*CompletionCompleteResult), nil
 }

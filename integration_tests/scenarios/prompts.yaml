@@ -8,6 +8,10 @@ scenarios:
           result:
             prompts:
               - { name: "code_review", description: "Simple code review prompt" }
+              - { name: "test_prompt_with_arguments", description: "Synthetic parameterized instructions" }
+              - { name: "test_prompt_with_embedded_resource", description: "Synthetic resource instructions" }
+              - { name: "test_prompt_with_image", description: "Synthetic image instructions" }
+              - { name: "test_simple_prompt", description: "Synthetic text instructions" }
 
   - name: prompts_get_static
     steps:

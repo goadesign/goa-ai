@@ -123,8 +123,8 @@ located role alias. Raw malformed requests cannot invoke the service. Nil result
 null messages, unset branches and invalid content return protocol errors.
 The full serial race suite and quickstart passed; fresh focused race tests cover
 the final shared-converter changes. Build, configured lint and uncached generated
-HTTP scenarios passed. The frozen referee baseline has not been rerun for prompts;
-independent producer conformance remains a release gate.
+HTTP scenarios passed. The frozen referee now passes five prompt scenarios: ten checks including
+wire-schema validation. The original full-suite baseline has not been rerun.
 
 Prompt argument completion now binds a declared prompt argument to an ordinary
 unary Goa method. The generated constructor retains partial text and prior
@@ -148,8 +148,9 @@ invoke the service. Public DSL checks reject missing context declarations,
 unknown bindings, duplicates and absent/weaker array bounds. Build, the full serial root race suite and quickstart passed. Fresh affected
 package race tests cover the final shared string-map validation, and configured
 lint passed with zero issues. There is no deployed completion
-caller evidence for this newly introduced binding. Independent completion
-conformance and URI-template completion remain release gates.
+caller evidence for this newly introduced binding. The frozen referee passes both prompt-completion checks through the actual
+generated server. URI-template completion remains a release gate; the original
+full-suite baseline has not been rerun.
 
 
 Open `_meta` data also makes these content-containing types ineligible for the

@@ -77,6 +77,21 @@ also verify icon preservation and independent copies in tool errors.
 These are local client checks. The full referee baseline above has not been
 rerun, and rich server authoring is still required before release.
 
+## Subsequent prompt and completion verification
+
+On 2026-10-03 at 22:57 UTC, the generated fixture passed all six frozen
+`prompts-list`, `prompts-get-simple`, `prompts-get-with-args`,
+`prompts-get-embedded-resource`, `prompts-get-with-image`, and
+`completion-complete` scenarios: 12 successful checks, no failures, warnings or
+skips. Every run selected `2026-07-28`; the referee pin and scenarios were
+unchanged. The fixture declares ordinary typed Goa producers and binds them
+through `Prompt` and `PromptCompletion`. The generated HTTP path returns exact
+argument text and resource URI, ordered image/text messages, and two suggestions
+with a total. The uncached serial race-enabled integration suite also passed.
+These targeted results supplement the original failing baseline. They do not
+change its recorded counts or establish URI-template completion or full-suite
+conformance.
+
 ## Scenario results
 
 Success, failure, warning and skip columns count individual checks. Informational

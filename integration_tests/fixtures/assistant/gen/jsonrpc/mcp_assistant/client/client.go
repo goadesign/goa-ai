@@ -224,3 +224,27 @@ func (c *Client) PromptsGet() goa.Endpoint {
 		return decodeResponse(resp, requestID)
 	}
 }
+
+// CompletionComplete returns an endpoint that makes JSON-RPC requests to the
+// mcp_assistant service completion/complete method.
+func (c *Client) CompletionComplete() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeCompletionCompleteRequest(c.encoder)
+		decodeResponse = DecodeCompletionCompleteResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildCompletionCompleteRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.Doer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("mcp_assistant", "completion/complete", err)
+		}
+		return decodeResponse(resp, requestID)
+	}
+}

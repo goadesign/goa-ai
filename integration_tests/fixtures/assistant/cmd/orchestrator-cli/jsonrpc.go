@@ -52,6 +52,8 @@ func doJSONRPC(ctx context.Context, scheme, host string, timeout int, debug bool
 			return writeEndpointResult(ctx, stdout, endpoint, payload)
 		case "prompts-get":
 			return writeEndpointResult(ctx, stdout, endpoint, payload)
+		case "completion-complete":
+			return writeEndpointResult(ctx, stdout, endpoint, payload)
 		}
 	}
 	panic("parsed JSON-RPC command has no generated result writer")

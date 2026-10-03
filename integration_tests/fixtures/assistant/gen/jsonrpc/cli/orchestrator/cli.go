@@ -23,7 +23,7 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
-		"mcp-assistant (server-discover|tools-list|tools-call|resources-list|resources-read|prompts-list|prompts-get)",
+		"mcp-assistant (server-discover|tools-list|tools-call|resources-list|resources-read|prompts-list|prompts-get|completion-complete)",
 	}
 }
 
@@ -84,6 +84,9 @@ func ParseEndpoint(
 
 		mcpAssistantPromptsGetFlags    = flag.NewFlagSet("prompts-get", flag.ExitOnError)
 		mcpAssistantPromptsGetBodyFlag = new(cliStringFlag)
+
+		mcpAssistantCompletionCompleteFlags    = flag.NewFlagSet("completion-complete", flag.ExitOnError)
+		mcpAssistantCompletionCompleteBodyFlag = new(cliStringFlag)
 	)
 	mcpAssistantServerDiscoverFlags.Var(mcpAssistantServerDiscoverBodyFlag, "body", "")
 	mcpAssistantToolsListFlags.Var(mcpAssistantToolsListBodyFlag, "body", "")
@@ -92,6 +95,7 @@ func ParseEndpoint(
 	mcpAssistantResourcesReadFlags.Var(mcpAssistantResourcesReadBodyFlag, "body", "")
 	mcpAssistantPromptsListFlags.Var(mcpAssistantPromptsListBodyFlag, "body", "")
 	mcpAssistantPromptsGetFlags.Var(mcpAssistantPromptsGetBodyFlag, "body", "")
+	mcpAssistantCompletionCompleteFlags.Var(mcpAssistantCompletionCompleteBodyFlag, "body", "")
 
 	mcpAssistantFlags.Usage = mcpAssistantUsage
 	mcpAssistantServerDiscoverFlags.Usage = mcpAssistantServerDiscoverUsage
@@ -101,6 +105,7 @@ func ParseEndpoint(
 	mcpAssistantResourcesReadFlags.Usage = mcpAssistantResourcesReadUsage
 	mcpAssistantPromptsListFlags.Usage = mcpAssistantPromptsListUsage
 	mcpAssistantPromptsGetFlags.Usage = mcpAssistantPromptsGetUsage
+	mcpAssistantCompletionCompleteFlags.Usage = mcpAssistantCompletionCompleteUsage
 
 	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 		return nil, nil, err
@@ -157,6 +162,9 @@ func ParseEndpoint(
 			case "prompts-get":
 				epf = mcpAssistantPromptsGetFlags
 
+			case "completion-complete":
+				epf = mcpAssistantCompletionCompleteFlags
+
 			}
 
 		}
@@ -203,6 +211,9 @@ func ParseEndpoint(
 			case "prompts-get":
 				endpoint = c.PromptsGet()
 				data, err = mcpassistantc.BuildPromptsGetPayload(mcpAssistantPromptsGetBodyFlag.value)
+			case "completion-complete":
+				endpoint = c.CompletionComplete()
+				data, err = mcpassistantc.BuildCompletionCompletePayload(mcpAssistantCompletionCompleteBodyFlag.value)
 			}
 		}
 	}
@@ -226,6 +237,7 @@ func mcpAssistantUsage() {
 	fmt.Fprintln(os.Stderr, `    resources-read: Read a resource`)
 	fmt.Fprintln(os.Stderr, `    prompts-list: List available prompts`)
 	fmt.Fprintln(os.Stderr, `    prompts-get: Get a prompt by name`)
+	fmt.Fprintln(os.Stderr, `    completion-complete: Return service-ranked suggestions for the argument currently being entered`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s mcp-assistant COMMAND --help\n", os.Args[0])
@@ -354,4 +366,22 @@ func mcpAssistantPromptsGetUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant prompts-get --body '{\n      \"_meta\": \"Occaecati maiores laudantium quis sint mollitia placeat.\",\n      \"arguments\": {\n         \"Quidem est sint reiciendis.\": \"Repellat autem qui quis inventore recusandae fugit.\"\n      },\n      \"name\": \"Voluptas accusamus rerum quo.\"\n   }'")
+}
+
+func mcpAssistantCompletionCompleteUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] mcp-assistant completion-complete", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Return service-ranked suggestions for the argument currently being entered`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant completion-complete --body '{\n      \"_meta\": \"Cupiditate sed at occaecati exercitationem laborum illo.\",\n      \"argument\": {\n         \"name\": \"Et quae aut numquam quia eos.\",\n         \"value\": \"Esse commodi tempore sunt labore deserunt ad.\"\n      },\n      \"context\": {\n         \"arguments\": {\n            \"Aut qui quia voluptatem fugiat nam totam.\": \"Id sunt soluta sed.\",\n            \"Et neque et aut.\": \"Sed odit deleniti odio inventore aperiam.\",\n            \"Veritatis expedita.\": \"Culpa eos odit impedit quia.\"\n         }\n      },\n      \"ref\": {\n         \"name\": \"Quo aut vero vitae repudiandae laudantium quam.\",\n         \"title\": \"Delectus corrupti laborum quia aut.\",\n         \"type\": \"ref/resource\",\n         \"uri\": \"Atque et dicta molestiae.\"\n      }\n   }'")
 }

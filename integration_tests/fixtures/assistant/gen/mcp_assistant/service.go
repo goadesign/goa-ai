@@ -37,6 +37,8 @@ type Service interface {
 	PromptsList(context.Context, *PromptsListPayload) (res *PromptsListResult, err error)
 	// Get a prompt by name
 	PromptsGet(context.Context, *PromptsGetPayload) (res *PromptsGetResult, err error)
+	// Return service-ranked suggestions for the argument currently being entered
+	CompletionComplete(context.Context, *CompletionCompletePayload) (res *CompletionCompleteResult, err error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -53,7 +55,67 @@ const ServiceName = "mcp_assistant"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [7]string{"server/discover", "tools/list", "tools/call", "resources/list", "resources/read", "prompts/list", "prompts/get"}
+var MethodNames = [8]string{"server/discover", "tools/list", "tools/call", "resources/list", "resources/read", "prompts/list", "prompts/get", "completion/complete"}
+
+type CompletionArgument struct {
+	// Declared argument currently being entered
+	Name string
+	// Partial text used by the service to find suggestions
+	Value string
+}
+
+// CompletionCompletePayload is the payload type of the mcp_assistant service
+// completion/complete method.
+type CompletionCompletePayload struct {
+	// Prompt or resource whose argument is being completed
+	Ref *CompletionReference
+	// Argument name and partial text
+	Argument *CompletionArgument
+	// Prior values used to refine suggestions
+	Context *CompletionContext
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// CompletionCompleteResult is the result type of the mcp_assistant service
+// completion/complete method.
+type CompletionCompleteResult struct {
+	// Ranked suggestions for this request
+	Completion *CompletionSuggestion
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType string
+}
+
+type CompletionContext struct {
+	// Previously resolved argument values
+	Arguments map[string]string
+}
+
+type CompletionReference struct {
+	// Whether the reference names a prompt or resource
+	Type string
+	// Prompt name when type is ref/prompt
+	Name *string
+	// Optional display title for a prompt reference
+	Title *string
+	// Resource URI or URI template when type is ref/resource
+	URI *string
+}
+
+type CompletionSuggestion struct {
+	// Suggestions in service-selected relevance order
+	Values []string
+	// Total available matches, which can exceed the returned count
+	Total *int64
+	// Whether further matches exist
+	HasMore *bool
+}
+
+// Argument suggestions
+type CompletionsCapability struct {
+}
 
 type ContentAnnotations struct {
 	// Roles that should see this content
@@ -286,6 +348,8 @@ type ResourcesReadResult struct {
 }
 
 type ServerCapabilities struct {
+	// Declared argument suggestion providers
+	Completions *CompletionsCapability
 	// Tool capabilities
 	Tools *ToolsCapability
 	// Resource capabilities
@@ -384,6 +448,113 @@ func MakeInvalidParams(err error) *goa.ServiceError {
 // MakeInternalError builds a goa.ServiceError from an error.
 func MakeInternalError(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "internal_error", false, false, false)
+}
+
+// jsonCompletionArgumentTransport stores JSON fields until they have been validated.
+type jsonCompletionArgumentTransport struct {
+	// Declared argument currently being entered
+	Name *string `json:"name"`
+	// Partial text used by the service to find suggestions
+	Value *string `json:"value"`
+}
+
+// validatejsonCompletionArgumentTransport checks decoded JSON before it becomes a service value.
+func validatejsonCompletionArgumentTransport(value *jsonCompletionArgumentTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if value.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
+	}
+	return err
+}
+
+// jsonCompletionContextTransport stores JSON fields until they have been validated.
+type jsonCompletionContextTransport struct {
+	// Previously resolved argument values
+	Arguments map[string]string `json:"arguments,omitempty"`
+}
+
+// validatejsonCompletionContextTransport checks decoded JSON before it becomes a service value.
+func validatejsonCompletionContextTransport(value *jsonCompletionContextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+
+	return err
+}
+
+// jsonCompletionReferenceTransport stores JSON fields until they have been validated.
+type jsonCompletionReferenceTransport struct {
+	// Whether the reference names a prompt or resource
+	Type *string `json:"type"`
+	// Prompt name when type is ref/prompt
+	Name *string `json:"name,omitempty"`
+	// Optional display title for a prompt reference
+	Title *string `json:"title,omitempty"`
+	// Resource URI or URI template when type is ref/resource
+	URI *string `json:"uri,omitempty"`
+}
+
+// validatejsonCompletionReferenceTransport checks decoded JSON before it becomes a service value.
+func validatejsonCompletionReferenceTransport(value *jsonCompletionReferenceTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if value.Type != nil {
+		if !(*value.Type == "ref/prompt" || *value.Type == "ref/resource") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *value.Type, []any{"ref/prompt", "ref/resource"}))
+		}
+	}
+	return err
+}
+
+// jsonCompletionSuggestionTransport stores JSON fields until they have been validated.
+type jsonCompletionSuggestionTransport struct {
+	// Suggestions in service-selected relevance order
+	Values []*string `json:"values"`
+	// Total available matches, which can exceed the returned count
+	Total *int64 `json:"total,omitempty"`
+	// Whether further matches exist
+	HasMore *bool `json:"hasMore,omitempty"`
+}
+
+// validatejsonCompletionSuggestionTransport checks decoded JSON before it becomes a service value.
+func validatejsonCompletionSuggestionTransport(value *jsonCompletionSuggestionTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Values == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("values", "body"))
+	}
+	if len(value.Values) > 100 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.values", value.Values, len(value.Values), 100, false))
+	}
+	for _, e := range value.Values {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.values", "[*]"))
+		}
+	}
+	return err
+}
+
+// jsonCompletionsCapabilityTransport stores JSON fields until they have been validated.
+type jsonCompletionsCapabilityTransport struct {
+}
+
+// validatejsonCompletionsCapabilityTransport checks decoded JSON before it becomes a service value.
+func validatejsonCompletionsCapabilityTransport(value *jsonCompletionsCapabilityTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+
+	return err
 }
 
 // jsonContentAnnotationsTransport stores JSON fields until they have been validated.
@@ -554,6 +725,8 @@ func validatejsonResourcesCapabilityTransport(value *jsonResourcesCapabilityTran
 
 // jsonServerCapabilitiesTransport stores JSON fields until they have been validated.
 type jsonServerCapabilitiesTransport struct {
+	// Declared argument suggestion providers
+	Completions *jsonCompletionsCapabilityTransport `json:"completions,omitempty"`
 	// Tool capabilities
 	Tools *jsonToolsCapabilityTransport `json:"tools,omitempty"`
 	// Resource capabilities
@@ -607,6 +780,25 @@ func validatejsonToolsCapabilityTransport(value *jsonToolsCapabilityTransport) (
 	return err
 }
 
+// validateCompletionReferenceOriginal checks the original typed value before JSON conversion.
+func validateCompletionReferenceOriginal(value *CompletionReference) (err error) {
+	if !(value.Type == "ref/prompt" || value.Type == "ref/resource") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.type", value.Type, []any{"ref/prompt", "ref/resource"}))
+	}
+	return err
+}
+
+// validateCompletionSuggestionOriginal checks the original typed value before JSON conversion.
+func validateCompletionSuggestionOriginal(value *CompletionSuggestion) (err error) {
+	if value.Values == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("values", "value"))
+	}
+	if len(value.Values) > 100 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.values", value.Values, len(value.Values), 100, false))
+	}
+	return err
+}
+
 // validateContentAnnotationsOriginal checks the original typed value before JSON conversion.
 func validateContentAnnotationsOriginal(value *ContentAnnotations) (err error) {
 	for _, e := range value.Audience {
@@ -644,6 +836,305 @@ func validatePromptInfoOriginal(value *PromptInfo) (err error) {
 		}
 	}
 	return err
+}
+
+// EncodeCompletionArgument turns a service value into JSON using the field names in the Goa design.
+func EncodeCompletionArgument(in *CompletionArgument) ([]byte, error) {
+	if err := checkCompletionArgumentValue(in); err != nil {
+		return nil, fmt.Errorf("encode CompletionArgument JSON: %w", err)
+	}
+	var body *jsonCompletionArgumentTransport
+	{
+		body = &jsonCompletionArgumentTransport{
+			Name:  &in.Name,
+			Value: &in.Value,
+		}
+	}
+	if err := validatejsonCompletionArgumentTransport(body); err != nil {
+		return nil, fmt.Errorf("validate CompletionArgument JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode CompletionArgument JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeCompletionArgument checks JSON field names from the Goa design and returns a service value.
+func DecodeCompletionArgument(data []byte) (out *CompletionArgument, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode CompletionArgument JSON: %w", err)
+	}
+	if err := validateCompletionArgumentJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode CompletionArgument JSON: %w", err)
+	}
+	var body *jsonCompletionArgumentTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode CompletionArgument JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode CompletionArgument JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode CompletionArgument JSON after first value: %w", err)
+	}
+	if err := validatejsonCompletionArgumentTransport(body); err != nil {
+		return out, fmt.Errorf("validate CompletionArgument JSON: %w", err)
+	}
+	{
+		out = &CompletionArgument{
+			Name:  *body.Name,
+			Value: *body.Value,
+		}
+	}
+	return out, nil
+}
+
+// EncodeCompletionContext turns a service value into JSON using the field names in the Goa design.
+func EncodeCompletionContext(in *CompletionContext) ([]byte, error) {
+	if err := checkCompletionContextValue(in); err != nil {
+		return nil, fmt.Errorf("encode CompletionContext JSON: %w", err)
+	}
+	var body *jsonCompletionContextTransport
+	{
+		body = &jsonCompletionContextTransport{}
+		if in.Arguments != nil {
+			body.Arguments = make(map[string]string, len(in.Arguments))
+			for key, val := range in.Arguments {
+				tk := key
+				tv := val
+				body.Arguments[tk] = tv
+			}
+		}
+	}
+	if err := validatejsonCompletionContextTransport(body); err != nil {
+		return nil, fmt.Errorf("validate CompletionContext JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode CompletionContext JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeCompletionContext checks JSON field names from the Goa design and returns a service value.
+func DecodeCompletionContext(data []byte) (out *CompletionContext, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode CompletionContext JSON: %w", err)
+	}
+	if err := validateCompletionContextJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode CompletionContext JSON: %w", err)
+	}
+	var body *jsonCompletionContextTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode CompletionContext JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode CompletionContext JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode CompletionContext JSON after first value: %w", err)
+	}
+	if err := validatejsonCompletionContextTransport(body); err != nil {
+		return out, fmt.Errorf("validate CompletionContext JSON: %w", err)
+	}
+	{
+		out = &CompletionContext{}
+		if body.Arguments != nil {
+			out.Arguments = make(map[string]string, len(body.Arguments))
+			for key, val := range body.Arguments {
+				tk := key
+				tv := val
+				out.Arguments[tk] = tv
+			}
+		}
+	}
+	return out, nil
+}
+
+// EncodeCompletionReference turns a service value into JSON using the field names in the Goa design.
+func EncodeCompletionReference(in *CompletionReference) ([]byte, error) {
+	if err := checkCompletionReferenceValue(in); err != nil {
+		return nil, fmt.Errorf("encode CompletionReference JSON: %w", err)
+	}
+	if err := validateCompletionReferenceOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate CompletionReference value: %w", err)
+	}
+	var body *jsonCompletionReferenceTransport
+	{
+		body = &jsonCompletionReferenceTransport{
+			Type:  &in.Type,
+			Name:  in.Name,
+			Title: in.Title,
+			URI:   in.URI,
+		}
+	}
+	if err := validatejsonCompletionReferenceTransport(body); err != nil {
+		return nil, fmt.Errorf("validate CompletionReference JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode CompletionReference JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeCompletionReference checks JSON field names from the Goa design and returns a service value.
+func DecodeCompletionReference(data []byte) (out *CompletionReference, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode CompletionReference JSON: %w", err)
+	}
+	if err := validateCompletionReferenceJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode CompletionReference JSON: %w", err)
+	}
+	var body *jsonCompletionReferenceTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode CompletionReference JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode CompletionReference JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode CompletionReference JSON after first value: %w", err)
+	}
+	if err := validatejsonCompletionReferenceTransport(body); err != nil {
+		return out, fmt.Errorf("validate CompletionReference JSON: %w", err)
+	}
+	{
+		out = &CompletionReference{
+			Type:  *body.Type,
+			Name:  body.Name,
+			Title: body.Title,
+			URI:   body.URI,
+		}
+	}
+	return out, nil
+}
+
+// EncodeCompletionSuggestion turns a service value into JSON using the field names in the Goa design.
+func EncodeCompletionSuggestion(in *CompletionSuggestion) ([]byte, error) {
+	if err := checkCompletionSuggestionValue(in); err != nil {
+		return nil, fmt.Errorf("encode CompletionSuggestion JSON: %w", err)
+	}
+	if err := validateCompletionSuggestionOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate CompletionSuggestion value: %w", err)
+	}
+	var body *jsonCompletionSuggestionTransport
+	{
+		body = &jsonCompletionSuggestionTransport{
+			Total:   in.Total,
+			HasMore: in.HasMore,
+		}
+		body.Values = make([]*string, len(in.Values))
+		for i, val := range in.Values {
+			var transformed string
+			transformed = val
+			body.Values[i] = &transformed
+		}
+	}
+	if err := validatejsonCompletionSuggestionTransport(body); err != nil {
+		return nil, fmt.Errorf("validate CompletionSuggestion JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode CompletionSuggestion JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeCompletionSuggestion checks JSON field names from the Goa design and returns a service value.
+func DecodeCompletionSuggestion(data []byte) (out *CompletionSuggestion, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode CompletionSuggestion JSON: %w", err)
+	}
+	if err := validateCompletionSuggestionJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode CompletionSuggestion JSON: %w", err)
+	}
+	var body *jsonCompletionSuggestionTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode CompletionSuggestion JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode CompletionSuggestion JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode CompletionSuggestion JSON after first value: %w", err)
+	}
+	if err := validatejsonCompletionSuggestionTransport(body); err != nil {
+		return out, fmt.Errorf("validate CompletionSuggestion JSON: %w", err)
+	}
+	{
+		out = &CompletionSuggestion{
+			Total:   body.Total,
+			HasMore: body.HasMore,
+		}
+		out.Values = make([]string, len(body.Values))
+		for i, val := range body.Values {
+			out.Values[i] = *val
+		}
+	}
+	return out, nil
+}
+
+// EncodeCompletionsCapability turns a service value into JSON using the field names in the Goa design.
+func EncodeCompletionsCapability(in *CompletionsCapability) ([]byte, error) {
+	if err := checkCompletionsCapabilityValue(in); err != nil {
+		return nil, fmt.Errorf("encode CompletionsCapability JSON: %w", err)
+	}
+	var body *jsonCompletionsCapabilityTransport
+	{
+		body = &jsonCompletionsCapabilityTransport{}
+	}
+	if err := validatejsonCompletionsCapabilityTransport(body); err != nil {
+		return nil, fmt.Errorf("validate CompletionsCapability JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode CompletionsCapability JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeCompletionsCapability checks JSON field names from the Goa design and returns a service value.
+func DecodeCompletionsCapability(data []byte) (out *CompletionsCapability, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode CompletionsCapability JSON: %w", err)
+	}
+	if err := validateCompletionsCapabilityJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode CompletionsCapability JSON: %w", err)
+	}
+	var body *jsonCompletionsCapabilityTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode CompletionsCapability JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode CompletionsCapability JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode CompletionsCapability JSON after first value: %w", err)
+	}
+	if err := validatejsonCompletionsCapabilityTransport(body); err != nil {
+		return out, fmt.Errorf("validate CompletionsCapability JSON: %w", err)
+	}
+	{
+		out = &CompletionsCapability{}
+	}
+	return out, nil
 }
 
 // EncodeContentAnnotations turns a service value into JSON using the field names in the Goa design.
@@ -1088,6 +1579,9 @@ func EncodeServerCapabilities(in *ServerCapabilities) ([]byte, error) {
 	var body *jsonServerCapabilitiesTransport
 	{
 		body = &jsonServerCapabilitiesTransport{}
+		if in.Completions != nil {
+			body.Completions = encodeCompletionsCapabilityToCompletionsCapabilityTransport(in.Completions)
+		}
 		if in.Tools != nil {
 			body.Tools = encodeToolsCapabilityToToolsCapabilityTransport(in.Tools)
 		}
@@ -1134,6 +1628,9 @@ func DecodeServerCapabilities(data []byte) (out *ServerCapabilities, err error) 
 	}
 	{
 		out = &ServerCapabilities{}
+		if body.Completions != nil {
+			out.Completions = decodeCompletionsCapabilityTransportToCompletionsCapability(body.Completions)
+		}
 		if body.Tools != nil {
 			out.Tools = decodeToolsCapabilityTransportToToolsCapability(body.Tools)
 		}
@@ -1257,6 +1754,12 @@ func DecodeToolsCapability(data []byte) (out *ToolsCapability, err error) {
 	return out, nil
 }
 
+func decodeCompletionsCapabilityTransportToCompletionsCapability(v *jsonCompletionsCapabilityTransport) *CompletionsCapability {
+	res := &CompletionsCapability{}
+
+	return res
+}
+
 func decodePromptArgumentTransportToPromptArgument(v *jsonPromptArgumentTransport) *PromptArgument {
 	res := &PromptArgument{
 		Name:        *v.Name,
@@ -1281,6 +1784,12 @@ func decodeResourcesCapabilityTransportToResourcesCapability(v *jsonResourcesCap
 
 func decodeToolsCapabilityTransportToToolsCapability(v *jsonToolsCapabilityTransport) *ToolsCapability {
 	res := &ToolsCapability{}
+
+	return res
+}
+
+func encodeCompletionsCapabilityToCompletionsCapabilityTransport(v *CompletionsCapability) *jsonCompletionsCapabilityTransport {
+	res := &jsonCompletionsCapabilityTransport{}
 
 	return res
 }
@@ -1311,6 +1820,441 @@ func encodeToolsCapabilityToToolsCapabilityTransport(v *ToolsCapability) *jsonTo
 	res := &jsonToolsCapabilityTransport{}
 
 	return res
+}
+
+// validateCompletionArgumentJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionArgumentJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "name":
+			if err := validateCompletionArgumentJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Declared argument currently being entered",
+			); err != nil {
+				return err
+			}
+		case "value":
+			if err := validateCompletionArgumentJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Partial text used by the service to find suggestions",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"name",
+				"value",
+			})
+		}
+	}
+	return nil
+}
+
+// validateCompletionArgumentJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionArgumentJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateCompletionArgumentJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionArgumentJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateCompletionContextJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionContextJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "arguments":
+			if err := validateCompletionContextJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Previously resolved argument values",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"arguments",
+			})
+		}
+	}
+	return nil
+}
+
+// validateCompletionContextJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionContextJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if err := validateCompletionContextJSONValue3(
+			generatedJSONChildPath(path, key, true),
+			typed[key], description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateCompletionContextJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionContextJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateCompletionReferenceJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionReferenceJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "name":
+			if err := validateCompletionReferenceJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Prompt name when type is ref/prompt",
+			); err != nil {
+				return err
+			}
+		case "title":
+			if err := validateCompletionReferenceJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Optional display title for a prompt reference",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateCompletionReferenceJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the reference names a prompt or resource",
+			); err != nil {
+				return err
+			}
+		case "uri":
+			if err := validateCompletionReferenceJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Resource URI or URI template when type is ref/resource",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"name",
+				"title",
+				"type",
+				"uri",
+			})
+		}
+	}
+	return nil
+}
+
+// validateCompletionReferenceJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionReferenceJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateCompletionReferenceJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionReferenceJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateCompletionReferenceJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionReferenceJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateCompletionReferenceJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionReferenceJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateCompletionSuggestionJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionSuggestionJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "hasMore":
+			if err := validateCompletionSuggestionJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether further matches exist",
+			); err != nil {
+				return err
+			}
+		case "total":
+			if err := validateCompletionSuggestionJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Total available matches, which can exceed the returned count",
+			); err != nil {
+				return err
+			}
+		case "values":
+			if err := validateCompletionSuggestionJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Suggestions in service-selected relevance order",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"hasMore",
+				"total",
+				"values",
+			})
+		}
+	}
+	return nil
+}
+
+// validateCompletionSuggestionJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionSuggestionJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateCompletionSuggestionJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionSuggestionJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	typed, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	if _, err := strconv.ParseInt(typed.String(), 10, 64); err != nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
+	}
+	return nil
+}
+
+// validateCompletionSuggestionJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionSuggestionJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateCompletionSuggestionJSONValue5(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateCompletionSuggestionJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionSuggestionJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateCompletionsCapabilityJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompletionsCapabilityJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
+	}
+	return nil
 }
 
 // validateContentAnnotationsJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
@@ -2091,22 +3035,29 @@ func validateServerCapabilitiesJSONValue(path string, value any, description str
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "prompts":
+		case "completions":
 			if err := validateServerCapabilitiesJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Declared argument suggestion providers",
+			); err != nil {
+				return err
+			}
+		case "prompts":
+			if err := validateServerCapabilitiesJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Prompt capabilities",
 			); err != nil {
 				return err
 			}
 		case "resources":
-			if err := validateServerCapabilitiesJSONValue3(
+			if err := validateServerCapabilitiesJSONValue4(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Resource capabilities",
 			); err != nil {
 				return err
 			}
 		case "tools":
-			if err := validateServerCapabilitiesJSONValue4(
+			if err := validateServerCapabilitiesJSONValue5(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Tool capabilities",
 			); err != nil {
@@ -2114,6 +3065,7 @@ func validateServerCapabilitiesJSONValue(path string, value any, description str
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"completions",
 				"prompts",
 				"resources",
 				"tools",
@@ -2179,6 +3131,33 @@ func validateServerCapabilitiesJSONValue3(path string, value any, description st
 
 // validateServerCapabilitiesJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateServerCapabilitiesJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
+	}
+	return nil
+}
+
+// validateServerCapabilitiesJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServerCapabilitiesJSONValue5(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -2526,6 +3505,181 @@ func generatedJSONChildPath(path, key string, _ bool) string {
 	return path + "[" + strconv.Quote(key) + "]"
 }
 
+// checkCompletionArgumentValue checks text and cycles before conversion.
+func checkCompletionArgumentValue(in *CompletionArgument) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkCompletionArgumentCompletionArgumentValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkCompletionArgumentCompletionArgumentValue checks one generated value on the active path.
+func checkCompletionArgumentCompletionArgumentValue(in *CompletionArgument, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Name)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "name", false))
+		}
+		if !utf8.ValidString(string(in.Value)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkCompletionContextValue checks text and cycles before conversion.
+func checkCompletionContextValue(in *CompletionContext) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkCompletionContextCompletionContextValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkCompletionContextCompletionContextValue checks one generated value on the active path.
+func checkCompletionContextCompletionContextValue(in *CompletionContext, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for key1, item1 := range in.Arguments {
+			_ = item1
+			if !utf8.ValidString(string(key1)) {
+				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "arguments", false))
+			}
+			if !utf8.ValidString(string(item1)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "arguments", false), string(key1), true))
+			}
+		}
+	}
+	return nil
+}
+
+// checkCompletionReferenceValue checks text and cycles before conversion.
+func checkCompletionReferenceValue(in *CompletionReference) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkCompletionReferenceCompletionReferenceValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkCompletionReferenceCompletionReferenceValue checks one generated value on the active path.
+func checkCompletionReferenceCompletionReferenceValue(in *CompletionReference, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Type)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "type", false))
+		}
+		if in.Name != nil {
+			if !utf8.ValidString(string(*in.Name)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "name", false))
+			}
+		}
+		if in.Title != nil {
+			if !utf8.ValidString(string(*in.Title)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "title", false))
+			}
+		}
+		if in.URI != nil {
+			if !utf8.ValidString(string(*in.URI)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
+			}
+		}
+	}
+	return nil
+}
+
+// checkCompletionSuggestionValue checks text and cycles before conversion.
+func checkCompletionSuggestionValue(in *CompletionSuggestion) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkCompletionSuggestionCompletionSuggestionValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkCompletionSuggestionCompletionSuggestionValue checks one generated value on the active path.
+func checkCompletionSuggestionCompletionSuggestionValue(in *CompletionSuggestion, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Values {
+			_ = index1
+			_ = item1
+			if !utf8.ValidString(string(item1)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "values", false), strconv.Itoa(index1), true))
+			}
+		}
+	}
+	return nil
+}
+
+// checkCompletionsCapabilityValue checks text and cycles before conversion.
+func checkCompletionsCapabilityValue(in *CompletionsCapability) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkCompletionsCapabilityCompletionsCapabilityValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkCompletionsCapabilityCompletionsCapabilityValue checks one generated value on the active path.
+func checkCompletionsCapabilityCompletionsCapabilityValue(in *CompletionsCapability, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+	}
+	return nil
+}
+
 // checkContentAnnotationsValue checks text and cycles before conversion.
 func checkContentAnnotationsValue(in *ContentAnnotations) error {
 	if in == nil {
@@ -2832,6 +3986,9 @@ func checkServerCapabilitiesServerCapabilitiesValue(in *ServerCapabilities, fiel
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if err := checkServerCapabilitiesCompletionsCapabilityValue(in.Completions, generatedJSONChildPath(field, "completions", false), active); err != nil {
+			return err
+		}
 		if err := checkServerCapabilitiesToolsCapabilityValue(in.Tools, generatedJSONChildPath(field, "tools", false), active); err != nil {
 			return err
 		}
@@ -2841,6 +3998,21 @@ func checkServerCapabilitiesServerCapabilitiesValue(in *ServerCapabilities, fiel
 		if err := checkServerCapabilitiesPromptsCapabilityValue(in.Prompts, generatedJSONChildPath(field, "prompts", false), active); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// checkServerCapabilitiesCompletionsCapabilityValue checks one generated value on the active path.
+func checkServerCapabilitiesCompletionsCapabilityValue(in *CompletionsCapability, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 	}
 	return nil
 }

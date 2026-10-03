@@ -71,6 +71,8 @@ Verified on 2026-10-03 with the pinned referee:
 | Server / `server-stateless` | 21 passed, 4 failed; overall failure | Four checks report `untestable`: fixture has no missing-capability, streaming-elicitation, or logging diagnostic tools. This is not a full scenario pass. |
 | Server / `dns-rebinding-protection` | 2 passed | Configured localhost browser Origin accepted; attack Origin rejected |
 | Server / `resources-read-binary` | 2 passed after binary-resource implementation | Real generated adapter returns a complete synthetic PNG; its wire schema passes. Empty binary content and aliases also have local generated-client/HTTP checks. |
+| Server / `prompts-list`, `prompts-get-simple`, `prompts-get-with-args`, `prompts-get-embedded-resource`, `prompts-get-with-image` | 10 passed after typed-prompt implementation | Actual generated producers preserve argument text, the embedded URI, and ordered image/text messages. Each scenario passes its operation and wire-schema check. |
+| Server / `completion-complete` | 2 passed after prompt-completion implementation | A typed service returns two suggestions and their total through the generated endpoint. URI-template suggestions remain unverified. |
 | Server / `caching` | 7 passed, 1 failed; overall failure | URI-template listing is not implemented or advertised. Fixed-resource and other tested cache fields pass. |
 
 The custom-header driver's second call omits the optional `verbose` property.
@@ -79,7 +81,7 @@ this driver exercises the documented omission case with valid arguments. Local
 transport tests independently verify null header omission. It does not claim a
 successful invalid-argument call.
 
-The broader released requirement set also covers content authoring, argument
+The broader released requirement set also covers additional content authoring, URI-template argument
 suggestions, authorization flows, server-produced multi-round input, and other
 paths that this fixture does not implement. The complete released-set runs
 exercised these scenarios and failed where the implementation or fixture is absent. See the [full audit](audit.md)

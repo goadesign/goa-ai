@@ -79,6 +79,19 @@ type PromptsGetRequestBody struct {
 	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
+// CompletionCompleteRequestBody is the type of the "mcp_assistant" service
+// "completion/complete" endpoint HTTP request body.
+type CompletionCompleteRequestBody struct {
+	// Prompt or resource whose argument is being completed
+	Ref *CompletionReferenceRequestBody `form:"ref,omitempty" json:"ref,omitempty" xml:"ref,omitempty"`
+	// Argument name and partial text
+	Argument *CompletionArgumentRequestBody `form:"argument,omitempty" json:"argument,omitempty" xml:"argument,omitempty"`
+	// Prior values used to refine suggestions
+	Context *CompletionContextRequestBody `form:"context,omitempty" json:"context,omitempty" xml:"context,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
 // ServerDiscoverResponseBody is the type of the "mcp_assistant" service
 // "server/discover" endpoint HTTP response body.
 type ServerDiscoverResponseBody struct {
@@ -184,6 +197,17 @@ type PromptsGetResponseBody struct {
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
 	// Prompt messages
 	Messages []*PromptMessageResponseBody `form:"messages" json:"messages" xml:"messages"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType string `form:"resultType" json:"resultType" xml:"resultType"`
+}
+
+// CompletionCompleteResponseBody is the type of the "mcp_assistant" service
+// "completion/complete" endpoint HTTP response body.
+type CompletionCompleteResponseBody struct {
+	// Ranked suggestions for this request
+	Completion *CompletionSuggestionResponseBody `form:"completion" json:"completion" xml:"completion"`
 	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
 	// This response contains a finished result
@@ -361,15 +385,60 @@ type PromptsGetInternalErrorResponseBody struct {
 	Fault bool `form:"fault" json:"fault" xml:"fault"`
 }
 
+// CompletionCompleteInvalidParamsResponseBody is the type of the
+// "mcp_assistant" service "completion/complete" endpoint HTTP response body
+// for the "invalid_params" error.
+type CompletionCompleteInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name string `form:"name" json:"name" xml:"name"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID string `form:"id" json:"id" xml:"id"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message string `form:"message" json:"message" xml:"message"`
+	// Is the error temporary?
+	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
+	// Is the error a timeout?
+	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
+	// Is the error a server-side fault?
+	Fault bool `form:"fault" json:"fault" xml:"fault"`
+}
+
+// CompletionCompleteInternalErrorResponseBody is the type of the
+// "mcp_assistant" service "completion/complete" endpoint HTTP response body
+// for the "internal_error" error.
+type CompletionCompleteInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name string `form:"name" json:"name" xml:"name"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID string `form:"id" json:"id" xml:"id"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message string `form:"message" json:"message" xml:"message"`
+	// Is the error temporary?
+	Temporary bool `form:"temporary" json:"temporary" xml:"temporary"`
+	// Is the error a timeout?
+	Timeout bool `form:"timeout" json:"timeout" xml:"timeout"`
+	// Is the error a server-side fault?
+	Fault bool `form:"fault" json:"fault" xml:"fault"`
+}
+
 // ServerCapabilitiesResponseBody is used to define fields on response body
 // types.
 type ServerCapabilitiesResponseBody struct {
+	// Declared argument suggestion providers
+	Completions *CompletionsCapabilityResponseBody `form:"completions,omitempty" json:"completions,omitempty" xml:"completions,omitempty"`
 	// Tool capabilities
 	Tools *ToolsCapabilityResponseBody `form:"tools,omitempty" json:"tools,omitempty" xml:"tools,omitempty"`
 	// Resource capabilities
 	Resources *ResourcesCapabilityResponseBody `form:"resources,omitempty" json:"resources,omitempty" xml:"resources,omitempty"`
 	// Prompt capabilities
 	Prompts *PromptsCapabilityResponseBody `form:"prompts,omitempty" json:"prompts,omitempty" xml:"prompts,omitempty"`
+}
+
+// CompletionsCapabilityResponseBody is used to define fields on response body
+// types.
+type CompletionsCapabilityResponseBody struct {
 }
 
 // ToolsCapabilityResponseBody is used to define fields on response body types.
@@ -519,6 +588,44 @@ type PromptMessageResponseBody struct {
 	Role string `form:"role" json:"role" xml:"role"`
 	// Message content
 	Content *ContentItemResponseBody `form:"content" json:"content" xml:"content"`
+}
+
+// CompletionSuggestionResponseBody is used to define fields on response body
+// types.
+type CompletionSuggestionResponseBody struct {
+	// Suggestions in service-selected relevance order
+	Values []string `form:"values" json:"values" xml:"values"`
+	// Total available matches, which can exceed the returned count
+	Total *int64 `form:"total,omitempty" json:"total,omitempty" xml:"total,omitempty"`
+	// Whether further matches exist
+	HasMore *bool `form:"hasMore,omitempty" json:"hasMore,omitempty" xml:"hasMore,omitempty"`
+}
+
+// CompletionReferenceRequestBody is used to define fields on request body
+// types.
+type CompletionReferenceRequestBody struct {
+	// Whether the reference names a prompt or resource
+	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
+	// Prompt name when type is ref/prompt
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Optional display title for a prompt reference
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Resource URI or URI template when type is ref/resource
+	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+}
+
+// CompletionArgumentRequestBody is used to define fields on request body types.
+type CompletionArgumentRequestBody struct {
+	// Declared argument currently being entered
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Partial text used by the service to find suggestions
+	Value *string `form:"value,omitempty" json:"value,omitempty" xml:"value,omitempty"`
+}
+
+// CompletionContextRequestBody is used to define fields on request body types.
+type CompletionContextRequestBody struct {
+	// Previously resolved argument values
+	Arguments map[string]string `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
 }
 
 // NewServerDiscoverResponseBody builds the HTTP response body from the result
@@ -690,6 +797,19 @@ func NewPromptsGetResponseBody(res *mcpassistant.PromptsGetResult) *PromptsGetRe
 	return body
 }
 
+// NewCompletionCompleteResponseBody builds the HTTP response body from the
+// result of the "completion/complete" endpoint of the "mcp_assistant" service.
+func NewCompletionCompleteResponseBody(res *mcpassistant.CompletionCompleteResult) *CompletionCompleteResponseBody {
+	body := &CompletionCompleteResponseBody{
+		Meta:       res.Meta,
+		ResultType: res.ResultType,
+	}
+	if res.Completion != nil {
+		body.Completion = marshalMcpassistantCompletionSuggestionToCompletionSuggestionResponseBody(res.Completion)
+	}
+	return body
+}
+
 // NewToolsListInvalidParamsResponseBody builds the HTTP response body from the
 // result of the "tools/list" endpoint of the "mcp_assistant" service.
 func NewToolsListInvalidParamsResponseBody(res *goa.ServiceError) *ToolsListInvalidParamsResponseBody {
@@ -816,6 +936,36 @@ func NewPromptsGetInternalErrorResponseBody(res *goa.ServiceError) *PromptsGetIn
 	return body
 }
 
+// NewCompletionCompleteInvalidParamsResponseBody builds the HTTP response body
+// from the result of the "completion/complete" endpoint of the "mcp_assistant"
+// service.
+func NewCompletionCompleteInvalidParamsResponseBody(res *goa.ServiceError) *CompletionCompleteInvalidParamsResponseBody {
+	body := &CompletionCompleteInvalidParamsResponseBody{
+		Name:      res.Name,
+		ID:        res.ID,
+		Message:   res.Message,
+		Temporary: res.Temporary,
+		Timeout:   res.Timeout,
+		Fault:     res.Fault,
+	}
+	return body
+}
+
+// NewCompletionCompleteInternalErrorResponseBody builds the HTTP response body
+// from the result of the "completion/complete" endpoint of the "mcp_assistant"
+// service.
+func NewCompletionCompleteInternalErrorResponseBody(res *goa.ServiceError) *CompletionCompleteInternalErrorResponseBody {
+	body := &CompletionCompleteInternalErrorResponseBody{
+		Name:      res.Name,
+		ID:        res.ID,
+		Message:   res.Message,
+		Temporary: res.Temporary,
+		Timeout:   res.Timeout,
+		Fault:     res.Fault,
+	}
+	return body
+}
+
 // NewServerDiscoverDiscoverPayload builds a mcp_assistant service
 // server/discover endpoint payload.
 func NewServerDiscoverDiscoverPayload(body *ServerDiscoverRequestBody) *mcpassistant.DiscoverPayload {
@@ -901,6 +1051,21 @@ func NewPromptsGetPayload(body *PromptsGetRequestBody) *mcpassistant.PromptsGetP
 	return v
 }
 
+// NewCompletionCompletePayload builds a mcp_assistant service
+// completion/complete endpoint payload.
+func NewCompletionCompletePayload(body *CompletionCompleteRequestBody) *mcpassistant.CompletionCompletePayload {
+	v := &mcpassistant.CompletionCompletePayload{
+		Meta: body.Meta,
+	}
+	v.Ref = unmarshalCompletionReferenceRequestBodyToMcpassistantCompletionReference(body.Ref)
+	v.Argument = unmarshalCompletionArgumentRequestBodyToMcpassistantCompletionArgument(body.Argument)
+	if body.Context != nil {
+		v.Context = unmarshalCompletionContextRequestBodyToMcpassistantCompletionContext(body.Context)
+	}
+
+	return v
+}
+
 // ValidateServerDiscoverRequestBody runs the validations defined on
 // ServerDiscoverRequestBody
 func ValidateServerDiscoverRequestBody(body *ServerDiscoverRequestBody) (err error) {
@@ -973,6 +1138,83 @@ func ValidatePromptsGetRequestBody(body *PromptsGetRequestBody) (err error) {
 	}
 	if body.Meta == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
+	}
+	return
+}
+
+// ValidateCompletionCompleteRequestBody runs the validations defined on
+// CompletionCompleteRequestBody
+func ValidateCompletionCompleteRequestBody(body *CompletionCompleteRequestBody) (err error) {
+	if body.Ref == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ref", "body"))
+	}
+	if body.Argument == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("argument", "body"))
+	}
+	if body.Meta == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
+	}
+	if body.Ref != nil {
+		if err2 := validateCompletionReferenceRequestBody(body.Ref, "body.ref"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Argument != nil {
+		if err2 := validateCompletionArgumentRequestBody(body.Argument, "body.argument"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// ValidateCompletionReferenceRequestBody runs the validations defined on
+// CompletionReference
+func ValidateCompletionReferenceRequestBody(body *CompletionReferenceRequestBody) (err error) {
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if body.Type != nil {
+		if !(*body.Type == "ref/prompt" || *body.Type == "ref/resource") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"ref/prompt", "ref/resource"}))
+		}
+	}
+	return
+}
+
+// validateCompletionReferenceRequestBody checks CompletionReference and
+// reports errors using the path supplied by its caller
+func validateCompletionReferenceRequestBody(body *CompletionReferenceRequestBody, path string) (err error) {
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
+	}
+	if body.Type != nil {
+		if !(*body.Type == "ref/prompt" || *body.Type == "ref/resource") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"ref/prompt", "ref/resource"}))
+		}
+	}
+	return
+}
+
+// ValidateCompletionArgumentRequestBody runs the validations defined on
+// CompletionArgument
+func ValidateCompletionArgumentRequestBody(body *CompletionArgumentRequestBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
+	}
+	return
+}
+
+// validateCompletionArgumentRequestBody checks CompletionArgument and reports
+// errors using the path supplied by its caller
+func validateCompletionArgumentRequestBody(body *CompletionArgumentRequestBody, path string) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	if body.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", path))
 	}
 	return
 }

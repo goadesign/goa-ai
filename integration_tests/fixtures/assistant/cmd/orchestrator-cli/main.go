@@ -109,7 +109,7 @@ func writeJSON(stdout io.Writer, data any) error {
 
 func usage() {
 	usageCommands := []string{
-		"mcp-assistant (server-discover|tools-list|tools-call|resources-list|resources-read|prompts-list|prompts-get)",
+		"mcp-assistant (server-discover|tools-list|tools-call|resources-list|resources-read|prompts-list|prompts-get|completion-complete)",
 	}
 	fmt.Fprintf(os.Stderr, `%s is a command line client for the assistant API.
 

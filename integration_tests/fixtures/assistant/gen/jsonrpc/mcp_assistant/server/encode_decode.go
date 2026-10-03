@@ -236,11 +236,45 @@ func DecodePromptsGetRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 	}
 }
 
+// DecodeCompletionCompleteRequest returns a decoder for requests sent to the
+// mcp_assistant completion/complete endpoint.
+func DecodeCompletionCompleteRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.CompletionCompletePayload, error) {
+	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.CompletionCompletePayload, error) {
+		r.Body = io.NopCloser(bytes.NewReader(req.Params))
+		var payload *mcpassistant.CompletionCompletePayload
+		var (
+			body CompletionCompleteRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateCompletionCompleteRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewCompletionCompletePayload(&body)
+
+		return payload, nil
+	}
+}
+
 // marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody builds
 // a value of type *ServerCapabilitiesResponseBody from a value of type
 // *mcpassistant.ServerCapabilities.
 func marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody(v *mcpassistant.ServerCapabilities) *ServerCapabilitiesResponseBody {
 	res := &ServerCapabilitiesResponseBody{}
+	if v.Completions != nil {
+		res.Completions = marshalMcpassistantCompletionsCapabilityToCompletionsCapabilityResponseBody(v.Completions)
+	}
 	if v.Tools != nil {
 		res.Tools = marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBody(v.Tools)
 	}
@@ -250,6 +284,15 @@ func marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody(v *mc
 	if v.Prompts != nil {
 		res.Prompts = marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBody(v.Prompts)
 	}
+
+	return res
+}
+
+// marshalMcpassistantCompletionsCapabilityToCompletionsCapabilityResponseBody
+// builds a value of type *CompletionsCapabilityResponseBody from a value of
+// type *mcpassistant.CompletionsCapability.
+func marshalMcpassistantCompletionsCapabilityToCompletionsCapabilityResponseBody(v *mcpassistant.CompletionsCapability) *CompletionsCapabilityResponseBody {
+	res := &CompletionsCapabilityResponseBody{}
 
 	return res
 }
@@ -455,6 +498,69 @@ func marshalMcpassistantPromptMessageToPromptMessageResponseBody(v *mcpassistant
 	}
 	if v.Content != nil {
 		res.Content = marshalMcpassistantContentItemToContentItemResponseBody(v.Content)
+	}
+
+	return res
+}
+
+// unmarshalCompletionReferenceRequestBodyToMcpassistantCompletionReference
+// builds a value of type *mcpassistant.CompletionReference from a value of
+// type *CompletionReferenceRequestBody.
+func unmarshalCompletionReferenceRequestBodyToMcpassistantCompletionReference(v *CompletionReferenceRequestBody) *mcpassistant.CompletionReference {
+	res := &mcpassistant.CompletionReference{
+		Type:  *v.Type,
+		Name:  v.Name,
+		Title: v.Title,
+		URI:   v.URI,
+	}
+
+	return res
+}
+
+// unmarshalCompletionArgumentRequestBodyToMcpassistantCompletionArgument
+// builds a value of type *mcpassistant.CompletionArgument from a value of type
+// *CompletionArgumentRequestBody.
+func unmarshalCompletionArgumentRequestBodyToMcpassistantCompletionArgument(v *CompletionArgumentRequestBody) *mcpassistant.CompletionArgument {
+	res := &mcpassistant.CompletionArgument{
+		Name:  *v.Name,
+		Value: *v.Value,
+	}
+
+	return res
+}
+
+// unmarshalCompletionContextRequestBodyToMcpassistantCompletionContext builds
+// a value of type *mcpassistant.CompletionContext from a value of type
+// *CompletionContextRequestBody.
+func unmarshalCompletionContextRequestBodyToMcpassistantCompletionContext(v *CompletionContextRequestBody) *mcpassistant.CompletionContext {
+	res := &mcpassistant.CompletionContext{}
+	if v.Arguments != nil {
+		res.Arguments = make(map[string]string, len(v.Arguments))
+		for key, val := range v.Arguments {
+			tk := key
+			tv := val
+			res.Arguments[tk] = tv
+		}
+	}
+
+	return res
+}
+
+// marshalMcpassistantCompletionSuggestionToCompletionSuggestionResponseBody
+// builds a value of type *CompletionSuggestionResponseBody from a value of
+// type *mcpassistant.CompletionSuggestion.
+func marshalMcpassistantCompletionSuggestionToCompletionSuggestionResponseBody(v *mcpassistant.CompletionSuggestion) *CompletionSuggestionResponseBody {
+	res := &CompletionSuggestionResponseBody{
+		Total:   v.Total,
+		HasMore: v.HasMore,
+	}
+	if v.Values != nil {
+		res.Values = make([]string, len(v.Values))
+		for i, val := range v.Values {
+			res.Values[i] = val
+		}
+	} else {
+		res.Values = []string{}
 	}
 
 	return res

@@ -220,3 +220,50 @@ func BuildPromptsGetPayload(mcpAssistantPromptsGetBody *string) (*mcpassistant.P
 
 	return v, nil
 }
+
+// BuildCompletionCompletePayload builds the payload for the mcp_assistant
+// completion/complete endpoint from CLI flags.
+func BuildCompletionCompletePayload(mcpAssistantCompletionCompleteBody *string) (*mcpassistant.CompletionCompletePayload, error) {
+	var err error
+	var body CompletionCompleteRequestBody
+	{
+		if mcpAssistantCompletionCompleteBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*mcpAssistantCompletionCompleteBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"_meta\": \"Cupiditate sed at occaecati exercitationem laborum illo.\",\n      \"argument\": {\n         \"name\": \"Et quae aut numquam quia eos.\",\n         \"value\": \"Esse commodi tempore sunt labore deserunt ad.\"\n      },\n      \"context\": {\n         \"arguments\": {\n            \"Aut qui quia voluptatem fugiat nam totam.\": \"Id sunt soluta sed.\",\n            \"Et neque et aut.\": \"Sed odit deleniti odio inventore aperiam.\",\n            \"Veritatis expedita.\": \"Culpa eos odit impedit quia.\"\n         }\n      },\n      \"ref\": {\n         \"name\": \"Quo aut vero vitae repudiandae laudantium quam.\",\n         \"title\": \"Delectus corrupti laborum quia aut.\",\n         \"type\": \"ref/resource\",\n         \"uri\": \"Atque et dicta molestiae.\"\n      }\n   }'")
+		}
+		if body.Ref == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("ref", "body"))
+		}
+		if body.Argument == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("argument", "body"))
+		}
+		if body.Meta == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
+		}
+		if body.Ref != nil {
+			if err2 := validateCompletionReferenceRequestBody(body.Ref, "body.ref"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &mcpassistant.CompletionCompletePayload{
+		Meta: body.Meta,
+	}
+	if body.Ref != nil {
+		v.Ref = marshalCompletionReferenceRequestBodyToMcpassistantCompletionReference(body.Ref)
+	}
+	if body.Argument != nil {
+		v.Argument = marshalCompletionArgumentRequestBodyToMcpassistantCompletionArgument(body.Argument)
+	}
+	if body.Context != nil {
+		v.Context = marshalCompletionContextRequestBodyToMcpassistantCompletionContext(body.Context)
+	}
+
+	return v, nil
+}

@@ -950,11 +950,163 @@ func DecodePromptsGetResponse(decoder func(*http.Response) goahttp.Decoder, rest
 	}
 }
 
+// BuildCompletionCompleteRequest instantiates a HTTP request object with
+// method and path set to call the "mcp_assistant" service
+// "completion/complete" endpoint
+func (c *Client) BuildCompletionCompleteRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: CompletionCompleteMcpAssistantPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("mcp_assistant", "completion/complete", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeCompletionCompleteRequest returns an encoder for requests sent to the
+// mcp_assistant service completion/complete JSON-RPC method. The encoder
+// returns the request ID written into the JSON-RPC message.
+func EncodeCompletionCompleteRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) (string, error) {
+	return func(req *http.Request, v any) (string, error) {
+		p, ok := v.(*mcpassistant.CompletionCompletePayload)
+		if !ok {
+			return "", goahttp.ErrInvalidType("mcp_assistant", "completion/complete", "*mcpassistant.CompletionCompletePayload", v)
+		}
+		b := NewCompletionCompleteRequestBody(p)
+		body := &jsonrpc.Request{
+			JSONRPC: "2.0",
+			Method:  "completion/complete",
+			Params:  b,
+		}
+		requestID := uuid.New().String()
+		body.ID = requestID
+		if err := encoder(req).Encode(&body); err != nil {
+			return "", goahttp.ErrEncodingError("mcp_assistant", "completion/complete", err)
+		}
+		return requestID, nil
+	}
+}
+
+// DecodeCompletionCompleteResponse returns a decoder for responses returned by
+// the mcp_assistant service completion/complete JSON-RPC method. The decoder
+// rejects responses that do not repeat requestID. restoreBody controls whether
+// the response body should be restored after having been read.
+func DecodeCompletionCompleteResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response, string) (any, error) {
+	return func(resp *http.Response, requestID string) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "completion/complete", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("mcp_assistant", "completion/complete", err))
+				}
+			}()
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("mcp_assistant", "completion/complete", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "completion/complete", resp.StatusCode, string(body))
+		}
+
+		var jresp jsonrpc.RawResponse
+		if err := decoder(resp).Decode(&jresp); err != nil {
+			return nil, goahttp.ErrDecodingError("mcp_assistant", "completion/complete", err)
+		}
+		if err := jresp.Validate(requestID); err != nil {
+			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "completion/complete", resp.StatusCode, err.Error())
+		}
+
+		if jresp.Error != nil {
+			serviceErrorName, serviceErrorBody, ok := jsonrpc.DecodeServiceErrorData(jresp.Error.Data)
+			if !ok {
+				return nil, jresp.Error
+			}
+			switch jresp.Error.Code {
+			case -32602:
+				switch serviceErrorName {
+				case "invalid_params":
+					resp.Body = io.NopCloser(bytes.NewReader(serviceErrorBody))
+					var (
+						body CompletionCompleteInvalidParamsResponseBody
+						err  error
+					)
+					err = decoder(resp).Decode(&body)
+					if err != nil {
+						return nil, goahttp.ErrDecodingError("mcp_assistant", "completion/complete", err)
+					}
+					err = ValidateCompletionCompleteInvalidParamsResponseBody(&body)
+					if err != nil {
+						return nil, goahttp.ErrValidationError("mcp_assistant", "completion/complete", err)
+					}
+					return nil, NewCompletionCompleteInvalidParams(&body)
+				default:
+					return nil, jresp.Error
+				}
+			case -32603:
+				switch serviceErrorName {
+				case "internal_error":
+					resp.Body = io.NopCloser(bytes.NewReader(serviceErrorBody))
+					var (
+						body CompletionCompleteInternalErrorResponseBody
+						err  error
+					)
+					err = decoder(resp).Decode(&body)
+					if err != nil {
+						return nil, goahttp.ErrDecodingError("mcp_assistant", "completion/complete", err)
+					}
+					err = ValidateCompletionCompleteInternalErrorResponseBody(&body)
+					if err != nil {
+						return nil, goahttp.ErrValidationError("mcp_assistant", "completion/complete", err)
+					}
+					return nil, NewCompletionCompleteInternalError(&body)
+				default:
+					return nil, jresp.Error
+				}
+			default:
+				return nil, jresp.Error
+			}
+		}
+		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
+		var (
+			body CompletionCompleteResponseBody
+			err  error
+		)
+		err = decoder(resp).Decode(&body)
+		if err != nil {
+			return nil, goahttp.ErrDecodingError("mcp_assistant", "completion/complete", err)
+		}
+		err = ValidateCompletionCompleteResponseBody(&body)
+		if err != nil {
+			return nil, goahttp.ErrValidationError("mcp_assistant", "completion/complete", err)
+		}
+		res := NewCompletionCompleteResultOK(&body)
+		return res, nil
+	}
+}
+
 // unmarshalServerCapabilitiesResponseBodyToMcpassistantServerCapabilities
 // builds a value of type *mcpassistant.ServerCapabilities from a value of type
 // *ServerCapabilitiesResponseBody.
 func unmarshalServerCapabilitiesResponseBodyToMcpassistantServerCapabilities(v *ServerCapabilitiesResponseBody) *mcpassistant.ServerCapabilities {
 	res := &mcpassistant.ServerCapabilities{}
+	if v.Completions != nil {
+		res.Completions = unmarshalCompletionsCapabilityResponseBodyToMcpassistantCompletionsCapability(v.Completions)
+	}
 	if v.Tools != nil {
 		res.Tools = unmarshalToolsCapabilityResponseBodyToMcpassistantToolsCapability(v.Tools)
 	}
@@ -964,6 +1116,15 @@ func unmarshalServerCapabilitiesResponseBodyToMcpassistantServerCapabilities(v *
 	if v.Prompts != nil {
 		res.Prompts = unmarshalPromptsCapabilityResponseBodyToMcpassistantPromptsCapability(v.Prompts)
 	}
+
+	return res
+}
+
+// unmarshalCompletionsCapabilityResponseBodyToMcpassistantCompletionsCapability
+// builds a value of type *mcpassistant.CompletionsCapability from a value of
+// type *CompletionsCapabilityResponseBody.
+func unmarshalCompletionsCapabilityResponseBodyToMcpassistantCompletionsCapability(v *CompletionsCapabilityResponseBody) *mcpassistant.CompletionsCapability {
+	res := &mcpassistant.CompletionsCapability{}
 
 	return res
 }
@@ -1168,6 +1329,108 @@ func unmarshalPromptMessageResponseBodyToMcpassistantPromptMessage(v *PromptMess
 		Role: *v.Role,
 	}
 	res.Content = unmarshalContentItemResponseBodyToMcpassistantContentItem(v.Content)
+
+	return res
+}
+
+// marshalMcpassistantCompletionReferenceToCompletionReferenceRequestBody
+// builds a value of type *CompletionReferenceRequestBody from a value of type
+// *mcpassistant.CompletionReference.
+func marshalMcpassistantCompletionReferenceToCompletionReferenceRequestBody(v *mcpassistant.CompletionReference) *CompletionReferenceRequestBody {
+	res := &CompletionReferenceRequestBody{
+		Type:  v.Type,
+		Name:  v.Name,
+		Title: v.Title,
+		URI:   v.URI,
+	}
+
+	return res
+}
+
+// marshalMcpassistantCompletionArgumentToCompletionArgumentRequestBody builds
+// a value of type *CompletionArgumentRequestBody from a value of type
+// *mcpassistant.CompletionArgument.
+func marshalMcpassistantCompletionArgumentToCompletionArgumentRequestBody(v *mcpassistant.CompletionArgument) *CompletionArgumentRequestBody {
+	res := &CompletionArgumentRequestBody{
+		Name:  v.Name,
+		Value: v.Value,
+	}
+
+	return res
+}
+
+// marshalMcpassistantCompletionContextToCompletionContextRequestBody builds a
+// value of type *CompletionContextRequestBody from a value of type
+// *mcpassistant.CompletionContext.
+func marshalMcpassistantCompletionContextToCompletionContextRequestBody(v *mcpassistant.CompletionContext) *CompletionContextRequestBody {
+	res := &CompletionContextRequestBody{}
+	if v.Arguments != nil {
+		res.Arguments = make(map[string]string, len(v.Arguments))
+		for key, val := range v.Arguments {
+			tk := key
+			tv := val
+			res.Arguments[tk] = tv
+		}
+	}
+
+	return res
+}
+
+// marshalCompletionReferenceRequestBodyToMcpassistantCompletionReference
+// builds a value of type *mcpassistant.CompletionReference from a value of
+// type *CompletionReferenceRequestBody.
+func marshalCompletionReferenceRequestBodyToMcpassistantCompletionReference(v *CompletionReferenceRequestBody) *mcpassistant.CompletionReference {
+	res := &mcpassistant.CompletionReference{
+		Type:  v.Type,
+		Name:  v.Name,
+		Title: v.Title,
+		URI:   v.URI,
+	}
+
+	return res
+}
+
+// marshalCompletionArgumentRequestBodyToMcpassistantCompletionArgument builds
+// a value of type *mcpassistant.CompletionArgument from a value of type
+// *CompletionArgumentRequestBody.
+func marshalCompletionArgumentRequestBodyToMcpassistantCompletionArgument(v *CompletionArgumentRequestBody) *mcpassistant.CompletionArgument {
+	res := &mcpassistant.CompletionArgument{
+		Name:  v.Name,
+		Value: v.Value,
+	}
+
+	return res
+}
+
+// marshalCompletionContextRequestBodyToMcpassistantCompletionContext builds a
+// value of type *mcpassistant.CompletionContext from a value of type
+// *CompletionContextRequestBody.
+func marshalCompletionContextRequestBodyToMcpassistantCompletionContext(v *CompletionContextRequestBody) *mcpassistant.CompletionContext {
+	res := &mcpassistant.CompletionContext{}
+	if v.Arguments != nil {
+		res.Arguments = make(map[string]string, len(v.Arguments))
+		for key, val := range v.Arguments {
+			tk := key
+			tv := val
+			res.Arguments[tk] = tv
+		}
+	}
+
+	return res
+}
+
+// unmarshalCompletionSuggestionResponseBodyToMcpassistantCompletionSuggestion
+// builds a value of type *mcpassistant.CompletionSuggestion from a value of
+// type *CompletionSuggestionResponseBody.
+func unmarshalCompletionSuggestionResponseBodyToMcpassistantCompletionSuggestion(v *CompletionSuggestionResponseBody) *mcpassistant.CompletionSuggestion {
+	res := &mcpassistant.CompletionSuggestion{
+		Total:   v.Total,
+		HasMore: v.HasMore,
+	}
+	res.Values = make([]string, len(v.Values))
+	for i, val := range v.Values {
+		res.Values[i] = *val
+	}
 
 	return res
 }

@@ -7,7 +7,7 @@ import (
 
 var _ = API("assistant", func() {
 	Title("AI Assistant API")
-	Description("Simple MCP example exposing unary tools, fixed resources, and static prompts")
+	Description("Synthetic MCP service exposing unary tools, fixed resources, typed prompts, and argument suggestions")
 	Version("1.0")
 	Server("orchestrator", func() {
 		Host("dev", func() {
@@ -64,6 +64,8 @@ var _ = Service("assistant", func() {
 		"user",
 		"Review the provided code and suggest improvements.",
 	)
+
+	refereePrompts()
 
 	// ---- Tools (for MCP tools/list and tools/call) ----
 

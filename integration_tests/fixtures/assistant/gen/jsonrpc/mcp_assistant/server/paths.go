@@ -41,3 +41,8 @@ func PromptsListMcpAssistantPath() string {
 func PromptsGetMcpAssistantPath() string {
 	return "/rpc"
 }
+
+// CompletionCompleteMcpAssistantPath returns the URL path to the mcp_assistant service completion/complete HTTP endpoint.
+func CompletionCompleteMcpAssistantPath() string {
+	return "/rpc"
+}
