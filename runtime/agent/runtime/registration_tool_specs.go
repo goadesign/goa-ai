@@ -54,7 +54,7 @@ func (r *Runtime) validateToolSpecRegistrations(
 				return nil, fmt.Errorf("%w: tool %q execution payload codec must define both ToJSON and FromJSON", ErrInvalidConfig, spec.Name)
 			}
 			if spec.TextOnly != nil {
-				if spec.TextOnly.Payload.Codec.FromJSON == nil || spec.TextOnly.ExecutionCodec.FromJSON == nil || spec.TextOnly.ExecutionCodec.ToJSON == nil {
+				if spec.TextOnly.Payload.Codec.FromJSON == nil || spec.TextOnly.Payload.Codec.ToJSON == nil || spec.TextOnly.ExecutionCodec.FromJSON == nil || spec.TextOnly.ExecutionCodec.ToJSON == nil {
 					return nil, fmt.Errorf("%w: tool %q text-only codecs are required", ErrInvalidConfig, spec.Name)
 				}
 				if _, err := model.NewToolDefinitionFromSpec(spec.ForTextOnly()); err != nil {

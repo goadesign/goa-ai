@@ -38,7 +38,7 @@ func NewProvider(svc {{ .ServiceTypeRef }}) *Provider {
 // and returns one success or failure with the same registration token and tool
 // use ID. The service method receives ctx and must stop when it is canceled.
 func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCallMessage) (toolregistry.ToolResultMessage, error) {
-	ctx = runtime.WithTextOnlyContext(ctx, msg.Meta != nil && msg.Meta.TextOnly)
+	ctx = run.WithTextOnlyContext(ctx, msg.Meta != nil && msg.Meta.TextOnly)
 	if msg.ToolUseID == "" {
 		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, "", "invalid_call", "tool_use_id is required"), nil
 	}
@@ -75,8 +75,13 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
             if !ok {
                 return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_contract", "generated tool contract is missing"), nil
             }
-            if _, err := spec.TextOnly.ExecutionCodec.FromJSON(msg.Payload); err != nil {
+            decoded, err := spec.TextOnly.ExecutionCodec.FromJSON(msg.Payload)
+            if err != nil {
                 return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
+            }
+            msg.Payload, err = spec.TextOnly.ExecutionCodec.ToJSON(decoded)
+            if err != nil {
+                return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
             }
         }
 {{- end }}

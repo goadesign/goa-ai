@@ -683,6 +683,9 @@ type (
 		// guidance to the model about how to interpret or present the result.
 		ResultReminder string
 
+		// UIResultReminder is result guidance omitted from text-only contracts.
+		UIResultReminder string
+
 		// Confirmation configures design-time confirmation requirements for this tool.
 		Confirmation *ToolConfirmationData
 

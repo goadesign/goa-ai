@@ -433,6 +433,14 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			}
 			continue
 		}
+		if call.TextOnly {
+			call.Payload, err = prepareTextOnlyExecutionPayload(spec, call.Payload)
+			if err != nil {
+				executionErr = errors.Join(executionErr, err)
+				continue
+			}
+			b.calls[i] = call
+		}
 		var toolsetName string
 		var ts ToolsetRegistration
 		var hasTS bool
@@ -519,7 +527,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		// Inline service tools execute within the workflow loop.
 		if hasTS && ts.Inline {
 			start := wfCtx.Now()
-			ctxInline := engine.WithWorkflowContext(WithTextOnlyContext(ctx, call.TextOnly), wfCtx)
+			ctxInline := engine.WithWorkflowContext(run.WithTextOnlyContext(ctx, call.TextOnly), wfCtx)
 			executorCall := cloneToolCall(call)
 			execResult, err := ts.Execute(ctxInline, &executorCall)
 			if err != nil {

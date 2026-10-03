@@ -69,7 +69,7 @@ func prepareRegistrySchema(tool *ToolData, entry *toolEntry) error {
 			Search:          &genregistry.ToolSearchDocument{Length: entry.TextOnlySearch.Length, Terms: entry.TextOnlySearch.Terms},
 			PayloadSchema:   entry.TextOnlyPayload.SchemaJSON,
 			ExecutionSchema: entry.TextOnlyExecution.ExecutionSchemaJSON,
-			ResultReminder:  registryOptionalString(entry.ResultReminder),
+			ResultReminder:  registryOptionalString(entry.TextOnlyResultReminder),
 			Payload:         registryTypeMetadata(entry.TextOnlyPayload),
 		}
 	}

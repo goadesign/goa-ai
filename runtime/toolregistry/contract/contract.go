@@ -88,11 +88,12 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 		if err != nil {
 			return tools.ToolSpec{}, fmt.Errorf("tool %q text-only arguments: %w", declaration.Name, err)
 		}
+		input.Codec = compileTextOnlyModelCodec(payload, input)
 		search := tools.SearchDocument{Length: text.Search.Length, Terms: maps.Clone(text.Search.Terms)}
 		if err := search.Validate(); err != nil {
 			return tools.ToolSpec{}, err
 		}
-		execution, err := schema.Codec(text.ExecutionSchema)
+		execution, err := compileTextOnlyExecutionCodec(text.ExecutionSchema)
 		if err != nil {
 			return tools.ToolSpec{}, fmt.Errorf("text-only execution schema: %w", err)
 		}

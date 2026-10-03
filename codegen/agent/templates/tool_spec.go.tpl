@@ -81,7 +81,7 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
         TextOnly: &tools.ModelContract{
             ExecutionSchema: tools.RawJSON({{ printf "%q" .TextOnlyExecution.ExecutionSchemaJSON }}),
             ExecutionCodec: {{ .TextOnlyExecution.GenericCodec }},
-            ResultReminder: {{ printf "%q" .ResultReminder }},
+            ResultReminder: {{ printf "%q" .TextOnlyResultReminder }},
             Description: {{ printf "%q" .TextOnlyDescription }},
             Search: tools.SearchDocument{Length: {{ .TextOnlySearch.Length }}, Terms: map[string]int{
             {{- range $term, $count := .TextOnlySearch.Terms }}

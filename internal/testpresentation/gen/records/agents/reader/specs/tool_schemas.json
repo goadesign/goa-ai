@@ -52,6 +52,11 @@
               "description": "Record selection.",
               "type": "string"
             },
+            "render_summary": {
+              "default": false,
+              "description": "Show an interactive summary.",
+              "type": "boolean"
+            },
             "render_ui": {
               "description": "Show an interactive card.",
               "type": "boolean"

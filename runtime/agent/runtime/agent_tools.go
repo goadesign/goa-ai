@@ -10,7 +10,8 @@
 //   - Consumer-side prompt rendering (PromptSpecs/Templates/Texts) is optional and
 //     must be payload-only: it cannot depend on provider-only server context.
 //   - When no consumer-side prompt content is configured, the runtime uses the
-//     canonical tool payload to construct the nested user message deterministically.
+//     selected model contract to construct the nested user message. Execution
+//     arguments remain complete in RunContext.ToolArgs.
 package runtime
 
 import (
@@ -356,15 +357,16 @@ func attachRunLink(result *planner.ToolResult, handle *run.Handle) {
 }
 
 // buildAgentChildRequest constructs the nested agent messages and run context for an
-// agent-as-tool invocation based on the tool call and configuration. It decodes the
-// payload for prompt/template rendering and records canonical JSON args for the child.
+// agent-as-tool invocation. Custom renderers receive complete execution arguments;
+// the default message uses the selected model contract and retains complete ToolArgs.
 func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConfig, call *ToolCall, messages []*model.Message, parentRun *run.Context) (agentChildRequest, error) {
 	var zeroRequest agentChildRequest
 
 	// Decode payload for prompt/template rendering. Prefer tool codecs when
 	// specs are registered. Agent-as-tool payloads must be validated at the
 	// parent boundary; do not fall back to untyped JSON decoding.
-	if _, ok := r.ToolSpec(call.Name); !ok {
+	spec, ok := r.ToolSpec(call.Name)
+	if !ok {
 		return zeroRequest, fmt.Errorf(
 			"agent tool %s requires a registered ToolSpec for payload decoding (missing specs/codecs)",
 			call.Name,
@@ -425,14 +427,18 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 	} else if cfg.Prompt != nil {
 		userContent = cfg.Prompt(call.Name, promptPayload)
 	} else if len(call.Payload) > 0 {
-		// Default: build a deterministic user message from the canonical payload.
-		//
-		// Contract:
-		//   - call.Payload is canonical JSON at this boundary (validated by tool codecs).
-		//   - Use the raw JSON bytes verbatim, preserving exact schema keys and shape.
-		//   - Consumer code that wants a natural-language projection for string payloads
-		//     must configure it explicitly via PromptSpecs/Templates/Texts/Prompt.
-		userContent = string(call.Payload.RawMessage())
+		// A text-only call encodes its default message with the model contract,
+		// which omits disabled UI controls. The child still receives complete
+		// execution arguments in ToolArgs. Ordinary calls keep their saved bytes.
+		if call.TextOnly {
+			encoded, err := spec.ForTextOnly().Payload.Codec.ToJSON(val)
+			if err != nil {
+				return zeroRequest, fmt.Errorf("encode text-only child message for %s: %w", call.Name, err)
+			}
+			userContent = string(encoded)
+		} else {
+			userContent = string(call.Payload.RawMessage())
+		}
 	}
 	if m := newTextAgentMessage(model.ConversationRoleUser, userContent); m != nil {
 		childMessages = append(childMessages, m)

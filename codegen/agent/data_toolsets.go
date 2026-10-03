@@ -242,6 +242,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Bookkeeping:        expr.Bookkeeping,
 		ReplanOnTimeout:    expr.ReplanOnTimeout,
 		ResultReminder:     expr.ResultReminder,
+		UIResultReminder:   expr.UIResultReminder,
 	}
 	tool.HasResult = tool.Return != nil && tool.Return.Type != goaexpr.Empty
 	tool.ModelHiddenPayloadFields = modelHiddenPayloadFields(expr)

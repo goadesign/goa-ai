@@ -97,10 +97,13 @@ type (
 		// ResultReminder is an optional system reminder that is injected into
 		// the conversation after the tool result is returned. It provides
 		// backstage guidance to the model about how to interpret or present
-		// the result (for example, "The user sees a rendered graph of this
-		// data"). The reminder is wrapped in <system-reminder> tags by the
-		// runtime.
+		// the result. The reminder is wrapped in <system-reminder> tags by the
+		// runtime and remains available in text-only runs.
 		ResultReminder string
+
+		// UIResultReminder is static guidance after a tool result that applies only
+		// when the run supports interactive output.
+		UIResultReminder string
 
 		// Confirmation configures design-time confirmation requirements for this tool.
 		// When non-nil, the runtime requests an external confirmation before executing

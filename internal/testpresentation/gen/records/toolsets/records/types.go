@@ -23,6 +23,8 @@ type (
 		Query string
 		// Show an interactive card.
 		RenderUI *bool
+		// Show an interactive summary.
+		RenderSummary bool
 	}
 	// ReadResult defines the JSON result for the records.read tool.
 	ReadResult = struct {

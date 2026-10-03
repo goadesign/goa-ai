@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"goa.design/goa-ai/runtime/agent/run"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -26,7 +27,7 @@ func TestTextOnlyConversationCompletesWithoutInputProtocol(t *testing.T) {
 		Name: "records", Specs: genrecords.Specs(),
 		Execute: func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 			executions++
-			assert.True(t, IsTextOnly(ctx))
+			assert.True(t, run.IsTextOnly(ctx))
 			assert.True(t, call.TextOnly)
 			return Executed(&planner.ToolResult{Name: call.Name, Result: &genrecords.ReadResult{Count: 2}}), nil
 		},

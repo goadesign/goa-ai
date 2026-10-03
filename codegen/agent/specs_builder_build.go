@@ -106,33 +106,41 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 			}
 		}
 		metaPairs := toolMetaPairs(tool.Meta)
+		resultReminder := tool.ResultReminder
+		if tool.UIResultReminder != "" {
+			if resultReminder != "" {
+				resultReminder += "\n"
+			}
+			resultReminder += tool.UIResultReminder
+		}
 		entry := &toolEntry{
 			// Name is the qualified tool ID used at runtime (toolset.tool).
-			Name:                tool.QualifiedName,
-			GoName:              goName,
-			ConstName:           constName,
-			Title:               tool.Title,
-			Description:         tool.Description + tool.UIInstructions,
-			RequiresUI:          tool.RequiresUI,
-			TextOnlyDescription: tool.Description,
-			TextOnlySearch:      toolcontracts.NewSearchDocument(tool.QualifiedName + " " + tool.Title + " " + tool.Description),
-			TextOnlyPayload:     textOnlyPayload,
-			TextOnlyExecution:   textOnlyExecution,
-			Search:              toolcontracts.NewSearchDocument(tool.QualifiedName + " " + tool.Title + " " + tool.Description + tool.UIInstructions),
-			ServerData:          serverDataEntries,
-			Tags:                tool.Tags,
-			Meta:                tool.Meta,
-			MetaPairs:           metaPairs,
-			Payload:             payload,
-			ModelPayload:        modelPayload,
-			Result:              result,
-			HasResult:           tool.HasResult,
-			Bounds:              tool.Bounds,
-			TerminalRun:         tool.TerminalRun,
-			Bookkeeping:         tool.Bookkeeping,
-			ReplanOnTimeout:     tool.ReplanOnTimeout,
-			ResultReminder:      tool.ResultReminder,
-			Confirmation:        tool.Confirmation,
+			Name:                   tool.QualifiedName,
+			GoName:                 goName,
+			ConstName:              constName,
+			Title:                  tool.Title,
+			Description:            tool.Description + tool.UIInstructions,
+			RequiresUI:             tool.RequiresUI,
+			TextOnlyDescription:    tool.Description,
+			TextOnlySearch:         toolcontracts.NewSearchDocument(tool.QualifiedName + " " + tool.Title + " " + tool.Description),
+			TextOnlyPayload:        textOnlyPayload,
+			TextOnlyExecution:      textOnlyExecution,
+			Search:                 toolcontracts.NewSearchDocument(tool.QualifiedName + " " + tool.Title + " " + tool.Description + tool.UIInstructions),
+			ServerData:             serverDataEntries,
+			Tags:                   tool.Tags,
+			Meta:                   tool.Meta,
+			MetaPairs:              metaPairs,
+			Payload:                payload,
+			ModelPayload:           modelPayload,
+			Result:                 result,
+			HasResult:              tool.HasResult,
+			Bounds:                 tool.Bounds,
+			TerminalRun:            tool.TerminalRun,
+			Bookkeeping:            tool.Bookkeeping,
+			ReplanOnTimeout:        tool.ReplanOnTimeout,
+			ResultReminder:         resultReminder,
+			TextOnlyResultReminder: tool.ResultReminder,
+			Confirmation:           tool.Confirmation,
 		}
 		if err := prepareRegistrySchema(tool, entry); err != nil {
 			return nil, err
@@ -204,6 +212,7 @@ func newToolContractTypeOwner(tool *ToolData) *contractTypeOwner {
 		MethodResultAttr:         tool.MethodResultAttr,
 		Bounds:                   tool.Bounds,
 		ModelHiddenPayloadFields: tool.ModelHiddenPayloadFields,
+		UIOnlyFields:             tool.UIOnlyFields,
 	}
 }
 

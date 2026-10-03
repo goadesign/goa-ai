@@ -126,6 +126,7 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 		ScopeName:                toolset,
 		Bounds:                   boundsData(tool.Bounds, tool.Method),
 		ModelHiddenPayloadFields: slices.Clone(tool.InjectedFields),
+		UIOnlyFields:             slices.Clone(tool.UIOnlyFields),
 	}
 	payload := tool.Args
 	if payload == nil || payload.Type == nil || payload.Type == goaexpr.Empty {
@@ -197,6 +198,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 		ScopeName:                toolset,
 		Bounds:                   boundsData(tool.Bounds, tool.Method),
 		ModelHiddenPayloadFields: slices.Clone(tool.InjectedFields),
+		UIOnlyFields:             slices.Clone(tool.UIOnlyFields),
 	}
 	payload := tool.Args
 	if payload == nil || payload.Type == nil || payload.Type == goaexpr.Empty {
@@ -548,10 +550,10 @@ func localizedSpecShapes(owner *contractTypeOwner, attribute *goaexpr.AttributeE
 	}
 	public, publicTypes := localizeNestedTypes(shape, false, nil, specJSONModel)
 	transportSource := public
-	if (usage == usagePayload || usage == usageModelPayload || usage == usageTextOnlyPayload) && len(owner.ModelHiddenPayloadFields) > 0 {
+	if (usage == usagePayload || usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution) && len(owner.ModelHiddenPayloadFields) > 0 {
 		transportSource = modelTransportShape(public, owner.ModelHiddenPayloadFields)
 	}
-	if usage == usagePayload && owner.Bounds != nil && owner.Bounds.Paging != nil && owner.Bounds.Paging.ContinueTool != "" {
+	if (usage == usagePayload || usage == usageTextOnlyExecution) && owner.Bounds != nil && owner.Bounds.Paging != nil && owner.Bounds.Paging.ContinueTool != "" {
 		paging := owner.Bounds.Paging
 		for _, field := range *effectiveObject(transportSource) {
 			if modelJSONName(field.Name) != paging.CursorField {

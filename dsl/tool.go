@@ -793,7 +793,8 @@ func BoundedResult(fns ...func()) {
 //	Tool("get_time_series", "Get Time Series", func() {
 //	    Args(GetTimeSeriesToolArgs)
 //	    Return(GetTimeSeriesToolReturn)
-//	    ResultReminder("The user sees a rendered graph of this data.")
+//	    ResultReminder("Report the data with its time range.")
+//	    UIResultReminder("The user sees a rendered graph of this data.")
 //	})
 func ResultReminder(s string) {
 	tool, ok := eval.Current().(*agentsexpr.ToolExpr)

@@ -60,5 +60,10 @@ func ValidateReadTextOnlyExecutionTransport(body *ReadTextOnlyExecutionTransport
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.render_ui", *body.RenderUI, []any{false}))
 		}
 	}
+	if body.RenderSummary != nil {
+		if !(*body.RenderSummary == false) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.render_summary", *body.RenderSummary, []any{false}))
+		}
+	}
 	return
 }

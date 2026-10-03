@@ -39,3 +39,15 @@ func UIInstructions(text string) {
 	}
 	tool.UIInstructions = text
 }
+
+// UIResultReminder adds static guidance after a tool result only when the run
+// supports interactive output. Text-only contracts retain ResultReminder guidance
+// and omit this reminder. Do not include <system-reminder> tags in the text.
+func UIResultReminder(text string) {
+	tool, ok := eval.Current().(*agentexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	tool.UIResultReminder = text
+}

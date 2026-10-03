@@ -190,8 +190,10 @@ func TestInjectMixedBoundUnboundProviderScopesMeta(t *testing.T) {
 	provider := fileContent(t, files, "gen/catalog/toolsets/helpers/provider.go")
 	require.NotContains(t, provider, "meta := runtime.ToolCallMeta{",
 		"no method-backed tool injects, so provider.go must not declare meta")
-	require.Contains(t, provider, "ctx = runtime.WithTextOnlyContext(ctx, msg.Meta != nil && msg.Meta.TextOnly)",
+	require.Contains(t, provider, "ctx = run.WithTextOnlyContext(ctx, msg.Meta != nil && msg.Meta.TextOnly)",
 		"every provider passes the accepted execution policy to the service")
+	require.NotContains(t, provider, `"goa.design/goa-ai/runtime/agent/runtime"`,
+		"a provider without method injection must not import the runtime package")
 
 	// The unbound tool's compiled injection still exists for local executors.
 	inject := fileContent(t, files, "gen/catalog/toolsets/helpers/inject.go")

@@ -278,6 +278,9 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
     _ = in
     var out {{ if .Pointer }}*{{ end }}{{ .FullRef }}
 {{ .DecodeTransform }}
+    {{- range .DisabledUIFields }}
+    out.{{ .Name }} = {{ if .Pointer }}new(bool){{ else }}false{{ end }}
+    {{- end }}
     return out, nil
     {{- else }}
     var v {{ .FullRef }}

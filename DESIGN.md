@@ -556,7 +556,9 @@ their stable call identities let tool owners return stored results without
 repeating side effects.
 
 Text-only runs accept one saved execution restriction. Generated tool contracts
-omit optional UI arguments and instructions; tools requiring UI or confirmation
+omit optional UI arguments, instructions, and UI result reminders while retaining
+domain result reminders. Generated decoders initialize omitted UI controls to
+false before execution; tools requiring UI or confirmation
 cannot enter that run. Producers retain domain results and internal evidence,
 while the runtime rejects UI output before publication or persistence. Native
 children inherit the parent's restriction or their own stricter restriction;

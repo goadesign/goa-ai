@@ -6828,14 +6828,23 @@ resumed planning.
 Declare `RequiresUI()` on tools whose execution needs a rendered result or
 interactive client. Declare `UIOnly("renderUi")` for an optional Boolean control
 that must be disabled, and place optional rendering guidance in
-`UIInstructions(...)`. Code generation creates both model contracts from that
+`UIInstructions(...)`. Keep domain result guidance in `ResultReminder(...)`
+and declare guidance that assumes rendered output with `UIResultReminder(...)`.
+The ordinary reminder combines both declarations with a separating newline;
+the text-only reminder retains only domain guidance.
+Code generation creates both model contracts from that
 one declaration. The text-only model decoder rejects the hidden control, while
-the execution decoder allows only its disabled value. Domain results and
-internal/provenance server data remain available.
+the execution decoder allows only its disabled value. Both decoders initialize
+omitted UI controls to false, including optional pointer fields, so execution
+JSON includes the disabled value. Generated Registry providers pass these
+false controls to bound service methods and continue supplying `Inject` fields
+from call metadata. Other execution arguments, such as paging inputs, retain
+their ordinary contract. Domain results and internal/provenance server data
+remain available.
 
 The runtime excludes UI and confirmation-required tools before advertising and
 execution. Registry tools require a generated text-only contract. Executors
-receive `ToolCall.TextOnly`, and `runtime.IsTextOnly(ctx)` exposes the same
+receive `ToolCall.TextOnly`, and `run.IsTextOnly(ctx)` exposes the same
 accepted restriction to domain producers. Check it before constructing UI
 output. UI server data from a completed text-only call fails before publication
 or persistence; it is not silently removed and the runtime does not repeat a

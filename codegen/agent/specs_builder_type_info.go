@@ -259,6 +259,21 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		DecodeTransform:              decodeBody,
 		EncodeTransform:              encodeBody,
 	}
+	// Text-only inputs cannot request UI output. Initialize each known control
+	// after decoding so executors receive false even when its JSON field is absent.
+	if usage == usageTextOnlyPayload || usage == usageTextOnlyExecution {
+		for _, name := range owner.UIOnlyFields {
+			attribute := planned.public.Find(name)
+			fields := planned.publicLayout.PlansForOccurrence(attribute)
+			if len(fields) != 1 || fields[0].FieldName(true) == "" {
+				return nil, fmt.Errorf("UIOnly field %q has no unique Go field layout", name)
+			}
+			info.DisabledUIFields = append(info.DisabledUIFields, &disabledUIField{
+				Name:    fields[0].FieldName(true),
+				Pointer: fields[0].IsPointer(),
+			})
+		}
+	}
 	// Accept empty JSON for payloads that are empty structs (no fields).
 	if usage == usagePayload && isEmptyStruct(att) {
 		info.AcceptEmpty = true

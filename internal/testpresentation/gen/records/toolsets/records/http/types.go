@@ -32,6 +32,8 @@ type (
 		Query *string `json:"query"`
 		// Show an interactive card.
 		RenderUI *bool `json:"render_ui,omitempty"`
+		// Show an interactive summary.
+		RenderSummary *bool `json:"render_summary,omitempty"`
 	}
 	// ReadTextOnlyInputTransport is the internal JSON transport type for ReadPayload.
 	// It lives in the toolset-local http package and is used only for JSON
@@ -42,6 +44,8 @@ type (
 		Query *string `json:"query"`
 		// Show an interactive card.
 		RenderUI *bool `json:"-"`
+		// Show an interactive summary.
+		RenderSummary *bool `json:"-"`
 	}
 	// ReadResultTransport is the internal JSON transport type for ReadResult.
 	// It lives in the toolset-local http package and is used only for JSON
@@ -74,5 +78,7 @@ type (
 		Query *string `json:"query"`
 		// Show an interactive card.
 		RenderUI *bool `json:"render_ui,omitempty"`
+		// Show an interactive summary.
+		RenderSummary *bool `json:"render_summary,omitempty"`
 	}
 )

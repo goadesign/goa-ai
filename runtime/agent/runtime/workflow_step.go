@@ -908,7 +908,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	// A successful sibling query still owns its unfinished pages. Preserve
 	// the finish failure while the planner chooses another page or submission.
 	if finishRecovery(pendingRecovery) {
-		continuations, err := l.r.availableContinuationActions(l.input.AgentID, l.st.ToolOutputs)
+		continuations, err := l.r.availableContinuationActions(l.input.AgentID, l.st.ToolOutputs, l.base.RunContext.TextOnly)
 		if err != nil {
 			return nil, err
 		}

@@ -81,7 +81,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, wireInput *PlanActivity
 		if err != nil {
 			return nil, err
 		}
-		continuationActions, err = r.availableContinuationActions(input.AgentID, historicalOutputs)
+		continuationActions, err = r.availableContinuationActions(input.AgentID, historicalOutputs, input.RunContext.TextOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -206,7 +206,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, wireInput *PlanActivit
 	}
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !synthesisOnly {
-		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs)
+		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs, input.RunContext.TextOnly)
 		if err != nil {
 			return nil, err
 		}
@@ -1454,6 +1454,14 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 	}
 
+	if call.TextOnly {
+		call.Payload, err = prepareTextOnlyExecutionPayload(spec, call.Payload)
+		if err != nil {
+			return nil, engine.MarkActivityErrorNonRetryable(err)
+		}
+		raw = call.Payload
+	}
+
 	// For non DecodeInExecutor toolsets, validate payloads eagerly using the
 	// generated codecs so we can surface structured correction contracts. Executors
 	// still receive the execution payload and may decode again as needed.
@@ -1468,15 +1476,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 	}
 
-	if call.TextOnly && (spec.RequiresUI || spec.Confirmation != nil || spec.TextOnly == nil) {
-		return nil, errors.New("tool requires UI or has no generated text-only contract")
-	}
-	if call.TextOnly {
-		if _, err := spec.TextOnly.ExecutionCodec.FromJSON(call.Payload); err != nil {
-			return nil, engine.MarkActivityErrorNonRetryable(fmt.Errorf("text-only execution arguments: %w", err))
-		}
-	}
-	ctx = WithTextOnlyContext(ctx, call.TextOnly)
+	ctx = run.WithTextOnlyContext(ctx, call.TextOnly)
 	meta := ToolCallMetaFromCall(call)
 	start := time.Now()
 	executorCall := cloneToolCall(call)

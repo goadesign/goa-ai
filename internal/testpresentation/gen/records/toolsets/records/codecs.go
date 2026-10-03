@@ -206,6 +206,11 @@ var readPayloadFields = []tools.FieldMetadata{
 		JSONType:    "boolean",
 		Description: "Show an interactive card.",
 	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("render_summary")},
+		JSONType:    "boolean",
+		Description: "Show an interactive summary.",
+	},
 }
 var readTextOnlyInputFields = []tools.FieldMetadata{
 	{
@@ -255,6 +260,11 @@ var readTextOnlyExecutionFields = []tools.FieldMetadata{
 		Path:        []tools.FieldPathSegment{tools.FixedField("render_ui")},
 		JSONType:    "boolean",
 		Description: "Show an interactive card.",
+	},
+	{
+		Path:        []tools.FieldPathSegment{tools.FixedField("render_summary")},
+		JSONType:    "boolean",
+		Description: "Show an interactive summary.",
 	},
 }
 
@@ -721,8 +731,9 @@ func MarshalReadPayload(v *ReadPayload) ([]byte, error) {
 	_ = in
 	var out *toolhttp.ReadPayloadTransport
 	out = &toolhttp.ReadPayloadTransport{
-		Query:    &in.Query,
-		RenderUI: in.RenderUI,
+		Query:         &in.Query,
+		RenderUI:      in.RenderUI,
+		RenderSummary: &in.RenderSummary,
 	}
 	return json.Marshal(out)
 }
@@ -751,6 +762,12 @@ func UnmarshalReadPayload(data []byte) (*ReadPayload, error) {
 		Query:    *in.Query,
 		RenderUI: in.RenderUI,
 	}
+	if in.RenderSummary != nil {
+		out.RenderSummary = *in.RenderSummary
+	}
+	if in.RenderSummary == nil {
+		out.RenderSummary = false
+	}
 	return out, nil
 }
 
@@ -763,8 +780,9 @@ func marshalReadTextOnlyInput(v *ReadPayload) ([]byte, error) {
 	_ = in
 	var out *toolhttp.ReadTextOnlyInputTransport
 	out = &toolhttp.ReadTextOnlyInputTransport{
-		Query:    &in.Query,
-		RenderUI: in.RenderUI,
+		Query:         &in.Query,
+		RenderUI:      in.RenderUI,
+		RenderSummary: &in.RenderSummary,
 	}
 	return json.Marshal(out)
 }
@@ -793,6 +811,14 @@ func unmarshalReadTextOnlyInput(data []byte) (*ReadPayload, error) {
 		Query:    *in.Query,
 		RenderUI: in.RenderUI,
 	}
+	if in.RenderSummary != nil {
+		out.RenderSummary = *in.RenderSummary
+	}
+	if in.RenderSummary == nil {
+		out.RenderSummary = false
+	}
+	out.RenderUI = new(bool)
+	out.RenderSummary = false
 	return out, nil
 }
 
@@ -917,8 +943,9 @@ func marshalReadTextOnlyExecution(v *ReadPayload) ([]byte, error) {
 	_ = in
 	var out *toolhttp.ReadTextOnlyExecutionTransport
 	out = &toolhttp.ReadTextOnlyExecutionTransport{
-		Query:    &in.Query,
-		RenderUI: in.RenderUI,
+		Query:         &in.Query,
+		RenderUI:      in.RenderUI,
+		RenderSummary: &in.RenderSummary,
 	}
 	return json.Marshal(out)
 }
@@ -947,6 +974,14 @@ func unmarshalReadTextOnlyExecution(data []byte) (*ReadPayload, error) {
 		Query:    *in.Query,
 		RenderUI: in.RenderUI,
 	}
+	if in.RenderSummary != nil {
+		out.RenderSummary = *in.RenderSummary
+	}
+	if in.RenderSummary == nil {
+		out.RenderSummary = false
+	}
+	out.RenderUI = new(bool)
+	out.RenderSummary = false
 	return out, nil
 }
 
@@ -1067,6 +1102,13 @@ func validateReadPayloadJSONValue(path string, value any, description string) er
 			); err != nil {
 				return err
 			}
+		case "render_summary":
+			if err := validateBooleanJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Show an interactive summary.",
+			); err != nil {
+				return err
+			}
 		case "render_ui":
 			if err := validateBooleanJSONValue(
 				generatedJSONChildPath(path, key, false),
@@ -1077,6 +1119,7 @@ func validateReadPayloadJSONValue(path string, value any, description string) er
 		default:
 			return unknownJSONFieldError(path, key, []string{
 				"query",
+				"render_summary",
 				"render_ui",
 			})
 		}
