@@ -67,8 +67,8 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	}
 	typeName := planned.publicDeclaration.Name()
 	key := "name:" + typeName
-	if usage == usageModelPayload {
-		key += ":model-input"
+	if usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution {
+		key += ":" + string(usage)
 	}
 
 	defineType := false
@@ -79,7 +79,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	)
 	b.materializeNestedLocalTypes(scope, planned.publicTypes, publicPtr, publicDefaults)
 	tt, defLine, fullRef := b.buildTypeDefinition(typeName, planned.public, scope, defineType, publicPtr, publicDefaults)
-	if usage == usageModelPayload {
+	if usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution {
 		defLine = ""
 	}
 	b.collectUnionSumTypes(scope, tt)
@@ -111,7 +111,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		return nil, fmt.Errorf("build %s %s schema: %w", owner.QualifiedName, usage, err)
 	}
 	var executionSchemaBytes []byte
-	if usage == usagePayload {
+	if usage == usagePayload || usage == usageTextOnlyExecution {
 		executionSchemaBytes = append([]byte(nil), schemaWithoutRootExampleBytes...)
 	}
 	if usage == usagePayload && len(owner.ModelHiddenPayloadFields) > 0 {
@@ -286,6 +286,10 @@ func (p *toolSpecsPackagePlan) typeFor(owner *contractTypeOwner, usage typeUsage
 		return names.payloadType
 	case usageModelPayload:
 		return names.modelPayloadType
+	case usageTextOnlyPayload:
+		return names.textOnlyPayloadType
+	case usageTextOnlyExecution:
+		return names.textOnlyExecutionType
 	case usageResult:
 		return names.resultType
 	case usageServerData:

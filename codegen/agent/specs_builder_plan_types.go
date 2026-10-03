@@ -141,6 +141,18 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 			return err
 		}
 	}
+	if len(tool.UIOnlyFields) > 0 {
+		textOwner := *owner
+		textOwner.ModelHiddenPayloadFields = append(modelHiddenPayloadFields(tool), tool.UIOnlyFields...)
+		if err := p.declareTypeImports(&textOwner, payload, usageTextOnlyPayload, specJSONModel); err != nil {
+			return err
+		}
+	}
+	if len(tool.UIOnlyFields) > 0 {
+		if err := p.declareTypeImports(owner, textOnlyExecutionShape(payload, tool.UIOnlyFields), usageTextOnlyExecution, specJSONModel); err != nil {
+			return err
+		}
+	}
 	publicPayload := effectiveObject(payload)
 	for _, name := range tool.InjectedFields {
 		if err := p.fileImports.publicInject.AddTypeExpressions(publicPayload.Attribute(name)); err != nil {
@@ -204,6 +216,22 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 		}
 		names.modelPayloadType = p.types[stableTypeKey(owner, usageModelPayload, "")]
 		names.modelPayloadType.jsonValidator.render = true
+	}
+	if len(tool.UIOnlyFields) > 0 {
+		textOwner := *owner
+		textOwner.ModelHiddenPayloadFields = append(modelHiddenPayloadFields(tool), tool.UIOnlyFields...)
+		if err := p.declareType(&textOwner, payload, usageTextOnlyPayload, "", specJSONModel); err != nil {
+			return err
+		}
+		names.textOnlyPayloadType = p.types[stableTypeKey(owner, usageTextOnlyPayload, "")]
+		names.textOnlyPayloadType.jsonValidator.render = true
+	}
+	if len(tool.UIOnlyFields) > 0 {
+		if err := p.declareType(owner, textOnlyExecutionShape(payload, tool.UIOnlyFields), usageTextOnlyExecution, "", specJSONModel); err != nil {
+			return err
+		}
+		names.textOnlyExecutionType = p.types[stableTypeKey(owner, usageTextOnlyExecution, "")]
+		names.textOnlyExecutionType.jsonValidator.render = true
 	}
 	publicPayload := effectiveObject(names.payloadType.publicShape)
 	for _, name := range tool.InjectedFields {
@@ -324,6 +352,10 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		preferred += "Payload"
 	case usageModelPayload:
 		preferred += "ModelInput"
+	case usageTextOnlyPayload:
+		preferred += "TextOnlyInput"
+	case usageTextOnlyExecution:
+		preferred += "TextOnlyExecution"
 	case usageResult:
 		preferred += "Result"
 	case usageServerData:
@@ -345,7 +377,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		publicLayout      *goacodegen.GoTypePlan
 		err               error
 	)
-	if usage == usageModelPayload {
+	if usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution {
 		// Both decoders return the existing typed payload. Only the model's
 		// JSON transport omits values that execution supplies later.
 		execution := p.types[stableTypeKey(owner, usagePayload, "")]
@@ -430,7 +462,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		key,
 		preferred,
 		owner.Kind == contractTypeOwnerCompletion,
-		usage == usageModelPayload,
+		usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution,
 		publicDeclaration,
 		transportDeclaration,
 	)
@@ -516,7 +548,7 @@ func localizedSpecShapes(owner *contractTypeOwner, attribute *goaexpr.AttributeE
 	}
 	public, publicTypes := localizeNestedTypes(shape, false, nil, specJSONModel)
 	transportSource := public
-	if (usage == usagePayload || usage == usageModelPayload) && len(owner.ModelHiddenPayloadFields) > 0 {
+	if (usage == usagePayload || usage == usageModelPayload || usage == usageTextOnlyPayload) && len(owner.ModelHiddenPayloadFields) > 0 {
 		transportSource = modelTransportShape(public, owner.ModelHiddenPayloadFields)
 	}
 	if usage == usagePayload && owner.Bounds != nil && owner.Bounds.Paging != nil && owner.Bounds.Paging.ContinueTool != "" {
@@ -834,4 +866,21 @@ func declareAttributeUnions(pkg *goacodegen.GeneratedPackage, fixed map[string]*
 		return nil
 	}
 	return visit(attribute)
+}
+
+// textOnlyExecutionShape copies the complete tool input and requires every
+// rendering control to be false. Paging and server-supplied fields remain valid.
+func textOnlyExecutionShape(input *goaexpr.AttributeExpr, fields []string) *goaexpr.AttributeExpr {
+	shape := goaexpr.DupAtt(input)
+	for _, name := range fields {
+		field := effectiveObject(shape).Attribute(name)
+		if field.Validation == nil {
+			field.Validation = &goaexpr.ValidationExpr{}
+		}
+		field.Validation.Values = []any{false}
+		field.DefaultValue = false
+		field.UserExamples = nil
+	}
+	shape.UserExamples = nil
+	return shape
 }

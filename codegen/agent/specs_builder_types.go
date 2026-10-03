@@ -111,7 +111,12 @@ type (
 		Payload *typeData
 		// ModelPayload uses the model's smaller input shape when continuation
 		// execution requires arguments the model is not allowed to supply.
-		ModelPayload *typeData
+		ModelPayload        *typeData
+		RequiresUI          bool
+		TextOnlyDescription string
+		TextOnlySearch      toolcontracts.SearchDocument
+		TextOnlyPayload     *typeData
+		TextOnlyExecution   *typeData
 		// Type metadata for the tool's output result.
 		Result *typeData
 		// HasResult reports whether the tool returns a value.
@@ -399,8 +404,10 @@ const (
 	contractTypeOwnerTool       contractTypeOwnerKind = "tool"
 	contractTypeOwnerCompletion contractTypeOwnerKind = "completion"
 
-	usagePayload      typeUsage = "payload"
-	usageModelPayload typeUsage = "model-payload"
-	usageResult       typeUsage = "result"
-	usageServerData   typeUsage = "server-data"
+	usagePayload           typeUsage = "payload"
+	usageModelPayload      typeUsage = "model-payload"
+	usageTextOnlyPayload   typeUsage = "text-only-payload"
+	usageTextOnlyExecution typeUsage = "text-only-execution"
+	usageResult            typeUsage = "result"
+	usageServerData        typeUsage = "server-data"
 )

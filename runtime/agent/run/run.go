@@ -53,6 +53,8 @@ type (
 	// the identifiers, labels, and constraints active for this specific
 	// invocation attempt.
 	Context struct {
+		// TextOnly is derived from the accepted run policy and disables UI interaction.
+		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
 		// RunID uniquely identifies the durable workflow run (infrastructure layer).
 		// This corresponds to the workflow engine's execution identifier (e.g.,
 		// Temporal WorkflowID). Used for workflow operations, replay, and observability.

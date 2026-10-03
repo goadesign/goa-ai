@@ -224,6 +224,9 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		Name:               expr.Name,
 		ConstName:          codegen.Goify(expr.Name, true),
 		Description:        expr.Description,
+		RequiresUI:         expr.RequiresUI,
+		UIOnlyFields:       expr.UIOnlyFields,
+		UIInstructions:     expr.UIInstructions,
 		QualifiedName:      qualified,
 		Title:              naming.HumanizeTitle(title),
 		Tags:               mergedToolTags(ts, expr),
@@ -421,7 +424,7 @@ func modelHiddenPayloadFields(tool *agentsExpr.ToolExpr) []string {
 	if isDedicatedContinuation(tool) {
 		return append(fields, continuationModelHiddenFields(tool)...)
 	}
-	if tool.Bounds != nil && tool.Bounds.Paging != nil && tool.Bounds.Paging.ContinueTool != "" {
+	if tool.Bounds != nil && tool.Bounds.Paging != nil && tool.Bounds.Paging.ContinueTool != "" && tool.Args.Find(tool.Bounds.Paging.CursorField) != nil {
 		return append(fields, tool.Bounds.Paging.CursorField)
 	}
 	return fields

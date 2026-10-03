@@ -1733,3 +1733,10 @@ Notes:
 - Compatibility uses Goa's type system (names and structure, including `Extend`)
 - For nested shapes, keep pointers in user types for validators/codecs
 - Mapping lives in executors; transforms are conveniences when types align
+
+## Optional presentation
+
+`RequiresUI()` excludes a tool from text-only runs. `UIOnly("renderUi")` hides an
+optional Boolean argument and disables it during execution. `UIInstructions(...)`
+adds rendering guidance only to the ordinary tool contract. See
+[text-only execution](runtime.md#text-only-execution) for the runtime contract.

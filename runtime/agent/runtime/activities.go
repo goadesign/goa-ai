@@ -548,6 +548,17 @@ func (r *Runtime) preparePlannerActivity(
 			advertisedSpecs = append(advertisedSpecs, catalog.specs[name])
 		}
 	}
+	if input.Policy != nil && input.Policy.TextOnly {
+		for i, spec := range advertisedSpecs {
+			if spec.TextOnly != nil {
+				advertisedSpecs[i] = spec.ForTextOnly()
+			}
+		}
+		if parentTool != nil && parentTool.TextOnly != nil {
+			selected := parentTool.ForTextOnly()
+			parentTool = &selected
+		}
+	}
 	events := newPlannerEvents(input.AgentID, input.RunID, input.RunContext.SessionID)
 	publicationBatchID := uuid.NewString()
 	invocations := &modelInvocationJournal{
@@ -1388,6 +1399,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// retains the model-authored call and owns any later correction evidence.
 	raw := append(rawjson.Message(nil), req.Payload...)
 	call := ToolCall{
+		TextOnly:         req.TextOnly,
 		Registry:         req.Registry.Clone(),
 		Name:             req.ToolName,
 		Payload:          raw,
@@ -1453,6 +1465,15 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		}
 	}
 
+	if call.TextOnly && (spec.RequiresUI || spec.Confirmation != nil || spec.TextOnly == nil) {
+		return nil, errors.New("tool requires UI or has no generated text-only contract")
+	}
+	if call.TextOnly {
+		if _, err := spec.TextOnly.ExecutionCodec.FromJSON(call.Payload); err != nil {
+			return nil, engine.MarkActivityErrorNonRetryable(fmt.Errorf("text-only execution arguments: %w", err))
+		}
+	}
+	ctx = WithTextOnlyContext(ctx, call.TextOnly)
 	meta := ToolCallMetaFromCall(call)
 	start := time.Now()
 	executorCall := cloneToolCall(call)
@@ -1471,6 +1492,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	result, resultJSON, clarification, err := r.materializeActivityToolExecutionResult(ctx, call, execResult)
 	if err != nil {
+		if call.TextOnly {
+			return nil, engine.MarkActivityErrorNonRetryable(err)
+		}
 		return nil, err
 	}
 	out := &ToolOutput{

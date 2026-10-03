@@ -775,6 +775,7 @@ func (r *recordingCallAdmissions) Ensure(
 	toolset, toolUseID, registrationToken, digest string,
 	executionTimeout, ttl time.Duration,
 	_ []byte,
+	_ bool,
 ) (callAdmission, bool, error) {
 	r.registrationToken = registrationToken
 	return callAdmission{
