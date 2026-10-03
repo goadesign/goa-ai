@@ -78,46 +78,7 @@ func (p *mcpExamplePlugin) generate(
 	if err != nil {
 		return nil, err
 	}
-	return removeMCPClientCommands(p.exampleRoot, mcpServices, files), nil
-}
-
-// removeMCPClientCommands removes command-line clients for servers that expose
-// MCP. One command invocation cannot initialize a session and then perform a
-// separate MCP operation, so advertising those commands would be misleading.
-func removeMCPClientCommands(
-	root *expr.RootExpr,
-	services []exampleMCPService,
-	files []*codegen.File,
-) []*codegen.File {
-	mcpNames := make(map[string]struct{}, len(services))
-	for _, service := range services {
-		mcpNames["mcp_"+service.service.Name] = struct{}{}
-	}
-	servers := make(map[string]struct{})
-	for _, server := range root.API.Servers {
-		for _, service := range server.Services {
-			if _, ok := mcpNames[service]; ok {
-				servers[codegen.SnakeCase(codegen.Goify(server.Name, true))] = struct{}{}
-				break
-			}
-		}
-	}
-	kept := files[:0]
-	for _, file := range files {
-		path := filepath.ToSlash(file.Path)
-		remove := false
-		for server := range servers {
-			if strings.HasPrefix(path, "cmd/"+server+"-cli/") ||
-				strings.HasPrefix(path, "gen/jsonrpc/cli/"+server+"/") {
-				remove = true
-				break
-			}
-		}
-		if !remove {
-			kept = append(kept, file)
-		}
-	}
-	return kept
+	return files, nil
 }
 
 // bindExampleMCPServices copies the final constructor, interface, package, and

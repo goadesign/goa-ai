@@ -30,6 +30,11 @@ linters:
     - unused
     - whitespace
   settings:
+    goconst:
+      ignore-tests: true
+      exclude-types:
+        - call
+        - compositelit
     tagliatelle:
       case:
         rules:

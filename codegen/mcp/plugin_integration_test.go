@@ -14,568 +14,83 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	_ "goa.design/goa-ai/codegen/agent"
+	agentexpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	goagenerator "goa.design/goa/v3/codegen/generator"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
 
-const callerLifecycleGeneratedTestSource = `// This file checks that the generated caller starts the generated MCP service before calling a tool.
+const callerLifecycleGeneratedTestSource = `// These tests run independent HTTP requests against the actual generated MCP server.
 package client
 
 import (
-	"bytes"
-	"context"
-	"encoding/json"
-	"fmt"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"strings"
-	"testing"
-
-	mcpfmt "generated.local/gen/mcp_fmt"
-	mcpfmtsrv "generated.local/gen/jsonrpc/mcp_fmt/server"
-	goahttp "goa.design/goa/v3/http"
-	mcpruntime "goa.design/goa-ai/runtime/mcp"
+ "bytes"
+ "context"
+ "encoding/json"
+ "io"
+ "net/http"
+ "net/http/httptest"
+ "net/url"
+ "strings"
+ "testing"
+ genmcpfmt "generated.local/gen/mcp_fmt"
+ genmcpfmtsrv "generated.local/gen/jsonrpc/mcp_fmt/server"
+ goahttp "goa.design/goa/v3/http"
+ mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
-type echoService struct {
-	calls int
-}
+type echoService struct { calls int }
+func (s *echoService) Echo(context.Context) (string,error) {s.calls++;return "hello",nil}
 
-type countingDoer struct {
-	calls int
-}
+func TestGeneratedStatelessProtocol(t *testing.T) {
+ service:=&echoService{}
+ adapter:=genmcpfmt.NewMCPAdapter(service,nil)
+ mux:=goahttp.NewMuxer()
+ server:=genmcpfmtsrv.New(genmcpfmt.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil)
+ genmcpfmtsrv.MountWithOrigins(mux,server,[]string{"https://allowed.test"})
+ endpoint:=httptest.NewServer(mux);defer endpoint.Close()
+ location,err:=url.Parse(endpoint.URL);if err!=nil{t.Fatal(err)}
+ client:=NewClient(location.Scheme,location.Host,endpoint.Client(),goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
+ caller,err:=NewCaller(client,mcpruntime.ClientInfo{Name:"test",Version:"1"},mcpruntime.InputSupport{});if err!=nil{t.Fatal(err)}
+ result,err:=caller.CallTool(context.Background(),mcpruntime.CallRequest{Tool:"echo",Payload:json.RawMessage("{}")});if err!=nil{t.Fatal(err)}
+ if string(result.StructuredContent)!="\"hello\"" || len(result.Content)!=0 || service.calls!=1 {t.Fatalf("result=%+v calls=%d",result,service.calls)}
+ discovered,err:=client.ServerDiscover()(context.Background(),&genmcpfmt.DiscoverPayload{});if err!=nil{t.Fatal(err)}
+ discovery:=discovered.(*genmcpfmt.DiscoverResult)
+ if discovery.ResultType!="complete"||len(discovery.SupportedVersions)!=1||discovery.SupportedVersions[0]!=mcpruntime.ProtocolVersion{t.Fatalf("discovery=%+v",discovery)}
+ catalog,err:=client.ToolsList()(context.Background(),&genmcpfmt.ToolsListPayload{});if err!=nil{t.Fatal(err)}
+ if catalog.(*genmcpfmt.ToolsListResult).CacheScope!="private"{t.Fatal("missing cache scope")}
 
-func writeSSE(t *testing.T, w http.ResponseWriter, value any) {
-	t.Helper()
-	data, err := json.Marshal(value)
-	if err != nil {
-		t.Fatalf("encode SSE message: %v", err)
-	}
-	if _, err := io.WriteString(w, "data: "+string(data)+"\n\n"); err != nil {
-		t.Fatalf("write SSE message: %v", err)
-	}
-}
-
-func (d *countingDoer) Do(*http.Request) (*http.Response, error) {
-	d.calls++
-	return nil, context.Canceled
-}
-
-func (s *echoService) Echo(context.Context) (string, error) {
-	s.calls++
-	return "hello", nil
-}
-
-func TestCallerRejectsIncompleteClientInfoBeforeRequest(t *testing.T) {
-	doer := new(countingDoer)
-	client := NewClient(
-		"http",
-		"mcp.invalid",
-		doer,
-		goahttp.RequestEncoder,
-		goahttp.ResponseDecoder,
-		false,
-	)
-	_, err := NewCaller(context.Background(), client, mcpruntime.ClientInfo{Version: "1.0.0"})
-	if err == nil || err.Error() != "mcp: client name is required" {
-		t.Fatalf("NewCaller() error = %v, want missing client name", err)
-	}
-	if doer.calls != 0 {
-		t.Fatalf("initialize requests = %d, want 0", doer.calls)
-	}
-}
-
-func TestCallerRejectsDifferentProtocolVersion(t *testing.T) {
-	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatalf("decode initialize request: %v", err)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{
-			"jsonrpc": "2.0",
-			"id":      request["id"],
-			"result": map[string]any{
-				"protocolVersion": "2099-01-01",
-				"capabilities":    map[string]any{},
-				"serverInfo": map[string]any{
-					"name":    "other-server",
-					"version": "1.0.0",
-				},
-			},
-		}); err != nil {
-			t.Fatalf("encode initialize response: %v", err)
-		}
-	}))
-	defer httpServer.Close()
-
-	serverURL, err := url.Parse(httpServer.URL)
-	if err != nil {
-		t.Fatalf("parse server URL: %v", err)
-	}
-	client := NewClient(
-		serverURL.Scheme,
-		serverURL.Host,
-		httpServer.Client(),
-		goahttp.RequestEncoder,
-		goahttp.ResponseDecoder,
-		false,
-	)
-	_, err = NewCaller(context.Background(), client, mcpruntime.ClientInfo{
-		Name:    "generated-test",
-		Version: "1.0.0",
-	})
-	if err == nil || !strings.Contains(err.Error(), "server selected protocol version \"2099-01-01\"") {
-		t.Fatalf("NewCaller() error = %v, want protocol version mismatch", err)
-	}
-}
-
-func TestCallerReadsEventStreamAndAnswersServerPing(t *testing.T) {
-	pingReply := make(chan struct{}, 1)
-	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatalf("decode MCP message: %v", err)
-		}
-		method, _ := request["method"].(string)
-		switch method {
-		case "initialize":
-			w.Header().Set("Content-Type", "text/event-stream")
-			writeSSE(t, w, map[string]any{
-				"jsonrpc": "2.0",
-				"id":      request["id"],
-				"result": map[string]any{
-					"protocolVersion": mcpfmt.DefaultProtocolVersion,
-					"capabilities":    map[string]any{"tools": map[string]any{}},
-					"serverInfo":      map[string]any{"name": "plain-server", "version": "1.0.0"},
-				},
-			})
-		case "notifications/initialized":
-			w.WriteHeader(http.StatusAccepted)
-		case "tools/call":
-			w.Header().Set("Content-Type", "text/event-stream")
-			writeSSE(t, w, map[string]any{
-				"jsonrpc": "2.0",
-				"method":  "notifications/message",
-				"params":  map[string]any{"level": "info", "data": "working"},
-			})
-			writeSSE(t, w, map[string]any{
-				"jsonrpc": "2.0",
-				"id":      "server-ping",
-				"method":  "ping",
-				"params":  map[string]any{},
-			})
-			writeSSE(t, w, map[string]any{
-				"jsonrpc": "2.0",
-				"id":      request["id"],
-				"result": map[string]any{
-					"content": []any{map[string]any{"type": "text", "text": "hello"}},
-				},
-			})
-		default:
-			if request["id"] != "server-ping" || request["result"] == nil {
-				t.Fatalf("unexpected MCP message: %#v", request)
-			}
-			pingReply <- struct{}{}
-			w.WriteHeader(http.StatusAccepted)
-		}
-	}))
-	defer httpServer.Close()
-
-	serverURL, err := url.Parse(httpServer.URL)
-	if err != nil {
-		t.Fatalf("parse server URL: %v", err)
-	}
-	client := NewClient(
-		serverURL.Scheme,
-		serverURL.Host,
-		httpServer.Client(),
-		goahttp.RequestEncoder,
-		goahttp.ResponseDecoder,
-		false,
-	)
-	caller, err := NewCaller(context.Background(), client, mcpruntime.ClientInfo{
-		Name:    "generated-test",
-		Version: "1.0.0",
-	})
-	if err != nil {
-		t.Fatalf("initialize caller: %v", err)
-	}
-	result, err := caller.CallTool(context.Background(), mcpruntime.CallRequest{
-		Tool:    "echo",
-		Payload: json.RawMessage("{}"),
-	})
-	if err != nil {
-		t.Fatalf("call tool: %v", err)
-	}
-	if len(result.Content) != 1 {
-		t.Fatalf("tool content = %#v, want one hello block", result.Content)
-	}
-	text, ok := result.Content[0].(*mcpruntime.TextContent)
-	if !ok || text.Text != "hello" {
-		t.Fatalf("tool content = %#v, want one hello block", result.Content)
-	}
-	select {
-	case <-pingReply:
-	default:
-		t.Fatal("generated client did not answer the server ping")
-	}
-}
-
-func TestCallerInitializesBeforeCallingTool(t *testing.T) {
-	service := new(echoService)
-	adapter := mcpfmt.NewMCPAdapter(service, nil)
-	endpoints := mcpfmt.NewEndpoints(adapter)
-	mux := goahttp.NewMuxer()
-	server := mcpfmtsrv.New(
-		endpoints,
-		mux,
-		goahttp.RequestDecoder,
-		goahttp.ResponseEncoder,
-		func(_ context.Context, _ http.ResponseWriter, err error) {
-			t.Errorf("serve MCP request: %v", err)
-		},
-	)
-	mcpfmtsrv.Mount(mux, server)
-	var methods []string
-	var hasIDs []bool
-	var protocolVersions []string
-	var acceptHeaders []string
-	observed := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("read MCP request: %v", err)
-		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		var request map[string]json.RawMessage
-		if err := json.Unmarshal(body, &request); err != nil {
-			t.Fatalf("decode MCP request: %v", err)
-		}
-		var method string
-		if err := json.Unmarshal(request["method"], &method); err != nil {
-			t.Fatalf("decode MCP method: %v", err)
-		}
-		methods = append(methods, method)
-		_, hasID := request["id"]
-		hasIDs = append(hasIDs, hasID)
-		protocolVersions = append(protocolVersions, r.Header.Get("MCP-Protocol-Version"))
-		acceptHeaders = append(acceptHeaders, r.Header.Get("Accept"))
-		if method == "initialize" {
-			var params map[string]json.RawMessage
-			if err := json.Unmarshal(request["params"], &params); err != nil {
-				t.Fatalf("decode initialize parameters: %v", err)
-			}
-			if string(params["capabilities"]) != "{}" {
-				t.Fatalf("initialize capabilities = %s, want {}", params["capabilities"])
-			}
-		}
-		mux.ServeHTTP(w, r)
-	})
-	httpServer := httptest.NewServer(observed)
-	defer httpServer.Close()
-
-	serverURL, err := url.Parse(httpServer.URL)
-	if err != nil {
-		t.Fatalf("parse server URL: %v", err)
-	}
-	client := NewClient(
-		serverURL.Scheme,
-		serverURL.Host,
-		httpServer.Client(),
-		goahttp.RequestEncoder,
-		goahttp.ResponseDecoder,
-		false,
-	)
-	caller, err := NewCaller(context.Background(), client, mcpruntime.ClientInfo{
-		Name:    "generated-test",
-		Version: "1.0.0",
-	})
-	if err != nil {
-		t.Fatalf("initialize caller: %v", err)
-	}
-	if len(methods) != 2 || methods[0] != "initialize" || methods[1] != "notifications/initialized" {
-		t.Fatalf("initialization methods = %#v", methods)
-	}
-	if !hasIDs[0] || hasIDs[1] {
-		t.Fatalf("initialization ID presence = %#v, want [true false]", hasIDs)
-	}
-	if protocolVersions[0] != "" || protocolVersions[1] != mcpfmt.DefaultProtocolVersion {
-		t.Fatalf("initialization protocol headers = %#v", protocolVersions)
-	}
-	for _, accept := range acceptHeaders {
-		if accept != "application/json, text/event-stream" {
-			t.Fatalf("Accept header = %q", accept)
-		}
-	}
-
-	result, err := caller.CallTool(context.Background(), mcpruntime.CallRequest{
-		Tool:    "echo",
-		Payload: json.RawMessage(` + "`{}`" + `),
-	})
-	if err != nil {
-		t.Fatalf("call echo tool: %v", err)
-	}
-	if len(result.Content) != 1 {
-		t.Fatalf("tool content = %#v, want one hello block", result.Content)
-	}
-	text, ok := result.Content[0].(*mcpruntime.TextContent)
-	if !ok || text.Text != "hello" {
-		t.Fatalf("tool content = %#v, want one hello block", result.Content)
-	}
-	if service.calls != 1 {
-		t.Fatalf("service calls = %d, want 1", service.calls)
-	}
-	if protocolVersions[2] != mcpfmt.DefaultProtocolVersion {
-		t.Fatalf("tool protocol header = %q", protocolVersions[2])
-	}
-}
-
-func TestCallerStartsNewSessionAfterExpiryWithoutRepeatingTool(t *testing.T) {
-	var initializeCalls int
-	var toolCalls int
-	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var request map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			t.Fatalf("decode MCP message: %v", err)
-		}
-		method, _ := request["method"].(string)
-		switch method {
-		case "initialize":
-			initializeCalls++
-			w.Header().Set("Mcp-Session-Id", fmt.Sprintf("session-%d", initializeCalls))
-			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      request["id"],
-				"result": map[string]any{
-					"protocolVersion": mcpfmt.DefaultProtocolVersion,
-					"capabilities":    map[string]any{"tools": map[string]any{}},
-					"serverInfo":      map[string]any{"name": "session-server", "version": "1.0.0"},
-				},
-			}); err != nil {
-				t.Fatalf("encode initialize response: %v", err)
-			}
-		case "notifications/initialized":
-			w.WriteHeader(http.StatusAccepted)
-		case "tools/call":
-			toolCalls++
-			if toolCalls == 1 {
-				if got := r.Header.Get("Mcp-Session-Id"); got != "session-1" {
-					t.Fatalf("first tool session = %q, want session-1", got)
-				}
-				w.WriteHeader(http.StatusNotFound)
-				return
-			}
-			if got := r.Header.Get("Mcp-Session-Id"); got != "session-2" {
-				t.Fatalf("second tool session = %q, want session-2", got)
-			}
-			w.Header().Set("Content-Type", "application/json")
-			if err := json.NewEncoder(w).Encode(map[string]any{
-				"jsonrpc": "2.0",
-				"id":      request["id"],
-				"result": map[string]any{
-					"content": []any{map[string]any{"type": "text", "text": "hello"}},
-				},
-			}); err != nil {
-				t.Fatalf("encode tool response: %v", err)
-			}
-		default:
-			t.Fatalf("unexpected MCP method %q", method)
-		}
-	}))
-	defer httpServer.Close()
-
-	serverURL, err := url.Parse(httpServer.URL)
-	if err != nil {
-		t.Fatalf("parse server URL: %v", err)
-	}
-	client := NewClient(
-		serverURL.Scheme,
-		serverURL.Host,
-		httpServer.Client(),
-		goahttp.RequestEncoder,
-		goahttp.ResponseDecoder,
-		false,
-	)
-	caller, err := NewCaller(context.Background(), client, mcpruntime.ClientInfo{
-		Name:    "generated-test",
-		Version: "1.0.0",
-	})
-	if err != nil {
-		t.Fatalf("initialize caller: %v", err)
-	}
-	_, err = caller.CallTool(context.Background(), mcpruntime.CallRequest{
-		Tool:    "echo",
-		Payload: json.RawMessage(` + "`{}`" + `),
-	})
-	if err == nil {
-		t.Fatal("expired tool call succeeded")
-	}
-	if toolCalls != 1 {
-		t.Fatalf("tool calls after expiry = %d, want 1", toolCalls)
-	}
-	if initializeCalls != 2 {
-		t.Fatalf("initialize calls after expiry = %d, want 2", initializeCalls)
-	}
-	result, err := caller.CallTool(context.Background(), mcpruntime.CallRequest{
-		Tool:    "echo",
-		Payload: json.RawMessage(` + "`{}`" + `),
-	})
-	if err != nil {
-		t.Fatalf("call tool with replacement session: %v", err)
-	}
-	if len(result.Content) != 1 {
-		t.Fatalf("tool content = %#v, want one hello block", result.Content)
-	}
-	text, ok := result.Content[0].(*mcpruntime.TextContent)
-	if !ok || text.Text != "hello" {
-		t.Fatalf("tool content = %#v, want one hello block", result.Content)
-	}
-	if toolCalls != 2 {
-		t.Fatalf("tool calls after recovery = %d, want 2", toolCalls)
-	}
-}
-
-func TestMCPTransportEnforcesStreamableHTTPRequests(t *testing.T) {
-	service := new(echoService)
-	adapter := mcpfmt.NewMCPAdapter(service, nil)
-	endpoints := mcpfmt.NewEndpoints(adapter)
-	mux := goahttp.NewMuxer()
-	server := mcpfmtsrv.New(
-		endpoints,
-		mux,
-		goahttp.RequestDecoder,
-		goahttp.ResponseEncoder,
-		func(_ context.Context, _ http.ResponseWriter, err error) {
-			t.Errorf("serve MCP request: %v", err)
-		},
-	)
-	mcpfmtsrv.Mount(mux, server)
-
-	batch := httptest.NewRequest(http.MethodPost, mcpfmtsrv.ToolsCallMcpFmtPath(), strings.NewReader(` + "`" + `[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":"hello"}}]` + "`" + `))
-	batch.Header.Set("Content-Type", "application/json")
-	batchResponse := httptest.NewRecorder()
-	mux.ServeHTTP(batchResponse, batch)
-	if batchResponse.Code != http.StatusOK {
-		t.Fatalf("batch HTTP status = %d, want 200", batchResponse.Code)
-	}
-	var response struct {
-		Error struct {
-			Code int ` + "`" + `json:"code"` + "`" + `
-		} ` + "`" + `json:"error"` + "`" + `
-	}
-	if err := json.Unmarshal(batchResponse.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode batch response: %v", err)
-	}
-	if response.Error.Code != -32600 {
-		t.Fatalf("batch error code = %d, want -32600", response.Error.Code)
-	}
-
-	crossOrigin := httptest.NewRequest(http.MethodPost, mcpfmtsrv.ToolsCallMcpFmtPath(), strings.NewReader(` + "`" + `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":"hello"}}` + "`" + `))
-	crossOrigin.Header.Set("Content-Type", "application/json")
-	crossOrigin.Header.Set("Origin", "https://other.example")
-	crossOriginResponse := httptest.NewRecorder()
-	mux.ServeHTTP(crossOriginResponse, crossOrigin)
-	if crossOriginResponse.Code != http.StatusForbidden {
-		t.Fatalf("cross-origin HTTP status = %d, want 403", crossOriginResponse.Code)
-	}
-
-	sameHostOrigin := httptest.NewRequest(http.MethodPost, mcpfmtsrv.ToolsCallMcpFmtPath(), strings.NewReader(` + "`" + `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":"hello"}}` + "`" + `))
-	sameHostOrigin.Header.Set("Content-Type", "application/json")
-	sameHostOrigin.Header.Set("Origin", "https://example.com")
-	sameHostOriginResponse := httptest.NewRecorder()
-	mux.ServeHTTP(sameHostOriginResponse, sameHostOrigin)
-	if sameHostOriginResponse.Code != http.StatusForbidden {
-		t.Fatalf("unlisted same-host Origin HTTP status = %d, want 403", sameHostOriginResponse.Code)
-	}
-
-	get := httptest.NewRequest(http.MethodGet, mcpfmtsrv.ToolsCallMcpFmtPath(), nil)
-	getResponse := httptest.NewRecorder()
-	mux.ServeHTTP(getResponse, get)
-	if getResponse.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("GET HTTP status = %d, want 405", getResponse.Code)
-	}
-
-	crossOriginGET := httptest.NewRequest(http.MethodGet, mcpfmtsrv.ToolsCallMcpFmtPath(), nil)
-	crossOriginGET.Header.Set("Origin", "https://other.example")
-	crossOriginGETResponse := httptest.NewRecorder()
-	mux.ServeHTTP(crossOriginGETResponse, crossOriginGET)
-	if crossOriginGETResponse.Code != http.StatusForbidden {
-		t.Fatalf("cross-origin GET HTTP status = %d, want 403", crossOriginGETResponse.Code)
-	}
-
-	pingBody := ` + "`" + `{"jsonrpc":"2.0","id":"ping-1","method":"ping","params":{}}` + "`" + `
-	browserMux := goahttp.NewMuxer()
-	browserServer := mcpfmtsrv.New(
-		endpoints,
-		browserMux,
-		goahttp.RequestDecoder,
-		goahttp.ResponseEncoder,
-		func(_ context.Context, _ http.ResponseWriter, err error) {
-			t.Errorf("serve browser MCP request: %v", err)
-		},
-	)
-	mcpfmtsrv.MountWithOrigins(browserMux, browserServer, []string{"https://app.example"})
-	allowedOrigin := httptest.NewRequest(http.MethodPost, mcpfmtsrv.ToolsCallMcpFmtPath(), strings.NewReader(pingBody))
-	allowedOrigin.Header.Set("Content-Type", "application/json")
-	allowedOrigin.Header.Set("MCP-Protocol-Version", mcpfmt.DefaultProtocolVersion)
-	allowedOrigin.Header.Set("Origin", "https://app.example")
-	allowedOriginResponse := httptest.NewRecorder()
-	browserMux.ServeHTTP(allowedOriginResponse, allowedOrigin)
-	if allowedOriginResponse.Code != http.StatusOK {
-		t.Fatalf("allowed Origin HTTP status = %d, want 200", allowedOriginResponse.Code)
-	}
-
-	differentOrigin := httptest.NewRequest(http.MethodPost, mcpfmtsrv.ToolsCallMcpFmtPath(), strings.NewReader(pingBody))
-	differentOrigin.Header.Set("Content-Type", "application/json")
-	differentOrigin.Header.Set("MCP-Protocol-Version", mcpfmt.DefaultProtocolVersion)
-	differentOrigin.Header.Set("Origin", "https://APP.example")
-	differentOriginResponse := httptest.NewRecorder()
-	browserMux.ServeHTTP(differentOriginResponse, differentOrigin)
-	if differentOriginResponse.Code != http.StatusForbidden {
-		t.Fatalf("different Origin HTTP status = %d, want 403", differentOriginResponse.Code)
-	}
-
-	allowedOriginGET := httptest.NewRequest(http.MethodGet, mcpfmtsrv.ToolsCallMcpFmtPath(), nil)
-	allowedOriginGET.Header.Set("Origin", "https://app.example")
-	allowedOriginGETResponse := httptest.NewRecorder()
-	browserMux.ServeHTTP(allowedOriginGETResponse, allowedOriginGET)
-	if allowedOriginGETResponse.Code != http.StatusMethodNotAllowed {
-		t.Fatalf("allowed Origin GET HTTP status = %d, want 405", allowedOriginGETResponse.Code)
-	}
-
-	missingVersion := httptest.NewRequest(http.MethodPost, mcpfmtsrv.ToolsCallMcpFmtPath(), strings.NewReader(pingBody))
-	missingVersion.Header.Set("Content-Type", "application/json")
-	missingVersionResponse := httptest.NewRecorder()
-	mux.ServeHTTP(missingVersionResponse, missingVersion)
-	if missingVersionResponse.Code != http.StatusBadRequest {
-		t.Fatalf("missing protocol version HTTP status = %d, want 400", missingVersionResponse.Code)
-	}
-
-	wrongVersion := httptest.NewRequest(http.MethodPost, mcpfmtsrv.ToolsCallMcpFmtPath(), strings.NewReader(pingBody))
-	wrongVersion.Header.Set("Content-Type", "application/json")
-	wrongVersion.Header.Set("MCP-Protocol-Version", "2099-01-01")
-	wrongVersionResponse := httptest.NewRecorder()
-	mux.ServeHTTP(wrongVersionResponse, wrongVersion)
-	if wrongVersionResponse.Code != http.StatusBadRequest {
-		t.Fatalf("unsupported protocol version HTTP status = %d, want 400", wrongVersionResponse.Code)
-	}
-
-	validVersion := httptest.NewRequest(http.MethodPost, mcpfmtsrv.ToolsCallMcpFmtPath(), strings.NewReader(pingBody))
-	validVersion.Header.Set("Content-Type", "application/json")
-	validVersion.Header.Set("MCP-Protocol-Version", mcpfmt.DefaultProtocolVersion)
-	validVersionResponse := httptest.NewRecorder()
-	mux.ServeHTTP(validVersionResponse, validVersion)
-	if validVersionResponse.Code != http.StatusOK {
-		t.Fatalf("supported protocol version HTTP status = %d, want 200", validVersionResponse.Code)
-	}
-	if service.calls != 0 {
-		t.Fatalf("service calls = %d, want 0", service.calls)
-	}
+ for _,origins:=range [][]string{{"https://allowed.test"},{""},{"https://evil.test"},{"https://allowed.test","https://evil.test"}} {
+  request,err:=http.NewRequestWithContext(t.Context(),"POST",endpoint.URL+"/fmt",strings.NewReader("{\"jsonrpc\":\"2.0\",\"id\":\"origin\",\"method\":\"server/discover\",\"params\":{\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"));if err!=nil{t.Fatal(err)}
+  request.Header.Set("MCP-Protocol-Version",mcpruntime.ProtocolVersion)
+  request.Header.Set("MCP-Method","server/discover")
+  request.Header["Origin"]=origins
+  response,err:=endpoint.Client().Do(request);if err!=nil{t.Fatal(err)}
+  if err:=response.Body.Close();err!=nil{t.Fatal(err)}
+  expected:=403;if len(origins)==1&&origins[0]=="https://allowed.test"{expected=200}
+  if response.StatusCode!=expected{t.Fatalf("origins=%v status=%d",origins,response.StatusCode)}
+ }
+ for _,method:=range []string{"GET","DELETE"}{
+  request,err:=http.NewRequest(method,endpoint.URL+"/fmt",nil);if err!=nil{t.Fatal(err)}
+  response,err:=endpoint.Client().Do(request);if err!=nil{t.Fatal(err)}
+  if err:=response.Body.Close();err!=nil{t.Fatal(err)}
+  if response.StatusCode!=405{t.Fatal(response.StatusCode)}
+ }
+ for _,test:=range []struct{method string;version string;status,code int}{
+  {"tools/call",mcpruntime.ProtocolVersion,200,0},
+  {"server/discover","2025-06-18",400,mcpruntime.UnsupportedProtocolVersion},
+  {"initialize",mcpruntime.ProtocolVersion,404,mcpruntime.JSONRPCMethodNotFound},
+ }{
+  body:=[]byte("{\"jsonrpc\":\"2.0\",\"id\":9007199254740993,\"method\":\""+test.method+"\",\"params\":{\"name\":\"echo\",\"arguments\":{},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\""+test.version+"\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}")
+  request,err:=http.NewRequest("POST",endpoint.URL+"/fmt",bytes.NewReader(body));if err!=nil{t.Fatal(err)}
+  request.Header.Set("Content-Type","application/json");request.Header.Set("MCP-Protocol-Version",test.version);request.Header.Set("Mcp-Method",test.method);if test.method=="tools/call"{request.Header.Set("Mcp-Name","echo")}
+  response,err:=endpoint.Client().Do(request);if err!=nil{t.Fatal(err)}
+  encoded,err:=io.ReadAll(response.Body);if err!=nil{t.Fatal(err)};if err:=response.Body.Close();err!=nil{t.Fatal(err)}
+  if response.StatusCode!=test.status||!strings.Contains(string(encoded),"9007199254740993"){t.Fatalf("status=%d body=%s",response.StatusCode,encoded)}
+  if test.code!=0{var failure struct{Error struct{Code int}};if err:=json.Unmarshal(encoded,&failure);err!=nil{t.Fatal(err)};if failure.Error.Code!=test.code{t.Fatalf("failure=%s",encoded)}}
+ }
 }
 `
 
@@ -587,10 +102,13 @@ import (
 	"encoding/json"
 	"testing"
 
-	genmcpcalc "generated.local/gen/mcp_calc"
-	genmcpformatter "generated.local/gen/mcp_formatter"
-	genmcpselector "generated.local/gen/mcp_selector"
-	"goa.design/goa-ai/runtime/agent/model"
+	genmcpcalc "generated.local/gen/calc/toolsets/calc"
+	genmcpformatter "generated.local/gen/formatter/toolsets/formatter"
+	genmcpselector "generated.local/gen/selector/toolsets/selector"
+	genfmtspecs "generated.local/gen/fmt_/toolsets/fmt"
+    genfmtexec "generated.local/gen/fmt_/toolsets/fmt/mcp"
+    "goa.design/goa-ai/runtime/agent/engine"
+    "goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
@@ -599,11 +117,19 @@ import (
 )
 
 func TestGeneratedMCPModelAndExecutionCodecsMatch(t *testing.T) {
+    payloads := map[string][]byte{
+        "fmt.echo": []byte("{}"),
+        "calc.add": []byte("{\"operand\":{\"value\":1}}"),
+        "calc.subtract": []byte("{\"subtrahend\":{\"value\":1}}"),
+        "formatter.render": []byte("{\"value\":\"render me\"}"),
+        "selector.read-value": []byte("{}"),
+        "selector.read_value": []byte("{}"),
+    }
 	for _, specs := range [][]tools.ToolSpec{
-		FmtFmtToolsetToolSpecs,
-		genmcpcalc.CalcCalcToolsetToolSpecs,
-		genmcpformatter.FormatterFormatterToolsetToolSpecs,
-		genmcpselector.SelectorSelectorToolsetToolSpecs,
+		genfmtspecs.Specs(),
+		genmcpcalc.Specs(),
+		genmcpformatter.Specs(),
+		genmcpselector.Specs(),
 	} {
 		for _, spec := range specs {
 			t.Run(spec.Name.String(), func(t *testing.T) {
@@ -617,7 +143,7 @@ func TestGeneratedMCPModelAndExecutionCodecsMatch(t *testing.T) {
 					if codec.FromJSON == nil || codec.ToJSON == nil {
 						t.Fatal("generated payload codec is incomplete")
 					}
-					value, err := codec.FromJSON(spec.Payload.ExampleJSON)
+					value, err := codec.FromJSON(payloads[spec.Name.String()])
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -641,15 +167,17 @@ func TestRegisteredStringToolDecodesEveryControlCharacter(t *testing.T) {
 	want := "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f" +
 		"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f"
 	caller := mcpruntime.CallerFunc(func(context.Context, mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-		return mcpruntime.CallResponse{Content: []mcpruntime.ContentBlock{&mcpruntime.TextContent{Text: want}}}, nil
+		encoded,err:=json.Marshal(want)
+        return mcpruntime.CallResponse{StructuredContent: encoded}, err
 	})
 	rt := agentsruntime.New(storageinmem.New())
-	if err := RegisterFmtFmtToolset(context.Background(), rt, caller); err != nil {
+	exec := genfmtexec.NewMCPExecutor(caller)
+    if err := rt.RegisterToolset(agentsruntime.ToolsetRegistration{Name: "fmt.fmt", Specs: genfmtspecs.Specs(), ToolMetadataLookup: genfmtspecs.MetadataByName, ActivityRetryPolicy: &engine.RetryPolicy{MaxAttempts: 1}, Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) { meta := agentsruntime.ToolCallMetaFromCall(*call); return exec.Execute(ctx, &meta, call) }}); err != nil {
 		t.Fatal(err)
 	}
 	out, err := rt.ExecuteToolActivity(context.Background(), &agentsruntime.ToolInput{
 		ToolsetName: "fmt.fmt",
-		ToolName:    tools.Ident("echo"),
+		ToolName:    genfmtspecs.Echo,
 		Payload:     rawjson.Message(` + "`{}`" + `),
 	})
 	if err != nil {
@@ -729,6 +257,7 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	eval.Reset()
 	require.NoError(t, eval.Register(root))
 	require.NoError(t, eval.Register(mcpexpr.Root))
+	require.NoError(t, eval.Register(&agentexpr.RootExpr{}))
 	mcpexpr.Root.RegisterMCP(service, &mcpexpr.MCPExpr{
 		Name:    "calc",
 		Version: "1.0.0",
@@ -795,11 +324,6 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 			{Name: "documents", URI: "doc://list", MimeType: "application/json", Method: resourceMethods["read_document"]},
 		},
 	})
-	// This test builds MCP expressions directly, so finish the expressions before
-	// passing them to the generator just as Goa's DSL evaluation does.
-	for _, mcp := range mcpexpr.Root.MCPServers {
-		mcp.Finalize()
-	}
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(
 		filepath.Join(dir, "go.mod"),
@@ -857,12 +381,10 @@ replace goa.design/goa/v3 => %s
 	require.NotContains(t, string(adapterServer), "\n\t\"io\"\n")
 	require.NotContains(t, string(adapterServer), "\n\t\"net/http\"\n")
 	require.NotContains(t, string(adapterServer), "\n\t\"strings\"\n")
-	register, err := generatedRoot.ReadFile("mcp_calc/register.go")
-	require.NoError(t, err)
-	require.Contains(t, string(register), `Name:                     "*shared.CalculationRequest"`)
-	require.Contains(t, string(register), `Name:   "*calc.CalculationResponse"`)
-	require.Contains(t, string(register), `Name:                     "*shared2.SubtractRequest"`)
-	require.Contains(t, string(register), `Name:   "*shared2.SubtractResponse"`)
+	_, err = generatedRoot.Stat("mcp_calc/register.go")
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.FileExists(t, filepath.Join(dir, "gen", "calc", "toolsets", "calc", "specs.go"))
+	require.FileExists(t, filepath.Join(dir, "gen", "calc", "toolsets", "calc", "mcp", "mcp_executor.go"))
 	_, err = os.Stat(filepath.Join(dir, "gen", "jsonrpc", "calc", "client"))
 	require.ErrorIs(t, err, os.ErrNotExist)
 	server, err := generatedRoot.ReadFile("jsonrpc/mcp_calc/server/server.go")
@@ -870,9 +392,9 @@ replace goa.design/goa/v3 => %s
 	require.Contains(t, string(server), "\n\t\"bytes\"\n")
 	require.Contains(t, string(server), "withMCPTransport(h, allowedOrigins, h.ServeHTTP)")
 	require.Contains(t, string(server), "func MountWithOrigins(")
-	require.Contains(t, string(server), `mux.Handle("GET", "/calc", mcpGETHandler(allowedOrigins))`)
-	require.Contains(t, string(server), `r.Header.Get("MCP-Protocol-Version") != mcpcalc.DefaultProtocolVersion`)
-	require.Contains(t, string(server), `jsonrpc.MakeErrorResponse(nil, jsonrpc.InvalidRequest, "Invalid request", nil)`)
+	require.Contains(t, string(server), `mux.Handle("GET", "/calc", mcpMethodNotAllowed(allowedOrigins))`)
+	require.Contains(t, string(server), "mcpruntime.ValidateHTTPRequest(r, body,")
+	require.Contains(t, string(server), "mcpruntime.WriteProtocolError")
 	formatterCodec, err := generatedRoot.ReadFile("mcp_formatter/internal/codec/codec.go")
 	require.NoError(t, err)
 	require.Contains(t, string(formatterCodec), "func DecodeRenderPayload(")
@@ -881,7 +403,7 @@ replace goa.design/goa/v3 => %s
 	formatterServer, err := generatedRoot.ReadFile("mcp_formatter/adapter_server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(formatterServer), "mcpcodec.DecodeRenderPayload(arguments)")
-	require.Contains(t, string(formatterServer), "text := string(result)")
+	require.Contains(t, string(formatterServer), "encoded, err := mcpcodec.EncodeRenderResult(result)")
 	_, err = generatedRoot.Stat("mcp_prompts/prompt_provider.go")
 	require.ErrorIs(t, err, os.ErrNotExist)
 	promptServer, err := generatedRoot.ReadFile("mcp_prompts/adapter_server.go")
@@ -905,10 +427,10 @@ replace goa.design/goa/v3 => %s
 	selectorCaller, err := generatedRoot.ReadFile("jsonrpc/mcp_selector/client/caller.go")
 	require.NoError(t, err)
 	require.Contains(t, string(selectorCaller), `mcpselector "generated.local/gen/mcp_selector"`)
-	require.Contains(t, string(selectorCaller), "if err := InitializeSession(ctx, client, clientInfo); err != nil {")
+	require.Contains(t, string(selectorCaller), "mcpruntime.NewHTTPTransport(client.Doer, info,")
 	selectorSession, err := generatedRoot.ReadFile("jsonrpc/mcp_selector/client/session.go")
-	require.NoError(t, err)
-	require.Contains(t, string(selectorSession), "func InitializeSession(")
+	require.ErrorIs(t, err, os.ErrNotExist)
+	require.Empty(t, selectorSession)
 	resourceServer, err := generatedRoot.ReadFile("mcp_resources/adapter_server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(resourceServer), `case "doc://list":`)

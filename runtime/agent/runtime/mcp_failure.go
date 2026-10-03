@@ -17,16 +17,19 @@ import (
 // example when invalid arguments allow the model to correct its call.
 func MCPCallFailure(name tools.Ident, err error) *planner.ToolResult {
 	kind := planner.FailureUnavailable
-	action := planner.RecoveryReplan
+	action := planner.RecoveryFinish
 	if errors.Is(err, context.DeadlineExceeded) {
 		kind = planner.FailureTimeout
 		action = planner.RecoveryFinish
 	} else {
+		var unknown *mcp.OutcomeUnknownError
 		var malformed *mcp.MalformedResponseError
 		var internal *mcp.InternalError
 		var execution *mcp.ToolExecutionError
 		var rpcErr *mcp.Error
 		switch {
+		case errors.As(err, &unknown):
+			kind = planner.FailureTimeout
 		case errors.As(err, &malformed):
 			kind = planner.FailureMalformedResult
 			action = planner.RecoveryFinish
@@ -35,6 +38,7 @@ func MCPCallFailure(name tools.Ident, err error) *planner.ToolResult {
 			action = planner.RecoveryFinish
 		case errors.As(err, &execution):
 			kind = planner.FailureDomainRejection
+			action = planner.RecoveryReplan
 		case errors.As(err, &rpcErr):
 			switch rpcErr.Code {
 			case mcp.JSONRPCInvalidParams:
@@ -42,6 +46,7 @@ func MCPCallFailure(name tools.Ident, err error) *planner.ToolResult {
 				action = planner.RecoveryCorrectCall
 			case mcp.JSONRPCMethodNotFound:
 				kind = planner.FailureInvalidCall
+				action = planner.RecoveryReplan
 			default:
 				kind = planner.FailureInternal
 				action = planner.RecoveryFinish

@@ -255,6 +255,12 @@ func validateStepToolRecord(context string, record stepToolRecord) error {
 	if record.call.ToolCallID == "" {
 		return fmt.Errorf("%s: missing call tool_call_id for %s", context, record.call.Name)
 	}
+	if record.mcpInput != nil {
+		if record.result != nil || record.clarification != nil || record.childSuspension != nil || record.resultPublished || record.resultRecord != nil {
+			return fmt.Errorf("%s: unfinished MCP call has a completed result", context)
+		}
+		return nil
+	}
 	if record.result == nil {
 		return fmt.Errorf("%s: nil tool result for %s", context, record.call.Name)
 	}

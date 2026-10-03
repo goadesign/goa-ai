@@ -364,8 +364,6 @@ type (
 		PathName string
 		// PackageName is the Go package name for generated helper code.
 		PackageName string
-		// AgentPackageHelperAlias is the final helper import name used by the agent package.
-		AgentPackageHelperAlias string
 		// PackageImportPath is the Go import path to that helper package.
 		PackageImportPath string
 		// Dir is the filesystem target for toolset-specific files.

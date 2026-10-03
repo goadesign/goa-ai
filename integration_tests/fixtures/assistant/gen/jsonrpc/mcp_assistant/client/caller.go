@@ -10,112 +10,33 @@ package client
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
-	"sync"
 
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
-// Caller lets the runtime call tools through the generated MCP client.
+// Caller invokes typed tools through the generated stateless MCP client.
 type Caller struct {
-	client       *Client
-	clientInfo   mcpruntime.ClientInfo
-	session      *mcpruntime.HTTPSession
-	initializeMu sync.Mutex
+	client    *Client
+	transport *mcpruntime.HTTPTransport
 }
 
-// NewCaller initializes the MCP session and returns a caller only when the
-// server accepts the generated protocol version and client information.
-func NewCaller(ctx context.Context, client *Client, clientInfo mcpruntime.ClientInfo) (mcpruntime.Caller, error) {
-	if err := InitializeSession(ctx, client, clientInfo); err != nil {
+// NewCaller checks application identity and binds it to each request. It does
+// not contact the server or require a discovery request before invoking a tool.
+func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport) (mcpruntime.Caller, error) {
+	if err := info.Validate(); err != nil {
 		return nil, err
 	}
-	return &Caller{
-		client:     client,
-		clientInfo: clientInfo,
-		session:    client.Doer.(*mcpruntime.HTTPSession),
-	}, nil
+	transport := mcpruntime.NewHTTPTransport(client.Doer, info, map[string][]mcpruntime.HeaderBinding{}, support)
+	return &Caller{client: client, transport: transport}, nil
 }
 
-// CallTool sends one tools/call request and returns its content to the runtime.
+// CallTool sends the tool's exact arguments and returns its structured content.
 func (c *Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-	if err := c.ensureSession(ctx); err != nil {
+	payload := &mcpassistant.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
+	request, err := c.client.BuildToolsCallRequest(ctx, payload)
+	if err != nil {
 		return mcpruntime.CallResponse{}, err
 	}
-	payload := &mcpassistant.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
-	ires, err := c.client.ToolsCall()(ctx, payload)
-	if err != nil {
-		if initializeErr := c.ensureSession(ctx); initializeErr != nil {
-			return mcpruntime.CallResponse{}, errors.Join(
-				callerError(err),
-				fmt.Errorf("start new MCP session: %w", initializeErr),
-			)
-		}
-		return mcpruntime.CallResponse{}, callerError(err)
-	}
-	result := ires.(*mcpassistant.ToolsCallResult)
-	content := make([]mcpruntime.ContentBlock, len(result.Content))
-	for i, item := range result.Content {
-		content[i] = &mcpruntime.TextContent{Text: item.Text}
-	}
-	response := mcpruntime.CallResponse{Content: content}
-	if len(result.StructuredContent) > 0 {
-		var object map[string]json.RawMessage
-		if err := json.Unmarshal(result.StructuredContent, &object); err != nil || object == nil {
-			return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
-				errors.New("structuredContent must be a JSON object"),
-			)
-		}
-		response.StructuredContent = append(json.RawMessage(nil), result.StructuredContent...)
-	}
-	if result.IsError != nil && *result.IsError {
-		return mcpruntime.CallResponse{}, mcpruntime.NewToolExecutionError(response)
-	}
-	if req.Tool == "analyze_sentiment" && len(response.StructuredContent) == 0 {
-		return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
-			errors.New("MCP response is missing structured content"),
-		)
-	}
-	if req.Tool == "extract_keywords" && len(response.StructuredContent) == 0 {
-		return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
-			errors.New("MCP response is missing structured content"),
-		)
-	}
-	if req.Tool == "summarize_text" && len(response.StructuredContent) == 0 {
-		return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
-			errors.New("MCP response is missing structured content"),
-		)
-	}
-	if req.Tool == "search" && len(response.StructuredContent) == 0 {
-		return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
-			errors.New("MCP response is missing structured content"),
-		)
-	}
-	if req.Tool == "execute_code" && len(response.StructuredContent) == 0 {
-		return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
-			errors.New("MCP response is missing structured content"),
-		)
-	}
-	if req.Tool == "process_batch" && len(response.StructuredContent) == 0 {
-		return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
-			errors.New("MCP response is missing structured content"),
-		)
-	}
-	return response, nil
-}
-
-// ensureSession starts one replacement handshake after the server expires the
-// current HTTP session. It never repeats the tool call that observed expiry.
-func (c *Caller) ensureSession(ctx context.Context) error {
-	if c.session.Initialized() {
-		return nil
-	}
-	c.initializeMu.Lock()
-	defer c.initializeMu.Unlock()
-	if c.session.Initialized() {
-		return nil
-	}
-	return InitializeSession(ctx, c.client, c.clientInfo)
+	return c.transport.CallTool(ctx, request.URL.String(), req)
 }

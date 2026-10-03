@@ -33,23 +33,6 @@ func TestMCPBasicConfiguration(t *testing.T) {
 	require.Equal(t, "calculator", mcp.Service.Name)
 }
 
-func TestMCPWithProtocolVersion(t *testing.T) {
-	runMCPDSL(t, func() {
-		API("test", func() {})
-		Service("calculator", func() {
-			MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
-			JSONRPC(func() {
-				POST("/mcp")
-			})
-		})
-	})
-
-	require.Len(t, mcpexpr.Root.MCPServers, 1)
-	mcp := mcpexpr.Root.MCPServers["calculator"]
-	require.NotNil(t, mcp)
-	require.Equal(t, "2025-06-18", mcp.ProtocolVersion)
-}
-
 func TestGoaJSONRPCNotificationRemainsAvailable(t *testing.T) {
 	runMCPDSL(t, func() {
 		API("test", func() {})

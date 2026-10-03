@@ -1,7 +1,5 @@
 scenarios:
   - name: resources_list
-    pre:
-      auto_initialize: true
     steps:
       - name: list
         op: ResourcesList
@@ -13,8 +11,6 @@ scenarios:
               - { uri: "system://info", name: "system_info", mimeType: "application/json" }
 
   - name: resources_read_documents
-    pre:
-      auto_initialize: true
     steps:
       - name: read
         op: ResourcesRead
@@ -26,8 +22,6 @@ scenarios:
               - { uri: "doc://list", mimeType: "application/json", text: '{"items":["guide.md","reference.md"]}' }
 
   - name: resources_read_system_info
-    pre:
-      auto_initialize: true
     steps:
       - name: read
         op: ResourcesRead
@@ -39,8 +33,6 @@ scenarios:
               - { uri: "system://info", mimeType: "application/json", text: '{"name":"assistant","version":"1.0.0"}' }
 
   - name: resources_list_rejects_cursor
-    pre:
-      auto_initialize: true
     steps:
       - name: list
         op: ResourcesList
@@ -50,8 +42,6 @@ scenarios:
           error: { code: -32602 }
 
   - name: resources_read_unknown_uri
-    pre:
-      auto_initialize: true
     steps:
       - name: read
         op: ResourcesRead

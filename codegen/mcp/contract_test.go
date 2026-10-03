@@ -30,9 +30,8 @@ func TestPrepareServices_RejectsUnmappedMCPMethods(t *testing.T) {
 		jsonrpcService(svc, "/rpc"),
 	})
 	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:            "calc",
-		Version:         "1.0.0",
-		ProtocolVersion: "2025-06-18",
+		Name:    "calc",
+		Version: "1.0.0",
 		Tools: []*mcpexpr.ToolExpr{
 			{Name: "add", Method: methods["add"]},
 		},
@@ -54,9 +53,8 @@ func TestPrepareServices_AttachesGeneratedMCPDesign(t *testing.T) {
 		jsonrpcService(svc, "/rpc"),
 	})
 	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:            "calc",
-		Version:         "1.0.0",
-		ProtocolVersion: "2025-06-18",
+		Name:    "calc",
+		Version: "1.0.0",
 		Tools: []*mcpexpr.ToolExpr{
 			{Name: "add", Method: methods["add"]},
 		},
@@ -73,20 +71,11 @@ func TestPrepareServices_AttachesGeneratedMCPDesign(t *testing.T) {
 	require.Same(t, root.Services[1], root.API.JSONRPC.Services[0].ServiceExpr)
 	require.Equal(t, "/rpc", root.API.JSONRPC.Services[0].JSONRPCRoute.Path)
 	mcpService := root.Services[1]
-	initialized := mcpService.Method("notifications/initialized")
-	require.NotNil(t, initialized)
-	initializedPayload := expr.AsObject(initialized.Payload.Type)
-	require.NotNil(t, initializedPayload)
-	require.Empty(t, *initializedPayload)
-	initializedEndpoint := root.API.JSONRPC.Services[0].EndpointFor(initialized)
-	require.NotNil(t, initializedEndpoint)
-	require.True(t, initializedEndpoint.IsJSONRPCNotification())
-	initialize := mcpService.Method("initialize")
-	require.NotNil(t, initialize)
-	initializePayload := expr.AsObject(initialize.Payload.Type)
-	require.NotNil(t, initializePayload.Attribute("capabilities"))
-	require.Nil(t, initializePayload.Attribute("protocolVersion").Validation)
-	require.True(t, initialize.Payload.IsRequired("capabilities"))
+	discover := mcpService.Method("server/discover")
+	require.NotNil(t, discover)
+	require.True(t, discover.Payload.IsRequired("_meta"))
+	require.Nil(t, mcpService.Method("initialize"))
+	require.Nil(t, mcpService.Method("notifications/initialized"))
 	toolsCall := mcpService.Method("tools/call")
 	require.NotNil(t, toolsCall.Result)
 	require.Same(t, toolsCall.Result, toolsCall.StreamingResult)
@@ -95,12 +84,10 @@ func TestPrepareServices_AttachesGeneratedMCPDesign(t *testing.T) {
 	require.Nil(t, mcpService.Method("resources/subscribe"))
 	require.Nil(t, mcpService.Method("resources/unsubscribe"))
 	require.Nil(t, mcpService.Method("events/stream"))
-	ping := mcpService.Method("ping")
-	require.NotNil(t, ping)
-	require.Empty(t, *expr.AsObject(ping.Result.Type))
+	require.Nil(t, mcpService.Method("ping"))
 }
 
-func TestPrepareServices_BuildsMCP202506WireTypes(t *testing.T) {
+func TestPrepareServices_BuildsCurrentMCPWireTypes(t *testing.T) {
 	restore := resetMCPCodegenState(t)
 	defer restore()
 
@@ -226,7 +213,7 @@ func TestBuildAdapterDataRejectsAnExampleThatCannotBeEncodedAsJSON(t *testing.T)
 		},
 	}
 
-	_, err := newAdapterGenerator(
+	_, err := newAdapterGenerator(testSchemaAPI(),
 		svc,
 		mcp,
 	).buildAdapterData()
@@ -249,7 +236,7 @@ func TestStaticPromptsRenderWithoutAProvider(t *testing.T) {
 	}
 
 	files := generateMCPTransport("example.com/assistant/gen", &expr.ServiceExpr{Name: "assistant"}, data)
-	require.Len(t, files, 2)
+	require.Len(t, files, 1)
 	for _, file := range files {
 		require.NotEqual(t, "gen/mcp_assistant/prompt_provider.go", filepath.ToSlash(file.Path))
 	}
@@ -330,7 +317,7 @@ func TestPrepareServices_AcceptedMCPServiceAssignsEveryOriginalEndpoint(t *testi
 	require.False(t, resourcesRead.IsStreaming())
 	require.False(t, resourcesRead.HasMixedResults())
 
-	data, err := newAdapterGenerator(
+	data, err := newAdapterGenerator(testSchemaAPI(),
 		svc,
 		mcp,
 	).buildAdapterData()
@@ -516,4 +503,9 @@ func renderGeneratedFile(t *testing.T, file *gcodegen.File) string {
 func prepareServices(roots []eval.Root) error {
 	_, err := prepareMCPServices(append(roots, mcpexpr.Root))
 	return err
+}
+
+// testSchemaAPI gives isolated generator tests a deterministic example source.
+func testSchemaAPI() *expr.APIExpr {
+	return &expr.APIExpr{RandomizerFactory: expr.NewDeterministicRandomizerFactory()}
 }

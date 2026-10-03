@@ -27,6 +27,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 )
 
 // plannerActivityInvocation is the shared prepared state for one planner
@@ -1388,6 +1389,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// retains the model-authored call and owns any later correction evidence.
 	raw := append(rawjson.Message(nil), req.Payload...)
 	call := ToolCall{
+		MCPContinuation:  req.MCPContinuation,
 		Registry:         req.Registry.Clone(),
 		Name:             req.ToolName,
 		Payload:          raw,
@@ -1462,6 +1464,19 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	}
 	if execResult == nil {
 		return nil, errors.New("tool execution returned nil execution result")
+	}
+	if execResult.mcpInput != nil {
+		if execResult.ToolResult != nil || execResult.Clarification != nil || execResult.childSuspension != nil {
+			return nil, errors.New("MCP input cannot accompany a completed tool result")
+		}
+		if err := execResult.mcpInput.Validate(mcp.InputSupport{Form: true, URL: true}); err != nil {
+			return nil, err
+		}
+		out := &ToolOutput{MCPInput: execResult.mcpInput}
+		if err := validateToolActivityOutputBudget(out); err != nil {
+			return nil, outputcontract.NewWithOrigin(err, outputcontract.OriginTool)
+		}
+		return out, nil
 	}
 	// Enrich or build telemetry via registration builder when available.
 	if reg.TelemetryBuilder != nil {

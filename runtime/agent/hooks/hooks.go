@@ -78,6 +78,9 @@ const (
 	// AwaitQuestions fires when the planner requests structured multiple-choice user input.
 	AwaitQuestions EventType = "await_questions"
 
+	// AwaitMCPInput fires when an unfinished remote call requests host input.
+	AwaitMCPInput EventType = "await_mcp_input"
+
 	// AwaitConfirmation fires when the runtime requests operator confirmation.
 	AwaitConfirmation EventType = "await_confirmation"
 

@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -445,10 +446,12 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			queue:            queue,
 			expectedChildren: e.expectedChildren,
 		}
-		if err := e.publishToolCallScheduled(ctx, call, queue); err != nil {
-			executionErr = errors.Join(executionErr, err)
-			b.scheduleByID[call.ToolCallID] = state
-			continue
+		if call.MCPContinuation == nil {
+			if err := e.publishToolCallScheduled(ctx, call, queue); err != nil {
+				executionErr = errors.Join(executionErr, err)
+				b.scheduleByID[call.ToolCallID] = state
+				continue
+			}
 		}
 		state.published = true
 		b.scheduleByID[call.ToolCallID] = state
@@ -556,6 +559,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 
 		// Activity path (service-backed tools).
 		toolInput := ToolInput{
+			MCPContinuation:  call.MCPContinuation,
 			Registry:         call.Registry.Clone(),
 			AgentID:          e.agentID,
 			RunID:            e.runID,
@@ -569,6 +573,9 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			ParentToolCallID: call.ParentToolCallID,
 		}
 		callOpts := computeToolActivityOptions(wfCtx, e.toolActOptions, e.finishBy)
+		if hasTS && ts.ActivityRetryPolicy != nil {
+			callOpts.RetryPolicy = *ts.ActivityRetryPolicy
+		}
 		if callOpts.Queue == "" && hasTS && !ts.Inline && ts.TaskQueue != "" {
 			callOpts.Queue = ts.TaskQueue
 		}
@@ -692,6 +699,15 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 		return e.synthesizeUnknownToolResult(ctx, info.call, duration)
 	}
 
+	if out.MCPInput != nil {
+		if len(out.Payload) != 0 || len(out.ServerData) != 0 || out.Bounds != nil || out.Telemetry != nil || out.Failure != nil || out.Clarification != nil {
+			return nil, errors.New("MCP input cannot accompany a completed activity result")
+		}
+		if err := out.MCPInput.Validate(mcp.InputSupport{Form: true, URL: true}); err != nil {
+			return nil, err
+		}
+		return &ToolExecutionResult{mcpInput: out.MCPInput, mcpToolCallID: info.call.ToolCallID, duration: duration}, nil
+	}
 	var decoded any
 	if out.Failure == nil && hasNonNullJSON(out.Payload.RawMessage()) {
 		v, err := spec.Result.Codec.FromJSON(out.Payload)

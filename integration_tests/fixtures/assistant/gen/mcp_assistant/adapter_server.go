@@ -13,146 +13,138 @@ import (
 
 	assistant "example.com/assistant/gen/assistant"
 	mcpcodec "example.com/assistant/gen/mcp_assistant/internal/codec"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	mcpruntime "goa.design/goa-ai/runtime/mcp"
 	goa "goa.design/goa/v3/pkg"
 )
 
-// MCPAdapter core: types, options, constructor, helpers
-
+// MCPAdapter calls the authored Goa service after the HTTP binding and generated
+// argument codecs accept the request. It returns only this release's MCP contract.
 type (
-	// MCPAdapter translates MCP protocol requests into calls to the authored
-	// Goa service.
+	// MCPAdapter translates protocol requests into authored service operations.
 	MCPAdapter struct {
 		service assistant.Service
-		opts    *MCPAdapterOptions
+		opts    MCPAdapterOptions
 	}
-
-	// MCPAdapterOptions allows customizing adapter behavior.
+	// MCPAdapterOptions configures how application errors are exposed to clients.
 	MCPAdapterOptions struct {
-		// Logger is an optional hook called with internal adapter events.
-		Logger func(ctx context.Context, event string, details any)
-		// ErrorMapper replaces a service error before the MCP client sees it.
+		// ErrorMapper replaces a service error with an application-approved error.
+		// It must return a non-nil error; returning nil violates this contract.
 		ErrorMapper func(error) error
 	}
 )
 
-// NewMCPAdapter returns an MCP service that calls the Goa service implementation.
+// NewMCPAdapter connects an already-built service to the MCP protocol methods.
 func NewMCPAdapter(service assistant.Service, opts *MCPAdapterOptions) *MCPAdapter {
-	return &MCPAdapter{
-		service: service,
-		opts:    opts,
+	adapter := &MCPAdapter{service: service}
+	if opts != nil {
+		adapter.opts = *opts
 	}
+	return adapter
 }
 
-func (a *MCPAdapter) log(ctx context.Context, event string, details any) {
-	if a != nil && a.opts != nil && a.opts.Logger != nil {
-		a.opts.Logger(ctx, event, details)
-	}
-}
-
-// mapError lets the application replace a service error before it is returned.
+// mapError applies the host's error disclosure policy to a service failure.
 func (a *MCPAdapter) mapError(err error) error {
-	if a != nil && a.opts != nil && a.opts.ErrorMapper != nil && err != nil {
-		if m := a.opts.ErrorMapper(err); m != nil {
-			return m
-		}
+	if a.opts.ErrorMapper != nil {
+		return a.opts.ErrorMapper(err)
 	}
 	return err
 }
 
-func stringPtr(s string) *string {
-	return &s
+func stringPtr(value string) *string {
+	return &value
 }
 func boolPtr(value bool) *bool {
 	return &value
 }
 
-// Initialize handles the MCP initialize request.
-func (a *MCPAdapter) Initialize(_ context.Context, _ *InitializePayload) (*InitializeResult, error) {
-	serverInfo := &ServerInfo{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-	}
+// resultMeta identifies the server software on each independent response.
+func resultMeta() json.RawMessage {
+	return json.RawMessage("{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"assistant-mcp\",\"version\":\"1.0.0\"}}")
+}
 
+// ServerDiscover describes declared capabilities without creating client state.
+func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*DiscoverResult, error) {
+	_, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.server/discover")
+	defer span.End()
 	capabilities := &ServerCapabilities{}
 	capabilities.Tools = &ToolsCapability{}
 	capabilities.Resources = &ResourcesCapability{}
 	capabilities.Prompts = &PromptsCapability{}
-
-	return &InitializeResult{
-		ProtocolVersion: DefaultProtocolVersion,
-		ServerInfo:      serverInfo,
-		Capabilities:    capabilities,
+	return &DiscoverResult{
+		ResultType:        "complete",
+		Meta:              resultMeta(),
+		SupportedVersions: []string{mcpruntime.ProtocolVersion},
+		Capabilities:      capabilities,
+		TTLMs:             0,
+		CacheScope:        "private",
 	}, nil
 }
 
-// NotificationsInitialized accepts the notification sent after initialization.
-// The HTTP transport tracks setup separately for each client session.
-func (a *MCPAdapter) NotificationsInitialized(_ context.Context) error {
-	return nil
-}
-
-// Ping handles the MCP ping request.
-func (a *MCPAdapter) Ping(ctx context.Context) (*PingResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "ping"})
-	res := &PingResult{}
-	a.log(ctx, "response", map[string]any{"method": "ping"})
-	return res, nil
-}
-
-// Tools handling
-
-// ToolsList returns the tools declared in the Goa design.
+// ToolsList returns the stable catalog declared by the design. A supplied
+// cursor is invalid because this generated catalog has only one page.
 func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*ToolsListResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "tools/list"})
-	if p.Params != nil && p.Params.Cursor != nil {
-		return nil, goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
+	_, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/list")
+	defer span.End()
+	if p.Cursor != nil {
+		failure := goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
+		span.RecordError(failure)
+		span.SetStatus(codes.Error, failure.Error())
+		return nil, failure
 	}
-	tools := []*ToolInfo{
-		{
-			Name:         "analyze_sentiment",
-			Description:  stringPtr("Analyze sentiment of text"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"sentiment\":{\"type\":\"string\",\"description\":\"Detected sentiment\"}},\"additionalProperties\":false}"),
+	return &ToolsListResult{
+		ResultType: "complete",
+		Meta:       resultMeta(),
+		TTLMs:      0,
+		CacheScope: "private",
+		Tools: []*ToolInfo{
+			{
+				Name:         "analyze_sentiment",
+				Description:  stringPtr("Analyze sentiment of text"),
+				InputSchema:  json.RawMessage("{\"$defs\":{\"AnalyzeSentimentPayload\":{\"properties\":{\"text\":{\"description\":\"Input text to analyze\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"AnalyzeSentimentPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text to analyze\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"AnalyzeSentimentPayload\",\"type\":\"object\"}"),
+				OutputSchema: json.RawMessage("{\"$defs\":{\"AnalyzeSentimentResult\":{\"properties\":{\"sentiment\":{\"description\":\"Detected sentiment\",\"type\":\"string\"}},\"title\":\"AnalyzeSentimentResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"sentiment\":{\"description\":\"Detected sentiment\",\"type\":\"string\"}},\"title\":\"AnalyzeSentimentResult\",\"type\":\"object\"}"),
+			},
+			{
+				Name:         "execute_code",
+				Description:  stringPtr("Execute code"),
+				InputSchema:  json.RawMessage("{\"$defs\":{\"ExecuteCodePayload\":{\"properties\":{\"code\":{\"description\":\"Code to execute\",\"type\":\"string\"},\"language\":{\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"title\":\"ExecuteCodePayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"code\":{\"description\":\"Code to execute\",\"type\":\"string\"},\"language\":{\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"title\":\"ExecuteCodePayload\",\"type\":\"object\"}"),
+				OutputSchema: json.RawMessage("{\"$defs\":{\"ExecuteCodeResult\":{\"properties\":{\"output\":{\"description\":\"Execution output\",\"type\":\"string\"}},\"title\":\"ExecuteCodeResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"output\":{\"description\":\"Execution output\",\"type\":\"string\"}},\"title\":\"ExecuteCodeResult\",\"type\":\"object\"}"),
+			},
+			{
+				Name:         "extract_keywords",
+				Description:  stringPtr("Extract keywords from text"),
+				InputSchema:  json.RawMessage("{\"$defs\":{\"ExtractKeywordsPayload\":{\"properties\":{\"text\":{\"description\":\"Input text\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"ExtractKeywordsPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"ExtractKeywordsPayload\",\"type\":\"object\"}"),
+				OutputSchema: json.RawMessage("{\"$defs\":{\"ExtractKeywordsResult\":{\"properties\":{\"keywords\":{\"description\":\"Extracted keywords\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"ExtractKeywordsResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"keywords\":{\"description\":\"Extracted keywords\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"ExtractKeywordsResult\",\"type\":\"object\"}"),
+			},
+			{
+				Name:         "process_batch",
+				Description:  stringPtr("Process a batch of items"),
+				InputSchema:  json.RawMessage("{\"$defs\":{\"ProcessBatchPayload\":{\"properties\":{\"blob\":{\"description\":\"Base64 blob\",\"type\":\"string\"},\"format\":{\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"description\":\"Items to process\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"mimeType\":{\"description\":\"MIME type\",\"type\":\"string\"},\"uri\":{\"description\":\"Resource URI\",\"type\":\"string\"}},\"required\":[\"items\"],\"title\":\"ProcessBatchPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"blob\":{\"description\":\"Base64 blob\",\"type\":\"string\"},\"format\":{\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"description\":\"Items to process\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"mimeType\":{\"description\":\"MIME type\",\"type\":\"string\"},\"uri\":{\"description\":\"Resource URI\",\"type\":\"string\"}},\"required\":[\"items\"],\"title\":\"ProcessBatchPayload\",\"type\":\"object\"}"),
+				OutputSchema: json.RawMessage("{\"$defs\":{\"ProcessBatchResult\":{\"properties\":{\"ok\":{\"description\":\"Operation status\",\"type\":\"boolean\"}},\"title\":\"ProcessBatchResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"ok\":{\"description\":\"Operation status\",\"type\":\"boolean\"}},\"title\":\"ProcessBatchResult\",\"type\":\"object\"}"),
+			},
+			{
+				Name:         "search",
+				Description:  stringPtr("Search knowledge base"),
+				InputSchema:  json.RawMessage("{\"$defs\":{\"SearchPayload\":{\"properties\":{\"limit\":{\"description\":\"Maximum number of results\",\"format\":\"int64\",\"type\":\"integer\"},\"query\":{\"description\":\"Search query\",\"type\":\"string\"}},\"required\":[\"query\"],\"title\":\"SearchPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"limit\":{\"description\":\"Maximum number of results\",\"format\":\"int64\",\"type\":\"integer\"},\"query\":{\"description\":\"Search query\",\"type\":\"string\"}},\"required\":[\"query\"],\"title\":\"SearchPayload\",\"type\":\"object\"}"),
+				OutputSchema: json.RawMessage("{\"$defs\":{\"SearchResult\":{\"properties\":{\"results\":{\"description\":\"Search results\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"SearchResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"results\":{\"description\":\"Search results\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"SearchResult\",\"type\":\"object\"}"),
+			},
+			{
+				Name:         "summarize_text",
+				Description:  stringPtr("Summarize text"),
+				InputSchema:  json.RawMessage("{\"$defs\":{\"SummarizeTextPayload\":{\"properties\":{\"text\":{\"description\":\"Input text to summarize\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"SummarizeTextPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text to summarize\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"SummarizeTextPayload\",\"type\":\"object\"}"),
+				OutputSchema: json.RawMessage("{\"$defs\":{\"SummarizeTextResult\":{\"properties\":{\"summary\":{\"description\":\"Summary\",\"type\":\"string\"}},\"title\":\"SummarizeTextResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"summary\":{\"description\":\"Summary\",\"type\":\"string\"}},\"title\":\"SummarizeTextResult\",\"type\":\"object\"}"),
+			},
 		},
-		{
-			Name:         "extract_keywords",
-			Description:  stringPtr("Extract keywords from text"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"keywords\":{\"type\":\"array\",\"description\":\"Extracted keywords\",\"items\":{\"type\":\"string\"}}},\"additionalProperties\":false}"),
-		},
-		{
-			Name:         "summarize_text",
-			Description:  stringPtr("Summarize text"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"summary\":{\"type\":\"string\",\"description\":\"Summary\"}},\"additionalProperties\":false}"),
-		},
-		{
-			Name:         "search",
-			Description:  stringPtr("Search knowledge base"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"description\":\"Search results\",\"items\":{\"type\":\"string\"}}},\"additionalProperties\":false}"),
-		},
-		{
-			Name:         "execute_code",
-			Description:  stringPtr("Execute code"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"output\":{\"type\":\"string\",\"description\":\"Execution output\"}},\"additionalProperties\":false}"),
-		},
-		{
-			Name:         "process_batch",
-			Description:  stringPtr("Process a batch of items"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"ok\":{\"type\":\"boolean\",\"description\":\"Operation status\"}},\"additionalProperties\":false}"),
-		},
-	}
-	res := &ToolsListResult{Tools: tools}
-	a.log(ctx, "response", map[string]any{"method": "tools/list"})
-	return res, nil
+	}, nil
 }
 
-// toolCallError returns a service failure as an MCP tool result.
+// toolCallError lets the client correct a recognized tool's arguments or
+// observe an application failure without treating it as a protocol failure.
 func toolCallError(message string) *ToolsCallResult {
 	return &ToolsCallResult{
+		ResultType: "complete",
+		Meta:       resultMeta(),
 		Content: []*ContentItem{
 			{Type: "text", Text: message},
 		},
@@ -160,9 +152,11 @@ func toolCallError(message string) *ToolsCallResult {
 	}
 }
 
-// ToolsCall validates the arguments and calls the Goa method for the named tool.
+// ToolsCall decodes the named tool's arguments through its generated codec,
+// calls its service, and encodes one structured result through that same contract.
 func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "tools/call", "name": p.Name})
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/call")
+	defer span.End()
 	switch p.Name {
 	case "analyze_sentiment":
 		arguments := p.Arguments
@@ -171,103 +165,27 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		payload, err := mcpcodec.DecodeAnalyzeSentimentPayload(arguments)
 		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
 		result, err := a.service.AnalyzeSentiment(ctx, payload)
 		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
+			failure := a.mapError(err)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return toolCallError(failure.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeAnalyzeSentimentResult(result)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
+		return &ToolsCallResult{
+			ResultType:        "complete",
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
-	case "extract_keywords":
-		arguments := p.Arguments
-		if len(arguments) == 0 {
-			arguments = json.RawMessage("{}")
-		}
-		payload, err := mcpcodec.DecodeExtractKeywordsPayload(arguments)
-		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
-		}
-		result, err := a.service.ExtractKeywords(ctx, payload)
-		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
-		}
-		encoded, err := mcpcodec.EncodeExtractKeywordsResult(result)
-		if err != nil {
-			return nil, goa.PermanentError("internal_error", "%s", err.Error())
-		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
-			StructuredContent: json.RawMessage(encoded),
-		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
-	case "summarize_text":
-		arguments := p.Arguments
-		if len(arguments) == 0 {
-			arguments = json.RawMessage("{}")
-		}
-		payload, err := mcpcodec.DecodeSummarizeTextPayload(arguments)
-		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
-		}
-		result, err := a.service.SummarizeText(ctx, payload)
-		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
-		}
-		encoded, err := mcpcodec.EncodeSummarizeTextResult(result)
-		if err != nil {
-			return nil, goa.PermanentError("internal_error", "%s", err.Error())
-		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
-			StructuredContent: json.RawMessage(encoded),
-		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
-	case "search":
-		arguments := p.Arguments
-		if len(arguments) == 0 {
-			arguments = json.RawMessage("{}")
-		}
-		payload, err := mcpcodec.DecodeSearchPayload(arguments)
-		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
-		}
-		result, err := a.service.Search(ctx, payload)
-		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
-		}
-		encoded, err := mcpcodec.EncodeSearchResult(result)
-		if err != nil {
-			return nil, goa.PermanentError("internal_error", "%s", err.Error())
-		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
-			StructuredContent: json.RawMessage(encoded),
-		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
+		}, nil
 	case "execute_code":
 		arguments := p.Arguments
 		if len(arguments) == 0 {
@@ -275,25 +193,55 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		payload, err := mcpcodec.DecodeExecuteCodePayload(arguments)
 		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
 		result, err := a.service.ExecuteCode(ctx, payload)
 		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
+			failure := a.mapError(err)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return toolCallError(failure.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeExecuteCodeResult(result)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
+		return &ToolsCallResult{
+			ResultType:        "complete",
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
+		}, nil
+	case "extract_keywords":
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
 		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
+		payload, err := mcpcodec.DecodeExtractKeywordsPayload(arguments)
+		if err != nil {
+			return toolCallError("invalid arguments: " + err.Error()), nil
+		}
+		result, err := a.service.ExtractKeywords(ctx, payload)
+		if err != nil {
+			failure := a.mapError(err)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return toolCallError(failure.Error()), nil
+		}
+		encoded, err := mcpcodec.EncodeExtractKeywordsResult(result)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		return &ToolsCallResult{
+			ResultType:        "complete",
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
+			StructuredContent: json.RawMessage(encoded),
+		}, nil
 	case "process_batch":
 		arguments := p.Arguments
 		if len(arguments) == 0 {
@@ -301,25 +249,83 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		payload, err := mcpcodec.DecodeProcessBatchPayload(arguments)
 		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
 		result, err := a.service.ProcessBatch(ctx, payload)
 		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
+			failure := a.mapError(err)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return toolCallError(failure.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeProcessBatchResult(result)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
+		return &ToolsCallResult{
+			ResultType:        "complete",
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
+		}, nil
+	case "search":
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
 		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
+		payload, err := mcpcodec.DecodeSearchPayload(arguments)
+		if err != nil {
+			return toolCallError("invalid arguments: " + err.Error()), nil
+		}
+		result, err := a.service.Search(ctx, payload)
+		if err != nil {
+			failure := a.mapError(err)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return toolCallError(failure.Error()), nil
+		}
+		encoded, err := mcpcodec.EncodeSearchResult(result)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		return &ToolsCallResult{
+			ResultType:        "complete",
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
+			StructuredContent: json.RawMessage(encoded),
+		}, nil
+	case "summarize_text":
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
+		}
+		payload, err := mcpcodec.DecodeSummarizeTextPayload(arguments)
+		if err != nil {
+			return toolCallError("invalid arguments: " + err.Error()), nil
+		}
+		result, err := a.service.SummarizeText(ctx, payload)
+		if err != nil {
+			failure := a.mapError(err)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return toolCallError(failure.Error()), nil
+		}
+		encoded, err := mcpcodec.EncodeSummarizeTextResult(result)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		return &ToolsCallResult{
+			ResultType:        "complete",
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
+			StructuredContent: json.RawMessage(encoded),
+		}, nil
 	default:
 		return nil, goa.PermanentError("invalid_params", "unknown tool: %s", p.Name)
 	}
@@ -329,59 +335,79 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 
 // ResourcesList returns the fixed resources declared in the Goa design.
 func (a *MCPAdapter) ResourcesList(ctx context.Context, p *ResourcesListPayload) (*ResourcesListResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "resources/list"})
-	if p.Params != nil && p.Params.Cursor != nil {
-		return nil, goa.PermanentError("invalid_params", "resources/list does not accept a cursor")
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/list")
+	defer span.End()
+
+	if p.Cursor != nil {
+		failure := goa.PermanentError("invalid_params", "resources/list does not accept a cursor")
+		span.RecordError(failure)
+		span.SetStatus(codes.Error, failure.Error())
+		return nil, failure
 	}
 	resources := []*ResourceInfo{
 		{URI: "doc://list", Name: "documents", Description: stringPtr("List available documents"), MimeType: stringPtr("application/json")},
 		{URI: "system://info", Name: "system_info", Description: stringPtr("Return system info"), MimeType: stringPtr("application/json")},
 	}
-	res := &ResourcesListResult{Resources: resources}
-	a.log(ctx, "response", map[string]any{"method": "resources/list"})
+	res := &ResourcesListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Resources: resources}
+
 	return res, nil
 }
 
 // ResourcesRead calls the Goa method that owns the requested resource.
 func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload) (*ResourcesReadResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "resources/read", "uri": p.URI})
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/read")
+	defer span.End()
+
 	switch p.URI {
 	case "doc://list":
 		result, err := a.service.ListDocuments(ctx)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, a.mapError(err)
 		}
 		encoded, err := mcpcodec.EncodeListDocumentsResult(result)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
 		text := string(encoded)
 		res := &ResourcesReadResult{
+			ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
 			Contents: []*ResourceContent{
 				{URI: p.URI, MimeType: stringPtr("application/json"), Text: text},
 			},
 		}
-		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": p.URI})
+
 		return res, nil
 	case "system://info":
 		result, err := a.service.SystemInfo(ctx)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, a.mapError(err)
 		}
 		encoded, err := mcpcodec.EncodeSystemInfoResult(result)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
 		text := string(encoded)
 		res := &ResourcesReadResult{
+			ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
 			Contents: []*ResourceContent{
 				{URI: p.URI, MimeType: stringPtr("application/json"), Text: text},
 			},
 		}
-		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": p.URI})
+
 		return res, nil
 	default:
-		return nil, goa.PermanentError("invalid_params", "Unknown resource: %s", p.URI)
+		failure := goa.PermanentError("invalid_params", "unknown resource: %s", p.URI)
+		span.RecordError(failure)
+		span.SetStatus(codes.Error, failure.Error())
+		return nil, failure
 	}
 }
 
@@ -389,27 +415,37 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 
 // PromptsList returns the fixed prompts declared in the Goa design.
 func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*PromptsListResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "prompts/list"})
-	if p.Params != nil && p.Params.Cursor != nil {
-		return nil, goa.PermanentError("invalid_params", "prompts/list does not accept a cursor")
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/list")
+	defer span.End()
+
+	if p.Cursor != nil {
+		failure := goa.PermanentError("invalid_params", "prompts/list does not accept a cursor")
+		span.RecordError(failure)
+		span.SetStatus(codes.Error, failure.Error())
+		return nil, failure
 	}
 	prompts := []*PromptInfo{
 
 		{Name: "code_review", Description: stringPtr("Simple code review prompt")},
 	}
-	res := &PromptsListResult{Prompts: prompts}
-	a.log(ctx, "response", map[string]any{"method": "prompts/list"})
+	res := &PromptsListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Prompts: prompts}
+
 	return res, nil
 }
 
 // PromptsGet returns the fixed messages for the named prompt.
 func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*PromptsGetResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "prompts/get", "name": p.Name})
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/get")
+	defer span.End()
+
 	switch p.Name {
 
 	case "code_review":
 		if len(p.Arguments) > 0 {
-			return nil, goa.PermanentError("invalid_params", "prompt %q does not accept arguments", p.Name)
+			failure := goa.PermanentError("invalid_params", "prompt %q does not accept arguments", p.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
 		}
 		msgs := make([]*PromptMessage, 0, 1)
 
@@ -422,12 +458,16 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 		})
 
 		res := &PromptsGetResult{
+			ResultType: "complete", Meta: resultMeta(),
 			Description: stringPtr("Simple code review prompt"),
 			Messages:    msgs,
 		}
-		a.log(ctx, "response", map[string]any{"method": "prompts/get", "name": p.Name})
+
 		return res, nil
 
 	}
-	return nil, goa.PermanentError("invalid_params", "Unknown prompt: %s", p.Name)
+	failure := goa.PermanentError("invalid_params", "unknown prompt: %s", p.Name)
+	span.RecordError(failure)
+	span.SetStatus(codes.Error, failure.Error())
+	return nil, failure
 }

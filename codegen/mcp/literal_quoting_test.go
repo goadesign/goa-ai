@@ -53,7 +53,7 @@ func TestGeneratedAdapterQuotesStaticDSLText(t *testing.T) {
 			},
 		},
 	}
-	generator := newAdapterGenerator(svc, mcp)
+	generator := newAdapterGenerator(testSchemaAPI(), svc, mcp)
 	tools, err := generator.buildToolAdapters()
 	require.NoError(t, err)
 	require.Len(t, tools, 1)

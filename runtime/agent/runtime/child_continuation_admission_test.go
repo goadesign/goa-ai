@@ -362,10 +362,10 @@ func TestChildContinuationPublicClientKeepsRunningParent(t *testing.T) {
 	require.Equal(t, stored, unchanged.Data)
 }
 
-// The fixed schema-v9 bytes come from the predecessor layout, not this test's
-// encoder. They are a synthetic compatibility fixture, not deployed history.
+// The fixed current-version bytes preserve an earlier run's execution parent
+// while a successor supplies its own parent. No deployed data is used.
 func TestRetainedChildSuspensionKeepsHistoricalParentBytes(t *testing.T) {
-	data, err := os.ReadFile("testdata/retained_child_suspension_v9.json")
+	data, err := os.ReadFile("testdata/retained_child_suspension_v10.json")
 	require.NoError(t, err)
 	var envelope api.RunSuspension
 	require.NoError(t, json.Unmarshal(data, &envelope))
@@ -393,4 +393,17 @@ func TestRetainedChildSuspensionKeepsHistoricalParentBytes(t *testing.T) {
 	missing := &RunInput{AgentID: admissionChildAgentID, RunID: "child-2", SessionID: "session-1", TurnID: "turn-2", Continuation: input.Continuation}
 	_, err = prepareContinuation(missing, definition)
 	require.ErrorContains(t, err, "explicit execution parent")
+}
+
+// Version-9 suspensions cannot be resumed after the breaking protocol upgrade.
+func TestStoredSuspensionRejectsPreviousVersion(t *testing.T) {
+	data, err := os.ReadFile("testdata/retained_child_suspension_v9.json")
+	require.NoError(t, err)
+	var envelope api.RunSuspension
+	require.NoError(t, json.Unmarshal(data, &envelope))
+	_, err = validateStoredRunSuspension(session.RunSuspension{ID: envelope.ID, Data: data}, session.RunMeta{
+		AgentID: admissionChildAgentID, RunID: "child-0", SessionID: "session-1", ParentRunID: "parent-0", Status: session.RunStatusSuspended,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "version")
 }

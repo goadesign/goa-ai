@@ -6,9 +6,11 @@ package bootstrap
 import (
 	"context"
 	"flag"
-	"fmt"
 	scribe "goa.design/goa-ai/gen/alpha/agents/scribe"
+	core "goa.design/goa-ai/gen/alpha/agents/scribe/core"
+	core2 "goa.design/goa-ai/gen/calc/toolsets/core"
 	plannerscribe "goa.design/goa-ai/internal/agents/scribe/planner"
+	"goa.design/goa-ai/runtime/agent/engine"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/storage"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
@@ -26,25 +28,34 @@ func New(ctx context.Context, store storage.Store) (*agentsruntime.Runtime, func
 	rt := agentsruntime.New(store)
 	cleanup := func() {}
 
-	// Register agents with example planners. Replace with your own planner impls.
+	// Register each executable once. Agent definitions may share these bindings.
+	{
+		caller, err := mcpruntime.NewHTTPCaller(mcpruntime.HTTPOptions{
+			Endpoint:   *mcpCalcCoreEndpoint,
+			ClientInfo: mcpruntime.ClientInfo{Name: "alpha", Version: "1.2.3"},
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		exec := core.NewMCPExecutor(caller)
+		registration := agentsruntime.ToolsetRegistration{
+			Name:                "core",
+			ActivityRetryPolicy: &engine.RetryPolicy{MaxAttempts: 1},
+			Specs:               core2.Specs(),
+			ToolMetadataLookup:  core2.MetadataByName,
+			Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
+				meta := agentsruntime.ToolCallMetaFromCall(*call)
+				return exec.Execute(ctx, &meta, call)
+			},
+		}
+		if err := rt.RegisterToolset(registration); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	// Register agents with example planners. Replace with your own planner implementations.
 	{
 		cfg := scribe.ScribeAgentConfig{Planner: plannerscribe.New()}
-		// Configure MCP callers for external toolsets.
-		cfg.MCPCallers = map[string]mcpruntime.Caller{}
-		if mcpCalcCoreEndpoint != nil && *mcpCalcCoreEndpoint != "" {
-			caller, err := mcpruntime.NewHTTPCaller(ctx, mcpruntime.HTTPOptions{
-				Endpoint:   *mcpCalcCoreEndpoint,
-				ClientInfo: mcpruntime.ClientInfo{Name: "alpha", Version: "1.2.3"},
-			})
-			if err != nil {
-				return nil, nil, err
-			}
-			cfg.MCPCallers[scribe.ScribeCalcServiceCoreSuiteToolsetID] = caller
-		} else {
-			cfg.MCPCallers[scribe.ScribeCalcServiceCoreSuiteToolsetID] = mcpruntime.CallerFunc(func(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-				return mcpruntime.CallResponse{}, fmt.Errorf("configure MCP caller for %s via -mcp-calc-core-endpoint flag", "core")
-			})
-		}
 		if err := scribe.RegisterScribeAgent(ctx, rt, cfg); err != nil {
 			return nil, nil, err
 		}

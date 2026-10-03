@@ -20,7 +20,7 @@ var _ = API("assistant", func() {
 var _ = Service("assistant", func() {
 	Description("AI Assistant service for the supported MCP protocol surface")
 
-	MCP("assistant-mcp", "1.0.0", ProtocolVersion("2025-06-18"))
+	MCP("assistant-mcp", "1.0.0")
 
 	// Keep the design minimal; integration tests exercise MCP protocol handlers.
 	JSONRPC(func() {

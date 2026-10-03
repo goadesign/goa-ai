@@ -13,9 +13,6 @@ import (
 // buildMCPTypes creates all MCP protocol type definitions
 func (b *mcpExprBuilder) buildMCPTypes() {
 	// Core types
-	b.getOrCreateType("ClientInfo", b.buildClientInfoType)
-	b.getOrCreateType("ServerInfo", b.buildServerInfoType)
-	b.getOrCreateType("ClientCapabilities", b.buildClientCapabilitiesType)
 	b.getOrCreateType("ServerCapabilities", b.buildServerCapabilitiesType)
 
 	// Tool types
@@ -41,90 +38,14 @@ func (b *mcpExprBuilder) buildMCPTypes() {
 
 // Core type builders
 
-func (b *mcpExprBuilder) buildInitializePayloadType() *expr.AttributeExpr {
+// buildDiscoverResultType gives callers the server's static capability catalog.
+func (b *mcpExprBuilder) buildDiscoverResultType() *expr.AttributeExpr {
 	return &expr.AttributeExpr{
 		Type: &expr.Object{
-			{Name: "protocolVersion", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "MCP protocol version",
-			}},
-			{Name: "clientInfo", Attribute: &expr.AttributeExpr{
-				Type:        b.getOrCreateType("ClientInfo", b.buildClientInfoType),
-				Description: "Client information",
-			}},
-			{Name: "capabilities", Attribute: &expr.AttributeExpr{
-				Type:        b.getOrCreateType("ClientCapabilities", b.buildClientCapabilitiesType),
-				Description: "Client capabilities",
-			}},
+			{Name: "supportedVersions", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: expr.String}}, Description: "Protocol revisions implemented by this release"}},
+			{Name: "capabilities", Attribute: &expr.AttributeExpr{Type: b.getOrCreateType("ServerCapabilities", b.buildServerCapabilitiesType), Description: "Operations declared by this service"}},
 		},
-		Validation: &expr.ValidationExpr{
-			Required: []string{"protocolVersion", "clientInfo", "capabilities"},
-		},
-	}
-}
-
-func (b *mcpExprBuilder) buildInitializeResultType() *expr.AttributeExpr {
-	return &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "protocolVersion", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "MCP protocol version",
-			}},
-			{Name: "capabilities", Attribute: &expr.AttributeExpr{
-				Type:        b.getOrCreateType("ServerCapabilities", b.buildServerCapabilitiesType),
-				Description: "Server capabilities",
-			}},
-			{Name: "serverInfo", Attribute: &expr.AttributeExpr{
-				Type:        b.getOrCreateType("ServerInfo", b.buildServerInfoType),
-				Description: "Server information",
-			}},
-		},
-		Validation: &expr.ValidationExpr{
-			Required: []string{"protocolVersion", "capabilities", "serverInfo"},
-		},
-	}
-}
-
-func (b *mcpExprBuilder) buildClientInfoType() *expr.AttributeExpr {
-	return &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "name", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Client name",
-			}},
-			{Name: "version", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Client version",
-			}},
-		},
-		Validation: &expr.ValidationExpr{
-			Required: []string{"name", "version"},
-		},
-	}
-}
-
-func (b *mcpExprBuilder) buildServerInfoType() *expr.AttributeExpr {
-	return &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "name", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Server name",
-			}},
-			{Name: "version", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Server version",
-			}},
-		},
-		Validation: &expr.ValidationExpr{
-			Required: []string{"name", "version"},
-		},
-	}
-}
-
-func (b *mcpExprBuilder) buildClientCapabilitiesType() *expr.AttributeExpr {
-	return &expr.AttributeExpr{
-		Type:        &expr.Object{},
-		Description: "Capabilities implemented by this client",
+		Validation: &expr.ValidationExpr{Required: []string{"supportedVersions", "capabilities"}},
 	}
 }
 
@@ -165,38 +86,18 @@ func (b *mcpExprBuilder) buildServerCapabilitiesType() *expr.AttributeExpr {
 	}
 }
 
-func (b *mcpExprBuilder) buildPingResultType() *expr.AttributeExpr {
-	return &expr.AttributeExpr{Type: &expr.Object{}}
-}
-
 // Tool type builders
 
 func (b *mcpExprBuilder) buildToolsListPayloadType() *expr.AttributeExpr {
 	return b.buildListPayloadType()
 }
 
-// buildListPayloadType keeps the service payload distinct from the optional
-// JSON-RPC params object. Goa can then omit params or decode the object when it
-// is present.
+// buildListPayloadType keeps pagination and per-request metadata in the actual
+// JSON-RPC params object. Static catalogs reject any supplied cursor.
 func (b *mcpExprBuilder) buildListPayloadType() *expr.AttributeExpr {
-	return &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "params", Attribute: &expr.AttributeExpr{
-				Type: b.getOrCreateType("PaginatedRequestParams", func() *expr.AttributeExpr {
-					return &expr.AttributeExpr{
-						Type: &expr.Object{
-							{Name: "cursor", Attribute: &expr.AttributeExpr{
-								Type:        expr.String,
-								Description: "Pagination cursor",
-							}},
-						},
-						Description: "Optional pagination parameters",
-					}
-				}),
-				Description: "Request parameters when pagination is used",
-			}},
-		},
-	}
+	return &expr.AttributeExpr{Type: &expr.Object{
+		{Name: "cursor", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Opaque cursor from a prior catalog page"}},
+	}}
 }
 
 func (b *mcpExprBuilder) buildToolsListResultType() *expr.AttributeExpr {

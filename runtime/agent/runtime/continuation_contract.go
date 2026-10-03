@@ -23,6 +23,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 )
 
 // continuationContractError marks a validation result that proves no
@@ -42,6 +43,9 @@ func prepareContinuation(input *RunInput, definition AgentDefinition) (*workflow
 		return nil, err
 	}
 	if err := validateContinuationAgainstCheckpoint(input, checkpoint, definition); err != nil {
+		return nil, err
+	}
+	if err := validateCheckpointMCPInputs(checkpoint); err != nil {
 		return nil, err
 	}
 	return checkpoint, nil
@@ -265,7 +269,7 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 		}
 	}
 	for i, record := range checkpoint.Batch.Records {
-		if record.ChildSuspension != nil {
+		if record.ChildSuspension != nil || record.MCPInput != nil {
 			if record.ResultRecord != nil {
 				return fmt.Errorf("unfinished child %q has a materialized result record", record.Call.ToolCallID)
 			}
@@ -614,7 +618,17 @@ func validatePendingInput(input *api.PendingInput) error {
 	if input == nil {
 		return errors.New("pending input is nil")
 	}
+	if input.Kind != api.PendingInputKindMCP && input.MCP != nil {
+		return errors.New("MCP input cannot accompany another pending request")
+	}
 	switch input.Kind {
+	case api.PendingInputKindMCP:
+		if input.MCP == nil || input.Confirmation != nil || input.Await != nil || input.MCP.ToolName == "" || input.MCP.ToolCallID == "" {
+			return errors.New("MCP pending input requires an exact invocation")
+		}
+		if input.MCP.Requests != nil {
+			return (&mcp.InputRequired{Requests: input.MCP.Requests}).Validate(mcp.InputSupport{Form: true, URL: true})
+		}
 	case api.PendingInputKindConfirmation:
 		if input.Confirmation == nil || input.Await != nil {
 			return errors.New("confirmation pending input has an invalid payload")
@@ -655,6 +669,9 @@ func validatePendingInputResponse(response *api.PendingInputResponse) error {
 		return errors.New("pending input response is required")
 	}
 	variants := 0
+	if response.MCP != nil {
+		variants++
+	}
 	if response.Clarification != nil {
 		variants++
 	}
@@ -679,7 +696,15 @@ func validatePendingInputResponseFor(pending *api.PendingInput, response *api.Pe
 	if err := validatePendingInputResponse(response); err != nil {
 		return err
 	}
+	if response.MCP != nil && pending.Kind != api.PendingInputKindMCP {
+		return errors.New("MCP response cannot complete another pending input")
+	}
 	switch pending.Kind {
+	case api.PendingInputKindMCP:
+		if response.MCP == nil || response.MCP.ToolCallID != pending.MCP.ToolCallID {
+			return errors.New("MCP response does not match the pending tool call")
+		}
+		return (&mcp.InputRequired{Requests: pending.MCP.Requests}).ValidateResponses(response.MCP.Responses)
 	case api.PendingInputKindConfirmation:
 		if response.Confirmation == nil {
 			return errors.New("run continuation requires a confirmation response")
@@ -760,6 +785,9 @@ func validateContinuationResponse(
 	definition AgentDefinition,
 ) error {
 	pending := checkpoint.Pending[0]
+	if pending.MCP != nil {
+		return nil
+	}
 	if pending.Child != nil {
 		record, ok := checkpointRecordByCallID(checkpoint.Batch.Records, pending.Child.ToolCallID)
 		if !ok {

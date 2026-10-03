@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"goa.design/goa/v3/codegen"
@@ -97,11 +98,14 @@ type (
 	exampleBootstrapFileData struct {
 		Service           *ServiceAgentsData
 		Agents            []*exampleBootstrapAgentData
+		Toolsets          []*exampleBootstrapToolsetData
 		ClientVersion     string
 		ContextAlias      string
 		FlagAlias         string
-		FmtAlias          string
+		HintsAlias        string
+		ToolsAlias        string
 		AgentRuntimeAlias string
+		EngineAlias       string
 		MCPRuntimeAlias   string
 		StorageAlias      string
 		HasMCP            bool
@@ -123,6 +127,8 @@ type (
 	// application-owned toolset.
 	exampleBootstrapToolsetData struct {
 		ExecutorAlias string
+		SpecsAlias    string
+		MCP           *exampleBootstrapMCPData
 		Toolset       *ToolsetData
 	}
 
@@ -229,10 +235,11 @@ func emitInternalBootstrap(svc *ServiceAgentsData, bootstraps *exampleBootstrapP
 		planned.pkg.Import(bootstrapStorageImportPath),
 	}
 	if svc.HasMCP {
-		imports = append(imports, planned.pkg.Import("fmt"))
+		imports = append(imports, planned.pkg.Import(engineImportPath))
 		imports = append(imports, planned.pkg.Import("flag"))
 		imports = append(imports, planned.pkg.Import(bootstrapMCPRuntimeImportPath))
 	}
+	bindings := make(map[string]*exampleBootstrapToolsetData)
 	agents := make([]*exampleBootstrapAgentData, 0, len(svc.Agents))
 	for _, ag := range svc.Agents {
 		agentPlan := planned.agents[ag.ID]
@@ -256,37 +263,65 @@ func emitInternalBootstrap(svc *ServiceAgentsData, bootstraps *exampleBootstrapP
 				return nil, fmt.Errorf("toolset %q has no example executor import plan", ts.QualifiedName)
 			}
 			imports = append(imports, planned.pkg.Import(executorPath))
-			agentData.ExampleToolsets = append(agentData.ExampleToolsets, &exampleBootstrapToolsetData{
-				ExecutorAlias: planned.pkg.ImportName(executorPath),
-				Toolset:       ts,
-			})
+			imports = append(imports, planned.pkg.Import(ts.SpecsImportPath))
+			if bindings[ts.QualifiedName] == nil {
+				bindings[ts.QualifiedName] = &exampleBootstrapToolsetData{
+					ExecutorAlias: planned.pkg.ImportName(executorPath),
+					SpecsAlias:    planned.pkg.ImportName(ts.SpecsImportPath),
+					Toolset:       ts,
+				}
+			}
 		}
 		for _, meta := range ag.MCPToolsets {
 			mcpPlan := agentPlan.mcp[meta.QualifiedName]
 			if mcpPlan == nil {
 				return nil, fmt.Errorf("MCP toolset %q has no example endpoint plan", meta.QualifiedName)
 			}
-			agentData.MCPToolsets = append(agentData.MCPToolsets, &exampleBootstrapMCPData{
-				MCPToolsetMeta: meta,
-				EndpointVar:    mcpPlan.endpoint.Name(),
-				FlagName:       mcpPlan.flagName,
-			})
+			for _, ts := range ag.AllToolsets {
+				if ts.QualifiedName != meta.QualifiedName || bindings[ts.QualifiedName] != nil {
+					continue
+				}
+				imports = append(imports, planned.pkg.Import(ts.PackageImportPath), planned.pkg.Import(ts.SpecsImportPath))
+				bindings[ts.QualifiedName] = &exampleBootstrapToolsetData{
+					ExecutorAlias: planned.pkg.ImportName(ts.PackageImportPath),
+					SpecsAlias:    planned.pkg.ImportName(ts.SpecsImportPath),
+					Toolset:       ts,
+					MCP:           &exampleBootstrapMCPData{MCPToolsetMeta: meta, EndpointVar: mcpPlan.endpoint.Name(), FlagName: mcpPlan.flagName},
+				}
+			}
 		}
 		agents = append(agents, agentData)
 	}
+	toolsets := make([]*exampleBootstrapToolsetData, 0, len(bindings))
+	for _, binding := range bindings {
+		toolsets = append(toolsets, binding)
+		for _, tool := range binding.Toolset.Tools {
+			if tool.CallHintTemplate != "" || tool.ResultHintTemplate != "" {
+				imports = append(imports, planned.pkg.Import(hintsImportPath), planned.pkg.Import(toolsImportPath))
+				break
+			}
+		}
+	}
+	slices.SortFunc(toolsets, func(a, b *exampleBootstrapToolsetData) int {
+		return strings.Compare(a.Toolset.QualifiedName, b.Toolset.QualifiedName)
+	})
 	path := filepath.Join("internal", "agents", svc.Service.PathName, "bootstrap", "bootstrap.go")
 	data := exampleBootstrapFileData{
 		Service:           svc,
 		Agents:            agents,
+		Toolsets:          toolsets,
 		ClientVersion:     apiVersion,
 		ContextAlias:      planned.pkg.ImportName("context"),
 		AgentRuntimeAlias: planned.pkg.ImportName(bootstrapAgentRuntimeImportPath),
+		EngineAlias:       planned.pkg.ImportName(engineImportPath),
+		HintsAlias:        planned.pkg.ImportName(hintsImportPath),
+		ToolsAlias:        planned.pkg.ImportName(toolsImportPath),
 		StorageAlias:      planned.pkg.ImportName(bootstrapStorageImportPath),
 		HasMCP:            svc.HasMCP,
 	}
 	if svc.HasMCP {
 		data.FlagAlias = planned.pkg.ImportName("flag")
-		data.FmtAlias = planned.pkg.ImportName("fmt")
+
 		data.MCPRuntimeAlias = planned.pkg.ImportName(bootstrapMCPRuntimeImportPath)
 	}
 	sections := []*codegen.SectionTemplate{

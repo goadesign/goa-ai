@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	agentexpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	goagenerator "goa.design/goa/v3/codegen/generator"
 	"goa.design/goa/v3/eval"
@@ -94,6 +95,7 @@ func configureCollidingExampleDesign(t *testing.T) {
 	expr.Root = root
 	require.NoError(t, eval.Register(root))
 	require.NoError(t, eval.Register(mcpexpr.Root))
+	require.NoError(t, eval.Register(&agentexpr.RootExpr{}))
 	mcpexpr.Root.RegisterMCP(first, &mcpexpr.MCPExpr{
 		Name:    "first",
 		Version: "1.0.0",

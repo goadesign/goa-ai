@@ -5,14 +5,12 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
-	"goa.design/goa-ai/codegen/internal/jsonshape"
-	"maps"
 	"strings"
 
+	"goa.design/goa-ai/codegen/internal/jsonschema"
+	"goa.design/goa-ai/codegen/internal/jsonshape"
 	"goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
-	"goa.design/goa/v3/http/codegen/openapi"
-	openapiv2 "goa.design/goa/v3/http/codegen/openapi/v2"
 )
 
 const (
@@ -228,76 +226,21 @@ func isEmptyStruct(att *goaexpr.AttributeExpr) bool {
 	}
 }
 
-// schemaVariantsForAttribute builds two JSON schemas for att. Both keep nested
-// examples written in the design and remove examples invented by Goa. The first
-// also keeps the root example written in the design; the second leaves it out.
-func (contract specJSONContract) schemaVariantsForAttribute(
-	api *goaexpr.APIExpr,
-	att *goaexpr.AttributeExpr,
-	example any,
-	identity goaexpr.ExampleIdentity,
-) ([]byte, []byte, error) {
+// schemaVariantsForAttribute starts from the common generated JSON contract,
+// then attaches this tool occurrence's explicitly authored examples.
+func (contract specJSONContract) schemaVariantsForAttribute(api *goaexpr.APIExpr, att *goaexpr.AttributeExpr, example any, identity goaexpr.ExampleIdentity) ([]byte, []byte, error) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return nil, nil, nil
 	}
-	examples := goaexpr.NewExampleGenerator(api.RandomizerFactory).At(identity)
-	schema := openapiv2.BuildAttributeSchema(api, att, examples)
-	if schema == nil {
-		return nil, nil, nil
-	}
-	// For a named root type, copy its definition to the root and keep the other
-	// definitions for nested references.
-	if ut, ok := att.Type.(goaexpr.UserType); ok {
-		tname := ""
-		switch u := ut.(type) {
-		case *goaexpr.UserTypeExpr:
-			tname = u.TypeName
-		case *goaexpr.ResultTypeExpr:
-			tname = u.TypeName
-		}
-		if tname != "" {
-			if def, ok := schema.Defs[tname]; ok && def != nil {
-				// The root is a copy, so its definitions may keep the original
-				// type for fields that refer back to it without creating an object
-				// cycle while the schema is marshaled.
-				root := *def
-				root.Defs = maps.Clone(schema.Defs)
-				return contract.schemaVariantBytes(&root, att, example)
-			}
-		}
-	}
-	return contract.schemaVariantBytes(schema, att, example)
-}
-
-func (contract specJSONContract) schemaVariantBytes(schema *openapi.Schema, att *goaexpr.AttributeExpr, example any) ([]byte, []byte, error) {
-	prevExample := schema.Example
-	schema.Example = example
-	annotated, err := schema.JSON()
+	encoded, err := jsonschema.Build(api, att, identity)
 	if err != nil {
-		schema.Example = prevExample
-		return annotated, nil, err
+		return nil, nil, err
 	}
-	annotated, err = contract.alignSchemaWithGeneratedDecoder(annotated, att)
+	annotated, err := contract.projectAuthoredSchemaExamples(encoded, att, example)
 	if err != nil {
-		schema.Example = prevExample
-		return annotated, nil, err
+		return nil, nil, err
 	}
-	annotated, err = contract.projectAuthoredSchemaExamples(annotated, att, example)
-	if err != nil {
-		schema.Example = prevExample
-		return annotated, nil, err
-	}
-	schema.Example = nil
-	plain, err := schema.JSON()
-	schema.Example = prevExample
-	if err != nil {
-		return annotated, plain, err
-	}
-	plain, err = contract.alignSchemaWithGeneratedDecoder(plain, att)
-	if err != nil {
-		return annotated, plain, err
-	}
-	plain, err = contract.projectAuthoredSchemaExamples(plain, att, nil)
+	plain, err := contract.projectAuthoredSchemaExamples(encoded, att, nil)
 	return annotated, plain, err
 }
 
@@ -405,142 +348,9 @@ func removeSchemaExamples(node any) {
 	}
 }
 
-// alignSchemaWithGeneratedDecoder closes Goa objects to unknown fields and
-// changes each union to the {type,value} JSON object accepted by generated
-// decoders. Maps remain open because their keys are caller-defined.
-func (contract specJSONContract) alignSchemaWithGeneratedDecoder(schemaBytes []byte, att *goaexpr.AttributeExpr) ([]byte, error) {
-	if len(schemaBytes) == 0 || att == nil {
-		return schemaBytes, nil
-	}
-	var doc map[string]any
-	if err := json.Unmarshal(schemaBytes, &doc); err != nil {
-		return nil, fmt.Errorf("unmarshal schema for generated decoder: %w", err)
-	}
-	defs, _ := doc["$defs"].(map[string]any)
-	if err := contract.alignSchemaNodeWithGeneratedDecoder(att, doc, defs, map[string]struct{}{}); err != nil {
-		return nil, err
-	}
-	out, err := json.Marshal(doc)
-	if err != nil {
-		return nil, fmt.Errorf("marshal schema for generated decoder: %w", err)
-	}
-	return out, nil
-}
-
-// alignSchemaNodeWithGeneratedDecoder updates one schema node using its Goa type.
-// Named types are followed through $defs while seen prevents recursive types
-// from visiting the same definition forever.
-func (contract specJSONContract) alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
-	if att == nil || att.Type == nil || len(schema) == 0 {
-		return nil
-	}
-	if example, ok := schema["example"]; ok {
-		normalized, ok := contract.canonicalizeSchemaExample(att, example)
-		if !ok {
-			delete(schema, "example")
-		} else {
-			schema["example"] = normalized
-		}
-	}
-	if refName := schemaRefName(schema); refName != "" {
-		if _, ok := seen[refName]; ok {
-			return nil
-		}
-		defSchema, ok := defs[refName].(map[string]any)
-		if !ok {
-			return fmt.Errorf("schema ref %q for generated decoder is missing from $defs", refName)
-		}
-		seen[refName] = struct{}{}
-		defer delete(seen, refName)
-		return contract.alignSchemaNodeWithGeneratedDecoder(att, defSchema, defs, seen)
-	}
-	switch dt := att.Type.(type) {
-	case goaexpr.UserType:
-		return contract.alignSchemaNodeWithGeneratedDecoder(dt.Attribute(), schema, defs, seen)
-	case *goaexpr.Object:
-		schema["additionalProperties"] = false
-		properties, _ := schema["properties"].(map[string]any)
-		for _, nat := range *dt {
-			name := nat.Name
-			childSchema, ok := properties[name].(map[string]any)
-			if !ok {
-				return fmt.Errorf("schema for field %q is missing", name)
-			}
-			if err := contract.alignSchemaNodeWithGeneratedDecoder(nat.Attribute, childSchema, defs, seen); err != nil {
-				return err
-			}
-		}
-	case *goaexpr.Array:
-		items, ok := schema["items"].(map[string]any)
-		if !ok {
-			return fmt.Errorf("array schema is missing items")
-		}
-		return contract.alignSchemaNodeWithGeneratedDecoder(dt.ElemType, items, defs, seen)
-	case *goaexpr.Map:
-		values, ok := schema["additionalProperties"].(map[string]any)
-		if !ok {
-			primitive, primitiveOK := jsonshape.PrimitiveType(dt.ElemType)
-			if primitiveOK && primitive.Kind() == goaexpr.AnyKind {
-				return nil
-			}
-			return fmt.Errorf("map schema is missing additionalProperties")
-		}
-		return contract.alignSchemaNodeWithGeneratedDecoder(dt.ElemType, values, defs, seen)
-	case *goaexpr.Union:
-		return contract.rewriteUnionSchema(dt, schema, defs, seen)
-	}
-	return nil
-}
-
-func (contract specJSONContract) rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
-	typeKey := union.GetTypeKey()
-	if typeKey == "" {
-		typeKey = unionTypeKeyDefault
-	}
-	valueKey := union.GetValueKey()
-	if valueKey == "" {
-		valueKey = unionValueKeyDefault
-	}
-	branches, _ := schema["oneOf"].([]any)
-	if len(branches) == 0 {
-		branches, _ = schema["anyOf"].([]any)
-	}
-	if len(branches) != len(union.Values) {
-		return fmt.Errorf("union schema for %q has %d correlated variants, want %d", union.TypeName, len(branches), len(union.Values))
-	}
-
-	for i, nat := range union.Values {
-		if nat == nil {
-			return fmt.Errorf("union %q has nil variant %d", union.TypeName, i)
-		}
-		branch, _ := branches[i].(map[string]any)
-		properties, _ := branch["properties"].(map[string]any)
-		typeSchema, _ := properties[typeKey].(map[string]any)
-		valueSchema, ok := properties[valueKey].(map[string]any)
-		variants, _ := typeSchema["enum"].([]any)
-		if len(variants) != 1 || variants[0] != nat.Name || !ok {
-			return fmt.Errorf("union schema variant %d for %q does not match %q", i, union.TypeName, nat.Name)
-		}
-		if nat.Attribute.Description != "" {
-			branch["description"] = nat.Attribute.Description
-		}
-		branch["additionalProperties"] = false
-		if err := contract.alignSchemaNodeWithGeneratedDecoder(nat.Attribute, valueSchema, defs, seen); err != nil {
-			return err
-		}
-	}
-	delete(schema, "example")
-	delete(schema, "anyOf")
-	delete(schema, "properties")
-	delete(schema, "required")
-	schema["type"] = jsonSchemaTypeObject
-	schema["oneOf"] = branches
-	return nil
-}
-
 func schemaRefName(schema map[string]any) string {
 	ref, _ := schema["$ref"].(string)
-	if ref == "" || !strings.HasPrefix(ref, "#/$defs/") {
+	if !strings.HasPrefix(ref, "#/$defs/") {
 		return ""
 	}
 	return strings.TrimPrefix(ref, "#/$defs/")
@@ -692,23 +502,17 @@ func exampleValue(example *exampleData) any {
 // Goa returns only the selected branch value. This function keeps all other
 // example values unchanged and wraps each union value with its branch name.
 func (contract specJSONContract) canonicalizeUnionExamples(att *goaexpr.AttributeExpr, example any) any {
-	normalized, _ := contract.canonicalizeUnionExampleValue(att, example, true)
+	normalized, _ := contract.canonicalizeUnionExampleValue(att, example)
 	return normalized
 }
 
-// canonicalizeSchemaExample adds the branch name to a generated union example.
-// It returns false when no branch matches the example.
-func (contract specJSONContract) canonicalizeSchemaExample(att *goaexpr.AttributeExpr, example any) (any, bool) {
-	return contract.canonicalizeUnionExampleValue(att, example, false)
-}
-
-func (contract specJSONContract) canonicalizeUnionExampleValue(att *goaexpr.AttributeExpr, example any, strict bool) (any, bool) {
+func (contract specJSONContract) canonicalizeUnionExampleValue(att *goaexpr.AttributeExpr, example any) (any, bool) {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return example, true
 	}
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
-		return contract.canonicalizeUnionExampleValue(dt.Attribute(), example, strict)
+		return contract.canonicalizeUnionExampleValue(dt.Attribute(), example)
 	case *goaexpr.Object:
 		m, ok := example.(map[string]any)
 		if !ok {
@@ -716,7 +520,7 @@ func (contract specJSONContract) canonicalizeUnionExampleValue(att *goaexpr.Attr
 		}
 		for k, v := range m {
 			child := contract.exampleChildAttribute(att, k)
-			normalized, ok := contract.canonicalizeUnionExampleValue(child, v, strict)
+			normalized, ok := contract.canonicalizeUnionExampleValue(child, v)
 			if !ok {
 				return nil, false
 			}
@@ -729,7 +533,7 @@ func (contract specJSONContract) canonicalizeUnionExampleValue(att *goaexpr.Attr
 			return example, true
 		}
 		for i, v := range s {
-			normalized, ok := contract.canonicalizeUnionExampleValue(dt.ElemType, v, strict)
+			normalized, ok := contract.canonicalizeUnionExampleValue(dt.ElemType, v)
 			if !ok {
 				return nil, false
 			}
@@ -742,7 +546,7 @@ func (contract specJSONContract) canonicalizeUnionExampleValue(att *goaexpr.Attr
 			return example, true
 		}
 		for k, v := range m {
-			normalized, ok := contract.canonicalizeUnionExampleValue(dt.ElemType, v, strict)
+			normalized, ok := contract.canonicalizeUnionExampleValue(dt.ElemType, v)
 			if !ok {
 				return nil, false
 			}
@@ -764,17 +568,14 @@ func (contract specJSONContract) canonicalizeUnionExampleValue(att *goaexpr.Attr
 		}
 
 		var chosen *goaexpr.NamedAttributeExpr
-		if canonical, ok := contract.canonicalUnionExample(dt, example, typeKey, valueKey, strict); ok {
+		if canonical, ok := contract.canonicalUnionExample(dt, example, typeKey, valueKey); ok {
 			return canonical, true
 		}
 		chosen = pickUnionVariantForExample(dt, example)
 		if chosen == nil {
-			if strict {
-				panic(fmt.Sprintf("agent/specs_builder: union example does not match any variant (type=%q)", dt.TypeName))
-			}
-			return nil, false
+			panic(fmt.Sprintf("agent/specs_builder: union example does not match any variant (type=%q)", dt.TypeName))
 		}
-		value, ok := contract.canonicalizeUnionExampleValue(chosen.Attribute, example, strict)
+		value, ok := contract.canonicalizeUnionExampleValue(chosen.Attribute, example)
 		if !ok {
 			return nil, false
 		}
@@ -811,7 +612,7 @@ func (contract specJSONContract) exampleChildAttribute(att *goaexpr.AttributeExp
 
 // canonicalUnionExample reads an example that already names its union branch
 // and fixes any union examples inside the selected value.
-func (contract specJSONContract) canonicalUnionExample(u *goaexpr.Union, example any, typeKey, valueKey string, strict bool) (any, bool) {
+func (contract specJSONContract) canonicalUnionExample(u *goaexpr.Union, example any, typeKey, valueKey string) (any, bool) {
 	m, ok := example.(map[string]any)
 	if !ok {
 		return nil, false
@@ -832,12 +633,9 @@ func (contract specJSONContract) canonicalUnionExample(u *goaexpr.Union, example
 	}
 	value, ok := m[valueKey]
 	if !ok {
-		if strict {
-			panic(fmt.Sprintf("agent/specs_builder: canonical union example for %q missing %q", u.TypeName, valueKey))
-		}
-		return nil, false
+		panic(fmt.Sprintf("agent/specs_builder: canonical union example for %q missing %q", u.TypeName, valueKey))
 	}
-	normalized, ok := contract.canonicalizeUnionExampleValue(chosen.Attribute, value, strict)
+	normalized, ok := contract.canonicalizeUnionExampleValue(chosen.Attribute, value)
 	if !ok {
 		return nil, false
 	}

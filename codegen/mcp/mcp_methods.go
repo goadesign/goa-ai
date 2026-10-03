@@ -10,11 +10,7 @@ import (
 // buildMethods creates all MCP protocol methods
 func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 	methods := make([]*expr.MethodExpr, 0, 10)
-	methods = append(methods,
-		b.buildInitializeMethod(),
-		b.buildInitializedMethod(),
-		b.buildPingMethod(),
-	)
+	methods = append(methods, b.buildDiscoverMethod())
 
 	// Add tool methods if tools are defined
 	if len(b.mcp.Tools) > 0 {
@@ -37,31 +33,14 @@ func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 	return methods
 }
 
-// buildInitializedMethod creates the notification that completes the MCP
-// handshake. MCP defines no parameters for this notification.
-func (b *mcpExprBuilder) buildInitializedMethod() *expr.MethodExpr {
+// buildDiscoverMethod exposes the release's capabilities and supported revision
+// without requiring a connection handshake or server-side client state.
+func (b *mcpExprBuilder) buildDiscoverMethod() *expr.MethodExpr {
 	return &expr.MethodExpr{
-		Name:        "notifications/initialized",
-		Description: "Mark an initialized MCP session ready for requests",
-	}
-}
-
-// buildInitializeMethod creates the initialize method
-func (b *mcpExprBuilder) buildInitializeMethod() *expr.MethodExpr {
-	return &expr.MethodExpr{
-		Name:        "initialize",
-		Description: "Initialize MCP session",
-		Payload:     b.userTypeAttr("InitializePayload", b.buildInitializePayloadType),
-		Result:      b.userTypeAttr("InitializeResult", b.buildInitializeResultType),
-	}
-}
-
-// buildPingMethod creates the ping method
-func (b *mcpExprBuilder) buildPingMethod() *expr.MethodExpr {
-	return &expr.MethodExpr{
-		Name:        "ping",
-		Description: "Ping the server",
-		Result:      b.userTypeAttr("PingResult", b.buildPingResultType),
+		Name:        "server/discover",
+		Description: "Describe this server's protocol revision and declared tools, resources, and prompts",
+		Payload:     b.userTypeAttr("DiscoverPayload", func() *expr.AttributeExpr { return &expr.AttributeExpr{Type: &expr.Object{}} }),
+		Result:      b.userTypeAttr("DiscoverResult", b.buildDiscoverResultType),
 	}
 }
 

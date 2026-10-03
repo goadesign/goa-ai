@@ -27,9 +27,6 @@ type (
 		// Description provides a human-readable explanation of the
 		// server's purpose.
 		Description string
-		// ProtocolVersion is the MCP protocol version this server
-		// implements.
-		ProtocolVersion string
 		// Tools is the collection of tool expressions exposed by this
 		// server.
 		Tools []*ToolExpr
@@ -101,8 +98,7 @@ type (
 )
 
 const (
-	defaultProtocolVersion = "2025-06-18"
-	jsonRPCRouteMessage    = `service %q must declare JSONRPC(func(){ POST(...) }) with a service-level path`
+	jsonRPCRouteMessage = `service %q must declare JSONRPC(func(){ POST(...) }) with a service-level path`
 	// ResourceURIPattern requires the scheme that identifies an MCP resource.
 	ResourceURIPattern = `^[a-zA-Z][a-zA-Z0-9+.-]*:.*`
 )
@@ -114,13 +110,6 @@ func (m *MCPExpr) EvalName() string {
 	return "MCP server for " + m.Service.Name
 }
 
-// Finalize finalizes the MCP expression
-func (m *MCPExpr) Finalize() {
-	if m.ProtocolVersion == "" {
-		m.ProtocolVersion = defaultProtocolVersion
-	}
-}
-
 // Validate validates the MCP expression
 func (m *MCPExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
@@ -130,9 +119,7 @@ func (m *MCPExpr) Validate() error {
 	if m.Version == "" {
 		verr.Add(m, "MCP server version is required")
 	}
-	if m.ProtocolVersion != "" && m.ProtocolVersion != defaultProtocolVersion {
-		verr.Add(m, "protocol version must be %q", defaultProtocolVersion)
-	}
+
 	route := m.jsonRPCRoute()
 	switch {
 	case route == nil || route.Path == "":

@@ -1,33 +1,31 @@
-{{ comment "MCPAdapter core: types, options, constructor, helpers" }}
-
+// MCPAdapter calls the authored Goa service after the HTTP binding and generated
+// argument codecs accept the request. It returns only this release's MCP contract.
 type (
-    // MCPAdapter translates MCP protocol requests into calls to the authored
-    // Goa service.
+    // MCPAdapter translates protocol requests into authored service operations.
     MCPAdapter struct {
         service {{ .Package }}.Service
-        opts *MCPAdapterOptions
+        opts MCPAdapterOptions
     }
-
-    // MCPAdapterOptions allows customizing adapter behavior.
+    // MCPAdapterOptions configures how application errors are exposed to clients.
     MCPAdapterOptions struct {
-        // Logger is an optional hook called with internal adapter events.
-        Logger func(ctx context.Context, event string, details any)
-        // ErrorMapper replaces a service error before the MCP client sees it.
+        // ErrorMapper replaces a service error with an application-approved error.
+        // It must return a non-nil error; returning nil violates this contract.
         ErrorMapper func(error) error
     }
 )
 
-// NewMCPAdapter returns an MCP service that calls the Goa service implementation.
+// NewMCPAdapter connects an already-built service to the MCP protocol methods.
 func NewMCPAdapter(service {{ .Package }}.Service, opts *MCPAdapterOptions) *MCPAdapter {
-    return &MCPAdapter{
-        service: service,
-        opts: opts,
+    adapter := &MCPAdapter{service: service}
+    if opts != nil {
+        adapter.opts = *opts
     }
+    return adapter
 }
 
 {{- if .NeedsNoArgumentsValidation }}
-// validateNoArguments accepts omitted arguments and an empty JSON object.
-// It rejects all data because the selected Goa method accepts no input.
+// validateNoArguments accepts omitted arguments or an empty JSON object for a
+// method with no payload. Any supplied property is an argument error.
 func validateNoArguments(arguments json.RawMessage) error {
     if len(arguments) == 0 {
         return nil
@@ -43,39 +41,32 @@ func validateNoArguments(arguments json.RawMessage) error {
 }
 {{- end }}
 
-func (a *MCPAdapter) log(ctx context.Context, event string, details any) {
-    if a != nil && a.opts != nil && a.opts.Logger != nil {
-        a.opts.Logger(ctx, event, details)
-    }
-}
-
-// mapError lets the application replace a service error before it is returned.
+// mapError applies the host's error disclosure policy to a service failure.
 func (a *MCPAdapter) mapError(err error) error {
-    if a != nil && a.opts != nil && a.opts.ErrorMapper != nil && err != nil {
-        if m := a.opts.ErrorMapper(err); m != nil {
-            return m
-        }
+    if a.opts.ErrorMapper != nil {
+        return a.opts.ErrorMapper(err)
     }
     return err
 }
 
-func stringPtr(s string) *string {
-    return &s
+func stringPtr(value string) *string {
+    return &value
 }
-
 {{- if .NeedsBoolPtr }}
 func boolPtr(value bool) *bool {
     return &value
 }
 {{- end }}
 
-// Initialize handles the MCP initialize request.
-func (a *MCPAdapter) Initialize(_ context.Context, _ *InitializePayload) (*InitializeResult, error) {
-    serverInfo := &ServerInfo{
-        Name:    {{ quote .MCPName }},
-        Version: {{ quote .MCPVersion }},
-    }
+// resultMeta identifies the server software on each independent response.
+func resultMeta() json.RawMessage {
+    return json.RawMessage({{ quote .ResultMeta }})
+}
 
+// ServerDiscover describes declared capabilities without creating client state.
+func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*DiscoverResult, error) {
+    _, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.server/discover")
+    defer span.End()
     capabilities := &ServerCapabilities{}
     {{- if .Tools }}
     capabilities.Tools = &ToolsCapability{}
@@ -86,24 +77,12 @@ func (a *MCPAdapter) Initialize(_ context.Context, _ *InitializePayload) (*Initi
     {{- if .StaticPrompts }}
     capabilities.Prompts = &PromptsCapability{}
     {{- end }}
-
-    return &InitializeResult{
-        ProtocolVersion: DefaultProtocolVersion,
-        ServerInfo:      serverInfo,
-        Capabilities:    capabilities,
+    return &DiscoverResult{
+        ResultType: "complete",
+        Meta: resultMeta(),
+        SupportedVersions: []string{mcpruntime.ProtocolVersion},
+        Capabilities: capabilities,
+        TTLMs: 0,
+        CacheScope: "private",
     }, nil
-}
-
-// NotificationsInitialized accepts the notification sent after initialization.
-// The HTTP transport tracks setup separately for each client session.
-func (a *MCPAdapter) NotificationsInitialized(_ context.Context) error {
-    return nil
-}
-
-// Ping handles the MCP ping request.
-func (a *MCPAdapter) Ping(ctx context.Context) (*PingResult, error) {
-    a.log(ctx, "request", map[string]any{"method": "ping"})
-    res := &PingResult{}
-    a.log(ctx, "response", map[string]any{"method": "ping"})
-    return res, nil
 }

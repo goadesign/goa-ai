@@ -13,7 +13,6 @@ import (
 	"os"
 	"os/exec"
 	"sync"
-	"time"
 )
 
 type (
@@ -29,23 +28,25 @@ type (
 		Dir string
 		// ClientInfo identifies this application to the MCP server.
 		ClientInfo ClientInfo
-		// InitTimeout limits initialization when it is greater than zero.
-		InitTimeout time.Duration
+		// InputSupport names the interactions the host can fulfill.
+		InputSupport InputSupport
 	}
 
 	// StdioCaller implements Caller using the MCP stdio transport.
 	StdioCaller struct {
-		cmd         *exec.Cmd
-		stdin       io.WriteCloser
-		pending     map[uint64]chan callResult
-		pendingMu   sync.Mutex
-		writeMu     sync.Mutex
-		nextID      uint64
-		closed      chan struct{}
-		closeOnce   sync.Once
-		shutdownErr error
-		closeErr    error
-		closeErrMu  sync.Mutex
+		clientInfo   ClientInfo
+		inputSupport InputSupport
+		cmd          *exec.Cmd
+		stdin        io.WriteCloser
+		pending      map[uint64]chan callResult
+		pendingMu    sync.Mutex
+		writeMu      sync.Mutex
+		nextID       uint64
+		closed       chan struct{}
+		closeOnce    sync.Once
+		shutdownErr  error
+		closeErr     error
+		closeErrMu   sync.Mutex
 	}
 
 	callResult struct {
@@ -54,8 +55,8 @@ type (
 	}
 )
 
-// NewStdioCaller launches the target command, performs the MCP initialize handshake,
-// and returns a Caller that keeps the stdio session alive across tool invocations.
+// NewStdioCaller launches the target command, and returns a caller without
+// initialization. Each invocation carries its own identity and capabilities.
 func NewStdioCaller(ctx context.Context, opts StdioOptions) (*StdioCaller, error) {
 	if err := opts.ClientInfo.Validate(); err != nil {
 		return nil, err
@@ -66,7 +67,7 @@ func NewStdioCaller(ctx context.Context, opts StdioOptions) (*StdioCaller, error
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	//nolint:gosec,noctx // The constructor context covers initialization; Close owns the process lifetime.
+	//nolint:gosec,noctx // The constructor context covers process startup; Close owns the process lifetime.
 	cmd := exec.Command(opts.Command, opts.Args...)
 	if opts.Dir != "" {
 		cmd.Dir = opts.Dir
@@ -97,16 +98,15 @@ func NewStdioCaller(ctx context.Context, opts StdioOptions) (*StdioCaller, error
 		}
 		return nil, errors.Join(fmt.Errorf("start MCP server: %w", err), stdinErr, stdoutErr)
 	}
-	caller := &StdioCaller{cmd: cmd, stdin: stdin, pending: make(map[uint64]chan callResult), closed: make(chan struct{})}
+	caller := &StdioCaller{clientInfo: opts.ClientInfo,
+		inputSupport: opts.InputSupport, cmd: cmd, stdin: stdin, pending: make(map[uint64]chan callResult), closed: make(chan struct{})}
 	go caller.readLoop(stdout)
-	if err := caller.initialize(ctx, opts); err != nil {
-		return nil, errors.Join(err, caller.Close())
-	}
 	return caller, nil
 }
 
-// Close terminates the stdio process and releases resources.
-func (c *StdioCaller) Close() error {
+// Close closes server input and waits for a clean exit. When ctx ends, it kills
+// the process and waits for it to be reaped before returning.
+func (c *StdioCaller) Close(ctx context.Context) error {
 	c.closeOnce.Do(func() {
 		var closeErr error
 		if c.stdin != nil {
@@ -114,20 +114,22 @@ func (c *StdioCaller) Close() error {
 				closeErr = errors.Join(closeErr, fmt.Errorf("close MCP server input: %w", err))
 			}
 		}
-		killed := false
-		if c.cmd != nil && c.cmd.ProcessState == nil {
-			if err := c.cmd.Process.Kill(); err == nil {
-				killed = true
-			} else if !errors.Is(err, os.ErrProcessDone) {
-				closeErr = errors.Join(closeErr, fmt.Errorf("stop MCP server: %w", err))
+		done := make(chan error, 1)
+		go func() { done <- c.cmd.Wait() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				closeErr = errors.Join(closeErr, fmt.Errorf("wait for MCP server: %w", err))
 			}
-		}
-		if c.cmd != nil {
-			if err := c.cmd.Wait(); err != nil {
-				var exitErr *exec.ExitError
-				if !killed || !errors.As(err, &exitErr) {
-					closeErr = errors.Join(closeErr, fmt.Errorf("wait for MCP server: %w", err))
-				}
+		case <-ctx.Done():
+			killErr := c.cmd.Process.Kill()
+			if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+				closeErr = errors.Join(closeErr, fmt.Errorf("stop MCP server: %w", killErr))
+			}
+			waitErr := <-done
+			var exitErr *exec.ExitError
+			if waitErr != nil && !errors.As(waitErr, &exitErr) {
+				closeErr = errors.Join(closeErr, fmt.Errorf("wait for MCP server: %w", waitErr))
 			}
 		}
 		c.shutdownErr = closeErr
@@ -138,51 +140,34 @@ func (c *StdioCaller) Close() error {
 
 // CallTool invokes tools/call over the stdio transport.
 func (c *StdioCaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
-	params := map[string]any{"name": req.Tool, "arguments": req.Payload}
-	addTraceMeta(ctx, params)
+	params := toolParams(req)
 	var result toolsCallResult
-	if err := c.call(ctx, "tools/call", params, &result); err != nil {
+	if err := c.call(ctx, methodToolsCall, params, &result); err != nil {
 		return CallResponse{}, err
 	}
-	return normalizeToolResult(result)
-}
-
-// initialize sends the client identity and requested protocol version to the
-// server process before any tool call can run.
-func (c *StdioCaller) initialize(ctx context.Context, opts StdioOptions) error {
-	payload := map[string]any{
-		"protocolVersion": DefaultProtocolVersion,
-		"capabilities":    map[string]any{},
-		"clientInfo": map[string]any{
-			"name":    opts.ClientInfo.Name,
-			"version": opts.ClientInfo.Version,
-		},
-	}
-	initCtx := ctx
-	if opts.InitTimeout > 0 {
-		var cancel context.CancelFunc
-		initCtx, cancel = context.WithTimeout(ctx, opts.InitTimeout)
-		defer cancel()
-	}
-	var result initializeResult
-	if err := c.call(initCtx, "initialize", payload, &result); err != nil {
-		return err
-	}
-	if err := validateInitializeResult(result); err != nil {
-		return err
-	}
-	return c.notify(rpcMethodInitialized, map[string]any{})
+	return normalizeCallResult(result, c.inputSupport)
 }
 
 // call writes one request and waits for the read loop to return the response
 // with the same request number.
-func (c *StdioCaller) call(ctx context.Context, method string, params any, result any) error {
+func (c *StdioCaller) call(ctx context.Context, method string, params map[string]any, result any) (err error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	meta, err := requestMeta(ctx, c.clientInfo, c.inputSupport, nil)
+	if err != nil {
+		return err
+	}
+	params["_meta"] = meta
 	id := c.next()
 	ch := make(chan callResult, 1)
 	c.pendingMu.Lock()
 	c.pending[id] = ch
 	c.pendingMu.Unlock()
 	req := rpcRequest{JSONRPC: rpcVersion, Method: method, ID: id, Params: params}
+	if method == methodToolsCall {
+		defer func() { err = unknownToolOutcome(err) }()
+	}
 	if err := c.writeMessage(req); err != nil {
 		c.removePending(id)
 		return err
@@ -202,7 +187,10 @@ func (c *StdioCaller) call(ctx context.Context, method string, params any, resul
 		}
 		return nil
 	case <-ctx.Done():
-		c.removePending(id)
+		if c.removePending(id) {
+			err := c.notify("notifications/cancelled", map[string]any{"requestId": id})
+			return errors.Join(ctx.Err(), err)
+		}
 		return ctx.Err()
 	case <-c.closed:
 		return c.closeError()
@@ -250,11 +238,8 @@ func (c *StdioCaller) readLoop(stdout io.Reader) {
 			return
 		}
 		if !ok {
-			if incoming.Method == "" || len(incoming.ID) == 0 {
-				continue
-			}
-			if err := c.replyToServerRequest(incoming); err != nil {
-				c.failPending(err)
+			if len(incoming.ID) > 0 {
+				c.failPending(NewMalformedResponseError(errors.New("independent server requests are not supported by this protocol")))
 				return
 			}
 			continue
@@ -272,18 +257,6 @@ func (c *StdioCaller) readLoop(stdout io.Reader) {
 	}
 }
 
-// replyToServerRequest answers ping and rejects methods this client did not
-// advertise, preserving the string or numeric identifier sent by the server.
-func (c *StdioCaller) replyToServerRequest(message rpcMessage) error {
-	reply := rpcReply{JSONRPC: rpcVersion, ID: message.ID}
-	if message.Method == "ping" {
-		reply.Result = json.RawMessage(`{}`)
-	} else {
-		reply.Error = &rpcError{Code: JSONRPCMethodNotFound, Message: "method not found"}
-	}
-	return c.writeMessage(reply)
-}
-
 // failPending returns the stream failure to every waiting call and closes the
 // server process.
 func (c *StdioCaller) failPending(err error) {
@@ -295,17 +268,21 @@ func (c *StdioCaller) failPending(err error) {
 	}
 	c.pendingMu.Unlock()
 	c.setCloseError(err)
-	if closeErr := c.Close(); closeErr != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if closeErr := c.Close(ctx); closeErr != nil {
 		c.setCloseError(closeErr)
 	}
 }
 
 // removePending stops waiting for the request after its context ends or its
 // request cannot be written.
-func (c *StdioCaller) removePending(id uint64) {
+func (c *StdioCaller) removePending(id uint64) bool {
 	c.pendingMu.Lock()
+	_, present := c.pending[id]
 	delete(c.pending, id)
 	c.pendingMu.Unlock()
+	return present
 }
 
 // next returns the next JSON-RPC request number for this process.

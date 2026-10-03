@@ -28,6 +28,7 @@ type (
 	exampleBootstrapPackagePlan struct {
 		pkg    *goacodegen.GeneratedPackage
 		agents map[string]*exampleBootstrapAgentPlan
+		mcp    map[string]*exampleBootstrapMCPPlan
 	}
 
 	// exampleBootstrapAgentPlan stores the imports and endpoint variables used
@@ -78,6 +79,7 @@ func planExampleBootstrapPackages(generation *goacodegen.Generation, design *age
 		packagePlan := &exampleBootstrapPackagePlan{
 			pkg:    pkg,
 			agents: make(map[string]*exampleBootstrapAgentPlan),
+			mcp:    make(map[string]*exampleBootstrapMCPPlan),
 		}
 		if err := packagePlan.declare(service, moduleBase); err != nil {
 			return nil, fmt.Errorf("plan service %q example bootstrap names: %w", service.Name, err)
@@ -95,6 +97,9 @@ func (p *exampleBootstrapPackagePlan) declare(service *agentir.Service, moduleBa
 	}
 	for _, spec := range []*goacodegen.ImportSpec{
 		goacodegen.SimpleImport("context"),
+		goacodegen.SimpleImport(engineImportPath),
+		goacodegen.SimpleImport(hintsImportPath),
+		goacodegen.SimpleImport(toolsImportPath),
 		goacodegen.NewImport("agentsruntime", bootstrapAgentRuntimeImportPath),
 		goacodegen.SimpleImport(bootstrapStorageImportPath),
 	} {
@@ -119,7 +124,17 @@ func (p *exampleBootstrapPackagePlan) declare(service *agentir.Service, moduleBa
 				return err
 			}
 		}
-		for _, reference := range agent.UsedToolsets {
+		for _, reference := range append(append([]*agentir.ToolsetRef{}, agent.UsedToolsets...), agent.ExportedToolsets...) {
+			if reference.SpecsImportPath != "" {
+				if err := p.pkg.ReserveGeneratedImport(goacodegen.NewImport(reference.SpecsPackageName, reference.SpecsImportPath)); err != nil {
+					return err
+				}
+			}
+			if reference.Provider != nil && reference.Provider.Kind == agentexpr.ProviderMCP {
+				if err := p.pkg.ReserveGeneratedImport(goacodegen.NewImport(reference.PackageName, reference.PackageImportPath)); err != nil {
+					return err
+				}
+			}
 			if !starterExecutorReference(reference) {
 				continue
 			}
@@ -140,6 +155,10 @@ func (p *exampleBootstrapPackagePlan) declare(service *agentir.Service, moduleBa
 			agentPlan.executorPaths[reference.QualifiedName] = executorPath
 		}
 		for _, meta := range exampleBootstrapMCPReferences(agent) {
+			if existing := p.mcp[meta.QualifiedName]; existing != nil {
+				agentPlan.mcp[meta.QualifiedName] = existing
+				continue
+			}
 			preferred := "mcp" + goacodegen.Goify(meta.ServiceName, true) +
 				goacodegen.Goify(meta.SuiteName, true) + "Endpoint"
 			declaration := goacodegen.NewPreferredName(
@@ -148,7 +167,7 @@ func (p *exampleBootstrapPackagePlan) declare(service *agentir.Service, moduleBa
 				goacodegen.UnexportedName,
 				exampleBootstrapNameOrder{
 					packagePath: p.pkg.ImportPath(),
-					key:         agent.ID + ":mcp:" + meta.QualifiedName,
+					key:         "mcp:" + meta.QualifiedName,
 				},
 			)
 			if err := p.pkg.DeclareName(declaration); err != nil {
@@ -159,6 +178,7 @@ func (p *exampleBootstrapPackagePlan) declare(service *agentir.Service, moduleBa
 				flagName: "mcp-" + strings.ToLower(meta.ServiceName) + "-" +
 					strings.ToLower(meta.SuiteName) + "-endpoint",
 			}
+			p.mcp[meta.QualifiedName] = agentPlan.mcp[meta.QualifiedName]
 			needsMCP = true
 		}
 		p.agents[agent.ID] = agentPlan
@@ -168,7 +188,6 @@ func (p *exampleBootstrapPackagePlan) declare(service *agentir.Service, moduleBa
 	}
 	for _, spec := range []*goacodegen.ImportSpec{
 		goacodegen.SimpleImport("flag"),
-		goacodegen.SimpleImport("fmt"),
 		goacodegen.NewImport("mcpruntime", bootstrapMCPRuntimeImportPath),
 	} {
 		if err := p.pkg.ReserveGeneratedImport(spec); err != nil {

@@ -17,16 +17,14 @@ import (
 // route supplies the MCP path. The same service may also expose ordinary HTTP,
 // file, and gRPC endpoints.
 //
-// MCP takes two required arguments and an optional list of configuration
-// functions:
-//   - name: the MCP server name (used in MCP handshake)
+// MCP takes two required arguments:
+//   - name: the server name returned in response metadata
 //   - version: the server version string
-//   - opts: optional configuration functions (e.g., ProtocolVersion)
 //
 // Example:
 //
 //	Service("calculator", func() {
-//	    MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+//	    MCP("calc", "1.0.0")
 //	    JSONRPC(func() {
 //	        POST("/mcp")
 //	    })
@@ -41,38 +39,16 @@ import (
 //	        Tool("add", "Add two numbers")
 //	    })
 //	})
-func MCP(name, version string, opts ...func(*exprmcp.MCPExpr)) {
+func MCP(name, version string) {
 	svc, ok := eval.Current().(*goaexpr.ServiceExpr)
 	if !ok {
 		eval.IncompatibleDSL()
 		return
 	}
 	m := &exprmcp.MCPExpr{Service: svc, Name: name, Version: version, Description: svc.Description}
-	for _, o := range opts {
-		if o != nil {
-			o(m)
-		}
-	}
 	if r := exprmcp.Root; r != nil {
 		r.RegisterMCP(svc, m)
 	}
-}
-
-// ProtocolVersion configures the MCP protocol version supported by the server.
-// It returns a configuration function for use with MCP.
-//
-// ProtocolVersion takes a single argument which is the protocol version string.
-//
-// Example:
-//
-//	Service("calculator", func() {
-//	    MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
-//	    JSONRPC(func() {
-//	        POST("/mcp")
-//	    })
-//	})
-func ProtocolVersion(version string) func(*exprmcp.MCPExpr) {
-	return func(m *exprmcp.MCPExpr) { m.ProtocolVersion = version }
 }
 
 // Resource marks the current method as an MCP resource provider. The method's

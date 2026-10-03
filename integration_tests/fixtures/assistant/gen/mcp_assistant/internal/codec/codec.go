@@ -271,8 +271,10 @@ func ValidateSystemInfoResultTransport(value *SystemInfoResultTransport) (err er
 // EncodeAnalyzeSentimentPayload turns a service value into JSON using the field names in the Goa design.
 func EncodeAnalyzeSentimentPayload(in *assistant.AnalyzeSentimentPayload) ([]byte, error) {
 	var body *AnalyzeSentimentPayloadTransport
-	body = &AnalyzeSentimentPayloadTransport{
-		Text: &in.Text,
+	{
+		body = &AnalyzeSentimentPayloadTransport{
+			Text: &in.Text,
+		}
 	}
 	if err := ValidateAnalyzeSentimentPayloadTransport(body); err != nil {
 		return nil, fmt.Errorf("validate AnalyzeSentimentPayload JSON: %w", err)
@@ -301,8 +303,10 @@ func DecodeAnalyzeSentimentPayload(data []byte) (out *assistant.AnalyzeSentiment
 	if err := ValidateAnalyzeSentimentPayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate AnalyzeSentimentPayload JSON: %w", err)
 	}
-	out = &assistant.AnalyzeSentimentPayload{
-		Text: *body.Text,
+	{
+		out = &assistant.AnalyzeSentimentPayload{
+			Text: *body.Text,
+		}
 	}
 	return out, nil
 }
@@ -310,8 +314,10 @@ func DecodeAnalyzeSentimentPayload(data []byte) (out *assistant.AnalyzeSentiment
 // EncodeAnalyzeSentimentResult turns a service value into JSON using the field names in the Goa design.
 func EncodeAnalyzeSentimentResult(in *assistant.AnalyzeSentimentResult) ([]byte, error) {
 	var body *AnalyzeSentimentResultTransport
-	body = &AnalyzeSentimentResultTransport{
-		Sentiment: in.Sentiment,
+	{
+		body = &AnalyzeSentimentResultTransport{
+			Sentiment: in.Sentiment,
+		}
 	}
 	if err := ValidateAnalyzeSentimentResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate AnalyzeSentimentResult JSON: %w", err)
@@ -340,8 +346,10 @@ func DecodeAnalyzeSentimentResult(data []byte) (out *assistant.AnalyzeSentimentR
 	if err := ValidateAnalyzeSentimentResultTransport(body); err != nil {
 		return out, fmt.Errorf("validate AnalyzeSentimentResult JSON: %w", err)
 	}
-	out = &assistant.AnalyzeSentimentResult{
-		Sentiment: body.Sentiment,
+	{
+		out = &assistant.AnalyzeSentimentResult{
+			Sentiment: body.Sentiment,
+		}
 	}
 	return out, nil
 }
@@ -349,9 +357,11 @@ func DecodeAnalyzeSentimentResult(data []byte) (out *assistant.AnalyzeSentimentR
 // EncodeExecuteCodePayload turns a service value into JSON using the field names in the Goa design.
 func EncodeExecuteCodePayload(in *assistant.ExecuteCodePayload) ([]byte, error) {
 	var body *ExecuteCodePayloadTransport
-	body = &ExecuteCodePayloadTransport{
-		Language: &in.Language,
-		Code:     &in.Code,
+	{
+		body = &ExecuteCodePayloadTransport{
+			Language: &in.Language,
+			Code:     &in.Code,
+		}
 	}
 	if err := ValidateExecuteCodePayloadTransport(body); err != nil {
 		return nil, fmt.Errorf("validate ExecuteCodePayload JSON: %w", err)
@@ -380,9 +390,11 @@ func DecodeExecuteCodePayload(data []byte) (out *assistant.ExecuteCodePayload, e
 	if err := ValidateExecuteCodePayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate ExecuteCodePayload JSON: %w", err)
 	}
-	out = &assistant.ExecuteCodePayload{
-		Language: *body.Language,
-		Code:     *body.Code,
+	{
+		out = &assistant.ExecuteCodePayload{
+			Language: *body.Language,
+			Code:     *body.Code,
+		}
 	}
 	return out, nil
 }
@@ -390,8 +402,10 @@ func DecodeExecuteCodePayload(data []byte) (out *assistant.ExecuteCodePayload, e
 // EncodeExecuteCodeResult turns a service value into JSON using the field names in the Goa design.
 func EncodeExecuteCodeResult(in *assistant.ExecuteCodeResult) ([]byte, error) {
 	var body *ExecuteCodeResultTransport
-	body = &ExecuteCodeResultTransport{
-		Output: in.Output,
+	{
+		body = &ExecuteCodeResultTransport{
+			Output: in.Output,
+		}
 	}
 	if err := ValidateExecuteCodeResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate ExecuteCodeResult JSON: %w", err)
@@ -420,8 +434,10 @@ func DecodeExecuteCodeResult(data []byte) (out *assistant.ExecuteCodeResult, err
 	if err := ValidateExecuteCodeResultTransport(body); err != nil {
 		return out, fmt.Errorf("validate ExecuteCodeResult JSON: %w", err)
 	}
-	out = &assistant.ExecuteCodeResult{
-		Output: body.Output,
+	{
+		out = &assistant.ExecuteCodeResult{
+			Output: body.Output,
+		}
 	}
 	return out, nil
 }
@@ -429,8 +445,10 @@ func DecodeExecuteCodeResult(data []byte) (out *assistant.ExecuteCodeResult, err
 // EncodeExtractKeywordsPayload turns a service value into JSON using the field names in the Goa design.
 func EncodeExtractKeywordsPayload(in *assistant.ExtractKeywordsPayload) ([]byte, error) {
 	var body *ExtractKeywordsPayloadTransport
-	body = &ExtractKeywordsPayloadTransport{
-		Text: &in.Text,
+	{
+		body = &ExtractKeywordsPayloadTransport{
+			Text: &in.Text,
+		}
 	}
 	if err := ValidateExtractKeywordsPayloadTransport(body); err != nil {
 		return nil, fmt.Errorf("validate ExtractKeywordsPayload JSON: %w", err)
@@ -459,8 +477,10 @@ func DecodeExtractKeywordsPayload(data []byte) (out *assistant.ExtractKeywordsPa
 	if err := ValidateExtractKeywordsPayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate ExtractKeywordsPayload JSON: %w", err)
 	}
-	out = &assistant.ExtractKeywordsPayload{
-		Text: *body.Text,
+	{
+		out = &assistant.ExtractKeywordsPayload{
+			Text: *body.Text,
+		}
 	}
 	return out, nil
 }
@@ -468,11 +488,13 @@ func DecodeExtractKeywordsPayload(data []byte) (out *assistant.ExtractKeywordsPa
 // EncodeExtractKeywordsResult turns a service value into JSON using the field names in the Goa design.
 func EncodeExtractKeywordsResult(in *assistant.ExtractKeywordsResult) ([]byte, error) {
 	var body *ExtractKeywordsResultTransport
-	body = &ExtractKeywordsResultTransport{}
-	if in.Keywords != nil {
-		body.Keywords = make([]string, len(in.Keywords))
-		for i, val := range in.Keywords {
-			body.Keywords[i] = val
+	{
+		body = &ExtractKeywordsResultTransport{}
+		if in.Keywords != nil {
+			body.Keywords = make([]string, len(in.Keywords))
+			for i, val := range in.Keywords {
+				body.Keywords[i] = val
+			}
 		}
 	}
 	if err := ValidateExtractKeywordsResultTransport(body); err != nil {
@@ -502,11 +524,13 @@ func DecodeExtractKeywordsResult(data []byte) (out *assistant.ExtractKeywordsRes
 	if err := ValidateExtractKeywordsResultTransport(body); err != nil {
 		return out, fmt.Errorf("validate ExtractKeywordsResult JSON: %w", err)
 	}
-	out = &assistant.ExtractKeywordsResult{}
-	if body.Keywords != nil {
-		out.Keywords = make([]string, len(body.Keywords))
-		for i, val := range body.Keywords {
-			out.Keywords[i] = val
+	{
+		out = &assistant.ExtractKeywordsResult{}
+		if body.Keywords != nil {
+			out.Keywords = make([]string, len(body.Keywords))
+			for i, val := range body.Keywords {
+				out.Keywords[i] = val
+			}
 		}
 	}
 	return out, nil
@@ -515,10 +539,12 @@ func DecodeExtractKeywordsResult(data []byte) (out *assistant.ExtractKeywordsRes
 // EncodeListDocumentsResult turns a service value into JSON using the field names in the Goa design.
 func EncodeListDocumentsResult(in *assistant.Documents) ([]byte, error) {
 	var body *ListDocumentsResultTransport
-	body = &ListDocumentsResultTransport{}
-	body.Items = make([]string, len(in.Items))
-	for i, val := range in.Items {
-		body.Items[i] = val
+	{
+		body = &ListDocumentsResultTransport{}
+		body.Items = make([]string, len(in.Items))
+		for i, val := range in.Items {
+			body.Items[i] = val
+		}
 	}
 	if err := ValidateListDocumentsResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate ListDocumentsResult JSON: %w", err)
@@ -533,15 +559,17 @@ func EncodeListDocumentsResult(in *assistant.Documents) ([]byte, error) {
 // EncodeProcessBatchPayload turns a service value into JSON using the field names in the Goa design.
 func EncodeProcessBatchPayload(in *assistant.ProcessBatchPayload) ([]byte, error) {
 	var body *ProcessBatchPayloadTransport
-	body = &ProcessBatchPayloadTransport{
-		Format:   in.Format,
-		Blob:     in.Blob,
-		URI:      in.URI,
-		MimeType: in.MimeType,
-	}
-	body.Items = make([]string, len(in.Items))
-	for i, val := range in.Items {
-		body.Items[i] = val
+	{
+		body = &ProcessBatchPayloadTransport{
+			Format:   in.Format,
+			Blob:     in.Blob,
+			URI:      in.URI,
+			MimeType: in.MimeType,
+		}
+		body.Items = make([]string, len(in.Items))
+		for i, val := range in.Items {
+			body.Items[i] = val
+		}
 	}
 	if err := ValidateProcessBatchPayloadTransport(body); err != nil {
 		return nil, fmt.Errorf("validate ProcessBatchPayload JSON: %w", err)
@@ -570,15 +598,17 @@ func DecodeProcessBatchPayload(data []byte) (out *assistant.ProcessBatchPayload,
 	if err := ValidateProcessBatchPayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate ProcessBatchPayload JSON: %w", err)
 	}
-	out = &assistant.ProcessBatchPayload{
-		Format:   body.Format,
-		Blob:     body.Blob,
-		URI:      body.URI,
-		MimeType: body.MimeType,
-	}
-	out.Items = make([]string, len(body.Items))
-	for i, val := range body.Items {
-		out.Items[i] = val
+	{
+		out = &assistant.ProcessBatchPayload{
+			Format:   body.Format,
+			Blob:     body.Blob,
+			URI:      body.URI,
+			MimeType: body.MimeType,
+		}
+		out.Items = make([]string, len(body.Items))
+		for i, val := range body.Items {
+			out.Items[i] = val
+		}
 	}
 	return out, nil
 }
@@ -586,8 +616,10 @@ func DecodeProcessBatchPayload(data []byte) (out *assistant.ProcessBatchPayload,
 // EncodeProcessBatchResult turns a service value into JSON using the field names in the Goa design.
 func EncodeProcessBatchResult(in *assistant.ProcessBatchResult) ([]byte, error) {
 	var body *ProcessBatchResultTransport
-	body = &ProcessBatchResultTransport{
-		OK: in.OK,
+	{
+		body = &ProcessBatchResultTransport{
+			OK: in.OK,
+		}
 	}
 	if err := ValidateProcessBatchResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate ProcessBatchResult JSON: %w", err)
@@ -616,8 +648,10 @@ func DecodeProcessBatchResult(data []byte) (out *assistant.ProcessBatchResult, e
 	if err := ValidateProcessBatchResultTransport(body); err != nil {
 		return out, fmt.Errorf("validate ProcessBatchResult JSON: %w", err)
 	}
-	out = &assistant.ProcessBatchResult{
-		OK: body.OK,
+	{
+		out = &assistant.ProcessBatchResult{
+			OK: body.OK,
+		}
 	}
 	return out, nil
 }
@@ -625,9 +659,11 @@ func DecodeProcessBatchResult(data []byte) (out *assistant.ProcessBatchResult, e
 // EncodeSearchPayload turns a service value into JSON using the field names in the Goa design.
 func EncodeSearchPayload(in *assistant.SearchPayload) ([]byte, error) {
 	var body *SearchPayloadTransport
-	body = &SearchPayloadTransport{
-		Query: &in.Query,
-		Limit: in.Limit,
+	{
+		body = &SearchPayloadTransport{
+			Query: &in.Query,
+			Limit: in.Limit,
+		}
 	}
 	if err := ValidateSearchPayloadTransport(body); err != nil {
 		return nil, fmt.Errorf("validate SearchPayload JSON: %w", err)
@@ -656,9 +692,11 @@ func DecodeSearchPayload(data []byte) (out *assistant.SearchPayload, err error) 
 	if err := ValidateSearchPayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate SearchPayload JSON: %w", err)
 	}
-	out = &assistant.SearchPayload{
-		Query: *body.Query,
-		Limit: body.Limit,
+	{
+		out = &assistant.SearchPayload{
+			Query: *body.Query,
+			Limit: body.Limit,
+		}
 	}
 	return out, nil
 }
@@ -666,11 +704,13 @@ func DecodeSearchPayload(data []byte) (out *assistant.SearchPayload, err error) 
 // EncodeSearchResult turns a service value into JSON using the field names in the Goa design.
 func EncodeSearchResult(in *assistant.SearchResult) ([]byte, error) {
 	var body *SearchResultTransport
-	body = &SearchResultTransport{}
-	if in.Results != nil {
-		body.Results = make([]string, len(in.Results))
-		for i, val := range in.Results {
-			body.Results[i] = val
+	{
+		body = &SearchResultTransport{}
+		if in.Results != nil {
+			body.Results = make([]string, len(in.Results))
+			for i, val := range in.Results {
+				body.Results[i] = val
+			}
 		}
 	}
 	if err := ValidateSearchResultTransport(body); err != nil {
@@ -700,11 +740,13 @@ func DecodeSearchResult(data []byte) (out *assistant.SearchResult, err error) {
 	if err := ValidateSearchResultTransport(body); err != nil {
 		return out, fmt.Errorf("validate SearchResult JSON: %w", err)
 	}
-	out = &assistant.SearchResult{}
-	if body.Results != nil {
-		out.Results = make([]string, len(body.Results))
-		for i, val := range body.Results {
-			out.Results[i] = val
+	{
+		out = &assistant.SearchResult{}
+		if body.Results != nil {
+			out.Results = make([]string, len(body.Results))
+			for i, val := range body.Results {
+				out.Results[i] = val
+			}
 		}
 	}
 	return out, nil
@@ -713,8 +755,10 @@ func DecodeSearchResult(data []byte) (out *assistant.SearchResult, err error) {
 // EncodeSummarizeTextPayload turns a service value into JSON using the field names in the Goa design.
 func EncodeSummarizeTextPayload(in *assistant.SummarizeTextPayload) ([]byte, error) {
 	var body *SummarizeTextPayloadTransport
-	body = &SummarizeTextPayloadTransport{
-		Text: &in.Text,
+	{
+		body = &SummarizeTextPayloadTransport{
+			Text: &in.Text,
+		}
 	}
 	if err := ValidateSummarizeTextPayloadTransport(body); err != nil {
 		return nil, fmt.Errorf("validate SummarizeTextPayload JSON: %w", err)
@@ -743,8 +787,10 @@ func DecodeSummarizeTextPayload(data []byte) (out *assistant.SummarizeTextPayloa
 	if err := ValidateSummarizeTextPayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate SummarizeTextPayload JSON: %w", err)
 	}
-	out = &assistant.SummarizeTextPayload{
-		Text: *body.Text,
+	{
+		out = &assistant.SummarizeTextPayload{
+			Text: *body.Text,
+		}
 	}
 	return out, nil
 }
@@ -752,8 +798,10 @@ func DecodeSummarizeTextPayload(data []byte) (out *assistant.SummarizeTextPayloa
 // EncodeSummarizeTextResult turns a service value into JSON using the field names in the Goa design.
 func EncodeSummarizeTextResult(in *assistant.SummarizeTextResult) ([]byte, error) {
 	var body *SummarizeTextResultTransport
-	body = &SummarizeTextResultTransport{
-		Summary: in.Summary,
+	{
+		body = &SummarizeTextResultTransport{
+			Summary: in.Summary,
+		}
 	}
 	if err := ValidateSummarizeTextResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate SummarizeTextResult JSON: %w", err)
@@ -782,8 +830,10 @@ func DecodeSummarizeTextResult(data []byte) (out *assistant.SummarizeTextResult,
 	if err := ValidateSummarizeTextResultTransport(body); err != nil {
 		return out, fmt.Errorf("validate SummarizeTextResult JSON: %w", err)
 	}
-	out = &assistant.SummarizeTextResult{
-		Summary: body.Summary,
+	{
+		out = &assistant.SummarizeTextResult{
+			Summary: body.Summary,
+		}
 	}
 	return out, nil
 }
@@ -791,9 +841,11 @@ func DecodeSummarizeTextResult(data []byte) (out *assistant.SummarizeTextResult,
 // EncodeSystemInfoResult turns a service value into JSON using the field names in the Goa design.
 func EncodeSystemInfoResult(in *assistant.SystemInfoResult) ([]byte, error) {
 	var body *SystemInfoResultTransport
-	body = &SystemInfoResultTransport{
-		Name:    in.Name,
-		Version: in.Version,
+	{
+		body = &SystemInfoResultTransport{
+			Name:    in.Name,
+			Version: in.Version,
+		}
 	}
 	if err := ValidateSystemInfoResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate SystemInfoResult JSON: %w", err)

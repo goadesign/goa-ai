@@ -15,57 +15,37 @@ import (
 
 // Client is the "mcp_assistant" service client.
 type Client struct {
-	InitializeEndpoint               goa.Endpoint
-	NotificationsInitializedEndpoint goa.Endpoint
-	PingEndpoint                     goa.Endpoint
-	ToolsListEndpoint                goa.Endpoint
-	ToolsCallEndpoint                goa.Endpoint
-	ResourcesListEndpoint            goa.Endpoint
-	ResourcesReadEndpoint            goa.Endpoint
-	PromptsListEndpoint              goa.Endpoint
-	PromptsGetEndpoint               goa.Endpoint
+	ServerDiscoverEndpoint goa.Endpoint
+	ToolsListEndpoint      goa.Endpoint
+	ToolsCallEndpoint      goa.Endpoint
+	ResourcesListEndpoint  goa.Endpoint
+	ResourcesReadEndpoint  goa.Endpoint
+	PromptsListEndpoint    goa.Endpoint
+	PromptsGetEndpoint     goa.Endpoint
 }
 
 // NewClient initializes a "mcp_assistant" service client given the endpoints.
-func NewClient(initialize, notificationsInitialized, ping, toolsList, toolsCall, resourcesList, resourcesRead, promptsList, promptsGet goa.Endpoint) *Client {
+func NewClient(serverDiscover, toolsList, toolsCall, resourcesList, resourcesRead, promptsList, promptsGet goa.Endpoint) *Client {
 	return &Client{
-		InitializeEndpoint:               initialize,
-		NotificationsInitializedEndpoint: notificationsInitialized,
-		PingEndpoint:                     ping,
-		ToolsListEndpoint:                toolsList,
-		ToolsCallEndpoint:                toolsCall,
-		ResourcesListEndpoint:            resourcesList,
-		ResourcesReadEndpoint:            resourcesRead,
-		PromptsListEndpoint:              promptsList,
-		PromptsGetEndpoint:               promptsGet,
+		ServerDiscoverEndpoint: serverDiscover,
+		ToolsListEndpoint:      toolsList,
+		ToolsCallEndpoint:      toolsCall,
+		ResourcesListEndpoint:  resourcesList,
+		ResourcesReadEndpoint:  resourcesRead,
+		PromptsListEndpoint:    promptsList,
+		PromptsGetEndpoint:     promptsGet,
 	}
 }
 
-// Initialize calls the "initialize" endpoint of the "mcp_assistant" service.
-func (c *Client) Initialize(ctx context.Context, p *InitializePayload) (res *InitializeResult, err error) {
+// ServerDiscover calls the "server/discover" endpoint of the "mcp_assistant"
+// service.
+func (c *Client) ServerDiscover(ctx context.Context, p *DiscoverPayload) (res *DiscoverResult, err error) {
 	var ires any
-	ires, err = c.InitializeEndpoint(ctx, p)
+	ires, err = c.ServerDiscoverEndpoint(ctx, p)
 	if err != nil {
 		return
 	}
-	return ires.(*InitializeResult), nil
-}
-
-// NotificationsInitialized calls the "notifications/initialized" endpoint of
-// the "mcp_assistant" service.
-func (c *Client) NotificationsInitialized(ctx context.Context) (err error) {
-	_, err = c.NotificationsInitializedEndpoint(ctx, nil)
-	return
-}
-
-// Ping calls the "ping" endpoint of the "mcp_assistant" service.
-func (c *Client) Ping(ctx context.Context) (res *PingResult, err error) {
-	var ires any
-	ires, err = c.PingEndpoint(ctx, nil)
-	if err != nil {
-		return
-	}
-	return ires.(*PingResult), nil
+	return ires.(*DiscoverResult), nil
 }
 
 // ToolsList calls the "tools/list" endpoint of the "mcp_assistant" service.

@@ -2,11 +2,18 @@
 package mcp
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
 
 type (
+	// OutcomeUnknownError means a sent tool request lost its usable response.
+	// The operation may have completed; issuing it again can repeat its effects.
+	OutcomeUnknownError struct {
+		cause error
+	}
+
 	// MalformedResponseError reports an MCP response with missing or invalid fields.
 	MalformedResponseError struct {
 		cause error
@@ -24,6 +31,22 @@ type (
 		Response CallResponse
 	}
 )
+
+// NewOutcomeUnknownError retains the failure that prevented proof of completion.
+func NewOutcomeUnknownError(cause error) *OutcomeUnknownError {
+	if cause == nil {
+		panic("mcp: unknown outcome requires a cause")
+	}
+	return &OutcomeUnknownError{cause: cause}
+}
+
+// Error describes the missing completion evidence for the sent operation.
+func (e *OutcomeUnknownError) Error() string {
+	return fmt.Sprintf("MCP tool outcome is unknown: %v", e.cause)
+}
+
+// Unwrap returns the transport or response failure.
+func (e *OutcomeUnknownError) Unwrap() error { return e.cause }
 
 // NewMalformedResponseError wraps a response decoding or shape failure.
 func NewMalformedResponseError(cause error) *MalformedResponseError {
@@ -84,6 +107,16 @@ func (e *ToolExecutionError) Error() string {
 		return "MCP tool execution error"
 	}
 	return "MCP tool execution error: " + strings.Join(messages, "\n")
+}
+
+// unknownToolOutcome preserves explicit protocol errors and marks other failures
+// after a tool request was sent, so callers cannot mistake them for a rejection.
+func unknownToolOutcome(err error) error {
+	var protocol *Error
+	if err == nil || errors.As(err, &protocol) {
+		return err
+	}
+	return NewOutcomeUnknownError(err)
 }
 
 // cloneContentBlocks copies tool error content so callers cannot change the

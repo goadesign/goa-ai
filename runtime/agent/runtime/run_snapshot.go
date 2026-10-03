@@ -64,6 +64,7 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 		case hooks.RunStarted,
 			hooks.ChildRunLinked,
 			hooks.AwaitClarification,
+			hooks.AwaitMCPInput,
 			hooks.AwaitConfirmation,
 			hooks.AwaitExternalTools,
 			hooks.RunPhaseChanged,
@@ -102,6 +103,9 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 				ToolName: p.RestrictToTool,
 				Question: p.Question,
 			}
+
+		case *hooks.AwaitMCPInputEvent:
+			s.Await = &run.AwaitSnapshot{Kind: string(hooks.AwaitMCPInput), ToolName: p.Input.ToolName, ToolCallID: p.Input.ToolCallID, ItemCount: len(p.Input.Requests)}
 
 		case *hooks.AwaitConfirmationEvent:
 			s.Await = &run.AwaitSnapshot{

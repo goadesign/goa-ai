@@ -19,14 +19,14 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// DecodeInitializeRequest returns a decoder for requests sent to the
-// mcp_assistant initialize endpoint.
-func DecodeInitializeRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.InitializePayload, error) {
-	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.InitializePayload, error) {
+// DecodeServerDiscoverRequest returns a decoder for requests sent to the
+// mcp_assistant server/discover endpoint.
+func DecodeServerDiscoverRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.DiscoverPayload, error) {
+	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.DiscoverPayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
-		var payload *mcpassistant.InitializePayload
+		var payload *mcpassistant.DiscoverPayload
 		var (
-			body InitializeRequestBody
+			body ServerDiscoverRequestBody
 			err  error
 		)
 		err = decoder(r).Decode(&body)
@@ -40,11 +40,11 @@ func DecodeInitializeRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 			}
 			return payload, goa.DecodePayloadError(err.Error())
 		}
-		err = ValidateInitializeRequestBody(&body)
+		err = ValidateServerDiscoverRequestBody(&body)
 		if err != nil {
 			return payload, err
 		}
-		payload = NewInitializePayload(&body)
+		payload = NewServerDiscoverDiscoverPayload(&body)
 
 		return payload, nil
 	}
@@ -57,24 +57,25 @@ func DecodeToolsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var payload *mcpassistant.ToolsListPayload
 		var (
-			body *ToolsListRequestBody
+			body ToolsListRequestBody
 			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				err = nil
-			} else {
-				var gerr *goa.ServiceError
-				if errors.As(err, &gerr) {
-					return payload, gerr
-				}
-				return payload, goa.DecodePayloadError(err.Error())
+				return payload, goa.MissingPayloadError()
 			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
 		}
-		if body != nil {
+		err = ValidateToolsListRequestBody(&body)
+		if err != nil {
+			return payload, err
 		}
-		payload = NewToolsListPayload(body)
+		payload = NewToolsListPayload(&body)
 
 		return payload, nil
 	}
@@ -118,24 +119,25 @@ func DecodeResourcesListRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var payload *mcpassistant.ResourcesListPayload
 		var (
-			body *ResourcesListRequestBody
+			body ResourcesListRequestBody
 			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				err = nil
-			} else {
-				var gerr *goa.ServiceError
-				if errors.As(err, &gerr) {
-					return payload, gerr
-				}
-				return payload, goa.DecodePayloadError(err.Error())
+				return payload, goa.MissingPayloadError()
 			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
 		}
-		if body != nil {
+		err = ValidateResourcesListRequestBody(&body)
+		if err != nil {
+			return payload, err
 		}
-		payload = NewResourcesListPayload(body)
+		payload = NewResourcesListPayload(&body)
 
 		return payload, nil
 	}
@@ -179,24 +181,25 @@ func DecodePromptsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var payload *mcpassistant.PromptsListPayload
 		var (
-			body *PromptsListRequestBody
+			body PromptsListRequestBody
 			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				err = nil
-			} else {
-				var gerr *goa.ServiceError
-				if errors.As(err, &gerr) {
-					return payload, gerr
-				}
-				return payload, goa.DecodePayloadError(err.Error())
+				return payload, goa.MissingPayloadError()
 			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
 		}
-		if body != nil {
+		err = ValidatePromptsListRequestBody(&body)
+		if err != nil {
+			return payload, err
 		}
-		payload = NewPromptsListPayload(body)
+		payload = NewPromptsListPayload(&body)
 
 		return payload, nil
 	}
@@ -231,26 +234,6 @@ func DecodePromptsGetRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 
 		return payload, nil
 	}
-}
-
-// unmarshalClientInfoRequestBodyToMcpassistantClientInfo builds a value of
-// type *mcpassistant.ClientInfo from a value of type *ClientInfoRequestBody.
-func unmarshalClientInfoRequestBodyToMcpassistantClientInfo(v *ClientInfoRequestBody) *mcpassistant.ClientInfo {
-	res := &mcpassistant.ClientInfo{
-		Name:    *v.Name,
-		Version: *v.Version,
-	}
-
-	return res
-}
-
-// unmarshalClientCapabilitiesRequestBodyToMcpassistantClientCapabilities
-// builds a value of type *mcpassistant.ClientCapabilities from a value of type
-// *ClientCapabilitiesRequestBody.
-func unmarshalClientCapabilitiesRequestBodyToMcpassistantClientCapabilities(v *ClientCapabilitiesRequestBody) *mcpassistant.ClientCapabilities {
-	res := &mcpassistant.ClientCapabilities{}
-
-	return res
 }
 
 // marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody builds
@@ -294,17 +277,6 @@ func marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBody(v *
 // *mcpassistant.PromptsCapability.
 func marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBody(v *mcpassistant.PromptsCapability) *PromptsCapabilityResponseBody {
 	res := &PromptsCapabilityResponseBody{}
-
-	return res
-}
-
-// marshalMcpassistantServerInfoToServerInfoResponseBody builds a value of type
-// *ServerInfoResponseBody from a value of type *mcpassistant.ServerInfo.
-func marshalMcpassistantServerInfoToServerInfoResponseBody(v *mcpassistant.ServerInfo) *ServerInfoResponseBody {
-	res := &ServerInfoResponseBody{
-		Name:    v.Name,
-		Version: v.Version,
-	}
 
 	return res
 }

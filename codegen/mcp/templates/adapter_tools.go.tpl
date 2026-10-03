@@ -1,32 +1,41 @@
 {{- if .Tools }}
-{{ comment "Tools handling" }}
-
-// ToolsList returns the tools declared in the Goa design.
+// ToolsList returns the stable catalog declared by the design. A supplied
+// cursor is invalid because this generated catalog has only one page.
 func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*ToolsListResult, error) {
-    a.log(ctx, "request", map[string]any{"method": "tools/list"})
-    if p.Params != nil && p.Params.Cursor != nil {
-        return nil, goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
+    _, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/list")
+    defer span.End()
+    if p.Cursor != nil {
+        failure := goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
+        span.RecordError(failure)
+        span.SetStatus(codes.Error, failure.Error())
+        return nil, failure
     }
-    tools := []*ToolInfo{
+    return &ToolsListResult{
+        ResultType: "complete",
+        Meta: resultMeta(),
+        TTLMs: 0,
+        CacheScope: "private",
+        Tools: []*ToolInfo{
         {{- range .Tools }}
-        {
-            Name: {{ quote .Name }},
-            Description: stringPtr({{ quote .Description }}),
-            InputSchema: json.RawMessage({{ quote .InputSchema }}),
-            {{- if .OutputSchema }}
-            OutputSchema: json.RawMessage({{ quote .OutputSchema }}),
-            {{- end }}
-        },
+            {
+                Name: {{ quote .Name }},
+                Description: stringPtr({{ quote .Description }}),
+                InputSchema: json.RawMessage({{ quote .InputSchema }}),
+                {{- if .HasResult }}
+                OutputSchema: json.RawMessage({{ quote .OutputSchema }}),
+                {{- end }}
+            },
         {{- end }}
-    }
-    res := &ToolsListResult{Tools: tools}
-    a.log(ctx, "response", map[string]any{"method": "tools/list"})
-    return res, nil
+        },
+    }, nil
 }
 
-// toolCallError returns a service failure as an MCP tool result.
+// toolCallError lets the client correct a recognized tool's arguments or
+// observe an application failure without treating it as a protocol failure.
 func toolCallError(message string) *ToolsCallResult {
     return &ToolsCallResult{
+        ResultType: "complete",
+        Meta: resultMeta(),
         Content: []*ContentItem{
             {Type: "text", Text: message},
         },
@@ -34,9 +43,11 @@ func toolCallError(message string) *ToolsCallResult {
     }
 }
 
-// ToolsCall validates the arguments and calls the Goa method for the named tool.
+// ToolsCall decodes the named tool's arguments through its generated codec,
+// calls its service, and encodes one structured result through that same contract.
 func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error) {
-    a.log(ctx, "request", map[string]any{"method": "tools/call", "name": p.Name})
+    ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/call")
+    defer span.End()
     switch p.Name {
     {{- range .Tools }}
     case {{ quote .Name }}:
@@ -47,11 +58,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
         }
         payload, err := {{ $.CodecPackage }}.{{ .Codec.PayloadDecode }}(arguments)
         if err != nil {
-            return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+            return toolCallError("invalid arguments: " + err.Error()), nil
         }
         {{- else }}
         if err := validateNoArguments(p.Arguments); err != nil {
-            return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+            return toolCallError("invalid arguments: " + err.Error()), nil
         }
         {{- end }}
         {{- if .HasResult }}
@@ -61,46 +72,40 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
         result, err := a.service.{{ .ServiceMethodName }}(ctx)
         {{- end }}
         if err != nil {
-            return toolCallError(a.mapError(err).Error()), nil
+            failure := a.mapError(err)
+            span.RecordError(failure)
+            span.SetStatus(codes.Error, failure.Error())
+            return toolCallError(failure.Error()), nil
         }
-        {{- if .TextResult }}
-        text := string(result)
-        {{- else }}
         encoded, err := {{ $.CodecPackage }}.{{ .Codec.ResultEncode }}(result)
         if err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("internal_error", "%s", err.Error())
         }
-        text := string(encoded)
-        {{- end }}
-        final := &ToolsCallResult{
-            Content: []*ContentItem{
-                {Type: "text", Text: text},
-            },
-            {{- if .HasStructuredResult }}
+        return &ToolsCallResult{
+            ResultType: "complete",
+            Meta: resultMeta(),
+            Content: []*ContentItem{},
             StructuredContent: json.RawMessage(encoded),
-            {{- end }}
-        }
-        a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-        return final, nil
+        }, nil
         {{- else }}
         {{- if .HasPayload }}
-        if err := a.service.{{ .ServiceMethodName }}(ctx, payload); err != nil {
-            return toolCallError(a.mapError(err).Error()), nil
-        }
+        err := a.service.{{ .ServiceMethodName }}(ctx, payload)
         {{- else }}
-        if err := a.service.{{ .ServiceMethodName }}(ctx); err != nil {
-            return toolCallError(a.mapError(err).Error()), nil
-        }
+        err := a.service.{{ .ServiceMethodName }}(ctx)
         {{- end }}
-        a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-        return &ToolsCallResult{
-            Content: []*ContentItem{},
-        }, nil
+        if err != nil {
+            failure := a.mapError(err)
+            span.RecordError(failure)
+            span.SetStatus(codes.Error, failure.Error())
+            return toolCallError(failure.Error()), nil
+        }
+        return &ToolsCallResult{ResultType: "complete", Meta: resultMeta(), Content: []*ContentItem{}}, nil
         {{- end }}
     {{- end }}
     default:
         return nil, goa.PermanentError("invalid_params", "unknown tool: %s", p.Name)
     }
 }
-
 {{- end }}

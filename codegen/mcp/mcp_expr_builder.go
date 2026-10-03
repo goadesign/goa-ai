@@ -4,6 +4,7 @@ package codegen
 
 import (
 	"fmt"
+	"strings"
 
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/expr"
@@ -96,7 +97,38 @@ func (b *mcpExprBuilder) BuildServiceExpr() *expr.ServiceExpr {
 // userTypeAttr refers to one named MCP type so generated clients use the same
 // Go type in method fields and helper functions.
 func (b *mcpExprBuilder) userTypeAttr(name string, builder func() *expr.AttributeExpr) *expr.AttributeExpr {
-	return b.UserTypeAttr(name, builder)
+	return b.UserTypeAttr(name, func() *expr.AttributeExpr {
+		attribute := builder()
+		object := expr.AsObject(attribute.Type)
+		if attribute.Validation == nil {
+			attribute.Validation = &expr.ValidationExpr{}
+		}
+		meta := &expr.NamedAttributeExpr{Name: "_meta", Attribute: &expr.AttributeExpr{
+			Type:        expr.Any,
+			Description: "Namespaced protocol metadata and extension values",
+			Meta:        expr.MetaExpr{"struct:field:type": []string{"json.RawMessage", "encoding/json"}, "struct:tag:json": []string{"_meta,omitempty"}},
+		}}
+		*object = append(*object, meta)
+		if strings.HasSuffix(name, "Payload") {
+			attribute.Validation.Required = append(attribute.Validation.Required, "_meta")
+		} else {
+			*object = append(*object, &expr.NamedAttributeExpr{Name: "resultType", Attribute: &expr.AttributeExpr{
+				Type: expr.String, Description: "This response contains a finished result",
+				Validation: &expr.ValidationExpr{Values: []any{"complete"}},
+			}})
+			attribute.Validation.Required = append(attribute.Validation.Required, "resultType")
+			switch name {
+			case "DiscoverResult", "ToolsListResult", "ResourcesListResult", "PromptsListResult", "ResourcesReadResult":
+				minimum := float64(0)
+				*object = append(*object,
+					&expr.NamedAttributeExpr{Name: "ttlMs", Attribute: &expr.AttributeExpr{Type: expr.Int64, Description: "Milliseconds this one response may be cached", Validation: &expr.ValidationExpr{Minimum: &minimum}}},
+					&expr.NamedAttributeExpr{Name: "cacheScope", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Whether this response may be reused across authorization contexts", Validation: &expr.ValidationExpr{Values: []any{"public", "private"}}}},
+				)
+				attribute.Validation.Required = append(attribute.Validation.Required, "ttlMs", "cacheScope")
+			}
+		}
+		return attribute
+	})
 }
 
 // Attach adds the MCP service, types, and JSON-RPC transport to root. Goa plans
@@ -119,16 +151,6 @@ func (b *mcpExprBuilder) Attach(root *expr.RootExpr, mcpService *expr.ServiceExp
 func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr, jsonrpcPath string) *expr.HTTPServiceExpr {
 	httpService := shared.BuildHTTPServiceBase(mcpService, mcpHTTPServiceConfig{jsonrpcPath: jsonrpcPath})
 	for _, endpoint := range httpService.HTTPEndpoints {
-		if endpoint.MethodExpr.Name == "notifications/initialized" {
-			endpoint.JSONRPCNotification = true
-		}
-		switch endpoint.MethodExpr.Name {
-		case "tools/list", "resources/list", "prompts/list":
-			body := expr.DupAttForDSL(expr.AsObject(endpoint.MethodExpr.Payload.Type).Attribute("params"))
-			body.AddMeta("origin:attribute", "params")
-			body.AddMeta("http:body")
-			endpoint.Body = body
-		}
 		if len(endpoint.MethodExpr.Errors) > 0 {
 			endpoint.HTTPErrors = buildMCPHTTPErrorMappings(endpoint)
 		}

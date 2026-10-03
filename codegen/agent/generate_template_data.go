@@ -227,12 +227,10 @@ type (
 	}
 
 	mcpExecutorToolData struct {
-		LocalName        string
-		ConstName        string
-		SpecVar          string
-		HasResult        bool
-		StructuredResult bool
-		TextResult       bool
+		LocalName string
+		ConstName string
+		SpecVar   string
+		HasResult bool
 	}
 
 	// transforms metadata used by tool_transforms.go.tpl

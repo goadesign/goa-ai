@@ -1,46 +1,47 @@
-{{ printf "%s configures the mux to serve the JSON-RPC %s service methods." .MountServerDeclaration.Name .Service.Name | comment }}
-func {{ .MountServerDeclaration.Name }}(mux goahttp.Muxer, h *{{ .ServerStructDeclaration.Name }}) {
+{{ printf "%s configures the mux to serve the JSON-RPC %s service methods." .Transport.MountServerDeclaration.Name .Transport.Service.Name | comment }}
+func {{ .Transport.MountServerDeclaration.Name }}(mux goahttp.Muxer, h *{{ .Transport.ServerStructDeclaration.Name }}) {
 	MountWithOrigins(mux, h, nil)
 }
 
 // MountWithOrigins configures the mux to serve the JSON-RPC service. Requests
 // that send an Origin header must exactly match one of the allowed origins.
-func MountWithOrigins(mux goahttp.Muxer, h *{{ .ServerStructDeclaration.Name }}, origins []string) {
+func MountWithOrigins(mux goahttp.Muxer, h *{{ .Transport.ServerStructDeclaration.Name }}, origins []string) {
 	allowedOrigins := make(map[string]struct{}, len(origins))
 	for _, origin := range origins {
 		allowedOrigins[origin] = struct{}{}
 	}
-{{- if .HasMixed }}
+{{- if .Transport.HasMixed }}
 	// ServeHTTP checks the Accept header and chooses one response or a stream of events.
-	{{- range (index .Endpoints 0).Routes }}
+	{{- range (index .Transport.Endpoints 0).Routes }}
 	mux.Handle("{{ .Verb }}", "{{ .Path }}", withMCPTransport(h, allowedOrigins, h.ServeHTTP))
 	{{- end }}
-{{- else if .HasSSE }}
+{{- else if .Transport.HasSSE }}
 	// Every method in this server writes a stream of events.
-	{{- range .Endpoints }}
+	{{- range .Transport.Endpoints }}
 		{{- range .Routes }}
 	mux.Handle("{{ .Verb }}", "{{ .Path }}", withMCPTransport(h, allowedOrigins, h.handleSSE))
 		{{- end }}
 	{{- end }}
 {{- else }}
 	// Every method in this server writes one JSON-RPC response.
-	{{- range (index .Endpoints 0).Routes }}
+	{{- range (index .Transport.Endpoints 0).Routes }}
 	mux.Handle("{{ .Verb }}", "{{ .Path }}", withMCPTransport(h, allowedOrigins, h.ServeHTTP))
 	{{- end }}
 {{- end }}
-	{{- range (index .Endpoints 0).Routes }}
-	mux.Handle("GET", "{{ .Path }}", mcpGETHandler(allowedOrigins))
+	{{- range (index .Transport.Endpoints 0).Routes }}
+	mux.Handle("GET", "{{ .Path }}", mcpMethodNotAllowed(allowedOrigins))
+	mux.Handle("DELETE", "{{ .Path }}", mcpMethodNotAllowed(allowedOrigins))
 	{{- end }}
 }
 
-{{ printf "%s configures the mux to serve the JSON-RPC %s service methods." .MountServerDeclaration.Name .Service.Name | comment }}
-func (s *{{ .ServerStructDeclaration.Name }}) {{ .MountServerDeclaration.Name }}(mux goahttp.Muxer) {
-	{{ .MountServerDeclaration.Name }}(mux, s)
+{{ printf "%s configures the mux to serve the JSON-RPC %s service methods." .Transport.MountServerDeclaration.Name .Transport.Service.Name | comment }}
+func (s *{{ .Transport.ServerStructDeclaration.Name }}) {{ .Transport.MountServerDeclaration.Name }}(mux goahttp.Muxer) {
+	{{ .Transport.MountServerDeclaration.Name }}(mux, s)
 }
 
 // MountWithOrigins configures the mux to serve this JSON-RPC service.
 // Requests that send an Origin header must exactly match an allowed origin.
-func (s *{{ .ServerStructDeclaration.Name }}) MountWithOrigins(mux goahttp.Muxer, origins []string) {
+func (s *{{ .Transport.ServerStructDeclaration.Name }}) MountWithOrigins(mux goahttp.Muxer, origins []string) {
 	MountWithOrigins(mux, s, origins)
 }
 
@@ -51,7 +52,18 @@ type mcpResponseWriter struct {
 }
 
 // withMCPTransport enforces the HTTP rules that MCP adds to JSON-RPC.
-func withMCPTransport(h *{{ .ServerStructDeclaration.Name }}, allowedOrigins map[string]struct{}, next http.HandlerFunc) http.HandlerFunc {
+func withMCPTransport(h *{{ .Transport.ServerStructDeclaration.Name }}, allowedOrigins map[string]struct{}, next http.HandlerFunc) http.HandlerFunc {
+    bindings := map[string][]mcpruntime.HeaderBinding{
+        {{- range .Tools }}
+        {{- if .Headers }}
+        {{ printf "%q" .Name }}: {
+            {{- range .Headers }}
+            {Name: {{ printf "%q" .Name }}, Type: {{ printf "%q" .Type }}, Path: []string{ {{ range .Path }}{{ printf "%q" . }}, {{ end }} }},
+            {{- end }}
+        },
+        {{- end }}
+        {{- end }}
+    }
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !mcpOriginAllowed(r, allowedOrigins) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
@@ -66,20 +78,32 @@ func withMCPTransport(h *{{ .ServerStructDeclaration.Name }}, allowedOrigins map
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		body = bytes.TrimSpace(body)
-		if len(body) > 0 && body[0] == '[' {
-			response := jsonrpc.MakeErrorResponse(nil, jsonrpc.InvalidRequest, "Invalid request", nil)
-			if err := h.encoder(r.Context(), w).Encode(response); err != nil {
-				h.errhandler(r.Context(), w, fmt.Errorf("encode MCP invalid request response: %w", err))
-			}
-			return
-		}
-		var request jsonrpc.RawRequest
-		if err := request.UnmarshalJSON(body); err == nil && request.HasMethod && request.Method != "initialize" &&
-			r.Header.Get("MCP-Protocol-Version") != {{ .Service.PkgName }}.DefaultProtocolVersion {
-			http.Error(w, "Unsupported MCP protocol version", http.StatusBadRequest)
-			return
-		}
+        if failure := mcpruntime.ValidateHTTPRequest(r, body, bindings); failure != nil {
+            if err := mcpruntime.WriteProtocolError(w, body, failure); err != nil {
+                h.errhandler(r.Context(), w, err)
+            }
+            return
+        }
+        var request jsonrpc.RawRequest
+        if err := request.UnmarshalJSON(body); err != nil {
+            h.errhandler(r.Context(), w, err)
+            return
+        }
+        if !request.HasID {
+            w.WriteHeader(http.StatusAccepted)
+            return
+        }
+        switch request.Method {
+        {{- range .Transport.Endpoints }}
+        case {{ printf "%q" .Method.Name }}:
+        {{- end }}
+        default:
+            failure := &mcpruntime.Error{Code: mcpruntime.JSONRPCMethodNotFound, Message: "Method not found"}
+            if err := mcpruntime.WriteProtocolError(w, body, failure); err != nil {
+                h.errhandler(r.Context(), w, err)
+            }
+            return
+        }
 
 		response := &mcpResponseWriter{ResponseWriter: w}
 		next(response, r)
@@ -89,9 +113,8 @@ func withMCPTransport(h *{{ .ServerStructDeclaration.Name }}, allowedOrigins map
 	}
 }
 
-// mcpGETHandler rejects server event streams because this generated server
-// supports request responses only.
-func mcpGETHandler(allowedOrigins map[string]struct{}) http.HandlerFunc {
+// mcpMethodNotAllowed rejects HTTP methods absent from the current MCP binding.
+func mcpMethodNotAllowed(allowedOrigins map[string]struct{}) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !mcpOriginAllowed(r, allowedOrigins) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
@@ -104,11 +127,14 @@ func mcpGETHandler(allowedOrigins map[string]struct{}) http.HandlerFunc {
 // mcpOriginAllowed reports whether the request omits Origin or names an origin
 // the application allowed when it mounted the server.
 func mcpOriginAllowed(r *http.Request, allowedOrigins map[string]struct{}) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
+	origins := r.Header.Values("Origin")
+	if len(origins) == 0 {
 		return true
 	}
-	_, ok := allowedOrigins[origin]
+	if len(origins) != 1 || origins[0] == "" {
+		return false
+	}
+	_, ok := allowedOrigins[origins[0]]
 	return ok
 }
 

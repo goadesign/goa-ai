@@ -4,6 +4,10 @@ GO ?= go
 HTTP_PORT ?= 8888
 
 PROTOC := $(shell command -v protoc 2>/dev/null)
+GOLANGCI_LINT ?= golangci-lint
+GOLANGCI_LINT_TARGET := $(shell grep '^github.com/golangci/golangci-lint/v2/cmd/golangci-lint@' .go-install)
+GOLANGCI_LINT_VERSION := $(patsubst v%,%,$(word 2,$(subst @, ,$(GOLANGCI_LINT_TARGET))))
+
 PROTOC_GEN_GO := protoc-gen-go
 PROTOC_GEN_GO_GRPC := protoc-gen-go-grpc
 PROTOC_VERSION := $(shell awk '$$1 == "protoc" { print $$2; exit }' .tool-versions)
@@ -23,7 +27,7 @@ build: tools
 	$(GO) build ./...
 
 lint: tools
-	$(GO) tool golangci-lint run --timeout=5m
+	$(GOLANGCI_LINT) run --timeout=5m
 
 test: tools
 	$(GO) test -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests'`
@@ -42,7 +46,12 @@ ci: build lint test
 tools: ensure-golangci ensure-protoc-plugins protoc-check
 
 ensure-golangci:
-	@$(GO) tool golangci-lint version >/dev/null
+	@version="$$( $(GOLANGCI_LINT) version 2>/dev/null | awk '{ print $$4 }' || true)"; \
+	if [ "$$version" != "$(GOLANGCI_LINT_VERSION)" ]; then \
+		echo "Error: golangci-lint $(GOLANGCI_LINT_VERSION) is required, but $${version:-none} is in PATH."; \
+		echo "Run 'make setup' and ensure GOPATH/bin is in PATH."; \
+		exit 1; \
+	fi
 
 ensure-protoc-plugins:
 	@installed="$$(command -v $(PROTOC_GEN_GO) 2>/dev/null || true)"; \

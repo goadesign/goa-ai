@@ -12,7 +12,8 @@ func MountWithOrigins(mux goahttp.Muxer, h *Server, origins []string) {
 	}
 	// Every method in this server writes one JSON-RPC response.
 	mux.Handle("POST", "/mcp", withMCPTransport(h, allowedOrigins, h.ServeHTTP))
-	mux.Handle("GET", "/mcp", mcpGETHandler(allowedOrigins))
+	mux.Handle("GET", "/mcp", mcpMethodNotAllowed(allowedOrigins))
+	mux.Handle("DELETE", "/mcp", mcpMethodNotAllowed(allowedOrigins))
 }
 
 // Mount configures the mux to serve the JSON-RPC mcp_calc service methods.
@@ -34,6 +35,7 @@ type mcpResponseWriter struct {
 
 // withMCPTransport enforces the HTTP rules that MCP adds to JSON-RPC.
 func withMCPTransport(h *Server, allowedOrigins map[string]struct{}, next http.HandlerFunc) http.HandlerFunc {
+	bindings := map[string][]mcpruntime.HeaderBinding{}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !mcpOriginAllowed(r, allowedOrigins) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
@@ -48,18 +50,28 @@ func withMCPTransport(h *Server, allowedOrigins map[string]struct{}, next http.H
 			return
 		}
 		r.Body = io.NopCloser(bytes.NewReader(body))
-		body = bytes.TrimSpace(body)
-		if len(body) > 0 && body[0] == '[' {
-			response := jsonrpc.MakeErrorResponse(nil, jsonrpc.InvalidRequest, "Invalid request", nil)
-			if err := h.encoder(r.Context(), w).Encode(response); err != nil {
-				h.errhandler(r.Context(), w, fmt.Errorf("encode MCP invalid request response: %w", err))
+		if failure := mcpruntime.ValidateHTTPRequest(r, body, bindings); failure != nil {
+			if err := mcpruntime.WriteProtocolError(w, body, failure); err != nil {
+				h.errhandler(r.Context(), w, err)
 			}
 			return
 		}
 		var request jsonrpc.RawRequest
-		if err := request.UnmarshalJSON(body); err == nil && request.HasMethod && request.Method != "initialize" &&
-			r.Header.Get("MCP-Protocol-Version") != mcpcalc.DefaultProtocolVersion {
-			http.Error(w, "Unsupported MCP protocol version", http.StatusBadRequest)
+		if err := request.UnmarshalJSON(body); err != nil {
+			h.errhandler(r.Context(), w, err)
+			return
+		}
+		if !request.HasID {
+			w.WriteHeader(http.StatusAccepted)
+			return
+		}
+		switch request.Method {
+		case "":
+		default:
+			failure := &mcpruntime.Error{Code: mcpruntime.JSONRPCMethodNotFound, Message: "Method not found"}
+			if err := mcpruntime.WriteProtocolError(w, body, failure); err != nil {
+				h.errhandler(r.Context(), w, err)
+			}
 			return
 		}
 
@@ -71,9 +83,8 @@ func withMCPTransport(h *Server, allowedOrigins map[string]struct{}, next http.H
 	}
 }
 
-// mcpGETHandler rejects server event streams because this generated server
-// supports request responses only.
-func mcpGETHandler(allowedOrigins map[string]struct{}) http.HandlerFunc {
+// mcpMethodNotAllowed rejects HTTP methods absent from the current MCP binding.
+func mcpMethodNotAllowed(allowedOrigins map[string]struct{}) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !mcpOriginAllowed(r, allowedOrigins) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
@@ -86,11 +97,14 @@ func mcpGETHandler(allowedOrigins map[string]struct{}) http.HandlerFunc {
 // mcpOriginAllowed reports whether the request omits Origin or names an origin
 // the application allowed when it mounted the server.
 func mcpOriginAllowed(r *http.Request, allowedOrigins map[string]struct{}) bool {
-	origin := r.Header.Get("Origin")
-	if origin == "" {
+	origins := r.Header.Values("Origin")
+	if len(origins) == 0 {
 		return true
 	}
-	_, ok := allowedOrigins[origin]
+	if len(origins) != 1 || origins[0] == "" {
+		return false
+	}
+	_, ok := allowedOrigins[origins[0]]
 	return ok
 }
 

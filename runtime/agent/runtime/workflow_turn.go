@@ -90,6 +90,10 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 
 	toolClarifications := toolClarificationsFromRecords(records)
 	for i := range records {
+		if records[i].mcpInput != nil {
+			batch.pending = append(batch.pending, checkpointPendingInput{MCP: pendingMCPInput(records[i].call, records[i].mcpInput)})
+			continue
+		}
 		if records[i].childSuspension == nil {
 			continue
 		}

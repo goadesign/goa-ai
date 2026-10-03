@@ -28,6 +28,7 @@ func TestGeneratedMCPExecutorDecodesEveryStringControlCharacter(t *testing.T) {
 
 import (
 	"context"
+    "encoding/json"
 	"testing"
 
 	calccore "generated.local/gen/calc/toolsets/core"
@@ -39,11 +40,10 @@ func TestStringResultControlCharacters(t *testing.T) {
 	want := "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f" +
 		"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f"
 	caller := mcpruntime.CallerFunc(func(context.Context, mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-		return mcpruntime.CallResponse{
-			Content: []mcpruntime.ContentBlock{&mcpruntime.TextContent{Text: want}},
-		}, nil
+		encoded, err := json.Marshal(want)
+        return mcpruntime.CallResponse{StructuredContent: encoded}, err
 	})
-	executor := NewScribeCoreMCPExecutor(caller)
+	executor := NewMCPExecutor(caller)
 	result, err := executor.Execute(context.Background(), &runtime.ToolCallMeta{}, &runtime.ToolCall{
 		Name:    calccore.Label,
 		Payload: []byte(` + "`{}`" + `),
