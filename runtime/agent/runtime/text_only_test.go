@@ -2,7 +2,6 @@ package runtime
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 	"time"
 
@@ -300,8 +299,6 @@ func TestTextOnlyNativeDefaultPromptPreservesDomainShapes(t *testing.T) {
 			require.NoError(t, err)
 			assert.JSONEq(t, input, firstText(request.messages[0]))
 			assert.Equal(t, call.Payload, request.runContext.ToolArgs)
-			var value any
-			require.NoError(t, json.Unmarshal(request.runContext.ToolArgs, &value))
 		})
 	}
 }
