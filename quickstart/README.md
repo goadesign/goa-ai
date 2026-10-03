@@ -49,6 +49,34 @@ var Answer = Type("Answer", func() {
     Required("text")
 })
 
+var CapturedToolFailure = Type("CapturedToolFailure", func() {
+    Attribute("kind", String, "Observed failure classification.")
+    Attribute("message", String, "Observed failure explanation.")
+    Attribute("recovery_action", String, "The runtime's recorded recovery action.")
+    Required("kind", "message", "recovery_action")
+})
+
+var CapturedToolCall = Type("CapturedToolCall", func() {
+    Attribute("name", String, "The invoked tool.")
+    Attribute("call_id", String, "The identifier linking invocation and result.")
+    Attribute("parent_call_id", String, "The parent call, or empty for a root call.")
+    Attribute("arguments", Bytes, "Exact tool-argument JSON bytes.")
+    Attribute("result", Bytes, "Exact result JSON bytes, when available.")
+    Attribute("completed", Boolean, "Whether a terminal tool result was observed.")
+    Attribute("failure", CapturedToolFailure, "Observed failure, when the tool failed.")
+    Required("name", "call_id", "parent_call_id", "completed")
+})
+
+var GreetingObservation = Type("GreetingObservation", func() {
+    Attribute("question", String, "The original question sent to the agent.")
+    Attribute("answer", String, "Captured assistant text, including an empty answer.")
+    Attribute("tool_calls", ArrayOf(CapturedToolCall), "Invocations in the collector's causal order.")
+    Attribute("terminal_phase", String, "Observed final workflow phase, or empty when absent.")
+    Attribute("terminal_failure", String, "Observed workflow failure explanation, or empty.")
+    Attribute("run_error", String, "The product call's returned error, or empty on success.")
+    Required("question", "answer", "terminal_phase", "terminal_failure", "run_error")
+})
+
 var DraftTaskStep = Type("DraftTaskStep", func() {
     Attribute("title", String, "Short step title")
     Example(map[string]any{"title": "Review the current launch checklist"})
@@ -96,10 +124,14 @@ var _ = Service("orchestrator", func() {
             Scenario("greeting_reply", func() {
                 Description("The agent produces a final assistant reply to a user question.")
                 Input(AskPayload)
+                Observation(GreetingObservation)
+                Check("run_tools", "The agent completes and answers the original question through helpers.answer.")
                 Tags("smoke")
             })
             Scenario("helpers_contract", func() {
                 Description("The helpers.answer tool contract is reachable from the agent.")
+                Observation(Boolean)
+                Check("payload_schema", "The reachable helpers.answer contract includes a payload schema.")
                 Tags("contract")
             })
         })
@@ -115,6 +147,7 @@ go run goa.design/goa/v3/cmd/goa example example.com/quickstart/design
 ```
 
 This creates:
+
 - **`gen/`** - Generated code (never edit by hand), including one typed
   descriptor factory per tool (`helpers.AnswerTool()`) pairing the tool identifier with
   its payload and result codecs
@@ -122,7 +155,7 @@ This creates:
 - **`internal/agents/orchestrator/bootstrap/bootstrap.go`** - Wires runtime, registers agents and toolset executors
 - **`internal/agents/chat/planner/planner.go`** - Application-owned planner (edit to connect your LLM)
 - **`gen/<service>/completions/`** - Generated typed direct-completion helpers
-- **`gen/evals/chat_quality/`** - Typed evaluation harness (hooks interface, validated inputs, tool contracts)
+- **`gen/evals/chat_quality/`** - Typed capture hooks, exact predicates, validated inputs, observation codecs, and tool contracts
 - **`cmd/chat_quality-evals/main.go`** - Application-owned eval command (created once, never overwritten)
 
 This quickstart's application-owned files are already filled in to demonstrate
@@ -201,65 +234,65 @@ The generated example uses the in-memory engine, so no Temporal is needed for de
 ## 5) Evaluate your agent
 
 The `Suite` in the design generates a typed evaluation harness under
-`gen/evals/chat_quality`: one hook method per scenario, validated typed inputs,
-and `MustToolContract`, a lookup over the tool contracts reachable from the
-agent. `goa example` scaffolds `cmd/chat_quality-evals` once; the hook bodies
-are yours and survive regeneration.
+`gen/evals/chat_quality`. Each scenario declares an observation type and an
+exact check. Generated `Hooks` capture those observations; generated `Checks`
+assess the saved values. `New` validates live inputs, while `ForAssessment`
+constructs an offline suite with no capture hooks or live dependencies.
+`MustToolContract` exposes tool contracts reachable from the agent.
+`goa example` scaffolds `cmd/chat_quality-evals` once; application edits survive
+regeneration.
 
-This quickstart's `greeting_reply` hook demonstrates the framework evidence
-flow (see `cmd/chat_quality-evals/main.go`): it bridges the runtime's event
-bus into an `evidence.Collector` (package `goa.design/goa-ai/eval/evidence`)
-while the real chat agent runs on the in-memory engine, then grades the run
-with declarative expectations built from the generated typed tool descriptor:
+The `greeting_reply` hook in [main.go](cmd/chat_quality-evals/main.go) subscribes
+an `evidence.Collector` to the runtime's events while the chat agent runs on
+the in-memory engine. [observations.go](cmd/chat_quality-evals/observations.go)
+copies the question, answer, tool arguments and results, failures, and completion
+state into `GreetingObservation`. Failed and partial product outcomes remain
+data that checks can assess.
 
-```go
-expect := evidence.Expect{
-    Tools: []evidence.Tool{
-        evidence.ExpectCall(genhelpers.AnswerTool(),
-            func(p *genhelpers.AnswerPayload) error { /* assert arguments */ return nil },
-            func(r *genhelpers.AnswerResult) error { /* assert result */ return nil },
-        ),
-    },
-}
-return eval.Result{Checks: expect.Checks(ev), Output: ev.Answer}, nil
-```
-
-The descriptor fixes the tool-name-to-codec pairing at generation time, so
-the predicates are compile-checked against the tool's actual payload and
-result types — a design change that renames or retypes a field breaks the
-suite at compile time instead of silently never matching. `Expect` grades the
-causal trajectory, failure classifications (`evidence.ExpectFailure`),
-pending confirmations (`evidence.ExpectConfirmation`), forbidden tools, and
-the terminal workflow phase.
+During assessment, `CheckGreetingReplyRunTools` reconstructs those saved facts
+and runs `evidence.Expect` with the generated `helpers.AnswerTool()` descriptor.
+It checks the original question, a nonempty tool result, and successful
+completion. The default matching permits a failed attempt followed by a
+successful retry. Typed predicates remain compile-checked against the tool's
+payload and result fields.
 
 ```bash
 go run ./cmd/chat_quality-evals              # whole suite
 go run ./cmd/chat_quality-evals --tag smoke  # by tag
 go run ./cmd/chat_quality-evals --scenario greeting_reply
+go run ./cmd/chat_quality-evals --capture capture.json
+go run ./cmd/chat_quality-evals --assess capture.json
 ```
 
-The command prints a JSON report (scenarios in declaration order, per-check
-outcomes) and exits non-zero when anything fails:
+`--capture` creates a new private archive without calling predicates or
+evaluation models. It does not overwrite an existing file. `--assess` evaluates
+the archive without running the agent. The full-run and assessment commands
+print a JSON report and exit nonzero when anything fails. A shortened report
+looks like:
 
 ```json
 {
   "suite_id": "chat_quality",
   "scenarios": [
-    {"id": "greeting_reply", "result": {"checks": [{"name": "trajectory", "passed": true}, {"name": "terminal", "passed": true}], "output": "Deterministic demo answer to: What is the capital of Japan?"}, "passed": true},
-    {"id": "helpers_contract", "result": {"checks": [{"name": "answer_payload_schema_present", "passed": true}]}, "passed": true}
+    {"id": "greeting_reply", "checks": [{"name": "run_tools", "passed": true}], "passed": true},
+    {"id": "helpers_contract", "checks": [{"name": "payload_schema", "passed": true}], "passed": true}
   ],
   "passed": true
 }
 ```
 
-This suite is deterministic, so the runner takes a nil judge. When your hooks
-return semantic `eval.Claims` about model output, pass an `eval.Judge` instead
-— `judge.New(modelClient, maxOutputTokens)` from `eval/judge` wraps any
-`model.Client` in a typed, calibration-checked LLM judge. Supply a positive
-output-token limit for each complete response and handle the returned error.
-The same limit applies to all claims together and each permitted correction;
-it does not guarantee completion. See `docs/evals.md` in the goa-ai repository
-for the complete contract.
+The full report also records archive and assessment identities, policy,
+provenance, and separate capture and assessment durations. `Runner.Run` returns
+`(Archive, Report, error)`; check the error and `report.Passed`.
+
+This suite uses only exact checks, so the runner takes a nil assessment engine.
+For semantic checks, declare `Requirement`, `Subject`, and `Evidence` in the
+design. Construct a judge with `judge.New(modelClient, maxOutputTokens)`, pass it
+to `eval.NewReasoningEngine`, and handle both constructor errors before creating
+the runner. A selective engine can later accept System One predictions qualified
+on reviewed examples and send other cases to reasoning. Saved observations let
+you compare these approaches without rerunning the product. See the
+[evaluation guide](../docs/evals.md) for qualification, comparison, and migration.
 
 ## 6) (Optional) Connect to Temporal for production
 

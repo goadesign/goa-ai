@@ -3,10 +3,10 @@
 package codegen
 
 import (
-	"goa.design/goa-ai/codegen/internal/jsonshape"
 	"path/filepath"
 	"slices"
 
+	"goa.design/goa-ai/internal/codegen/jsonshape"
 	internaladmission "goa.design/goa-ai/internal/toolregistry/admission"
 	"goa.design/goa/v3/codegen"
 )

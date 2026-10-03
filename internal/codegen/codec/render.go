@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"goa.design/goa-ai/codegen/internal/jsonshape"
+	"goa.design/goa-ai/internal/codegen/jsonshape"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )

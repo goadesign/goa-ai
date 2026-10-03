@@ -341,15 +341,27 @@ Agent("chat", "Friendly Q&A assistant", func() {
     // ... toolsets ...
     Suite("chat_quality", func() {
         Description("Evaluates the chat agent end to end.")
+        Timeout("30s")
         Scenario("greeting_reply", func() {
             Description("The agent produces a final reply to a greeting.")
+            Observation(func() {
+                Attribute("question", String, "The question sent to the agent.")
+                Attribute("reply", String, "The observed reply, including an empty reply.")
+                Required("question", "reply")
+            })
+            Requirement("answers", "The reply answers the captured question.", func() {
+                Subject("reply")
+                Evidence("question")
+            })
             Tags("smoke")
         })
     })
 })
 ```
 
-Rerun `goa gen` to get a typed harness under `gen/evals/<suite>/` (one hook per scenario) and `goa example` to scaffold a runnable `cmd/<suite>-evals` command. Each hook runs your real agent and returns deterministic checks plus model-graded claims.
+Run `goa gen` to generate typed observation hooks and offline bindings under
+`gen/evals/<suite>/`, then `goa example` to create `cmd/<suite>-evals`. Hooks capture
+facts; declared checks and requirements assess the saved observations.
 
 ---
 

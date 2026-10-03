@@ -307,88 +307,75 @@ These write checks do not alter persisted JSON decoding; see the
 
 ## Generated Evaluations
 
-Applications define stable evaluation scenarios with `eval/dsl` beside their
-normal Goa v3 service design. A scenario `Input` is a Goa schema; concrete
-users, facilities, prompts, and other fixture values remain application code.
-`goa gen` emits local input types, Goa validation, one typed hook method per
-scenario, and a constructor that validates all supplied values before any live
-call. A scenario without `Input` receives only `context.Context`.
+The `eval/dsl` design fixes scenario inputs, typed observations, exact `Check`
+methods, and semantic `Requirement` statements. `Subject`, `Evidence`, and
+`ForEach` selectors are checked during generation and become direct typed field
+access. Generated codecs reuse the framework's strict JSON implementation.
+Observations admit failed and partial product outcomes; defaults cannot create
+facts that a hook did not capture. Assertion identities and coverage belong to
+the design, never to product hooks or model output.
 
-Suites may be generic top-level declarations or nested inside an agent.
-Agent-attached suites receive a generated lookup over the static tool specs
-reachable through that agent and its nested generated agents. The lookup
-delegates to canonical generated `ToolSpec` values and codecs; it does not
-reconstruct schemas or include registry-discovered contracts.
+Application hooks execute the product and return observations. `Capture` stores
+exact bytes, input configuration, schema identities, timestamps, errors, and
+provenance without calling predicates or assessors. `Assess` verifies the saved
+archive and uses only those bytes. Its generated `ForAssessment` constructor
+needs no capture hooks, live inputs, or product clients. `Run` composes the two
+operations. Capture and assessment each have independent per-scenario deadlines;
+bounded concurrency, selection validation, cancellation, and declaration-order
+reporting remain runner responsibilities. Each assessment has a separate content
+identity, evaluation provenance, and appendable report.
 
-`goa example` emits `cmd/<suite>-evals/main.go` once. This application-owned
-scaffold exposes every input and hook TODO but is not overwritten after product
-logic is added. The application implements those hooks to call the real product
-and return:
+Exact predicates cannot be overridden by semantic assessment. Reasoning-only,
+disagreement-detecting, and selective engines are explicit constructors. Native
+classifiers return complete four-label probabilities. Reasoners return judgments
+with explanations or explicit abstentions. Only a qualified automatic pass can
+avoid reasoning, and a reproducible audit policy can send it for independent
+assessment. Every other prediction requires reasoning. The initial reasoner
+sees original evidence without the classifier's opinion. Qualified pass/fail
+conflicts receive one adjudication; unresolved decisions and infrastructure
+errors remain distinct from product labels.
 
-- deterministic checks for exact facts such as IDs, counts, and tool calls;
-- semantic claims for meaning that requires reading a model answer; and
-- artifacts that help diagnose a failure.
+Qualification belongs to an exact observation schema, requirement statement,
+field selection, classifier version, instructions, and choice ordering. An
+application-owned reviewed corpus fixes independent groups and tuning/validation
+partitions. Tuning selects pass and fail probability bands; held-out evidence
+checks them once using conservative group error bounds. Insufficient evidence
+requires reasoning. Failure bands support disagreement detection, not automatic
+failure. The four-example semantic sanity check is explicit and provides no
+statistical qualification. No application-independent confidence cutoff is
+supplied, and the framework neither trains nor auto-promotes a model.
 
-The evidence collector owns correlation and assertion scope. `ToolCalls` records
-new invocations in one root run tree; ordered `ToolCompletions` records results
-delivered there, including earlier calls completed after an accepted continuation.
-The application supplies that accepted successor through
-`NewContinuationCollector`. Collector-produced context retains only pending calls
-and their observed ancestry across root stream boundaries. It cannot be authored
-through public evidence fields. Invocation and completion root scopes describe
-the observed run trees, not native child workflow identity. Exact trajectories,
-tool bans, and attempt policies continue to count only new invocations.
+`features/eval/typesafe` sends native Choice requests using generated private Goa
+records and codecs. It requires a pinned Jev version, verifies that version on
+responses, retains all four probabilities, enforces a caller-specified per-response
+byte ceiling, and honors context deadlines without retries or redirects.
+`eval/judge` remains the reasoning implementation, with explicit forced or
+automatic typed-tool constructors and the existing bounded format corrections.
+Model call records include failed invocations and corrections; missing usage is
+unknown. Provider-specific pricing remains application-owned.
 
-The runner owns execution mechanics. Callers choose all scenarios, exact
-scenario IDs, or tags through separate methods. Selection is validated before
-any product or model call. An explicit positive concurrency limit bounds work;
-failures do not stop unrelated scenarios; reports remain in declaration order.
-Progressive reporter callbacks expose starts and finishes without moving
-scheduling into the application. Caller cancellation stops new hooks, cancels
-in-flight contexts, and returns a partial report plus the context error.
-Application hooks, reporters, and the judge support concurrent calls up to the
-configured limit.
+`Engine.Challenge` tests reviewed examples and authored variants without changing
+qualifications. `Compare` assesses the same archive under multiple policies and
+repetitions, retaining complete reports, work, costs, and variability. It does not
+treat the reasoning baseline as ground truth. Real classifier accuracy and savings
+must be established with representative reviewed data, independently of synthetic
+contract tests.
 
-When semantic claims are present, a provider-neutral judge classifies each one
-as `entailed`, `contradicted`, `not_addressed`, or `indeterminate`. Before any
-scenario runs, the runner verifies all four meanings with framework-owned
-examples. Applications cannot weaken that check by supplying easier examples.
-Only `entailed` passes. Deterministic-only suites may omit the judge entirely.
-The model applies each claim's conditions, distinguishing required content from
-constraints that permit omission. Code never infers claim categories or remaps
-judgments to make omitted content pass.
+The `eval/evidence` collector continues to own stream correlation and causal
+ordering. `ToolCalls` contains new invocations in one root run tree;
+`ToolCompletions` contains results observed there, including earlier invocations
+completed after an accepted continuation. `NewContinuationCollector` receives
+the application's accepted successor and retains collector-owned pending context.
+Public evidence fields cannot create that context. Root stream scopes do not
+identify native child workflows, and earlier completions do not become new
+attempts. Applications capture the facts needed by their observation design and
+reuse existing typed expectations during offline assessment.
 
-The application constructing `eval/judge` supplies a required positive output-token
-limit for each complete model response and handles a construction error for invalid
-configuration. That limit is independent of claim count and remains unchanged
-across the existing bounded corrections. The judge owns response shape; the
-application owns permitted response work; providers enforce their own ceilings.
-No finite limit guarantees a completed judgment.
-
-`judge.New` uses forced tool output and `judge.NewAutomatic` explicitly selects
-automatic tool output. Both share the same judge implementation, prompt, schema,
-codec and correction policy. The application chooses the operation; no model
-capability guess or failure-driven fallback changes it.
-
-The private judge tool names each required property with its claim ID and places
-the full claim in that property's description. Code looks up results by name and
-returns them in input order; response position never establishes association.
-The schema owns shape and coverage, and the judge codec rejects duplicate raw
-JSON member names before decoding can overwrite a decision. Semantic truth remains
-model-owned. Hooks supply shared factual context through `Result.Reference`;
-the runner passes it to `Judge(ctx, output, claims, reference)` and retains it in
-the report. Each model request includes the reference once, separate from the
-unchanged candidate. Reference facts cannot fill omissions in that candidate.
-An empty reference is legitimate, and an empty candidate still skips grading.
-The judge attaches structural field metadata to the same tool schema so the
-existing model validator can name an invalid object or field in correction
-guidance. Semantic claim text stays in the schema, not in that metadata;
-correction never supplies a verdict or changes the accepted judgments.
-See the
-[judge contract](docs/evals.md#how-judging-works) for validation and limits.
-
-See [docs/evals.md](docs/evals.md) for the DSL, generated API, runner methods,
-and report behavior.
+`goa example` creates application-owned commands once. The breaking upgrade
+requires regenerated hooks, migrated checks and requirements, and updated report
+readers together; existing commands are not overwritten. See the authoritative
+[eval contract and migration guide](docs/evals.md) for caller APIs, selector
+semantics, qualification assumptions, and report behavior.
 
 ## Planner Step Contract
 

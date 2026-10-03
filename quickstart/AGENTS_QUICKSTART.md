@@ -339,24 +339,24 @@ Evaluates the chat agent end to end against the in-memory runtime.
 
 * **`helpers_contract`** (tags: `contract`): The helpers.answer tool contract is reachable from the agent.
 
-Everything typed lives in `gen/evals/chat_quality/`: a `Hooks` interface with one method per scenario, an `Inputs` struct for typed inputs, and (for agent-attached suites) `MustToolContract` to assert against the agent's reachable tool contracts. `goa example` scaffolds an application-owned command at `cmd/chat_quality-evals/main.go` **once**; it is yours to edit and is never overwritten.
+`gen/evals/chat_quality/` contains typed capture hooks, exact-check methods, strict
+observation codecs, and compiled requirement selectors. `Inputs` supplies capture
+inputs; `ForAssessment` constructs an offline suite without product hooks or live
+inputs. Agent-attached suites also expose `MustToolContract` for reachable tool
+contracts. `goa example` creates `cmd/chat_quality-evals/main.go` once.
 
-Implement each hook to run the real agent, then return the evidence to grade:
+The design owns every assertion. Capture hooks return the declared observation,
+including empty, partial, or unsuccessful product outcomes. A hook error means
+capture itself failed. Exact predicates return an empty diagnostic on success;
+semantic requirements are assessed by the configured engine.
 
-* **Checks** are deterministic facts: which tools were called, with which arguments, whether the run completed.
-* **Claims** are plain-language statements about the reply ("the answer names the capital of Japan") graded by a model judge.
-
-Don't recompute trajectory facts by hand. Bridge the runtime's event bus into
-an `evidence.Collector` (package `goa.design/goa-ai/eval/evidence`) while the
-agent runs, then declare expectations with the generated typed tool
-descriptors — the predicates are compile-checked against the tool's actual
-payload and result types:
+While the agent runs, feed its session's stream events into an
+`evidence.Collector` (`goa.design/goa-ai/eval/evidence`). Copy the question, reply,
+tool calls, and completion facts needed by your assertions into the typed
+observation. During offline assessment, reconstruct the needed `evidence.Evidence`
+from those saved fields and use generated typed tool descriptors:
 
 ```go
-collector := evidence.NewCollector()
-sub, err := streambridge.Register(rt.Bus, sink, stream.RuntimeHostProfile()) // sink filters the scenario's session and calls collector.Consume
-// ... run the agent ...
-ev, err := collector.Finish()
 expect := evidence.Expect{
     Tools: []evidence.Tool{
         evidence.ExpectCall(specs.<Tool>Tool(),
@@ -365,7 +365,12 @@ expect := evidence.Expect{
         ),
     },
 }
-return eval.Result{Checks: expect.Checks(ev), Claims: claims, Output: ev.Answer}, nil
+for _, check := range expect.Checks(savedEvidence) {
+    if !check.Passed {
+        return check.Diagnostic
+    }
+}
+return ""
 ```
 
 `Expect` grades the causal trajectory (in-order subsequence by default,
@@ -377,9 +382,25 @@ classifications (`evidence.ExpectFailure`), pending operator confirmations
 go run ./cmd/chat_quality-evals                    # run every scenario, JSON report on stdout
 go run ./cmd/chat_quality-evals -scenario <id>     # run selected scenarios (repeatable)
 go run ./cmd/chat_quality-evals -tag <tag>         # run by tag (repeatable)
+go run ./cmd/chat_quality-evals -capture run.json # capture without calling assessors
+go run ./cmd/chat_quality-evals -assess run.json  # assess saved observations only
 ```
 
-The command exits non-zero when any scenario fails, so it drops straight into CI. Deterministic-only suites can pass a `nil` judge; as soon as a hook returns claims, call `judge.New(modelClient, maxOutputTokens)` (see `goa.design/goa-ai/eval/judge`) and handle its returned error. Supply a positive output-token limit for one complete response, shared by all claims and applied unchanged to each permitted correction. The limit does not guarantee completion.
+The command exits nonzero on failed assertions, unresolved decisions, or capture
+and assessment errors. Suites containing only exact checks use a nil engine.
+For semantic requirements, construct `judge.New(modelClient, maxOutputTokens)`
+(`goa.design/goa-ai/eval/judge`), then `eval.NewReasoningEngine(grader)`, checking
+both errors. The output-token allowance applies to one complete model response,
+including each permitted format correction.
+
+A native System One classifier can reduce reasoning work after `eval.Qualify`
+tests application-reviewed examples on separate tuning and held-out groups.
+`eval.NewSelectiveEngine` accepts only qualified passes directly and audits a
+configured fraction with independent reasoning. Other predictions require
+reasoning; qualified disagreements get one adjudication. Use `Engine.Challenge`
+for authored variants and `eval.Compare` to compare complete costs and outcomes
+against a reasoning baseline on the same archive. No default confidence cutoff
+or automatic qualification is supplied.
 
 ---
 

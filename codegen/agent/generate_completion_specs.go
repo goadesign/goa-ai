@@ -4,10 +4,10 @@ package codegen
 
 import (
 	"fmt"
-	"goa.design/goa-ai/codegen/internal/jsonshape"
 	"path/filepath"
 	"sort"
 
+	"goa.design/goa-ai/internal/codegen/jsonshape"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"

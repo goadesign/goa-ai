@@ -5,10 +5,10 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
-	"goa.design/goa-ai/codegen/internal/jsonshape"
 	"maps"
 	"strings"
 
+	"goa.design/goa-ai/internal/codegen/jsonshape"
 	"goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 	"goa.design/goa/v3/http/codegen/openapi"

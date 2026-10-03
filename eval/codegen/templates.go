@@ -35,24 +35,39 @@ const suiteTemplate = `type (
 {{- range .Types }}
 	{{ comment .Description }}
 	{{ .Name }} {{ .Def }}
-
 {{- end }}
-	// {{ .Hooks }} is implemented by the application running this evaluation suite.
-	// Methods can run at the same time. Each method completes one scenario.
-	{{ .Hooks }} interface {
+{{- if .HasChecks }}
+	// {{ .Checks }} assesses captured values with exact, read-only predicates.
+	// An empty diagnostic passes; a nonempty diagnostic explains a failure.
+	// Methods must not call the product or reload reference data.
+	{{ .Checks }} interface {
 {{- range .Scenarios }}
-		// {{ .Method }} executes the {{ .RawID }} scenario.
-		{{ .Method }}(context.Context{{ if .HasInput }}, {{ .InputRef }}{{ end }}) (eval.Result, error)
+{{- $scenario := . }}
+{{- range .Checks }}
+		// {{ .Method }} checks the saved observation. {{ .Description }}
+		{{ .Method }}({{ $scenario.ObservationRef }}) string
+{{- end }}
+{{- end }}
+	}
+{{- end }}
+	// {{ .Hooks }} captures typed product evidence. Methods may run concurrently.
+	{{ .Hooks }} interface {
+{{- if .HasChecks }}
+		{{ .Checks }}
+{{- end }}
+{{- range .Scenarios }}
+		// {{ .Method }} runs {{ .RawID }} and returns its observed outcome.
+		{{ .Method }}(context.Context{{ if .HasInput }}, {{ .InputRef }}{{ end }}) ({{ .ObservationRef }}, error)
 {{- end }}
 	}
 
 	// {{ .Inputs }} contains the application value for every typed scenario.
 	{{ .Inputs }} struct {
 {{- range .Scenarios }}
-	{{- if .HasInput }}
+{{- if .HasInput }}
 		// {{ .InputField }} is passed to the {{ .RawID }} hook.
 		{{ .InputField }} {{ .InputRef }}
-	{{- end }}
+{{- end }}
 {{- end }}
 	}
 )
@@ -63,24 +78,63 @@ func {{ .New }}(hooks {{ .Hooks }}, inputs {{ .Inputs }}) (eval.Suite, error) {
 		return eval.Suite{}, fmt.Errorf("evaluation hooks are required")
 	}
 {{- range .Scenarios }}
-	{{- if .InputValidator }}
+{{- if .InputValidator }}
 	if err := {{ .InputValidator }}(inputs.{{ .InputField }}); err != nil {
 		return eval.Suite{}, fmt.Errorf("validate {{ .RawID }} input: %w", err)
 	}
-	{{- end }}
+{{- end }}
+{{- end }}
+	suite, err := {{ .ForAssessment }}({{ if .HasChecks }}hooks{{ end }})
+	if err != nil { return eval.Suite{}, err }
+{{- range .Scenarios }}
+{{- if .HasInput }}
+	suite.Scenarios[{{ .Index }}].Input, err = json.Marshal(inputs.{{ .InputField }})
+	if err != nil { return eval.Suite{}, fmt.Errorf("encode {{ .RawID }} input: %w", err) }
+{{- end }}
+	suite.Scenarios[{{ .Index }}].Capture = func(ctx context.Context) (rawjson.Message, error) {
+		observed, err := hooks.{{ .Method }}(ctx{{ if .HasInput }}, inputs.{{ .InputField }}{{ end }})
+		if err != nil { return nil, err }
+		return {{ .Encode }}(observed)
+	}
+{{- end }}
+	return suite, nil
+}
+
+// {{ .ForAssessment }} builds an offline suite using saved observations only.
+// It requires no capture hooks, live inputs, or product clients.
+func {{ .ForAssessment }}({{ if .HasChecks }}checks {{ .Checks }}{{ end }}) (eval.Suite, error) {
+{{- if .HasChecks }}
+	if checks == nil { return eval.Suite{}, fmt.Errorf("evaluation checks are required") }
 {{- end }}
 	return eval.Suite{
-		ID:          {{ .ID }},
+		ID: {{ .ID }},
 		Description: {{ .Description }},
 		Scenarios: []eval.Scenario{
 {{- range .Scenarios }}
 			{
-				ID:          {{ .ID }},
+				ID: {{ .ID }},
 				Description: {{ .Description }},
-				Tags:        []string{ {{- range .Tags }}{{ . }}, {{- end }}},
-				Timeout:     time.Duration({{ .Timeout }}),
-				Run: func(ctx context.Context) (eval.Result, error) {
-					return hooks.{{ .Method }}(ctx{{ if .HasInput }}, inputs.{{ .InputField }}{{ end }})
+				Tags: []string{ {{- range .Tags }}{{ . }},{{- end }}},
+				Timeout: time.Duration({{ .Timeout }}),
+				Schema: {{ .Schema }},
+				CheckNames: []string{ {{- range .Checks }}{{ .Name }},{{- end }}},
+				Requirements: []eval.Requirement{
+{{- range .Requirements }}
+					{ID: {{ .ID }}, SchemaID: {{ .SchemaID }}, Statement: {{ .Statement }}, Subject: {{ .Subject }}, Evidence: []string{ {{- range .Evidence }}{{ . }},{{- end }}}, ForEach: {{ .ForEach }}},
+{{- end }}
+				},
+				Bind: func(data rawjson.Message) (eval.Binding, error) {
+					observed, err := {{ .Decode }}(data)
+					if err != nil { return eval.Binding{}, err }
+					binding := eval.Binding{Subjects: make(map[string][]eval.Subject)}
+					{{ .Binding }}
+{{- range .Checks }}
+					{
+						diagnostic := checks.{{ .Method }}(observed)
+						binding.Checks = append(binding.Checks, eval.Check{Name: {{ .Name }}, Passed: diagnostic == "", Diagnostic: diagnostic})
+					}
+{{- end }}
+					return binding, nil
 				},
 			},
 {{- end }}
@@ -89,20 +143,19 @@ func {{ .New }}(hooks {{ .Hooks }}, inputs {{ .Inputs }}) (eval.Suite, error) {
 }
 
 {{- range .Validators }}
-// {{ .Name }} validates a generated evaluation input.
+// {{ .Name }} validates a generated evaluation value.
 func {{ .Name }}(value {{ .Ref }}) error {
 {{- if .Pointer }}
 	if value == nil {
 		return goa.MissingFieldError("input", "evaluation scenario")
 	}
 {{- end }}
-	{{- if .Lines }}
+{{- if .Lines }}
 	return {{ .NestedName }}(value, "input")
-	{{- else }}
+{{- else }}
 	return nil
-	{{- end }}
+{{- end }}
 }
-
 {{- if .Lines }}
 // {{ .NestedName }} validates value and starts error field names at path.
 func {{ .NestedName }}(value {{ .Ref }}, path string) (err error) {
@@ -112,7 +165,6 @@ func {{ .NestedName }}(value {{ .Ref }}, path string) (err error) {
 	return
 }
 {{- end }}
-
 {{- end }}`
 
 const contractTemplate = `// {{ .MustToolContract }} returns the generated description

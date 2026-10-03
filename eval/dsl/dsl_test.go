@@ -26,6 +26,8 @@ func TestSuiteDSL(t *testing.T) {
 			goadsl.Description("Evaluates assistant behavior.")
 			goadsl.Timeout("2m")
 			Scenario("record_inventory", func() {
+				Observation(goadsl.String)
+				Check("valid", "Checks the captured value.")
 				goadsl.Description("Lists records without truncation.")
 				Input(input)
 				aidls.Tags("records", "smoke")
@@ -57,6 +59,8 @@ func TestInputCustomizationExecutesOnce(t *testing.T) {
 			goadsl.Description("Evaluates assistant behavior.")
 			goadsl.Timeout("1m")
 			Scenario("answer", func() {
+				Observation(goadsl.String)
+				Check("valid", "Checks the captured value.")
 				goadsl.Description("Answers one query.")
 				Input(input, func() {
 					customizations++
@@ -88,6 +92,8 @@ func TestInputCustomizationWithoutRequirednessChangeKeepsTypeIdentity(t *testing
 			goadsl.Description("Evaluates assistant behavior.")
 			goadsl.Timeout("1m")
 			Scenario("answer", func() {
+				Observation(goadsl.String)
+				Check("valid", "Checks the captured value.")
 				goadsl.Description("Answers one query.")
 				Input(input, func() {
 					goadsl.Description("Query for the answer scenario.")
@@ -119,6 +125,8 @@ func TestInputWithDescriptionDuplicatesType(t *testing.T) {
 			goadsl.Description("Evaluates assistant behavior.")
 			goadsl.Timeout("1m")
 			Scenario("answer", func() {
+				Observation(goadsl.String)
+				Check("valid", "Checks the captured value.")
 				goadsl.Description("Answers one query.")
 				Input(original, "Query for the answer scenario.")
 			})
@@ -175,6 +183,8 @@ func TestInputRejectsMalformedShapeArguments(t *testing.T) {
 					goadsl.Description("Evaluates assistant behavior.")
 					goadsl.Timeout("1m")
 					Scenario("answer", func() {
+						Observation(goadsl.String)
+						Check("valid", "Checks the captured value.")
 						goadsl.Description("Answers one query.")
 						test.input()
 					})
@@ -220,9 +230,13 @@ func TestSuiteDSLValidation(t *testing.T) {
 					goadsl.Description("Assistant.")
 					goadsl.Timeout("1m")
 					Scenario("foo_id", func() {
+						Observation(goadsl.String)
+						Check("valid", "Checks the captured value.")
 						goadsl.Description("First.")
 					})
 					Scenario("foo_i_d", func() {
+						Observation(goadsl.String)
+						Check("valid", "Checks the captured value.")
 						goadsl.Description("Second.")
 					})
 				})
@@ -236,6 +250,8 @@ func TestSuiteDSLValidation(t *testing.T) {
 					goadsl.Description("Assistant.")
 					goadsl.Timeout("1m")
 					Scenario("case", func() {
+						Observation(goadsl.String)
+						Check("valid", "Checks the captured value.")
 						goadsl.Description("Case.")
 						goadsl.Timeout("0s")
 					})
@@ -250,6 +266,8 @@ func TestSuiteDSLValidation(t *testing.T) {
 					goadsl.Description("Assistant.")
 					goadsl.Timeout("1m")
 					Scenario("case", func() {
+						Observation(goadsl.String)
+						Check("valid", "Checks the captured value.")
 						goadsl.Description("Case.")
 						aidls.Tags("smoke", "smoke")
 					})
@@ -264,6 +282,8 @@ func TestSuiteDSLValidation(t *testing.T) {
 					goadsl.Description("Assistant.")
 					goadsl.Timeout("1m")
 					Scenario("case", func() {
+						Observation(goadsl.String)
+						Check("valid", "Checks the captured value.")
 						goadsl.Description("Case.")
 						Input(func() {
 							goadsl.OneOf("value", func() {
@@ -289,6 +309,8 @@ func TestSuiteDSLValidation(t *testing.T) {
 
 func validScenario() {
 	Scenario("case", func() {
+		Observation(goadsl.String)
+		Check("valid", "Checks the captured value.")
 		goadsl.Description("Case.")
 	})
 }

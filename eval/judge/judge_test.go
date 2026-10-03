@@ -4,8 +4,10 @@ package judge
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -159,20 +161,34 @@ func TestJudgeStopsAfterRuntimeCorrectionLimit(t *testing.T) {
 
 func TestRunnerRetainsRealJudgeDiagnostics(t *testing.T) {
 	client := &recordingClient{responses: []*model.Response{
-		toolResponse(`{"calibration_entailed":{"label":"entailed","rationale":"Running."},"calibration_contradicted":{"label":"contradicted","rationale":"Not stopped."},"calibration_not_addressed":{"label":"not_addressed","rationale":"Not discussed."},"calibration_indeterminate":{"label":"indeterminate","rationale":"Conflicting readings."}}`),
 		toolResponse(`{"judgments":[]}`),
 		toolResponse(`{"judgments":[]}`),
 		toolResponse(`{"judgments":[]}`),
 		toolResponse(`{"judgments":[]}`),
 	}}
-	runner, err := aieval.NewRunner(newTestJudge(t, client), aieval.RunnerConfig{MaxConcurrency: 1})
+	engine, err := aieval.NewReasoningEngine(newTestJudge(t, client))
 	require.NoError(t, err)
-	report, err := runner.Run(t.Context(), aieval.Suite{
+	runner, err := aieval.NewRunner(engine, aieval.RunnerConfig{MaxConcurrency: 1})
+	require.NoError(t, err)
+	const schema = `{"type":"string"}`
+	_, report, err := runner.Run(t.Context(), aieval.Suite{
 		ID: "diagnostics",
 		Scenarios: []aieval.Scenario{{
 			ID: "answer", Timeout: 10 * time.Second,
-			Run: func(context.Context) (aieval.Result, error) {
-				return aieval.Result{Output: "The work is complete.", Claims: []aieval.Claim{{ID: "complete", Text: "The work is complete."}}}, nil
+			Schema: schema,
+			Requirements: []aieval.Requirement{{
+				ID: "complete", SchemaID: fmt.Sprintf("%x", sha256.Sum256([]byte(schema))),
+				Statement: "The work is complete.", Subject: "$",
+			}},
+			Capture: func(context.Context) (rawjson.Message, error) {
+				return rawjson.Message(`"The work is complete."`), nil
+			},
+			Bind: func(data rawjson.Message) (aieval.Binding, error) {
+				var output string
+				if err := json.Unmarshal(data, &output); err != nil {
+					return aieval.Binding{}, err
+				}
+				return aieval.Binding{Subjects: map[string][]aieval.Subject{"complete": {{Content: output}}}}, nil
 			},
 		}},
 	})
@@ -180,11 +196,13 @@ func TestRunnerRetainsRealJudgeDiagnostics(t *testing.T) {
 	require.Len(t, report.Scenarios, 1)
 	assert.False(t, report.Passed)
 	assert.False(t, report.Scenarios[0].Passed)
-	assert.Empty(t, report.Scenarios[0].Judgments)
+	assert.Nil(t, report.Scenarios[0].Requirements[0].Instances[0].Decision)
 	assert.Contains(t, report.Scenarios[0].Error, "recovery_cap")
 	assert.Contains(t, report.Scenarios[0].Error, "missing property 'complete'")
 	assert.Contains(t, report.Scenarios[0].Error, "judgments")
-	assert.Len(t, client.requests, 5)
+	assert.Len(t, client.requests, 4)
+	assert.Len(t, report.Scenarios[0].Calls, 4)
+	assert.NoError(t, report.Validate())
 }
 
 func TestJudgeReturnsValidContradictionWithoutError(t *testing.T) {

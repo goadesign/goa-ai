@@ -22,6 +22,12 @@ var SavedQueryEvalInput = Type("SavedQueryEvalInput", func() {
 	Required("saved_query_id")
 })
 
+var QueryObservation = Type("QueryObservation", func() {
+	Attribute("query", String, "The query that was sent.")
+	Attribute("answer", String, "The observed answer, including an empty answer.")
+	Required("query", "answer")
+})
+
 // AssistantEvalSuite declares two scenarios with distinct typed inputs so the
 // fixture exercises generated hook signatures and scenario selection.
 func AssistantEvalSuite() {
@@ -32,11 +38,19 @@ func AssistantEvalSuite() {
 		Scenario("record_summary", func() {
 			Description("Summarizes records returned for a direct query.")
 			Input(QueryEvalInput)
+			Observation(QueryObservation)
+			Check("query_sent", "The captured query is nonempty.")
+			Requirement("response_includes_summary", "The response includes a record summary.", func() {
+				Subject("answer")
+				Evidence("query")
+			})
 			Tags("records", "direct")
 		})
 		Scenario("saved_query_replay", func() {
 			Description("Runs a previously saved query.")
 			Input(SavedQueryEvalInput)
+			Observation(Boolean)
+			Check("completed", "The saved query completed.")
 			Tags("records", "saved")
 		})
 	})

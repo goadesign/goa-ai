@@ -168,6 +168,11 @@ func (p *evalPlan) generate(files []*goacodegen.File) ([]*goacodegen.File, error
 			Path:             planned.Output,
 			SectionTemplates: suiteSections(data),
 		})
+		codecs, err := observationFiles(planned)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, codecs...)
 		if planned.Contract != nil {
 			if err := planned.ContractImports.Link(); err != nil {
 				return nil, err

@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/codegen/shared"
 	evalexpr "goa.design/goa-ai/eval/expr"
 	agentexpr "goa.design/goa-ai/expr/agent"
+	"goa.design/goa-ai/internal/codegen/codec"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -22,24 +23,28 @@ type (
 	// suitePlan stores a suite description, its scenarios and inputs, and the Go
 	// names used when its file is written.
 	suitePlan struct {
-		Name            string
-		ID              string
-		Description     string
-		Package         string
-		GenPkg          string
-		ImportPath      string
-		Output          string
-		PackagePlan     *goacodegen.GeneratedPackage
-		Scenarios       []scenarioPlan
-		Types           []*inputTypePlan
-		Validators      []*validatorPlan
-		SuiteImports    *goacodegen.GeneratedImportPlan
-		ContractImports *goacodegen.GeneratedImportPlan
-		Hooks           *goacodegen.NameDeclaration
-		Inputs          *goacodegen.NameDeclaration
-		New             *goacodegen.NameDeclaration
-		ToolContract    *goacodegen.NameDeclaration
-		Contract        *contractPlan
+		Name              string
+		ID                string
+		Description       string
+		Package           string
+		GenPkg            string
+		ImportPath        string
+		Output            string
+		PackagePlan       *goacodegen.GeneratedPackage
+		Scenarios         []scenarioPlan
+		Types             []*inputTypePlan
+		Validators        []*validatorPlan
+		SuiteImports      *goacodegen.GeneratedImportPlan
+		ContractImports   *goacodegen.GeneratedImportPlan
+		Hooks             *goacodegen.NameDeclaration
+		Inputs            *goacodegen.NameDeclaration
+		New               *goacodegen.NameDeclaration
+		ToolContract      *goacodegen.NameDeclaration
+		Contract          *contractPlan
+		Checks            *goacodegen.NameDeclaration
+		ForAssessment     *goacodegen.NameDeclaration
+		Codecs            *codec.Plan
+		ObservationCodecs []*observationCodecPlan
 	}
 
 	// examplePlan keeps one suite and the command names used by its starter file.
@@ -66,15 +71,21 @@ type (
 		Timeout        int64
 		Input          *goaexpr.AttributeExpr
 		InputValidator *goacodegen.NameDeclaration
+		Observation    *goaexpr.AttributeExpr
+		Codec          *observationCodecPlan
+		Schema         string
+		Checks         []checkData
+		Requirements   []requirementPlan
 	}
 
 	// inputTypePlan keeps one local input type and its package declarations.
 	inputTypePlan struct {
-		Description string
-		Attribute   *goaexpr.AttributeExpr
-		Type        goaexpr.UserType
-		Declaration *goacodegen.NameDeclaration
-		Validator   *validatorPlan
+		Description     string
+		Attribute       *goaexpr.AttributeExpr
+		Type            goaexpr.UserType
+		Declaration     *goacodegen.NameDeclaration
+		TypeDeclaration *goacodegen.TypeDeclaration
+		Validator       *validatorPlan
 	}
 
 	// validatorPlan keeps one input check and the function that writes it.
@@ -128,6 +139,9 @@ type (
 		Hooks          string
 		Inputs         string
 		New            string
+		Checks         string
+		ForAssessment  string
+		HasChecks      bool
 	}
 
 	// exampleData contains the final suite and command names used by one file.
@@ -144,18 +158,28 @@ type (
 
 	// scenarioData contains one generated hook method and copied case data.
 	scenarioData struct {
-		ID              string
-		RawID           string
-		Description     string
-		Method          string
-		Tags            []string
-		Timeout         int64
-		HasInput        bool
-		InputField      string
-		InputRef        string
-		InputValidator  string
-		InputZero       string
-		ExampleInputRef string
+		ID                    string
+		RawID                 string
+		Description           string
+		Method                string
+		Tags                  []string
+		Timeout               int64
+		HasInput              bool
+		InputField            string
+		InputRef              string
+		InputValidator        string
+		InputZero             string
+		ExampleInputRef       string
+		ObservationRef        string
+		ExampleObservationRef string
+		ObservationZero       string
+		Encode                string
+		Decode                string
+		Schema                string
+		Checks                []checkData
+		Requirements          []requirementData
+		Binding               string
+		Index                 int
 	}
 
 	// inputTypeData stores one public Go definition written for a scenario input.
@@ -255,6 +279,7 @@ func planSuite(
 		goacodegen.SimpleImport("fmt"),
 		goacodegen.SimpleImport("time"),
 		goacodegen.NewImport("eval", "goa.design/goa-ai/eval"),
+		goacodegen.NewImport("rawjson", "goa.design/goa-ai/runtime/agent/rawjson"),
 	); err != nil {
 		return nil, err
 	}
@@ -285,6 +310,18 @@ func planSuite(
 	if err != nil {
 		return nil, err
 	}
+	planned.Checks, err = declareEvalName(pkg, goacodegen.NameType, "Checks", goacodegen.ExportedName, suite.Name, "suite")
+	if err != nil {
+		return nil, err
+	}
+	planned.ForAssessment, err = declareEvalName(pkg, goacodegen.NameFunction, "ForAssessment", goacodegen.ExportedName, suite.Name, "suite")
+	if err != nil {
+		return nil, err
+	}
+	planned.Codecs, err = codec.NewPlan(generation, importPath)
+	if err != nil {
+		return nil, err
+	}
 	if contract != nil {
 		planned.ToolContract, err = declareEvalName(
 			pkg,
@@ -303,6 +340,9 @@ func planSuite(
 	for index, scenario := range suite.Scenarios {
 		item, err := planScenario(planned, scenario, suite.Timeout, seenTypes)
 		if err != nil {
+			return nil, err
+		}
+		if err := planObservation(planned, scenario, &item, seenTypes); err != nil {
 			return nil, err
 		}
 		planned.Scenarios[index] = item
@@ -336,6 +376,9 @@ func planScenario(
 	}
 	if scenario.Input == nil {
 		return planned, nil
+	}
+	if err := suite.SuiteImports.Require(goacodegen.NewImport("json", "encoding/json")); err != nil {
+		return scenarioPlan{}, err
 	}
 	input, err := localizeInput(scenario.Input)
 	if err != nil {
@@ -435,10 +478,12 @@ func linkSuiteData(planned *suitePlan, exampleAlias string) *suiteData {
 		Hooks:          planned.Hooks.Name(),
 		Inputs:         planned.Inputs.Name(),
 		New:            planned.New.Name(),
+		Checks:         planned.Checks.Name(),
+		ForAssessment:  planned.ForAssessment.Name(),
 	}
 	validatorNames := make(map[string]*goacodegen.NameDeclaration, len(planned.Types))
 	for _, inputType := range planned.Types {
-		description := inputType.Declaration.Name() + " is a generated evaluation input type."
+		description := inputType.Declaration.Name() + " is a generated evaluation value."
 		if inputType.Description != "" {
 			description += " " + inputType.Description
 		}
@@ -451,13 +496,25 @@ func linkSuiteData(planned *suitePlan, exampleAlias string) *suiteData {
 	}
 	for index, scenario := range planned.Scenarios {
 		linked := scenarioData{
-			ID:          scenario.ID,
-			RawID:       scenario.RawID,
-			Description: scenario.Description,
-			Method:      scenario.Method,
-			Tags:        append([]string(nil), scenario.Tags...),
-			Timeout:     scenario.Timeout,
+			ID:             scenario.ID,
+			RawID:          scenario.RawID,
+			Description:    scenario.Description,
+			Method:         scenario.Method,
+			Tags:           append([]string(nil), scenario.Tags...),
+			Timeout:        scenario.Timeout,
+			Index:          index,
+			ObservationRef: scope.GoTypeRef(scenario.Observation),
+			Encode:         scenario.Codec.Value.EncodeDeclaration().Name(),
+			Decode:         scenario.Codec.Value.DecodeDeclaration().Name(),
+			Schema:         strconv.Quote(scenario.Schema),
+			Checks:         append([]checkData(nil), scenario.Checks...),
 		}
+		if exampleAlias != "" {
+			linked.ExampleObservationRef = scope.GoFullTypeRef(scenario.Observation, exampleAlias)
+			linked.ObservationZero = zeroValue(linked.ExampleObservationRef)
+		}
+		data.HasChecks = data.HasChecks || len(scenario.Checks) > 0
+		linked.Requirements, linked.Binding = linkRequirements(scenario, scope)
 		if scenario.Input != nil {
 			linked.HasInput = true
 			linked.InputField = scenario.Method
@@ -519,6 +576,15 @@ func linkExampleData(planned *examplePlan) *exampleData {
 func localizeInput(input *goaexpr.AttributeExpr) (*goaexpr.AttributeExpr, error) {
 	local := goaexpr.DupAtt(input)
 	err := goacodegen.Walk(local, func(attribute *goaexpr.AttributeExpr) error {
+		if object := goaexpr.AsObject(attribute.Type); object != nil {
+			for _, field := range *object {
+				if field.Attribute.Meta == nil {
+					field.Attribute.Meta = make(goaexpr.MetaExpr)
+				}
+				delete(field.Attribute.Meta, "struct:tag:json")
+				field.Attribute.Meta["struct:tag:json:name"] = []string{field.Name}
+			}
+		}
 		userType, ok := attribute.Type.(goaexpr.UserType)
 		if !ok {
 			return nil
@@ -557,18 +623,17 @@ func planInputTypes(
 				return nil
 			}
 			name := goacodegen.Goify(actual.Name(), true)
-			declaration, err := declareEvalName(
-				suite.PackagePlan,
-				goacodegen.NameType,
+			typeDeclaration, err := suite.PackagePlan.DeclareGeneratedType(
 				name,
-				goacodegen.ExportedName,
-				suite.Name,
-				"input type "+actual.ID(),
-				actual,
+				evalNameOrder{Suite: suite.Name, Role: "value type", Symbol: actual.ID()},
 			)
 			if err != nil {
 				return err
 			}
+			if err := suite.PackagePlan.BindGeneratedType(actual, typeDeclaration); err != nil {
+				return err
+			}
+			declaration := typeDeclaration.Declaration()
 			validatorDeclaration, err := suite.PackagePlan.DeclareDependentName(
 				goacodegen.NameFunction,
 				declaration,
@@ -597,11 +662,12 @@ func planInputTypes(
 				NestedDeclaration: nestedValidatorDeclaration,
 			}
 			planned := &inputTypePlan{
-				Description: strings.TrimSpace(actual.Attribute().Description),
-				Attribute:   actual.Attribute(),
-				Type:        actual,
-				Declaration: declaration,
-				Validator:   validator,
+				Description:     strings.TrimSpace(actual.Attribute().Description),
+				Attribute:       actual.Attribute(),
+				Type:            actual,
+				Declaration:     declaration,
+				TypeDeclaration: typeDeclaration,
+				Validator:       validator,
 			}
 			seen[actual.ID()] = planned
 			result = append(result, planned)
@@ -637,7 +703,6 @@ func declareEvalName(
 	preferred string,
 	visibility goacodegen.PackageNameVisibility,
 	suite, role string,
-	keys ...goacodegen.Hasher,
 ) (*goacodegen.NameDeclaration, error) {
 	declaration := goacodegen.NewPreferredName(
 		kind,
@@ -645,7 +710,7 @@ func declareEvalName(
 		visibility,
 		evalNameOrder{Suite: suite, Role: role, Symbol: preferred},
 	)
-	if err := pkg.DeclareName(declaration, keys...); err != nil {
+	if err := pkg.DeclareName(declaration); err != nil {
 		return nil, err
 	}
 	return declaration, nil
