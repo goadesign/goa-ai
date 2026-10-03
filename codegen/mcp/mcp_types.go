@@ -59,8 +59,12 @@ func (b *mcpExprBuilder) buildServerCapabilitiesType() *expr.AttributeExpr {
 	prompts := b.getOrCreateType("PromptsCapability", func() *expr.AttributeExpr {
 		return &expr.AttributeExpr{Type: &expr.Object{}, Description: "Prompt capabilities"}
 	})
+	completions := b.getOrCreateType("CompletionsCapability", func() *expr.AttributeExpr {
+		return &expr.AttributeExpr{Type: &expr.Object{}, Description: "Argument suggestions"}
+	})
 	return &expr.AttributeExpr{
 		Type: &expr.Object{
+			{Name: "completions", Attribute: &expr.AttributeExpr{Type: completions, Description: "Declared argument suggestion providers"}},
 			{
 				Name: "tools",
 				Attribute: &expr.AttributeExpr{

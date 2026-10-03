@@ -48,6 +48,8 @@ type (
 		StaticPrompts []*StaticPromptAdapter
 		// MethodPrompts contains prompt operations implemented by service methods.
 		MethodPrompts []*MethodPromptAdapter
+		// PromptCompletions contains typed providers for known prompt arguments.
+		PromptCompletions []*promptCompletionAdapter
 		// PromptConversions contains the generated content and resource converters.
 		PromptConversions []*promptContentConversionData
 		// NeedsPromptBytes reports that a prompt produces binary content.
@@ -219,16 +221,21 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 	if err != nil {
 		return nil, err
 	}
+	completions, err := g.buildPromptCompletionAdapters()
+	if err != nil {
+		return nil, err
+	}
 	data := &AdapterData{
-		ServiceName:   g.originalService.Name,
-		ServiceGoName: codegen.Goify(g.originalService.Name, true),
-		MCPName:       g.mcp.Name,
-		MCPVersion:    g.mcp.Version,
-		Package:       codegen.SnakeCase(g.originalService.Name),
-		Tools:         tools,
-		Resources:     resources,
-		MethodPrompts: prompts,
-		NeedsBoolPtr:  len(tools)+len(prompts) > 0,
+		ServiceName:       g.originalService.Name,
+		ServiceGoName:     codegen.Goify(g.originalService.Name, true),
+		MCPName:           g.mcp.Name,
+		MCPVersion:        g.mcp.Version,
+		Package:           codegen.SnakeCase(g.originalService.Name),
+		Tools:             tools,
+		Resources:         resources,
+		MethodPrompts:     prompts,
+		PromptCompletions: completions,
+		NeedsBoolPtr:      len(tools)+len(prompts) > 0,
 	}
 
 	// Static prompts are handled directly in the adapter

@@ -1,0 +1,90 @@
+{{- if .PromptCompletions }}
+// CompletionComplete selects a declared prompt argument and asks its service
+// method for suggestions. Missing bindings return an empty list for a valid
+// argument; unknown names fail before any service method runs.
+func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionCompletePayload) (*CompletionCompleteResult, error) {
+    ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.completion/complete")
+    defer span.End()
+    if p.Ref.Type != "ref/prompt" || p.Ref.Name == nil {
+        failure := goa.PermanentError("invalid_params", "unknown completion reference")
+        span.RecordError(failure)
+        span.SetStatus(codes.Error, failure.Error())
+        return nil, failure
+    }
+    switch *p.Ref.Name {
+    {{ range .MethodPrompts }}
+    case {{ quote .Name }}:
+        switch p.Argument.Name {
+        {{ range .Arguments }}
+        case {{ quote .Name }}:
+        {{ end }}
+        default:
+            failure := goa.PermanentError("invalid_params", "unknown prompt argument: %s", p.Argument.Name)
+            span.RecordError(failure)
+            span.SetStatus(codes.Error, failure.Error())
+            return nil, failure
+        }
+        if p.Context != nil {
+            for name := range p.Context.Arguments {
+                switch name {
+                {{ range .Arguments }}
+                case {{ quote .Name }}:
+                {{ end }}
+                default:
+                    failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+                    span.RecordError(failure)
+                    span.SetStatus(codes.Error, failure.Error())
+                    return nil, failure
+                }
+            }
+        }
+    {{ end }}
+    default:
+        failure := goa.PermanentError("invalid_params", "unknown prompt: %s", *p.Ref.Name)
+        span.RecordError(failure)
+        span.SetStatus(codes.Error, failure.Error())
+        return nil, failure
+    }
+    {{ range .PromptCompletions }}
+    if *p.Ref.Name == {{ quote .Prompt }} && p.Argument.Name == {{ quote .Argument }} {
+        // The private constructor applies the method's defaults and validation
+        // to already-decoded protocol values before the service receives them.
+        body := &{{ .PayloadTransportRef }}{}
+        value := {{ .Value.ValueTypeRef }}(p.Argument.Value)
+        body.{{ .Value.Selector }} = &value
+        if p.Context != nil && p.Context.Arguments != nil {
+            body.{{ .Arguments.Selector }} = make({{ .Arguments.ValueTypeRef }}, len(p.Context.Arguments))
+            for name, value := range p.Context.Arguments {
+                body.{{ .Arguments.Selector }}[{{ .Arguments.KeyTypeRef }}(name)] = {{ .Arguments.ElementTypeRef }}(value)
+            }
+        }
+        payload, err := {{ $.CodecPackage }}.{{ .PayloadConstructor }}(body)
+        if err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+        }
+        result, err := a.service.{{ .ServiceMethodName }}(ctx, payload)
+        if err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, a.mapError(err)
+        }
+        if err := {{ $.CodecPackage }}.{{ .Codec.ResultValidate }}(result); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, goa.PermanentError("internal_error", "%s", err.Error())
+        }
+        {{ .Conversion }}
+        if len(out.Values) == 0 { out.Values = []string{} }
+        return &CompletionCompleteResult{ResultType: "complete", Meta: resultMeta(), Completion: out}, nil
+    }
+    {{ end }}
+    return &CompletionCompleteResult{ResultType: "complete", Meta: resultMeta(), Completion: &CompletionSuggestion{Values: []string{}}}, nil
+}
+{{ range .PromptCompletions }}
+{{ range .Helpers }}
+{{ .Source }}
+{{ end }}
+{{ end }}
+{{- end }}

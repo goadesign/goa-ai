@@ -62,16 +62,15 @@ func ValidateHTTPRequest(request *http.Request, body []byte, bindings map[string
 	// JSON types before a Go map can turn null into a zero string value.
 	if envelope.Method == methodPromptsGet {
 		if raw, present := params["arguments"]; present {
-			var arguments map[string]json.RawMessage
-			if json.Unmarshal(raw, &arguments) != nil || arguments == nil {
-				return &Error{Code: JSONRPCInvalidParams, Message: "prompt arguments must be an object of strings"}
+			if failure := validateStringArguments(raw, "prompt"); failure != nil {
+				return failure
 			}
-			for name, value := range arguments {
-				var argument string
-				if bytes.Equal(bytes.TrimSpace(value), []byte("null")) || json.Unmarshal(value, &argument) != nil {
-					return &Error{Code: JSONRPCInvalidParams, Message: fmt.Sprintf("prompt argument %q must be a string", name)}
-				}
-			}
+		}
+	}
+
+	if envelope.Method == methodCompletionComplete {
+		if failure := validateCompletionRequest(params); failure != nil {
+			return failure
 		}
 	}
 

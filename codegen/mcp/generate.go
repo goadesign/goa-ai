@@ -142,6 +142,12 @@ func generateMCPTransport(_ string, svc *expr.ServiceExpr, data *AdapterData) []
 					"quote":   func(s string) string { return fmt.Sprintf("%q", s) },
 				},
 			},
+			{
+				Name:    "mcp-adapter-completion",
+				Source:  mcpTemplates.Read("adapter_completion"),
+				Data:    data,
+				FuncMap: map[string]any{"quote": func(s string) string { return fmt.Sprintf("%q", s) }},
+			},
 		},
 	})
 

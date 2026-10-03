@@ -1540,6 +1540,55 @@ A method may also be a tool when its tool contract is valid. Static prompts keep
 their fixed role/text pairs. Server-produced requests for additional input remain
 tracked separately in the [upgrade plan](mcp_protocol_upgrade_plan.md).
 
+### MCP prompt argument suggestions
+
+`PromptCompletion(promptName, argumentName)` marks a separate unary Goa method
+that returns suggestions while a client fills one declared prompt argument.
+It does not execute that prompt or call a model. The binding must select an
+argument declared by a method-backed `Prompt`; duplicate bindings fail evaluation.
+
+The payload declares required `value: String` and optional
+`arguments: MapOf(String, String)`. Both fields must exist in the design:
+`value` contains the current partial text, and `arguments` retains previously
+resolved values from the client. Unknown prompt, argument and context names
+return invalid-parameter errors before dispatch. Ordinary Goa types, renamed
+fields, defaults and validators remain available; opaque Go field replacements
+are rejected.
+
+The result declares `values: ArrayOf(String)` with `MaxLength(100)` or a stricter
+bound, and may declare `total: Int64` and `hasMore: Boolean`. Keep `values`
+optional when an empty list is a valid domain result. The generated response
+always contains an array, including `[]`. The service owns relevance order,
+access control and any fuzzy matching; the framework never sorts or truncates
+its suggestions. Invalid output returns an internal-error response.
+
+```go
+Method("suggest_review_style", func() {
+    Description("Suggest review styles while the client fills the review prompt.")
+    Payload(func() {
+        Attribute("value", String, "Partial review-style text")
+        Attribute("arguments", MapOf(String, String), "Previously resolved prompt arguments")
+        Required("value")
+    })
+    Result(func() {
+        Attribute("values", ArrayOf(String), "Suggestions in relevance order", func() {
+            MaxLength(100)
+        })
+        Attribute("total", Int64, "Total matches, including values not returned")
+        Attribute("hasMore", Boolean, "Whether further matches exist")
+    })
+    PromptCompletion("review", "style")
+})
+```
+
+The MCP protocol limits **one response array** to at most 100 values, inclusive.
+It does not limit `total` to 100 or share an allowance across subsequent requests.
+A valid declared argument without a completion binding returns empty suggestions.
+The server advertises `completions` only when it has a binding. Applications
+configure authentication, rate limiting and suggestion access through their
+normal Goa service and HTTP composition. URI-template completion is still
+tracked in the [upgrade plan](mcp_protocol_upgrade_plan.md).
+
 ### MCP tool behavior hints
 
 Declare standard MCP annotations inside the method's `Tool` block:
@@ -1580,6 +1629,7 @@ these kinds through typed Goa results. Generated tools still return structured r
 | `Resource(name, uri, mime)`  | `resources/list`, `resources/read` |
 | `Prompt(name, desc)` in Method | `prompts/list`, `prompts/get` with typed arguments and messages |
 | `StaticPrompt(...)`          | `prompts/list`, `prompts/get`      |
+| `PromptCompletion(prompt, argument)` in Method | `completion/complete` for declared prompt arguments |
 
 
 ---

@@ -77,6 +77,9 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*D
     {{- if or .StaticPrompts .MethodPrompts }}
     capabilities.Prompts = &PromptsCapability{}
     {{- end }}
+    {{- if .PromptCompletions }}
+    capabilities.Completions = &CompletionsCapability{}
+    {{- end }}
     return &DiscoverResult{
         ResultType: "complete",
         Meta: resultMeta(),

@@ -83,12 +83,13 @@ type (
 )
 
 const (
-	rpcVersion          = "2.0"
-	methodToolsCall     = "tools/call"
-	methodPromptsGet    = "prompts/get"
-	resultComplete      = "complete"
-	resultInputRequired = "input_required"
-	elicitationForm     = "form"
+	rpcVersion               = "2.0"
+	methodToolsCall          = "tools/call"
+	methodPromptsGet         = "prompts/get"
+	methodCompletionComplete = "completion/complete"
+	resultComplete           = "complete"
+	resultInputRequired      = "input_required"
+	elicitationForm          = "form"
 )
 
 // UnmarshalJSON rejects null control fields before Go can confuse them with

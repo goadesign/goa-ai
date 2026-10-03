@@ -239,8 +239,9 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	fmtService, fmtMethods := testService("fmt", "echo")
 	prompts, _ := testService("prompts")
 	staticPrompts, _ := testService("static_prompts")
-	methodPrompts, promptMethods := testService("method_prompts", "review", "empty")
+	methodPrompts, promptMethods := testService("method_prompts", "review", "empty", "complete_style")
 	promptTypes := methodPromptFixture(promptMethods)
+	promptTypes = append(promptTypes, promptCompletionFixture(promptMethods["complete_style"])...)
 	simplePrompt, simpleMethods := testService("simple_prompt", "build")
 	simpleText := promptFixtureType("SimpleText", &expr.Object{{Name: "text", Attribute: &expr.AttributeExpr{Type: expr.String}}}, "text")
 	simpleContent := promptFixtureType("SimpleContent", &expr.Union{TypeName: "SimpleChoice", Values: []*expr.NamedAttributeExpr{{Name: "text", Attribute: &expr.AttributeExpr{Type: simpleText}}}})
@@ -344,8 +345,9 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 			{Name: "review-copy", Description: "Select the same review operation", Method: promptMethods["review"]},
 			{Name: "empty", Description: "Return an empty message sequence", Method: promptMethods["empty"]},
 		},
-		Tools:   []*mcpexpr.ToolExpr{{Name: "empty-messages", Description: "Return the authored message record", Method: promptMethods["empty"]}},
-		Prompts: []*mcpexpr.PromptExpr{{Name: "fixed", Messages: []*mcpexpr.MessageExpr{{Role: "assistant", Content: "Fixed instructions"}}}},
+		PromptCompletions: []*mcpexpr.PromptCompletionExpr{{Prompt: "review", Argument: "style", Method: promptMethods["complete_style"]}},
+		Tools:             []*mcpexpr.ToolExpr{{Name: "empty-messages", Description: "Return the authored message record", Method: promptMethods["empty"]}},
+		Prompts:           []*mcpexpr.PromptExpr{{Name: "fixed", Messages: []*mcpexpr.MessageExpr{{Role: "assistant", Content: "Fixed instructions"}}}},
 	})
 	mcpexpr.Root.RegisterMCP(prompts, &mcpexpr.MCPExpr{
 		Name:    "prompts",

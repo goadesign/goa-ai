@@ -6577,7 +6577,14 @@ selected old contracts for already accepted work. This upgrade does not rewrite
 catalog storage or retired-token history.
 
 Generated servers expose declared unary tools, fixed resource reads, and static
-or method-backed prompts. They do not advertise subscriptions, tasks, or
+or method-backed prompts, plus prompt argument suggestions when a
+`PromptCompletion` binding exists. Generated clients call `completion/complete`
+with a typed reference, argument and optional prior context. Suggestions retain
+service order; malformed context fails before service dispatch, and oversized or
+invalid output returns an internal error. The 100-value bound belongs to each
+response array, while totals and later responses remain independent. See
+[the suggestion contract](dsl.md#mcp-prompt-argument-suggestions).
+They do not advertise subscriptions, tasks, or
 server-originated elicitation. Host credential handling remains application-owned. The remaining
 feature and conformance work is tracked in the
 [MCP upgrade plan](mcp_protocol_upgrade_plan.md).

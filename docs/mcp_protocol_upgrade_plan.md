@@ -79,6 +79,7 @@ runtime tests pass after moving current synthetic suspension fixtures to version
 | Current discovery and unary tools | Implemented | Implemented | Generated executors and canonical specs |
 | Fixed text/JSON/binary resource reads and static/method-backed prompts | Implemented | Generated typed clients; exact text/blob validation | No implicit conversion into agent tools |
 | Rich structured tool results | Generated declared JSON result | Generated tool/prompt and runtime clients preserve five content kinds, icons, metadata and exact structured JSON | Declared result codec |
+| Prompt argument completion | Typed `PromptCompletion` method bindings | Generated `completion/complete` clients with bounded non-null string values | Client/user interaction; no model or terminal-answer routing |
 | Multi-round tool input | No producer advertised | Explicit unfinished result and successor request | Durable trusted form/URL/state-only continuation |
 | Tasks, subscriptions, URI templates | Not advertised | No extension claimed | Capability milestones remain separate |
 | OAuth and Apps | Host-owned dependencies; no built-in extension claimed | Host-built HTTP dependency | No grant/view ownership in the planner |
@@ -124,6 +125,31 @@ The full serial race suite and quickstart passed; fresh focused race tests cover
 the final shared-converter changes. Build, configured lint and uncached generated
 HTTP scenarios passed. The frozen referee baseline has not been rerun for prompts;
 independent producer conformance remains a release gate.
+
+Prompt argument completion now binds a declared prompt argument to an ordinary
+unary Goa method. The generated constructor retains partial text and prior
+argument context, applies domain validation, and calls that method once.
+Typed result conversion retains suggestion order, optional totals and `hasMore`.
+Known arguments without a binding return `[]`; unknown names and malformed
+context fail before dispatch. Invalid output fails with an internal error rather
+than truncation. This completes prompt suggestions, not URI-template suggestions.
+The complete request path is generated HTTP client -> release-owned metadata
+and raw string-map checks -> Goa decoding -> generated typed constructor ->
+service method -> Goa result validation -> generated typed conversion -> client
+validation. These methods are not agent tools or final assistant completions.
+
+The protocol owns the inclusive maximum of 100 string values in one reply array.
+It bounds that response's suggestion list, with no derived limit on the total
+matches or a sequence of requests. Compiled HTTP checks cover 0, 99, 100 and 101
+values, a later independent 100-value response, and totals of 250 and 1000.
+They verify renamed fields, located string aliases, exact context, error
+responses and eight valid/invalid peer shapes. Raw malformed context cannot
+invoke the service. Public DSL checks reject missing context declarations,
+unknown bindings, duplicates and absent/weaker array bounds. Build, the full serial root race suite and quickstart passed. Fresh affected
+package race tests cover the final shared string-map validation, and configured
+lint passed with zero issues. There is no deployed completion
+caller evidence for this newly introduced binding. Independent completion
+conformance and URI-template completion remain release gates.
 
 
 Open `_meta` data also makes these content-containing types ineligible for the
@@ -521,9 +547,9 @@ The protocol revision and the set of optional capabilities are different decisio
 | --- | --- | --- |
 | Tools and direct/agent clients | Implemented with old envelopes and several result modes | Required upgrade: one current transport, canonical generated contracts, one structured typed-result path, and complete composition |
 | Binary resource reads | Implemented from Goa byte-valued results, including aliases and empty content | The existing Resource DSL selects the URI/MIME. Generation emits blobs and strict client decoding. Compiled modules, HTTP scenarios, and the independent binary-resource referee passed. |
-| Parameterized prompts | Goa supports payload/result methods; MCP has only design-time static text messages | Viable typed service binding. Design current prompt argument/message contracts and a method-backed generator fixture; keep static prompts as a distinct honest authoring form. Do not revive `DynamicPrompt` providers/callbacks or turn prompts into automatic planner execution. |
+| Parameterized prompts | Implemented with ordinary string payloads and typed rich message results | Generated construction, Goa validation and declared union conversion preserve aliases and field names. Static prompts remain a distinct authoring form. Independent producer conformance remains outstanding. |
 | Resource templates | Current resources reject payloads and route only exact fixed URIs | Viable generated binding, currently absent. Map declared URI-template variables to typed service inputs, validate expansions and overlapping routes, and retain domain authorization. Requires a real URI-template contract; never reinterpret free-form URIs as filesystem authority. |
-| `completion/complete` | No MCP argument-suggestion method | Viable typed method binding after parameterized prompts/templates. Framework `Completion(...)` means a final typed assistant answer and is unrelated. Use distinct names and owners; do not feed suggestions into the agent's terminal-answer path. |
+| `completion/complete` | Prompt suggestions implemented through typed `PromptCompletion` bindings | Service owns ranked values; generated adapters own reference routing and validation. Compiled HTTP checks cover bounded arrays and exact context. URI-template suggestions and independent conformance remain outstanding; assistant `Completion(...)` stays separate. |
 | Additional input / form elicitation | Durable suspensions, ordered pending input, generated codecs, and host events exist; MCP caller/executor has no unfinished-call branch | Include the durable unfinished-call integration in the upgrade sequence. Advertise form support only with a real configured host and verified schema/response path. No-host callers reject honestly. |
 | URL elicitation | Host input can pause a run; no MCP URL consent/completion integration exists | Feasible host integration with consent, authenticated completion, and fresh-credential handling. Do not launch arbitrary URLs or return secrets through form answers. Advertise only the implemented mode. |
 | Progress | Shared callers can consume request-scoped SSE; agent hooks already carry execution progress | Add current request-ID/progress-token correlation in the transport. Any generated progress producer needs an explicit operation binding. Private agent events are not a public MCP payload. |

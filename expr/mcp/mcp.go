@@ -37,6 +37,8 @@ type (
 		Prompts []*PromptExpr
 		// MethodPrompts contains prompt operations implemented by service methods.
 		MethodPrompts []*MethodPromptExpr
+		// PromptCompletions binds known prompt arguments to suggestion methods.
+		PromptCompletions []*PromptCompletionExpr
 		// Service is the Goa service expression this MCP server is
 		// bound to.
 		Service *expr.ServiceExpr
@@ -111,6 +113,17 @@ type (
 		// Description explains when the client should select this prompt.
 		Description string
 		// Method owns the prompt's arguments and returned messages.
+		Method *expr.MethodExpr
+	}
+
+	// PromptCompletionExpr selects one service method for one prompt argument.
+	PromptCompletionExpr struct {
+		eval.Expression
+		// Prompt is the declared prompt name selected by the client.
+		Prompt string
+		// Argument is the declared prompt argument being completed.
+		Argument string
+		// Method receives partial input and returns ordered suggestions.
 		Method *expr.MethodExpr
 	}
 
@@ -206,6 +219,7 @@ func (m *MCPExpr) Validate() error {
 			}
 		}
 	}
+	m.validatePromptCompletions(verr)
 	if len(verr.Errors) > 0 {
 		return verr
 	}

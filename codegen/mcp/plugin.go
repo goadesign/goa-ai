@@ -94,6 +94,9 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planPromptConversions(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
+		if err := planCompletionConversions(plan.Generation(), servicePlan, prepared, adapter); err != nil {
+			return err
+		}
 		if err := declareMCPNames(plan.Generation(), adapter); err != nil {
 			return err
 		}
@@ -145,6 +148,9 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 		}
 		files = append(files, codecFiles...)
 		if err := bindPromptConversions(services, planned); err != nil {
+			return nil, err
+		}
+		if err := bindCompletionConversions(services, planned); err != nil {
 			return nil, err
 		}
 		if caller := clientCallerFile(planned.adapterData); caller != nil {
@@ -477,6 +483,20 @@ func planMCPCodecs(
 			}
 		}
 	}
+	for _, completion := range data.PromptCompletions {
+		data.NeedsServerCodec = true
+		values := methodCodecs[completion.authored.Method.Name]
+		if values.result.ValidationDeclaration() == nil {
+			if err := values.result.PlanValidation(); err != nil {
+				return nil, nil, err
+			}
+		}
+		if values.payload.TransportConstructorDeclaration() == nil {
+			if err := values.payload.PlanTransportConstructor(); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 	data.CodecImportPath = codecImportPath
 	data.CodecPackage = codecPackageName
 	return planned, methodCodecs, nil
@@ -577,6 +597,14 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 		}
 		return jsoncodec.ConstructOnly, jsoncodec.ValidateOnly
 	}
+	for _, completion := range data.PromptCompletions {
+		if completion.authored.Method.Name == methodName {
+			if payloadEncode || resultEncode {
+				return codecDirection(payloadEncode, payloadDecode), codecDirection(resultEncode, resultDecode)
+			}
+			return jsoncodec.ConstructOnly, jsoncodec.ValidateOnly
+		}
+	}
 	return codecDirection(payloadEncode, payloadDecode), codecDirection(resultEncode, resultDecode)
 }
 
@@ -618,6 +646,9 @@ func mappedMCPMethods(prepared *preparedMCPService) []*expr.MethodExpr {
 	}
 	for _, prompt := range prepared.mcp.MethodPrompts {
 		add(prompt.Method)
+	}
+	for _, completion := range prepared.mcp.PromptCompletions {
+		add(completion.Method)
 	}
 	return methods
 }

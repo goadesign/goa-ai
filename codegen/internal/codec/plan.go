@@ -60,7 +60,9 @@ type (
 		ValueTypeRef string
 		// Pointer reports whether the field stores its value through a pointer.
 		Pointer bool
-		// ElementTypeRef is the generated element type for an array field.
+		// KeyTypeRef is the generated key type for a map field.
+		KeyTypeRef string
+		// ElementTypeRef is the generated element type for an array or map field.
 		ElementTypeRef string
 		// ElementPointer reports whether an array stores each value through a pointer.
 		ElementPointer bool
@@ -323,6 +325,10 @@ func (v *Value) TransportField(
 		field.ElementTypeRef = linked.Enter(selected.Elem()).Def()
 		field.ElementPointer = goaexpr.IsObject(array.ElemType.Type) ||
 			transportArrayElementIsPointer(array)
+	}
+	if selected.Kind() == goacodegen.GoMap {
+		field.KeyTypeRef = linked.Enter(selected.Key()).Def()
+		field.ElementTypeRef = linked.Enter(selected.Elem()).Def()
 	}
 	return field, nil
 }

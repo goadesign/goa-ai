@@ -202,3 +202,17 @@ resource sizes and annotation priorities. All six cases return a JSON-RPC
 internal error instead of breaking response encoding. Fresh MCP generator race
 tests and configured lint passed for this boundary fix. These are local tests;
 the independent prompt scenario remains outstanding.
+
+## Subsequent prompt-completion verification
+
+The new `PromptCompletion` binding runs an ordinary typed Goa method for one
+known prompt argument. Separate-module generated HTTP tests verify exact partial
+text/context, located string aliases, renamed fields, ordered suggestions, empty
+results and actual invalid-parameter/internal-error responses. Array sizes 0,
+99 and 100 succeed, 101 fails, and a later 100-value response succeeds. Totals of
+250 and 1000 remain intact. Six malformed context requests fail before dispatch;
+eight peer-response cases cover required arrays, non-null string entries and the
+per-response bound. Public DSL evaluation rejects unknown/duplicate bindings,
+missing context declarations and absent/weaker bounds. Focused race tests and
+configured lint passed. Independent completion conformance and URI-template
+completion are outstanding; this evidence does not replace the referee baseline.

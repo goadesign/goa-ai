@@ -30,6 +30,9 @@ func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 		methods = append(methods, b.buildPromptsListMethod(), b.buildPromptsGetMethod())
 	}
 
+	if len(b.mcp.PromptCompletions) > 0 {
+		methods = append(methods, b.buildCompletionMethod())
+	}
 	return methods
 }
 

@@ -140,3 +140,23 @@ func collectPromptFixtureTypes(attribute *expr.AttributeExpr, seen map[expr.User
 		}
 	}
 }
+
+// promptCompletionFixture uses named strings and renamed fields to verify that
+// completion construction follows Goa's layouts rather than wire field names.
+func promptCompletionFixture(method *expr.MethodExpr) []expr.UserType {
+	key := promptFixtureType("CompletionKey", expr.String)
+	key.Meta = expr.MetaExpr{"struct:pkg:path": {"prompt/shared"}}
+	value := promptFixtureType("CompletionText", expr.String)
+	value.Meta = expr.MetaExpr{"struct:pkg:path": {"prompt/shared"}}
+	method.Payload = &expr.AttributeExpr{Type: &expr.Object{
+		{Name: "value", Attribute: &expr.AttributeExpr{Type: value, Description: "Partial argument text", Meta: expr.MetaExpr{"struct:field:name": {"Partial"}}, Validation: &expr.ValidationExpr{MaxLength: new(20)}}},
+		{Name: "arguments", Attribute: &expr.AttributeExpr{Type: &expr.Map{KeyType: &expr.AttributeExpr{Type: key}, ElemType: &expr.AttributeExpr{Type: value}}, Description: "Prior values", Meta: expr.MetaExpr{"struct:field:name": {"Prior"}}}},
+	}, Validation: &expr.ValidationExpr{Required: []string{"value"}}}
+	result := promptFixtureType("AuthoredSuggestions", &expr.Object{
+		{Name: "values", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: expr.String}}, Description: "Ranked suggestions", Validation: &expr.ValidationExpr{MaxLength: new(100)}}},
+		{Name: "total", Attribute: &expr.AttributeExpr{Type: expr.Int64, Description: "All matches", Meta: expr.MetaExpr{"struct:field:name": {"Matches"}}}},
+		{Name: "hasMore", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "More matches exist"}},
+	})
+	method.Result = &expr.AttributeExpr{Type: result}
+	return []expr.UserType{key, value, result}
+}

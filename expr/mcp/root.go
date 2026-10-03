@@ -86,6 +86,13 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	}
 	walk(prompts)
 	walk(messages)
+	var completions eval.ExpressionSet
+	for _, server := range r.MCPServers {
+		for _, completion := range server.PromptCompletions {
+			completions = append(completions, completion)
+		}
+	}
+	walk(completions)
 }
 
 // RegisterMCP registers an MCP server configuration for a service
