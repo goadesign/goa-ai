@@ -239,16 +239,16 @@ func (r *ResourceExpr) Validate() error {
 		switch {
 		case err != nil:
 			verr.Add(r, "resource %q MIME type %q is invalid", r.Name, r.MimeType)
-		case strings.HasPrefix(mediaType, "text/") && !isString(r.Method.Result.Type):
+		case strings.HasPrefix(mediaType, "text/") && !isPrimitive(r.Method.Result.Type, expr.String) && !isPrimitive(r.Method.Result.Type, expr.Bytes):
 			verr.Add(
 				r,
-				"resource %q uses MIME type %q but method %q does not return a string",
+				"resource %q uses MIME type %q but method %q does not return a string or bytes",
 				r.Name,
 				r.MimeType,
 				r.Method.Name,
 			)
-		case !strings.HasPrefix(mediaType, "text/") && mediaType != "application/json":
-			verr.Add(r, "resource %q MIME type %q is not supported", r.Name, r.MimeType)
+		case !strings.HasPrefix(mediaType, "text/") && mediaType != "application/json" && !isPrimitive(r.Method.Result.Type, expr.Bytes):
+			verr.Add(r, "resource %q uses MIME type %q but method %q does not return bytes", r.Name, r.MimeType, r.Method.Name)
 		}
 	}
 	if len(verr.Errors) > 0 {
@@ -302,15 +302,16 @@ func hasValue(attribute *expr.AttributeExpr) bool {
 	return attribute != nil && attribute.Type != nil && attribute.Type != expr.Empty
 }
 
-// isString follows a named type to determine whether its value is a string.
-func isString(dataType expr.DataType) bool {
+// isPrimitive follows a named result type so MIME validation checks the actual
+// service value and accepts aliases with the same content representation.
+func isPrimitive(dataType expr.DataType, primitive expr.Primitive) bool {
 	switch actual := dataType.(type) {
 	case expr.Primitive:
-		return actual == expr.String
+		return actual == primitive
 	case *expr.UserTypeExpr:
-		return isString(actual.Type)
+		return isPrimitive(actual.Type, primitive)
 	case *expr.ResultTypeExpr:
-		return isString(actual.Type)
+		return isPrimitive(actual.Type, primitive)
 	default:
 		return false
 	}

@@ -177,8 +177,10 @@ type ResourceContent struct {
 	URI string
 	// Content MIME type
 	MimeType *string
-	// Text content
-	Text string
+	// Text content; present only when blob is absent
+	Text *string
+	// Base64 binary content; present only when text is absent
+	Blob *string
 }
 
 type ResourceInfo struct {
@@ -504,8 +506,10 @@ type jsonResourceContentTransport struct {
 	URI *string `json:"uri"`
 	// Content MIME type
 	MimeType *string `json:"mimeType,omitempty"`
-	// Text content
-	Text *string `json:"text"`
+	// Text content; present only when blob is absent
+	Text *string `json:"text,omitempty"`
+	// Base64 binary content; present only when text is absent
+	Blob *string `json:"blob,omitempty"`
 }
 
 // validatejsonResourceContentTransport checks decoded JSON before it becomes a service value.
@@ -515,9 +519,6 @@ func validatejsonResourceContentTransport(value *jsonResourceContentTransport) (
 	}
 	if value.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
-	}
-	if value.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
 	}
 	return err
 }
@@ -1034,7 +1035,8 @@ func EncodeResourceContent(in *ResourceContent) ([]byte, error) {
 		body = &jsonResourceContentTransport{
 			URI:      &in.URI,
 			MimeType: in.MimeType,
-			Text:     &in.Text,
+			Text:     in.Text,
+			Blob:     in.Blob,
 		}
 	}
 	if err := validatejsonResourceContentTransport(body); err != nil {
@@ -1075,7 +1077,8 @@ func DecodeResourceContent(data []byte) (out *ResourceContent, err error) {
 		out = &ResourceContent{
 			URI:      *body.URI,
 			MimeType: body.MimeType,
-			Text:     *body.Text,
+			Text:     body.Text,
+			Blob:     body.Blob,
 		}
 	}
 	return out, nil
@@ -2083,22 +2086,29 @@ func validateResourceContentJSONValue(path string, value any, description string
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "mimeType":
+		case "blob":
 			if err := validateResourceContentJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Base64 binary content; present only when text is absent",
+			); err != nil {
+				return err
+			}
+		case "mimeType":
+			if err := validateResourceContentJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Content MIME type",
 			); err != nil {
 				return err
 			}
 		case "text":
-			if err := validateResourceContentJSONValue3(
+			if err := validateResourceContentJSONValue4(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Text content",
+				typed[key], "Text content; present only when blob is absent",
 			); err != nil {
 				return err
 			}
 		case "uri":
-			if err := validateResourceContentJSONValue4(
+			if err := validateResourceContentJSONValue5(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Resource URI",
 			); err != nil {
@@ -2106,6 +2116,7 @@ func validateResourceContentJSONValue(path string, value any, description string
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"blob",
 				"mimeType",
 				"text",
 				"uri",
@@ -2149,6 +2160,22 @@ func validateResourceContentJSONValue3(path string, value any, description strin
 
 // validateResourceContentJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateResourceContentJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResourceContentJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResourceContentJSONValue5(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -3047,8 +3074,15 @@ func checkResourceContentResourceContentValue(in *ResourceContent, field string,
 				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
 			}
 		}
-		if !utf8.ValidString(string(in.Text)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
+		if in.Text != nil {
+			if !utf8.ValidString(string(*in.Text)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
+			}
+		}
+		if in.Blob != nil {
+			if !utf8.ValidString(string(*in.Blob)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "blob", false))
+			}
 		}
 	}
 	return nil

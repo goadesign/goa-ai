@@ -156,7 +156,7 @@ func generateExampleAdapterStubs(
 		if f == nil {
 			return nil, fmt.Errorf("expected MCP example stub %q for service %q", stubPath, svc.Name)
 		}
-		header := findSection(f, headerSection)
+		header := findHeaderSection(f)
 		if header == nil {
 			return nil, fmt.Errorf("example stub %q for service %q is missing %q", f.Path, svc.Name, headerSection)
 		}
@@ -224,10 +224,11 @@ func exampleStubImportAlias(header *codegen.SectionTemplate, service exampleMCPS
 	)
 }
 
-// findSection returns the first section with the given name in file f.
-func findSection(f *codegen.File, name string) *codegen.SectionTemplate {
+// findHeaderSection returns the generated file header so callers can add imports
+// without changing the declarations emitted by Goa.
+func findHeaderSection(f *codegen.File) *codegen.SectionTemplate {
 	for _, s := range f.SectionTemplates {
-		if s.Name == name {
+		if s.Name == headerSection {
 			return s
 		}
 	}

@@ -36,7 +36,9 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
             span.SetStatus(codes.Error, err.Error())
             return nil, a.mapError(err)
         }
-        {{- if .TextResult }}
+        {{- if .BinaryResult }}
+        blob := base64.StdEncoding.EncodeToString(result)
+        {{- else if .TextResult }}
         text := string(result)
         {{- else }}
         encoded, err := {{ $.CodecPackage }}.{{ .Codec.ResultEncode }}(result)
@@ -50,7 +52,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
         res := &ResourcesReadResult{
  ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
             Contents: []*ResourceContent{
-                {URI: p.URI, MimeType: stringPtr({{ quote .MimeType }}), Text: text},
+                {URI: p.URI, MimeType: stringPtr({{ quote .MimeType }}), {{ if .BinaryResult }}Blob: &blob{{ else }}Text: &text{{ end }}},
             },
         }
 

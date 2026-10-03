@@ -43,7 +43,7 @@ func applyMCPHTTPRulesToJSONRPCMount(files []*codegen.File, services []*plannedM
 			continue
 		}
 		if service, ok := clients[filepath.ToSlash(f.Path)]; ok {
-			header := findSection(f, headerSection)
+			header := findHeaderSection(f)
 			if header == nil {
 				return fmt.Errorf("MCP client %q has no source header", f.Path)
 			}
@@ -61,7 +61,7 @@ func applyMCPHTTPRulesToJSONRPCMount(files []*codegen.File, services []*plannedM
 		if !ok {
 			continue
 		}
-		header := findSection(f, headerSection)
+		header := findHeaderSection(f)
 		if header == nil {
 			return fmt.Errorf("JSON-RPC server %q has no source header", f.Path)
 		}

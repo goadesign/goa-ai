@@ -323,11 +323,15 @@ func (b *mcpExprBuilder) buildResourceContentType() *expr.AttributeExpr {
 			}},
 			{Name: "text", Attribute: &expr.AttributeExpr{
 				Type:        expr.String,
-				Description: "Text content",
+				Description: "Text content; present only when blob is absent",
+			}},
+			{Name: "blob", Attribute: &expr.AttributeExpr{
+				Type:        expr.String,
+				Description: "Base64 binary content; present only when text is absent",
 			}},
 		},
 		Validation: &expr.ValidationExpr{
-			Required: []string{"uri", "text"},
+			Required: []string{"uri"},
 		},
 	}
 }

@@ -240,7 +240,9 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	prompts, _ := testService("prompts")
 	staticPrompts, _ := testService("static_prompts")
 	resources, resourceMethods := testService("resources", "read_document")
-	root := testRootExpr([]*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources}, []*expr.HTTPServiceExpr{
+	blobs, blobMethods := testService("blobs", "read_image")
+	blobMethods["read_image"].Result = &expr.AttributeExpr{Type: expr.Bytes}
+	root := testRootExpr([]*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources, blobs}, []*expr.HTTPServiceExpr{
 		jsonrpcService(service, "/calc"),
 		jsonrpcService(formatter, "/formatter"),
 		jsonrpcService(selector, "/selector"),
@@ -249,6 +251,7 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 		jsonrpcService(prompts, "/prompts"),
 		jsonrpcService(staticPrompts, "/static-prompts"),
 		jsonrpcService(resources, "/resources"),
+		jsonrpcService(blobs, "/blobs"),
 	})
 	httpService := root.API.HTTP.ServiceFor(service, root.API.HTTP)
 	httpEndpoint := httpService.EndpointFor(methods["add"])
@@ -264,7 +267,7 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	root.Types = append(root.Types, namedTypes...)
 	root.Types = append(root.Types, locatedRenderPayload)
 	root.WalkSets(func(eval.ExpressionSet) {})
-	for _, current := range []*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources} {
+	for _, current := range []*expr.ServiceExpr{service, formatter, selector, contextService, fmtService, prompts, staticPrompts, resources, blobs} {
 		for _, method := range current.Methods {
 			method.Prepare()
 		}
@@ -341,6 +344,12 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 		Version: "1.0.0",
 		Resources: []*mcpexpr.ResourceExpr{
 			{Name: "documents", URI: "doc://list", MimeType: "application/json", Method: resourceMethods["read_document"]},
+		},
+	})
+	mcpexpr.Root.RegisterMCP(blobs, &mcpexpr.MCPExpr{
+		Name: "blobs", Version: "1.0.0",
+		Resources: []*mcpexpr.ResourceExpr{
+			{Name: "image", URI: "asset://image", MimeType: "image/png", Method: blobMethods["read_image"]},
 		},
 	})
 	dir := t.TempDir()
@@ -455,6 +464,12 @@ replace goa.design/goa/v3 => %s
 	require.Contains(t, string(resourceServer), `case "doc://list":`)
 	require.Contains(t, string(resourceServer), "result, err := a.service.ReadDocument(ctx)")
 	require.NotContains(t, string(resourceServer), "ParseQuery")
+	_, err = generatedRoot.Stat("mcp_blobs/internal/codec/codec.go")
+	require.ErrorIs(t, err, os.ErrNotExist)
+	blobServer, err := generatedRoot.ReadFile("mcp_blobs/adapter_server.go")
+	require.NoError(t, err)
+	require.Contains(t, string(blobServer), "base64.StdEncoding.EncodeToString(result)")
+	require.NotContains(t, string(blobServer), "mcpcodec")
 	resourceCodec, err := generatedRoot.ReadFile("mcp_resources/internal/codec/codec.go")
 	require.NoError(t, err)
 	require.Contains(t, string(resourceCodec), "func EncodeReadDocumentResult")
@@ -468,6 +483,11 @@ replace goa.design/goa/v3 => %s
 	_, err = callerTest.WriteString(callerLifecycleGeneratedTestSource)
 	require.NoError(t, err)
 	require.NoError(t, callerTest.Close())
+	resourceTest, err := generatedRoot.OpenFile("jsonrpc/mcp_resources/client/resource_content_test.go", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	require.NoError(t, err)
+	_, err = resourceTest.WriteString(resourceContentGeneratedTestSource)
+	require.NoError(t, err)
+	require.NoError(t, resourceTest.Close())
 	registerTest, err := generatedRoot.OpenFile(
 		"mcp_fmt/register_string_test.go",
 		os.O_CREATE|os.O_WRONLY|os.O_TRUNC,

@@ -1058,7 +1058,8 @@ func unmarshalResourceContentResponseBodyToMcpassistantResourceContent(v *Resour
 	res := &mcpassistant.ResourceContent{
 		URI:      *v.URI,
 		MimeType: v.MimeType,
-		Text:     *v.Text,
+		Text:     v.Text,
+		Blob:     v.Blob,
 	}
 
 	return res

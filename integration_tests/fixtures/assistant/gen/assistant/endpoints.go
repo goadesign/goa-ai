@@ -15,27 +15,31 @@ import (
 
 // Endpoints wraps the "assistant" service endpoints.
 type Endpoints struct {
-	ListDocuments    goa.Endpoint
-	SystemInfo       goa.Endpoint
-	AnalyzeSentiment goa.Endpoint
-	ExtractKeywords  goa.Endpoint
-	SummarizeText    goa.Endpoint
-	Search           goa.Endpoint
-	ExecuteCode      goa.Endpoint
-	ProcessBatch     goa.Endpoint
+	ListDocuments       goa.Endpoint
+	SystemInfo          goa.Endpoint
+	BinaryResource      goa.Endpoint
+	EmptyBinaryResource goa.Endpoint
+	AnalyzeSentiment    goa.Endpoint
+	ExtractKeywords     goa.Endpoint
+	SummarizeText       goa.Endpoint
+	Search              goa.Endpoint
+	ExecuteCode         goa.Endpoint
+	ProcessBatch        goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "assistant" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		ListDocuments:    NewListDocumentsEndpoint(s),
-		SystemInfo:       NewSystemInfoEndpoint(s),
-		AnalyzeSentiment: NewAnalyzeSentimentEndpoint(s),
-		ExtractKeywords:  NewExtractKeywordsEndpoint(s),
-		SummarizeText:    NewSummarizeTextEndpoint(s),
-		Search:           NewSearchEndpoint(s),
-		ExecuteCode:      NewExecuteCodeEndpoint(s),
-		ProcessBatch:     NewProcessBatchEndpoint(s),
+		ListDocuments:       NewListDocumentsEndpoint(s),
+		SystemInfo:          NewSystemInfoEndpoint(s),
+		BinaryResource:      NewBinaryResourceEndpoint(s),
+		EmptyBinaryResource: NewEmptyBinaryResourceEndpoint(s),
+		AnalyzeSentiment:    NewAnalyzeSentimentEndpoint(s),
+		ExtractKeywords:     NewExtractKeywordsEndpoint(s),
+		SummarizeText:       NewSummarizeTextEndpoint(s),
+		Search:              NewSearchEndpoint(s),
+		ExecuteCode:         NewExecuteCodeEndpoint(s),
+		ProcessBatch:        NewProcessBatchEndpoint(s),
 	}
 }
 
@@ -43,6 +47,8 @@ func NewEndpoints(s Service) *Endpoints {
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListDocuments = m(e.ListDocuments)
 	e.SystemInfo = m(e.SystemInfo)
+	e.BinaryResource = m(e.BinaryResource)
+	e.EmptyBinaryResource = m(e.EmptyBinaryResource)
 	e.AnalyzeSentiment = m(e.AnalyzeSentiment)
 	e.ExtractKeywords = m(e.ExtractKeywords)
 	e.SummarizeText = m(e.SummarizeText)
@@ -64,6 +70,22 @@ func NewListDocumentsEndpoint(s Service) goa.Endpoint {
 func NewSystemInfoEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		return s.SystemInfo(ctx)
+	}
+}
+
+// NewBinaryResourceEndpoint returns an endpoint function that calls the method
+// "binary_resource" of service "assistant".
+func NewBinaryResourceEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		return s.BinaryResource(ctx)
+	}
+}
+
+// NewEmptyBinaryResourceEndpoint returns an endpoint function that calls the
+// method "empty_binary_resource" of service "assistant".
+func NewEmptyBinaryResourceEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		return s.EmptyBinaryResource(ctx)
 	}
 }
 

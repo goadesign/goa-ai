@@ -345,6 +345,7 @@ func marshalMcpassistantResourceContentToResourceContentResponseBody(v *mcpassis
 		URI:      v.URI,
 		MimeType: v.MimeType,
 		Text:     v.Text,
+		Blob:     v.Blob,
 	}
 
 	return res

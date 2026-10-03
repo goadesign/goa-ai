@@ -153,6 +153,9 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 	if err := applyMCPHTTPRulesToJSONRPCMount(files, p.planned); err != nil {
 		return nil, err
 	}
+	if err := applyResourceContentValidation(files, p.planned); err != nil {
+		return nil, err
+	}
 	return files, nil
 }
 
@@ -204,6 +207,14 @@ func planMCPImports(
 		"goa.design/goa-ai/runtime/mcp",
 		"go.opentelemetry.io/otel",
 		"go.opentelemetry.io/otel/codes",
+	}
+	for _, resource := range data.Resources {
+		if !resource.BinaryResult {
+			continue
+		}
+		serverFixed = append(serverFixed, goacodegen.SimpleImport("encoding/base64"))
+		data.serverImportPaths = append(data.serverImportPaths, "encoding/base64")
+		break
 	}
 	if data.NeedsNoArgumentsValidation {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("fmt"))
@@ -359,7 +370,8 @@ func planMCPCodecs(
 	methods := mappedMCPMethods(prepared)
 	hasValues := false
 	for _, method := range methods {
-		if hasMCPValue(method.Payload) || hasMCPValue(method.Result) {
+		payloadDirection, resultDirection := mcpCodecDirections(data, method.Name)
+		if (hasMCPValue(method.Payload) && payloadDirection != 0) || (hasMCPValue(method.Result) && resultDirection != 0) {
 			hasValues = true
 			break
 		}
@@ -385,12 +397,12 @@ func planMCPCodecs(
 	for _, method := range methods {
 		values := new(plannedMethodCodec)
 		preferred := goacodegen.Goify(method.Name, true)
-		payloadDirection, resultDirection := mcpCodecDirections(prepared, method.Name)
+		payloadDirection, resultDirection := mcpCodecDirections(data, method.Name)
 		if tool := toolMethods[method.Name]; tool != nil {
 			data.NeedsServerCodec = data.NeedsServerCodec || tool.HasPayload || tool.HasResult
 		}
 		if resource := resourceMethods[method.Name]; resource != nil {
-			data.NeedsServerCodec = data.NeedsServerCodec || !resource.TextResult
+			data.NeedsServerCodec = data.NeedsServerCodec || (!resource.TextResult && !resource.BinaryResult)
 		}
 		if hasMCPValue(method.Payload) && payloadDirection != 0 {
 			layout, layoutErr := services.MethodTypeLayout(method, method.Payload)
@@ -498,16 +510,16 @@ func methodCodecData(planned *plannedMethodCodec) *MethodCodecData {
 
 // mcpCodecDirections returns the conversions used by every MCP feature mapped
 // to methodName.
-func mcpCodecDirections(prepared *preparedMCPService, methodName string) (jsoncodec.Direction, jsoncodec.Direction) {
+func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Direction, jsoncodec.Direction) {
 	var payloadEncode, payloadDecode, resultEncode, resultDecode bool
-	for _, tool := range prepared.mcp.Tools {
-		if tool.Method.Name == methodName {
+	for _, tool := range data.Tools {
+		if tool.userMethodName == methodName {
 			payloadEncode, payloadDecode = true, true
 			resultEncode, resultDecode = true, true
 		}
 	}
-	for _, resource := range prepared.mcp.Resources {
-		if resource.Method.Name == methodName {
+	for _, resource := range data.Resources {
+		if resource.userMethodName == methodName && !resource.TextResult && !resource.BinaryResult {
 			resultEncode = true
 		}
 	}

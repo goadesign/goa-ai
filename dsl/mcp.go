@@ -53,6 +53,9 @@ func MCP(name, version string) {
 
 // Resource marks the current method as an MCP resource provider. The method's
 // result becomes the resource content returned when clients read the resource.
+// Bytes become base64 blob content with the declared MIME type. A string with a
+// text MIME type becomes text unchanged; application/json results use the generated
+// JSON codec. The generator chooses the representation from the declared result.
 //
 // Resource must appear in a Method expression within a service that has MCP enabled.
 //

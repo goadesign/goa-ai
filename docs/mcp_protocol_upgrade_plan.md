@@ -1,6 +1,6 @@
 # Upgrade goa-ai to MCP 2026-07-28
 
-Research and implementation plan, prepared 2026-10-02 and revised 2026-10-03 after tracing framework composition and prevailing retry implementations. The core implementation is complete in the isolated clone; release gates remain explicit below. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
+Research and implementation plan, prepared 2026-10-02 and revised 2026-10-03 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
 
 ## Outcome and scope
 
@@ -77,11 +77,20 @@ runtime tests pass after moving current synthetic suspension fixtures to version
 | Capability | Generated server | Direct client | Agent host |
 | --- | --- | --- | --- |
 | Current discovery and unary tools | Implemented | Implemented | Generated executors and canonical specs |
-| Fixed resource reads and static prompts | Implemented | Generated typed clients | No implicit conversion into agent tools |
+| Fixed text/JSON/binary resource reads and static prompts | Implemented | Generated typed clients; exact text/blob validation | No implicit conversion into agent tools |
 | Rich structured tool results | Generated declared JSON result | Five content kinds and exact structured JSON | Declared result codec |
 | Multi-round tool input | No producer advertised | Explicit unfinished result and successor request | Durable trusted form/URL/state-only continuation |
 | Tasks, subscriptions, parameterized prompts, URI templates | Not advertised | No extension claimed | Capability milestones remain separate |
 | OAuth and Apps | Host-owned dependencies; no built-in extension claimed | Host-built HTTP dependency | No grant/view ownership in the planner |
+
+Binary resources now use the existing `Resource` DSL and ordinary Goa byte
+results, including named byte types. The generator emits base64 `blob` content,
+preserves empty content, and omits unused JSON codecs for text/byte resources.
+Generated direct clients reject both/neither text/blob fields and malformed
+base64. The independent `resources-read-binary` scenario passed both operation
+and wire-schema checks on 2026-10-03. Compiled binary-only and mixed-resource
+clients and real generated HTTP scenarios passed. This completes the binary
+resource milestone; rich authored tool/prompt content remains separate.
 
 This table reports implementation scope, not full conformance. Verification
 completed with Go 1.26.3: `make lint` (zero issues), `make test` (race-enabled root
@@ -99,8 +108,10 @@ The official referee was pinned to commit
 header, invalid-annotation, and network-reference checks passed. The generated
 server passed all 21 stateless checks its fixture can exercise and both localhost
 Origin checks. Four stateless diagnostic checks are untestable with this fixture;
-caching fails on unimplemented URI templates; client metadata produces an
-alternate-version warning. See the [reproducible conformance report](../integration_tests/conformance/README.md)
+caching fails on unimplemented URI templates. The metadata peer rejects the current
+revision while advertising the same revision, and warns when the client stops
+instead of sending it again. Complete released-set runs now expose additional
+fixture and implementation gaps; see the full audit linked from the report. See the [reproducible conformance report](../integration_tests/conformance/README.md)
 for exact counts, skips, overall failures, and the broader unverified requirements.
 These results do not establish a complete released-requirement-set pass.
 
@@ -115,9 +126,11 @@ dependency graph cannot constrain application dependencies. Protoc is `36.2`;
 the two existing Go protobuf plugin pins already match the latest releases.
 
 The interrupted-SSE retry interpretation, external deployment inventory and
-cutover, and website documentation ownership remain release gates. The requested
-website content directory is absent from this repository; local API/runtime,
-README, architecture, quickstart, and integration documentation are updated.
+cutover, all required capabilities, and website documentation remain release gates.
+The website belongs to `goadesign/goa.design`; its five translated MCP pages are
+being prepared in `/Users/raphael/src/goa-ai-mcp-website`. That repository requires
+separate explicit authorization before PR creation. Local API/runtime, README,
+architecture, quickstart, and integration documentation are updated.
 No release or deployment has been performed. Review proceeds through a draft PR while these release gates remain open.
 
 Shared-schema changes can also change registry declaration identity. The
@@ -457,7 +470,7 @@ The protocol revision and the set of optional capabilities are different decisio
 | Feature | Current goa-ai evidence | Reassessed fit and decision |
 | --- | --- | --- |
 | Tools and direct/agent clients | Implemented with old envelopes and several result modes | Required upgrade: one current transport, canonical generated contracts, one structured typed-result path, and complete composition |
-| Binary resource reads | Goa has byte-valued results; MCP resource validation and generated resource content currently permit text/JSON only | Generator restriction, not framework inability. Include a typed binary-resource authoring proof; generate the protocol blob representation once at the boundary, with MIME and URI owned by the service. Never guess media from arbitrary strings. |
+| Binary resource reads | Implemented from Goa byte-valued results, including aliases and empty content | The existing Resource DSL selects the URI/MIME. Generation emits blobs and strict client decoding. Compiled modules, HTTP scenarios, and the independent binary-resource referee passed. |
 | Parameterized prompts | Goa supports payload/result methods; MCP has only design-time static text messages | Viable typed service binding. Design current prompt argument/message contracts and a method-backed generator fixture; keep static prompts as a distinct honest authoring form. Do not revive `DynamicPrompt` providers/callbacks or turn prompts into automatic planner execution. |
 | Resource templates | Current resources reject payloads and route only exact fixed URIs | Viable generated binding, currently absent. Map declared URI-template variables to typed service inputs, validate expansions and overlapping routes, and retain domain authorization. Requires a real URI-template contract; never reinterpret free-form URIs as filesystem authority. |
 | `completion/complete` | No MCP argument-suggestion method | Viable typed method binding after parameterized prompts/templates. Framework `Completion(...)` means a final typed assistant answer and is unrelated. Use distinct names and owners; do not feed suggestions into the agent's terminal-answer path. |
@@ -471,7 +484,7 @@ The protocol revision and the set of optional capabilities are different decisio
 | Apps | Returned content can contain resource links; no view sandbox or host permission mechanism exists | Requires a separate UI host and security contract. The server-side resource layer could supply declared content, but agent streams alone cannot implement Apps. No automatic HTML execution. |
 | Skills / other extensions | Open metadata can be retained; no extension-specific authored/runtime contract exists | Assess the extension's producer/consumer separately. No speculative capability or generic arbitrary-result fallback. |
 
-These optional authoring proofs and extension milestones are part of this plan's architectural coverage. They are not automatic promises to ship every optional feature in the core wire upgrade. The required release includes correct current core paths, canonical composition, and the unfinished-operation contract. Additional authoring and extension capabilities ship only after their specified owned implementation and acceptance proof; absence must be documented as “not implemented,” not “impossible in goa-ai.”
+The user requires every missing capability identified in this review before release. Protocol optionality does not make these implementation milestones optional for this upgrade. Keep PR #409 draft while work proceeds; commits and pushes are authorized, release is not. The required capability set is binary resources, rich authored content, parameterized prompts, URI templates, argument suggestions, server-produced additional input, progress, subscriptions, Tasks, built-in OAuth, and complete Apps and Skills integrations. Pin each extension separately. Extensions remain explicitly enabled by applications; do not advertise them before the complete path works. Deprecated roots, sampling, logging, and Dynamic Client Registration remain excluded by the from-scratch requirement. Any referee scenario that depends on a deprecated feature must be reported explicitly rather than implemented as a legacy path or silently ignored.
 
 New long-lived notifications are scoped to a subscription request and correlated by its exact ID; ordinary progress is scoped to its originating operation. Those requirements must govern any future subscription API. [Subscriptions](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions), [progress](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/progress).
 
@@ -617,18 +630,22 @@ These are dependency-ordered work packages for one breaking release. Intermediat
 
 **Acceptance:** suspend, restart the worker, answer through the trusted host, survive a second input round, and receive the original typed result without a new model call or duplicated side effect. No-host clients advertise no elicitation and fail truthfully. Existing confirmation/question/clarification outcomes still pass. Host-visible data contains no private checkpoint, credential, or opaque request state.
 
-### 7. Prove optional authoring and extension composition
+### 7. Implement all required authoring and extension capabilities
 
-These are explicit capability milestones, not legacy replacements or automatic release promises. Each chosen feature needs its typed caller experience and complete generated fixture before its implementation is accepted.
+Every milestone below is required before this upgrade can release. Define the typed caller experience and complete generated fixture before editing each public contract. The current framework foundations are evidence of feasibility, not proof that the capability already exists.
 
 1. **Resource/prompt authoring:** prove byte-valued resource reads and parameterized prompt methods using existing Goa types. Bind static facts at generation time, including MIME, messages, arguments, and routing. Add URI templates and argument suggestions only with unambiguous variable/typed-input bindings; framework assistant `Completion` remains separate. Use generated transforms, not runtime payload coercion. Preserve fixed URI and static message outcomes.
 2. **Subscriptions/progress:** identify the owning change/progress producer, authenticated selection, ordering, cancellation, and backpressure. Add request-scoped protocol events through a purpose-built generated binding and shared transport. Do not forward private session streams or install a generic global broadcaster. A subscription is a distinct operation, not streamed chunks of an otherwise unary tool/resource result.
 3. **Tasks consumer:** after declaring the extension, persist the exact remote task ID with its original invocation in trusted execution state. Schedule `tasks/get` through durable execution; polling observes server-owned work and must not reissue `tools/call`. Route task input through the same host path and use `tasks/update`/`tasks/cancel` with the required transport headers. Honor server polling guidance without inventing run-wide budgets.
 4. **Tasks server:** use an owned typed execution API over a durable workflow/job. Prove accepted-start recovery and readable task state before returning a handle. Derive identity from owner-authorized identifiers where possible; if a stable operation-to-successor mapping needs storage, only the initiating service owns it and exposes it through typed APIs. The adapter never reads another service's workflow tables. No universal scheduler, automatic taskification of unary methods, or global MCP deduplication store.
 5. **Task semantics:** pin the released extension independently; map working/input-required/terminal states, partial input, cancellation races, retained results, and authorization deliberately. A closed suspended workflow is not a completed task. A domain tool error remains a completed `isError` result; `failed` represents the extension's protocol-error outcome. Cancellation acknowledgement is intent, not proof work stopped. Set retention/TTL and polling policy only after the numeric and operational ownership gates.
-6. **Host/security extensions:** keep OAuth grant ownership and Apps sandbox/view permissions separate from agent execution. Retaining metadata is insufficient to advertise an extension. Deprecated roots/sampling/logging remain absent even though the framework has corresponding domain primitives.
+6. **Server-produced additional input:** bind an authored operation to typed input requests and validated responses. The operation owner preserves its original arguments and continuation state; generated adapters validate capability support before producing an interim result. Bind authorization-sensitive state to the current principal and operation, with owner-enforced integrity, expiry and replay rules. Prove multiple requests, multiple rounds, altered state rejection, cancellation, and non-tool methods. Reuse the implemented durable agent-host continuation path rather than inventing a second successful-result shape.
+7. **Rich authored content:** use declared result contracts for text, image, audio, embedded resources and resource links in tools and prompt messages. Keep structured output and presentation content distinct and preserve their declared relationship. Generate transforms and exact content variants; do not infer images or JSON from strings. Verify all variants against an independent peer.
+8. **Built-in authorization:** implement current protected-resource and authorization-server discovery, client registration metadata, grants, token handling, challenge-driven scope updates and issuer/resource checks. The application owns credential persistence, user consent and redirect handling through constructed dependencies; the MCP caller owns the protocol exchange. Include separately pinned client-credentials and enterprise-managed authorization profiles. Assess DPoP and workload identity scenarios against their current primary contracts before claiming them. Prove credential isolation across endpoints and concurrent calls, rejection of mismatched issuers/resources, cancellation, and bounded challenge handling. A host-supplied authenticated HTTP client alone does not complete this milestone.
+9. **Apps:** pin the official extension, expose declared app resources and implement the corresponding host message, sandbox and permission contract. Do not count metadata retention or returned HTML as a complete integration. Prove an actual host/view exchange, blocked unauthorized operations, resource policy and teardown independently from agent execution.
+10. **Skills:** pin the official extension and implement its authored discovery/content contract and consuming host path. Preserve owner authorization and typed resources; do not substitute generic open metadata or automatic planner execution for extension support.
 
-**Acceptance:** publish a per-feature matrix of implemented server, direct-client, and agent-host paths. Every advertised capability has a positive independent-peer test and its security/cancellation counterexample. Document all omitted features honestly. Optional extension work cannot hold up a correct core release merely because it exists in the specification, but no selected milestone is complete at the envelope or parser layer alone.
+**Acceptance:** publish a per-feature matrix of implemented server, direct-client, and agent-host paths. Every advertised capability has a positive independent-peer test and its security/cancellation counterexample. Document all omitted features honestly. No release may proceed while any requested milestone remains incomplete. No milestone is complete at the envelope or parser layer alone. Record server, direct-client and agent-host acceptance separately; a feature with no meaningful role in one layer must explain that ownership, not claim an untested implementation.
 
 
 ### 8. Replace the integration harness and document the breaking release
@@ -637,7 +654,7 @@ These are explicit capability milestones, not legacy replacements or automatic r
 2. Update protocol/tools/resources/prompts scenarios, fixture designs, generated compile tests, and golden files by regeneration. Add independent HTTP and stdio peers using only 2026-07-28.
 3. Assert rejection before service dispatch, cancellation, supported structured root kinds, direct wire null, codec-permitted typed null, raw error data, metadata, and private/no-cache hints. Cover configured host input, no-host rejection, shared registration, generated bootstrap, and stored continuation after restart. Replace old tests that enforce object-only results, session expiry, or compatibility defaults.
 4. Update [README](../README.md), [DESIGN](../DESIGN.md), [DSL docs](dsl.md), [runtime docs](runtime.md), and [overview](overview.md). Keep customer-facing guidance about capabilities, generated code, visible errors, and upgrade action separate from engineering transport internals.
-5. Locate the repository owning `content/en/docs/2-goa-ai/` and translated MCP pages. That directory is absent from this clone. A website update is required for release, but creating a PR in a different repository requires the user's separate authorization. Do not fabricate the directory here.
+5. Update `content/{en,fr,ja,it,es}/docs/2-goa-ai/mcp-integration.md` in the isolated `goadesign/goa.design` clone after the final caller contracts are implemented. Verify its documentation tests, links and production Hugo build. Obtain explicit authorization for that repository's PR only after the changes are concrete and reviewable; do not publish unfinished capabilities as available.
 6. Publish notes explaining removals, regeneration, changed result encoding, client/server cutover, optional feature scope, and rollback. Derive actual notes from the final diff, not this proposed plan.
 
 **Files:** [scenario runner](../integration_tests/framework/runner.go), [runner tests](../integration_tests/framework/runner_test.go), [MCP integration suite](../integration_tests/tests/mcp_integration_test.go), [fixture](../integration_tests/fixtures/assistant/mcp_assistant.go), [protocol](../integration_tests/scenarios/protocol.yaml), [tools](../integration_tests/scenarios/tools.yaml), [resources](../integration_tests/scenarios/resources.yaml), [prompts](../integration_tests/scenarios/prompts.yaml), fixture design files and docs above.
@@ -812,6 +829,6 @@ Keep the isolated clone until the work is complete and published without losing 
 
 ### Definition of done
 
-The replacement is complete when every claimed current-protocol path passes independent validation; all local generated consumers and docs use the new contract; no old version/lifecycle/session/text-coercion/compatibility path remains; domain outcomes in the preservation matrix are proven; complete generation/composition and configured host-input paths pass; optional capability claims match actual implementation; and downstream worker/checkpoint rollout, rollback, and interrupted-request semantics are explicit.
+The replacement is complete when every claimed current-protocol path passes independent validation; all local generated consumers and docs use the new contract; no old version/lifecycle/session/text-coercion/compatibility path remains; domain outcomes in the preservation matrix are proven; complete generation/composition and configured host-input paths pass; every requested capability is implemented and its complete path independently verified; extension advertisements match configured implementations; and downstream worker/checkpoint rollout, rollback, and interrupted-request semantics are explicit.
 
 A changed version literal, green legacy tests, or a successful tools/list request is insufficient evidence. The final implementation must have the same ownership and public surface it would have had if the old MCP implementation had never existed.

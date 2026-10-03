@@ -44,6 +44,20 @@ var _ = Service("assistant", func() {
 		JSONRPC(func() {})
 	})
 
+	Method("binary_resource", func() {
+		Description("Read the synthetic binary resource used by independent MCP verification")
+		Result(Image)
+		Resource("binary", "test://static-binary", "image/png")
+		JSONRPC(func() {})
+	})
+
+	Method("empty_binary_resource", func() {
+		Description("Read an existing binary resource whose content is empty")
+		Result(Bytes)
+		Resource("empty_binary", "test://empty-binary", "application/octet-stream")
+		JSONRPC(func() {})
+	})
+
 	StaticPrompt(
 		"code_review",
 		"Simple code review prompt",
@@ -131,4 +145,10 @@ var _ = Service("assistant", func() {
 var Documents = Type("Documents", func() {
 	Attribute("items", ArrayOf(String), "Document entries")
 	Required("items")
+})
+
+// Image is a named byte result so generation verifies the resource's underlying
+// value while preserving the service's authored result name.
+var Image = Type("Image", Bytes, func() {
+	Description("Encoded image bytes")
 })

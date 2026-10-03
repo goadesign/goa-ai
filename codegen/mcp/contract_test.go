@@ -134,8 +134,8 @@ func TestPrepareServices_BuildsCurrentMCPWireTypes(t *testing.T) {
 	require.True(t, resource.IsRequired("uri"))
 	require.True(t, resource.IsRequired("name"))
 	resourceContent := testRootType(t, root, "ResourceContent")
-	require.Equal(t, []string{"uri", "text"}, resourceContent.Validation.Required)
-	require.Nil(t, expr.AsObject(resourceContent.Type).Attribute("blob"))
+	require.Equal(t, []string{"uri"}, resourceContent.Validation.Required)
+	require.NotNil(t, expr.AsObject(resourceContent.Type).Attribute("blob"))
 
 	promptArgument := testRootType(t, root, "PromptArgument")
 	require.True(t, promptArgument.IsRequired("name"))

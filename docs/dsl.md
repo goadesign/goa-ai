@@ -1428,10 +1428,32 @@ Service("calculator", func() {
     })
 
     StaticPrompt("greeting", "Friendly greeting",
-        "system", "You are a helpful assistant",
+        "assistant", "You are a helpful assistant",
         "user", "Hello!")
 })
 ```
+
+### MCP resource content
+
+Resource methods have no payload and return the content for their declared URI.
+A `Bytes` result becomes base64 in the protocol's `blob` field, with the MIME
+type declared by `Resource`. Named byte types use the same representation.
+A string with a `text/` MIME type becomes `text` unchanged. Other result types
+with an `application/json` MIME type become `text` encoded by the generated
+result codec.
+
+```go
+Method("logo", func() {
+    Description("Read the service logo")
+    Result(Bytes)
+    Resource("logo", "asset://logo", "image/png")
+})
+```
+
+Empty byte results produce a present empty `blob`; empty strings produce a
+present empty `text`. The generated direct client rejects resource replies that
+contain both fields or neither field. The service returns ordinary typed data;
+it does not encode base64 itself or construct protocol content.
 
 ### MCP tool behavior hints
 

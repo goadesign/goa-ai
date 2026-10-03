@@ -2008,7 +2008,11 @@ The service owns preventing additional effects; missing hints, cancellation,
 malformed replies, and completed tool errors never authorize this retry path.
 
 Generated servers advertise only their implemented unary tools, fixed resource
-reads, and static prompts. Optional tasks, subscriptions, and server-originated
+reads, and static prompts. Resource representations are selected at generation
+time: byte results become base64 blobs, text results with a text MIME type remain
+text, and JSON results use the generated codec. Empty content preserves its field.
+Generated client validators reject resource replies with both or neither text/blob
+fields; this flat wire union has no Goa discriminator. Optional tasks, subscriptions, and server-originated
 elicitation need dedicated producers and bindings before they can be advertised.
 See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
 [the upgrade plan](docs/mcp_protocol_upgrade_plan.md) for remaining proof and scope.

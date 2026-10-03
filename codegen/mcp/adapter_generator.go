@@ -145,6 +145,8 @@ type (
 		// TextResult reports that the method result is a string returned without
 		// JSON quoting because the resource declares a text MIME type.
 		TextResult bool
+		// BinaryResult selects base64 blob content for a byte-valued service result.
+		BinaryResult bool
 		// Codec names the functions for the original method payload and result.
 		Codec *MethodCodecData
 
@@ -315,12 +317,21 @@ func (g *adapterGenerator) buildResourceAdapters() ([]*ResourceAdapter, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse MIME type for resource %q: %w", resource.Name, err)
 		}
+		resultType := resource.Method.Result.Type
+		for {
+			named, ok := resultType.(expr.UserType)
+			if !ok {
+				break
+			}
+			resultType = named.Attribute().Type
+		}
 		adapter := &ResourceAdapter{
 			Name:           resource.Name,
 			Description:    resource.Description,
 			URI:            resource.URI,
 			MimeType:       resource.MimeType,
-			TextResult:     strings.HasPrefix(mediaType, "text/"),
+			TextResult:     strings.HasPrefix(mediaType, "text/") && resultType != expr.Bytes,
+			BinaryResult:   resultType == expr.Bytes,
 			userMethodName: resource.Method.Name,
 		}
 

@@ -26,6 +26,10 @@ type Service interface {
 	ListDocuments(context.Context) (res *Documents, err error)
 	// Return system info
 	SystemInfo(context.Context) (res *SystemInfoResult, err error)
+	// Read the synthetic binary resource used by independent MCP verification
+	BinaryResource(context.Context) (res Image, err error)
+	// Read an existing binary resource whose content is empty
+	EmptyBinaryResource(context.Context) (res []byte, err error)
 	// Analyze sentiment of text
 	AnalyzeSentiment(context.Context, *AnalyzeSentimentPayload) (res *AnalyzeSentimentResult, err error)
 	// Extract keywords from text
@@ -54,7 +58,7 @@ const ServiceName = "assistant"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [8]string{"list_documents", "system_info", "analyze_sentiment", "extract_keywords", "summarize_text", "search", "execute_code", "process_batch"}
+var MethodNames = [10]string{"list_documents", "system_info", "binary_resource", "empty_binary_resource", "analyze_sentiment", "extract_keywords", "summarize_text", "search", "execute_code", "process_batch"}
 
 // AnalyzeSentimentPayload is the payload type of the assistant service
 // analyze_sentiment method.
@@ -105,6 +109,9 @@ type ExtractKeywordsResult struct {
 	// Extracted keywords
 	Keywords []string
 }
+
+// Image is the result type of the assistant service binary_resource method.
+type Image []byte
 
 // ProcessBatchPayload is the payload type of the assistant service
 // process_batch method.
@@ -182,6 +189,15 @@ func validatejsonDocumentsTransport(value *jsonDocumentsTransport) (err error) {
 	return err
 }
 
+// jsonImageTransport stores JSON fields until they have been validated.
+type jsonImageTransport []byte
+
+// validatejsonImageTransport checks decoded JSON before it becomes a service value.
+func validatejsonImageTransport(value jsonImageTransport) (err error) {
+
+	return err
+}
+
 // validateDocumentsOriginal checks the original typed value before JSON conversion.
 func validateDocumentsOriginal(value *Documents) (err error) {
 	if value.Items == nil {
@@ -250,6 +266,55 @@ func DecodeDocuments(data []byte) (out *Documents, err error) {
 	return out, nil
 }
 
+// EncodeImage turns a service value into JSON using the field names in the Goa design.
+func EncodeImage(in Image) ([]byte, error) {
+	if err := checkImageValue(in); err != nil {
+		return nil, fmt.Errorf("encode Image JSON: %w", err)
+	}
+	var body jsonImageTransport
+	{
+		body = jsonImageTransport(in)
+	}
+	if err := validatejsonImageTransport(body); err != nil {
+		return nil, fmt.Errorf("validate Image JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode Image JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeImage checks JSON field names from the Goa design and returns a service value.
+func DecodeImage(data []byte) (out Image, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode Image JSON: %w", err)
+	}
+	if err := validateImageJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode Image JSON: %w", err)
+	}
+	var body jsonImageTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode Image JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode Image JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode Image JSON after first value: %w", err)
+	}
+	if err := validatejsonImageTransport(body); err != nil {
+		return out, fmt.Errorf("validate Image JSON: %w", err)
+	}
+	{
+		out = Image(body)
+	}
+	return out, nil
+}
+
 // validateDocumentsJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validateDocumentsJSONValue(path string, value any, description string) error {
 	field := path
@@ -312,6 +377,22 @@ func validateDocumentsJSONValue2(path string, value any, description string) err
 
 // validateDocumentsJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateDocumentsJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateImageJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateImageJSONValue(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -504,5 +585,22 @@ func checkDocumentsDocumentsValue(in *Documents, field string, active map[any]bo
 			}
 		}
 	}
+	return nil
+}
+
+// checkImageValue checks text and cycles before conversion.
+func checkImageValue(in Image) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkImageImageValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkImageImageValue checks one generated value on the active path.
+func checkImageImageValue(in Image, field string, active map[any]bool) error {
 	return nil
 }

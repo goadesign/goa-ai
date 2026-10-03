@@ -440,8 +440,10 @@ type ResourceContentResponseBody struct {
 	URI string `form:"uri" json:"uri" xml:"uri"`
 	// Content MIME type
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
-	// Text content
-	Text string `form:"text" json:"text" xml:"text"`
+	// Text content; present only when blob is absent
+	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Base64 binary content; present only when text is absent
+	Blob *string `form:"blob,omitempty" json:"blob,omitempty" xml:"blob,omitempty"`
 }
 
 // PromptInfoResponseBody is used to define fields on response body types.

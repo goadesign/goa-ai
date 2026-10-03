@@ -9,6 +9,7 @@ package mcpassistant
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 
 	assistant "example.com/assistant/gen/assistant"
@@ -347,6 +348,8 @@ func (a *MCPAdapter) ResourcesList(ctx context.Context, p *ResourcesListPayload)
 	resources := []*ResourceInfo{
 		{URI: "doc://list", Name: "documents", Description: stringPtr("List available documents"), MimeType: stringPtr("application/json")},
 		{URI: "system://info", Name: "system_info", Description: stringPtr("Return system info"), MimeType: stringPtr("application/json")},
+		{URI: "test://empty-binary", Name: "empty_binary", Description: stringPtr("Read an existing binary resource whose content is empty"), MimeType: stringPtr("application/octet-stream")},
+		{URI: "test://static-binary", Name: "binary", Description: stringPtr("Read the synthetic binary resource used by independent MCP verification"), MimeType: stringPtr("image/png")},
 	}
 	res := &ResourcesListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Resources: resources}
 
@@ -376,7 +379,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 		res := &ResourcesReadResult{
 			ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
 			Contents: []*ResourceContent{
-				{URI: p.URI, MimeType: stringPtr("application/json"), Text: text},
+				{URI: p.URI, MimeType: stringPtr("application/json"), Text: &text},
 			},
 		}
 
@@ -398,7 +401,39 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 		res := &ResourcesReadResult{
 			ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
 			Contents: []*ResourceContent{
-				{URI: p.URI, MimeType: stringPtr("application/json"), Text: text},
+				{URI: p.URI, MimeType: stringPtr("application/json"), Text: &text},
+			},
+		}
+
+		return res, nil
+	case "test://empty-binary":
+		result, err := a.service.EmptyBinaryResource(ctx)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err)
+		}
+		blob := base64.StdEncoding.EncodeToString(result)
+		res := &ResourcesReadResult{
+			ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
+			Contents: []*ResourceContent{
+				{URI: p.URI, MimeType: stringPtr("application/octet-stream"), Blob: &blob},
+			},
+		}
+
+		return res, nil
+	case "test://static-binary":
+		result, err := a.service.BinaryResource(ctx)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err)
+		}
+		blob := base64.StdEncoding.EncodeToString(result)
+		res := &ResourcesReadResult{
+			ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
+			Contents: []*ResourceContent{
+				{URI: p.URI, MimeType: stringPtr("image/png"), Blob: &blob},
 			},
 		}
 

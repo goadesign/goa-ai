@@ -8,6 +8,7 @@
 package client
 
 import (
+	"encoding/base64"
 	"encoding/json"
 
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
@@ -440,8 +441,10 @@ type ResourceContentResponseBody struct {
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
 	// Content MIME type
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
-	// Text content
+	// Text content; present only when blob is absent
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Base64 binary content; present only when text is absent
+	Blob *string `form:"blob,omitempty" json:"blob,omitempty" xml:"blob,omitempty"`
 }
 
 // PromptInfoResponseBody is used to define fields on response body types.
@@ -1402,9 +1405,16 @@ func ValidateResourceContentResponseBody(body *ResourceContentResponseBody) (err
 	if body.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
 	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	// Resource contents choose exactly one representation, including empty content.
+	if (body.Text == nil) == (body.Blob == nil) {
+		err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+".contents", "text/blob", "exactly one of text or blob"))
 	}
+	if body.Blob != nil {
+		if _, decodeErr := base64.StdEncoding.DecodeString(*body.Blob); decodeErr != nil {
+			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_content", "%s.blob must contain base64 data", "body"))
+		}
+	}
+
 	return
 }
 
@@ -1414,9 +1424,16 @@ func validateResourceContentResponseBody(body *ResourceContentResponseBody, path
 	if body.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", path))
 	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", path))
+	// Resource contents choose exactly one representation, including empty content.
+	if (body.Text == nil) == (body.Blob == nil) {
+		err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+".contents", "text/blob", "exactly one of text or blob"))
 	}
+	if body.Blob != nil {
+		if _, decodeErr := base64.StdEncoding.DecodeString(*body.Blob); decodeErr != nil {
+			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_content", "%s.blob must contain base64 data", path))
+		}
+	}
+
 	return
 }
 
