@@ -3,7 +3,7 @@
 These drivers let the official MCP harness exercise goa-ai's production HTTP
 caller and an actual generated server. They author synthetic domain calls; the
 framework constructs the protocol messages. The server command lives in
-`../fixtures/assistant/cmd/conformance` because it imports that fixture's generated
+`../fixtures/assistant/conformance/server` because it imports that fixture's generated
 Goa contracts. Its explicit localhost Origin allowlist survives fixture regeneration.
 
 The referee is [modelcontextprotocol/conformance](https://github.com/modelcontextprotocol/conformance)
@@ -33,7 +33,7 @@ build the two drivers:
 ```sh
 make itest
 go build -o .cache/mcp-conformance-client ./integration_tests/conformance/client
-go -C integration_tests/fixtures/assistant build -o ../../../.cache/mcp-conformance-server ./cmd/conformance
+go -C integration_tests/fixtures/assistant build -o ../../../.cache/mcp-conformance-server ./conformance/server
 .cache/mcp-conformance-server --port 31172
 ```
 
