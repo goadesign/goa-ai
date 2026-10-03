@@ -245,9 +245,10 @@ uses those fields as both the argument and result contract of one ordinary
 tool, so callers cannot add tool policy or execution behavior. A private
 in-memory agent advertises only that tool, allows one successful
 tool execution, and requires it to complete the run. The typed schema and codec
-remain the model boundary; malformed JSON and typed validation failures use the
-runtime's bounded correction flow. Provider failures and every non-argument
-failure remain terminal. The returned `T` is exactly the value decoded from
+remain the model boundary; malformed JSON, typed validation failures and
+eligible unadvertised-tool-name rejections use the runtime's bounded correction
+flow. Provider, cancellation and deadline failures remain terminal. The returned
+`T` is exactly the value decoded from
 the accepted arguments, so callers cannot insert domain execution or rewriting
 between accepted model output and the returned value.
 
