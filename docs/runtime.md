@@ -6780,7 +6780,10 @@ cancellation remain outside `OutputValidationError`.
 messages without interactive client protocols. The accepted policy is carried
 through tool calls, native child runs, checkpoints and recovery. Child policy
 combines the parent and child restrictions with Boolean OR; it cannot loosen
-its parent and does not alter siblings.
+its parent and does not alter siblings. A stricter selected child requires a
+compatible invocation contract; the runtime rejects an incompatible contract or
+input before saving that child's model input and checks the contract again before
+resumed planning.
 
 Declare `RequiresUI()` on tools whose execution needs a rendered result or
 interactive client. Declare `UIOnly("renderUi")` for an optional Boolean control

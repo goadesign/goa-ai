@@ -554,7 +554,10 @@ func (r *Runtime) preparePlannerActivity(
 				advertisedSpecs[i] = spec.ForTextOnly()
 			}
 		}
-		if parentTool != nil && parentTool.TextOnly != nil {
+		if parentTool != nil {
+			if parentTool.RequiresUI || parentTool.Confirmation != nil || parentTool.TextOnly == nil {
+				return nil, engine.MarkActivityErrorNonRetryable(fmt.Errorf("agent tool %q is incompatible with text-only child execution", parentTool.Name))
+			}
 			selected := parentTool.ForTextOnly()
 			parentTool = &selected
 		}

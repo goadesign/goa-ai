@@ -141,14 +141,14 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 			return err
 		}
 	}
-	if len(tool.UIOnlyFields) > 0 {
+	if len(tool.UIOnlyFields) > 0 && !tool.RequiresUI && tool.Confirmation == nil {
 		textOwner := *owner
 		textOwner.ModelHiddenPayloadFields = append(modelHiddenPayloadFields(tool), tool.UIOnlyFields...)
 		if err := p.declareTypeImports(&textOwner, payload, usageTextOnlyPayload, specJSONModel); err != nil {
 			return err
 		}
 	}
-	if len(tool.UIOnlyFields) > 0 {
+	if len(tool.UIOnlyFields) > 0 && !tool.RequiresUI && tool.Confirmation == nil {
 		if err := p.declareTypeImports(owner, textOnlyExecutionShape(payload, tool.UIOnlyFields), usageTextOnlyExecution, specJSONModel); err != nil {
 			return err
 		}
@@ -217,7 +217,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 		names.modelPayloadType = p.types[stableTypeKey(owner, usageModelPayload, "")]
 		names.modelPayloadType.jsonValidator.render = true
 	}
-	if len(tool.UIOnlyFields) > 0 {
+	if len(tool.UIOnlyFields) > 0 && !tool.RequiresUI && tool.Confirmation == nil {
 		textOwner := *owner
 		textOwner.ModelHiddenPayloadFields = append(modelHiddenPayloadFields(tool), tool.UIOnlyFields...)
 		if err := p.declareType(&textOwner, payload, usageTextOnlyPayload, "", specJSONModel); err != nil {
@@ -226,7 +226,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 		names.textOnlyPayloadType = p.types[stableTypeKey(owner, usageTextOnlyPayload, "")]
 		names.textOnlyPayloadType.jsonValidator.render = true
 	}
-	if len(tool.UIOnlyFields) > 0 {
+	if len(tool.UIOnlyFields) > 0 && !tool.RequiresUI && tool.Confirmation == nil {
 		if err := p.declareType(owner, textOnlyExecutionShape(payload, tool.UIOnlyFields), usageTextOnlyExecution, "", specJSONModel); err != nil {
 			return err
 		}
