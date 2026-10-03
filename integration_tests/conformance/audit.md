@@ -167,4 +167,3 @@ lists the scenario as an extension, pending or added after release.
 | `request-metadata` | Scored | 4 | 0 | 1 | 3 |
 | `sep-2322-client-request-state` | Scored | 0 | 5 | 0 | 0 |
 | `tools_call` | Scored | 2 | 0 | 0 | 0 |
-
