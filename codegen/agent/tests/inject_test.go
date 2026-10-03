@@ -180,22 +180,18 @@ func TestInjectAgentRequiredLabelsAggregation(t *testing.T) {
 	require.Contains(t, agent, "specs.RequiredLabels(),")
 }
 
-// TestInjectMixedBoundUnboundProviderScopesMeta locks the provider-side
-// compile regression at the section level: a toolset mixing a non-injecting
-// BindTo tool with an injecting UNBOUND tool must NOT emit the
-// runtime.ToolCallMeta declaration (or the runtime import) in provider.go --
-// HandleToolCall only dispatches method-backed tools, so nothing would use
-// the variable and the generated package would fail to compile.
-// TestGeneratedMixedInjectPackagesCompile proves the same end to end with an
-// actual go build of the generated tree.
+// TestInjectMixedBoundUnboundProviderScopesMeta checks a provider mixing
+// method-backed tools without injected fields and local tools with injected
+// fields. The provider passes accepted text-only policy to its service but does
+// not declare unused argument metadata. Generated-package tests also compile it.
 func TestInjectMixedBoundUnboundProviderScopesMeta(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectMixedBoundUnboundExample())
 
 	provider := fileContent(t, files, "gen/catalog/toolsets/helpers/provider.go")
 	require.NotContains(t, provider, "meta := runtime.ToolCallMeta{",
 		"no method-backed tool injects, so provider.go must not declare meta")
-	require.NotContains(t, provider, `"goa.design/goa-ai/runtime/agent/runtime"`,
-		"the runtime import must be gated together with the meta declaration")
+	require.Contains(t, provider, "ctx = runtime.WithTextOnlyContext(ctx, msg.Meta != nil && msg.Meta.TextOnly)",
+		"every provider passes the accepted execution policy to the service")
 
 	// The unbound tool's compiled injection still exists for local executors.
 	inject := fileContent(t, files, "gen/catalog/toolsets/helpers/inject.go")
