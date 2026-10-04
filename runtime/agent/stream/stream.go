@@ -31,6 +31,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/content"
 )
 
 type (
@@ -390,6 +391,10 @@ type (
 
 	// ToolEndPayload carries private result metadata for a completed tool invocation.
 	ToolEndPayload struct {
+		// Blocks retains ordered text, media and resource descriptions for this
+		// invocation, including when execution failed.
+		Blocks content.Blocks `json:"blocks,omitempty"`
+
 		// CallRunID identifies the workflow run whose ToolStart event opened this
 		// tool invocation. It differs from the enclosing event's run ID when a
 		// continuation workflow supplies an externally produced result.

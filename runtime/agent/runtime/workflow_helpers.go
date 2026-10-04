@@ -148,15 +148,11 @@ func (r *Runtime) appendUserToolRecordResults(
 		if err != nil {
 			return err
 		}
-		content, err := toolResultRecordContent(record)
+		part, err := toolResultRecordPart(record)
 		if err != nil {
 			return err
 		}
-		parts = append(parts, model.ToolResultPart{
-			ToolUseID: transcriptToolCallID(call),
-			Content:   content,
-			IsError:   tr.Failure != nil,
-		})
+		parts = append(parts, part)
 		if hasSpec && tr.Failure == nil {
 			sources, err := r.toolImageSources(spec, tr.ServerData)
 			if err != nil {

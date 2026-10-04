@@ -2,10 +2,12 @@
 // Copying keeps order, media, optional fields and nested metadata intact.
 package content
 
+import "slices"
+
 // Clone copies a validated sequence, including nested resource metadata and
 // icons. The caller receives values it can change without changing the original.
 func (blocks Blocks) Clone() Blocks {
-	cloned := make(Blocks, len(blocks))
+	cloned := slices.Clone(blocks)
 	for i, block := range blocks {
 		switch value := block.(type) {
 		case *TextContent:
@@ -32,7 +34,7 @@ func (blocks Blocks) Clone() Blocks {
 				size := *value.Size
 				copy.Size = &size
 			}
-			copy.Icons = make([]Icon, len(value.Icons))
+			copy.Icons = slices.Clone(value.Icons)
 			for i, icon := range value.Icons {
 				copy.Icons[i] = icon
 				copy.Icons[i].MIMEType = cloneString(icon.MIMEType)
@@ -79,7 +81,7 @@ func cloneAnnotations(annotations *Annotations) *Annotations {
 		return nil
 	}
 	copy := *annotations
-	copy.Audience = append([]Role(nil), annotations.Audience...)
+	copy.Audience = slices.Clone(annotations.Audience)
 	if annotations.Priority != nil {
 		priority := *annotations.Priority
 		copy.Priority = &priority

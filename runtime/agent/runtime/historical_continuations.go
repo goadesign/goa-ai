@@ -125,7 +125,7 @@ func (r *Runtime) loadHistoricalContinuationOutputs(
 		call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
 		if output.Failure != nil {
 			_, err = validatePersistedToolResult(nil, call, entry.events.result.ResultJSON,
-				output.ServerData, output.Bounds, output.Failure)
+				output.ServerData, output.Blocks, output.Bounds, output.Failure)
 		} else {
 			spec, ok, lookupErr := lookupCallSpec(call, r.toolSpec)
 			if lookupErr != nil {

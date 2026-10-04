@@ -175,7 +175,7 @@ func TestValidateSuccessfulToolResultKeepsPrivateCallDiagnostics(t *testing.T) {
 	result := rawjson.Message(`{"results":["alpha"]}`)
 	call := ToolCall{Name: spec.Name, ToolCallID: "tool-1"}
 
-	_, err := validatePersistedToolResult(&spec, call, result, nil, nil, nil)
+	_, err := validatePersistedToolResult(&spec, call, result, nil, nil, nil, nil)
 	require.ErrorContains(t, err, "result without bounds")
 	require.ErrorContains(t, err, "tool_call_id=tool-1")
 

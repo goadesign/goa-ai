@@ -21,6 +21,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/content"
 	"goa.design/goa-ai/runtime/mcp"
 
 	"go.temporal.io/sdk/temporal"
@@ -210,6 +211,10 @@ type (
 	// a result or error.
 	ToolResultReceivedEvent struct {
 		baseEvent
+		// Blocks retains ordered text, media and resource descriptions for this
+		// invocation, including when execution failed.
+		Blocks content.Blocks
+
 		// CallRunID identifies the workflow run that emitted the matching
 		// ToolCallScheduledEvent. It differs from RunID when external input ends
 		// one workflow and the supplied result starts its continuation.
@@ -962,8 +967,8 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 // NewToolResultReceivedEvent constructs a ToolResultReceivedEvent. callRunID
 // identifies the exact run that emitted the matching scheduled-call event;
 // runID identifies the run emitting this result. The canonical result JSON and
-// server-side data are stored exactly once here.
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, callRunID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
+// server-side data and validated content blocks are retained for this invocation.
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, callRunID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, serverData rawjson.Message, blocks content.Blocks, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
@@ -975,6 +980,7 @@ func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, ca
 		ResultJSON:       resultJSON,
 		ResultBytes:      len(resultJSON),
 		ServerData:       serverData,
+		Blocks:           blocks.Clone(),
 		ResultPreview:    resultPreview,
 		Bounds:           agent.CloneBounds(bounds),
 		Duration:         duration,

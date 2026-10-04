@@ -224,6 +224,7 @@ func finalToolResultEvent(toolName tools.Ident, result *planner.FinalToolResult)
 		Name:       toolName,
 		Result:     append(rawjson.Message(nil), result.Result...),
 		ServerData: append(rawjson.Message(nil), result.ServerData...),
+		Blocks:     result.Blocks.Clone(),
 		Bounds:     result.Bounds,
 		Failure:    planner.CloneToolFailure(result.Failure),
 		Telemetry:  result.Telemetry,

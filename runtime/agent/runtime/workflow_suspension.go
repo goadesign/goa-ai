@@ -500,6 +500,7 @@ func decodeCheckpointToolEvent(event *api.ToolEvent, call ToolCall, lookup toolS
 		call,
 		event.Result,
 		event.ServerData,
+		event.Blocks,
 		event.Bounds,
 		event.Failure,
 	)
@@ -509,6 +510,7 @@ func decodeCheckpointToolEvent(event *api.ToolEvent, call ToolCall, lookup toolS
 	result := &planner.ToolResult{
 		Name:          event.Name,
 		ServerData:    append(rawjson.Message(nil), event.ServerData...),
+		Blocks:        event.Blocks.Clone(),
 		Bounds:        event.Bounds,
 		Failure:       planner.CloneToolFailure(event.Failure),
 		Telemetry:     event.Telemetry,

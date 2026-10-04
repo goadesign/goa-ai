@@ -19,6 +19,14 @@ func {{ .Constructor }}(caller mcpruntime.Caller) runtime.ToolCallExecutor {
             if resp.InputRequired != nil {
                 return runtime.AwaitMCPInput(resp.InputRequired), nil
             }
+            if err := resp.Content.Validate(); err != nil {
+                return runtime.Executed({{ $.Failure }}(
+                    call.Name,
+                    planner.FailureMalformedResult,
+                    planner.RecoveryFinish,
+                    mcpruntime.NewMalformedResponseError(err),
+                )), nil
+            }
             var value any
             {{- if .HasResult }}
             if len(resp.StructuredContent) == 0 {
@@ -31,12 +39,12 @@ func {{ .Constructor }}(caller mcpruntime.Caller) runtime.ToolCallExecutor {
             }
             v, err := {{ $.SpecsAlias }}.{{ .SpecVar }}().Result.Codec.FromJSON(resp.StructuredContent)
             {{- else }}
-            if len(resp.Content) != 0 || len(resp.StructuredContent) != 0 {
+            if len(resp.StructuredContent) != 0 {
                 return runtime.Executed({{ $.Failure }}(
                     call.Name,
                     planner.FailureMalformedResult,
                     planner.RecoveryFinish,
-                    mcpruntime.NewMalformedResponseError(errors.New("MCP response for a method without a result must be empty")),
+                    mcpruntime.NewMalformedResponseError(errors.New("MCP response for a method without a result must omit structured content")),
                 )), nil
             }
             {{- end }}
@@ -54,6 +62,7 @@ func {{ .Constructor }}(caller mcpruntime.Caller) runtime.ToolCallExecutor {
             return runtime.Executed(&planner.ToolResult{
 				Name:      call.Name,
 				Result:    value,
+				Blocks:    resp.Content.Clone(),
 			}), nil
         {{- end }}
         default:

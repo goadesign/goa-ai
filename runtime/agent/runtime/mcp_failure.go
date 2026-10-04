@@ -9,6 +9,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/content"
 	"goa.design/goa-ai/runtime/mcp"
 )
 
@@ -16,6 +17,15 @@ import (
 // named tool. The runtime later adds the retained model input and registered
 // example when invalid arguments allow the model to correct its call.
 func MCPCallFailure(name tools.Ident, err error) *planner.ToolResult {
+	var blocks content.Blocks
+	var toolError *mcp.ToolExecutionError
+	if errors.As(err, &toolError) {
+		if validationErr := toolError.Response.Content.Validate(); validationErr != nil {
+			err = mcp.NewMalformedResponseError(validationErr)
+		} else {
+			blocks = toolError.Response.Content.Clone()
+		}
+	}
 	kind := planner.FailureUnavailable
 	action := planner.RecoveryFinish
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -54,7 +64,8 @@ func MCPCallFailure(name tools.Ident, err error) *planner.ToolResult {
 		}
 	}
 	return &planner.ToolResult{
-		Name: name,
+		Name:   name,
+		Blocks: blocks,
 		Failure: &planner.ToolFailure{
 			Kind:  kind,
 			Error: planner.ToolErrorFromError(err),

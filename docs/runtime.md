@@ -1578,7 +1578,7 @@ directly:
   `codegen.CapsData.MaxRecoveryTurns`.
 
 These names and their serialized field names are intentionally breaking.
-Suspensions written by this runtime use `goa-ai.run-suspension.v10`. Earlier
+Suspensions written by this runtime use `goa-ai.run-suspension.v11`. Earlier
 versions cannot resume on this runtime. Version nine references an exact saved
 history position; see [Runtime Store](#runtime-store-storagestore) for preparation
 and checkpoint upgrade requirements. It retains the recovery contract introduced
@@ -4179,13 +4179,13 @@ For runtime storage and workflow adapters:
 - Stop setting `policy.CapsState.ExpiresAt`. The workflow owns its budget and
   hard deadlines directly.
 - Treat saved suspensions from versions before
-  `goa-ai.run-suspension.v10` as incompatible. They cannot be resumed by this
+  `goa-ai.run-suspension.v11` as incompatible. They cannot be resumed by this
   runtime.
 
 Install the Goa revision required by this module before regenerating:
 
 ```bash
-go install goa.design/goa/v3/cmd/goa@v3.32.1-0.20261002212739-eccc91aee2e5
+go install goa.design/goa/v3/cmd/goa@v3.32.1-0.20261004165214-99a12cec25bc
 ```
 
 For a release that changes generated or persisted runtime shapes:
@@ -4201,7 +4201,7 @@ For a release that changes generated or persisted runtime shapes:
    new work.
 
 Completed run history keeps the same meaning. Suspensions restored for
-continuation must use the current `goa-ai.run-suspension.v10` contract. Historical
+continuation must use the current `goa-ai.run-suspension.v11` contract. Historical
 reporting does not restore private checkpoint state; see
 [Runtime Store](#runtime-store-storagestore). A host may still need to convert
 its physical records or collections so the new store can read them. That
@@ -4217,8 +4217,8 @@ workflow still requires attachment by exact ID. Deploy every workflow starter
 together before admission resumes. A queryable execution without the reserved
 recipe memo is a conflict; the runtime never infers its original start request.
 
-`goa-ai.run-suspension.v10` is the only accepted suspension schema for
-continuation restoration. Version nine and earlier are rejected without an
+`goa-ai.run-suspension.v11` is the only accepted suspension schema for
+continuation restoration. Version ten and earlier are rejected without an
 omission fallback. Before coordinated
 worker upgrade, finish old-format saved work under its owning runtime; if any
 must remain unfinished, obtain a separate host-owned preservation decision.
@@ -6510,9 +6510,23 @@ Decoding icons never fetches or renders their URIs. Method-backed prompt
 services can also author these five kinds through typed Goa results; see
 [the prompt contract](dsl.md#method-backed-mcp-prompts). The generated adapter
 rejects non-finite authored priorities and resource sizes before response
-encoding, so clients receive an internal-error response. The generated agent
-executor still consumes only structured JSON; connecting it to agent results,
-stored events and host streams remains a required release gate.
+encoding, so clients receive an internal-error response.
+
+Generated MCP executors preserve validated `Content` in `planner.ToolResult.Blocks`
+while decoding domain JSON with the declared result codec. A method that declares
+a result must still return structured JSON; content alone cannot satisfy it.
+A method without a result can return content while omitting structured JSON.
+MCP tool failures also keep their returned blocks.
+
+Tool activities, externally supplied results, saved result events, planner outputs,
+child final results and host `ToolEndPayload.Blocks` retain the same ordered value.
+`NewToolResultReceivedEvent` requires a blocks argument; pass the validated content
+or an empty sequence. Each owner receives an independent copy. Checkpoint version
+eleven stores content and verifies that the saved event and batch result agree;
+zero blocks has the same meaning whether its in-memory slice is nil or empty.
+Model history reads content from the accepted saved event for the exact call,
+including when the structured JSON is replaced by the existing omission preview.
+Authored rich tool content still requires its DSL and generated server conversion.
 
 Model tool results now expose `model.ToolResultPart.Blocks` beside their semantic
 `Content`. Message JSON and independent copies retain every block, order and

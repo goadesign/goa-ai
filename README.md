@@ -334,11 +334,12 @@ view name through agent decoding and stored results. See
 [result views](docs/dsl.md#goa-result-views).
 `runtime/content` owns the five ordered tool-content variants, their validating
 JSON codec and independent copies. Runtime MCP callers use `content.Blocks`;
-old content type names in `runtime/mcp` are removed. Model tool results can carry
-those blocks through message copying, replay and native provider encoding;
-unsupported media returns an explicit error. See
-[the content contract](docs/runtime.md#mcp-callers). The generated agent content
-path, HTTP credential delivery and OAuth challenges remain release gates in the
+old content type names in `runtime/mcp` are removed. Generated executors, saved
+agent results, child results and host events retain those blocks, including
+failed invocations. Model history, copying, replay and native provider encoding
+preserve supported content; unsupported media returns an explicit error. See
+[the content contract](docs/runtime.md#mcp-callers). Authored rich tool content,
+HTTP credential delivery and OAuth challenges remain release gates in the
 [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
 
 Application code owns planners, service behavior, authorization, side-effect

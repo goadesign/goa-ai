@@ -35,6 +35,7 @@ func encodeToolEvent(event *planner.ToolResult, call ToolCall, lookup toolSpecLo
 	return &api.ToolEvent{
 		Name: event.Name, Result: result,
 		ServerData: append(rawjson.Message(nil), event.ServerData...),
+		Blocks:     event.Blocks.Clone(),
 		Bounds:     event.Bounds, Failure: planner.CloneToolFailure(event.Failure),
 		Telemetry: event.Telemetry, ToolCallID: event.ToolCallID,
 		ChildrenCount: event.ChildrenCount, RunLink: event.RunLink,
@@ -68,6 +69,7 @@ func (r *Runtime) buildPlannerToolOutputRecords(records []stepToolRecord) ([]*pl
 			ContinuationRootToolCallID: call.ContinuationRootToolCallID,
 			Payload:                    append(rawjson.Message(nil), call.Payload...),
 			ServerData:                 append(rawjson.Message(nil), result.ServerData...),
+			Blocks:                     result.Blocks.Clone(),
 			Bounds:                     result.Bounds,
 			Failure:                    planner.CloneToolFailure(result.Failure),
 			Telemetry:                  result.Telemetry,

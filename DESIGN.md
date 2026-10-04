@@ -1120,7 +1120,7 @@ writers must not overlap. How the host reaches that state depends on its
 database and deployment environment.
 
 Continuation preparation accepts only the current suspension schema,
-`goa-ai.run-suspension.v10`, which references an exact saved history position.
+`goa-ai.run-suspension.v11`, which references an exact saved history position.
 Every accepted recovery plan that waits for input retains its actual advertised
 catalog, including authorized alternatives to a
 failed tool, preserving the catalog contract introduced in version eight.
@@ -1961,7 +1961,7 @@ for details and the SDK source-compatibility change.
   error instead of fabricating success after the required side effect did not
   occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
   because they assign different outcomes to the same exhausted limits.
-  Completion-aware suspensions use `goa-ai.run-suspension.v10`. The saved policy
+  Completion-aware suspensions use `goa-ai.run-suspension.v11`. The saved policy
   is required, and a checkpoint with another version fails at that typed
   boundary.
 - **Provider reasoning stream contract**: when a caller enables thinking
@@ -2565,8 +2565,14 @@ it. Provider translation honors the assistant audience and keeps extension
 metadata and display icons private. It returns explicit unsupported-media
 errors instead of changing media into text. Resource references never authorize
 a fetch. Native images and documents remain inside the originating tool result,
-including Gemini named media references. The generic agent result and stored
-event paths still need explicit content fields before the capability is complete.
+including Gemini named media references. Generated MCP executors retain content
+beside the declared result, including tool failures. Activities, saved result
+events, planner outputs, child final results and host tool-end events all carry
+that same typed value. Model history reads the accepted saved result and keeps
+its original invocation identity. Checkpoint version eleven retains content and
+rejects disagreement between its saved event and batch result. Older checkpoints
+have no compatibility reader. Authored rich tool content still needs its typed
+DSL and generated server conversion before that producer capability is complete.
 
 ## Error code mapping
 

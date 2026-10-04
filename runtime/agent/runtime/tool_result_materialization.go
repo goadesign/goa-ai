@@ -75,6 +75,11 @@ func (r *Runtime) materializeToolResultData(
 	if result == nil {
 		return nil, fmt.Errorf("nil tool result for %q (%s)", call.Name, call.ToolCallID)
 	}
+	if err := result.Blocks.Validate(); err != nil {
+		setMalformedToolResult(result, call, fmt.Errorf("invalid tool content: %w", err))
+		return nil, nil
+	}
+	result.Blocks = result.Blocks.Clone()
 	if result.Name == "" {
 		result.Name = call.Name
 	}
@@ -235,6 +240,9 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 	if (item.Success == nil) == (item.Failure == nil) {
 		return nil, nil, fmt.Errorf("await: tool result for %s must contain exactly one success or failure", call.Name)
 	}
+	if err := item.Blocks.Validate(); err != nil {
+		return nil, nil, fmt.Errorf("await: invalid tool content: %w", err)
+	}
 	var bounds *agent.Bounds
 	var decoded any
 	var err error
@@ -246,6 +254,7 @@ func (r *Runtime) decodeProvidedToolResult(ctx context.Context, spec tools.ToolS
 		Name:       call.Name,
 		Result:     decoded,
 		ServerData: nil,
+		Blocks:     item.Blocks.Clone(),
 		Bounds:     bounds,
 		Failure:    canonicalProvidedToolFailure(item.Failure),
 		ToolCallID: call.ToolCallID,
@@ -267,6 +276,7 @@ func setMalformedToolResult(result *planner.ToolResult, call ToolCall, cause err
 	result.Result = nil
 	result.Bounds = nil
 	result.ServerData = nil
+	result.Blocks = nil
 	result.Failure = &planner.ToolFailure{
 		Kind: planner.FailureMalformedResult,
 		Error: planner.NewToolErrorWithCause(

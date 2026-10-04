@@ -37,6 +37,14 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			if resp.InputRequired != nil {
 				return runtime.AwaitMCPInput(resp.InputRequired), nil
 			}
+			if err := resp.Content.Validate(); err != nil {
+				return runtime.Executed(failedMCPToolResult(
+					call.Name,
+					planner.FailureMalformedResult,
+					planner.RecoveryFinish,
+					mcpruntime.NewMalformedResponseError(err),
+				)), nil
+			}
 			var value any
 			if len(resp.StructuredContent) == 0 {
 				return runtime.Executed(failedMCPToolResult(
@@ -59,6 +67,7 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			return runtime.Executed(&planner.ToolResult{
 				Name:   call.Name,
 				Result: value,
+				Blocks: resp.Content.Clone(),
 			}), nil
 		case gencore.Describe:
 			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
@@ -71,6 +80,14 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			}
 			if resp.InputRequired != nil {
 				return runtime.AwaitMCPInput(resp.InputRequired), nil
+			}
+			if err := resp.Content.Validate(); err != nil {
+				return runtime.Executed(failedMCPToolResult(
+					call.Name,
+					planner.FailureMalformedResult,
+					planner.RecoveryFinish,
+					mcpruntime.NewMalformedResponseError(err),
+				)), nil
 			}
 			var value any
 			if len(resp.StructuredContent) == 0 {
@@ -94,6 +111,7 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			return runtime.Executed(&planner.ToolResult{
 				Name:   call.Name,
 				Result: value,
+				Blocks: resp.Content.Clone(),
 			}), nil
 		case gencore.Label:
 			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
@@ -106,6 +124,14 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			}
 			if resp.InputRequired != nil {
 				return runtime.AwaitMCPInput(resp.InputRequired), nil
+			}
+			if err := resp.Content.Validate(); err != nil {
+				return runtime.Executed(failedMCPToolResult(
+					call.Name,
+					planner.FailureMalformedResult,
+					planner.RecoveryFinish,
+					mcpruntime.NewMalformedResponseError(err),
+				)), nil
 			}
 			var value any
 			if len(resp.StructuredContent) == 0 {
@@ -129,6 +155,7 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			return runtime.Executed(&planner.ToolResult{
 				Name:   call.Name,
 				Result: value,
+				Blocks: resp.Content.Clone(),
 			}), nil
 		case gencore.Reset:
 			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
@@ -142,18 +169,27 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			if resp.InputRequired != nil {
 				return runtime.AwaitMCPInput(resp.InputRequired), nil
 			}
-			var value any
-			if len(resp.Content) != 0 || len(resp.StructuredContent) != 0 {
+			if err := resp.Content.Validate(); err != nil {
 				return runtime.Executed(failedMCPToolResult(
 					call.Name,
 					planner.FailureMalformedResult,
 					planner.RecoveryFinish,
-					mcpruntime.NewMalformedResponseError(errors.New("MCP response for a method without a result must be empty")),
+					mcpruntime.NewMalformedResponseError(err),
+				)), nil
+			}
+			var value any
+			if len(resp.StructuredContent) != 0 {
+				return runtime.Executed(failedMCPToolResult(
+					call.Name,
+					planner.FailureMalformedResult,
+					planner.RecoveryFinish,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response for a method without a result must omit structured content")),
 				)), nil
 			}
 			return runtime.Executed(&planner.ToolResult{
 				Name:   call.Name,
 				Result: value,
+				Blocks: resp.Content.Clone(),
 			}), nil
 		default:
 			return runtime.Executed(failedMCPToolResult(

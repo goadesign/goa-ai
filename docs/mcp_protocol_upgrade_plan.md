@@ -219,7 +219,7 @@ runtime tests pass after moving current synthetic suspension fixtures to version
 | --- | --- | --- | --- |
 | Current discovery and unary tools | Implemented | Implemented | Generated executors and canonical specs |
 | Fixed text/JSON/binary reads, parameterized typed reads and static/method-backed prompts | Implemented | Generated typed clients; exact text/blob validation | No implicit conversion into agent tools |
-| Structured tool results and rich content | Generated declared JSON result; no authored rich-tool binding yet | Generated tool/prompt and runtime clients preserve five content kinds, icons, metadata and exact structured JSON | Structured result codec; generated executors currently discard rich content |
+| Structured tool results and rich content | Generated declared JSON result; no authored rich-tool binding yet | Generated tool/prompt and runtime clients preserve five content kinds, icons, metadata and exact structured JSON | Structured result codec; generated executors, activities, saved events, child results, model history and host events retain content |
 | Prompt/resource argument completion | Typed `PromptCompletion` and `ResourceCompletion` method bindings | Generated `completion/complete` clients with bounded non-null string values | Client/user interaction; no model or terminal-answer routing |
 | Multi-round tool input | No producer advertised | Explicit unfinished result and successor request | Durable trusted form/URL/state-only continuation |
 | Subscriptions | Source bindings not implemented or advertised | HTTP and stdio `Listen` consumers implemented | Host callback owns observation; no implicit model tool |
@@ -377,7 +377,7 @@ These results do not establish a complete released-requirement-set pass.
 Root and all three nested application modules were updated with `go get -u ./...`
 and tidied. Final audits of the root and all three nested modules found no
 updates for their explicit direct or indirect requirements. Goa is pinned to
-`v3.32.1-0.20261002212739-eccc91aee2e5`; Pulse to
+`v3.32.1-0.20261004165214-99a12cec25bc`; Pulse to
 `v1.10.3-0.20261002205507-b34ad25e317d`. Provider SDKs, Temporal, MongoDB,
 OpenTelemetry, schema validation, and test dependencies are updated in the module
 files. The linter is pinned separately to `v2.14.0` in `.go-install` so its private
@@ -407,10 +407,10 @@ no external catalog migration or deployed inventory has been verified here.
 
 ## Rich tool content: complete path and provider constraints
 
-Direct callers preserve rich content, but the generated MCP agent executor reads
-only `StructuredContent` and drops `Content`. This is a verified consumer gap,
-not only an absent producer DSL. Adding an authored content binding alone cannot
-complete the capability.
+The original generated MCP agent executor consumed only `StructuredContent` and
+dropped `Content`. That consumer gap is now closed: the executor keeps validated
+content beside domain JSON and preserves it on tool failures. The authored
+producer DSL remains required; consumer support alone does not complete it.
 
 The shared value foundation is implemented in `runtime/content`: the five
 existing variants now have one ordered `Blocks` JSON codec and independent
@@ -422,8 +422,12 @@ document variants with explicit
 unsupported-media errors. Complete-request preflight includes every mutable
 content field before copying. The OpenAI adapter's Bedrock image estimate also
 counts images nested in function outputs without changing inference bytes or
-its existing per-image rules. The foundation still does not add content to
-agent result events or connect the generated executor to this model contract.
+its existing per-image rules. The runtime now carries that same typed value
+through activities, result events, externally provided results, planner outputs,
+child final results, checkpoint version eleven, model history and host events.
+Accepted saved results own model content and its correlation; no consumer chooses
+an unrelated latest result. Previous checkpoint versions are rejected without a
+compatibility reader.
 
 The implementation must preserve one ordered, typed content value alongside the
 structured result through these owners:
@@ -452,13 +456,12 @@ Inspect `codegen/agent/templates/mcp_executor.go.tpl`,
 `runtime/agent/hooks/codec.go`, `runtime/agent/runtime/workflow_suspension.go`,
 `runtime/agent/runtime/tool_output_hydration.go`, `runtime/agent/model/model.go`,
 `runtime/agent/transcript/runlog_replay.go` and `runtime/agent/stream/subscriber.go`.
-The activity and event envelopes currently contain structured results and private
-server data, with no rich-content field. The model tool-result contract now has
-typed `Blocks` beside semantic JSON and error status; its copies and JSON replay
-retain metadata, and native provider
-encoding omits host metadata and honors the assistant audience. Activity and
-event contracts must adopt this value explicitly rather than hiding content
-inside `any`.
+Activity and event envelopes now expose typed `Blocks` beside structured results
+and private server data. Zero blocks never encodes a separate presence state.
+Declared domain results remain required; content-only success is legal only for
+methods without a domain result. Invalid content becomes a precise malformed
+result rather than a partial result. Model copies and JSON replay retain metadata,
+while provider encoding omits host metadata and honors the assistant audience.
 
 The current provider documentation and installed SDK unions were checked before
 implementation. This table names tool-result support, not general user-message
@@ -480,9 +483,15 @@ bytes, annotations, icons and extension metadata; combine content with a typed
 structured result and test content-only and failed results. Verify canonical
 storage, worker replacement, successor restoration, transcript replay, host
 events, child forwarding and provider requests. Unsupported provider formats and
-malformed boundary values require explicit negative checks. This milestone
-remains incomplete until those paths are implemented; SDK availability alone is
-not completion evidence.
+malformed boundary values require explicit negative checks. Focused tests now
+exercise real tool activities and child workflows across two suspensions and a
+worker replacement, verifying checkpoint bytes, exact stored call correlation,
+planner hydration and model history. Compiled generated executors cover structured,
+content-only and failed results. Additional tests cover provided results, native
+workflow conversion, saved hook records, independent host copies, checkpoint
+content disagreement, transcript replay and aggregate output budgets. This is
+synthetic framework evidence; it does not prove deployed provider acceptance or
+external caller cutover. Authored tool content remains a release gate.
 
 ## Baseline before the upgrade
 

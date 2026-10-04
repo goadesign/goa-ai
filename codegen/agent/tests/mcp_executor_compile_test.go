@@ -35,6 +35,10 @@ import (
 
 	gencalccore "generated.local/gen/calc/toolsets/core"
 	"goa.design/goa-ai/runtime/agent/runtime"
+	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/content"
+	"reflect"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
@@ -107,6 +111,51 @@ func TestMCPExecutorRestrictsHostInputPerCall(t *testing.T) {
         if supported := <-advertised; supported == textOnly {
             t.Fatalf("textOnly=%t advertised host input=%t", textOnly, supported)
         }
+    }
+}
+
+func TestMCPExecutorRetainsOrderedContent(t *testing.T) {
+    blocks := content.Blocks{
+        &content.TextContent{Text:"returned",Meta:json.RawMessage(` + "`" + `{"id":9007199254740993}` + "`" + `)},
+        &content.ImageContent{Data:"AQID",MIMEType:"image/png"},
+        &content.AudioContent{Data:"BAUG",MIMEType:"audio/wav"},
+        &content.ResourceLink{Name:"report",URI:"https://example.com/report"},
+        &content.EmbeddedResource{Resource:&content.TextResourceContents{URI:"report://inline",Text:"complete"}},
+    }
+    for _, test := range []struct {
+        name string
+        tool tools.Ident
+        structured json.RawMessage
+        failed bool
+        malformed bool
+        invalidContent bool
+    }{
+        {name:"typed plus content",tool:gencalccore.Label,structured:json.RawMessage(` + "`" + `"accepted"` + "`" + `)},
+        {name:"content only",tool:gencalccore.Reset},
+        {name:"failed with content",tool:gencalccore.Label,failed:true},
+        {name:"typed result still required",tool:gencalccore.Label,malformed:true},
+        {name:"invalid content",tool:gencalccore.Reset,malformed:true,invalidContent:true},
+        {name:"invalid failed content",tool:gencalccore.Label,failed:true,malformed:true,invalidContent:true},
+        {name:"no result rejects structured",tool:gencalccore.Reset,structured:json.RawMessage(` + "`" + `{}` + "`" + `),malformed:true},
+    } {
+        t.Run(test.name,func(t *testing.T) {
+            caller := mcpruntime.CallerFunc(func(context.Context,mcpruntime.CallRequest)(mcpruntime.CallResponse,error){
+                response:=mcpruntime.CallResponse{Content:blocks,StructuredContent:test.structured}
+                if test.invalidContent { response.Content=content.Blocks{&content.ImageContent{Data:"%%%",MIMEType:"image/png"}} }
+                if test.failed { return mcpruntime.CallResponse{},&mcpruntime.ToolExecutionError{Response:response} }
+                return response,nil
+            })
+            result,err:=NewMCPExecutor(caller).Execute(t.Context(),&runtime.ToolCallMeta{},&runtime.ToolCall{Name:test.tool,Payload:[]byte(` + "`" + `{}` + "`" + `)})
+            if err!=nil { t.Fatal(err) }
+            if test.malformed {
+                if result.ToolResult.Failure==nil || result.ToolResult.Failure.Kind!=planner.FailureMalformedResult { t.Fatal("malformed result accepted") }
+                return
+            }
+            if !reflect.DeepEqual(blocks,result.ToolResult.Blocks) { t.Fatalf("content changed: %#v",result.ToolResult.Blocks) }
+            if (result.ToolResult.Failure!=nil)!=test.failed { t.Fatal("failure status changed") }
+            result.ToolResult.Blocks[0].(*content.TextContent).Text="changed"
+            if blocks[0].(*content.TextContent).Text!="returned" { t.Fatal("caller content is shared") }
+        })
     }
 }
 

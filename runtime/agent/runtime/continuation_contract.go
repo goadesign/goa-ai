@@ -335,6 +335,7 @@ func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDe
 		call,
 		output.Result,
 		output.ServerData,
+		output.Blocks,
 		output.Bounds,
 		output.Failure,
 	); err != nil {
@@ -838,6 +839,9 @@ func validateProvidedToolResults(
 	for _, result := range results.Results {
 		if result == nil {
 			return errors.New("tool-results response contains a nil result")
+		}
+		if err := result.Blocks.Validate(); err != nil {
+			return fmt.Errorf("tool result %q content: %w", result.ToolCallID, err)
 		}
 		if result.ToolCallID == "" {
 			return fmt.Errorf("tool result for %q requires tool_call_id", result.Name)

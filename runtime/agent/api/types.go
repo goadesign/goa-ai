@@ -18,6 +18,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/content"
 	"goa.design/goa-ai/runtime/mcp"
 )
 
@@ -350,6 +351,10 @@ type (
 	// nested agents because workflow engines decode arbitrary Go values as
 	// generic maps.
 	ToolEvent struct {
+		// Blocks retains ordered text, media and resource descriptions for this
+		// invocation, including when execution failed.
+		Blocks content.Blocks
+
 		// Name is the fully-qualified tool identifier that produced this result.
 		Name tools.Ident
 
@@ -1047,6 +1052,10 @@ type (
 
 	// ToolOutput is returned by tool executors after invoking the tool implementation.
 	ToolOutput struct {
+		// Blocks retains ordered text, media and resource descriptions for this
+		// invocation, including when execution failed.
+		Blocks content.Blocks
+
 		// MCPInput is an unfinished outcome, mutually exclusive with every final
 		// result field. The workflow saves it before requesting host interaction.
 		MCPInput *mcp.InputRequired
@@ -1135,6 +1144,10 @@ type (
 	//   canonical JSON, but server-only sidecars are never provided here; the
 	//   runtime materializes them after decoding.
 	ProvidedToolResult struct {
+		// Blocks retains ordered text, media and resource descriptions for this
+		// invocation, including when execution failed.
+		Blocks content.Blocks
+
 		// Name is the fully-qualified tool identifier that produced this result.
 		Name tools.Ident
 
@@ -1217,13 +1230,11 @@ const (
 	// PendingInputKindToolResults requires a ToolResults response.
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
-	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
-	// Version 8 retains the advertised catalog for every accepted recovery plan
-	// that waits for input. Failed tool names cannot reconstruct other choices
-	// advertised during that plan. Earlier versions are rejected.
-	// Version 10 also retains unfinished MCP arguments, host requests, and opaque
-	// server state. Earlier checkpoint versions are rejected without conversion.
-	RunSuspensionVersion = "goa-ai.run-suspension.v10"
+	// RunSuspensionVersion identifies the checkpoint emitted by this runtime.
+	// Version 11 retains ordered tool content alongside the accepted result,
+	// advertised catalog, unfinished MCP arguments, host requests, and opaque
+	// server state. Earlier versions are rejected without conversion.
+	RunSuspensionVersion = "goa-ai.run-suspension.v11"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

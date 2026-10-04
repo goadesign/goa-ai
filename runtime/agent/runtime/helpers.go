@@ -228,6 +228,7 @@ func cloneToolResults(src []*planner.ToolResult) []*planner.ToolResult {
 			continue
 		}
 		cp := *tr
+		cp.Blocks = tr.Blocks.Clone()
 		cp.Failure = planner.CloneToolFailure(tr.Failure)
 		out = append(out, &cp)
 	}

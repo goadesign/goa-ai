@@ -16,6 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/content"
 )
 
 const (
@@ -32,6 +33,7 @@ var (
 	jsonMarshalerType = reflect.TypeFor[json.Marshaler]()
 	textMarshalerType = reflect.TypeFor[encoding.TextMarshaler]()
 	modelMessageType  = reflect.TypeFor[model.Message]()
+	toolContentType   = reflect.TypeFor[content.Blocks]()
 	rawJSONType       = reflect.TypeFor[rawjson.Message]()
 	stdRawJSONType    = reflect.TypeFor[json.RawMessage]()
 )
@@ -495,11 +497,13 @@ func isRawJSON(value reflect.Value) bool {
 
 // unsupportedActivityOutputMarshaler rejects arbitrary JSON and text encoders
 // because their output can be unrelated to reflected fields and cannot be
-// bounded without first allocating the encoded value. model.Message is handled
-// structurally; interface overhead covers its generated part discriminators.
+// bounded without first allocating the encoded value. Framework-owned messages
+// and content are walked field by field; interface overhead covers their JSON
+// type names. Unrelated custom encoders remain rejected.
 func unsupportedActivityOutputMarshaler(value reflect.Value) (string, bool) {
 	typ := value.Type()
-	if typ == modelMessageType || (typ.Kind() == reflect.Pointer && typ.Elem() == modelMessageType) {
+	if typ == modelMessageType || (typ.Kind() == reflect.Pointer && typ.Elem() == modelMessageType) ||
+		typ == toolContentType || (typ.Kind() == reflect.Pointer && typ.Elem() == toolContentType) {
 		return "", false
 	}
 	if typ.Implements(jsonMarshalerType) ||

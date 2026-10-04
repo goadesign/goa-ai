@@ -365,7 +365,7 @@ func TestChildContinuationPublicClientKeepsRunningParent(t *testing.T) {
 // The fixed current-version bytes preserve an earlier run's execution parent
 // while a successor supplies its own parent. No deployed data is used.
 func TestRetainedChildSuspensionKeepsHistoricalParentBytes(t *testing.T) {
-	data, err := os.ReadFile("testdata/retained_child_suspension_v10.json")
+	data, err := os.ReadFile("testdata/retained_child_suspension_v11.json")
 	require.NoError(t, err)
 	var envelope api.RunSuspension
 	require.NoError(t, json.Unmarshal(data, &envelope))
@@ -395,9 +395,9 @@ func TestRetainedChildSuspensionKeepsHistoricalParentBytes(t *testing.T) {
 	require.ErrorContains(t, err, "explicit execution parent")
 }
 
-// Version-9 suspensions cannot be resumed after the breaking protocol upgrade.
+// Version-10 suspensions cannot be resumed after the result-content upgrade.
 func TestStoredSuspensionRejectsPreviousVersion(t *testing.T) {
-	data, err := os.ReadFile("testdata/retained_child_suspension_v9.json")
+	data, err := os.ReadFile("testdata/retained_child_suspension_v10.json")
 	require.NoError(t, err)
 	var envelope api.RunSuspension
 	require.NoError(t, json.Unmarshal(data, &envelope))

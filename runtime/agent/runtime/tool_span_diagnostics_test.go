@@ -57,7 +57,7 @@ func TestToolSpanPreservesApplicationDiagnosticChoice(t *testing.T) {
 				}
 			}
 			event := hooks.NewToolResultReceivedEvent("run", "service.agent", "session", "run",
-				"service.read", "call", "", nil, nil, "", nil, 125*time.Millisecond, nil, failure)
+				"service.read", "call", "", nil, nil, nil, "", nil, 125*time.Millisecond, nil, failure)
 			before := planner.CloneToolFailure(failure)
 
 			require.NoError(t, runtime.recordGenAITelemetryEvent(t.Context(), event))

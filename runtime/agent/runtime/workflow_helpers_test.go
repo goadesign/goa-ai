@@ -51,7 +51,7 @@ func materializedToolRecordForTest(t *testing.T, rt *Runtime, agentID agent.Iden
 	event := hooks.NewToolResultReceivedEvent(
 		base.RunContext.RunID, agentID, call.SessionID, call.RunID, call.Name,
 		call.ToolCallID, call.ParentToolCallID, resultJSON, result.ServerData,
-		preview, result.Bounds, 0, result.Telemetry, result.Failure,
+		result.Blocks, preview, result.Bounds, 0, result.Telemetry, result.Failure,
 	)
 	record, err := prepareHookRecordInput(t.Context(), event, "")
 	require.NoError(t, err)

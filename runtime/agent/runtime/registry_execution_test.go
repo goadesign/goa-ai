@@ -89,7 +89,7 @@ func TestRegistryResultRestoresWithoutCurrentCatalog(t *testing.T) {
 	scheduled := newToolCallScheduledEvent("run-1", "records.agent", "session-1", call, "", "", 0)
 	result := hooks.NewToolResultReceivedEvent(
 		"run-1", "records.agent", "session-1", "run-1", "records.find", "call-1", "",
-		rawjson.Message(`{"value":9007199254740993}`), nil, "", nil, 0, nil, nil,
+		rawjson.Message(`{"value":9007199254740993}`), nil, nil, "", nil, 0, nil, nil,
 	)
 	output, err := rt.plannerToolOutputFromCanonicalEvents("run-1", "run-1", "call-1",
 		&canonicalToolEvents{scheduled: scheduled}, &canonicalToolEvents{result: result})
@@ -113,7 +113,7 @@ func TestRegistryCorrectionUsesNewlyResolvedContract(t *testing.T) {
 		newToolCallScheduledEvent("run", definition.route.ID, "session", call, "", "", 0), "turn"))
 	require.NoError(t, rt.publishHookErr(t.Context(), hooks.NewToolResultReceivedEvent(
 		"run", definition.route.ID, "session", "run", call.Name, call.ToolCallID, "",
-		nil, nil, "", nil, 0, nil, testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "choose another value"),
+		nil, nil, nil, "", nil, 0, nil, testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "choose another value"),
 	), "turn"))
 
 	current := testRuntimeRegistryResolution("records.find", strings.Repeat("b", 64))

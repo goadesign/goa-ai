@@ -308,6 +308,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ParentToolCallID: evt.ParentToolCallID,
 			ToolName:         string(evt.ToolName),
 			Result:           evt.ResultJSON,
+			Blocks:           evt.Blocks.Clone(),
 			Bounds:           evt.Bounds,
 			Duration:         evt.Duration,
 			Telemetry:        evt.Telemetry,

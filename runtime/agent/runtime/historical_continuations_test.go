@@ -67,7 +67,7 @@ func TestPlanStartPreservesHistoricalResultAfterContractChange(t *testing.T) {
 			call := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", search.Name,
 				"source-1", rawjson.Message(`{"query":"records"}`), "", "", 0)
 			result := hooks.NewToolResultReceivedEvent("run-1", "svc.agent", "session-1", "run-1",
-				search.Name, "source-1", "", oldResult, nil, "Recorded evidence", tc.bounds, time.Second, nil, nil)
+				search.Name, "source-1", "", oldResult, nil, nil, "Recorded evidence", tc.bounds, time.Second, nil, nil)
 			appendHistoricalHookEvent(t, store, call, "source-call", 1)
 			appendHistoricalHookEvent(t, store, result, "source-result", 2)
 			input := seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "svc.agent", RunID: "run-2", RunContext: run.Context{RunID: "run-2", SessionID: "session-1"}}, messages)
@@ -115,7 +115,7 @@ func TestHistoricalContinuationRetiresCompletedChainAfterContractChange(t *testi
 		}
 		appendHistoricalHookEvent(t, store, call, callID, int64(index*2+1))
 		result := hooks.NewToolResultReceivedEvent("run-1", "svc.agent", "session-1", "run-1",
-			name, callID, "", rawjson.Message(`{"old_items":["evidence"]}`), nil, "Page", bounds, time.Second, nil, nil)
+			name, callID, "", rawjson.Message(`{"old_items":["evidence"]}`), nil, nil, "Page", bounds, time.Second, nil, nil)
 		appendHistoricalHookEvent(t, store, result, callID+"-result", int64(index*2+2))
 	}
 	outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), testResolvedPlanInput(t, rt, seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "svc.agent", RunContext: run.Context{SessionID: "session-1"}}, []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{
@@ -161,7 +161,7 @@ func TestHistoricalContinuationRejectsDamagedMetadata(t *testing.T) {
 			call := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", search.Name,
 				"source-1", rawjson.Message(`{"query":"records"}`), "", "", 0)
 			result := hooks.NewToolResultReceivedEvent("run-1", "svc.agent", "session-1", "run-1",
-				search.Name, "source-1", "", rawjson.Message(`{"items":[]}`), nil, "Page",
+				search.Name, "source-1", "", rawjson.Message(`{"items":[]}`), nil, nil, "Page",
 				&agent.Bounds{Returned: 0}, time.Second, nil, nil)
 			tc.mutate(result)
 			appendHistoricalHookEvent(t, store, call, "source-call", 1)

@@ -315,7 +315,7 @@ func (e *toolBatchExec) publishToolResultReceived(
 		parentID,
 		resultJSON,
 		tr.ServerData,
-		preview,
+		tr.Blocks, preview,
 		tr.Bounds,
 		duration,
 		tr.Telemetry,
@@ -718,13 +718,16 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 		if info.call.TextOnly {
 			return nil, errors.New("text-only tools cannot request MCP host input")
 		}
-		if len(out.Payload) != 0 || len(out.ServerData) != 0 || out.Bounds != nil || out.Telemetry != nil || out.Failure != nil || out.Clarification != nil {
+		if len(out.Payload) != 0 || len(out.ServerData) != 0 || len(out.Blocks) != 0 || out.Bounds != nil || out.Telemetry != nil || out.Failure != nil || out.Clarification != nil {
 			return nil, errors.New("MCP input cannot accompany a completed activity result")
 		}
 		if err := out.MCPInput.Validate(mcp.InputSupport{Form: true, URL: true}); err != nil {
 			return nil, err
 		}
 		return &ToolExecutionResult{mcpInput: out.MCPInput, mcpToolCallID: info.call.ToolCallID, duration: duration}, nil
+	}
+	if err := out.Blocks.Validate(); err != nil {
+		return nil, fmt.Errorf("tool %q activity content: %w", info.call.Name, err)
 	}
 	var decoded any
 	if out.Failure == nil && hasNonNullJSON(out.Payload.RawMessage()) {
@@ -740,6 +743,7 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 		Result:     decoded,
 		Bounds:     out.Bounds,
 		ServerData: out.ServerData,
+		Blocks:     out.Blocks.Clone(),
 		ToolCallID: info.call.ToolCallID,
 		Telemetry:  out.Telemetry,
 	}

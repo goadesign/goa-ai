@@ -11,6 +11,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
@@ -55,7 +56,7 @@ func validateCheckpointResultRecord(record checkpointToolRecord, checkpoint *wor
 	}
 	saved, err := decodeCheckpointToolEvent(&api.ToolEvent{
 		Name: event.ToolName, ToolCallID: event.ToolCallID, Result: event.ResultJSON,
-		ServerData: event.ServerData, Bounds: event.Bounds, Failure: event.Failure,
+		ServerData: event.ServerData, Blocks: event.Blocks, Bounds: event.Bounds, Failure: event.Failure,
 	}, record.Call, definition.spec)
 	if err != nil {
 		return err
@@ -67,6 +68,7 @@ func validateCheckpointResultRecord(record checkpointToolRecord, checkpoint *wor
 	if !reflect.DeepEqual(saved.Result, result.Result) ||
 		!reflect.DeepEqual(saved.Failure, result.Failure) ||
 		!reflect.DeepEqual(saved.Bounds, result.Bounds) ||
+		((len(saved.Blocks) != 0 || len(result.Blocks) != 0) && !reflect.DeepEqual(saved.Blocks, result.Blocks)) ||
 		!bytes.Equal(saved.ServerData, result.ServerData) {
 		return fmt.Errorf("saved result record disagrees with batch result for call %q", record.Call.ToolCallID)
 	}
@@ -76,16 +78,26 @@ func validateCheckpointResultRecord(record checkpointToolRecord, checkpoint *wor
 	return nil
 }
 
-// toolResultRecordContent projects only the accepted event. An empty preview
-// is a complete value; it never asks today's hint template to replace it.
-func toolResultRecordContent(record stepToolRecord) (any, error) {
+// toolResultRecordPart reads the accepted event and returns its correlated model
+// result, including validated media and failure status. An empty saved preview
+// is complete; the runtime never renders the original input again.
+func toolResultRecordPart(record stepToolRecord) (model.ToolResultPart, error) {
 	event, err := decodeToolResultRecord(record.resultRecord, record.call, record.callRunID, record.resultRunID)
 	if err != nil {
-		return nil, err
+		return model.ToolResultPart{}, err
 	}
 	errorMessage := ""
 	if event.Failure != nil {
 		errorMessage = event.Failure.Error.Error()
 	}
-	return transcript.ProjectToolResultContent(event.ResultJSON, event.Bounds, event.ResultPreview, errorMessage)
+	semantic, err := transcript.ProjectToolResultContent(event.ResultJSON, event.Bounds, event.ResultPreview, errorMessage)
+	if err != nil {
+		return model.ToolResultPart{}, err
+	}
+	return model.ToolResultPart{
+		ToolUseID: transcriptToolCallID(record.call),
+		Content:   semantic,
+		Blocks:    event.Blocks.Clone(),
+		IsError:   event.Failure != nil,
+	}, nil
 }

@@ -101,7 +101,7 @@ func TestAppendUserToolRecordResultsBoundsGuidance(t *testing.T) {
 			beforeBounds := agent.CloneBounds(result.Bounds)
 			base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
 			record := materializedToolRecordForTest(t, rt, "agent-1", base, call, result)
-			beforeContent, err := toolResultRecordContent(record)
+			beforePart, err := toolResultRecordPart(record)
 			require.NoError(t, err)
 			require.NoError(t, rt.appendUserToolRecordResults(t.Context(), "agent-1", base,
 				[]stepToolRecord{record}, ""))
@@ -116,7 +116,7 @@ func TestAppendUserToolRecordResultsBoundsGuidance(t *testing.T) {
 			part, ok := base.Messages[0].Parts[0].(model.ToolResultPart)
 			require.True(t, ok)
 			assert.Equal(t, call.ToolCallID, part.ToolUseID)
-			assert.Equal(t, beforeContent, part.Content)
+			assert.Equal(t, beforePart.Content, part.Content)
 			assert.Equal(t, tt.failure != nil, part.IsError)
 			assert.Equal(t, beforeBounds, result.Bounds)
 			if tt.failure != nil {

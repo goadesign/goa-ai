@@ -1245,6 +1245,9 @@ func validatePlannerFinalToolResult(spec tools.ToolSpec, final *planner.FinalToo
 	if final == nil {
 		return nil
 	}
+	if err := final.Blocks.Validate(); err != nil {
+		return fmt.Errorf("planner final tool content: %w", err)
+	}
 	resultJSON := bytes.TrimSpace(final.Result)
 	serverJSON := bytes.TrimSpace(final.ServerData)
 	if len(resultJSON) > 0 && !json.Valid(resultJSON) {
@@ -1525,6 +1528,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		Payload:    resultJSON,
 		Bounds:     result.Bounds,
 		ServerData: result.ServerData,
+		Blocks:     result.Blocks.Clone(),
 		Telemetry:  result.Telemetry,
 	}
 	if result.Failure != nil {

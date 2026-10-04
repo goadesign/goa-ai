@@ -108,6 +108,7 @@ func (r *Runtime) plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, t
 		ToolCall{Name: output.Name, ToolCallID: output.ToolCallID},
 		resultEvents.result.ResultJSON,
 		output.ServerData,
+		output.Blocks,
 		output.Bounds,
 		output.Failure,
 	); err != nil {
@@ -155,6 +156,9 @@ func toolOutputFromStoredEvents(callRunID, resultRunID, toolCallID string, callE
 		)
 	}
 
+	if err := resultEvents.result.Blocks.Validate(); err != nil {
+		return nil, fmt.Errorf("runtime: invalid stored tool content: %w", err)
+	}
 	output := &planner.ToolOutput{
 		Registry:                   callEvents.scheduled.Registry.Clone(),
 		CallRunID:                  callRunID,
@@ -165,6 +169,7 @@ func toolOutputFromStoredEvents(callRunID, resultRunID, toolCallID string, callE
 		ContinuationRootToolCallID: callEvents.scheduled.ContinuationRootToolCallID,
 		Payload:                    append(rawjson.Message(nil), callEvents.scheduled.Payload...),
 		ServerData:                 append(rawjson.Message(nil), resultEvents.result.ServerData...),
+		Blocks:                     resultEvents.result.Blocks.Clone(),
 		Bounds:                     resultEvents.result.Bounds,
 		Failure:                    resultEvents.result.Failure,
 		Telemetry:                  resultEvents.result.Telemetry,
