@@ -122,15 +122,46 @@ for that operation before adding a mechanism; if Goa lacks it, explain the
 necessary generic Goa change and its callers before implementation. A second
 application authentication callback is not a substitute for that proof.
 
-The original Goa endpoint validates selected service results before returning
-them, but returns those validation errors as ordinary input-validation errors.
-The existing `goa.ServiceError.Fault` contract already identifies server failures;
-no new public result-error type is needed. Goa must wrap the result-validation
-cause as a fault at that boundary, and MCP must honor that contract before
-mapping domain errors. The new ToolContent converter rejects invalid content it
-receives; earlier Goa view-validation failures still follow the original
-endpoint error path until that generic fix is integrated. Authentication error
-meaning requires its separate proof; neither classification may use error text.
+The earlier result-validation problem is fixed by merged Goa PR #4018 and the
+current dependency pin. Invalid selected service output carries the existing
+`goa.ServiceError.Fault` contract through MCP as an internal failure. That flag
+does not identify authentication rejection or permit a retry; authentication
+requires its own complete proof.
+
+Published [Goa PR #4019](https://github.com/goadesign/goa/pull/4019) passes local
+lint and the full uncached root race suite; its remote checks and merge remain
+pending. Its generated endpoints wrap only the final authentication callback rejection in
+`security.AuthenticationError`, retaining the original cause, error name and
+native transport mapping. The business method is not dispatched on that path;
+the same error returned by a business method remains unmarked. Authentication
+callbacks and outer middleware may already have performed work, so the marker
+adds no general retry permission. It carries no HTTP status, selected scheme or
+scope challenge. The OAuth owner must supply those meanings through a precise
+contract before MCP can turn a rejection into an authorization response. This
+change is not yet integrated into the current Goa AI dependency.
+
+The synthetic generator proof also confirms that credential annotations are
+method-specific: Goa rejects a payload that declares credentials for schemes
+absent from that method. Credential projection must follow evaluated method
+requirements and original transport bindings, including shared domain types;
+a fixture that tags every scheme on every method is not a valid counterexample.
+
+Protected-resource discovery must validate the returned resource identifier,
+not merely the URL's host or path prefix. For a derived well-known URL, compare
+against the resource identifier used to derive that candidate. For an explicit
+`WWW-Authenticate` metadata URL, compare against the resource request URL.
+Comparison is exact after JSON decoding, without Unicode normalization. Reject
+mismatching metadata rather than treating it as an absent discovery document or
+inventing authorization endpoints. Include path-specific and root discovery,
+explicit challenges, mismatched resources and distinct resources on one host in
+the acceptance tests. [RFC 9728 §§3.3 and 6](https://www.rfc-editor.org/rfc/rfc9728.html#section-3.3).
+
+A present authorization-response `iss` value must separately match the issuer
+recorded from validated authorization-server metadata, even when support was not
+advertised. Do not normalize URL case, ports, encoding or slashes before that
+comparison. Advertised issuer support makes a missing `iss` an error. Resource
+and issuer comparisons protect different decisions and must remain separate.
+[MCP authorization-response validation](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization#authorization-response-validation).
 
 There is no deployed target configuration or telemetry for this new framework
 profile. Use complete synthetic generated-service paths for the design proof,
