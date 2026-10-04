@@ -68,7 +68,9 @@ var viewed=ResultType("application/vnd.endpoint.record",func(){
  Required("visible","hidden")
  View("default",func(){Attribute("visible")})
  View("detailed",func(){Attribute("visible");Attribute("hidden")})
+ View("summary",func(){Attribute("visible")})
 })
+var records=CollectionOf(viewed,func(){TypeName("ViewedRecords")})
 var nested=ResultType("application/vnd.endpoint.nested",func(){
  TypeName("NestedRecord")
  Description("Two occurrences of the same result type with different fixed views")
@@ -126,6 +128,20 @@ var _=Service("secured",func(){
   Tool("nested","Return a record summary and details")
   JSONRPC(func(){})
  })
+ Method("select_view",func(){
+  Description("Choose a synthetic result view during execution")
+  Payload(func(){Field(1,"view",String,"The synthetic view to return",func(){Enum("default","detailed","summary")});Required("view")})
+  Result(viewed)
+  Tool("select_view","Return the service-selected synthetic result view")
+  JSONRPC(func(){})
+ })
+ Method("records",func(){
+  Description("Return an empty collection through a service-selected view")
+  Result(records)
+  Tool("records","Return synthetic viewed records")
+  Resource("records","test://records","application/json")
+  JSONRPC(func(){})
+ })
  Method("echo",func(){
   Description("Preserve a domain field whose spelling resembles a credential")
   Payload(func(){Field(1,"token",String,"A domain token with no security annotation");Required("token")})
@@ -142,13 +158,22 @@ import (
  "encoding/json"
  "errors"
  "net/http/httptest"
+ "net/url"
  "sync/atomic"
  "testing"
+ "github.com/stretchr/testify/assert"
  genservice "endpoint-contract.local/gen/secured"
  genmcp "endpoint-contract.local/gen/mcp_secured"
  genserver "endpoint-contract.local/gen/jsonrpc/mcp_secured/server"
+ genclient "endpoint-contract.local/gen/jsonrpc/mcp_secured/client"
  genspecs "endpoint-contract.local/gen/secured/toolsets/endpoint_contract"
+ genexecutor "endpoint-contract.local/gen/secured/toolsets/endpoint_contract/mcp"
+ "goa.design/goa-ai/runtime/agent/api"
+ "goa.design/goa-ai/runtime/agent/rawjson"
+ "goa.design/goa-ai/runtime/agent/engine/temporal"
+ "goa.design/goa-ai/runtime/agent/transcript"
  "goa.design/goa-ai/runtime/mcp"
+ "goa.design/goa-ai/runtime/agent/runtime"
  goahttp "goa.design/goa/v3/http"
  goa "goa.design/goa/v3/pkg"
  "goa.design/goa/v3/security"
@@ -171,6 +196,8 @@ func(s *service)Ping(ctx context.Context)(string,error){s.pings.Add(1);if ctx.Va
 func(s *service)Notify(ctx context.Context,p *genservice.NotifyPayload)error{s.notices.Add(1);if ctx.Value(middlewareKey{})!="configured"||p.Key!="record"{return errors.New("domain input or middleware lost")};return nil}
 func(s *service)Viewed(ctx context.Context)(*genservice.ViewedRecord,error){if ctx.Value(middlewareKey{})!="configured"{return nil,errors.New("middleware missing")};return &genservice.ViewedRecord{Visible:"shown",Hidden:"must-not-leak"},nil}
 func(s *service)Detailed(ctx context.Context)(*genservice.ViewedRecord,error){if ctx.Value(middlewareKey{})!="configured"{return nil,errors.New("middleware missing")};return &genservice.ViewedRecord{Visible:"shown",Hidden:"detail"},nil}
+func(s *service)Records(context.Context)(genservice.ViewedRecords,string,error){return genservice.ViewedRecords{},"default",nil}
+func(s *service)SelectView(_ context.Context,p *genservice.SelectViewPayload)(*genservice.ViewedRecord,string,error){return &genservice.ViewedRecord{Visible:"shown",Hidden:"retained"},p.View,nil}
 func(s *service)Echo(ctx context.Context,p *genservice.EchoPayload)(string,error){s.echoes.Add(1);if ctx.Value(middlewareKey{})!="configured"{return "",errors.New("middleware missing")};return p.Token,nil}
 func(s *service)Nested(context.Context)(*genservice.NestedRecord,error){
  return &genservice.NestedRecord{
@@ -185,7 +212,7 @@ func TestConfiguredEndpoints(t *testing.T){
  i:=&interceptors{}
  endpoints:=genservice.NewEndpoints(s,i)
  var middlewareCalls atomic.Int64
- endpoints.Use(func(next goa.Endpoint)goa.Endpoint{return func(ctx context.Context,input any)(any,error){middlewareCalls.Add(1);if ctx.Value(goa.ServiceKey)!="secured"{return nil,errors.New("original service identity lost")};method,ok:=ctx.Value(goa.MethodKey).(string);if !ok{ return nil,errors.New("original method identity missing")};switch method{case "read","ping","notify","echo","viewed","detailed","nested":default:return nil,errors.New("original method identity lost")};return next(context.WithValue(ctx,middlewareKey{},"configured"),input)}})
+ endpoints.Use(func(next goa.Endpoint)goa.Endpoint{return func(ctx context.Context,input any)(any,error){middlewareCalls.Add(1);if ctx.Value(goa.ServiceKey)!="secured"{return nil,errors.New("original service identity lost")};method,ok:=ctx.Value(goa.MethodKey).(string);if !ok{ return nil,errors.New("original method identity missing")};switch method{case "read","ping","notify","echo","viewed","detailed","nested","select_view","records":default:return nil,errors.New("original method identity lost")};return next(context.WithValue(ctx,middlewareKey{},"configured"),input)}})
  mux:=goahttp.NewMuxer()
  var mapped atomic.Int64
  adapter:=genmcp.NewMCPAdapter(endpoints,&genmcp.MCPAdapterOptions{ErrorMapper:func(err error)error{mapped.Add(1);return err}})
@@ -250,6 +277,63 @@ func TestConfiguredEndpoints(t *testing.T){
  for _,name:=range []string{"viewed","detailed","nested"}{
   if _,err:=direct.CallTool(t.Context(),mcp.CallRequest{Tool:name,Payload:json.RawMessage("{}")});err!=nil{t.Fatalf("%s advertised result contract: %v",name,err)}
  }
+ // A view selected during execution keeps its name through decoding and saved JSON.
+ for _,test:=range []struct{view,want string}{
+  {"default","{\"type\":\"default\",\"value\":{\"visible\":\"shown\"}}"},
+  {"detailed","{\"type\":\"detailed\",\"value\":{\"visible\":\"shown\",\"hidden\":\"retained\"}}"},
+  {"summary","{\"type\":\"summary\",\"value\":{\"visible\":\"shown\"}}"},
+ }{
+  response,err:=direct.CallTool(t.Context(),mcp.CallRequest{Tool:"select_view",Payload:json.RawMessage("{\"view\":\""+test.view+"\"}")})
+  if err!=nil||string(response.StructuredContent)!=test.want{t.Fatalf("selected %s result=%s err=%v",test.view,response.StructuredContent,err)}
+  for _,spec:=range genspecs.Specs(){
+   if spec.Name!="endpoint-contract.select_view"{continue}
+   value,err:=spec.Result.Codec.FromJSON(response.StructuredContent)
+   if err!=nil{t.Fatal(err)}
+   saved,err:=runtime.EncodeCanonicalToolResult(spec,value,nil)
+   if err!=nil||string(saved)!=test.want{t.Fatalf("saved view=%s err=%v",saved,err)}
+   if err:=runtime.ValidateSuccessfulToolResult(spec,saved,nil);err!=nil{t.Fatal(err)}
+   // The generated executor decodes the same HTTP result before workflow storage.
+   executed,err:=genexecutor.NewMCPExecutor(direct).Execute(t.Context(),nil,&runtime.ToolCall{Name:spec.Name,Payload:rawjson.Message("{\"view\":\""+test.view+"\"}")})
+   if err!=nil{t.Fatal(err)}
+   if executed.ToolResult.Failure!=nil{t.Fatalf("generated executor failure: %+v",executed.ToolResult.Failure)}
+   encoded,err:=runtime.EncodeCanonicalToolResult(spec,executed.ToolResult.Result,nil)
+   if err!=nil||string(encoded)!=test.want{t.Fatalf("executed selected view=%s err=%v",encoded,err)}
+   // The production workflow converter retains the view tag and invocation identity.
+   converter:=temporal.NewAgentDataConverter()
+   payload,err:=converter.ToPayload(&api.ToolEvent{Name:spec.Name,Result:encoded,ToolCallID:"selected-view-call"})
+   if err!=nil{t.Fatal(err)}
+   var restored api.ToolEvent
+   if err:=converter.FromPayload(payload,&restored);err!=nil{t.Fatal(err)}
+   if restored.Name!=spec.Name||restored.ToolCallID!="selected-view-call"||string(restored.Result)!=test.want{t.Fatalf("restored selected view: %+v",restored)}
+   if _,err:=spec.Result.Codec.FromJSON(restored.Result);err!=nil{t.Fatal(err)}
+   content,err:=transcript.ProjectToolResultContent(restored.Result,nil,"","")
+   if err!=nil{t.Fatal(err)}
+   contentJSON,err:=json.Marshal(content)
+   if err!=nil{t.Fatal(err)}
+   assert.JSONEq(t,test.want,string(contentJSON),"transcript selected view")
+   for _,invalid:=range []string{
+    "{\"type\":\"unknown\",\"value\":{\"visible\":\"shown\"}}",
+    "{\"type\":\"default\",\"value\":{\"visible\":\"shown\",\"hidden\":\"leak\"}}",
+    "{\"type\":\"detailed\",\"value\":{\"visible\":\"shown\"}}",
+    "{\"visible\":\"shown\"}",
+   }{
+    if _,err:=spec.Result.Codec.FromJSON([]byte(invalid));err==nil{t.Fatalf("accepted invalid selected view: %s",invalid)}
+   }
+  }
+ }
+ emptyRecords,err:=direct.CallTool(t.Context(),mcp.CallRequest{Tool:"records",Payload:json.RawMessage("{}")})
+ if err!=nil||string(emptyRecords.StructuredContent)!="{\"type\":\"default\",\"value\":[]}"{t.Fatalf("empty viewed collection=%s err=%v",emptyRecords.StructuredContent,err)}
+ for _,spec:=range genspecs.Specs(){
+  if spec.Name!="endpoint-contract.records"{continue}
+  if _,err:=spec.Result.Codec.FromJSON(emptyRecords.StructuredContent);err!=nil{t.Fatalf("decode empty viewed collection: %v",err)}
+ }
+ // The JSON resource uses the same selected collection contract as the tool.
+ location,err:=url.Parse(httpServer.URL);if err!=nil{t.Fatal(err)}
+ resourceClient:=genclient.NewClient(location.Scheme,location.Host,httpServer.Client(),goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
+ resourceValue,err:=resourceClient.ResourcesRead()(t.Context(),&genmcp.ResourcesReadPayload{URI:"test://records"})
+ if err!=nil{t.Fatal(err)}
+ resourceResult:=resourceValue.(*genmcp.ResourcesReadResult)
+ if len(resourceResult.Contents)!=1||resourceResult.Contents[0].Text==nil||*resourceResult.Contents[0].Text!=string(emptyRecords.StructuredContent){t.Fatalf("viewed collection resource=%+v",resourceResult)}
  // A custom endpoint's wrong Go type must fail before result conversion.
  endpoints.Ping=func(context.Context,any)(any,error){return 42,nil}
  _,err=caller.CallTool(t.Context(),httpServer.URL+"/mcp",mcp.CallRequest{Tool:"ping",Payload:json.RawMessage("{}")})

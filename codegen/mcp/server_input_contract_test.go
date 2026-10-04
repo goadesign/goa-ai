@@ -37,7 +37,7 @@ func TestGenerateMCPTransportUsesOneExactURIForEachResource(t *testing.T) {
 	data.EndpointsName = "Endpoints"
 	data.Resources[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
 	data.Resources[0].Codec = &MethodCodecData{
-		ResultEncode: "EncodeReadDocumentResult",
+		ResultEncode: testCodecPackage + ".EncodeReadDocumentResult",
 	}
 
 	files := generateMCPTransport("example.com/assistant/gen", svc, data)
@@ -77,8 +77,8 @@ func TestGenerateMCPTransportRejectsInputForMethodsWithoutPayloads(t *testing.T)
 	data.EndpointsName = "Endpoints"
 	data.Tools[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
 	data.Resources[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod1"}
-	data.Tools[0].Codec = &MethodCodecData{ResultEncode: "EncodeRunResult"}
-	data.Resources[0].Codec = &MethodCodecData{ResultEncode: "EncodeReadStatusResult"}
+	data.Tools[0].Codec = &MethodCodecData{ResultEncode: testCodecPackage + ".EncodeRunResult"}
+	data.Resources[0].Codec = &MethodCodecData{ResultEncode: testCodecPackage + ".EncodeReadStatusResult"}
 
 	files := generateMCPTransport("example.com/assistant/gen", svc, data)
 	require.NotEmpty(t, files)

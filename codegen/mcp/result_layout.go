@@ -1,4 +1,4 @@
-// Package codegen connects fixed MCP result contracts to Goa's generated view types.
+// Package codegen connects MCP result contracts to Goa's generated view types.
 // The server encodes the selected fields already returned by the endpoint;
 // the codec never rebuilds a full service result with omitted values.
 package codegen
@@ -23,13 +23,27 @@ type (
 // planMCPResult keeps Goa's optional view fields in the source Go layout while
 // applying the selected view's required fields to the private JSON contract.
 func planMCPResult(services *goaservice.Plan, method *expr.MethodExpr) (*expr.AttributeExpr, *codegen.GoTypePlan, error) {
-	contract, err := mcpcontract.Result(method)
+	if _, viewed := method.Result.Type.(*expr.ResultTypeExpr); !viewed {
+		layout, err := services.MethodTypeLayout(method, method.Result)
+		return method.Result, layout, err
+	}
+	if view, fixed := mcpcontract.FixedView(method); fixed {
+		return planMCPResultView(services, method, view)
+	}
+	source, err := services.ProjectedResult(method)
 	if err != nil {
 		return nil, nil, err
 	}
-	if _, fixed := mcpcontract.FixedView(method); !fixed {
-		layout, err := services.MethodTypeLayout(method, contract)
-		return contract, layout, err
+	layout, err := services.MethodTypeLayout(method, source)
+	return source, layout, err
+}
+
+// planMCPResultView keeps the selected fields and their validation while using
+// the actual Go pointers and names from Goa's generated view declaration.
+func planMCPResultView(services *goaservice.Plan, method *expr.MethodExpr, view string) (*expr.AttributeExpr, *codegen.GoTypePlan, error) {
+	contract, err := mcpcontract.SelectView(method, view)
+	if err != nil {
+		return nil, nil, err
 	}
 	source, err := services.ProjectedResult(method)
 	if err != nil {

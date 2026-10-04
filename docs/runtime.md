@@ -6466,8 +6466,13 @@ the generated agent decoder use only the selected fields. Required fields in
 that view remain required. Fields outside the view are rejected if they appear
 in the decoded response; they are never restored as zero values. Nested
 occurrences of the same result type can retain different views. A missing object returned by a service is an internal
-error; empty collections remain valid. Views selected during service execution
-still need a complete typed result contract before release.
+error; empty collections remain valid. A view selected during service execution
+returns `{"type":"view-name","value":...}` for tools and JSON resources.
+Generated agent codecs and stored result validation keep this tag and enforce
+only that branch's declared fields. Two views with identical fields retain
+separate names. Prompts, resource-template reads and suggestions keep their flat
+protocol responses, with every selectable view checked during generation.
+Deploy regenerated servers and consumers together when changing the result shape.
 
 Generated JSON-RPC clients use the same transport implementation. Their tool
 caller is constructed with `NewCaller(client, clientInfo, inputSupport, retryPolicy)`.

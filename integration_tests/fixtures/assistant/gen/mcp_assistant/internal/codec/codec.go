@@ -1890,24 +1890,6 @@ func (u SimplePromptResultresourceTransport) Validate() error {
 	}
 }
 
-// EncodeAnalyzeSentimentPayload turns a service value into JSON using the field names in the Goa design.
-func EncodeAnalyzeSentimentPayload(in *assistant.AnalyzeSentimentPayload) ([]byte, error) {
-	var body *AnalyzeSentimentPayloadTransport
-	{
-		body = &AnalyzeSentimentPayloadTransport{
-			Text: &in.Text,
-		}
-	}
-	if err := ValidateAnalyzeSentimentPayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate AnalyzeSentimentPayload JSON: %w", err)
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode AnalyzeSentimentPayload JSON: %w", err)
-	}
-	return data, nil
-}
-
 // DecodeAnalyzeSentimentPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeAnalyzeSentimentPayload(data []byte) (out *assistant.AnalyzeSentimentPayload, err error) {
 	var body *AnalyzeSentimentPayloadTransport
@@ -1951,31 +1933,6 @@ func EncodeAnalyzeSentimentResult(in *assistant.AnalyzeSentimentResult) ([]byte,
 	return data, nil
 }
 
-// DecodeAnalyzeSentimentResult checks JSON field names from the Goa design and returns a service value.
-func DecodeAnalyzeSentimentResult(data []byte) (out *assistant.AnalyzeSentimentResult, err error) {
-	var body *AnalyzeSentimentResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode AnalyzeSentimentResult JSON: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode AnalyzeSentimentResult JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode AnalyzeSentimentResult JSON after first value: %w", err)
-	}
-	if err := ValidateAnalyzeSentimentResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate AnalyzeSentimentResult JSON: %w", err)
-	}
-	{
-		out = &assistant.AnalyzeSentimentResult{
-			Sentiment: body.Sentiment,
-		}
-	}
-	return out, nil
-}
-
 // NewArgumentPromptPayload validates a decoded transport value and returns the service value.
 func NewArgumentPromptPayload(body *ArgumentPromptPayloadTransport) (out *assistant.ArgumentPromptPayload, err error) {
 	if err := ValidateArgumentPromptPayloadTransport(body); err != nil {
@@ -2013,25 +1970,6 @@ func ValidateArgumentPromptResultValue(in *assistant.RefereePromptResult) error 
 		return fmt.Errorf("validate ArgumentPromptResult value: %w", err)
 	}
 	return nil
-}
-
-// EncodeExecuteCodePayload turns a service value into JSON using the field names in the Goa design.
-func EncodeExecuteCodePayload(in *assistant.ExecuteCodePayload) ([]byte, error) {
-	var body *ExecuteCodePayloadTransport
-	{
-		body = &ExecuteCodePayloadTransport{
-			Language: &in.Language,
-			Code:     &in.Code,
-		}
-	}
-	if err := ValidateExecuteCodePayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate ExecuteCodePayload JSON: %w", err)
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode ExecuteCodePayload JSON: %w", err)
-	}
-	return data, nil
 }
 
 // DecodeExecuteCodePayload checks JSON field names from the Goa design and returns a service value.
@@ -2074,49 +2012,6 @@ func EncodeExecuteCodeResult(in *assistant.ExecuteCodeResult) ([]byte, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("encode ExecuteCodeResult JSON: %w", err)
-	}
-	return data, nil
-}
-
-// DecodeExecuteCodeResult checks JSON field names from the Goa design and returns a service value.
-func DecodeExecuteCodeResult(data []byte) (out *assistant.ExecuteCodeResult, err error) {
-	var body *ExecuteCodeResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode ExecuteCodeResult JSON: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode ExecuteCodeResult JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode ExecuteCodeResult JSON after first value: %w", err)
-	}
-	if err := ValidateExecuteCodeResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate ExecuteCodeResult JSON: %w", err)
-	}
-	{
-		out = &assistant.ExecuteCodeResult{
-			Output: body.Output,
-		}
-	}
-	return out, nil
-}
-
-// EncodeExtractKeywordsPayload turns a service value into JSON using the field names in the Goa design.
-func EncodeExtractKeywordsPayload(in *assistant.ExtractKeywordsPayload) ([]byte, error) {
-	var body *ExtractKeywordsPayloadTransport
-	{
-		body = &ExtractKeywordsPayloadTransport{
-			Text: &in.Text,
-		}
-	}
-	if err := ValidateExtractKeywordsPayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate ExtractKeywordsPayload JSON: %w", err)
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode ExtractKeywordsPayload JSON: %w", err)
 	}
 	return data, nil
 }
@@ -2168,35 +2063,6 @@ func EncodeExtractKeywordsResult(in *assistant.ExtractKeywordsResult) ([]byte, e
 	return data, nil
 }
 
-// DecodeExtractKeywordsResult checks JSON field names from the Goa design and returns a service value.
-func DecodeExtractKeywordsResult(data []byte) (out *assistant.ExtractKeywordsResult, err error) {
-	var body *ExtractKeywordsResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode ExtractKeywordsResult JSON: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode ExtractKeywordsResult JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode ExtractKeywordsResult JSON after first value: %w", err)
-	}
-	if err := ValidateExtractKeywordsResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate ExtractKeywordsResult JSON: %w", err)
-	}
-	{
-		out = &assistant.ExtractKeywordsResult{}
-		if body.Keywords != nil {
-			out.Keywords = make([]string, len(body.Keywords))
-			for i, val := range body.Keywords {
-				out.Keywords[i] = val
-			}
-		}
-	}
-	return out, nil
-}
-
 // ValidateImagePromptResultValue checks a service value against its declared field validation.
 func ValidateImagePromptResultValue(in *assistant.RefereePromptResult) error {
 
@@ -2238,31 +2104,6 @@ func EncodeListDocumentsResult(in *assistant.Documents) ([]byte, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("encode ListDocumentsResult JSON: %w", err)
-	}
-	return data, nil
-}
-
-// EncodeProcessBatchPayload turns a service value into JSON using the field names in the Goa design.
-func EncodeProcessBatchPayload(in *assistant.ProcessBatchPayload) ([]byte, error) {
-	var body *ProcessBatchPayloadTransport
-	{
-		body = &ProcessBatchPayloadTransport{
-			Format:   in.Format,
-			Blob:     in.Blob,
-			URI:      in.URI,
-			MimeType: in.MimeType,
-		}
-		body.Items = make([]string, len(in.Items))
-		for i, val := range in.Items {
-			body.Items[i] = val
-		}
-	}
-	if err := ValidateProcessBatchPayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate ProcessBatchPayload JSON: %w", err)
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode ProcessBatchPayload JSON: %w", err)
 	}
 	return data, nil
 }
@@ -2315,31 +2156,6 @@ func EncodeProcessBatchResult(in *assistant.ProcessBatchResult) ([]byte, error) 
 		return nil, fmt.Errorf("encode ProcessBatchResult JSON: %w", err)
 	}
 	return data, nil
-}
-
-// DecodeProcessBatchResult checks JSON field names from the Goa design and returns a service value.
-func DecodeProcessBatchResult(data []byte) (out *assistant.ProcessBatchResult, err error) {
-	var body *ProcessBatchResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode ProcessBatchResult JSON: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode ProcessBatchResult JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode ProcessBatchResult JSON after first value: %w", err)
-	}
-	if err := ValidateProcessBatchResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate ProcessBatchResult JSON: %w", err)
-	}
-	{
-		out = &assistant.ProcessBatchResult{
-			OK: body.OK,
-		}
-	}
-	return out, nil
 }
 
 // NewReadResourcePayload validates a decoded transport value and returns the service value.
@@ -2396,29 +2212,6 @@ func EncodeReportWorkResult(in string) ([]byte, error) {
 	return data, nil
 }
 
-// DecodeReportWorkResult checks JSON field names from the Goa design and returns a service value.
-func DecodeReportWorkResult(data []byte) (out string, err error) {
-	var body ReportWorkResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode ReportWorkResult JSON: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode ReportWorkResult JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode ReportWorkResult JSON after first value: %w", err)
-	}
-	if err := ValidateReportWorkResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate ReportWorkResult JSON: %w", err)
-	}
-	{
-		out = string(body)
-	}
-	return out, nil
-}
-
 // NewResourcePromptPayload validates a decoded transport value and returns the service value.
 func NewResourcePromptPayload(body *ResourcePromptPayloadTransport) (out *assistant.ResourcePromptPayload, err error) {
 	if err := ValidateResourcePromptPayloadTransport(body); err != nil {
@@ -2455,25 +2248,6 @@ func ValidateResourcePromptResultValue(in *assistant.RefereePromptResult) error 
 		return fmt.Errorf("validate ResourcePromptResult value: %w", err)
 	}
 	return nil
-}
-
-// EncodeSearchPayload turns a service value into JSON using the field names in the Goa design.
-func EncodeSearchPayload(in *assistant.SearchPayload) ([]byte, error) {
-	var body *SearchPayloadTransport
-	{
-		body = &SearchPayloadTransport{
-			Query: &in.Query,
-			Limit: in.Limit,
-		}
-	}
-	if err := ValidateSearchPayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate SearchPayload JSON: %w", err)
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode SearchPayload JSON: %w", err)
-	}
-	return data, nil
 }
 
 // DecodeSearchPayload checks JSON field names from the Goa design and returns a service value.
@@ -2522,35 +2296,6 @@ func EncodeSearchResult(in *assistant.SearchResult) ([]byte, error) {
 		return nil, fmt.Errorf("encode SearchResult JSON: %w", err)
 	}
 	return data, nil
-}
-
-// DecodeSearchResult checks JSON field names from the Goa design and returns a service value.
-func DecodeSearchResult(data []byte) (out *assistant.SearchResult, err error) {
-	var body *SearchResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode SearchResult JSON: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode SearchResult JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode SearchResult JSON after first value: %w", err)
-	}
-	if err := ValidateSearchResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate SearchResult JSON: %w", err)
-	}
-	{
-		out = &assistant.SearchResult{}
-		if body.Results != nil {
-			out.Results = make([]string, len(body.Results))
-			for i, val := range body.Results {
-				out.Results[i] = val
-			}
-		}
-	}
-	return out, nil
 }
 
 // ValidateSimplePromptResultValue checks a service value against its declared field validation.
@@ -2625,24 +2370,6 @@ func ValidateSuggestArgumentResultValue(in *assistant.SuggestArgumentResult) err
 	return nil
 }
 
-// EncodeSummarizeTextPayload turns a service value into JSON using the field names in the Goa design.
-func EncodeSummarizeTextPayload(in *assistant.SummarizeTextPayload) ([]byte, error) {
-	var body *SummarizeTextPayloadTransport
-	{
-		body = &SummarizeTextPayloadTransport{
-			Text: &in.Text,
-		}
-	}
-	if err := ValidateSummarizeTextPayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate SummarizeTextPayload JSON: %w", err)
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode SummarizeTextPayload JSON: %w", err)
-	}
-	return data, nil
-}
-
 // DecodeSummarizeTextPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeSummarizeTextPayload(data []byte) (out *assistant.SummarizeTextPayload, err error) {
 	var body *SummarizeTextPayloadTransport
@@ -2684,31 +2411,6 @@ func EncodeSummarizeTextResult(in *assistant.SummarizeTextResult) ([]byte, error
 		return nil, fmt.Errorf("encode SummarizeTextResult JSON: %w", err)
 	}
 	return data, nil
-}
-
-// DecodeSummarizeTextResult checks JSON field names from the Goa design and returns a service value.
-func DecodeSummarizeTextResult(data []byte) (out *assistant.SummarizeTextResult, err error) {
-	var body *SummarizeTextResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode SummarizeTextResult JSON: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode SummarizeTextResult JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode SummarizeTextResult JSON after first value: %w", err)
-	}
-	if err := ValidateSummarizeTextResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate SummarizeTextResult JSON: %w", err)
-	}
-	{
-		out = &assistant.SummarizeTextResult{
-			Summary: body.Summary,
-		}
-	}
-	return out, nil
 }
 
 // EncodeSystemInfoResult turns a service value into JSON using the field names in the Goa design.

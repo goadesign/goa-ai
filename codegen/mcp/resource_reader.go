@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
+	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa/v3/codegen"
 	goaservice "goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/expr"
@@ -44,6 +45,20 @@ func (g *adapterGenerator) buildResourceReaderAdapter() (*resourceReaderAdapter,
 		return nil, nil
 	}
 	declaration := g.mcp.ResourceTemplates[0]
+	if err := validateExecutionViews(declaration.Method, func(result *expr.AttributeExpr) error {
+		method := *declaration.Method
+		method.Result = result
+		selected := *declaration
+		selected.Method = &method
+		definition := *g.mcp
+		definition.ResourceTemplates = []*mcpexpr.ResourceTemplateExpr{&selected}
+		generator := *g
+		generator.mcp = &definition
+		_, err := generator.buildResourceReaderAdapter()
+		return err
+	}); err != nil {
+		return nil, err
+	}
 	if err := declaration.Validate(); err != nil {
 		return nil, err
 	}
@@ -119,7 +134,7 @@ func bindResourceReader(services *goaservice.ServicesData, planned *plannedMCPSe
 		return nil
 	}
 	values := planned.methodCodecs[reader.method.Name]
-	reader.Codec = methodCodecData(values)
+	reader.Codec = methodCodecData(values, data.CodecPackage)
 	var err error
 	reader.PayloadTransportRef, err = values.payload.TransportTypeName(data.mcpImportPath, data.mcpPackage.ImportName)
 	if err != nil {
@@ -132,7 +147,7 @@ func bindResourceReader(services *goaservice.ServicesData, planned *plannedMCPSe
 		return err
 	}
 	source := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
-	if reader.Endpoint.ProjectedResult {
+	if reader.Endpoint.ProjectedResult || reader.Endpoint.ExecutionView {
 		source = services.ViewAttributor(planned.prepared.userService.Name, data.mcpImportPath)
 	}
 	target := services.ServiceAttributor(planned.prepared.mcpService.Name, data.mcpImportPath)

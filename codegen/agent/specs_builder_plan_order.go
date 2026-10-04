@@ -71,12 +71,16 @@ func newLocalizedTypeNameOrder(packagePath string, source goaexpr.UserType, role
 	if location := goacodegen.UserTypeLocation(source); location != nil {
 		sourcePath = location.RelImportPath
 	}
+	sourceID := source.ID()
+	if result, ok := source.(*goaexpr.ResultTypeExpr); ok {
+		sourceID = result.Identifier
+	}
 	return localizedTypeNameOrder{
 		jsonContract: contract,
 		packagePath:  packagePath,
 		sourcePath:   sourcePath,
 		sourceName:   source.Name(),
-		sourceID:     source.ID(),
+		sourceID:     sourceID,
 		role:         role,
 	}
 }

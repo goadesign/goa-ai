@@ -126,6 +126,20 @@ func (g *adapterGenerator) buildMethodPromptAdapters() ([]*MethodPromptAdapter, 
 	content := builder.getOrCreateType("ContentItem", builder.buildContentItemType)
 	adapters := make([]*MethodPromptAdapter, 0, len(g.mcp.MethodPrompts))
 	for _, prompt := range g.mcp.MethodPrompts {
+		if err := validateExecutionViews(prompt.Method, func(result *expr.AttributeExpr) error {
+			method := *prompt.Method
+			method.Result = result
+			selected := *prompt
+			selected.Method = &method
+			definition := *g.mcp
+			definition.MethodPrompts = []*mcpexpr.MethodPromptExpr{&selected}
+			generator := *g
+			generator.mcp = &definition
+			_, err := generator.buildMethodPromptAdapters()
+			return err
+		}); err != nil {
+			return nil, err
+		}
 		if err := prompt.Validate(); err != nil {
 			return nil, err
 		}

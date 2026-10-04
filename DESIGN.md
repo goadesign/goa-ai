@@ -2545,8 +2545,13 @@ private JSON types, even when they share one generated Goa view declaration;
 Goa's graph copier preserves those shapes and recursive references. Schema
 requirements apply per occurrence. A missing object result is rejected at the
 Goa endpoint before view conversion, while an empty collection remains valid.
-Execution-selected views require their own typed wire contract and remain a
-release gate.
+Execution-selected tool results and JSON resources use Goa's tagged OneOf
+contract: the endpoint's view name is the tag, and the selected fields are the
+value. Each branch owns its required-field checks. Agent decoders and stored
+results preserve the tag, including when two views have identical fields.
+Prompt, resource-template and completion conversions retain their flat protocol
+shape; generation checks the required operation fields in every selectable view.
+Private server codecs encode results; only consumer codecs decode results.
 
 ## Error code mapping
 

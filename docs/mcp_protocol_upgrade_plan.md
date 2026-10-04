@@ -87,8 +87,9 @@ rather than merging different selected shapes by their original declaration.
 The complete serial root race suite and quickstart, regenerated assistant
 fixture race suite, evaluation consumer and build passed against the exact
 merged remote Goa dependency. The MCP and agent generator suites and shared
-codec suite are included in the root checks. Configured lint reports zero issues. These checks establish fixed-view
-behavior, not execution-selected views or full release conformance.
+codec suite are included in the root checks. Configured lint reports zero issues. These earlier checks establish fixed-view
+behavior; the execution-selected checks are recorded separately below. Neither
+establishes full release conformance.
 
 The required Goa generator fixes were verified in a separate isolated dependency
 clone: view package locations are removed before conversion identities are
@@ -102,11 +103,25 @@ The root and all three nested modules pin the merged source at
 `v3.32.1-0.20261004165214-99a12cec25bc`; no local Goa replacement remains.
 Build tools and CI actions use verified current releases.
 
-Views chosen by the service during execution remain a release gate. They need
-an honest typed wire contract shared by schemas, server encoding, generated
-agent decoders and stored results. A fixed-view test does not prove that path.
-No compatibility mode, blanket optional fields, or full-result reconstruction
-may substitute for that contract.
+Views chosen by the service during execution use Goa's tagged OneOf contract
+for tools and JSON resources. The original endpoint supplies the selected name;
+private server codecs encode only that view's fields. Catalog schemas, generated
+agent decoders and stored result validation preserve the same tag and branch
+requirements. Compiled HTTP checks cover default and detailed selections, two
+views with identical fields, missing/extra fields and empty viewed collections.
+Prompt, resource-template and completion conversions keep their flat protocol
+shape and reject any selectable view missing required operation fields during
+generation. Consumer codecs retain result decoding. Server generation emits only the
+payload decoding, result encoding, typed construction and validation that its
+adapters use; unused payload encoders and result decoders are removed. The
+assistant fixture is regenerated from that generator without hand-editing it. No compatibility mode, blanket optional fields or
+full-result reconstruction substitutes for the selected contract.
+The serial root race suite and quickstart, build, regenerated assistant fixture
+race suite and configured lint passed. A separate compiled HTTP acceptance check
+executes all three view selections through the generated MCP agent executor,
+encodes them with the result codec, round-trips the production workflow data
+converter, restores the invocation identity and validates transcript values.
+This proves the serialization contract, not a deployed Temporal cluster cutover.
 
 
 Current main's text-only execution restriction is preserved alongside MCP
@@ -204,10 +219,11 @@ runtime tests pass after moving current synthetic suspension fixtures to version
 | --- | --- | --- | --- |
 | Current discovery and unary tools | Implemented | Implemented | Generated executors and canonical specs |
 | Fixed text/JSON/binary reads, parameterized typed reads and static/method-backed prompts | Implemented | Generated typed clients; exact text/blob validation | No implicit conversion into agent tools |
-| Rich structured tool results | Generated declared JSON result | Generated tool/prompt and runtime clients preserve five content kinds, icons, metadata and exact structured JSON | Declared result codec |
+| Structured tool results and rich content | Generated declared JSON result; no authored rich-tool binding yet | Generated tool/prompt and runtime clients preserve five content kinds, icons, metadata and exact structured JSON | Structured result codec; generated executors currently discard rich content |
 | Prompt/resource argument completion | Typed `PromptCompletion` and `ResourceCompletion` method bindings | Generated `completion/complete` clients with bounded non-null string values | Client/user interaction; no model or terminal-answer routing |
 | Multi-round tool input | No producer advertised | Explicit unfinished result and successor request | Durable trusted form/URL/state-only continuation |
-| Tasks, subscriptions | Not advertised | No extension claimed | Capability milestones remain separate |
+| Subscriptions | Source bindings not implemented or advertised | HTTP and stdio `Listen` consumers implemented | Host callback owns observation; no implicit model tool |
+| Tasks | Not implemented or advertised | Consumer not implemented | Durable task milestone remains required |
 | OAuth and Apps | Host-owned dependencies; no built-in extension claimed | Host-built HTTP dependency | No grant/view ownership in the planner |
 
 Binary resources now use the existing `Resource` DSL and ordinary Goa byte
@@ -225,8 +241,8 @@ values and per-item priority bounds; MCP-specific decoding checks fields whose
 presence depends on the discriminator and the embedded text/blob choice.
 Resource-link icons and embedded metadata survive decoding. Runtime consumers
 also validate base64 and retain icons when copying tool errors. These are
-consumer capabilities; rich authored tool presentation remains
-required producer work. The ordinary Goa union envelope differs from MCP's flat
+direct-client capabilities. Rich authored tool presentation and the complete
+agent, storage and model-consumer path remain required work. The ordinary Goa union envelope differs from MCP's flat
 content envelope, so that producer design must explicitly own conversion rather
 than exposing untyped application callbacks.
 
@@ -388,6 +404,65 @@ protocol 10 and storage do not change. Service providers use the existing
 the replacement declaration and preserve already accepted calls. The Redis
 integration suite includes declaration replacement and saved-token behavior;
 no external catalog migration or deployed inventory has been verified here.
+
+## Rich tool content: complete path and provider constraints
+
+Direct callers preserve rich content, but the generated MCP agent executor reads
+only `StructuredContent` and drops `Content`. This is a verified consumer gap,
+not only an absent producer DSL. Adding an authored content binding alone cannot
+complete the capability.
+
+The implementation must preserve one ordered, typed content value alongside the
+structured result through these owners:
+
+1. The MCP caller validates five content variants and their metadata. The
+   generated executor keeps those values and decodes structured JSON with the
+   declared result codec. Tool failures also retain the returned content.
+2. The runtime materializes and validates the result, then copies content into
+   activity output, canonical result events and checkpoints. Private
+   `ServerData` stays private and cannot serve as a media channel.
+3. Durable event decoding, planner result restoration, successor-run restoration,
+   child results and host tool-end events keep the same order and metadata for
+   the same invocation. No consumer can rediscover a result by choosing the
+   latest event.
+4. Model history and transcript replay carry typed content inside the correlated
+   tool result. Message JSON decoding, deep copying and request-size accounting
+   include that content. The existing structured-result transcript omission rule
+   does not become a new per-media or run-wide limit.
+5. Provider adapters use their typed tool-result APIs. Resource links are
+   descriptions of references, not permission to fetch arbitrary addresses.
+   Unsupported media must fail explicitly while durable and host content remains
+   available; no base64-to-text substitution can claim the model saw media.
+
+Inspect `codegen/agent/templates/mcp_executor.go.tpl`,
+`runtime/agent/runtime/tool_result_materialization.go`, `runtime/agent/api/types.go`,
+`runtime/agent/hooks/codec.go`, `runtime/agent/runtime/workflow_suspension.go`,
+`runtime/agent/runtime/tool_output_hydration.go`, `runtime/agent/model/model.go`,
+`runtime/agent/transcript/runlog_replay.go` and `runtime/agent/stream/subscriber.go`.
+The activity and event envelopes currently contain structured results and private
+server data, with no rich-content field. The model tool-result contract likewise
+contains only semantic JSON and error status. Those contracts must change
+explicitly rather than hiding typed content inside `any`.
+
+The current provider documentation and installed SDK unions were checked before
+implementation. This table names tool-result support, not general user-message
+media support, and does not prove a configured model deployment accepts it.
+
+| Adapter | Verified tool-result representation | Constraint |
+| --- | --- | --- |
+| OpenAI Responses | String or typed array containing text, image and file items | The current SDK tool-result union has no audio variant. [Contract](https://developers.openai.com/api/docs/guides/function-calling) |
+| Anthropic | Nested text, image, document and search-result blocks | Content stays inside the matching tool result; the current union has no audio variant. [Contract](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls) |
+| Bedrock Converse | Text, JSON, image, document, search-result and video variants | Image support depends on the model; the current tool-result union has no audio variant. [Contract](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultContentBlock.html) |
+| Vertex Gen AI | Typed `FunctionResponse.Parts` containing inline or file data | Gemini 3 and later supports PNG/JPEG/WebP images and PDF/plain-text documents; the documented function-response media set excludes audio. [Contract](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/function-calling) |
+
+Acceptance must use all five content variants with ordering, empty text and
+bytes, annotations, icons and extension metadata; combine content with a typed
+structured result and test content-only and failed results. Verify canonical
+storage, worker replacement, successor restoration, transcript replay, host
+events, child forwarding and provider requests. Unsupported provider formats and
+malformed boundary values require explicit negative checks. This milestone
+remains incomplete until those paths are implemented; SDK availability alone is
+not completion evidence.
 
 ## Baseline before the upgrade
 

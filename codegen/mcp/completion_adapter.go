@@ -105,12 +105,12 @@ func bindCompletionConversions(services *goaservice.ServicesData, planned *plann
 	for _, completion := range data.Completions {
 		method := completion.method
 		sourceScope := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
-		if completion.Endpoint.ProjectedResult {
+		if completion.Endpoint.ProjectedResult || completion.Endpoint.ExecutionView {
 			sourceScope = services.ViewAttributor(planned.prepared.userService.Name, data.mcpImportPath)
 		}
 		source := &codegen.AttributeContext{Scope: sourceScope, UseDefault: true, Pointer: completion.resultLayout.Policy().Pointer}
 		values := planned.methodCodecs[method.Name]
-		completion.Codec = methodCodecData(values)
+		completion.Codec = methodCodecData(values, data.CodecPackage)
 		transport, err := values.payload.TransportTypeName(data.mcpImportPath, data.mcpPackage.ImportName)
 		if err != nil {
 			return err
@@ -129,7 +129,7 @@ func bindCompletionConversions(services *goaservice.ServicesData, planned *plann
 		if err := completion.transform.BindContexts(source, target); err != nil {
 			return err
 		}
-		completion.Conversion, completion.Helpers, err = completion.transform.Render("result", "out", true)
+		completion.Conversion, completion.Helpers, err = completion.transform.Render(completion.Endpoint.ResultValue, "out", true)
 		if err != nil {
 			return err
 		}
@@ -142,6 +142,15 @@ func bindCompletionConversions(services *goaservice.ServicesData, planned *plann
 func (g *adapterGenerator) buildCompletionAdapters() ([]*completionAdapter, error) {
 	adapters := make([]*completionAdapter, 0, len(g.mcp.PromptCompletions)+len(g.mcp.ResourceCompletions))
 	for _, completion := range g.mcp.PromptCompletions {
+		if err := validateExecutionViews(completion.Method, func(result *expr.AttributeExpr) error {
+			method := *completion.Method
+			method.Result = result
+			selected := *completion
+			selected.Method = &method
+			return selected.Validate()
+		}); err != nil {
+			return nil, err
+		}
 		if err := completion.Validate(); err != nil {
 			return nil, err
 		}
@@ -154,6 +163,15 @@ func (g *adapterGenerator) buildCompletionAdapters() ([]*completionAdapter, erro
 		adapters = append(adapters, &completionAdapter{ReferenceType: "ref/prompt", Reference: completion.Prompt, Argument: completion.Argument, method: completion.Method})
 	}
 	for _, completion := range g.mcp.ResourceCompletions {
+		if err := validateExecutionViews(completion.Method, func(result *expr.AttributeExpr) error {
+			method := *completion.Method
+			method.Result = result
+			selected := *completion
+			selected.Method = &method
+			return selected.Validate()
+		}); err != nil {
+			return nil, err
+		}
 		if err := completion.Validate(); err != nil {
 			return nil, err
 		}

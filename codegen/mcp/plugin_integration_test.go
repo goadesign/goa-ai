@@ -230,6 +230,13 @@ func TestRegisteredStringToolDecodesEveryControlCharacter(t *testing.T) {
 `
 
 func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
+	t.Run("fixed_views", func(t *testing.T) { runMCPPluginCorePlan(t, false) })
+	t.Run("execution_selected_views", func(t *testing.T) { runMCPPluginCorePlan(t, true) })
+}
+
+// runMCPPluginCorePlan compiles the same service contracts with fixed or
+// service-selected views and runs their generated HTTP clients and servers.
+func runMCPPluginCorePlan(t *testing.T, executionSelected bool) {
 	goaAIDirectory := testModuleDirectory(t, "goa.design/goa-ai")
 	goaDirectory := testModuleDirectory(t, "goa.design/goa/v3")
 	// The generated module is intentionally separate from the workspace that
@@ -269,6 +276,15 @@ func TestMCPPluginUsesCorePlanForAttachedService(t *testing.T) {
 	promptTypes = append(promptTypes, simpleText, simpleContent, simpleMessage, simpleResult)
 	templated, templateMethods := testService("templated", "read")
 	promptTypes = append(promptTypes, resourceReaderFixture(templateMethods["read"])...)
+	if executionSelected {
+		for _, method := range []*expr.MethodExpr{promptMethods["review"], promptMethods["empty"], promptMethods["complete_style"], templateMethods["read"]} {
+			result := method.Result.Type.(*expr.ResultTypeExpr)
+			if result.HasMultipleViews() {
+				continue
+			}
+			result.Views = append(result.Views, &expr.ViewExpr{Name: "detailed", Parent: result, AttributeExpr: expr.DupAtt(result.Views[0].AttributeExpr)})
+		}
+	}
 	resources, resourceMethods := testService("resources", "read_document")
 	blobs, blobMethods := testService("blobs", "read_image")
 	blobMethods["read_image"].Result = &expr.AttributeExpr{Type: expr.Bytes}
@@ -452,10 +468,10 @@ replace goa.design/goa/v3 => %s
 	codec, err := generatedRoot.ReadFile("mcp_calc/internal/codec/codec.go")
 	require.NoError(t, err)
 	require.Contains(t, string(codec), "func DecodeAddPayload(")
+	require.NotContains(t, string(codec), "func EncodeAddPayload(")
 	require.Contains(t, string(codec), "func EncodeAddResult(")
-	require.Contains(t, string(codec), "func DecodeAddResult(")
+	require.NotContains(t, string(codec), "func DecodeAddResult(")
 	require.Contains(t, string(codec), "func EncodeAddResult(in *calc.CalculationResponse)")
-	require.Contains(t, string(codec), "func DecodeAddResult(data []byte) (out *calc.CalculationResponse, err error)")
 	require.Contains(t, string(codec), "CalculationRequest")
 	require.Contains(t, string(codec), "Operand")
 	require.Contains(t, string(codec), "v *calc.Calculation")
@@ -486,7 +502,7 @@ replace goa.design/goa/v3 => %s
 	require.NoError(t, err)
 	require.Contains(t, string(formatterCodec), "func DecodeRenderPayload(")
 	require.Contains(t, string(formatterCodec), "func EncodeRenderResult(")
-	require.Contains(t, string(formatterCodec), "func DecodeRenderResult(")
+	require.NotContains(t, string(formatterCodec), "func DecodeRenderResult(")
 	formatterServer, err := generatedRoot.ReadFile("mcp_formatter/adapter_server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(formatterServer), "mcpcodec.DecodeRenderPayload(arguments)")
@@ -569,12 +585,27 @@ replace goa.design/goa/v3 => %s
 	require.NoError(t, registerTest.Close())
 	promptTest, err := generatedRoot.OpenFile("jsonrpc/mcp_method_prompts/client/method_prompt_test.go", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	require.NoError(t, err)
-	_, err = promptTest.WriteString(methodPromptGeneratedTestSource)
+	promptSource := methodPromptGeneratedTestSource
+	if executionSelected {
+		promptSource = strings.ReplaceAll(promptSource, "(*genprompts.AuthoredPromptResult,error)", "(*genprompts.AuthoredPromptResult,string,error)")
+		promptSource = strings.ReplaceAll(promptSource, "(*genprompts.AuthoredSuggestions,error)", "(*genprompts.AuthoredSuggestions,string,error)")
+		promptSource = strings.ReplaceAll(promptSource, `return nil,errors.New("configured`, `return nil,"detailed",errors.New("configured`)
+		promptSource = strings.ReplaceAll(promptSource, "return s.suggestions,s.failure", `return s.suggestions,"detailed",s.failure`)
+		promptSource = strings.ReplaceAll(promptSource, "return s.result,s.failure", `return s.result,"detailed",s.failure`)
+		promptSource = strings.ReplaceAll(promptSource, "return &genprompts.AuthoredPromptResult{},s.failure", `return &genprompts.AuthoredPromptResult{},"default",s.failure`)
+	}
+	_, err = promptTest.WriteString(promptSource)
 	require.NoError(t, err)
 	require.NoError(t, promptTest.Close())
 	readerTest, err := generatedRoot.OpenFile("jsonrpc/mcp_templated/client/resource_reader_test.go", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	require.NoError(t, err)
-	_, err = readerTest.WriteString(resourceReaderGeneratedTestSource)
+	readerSource := resourceReaderGeneratedTestSource
+	if executionSelected {
+		readerSource = strings.ReplaceAll(readerSource, "(*genreader.ReaderResult,error)", "(*genreader.ReaderResult,string,error)")
+		readerSource = strings.ReplaceAll(readerSource, `return nil,errors.New("configured`, `return nil,"detailed",errors.New("configured`)
+		readerSource = strings.ReplaceAll(readerSource, "return s.result,nil", `return s.result,"detailed",nil`)
+	}
+	_, err = readerTest.WriteString(readerSource)
 	require.NoError(t, err)
 	require.NoError(t, readerTest.Close())
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

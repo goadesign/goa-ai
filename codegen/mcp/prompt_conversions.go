@@ -166,7 +166,7 @@ func bindContentConversions(services *goaservice.ServicesData, planned *plannedM
 	targetScope := services.ServiceAttributor(planned.prepared.mcpService.Name, data.mcpImportPath)
 	for _, prompt := range data.MethodPrompts {
 		sourceScope := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
-		if prompt.Endpoint.ProjectedResult {
+		if prompt.Endpoint.ProjectedResult || prompt.Endpoint.ExecutionView {
 			sourceScope = services.ViewAttributor(planned.prepared.userService.Name, data.mcpImportPath)
 		}
 		result := expr.AsObject(prompt.resultAttribute.Type)

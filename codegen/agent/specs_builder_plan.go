@@ -157,11 +157,13 @@ type (
 		declaration  *goacodegen.TypeDeclaration
 	}
 
-	// localizedTypeKey keeps the same named type separate when its native-image
-	// and ordinary JSON transport fields differ. Public types always use model.
+	// localizedTypeKey shares Goa result views by their media identifier, which
+	// includes the selected view. Other named types retain their source identity.
+	// Native-image and ordinary JSON transport definitions stay separate.
 	localizedTypeKey struct {
-		source       goaexpr.UserType
-		jsonContract specJSONContract
+		resultIdentifier string
+		source           goaexpr.UserType
+		jsonContract     specJSONContract
 	}
 
 	// localizedSpecTypeShapes stores the public and JSON-decoding shapes used by

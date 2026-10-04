@@ -31,7 +31,7 @@ func TestGenerateMCPTransport_RendersUnaryToolsCall(t *testing.T) {
 	data.NeedsServerCodec = true
 	data.EndpointsName = "Endpoints"
 	data.Tools[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
-	data.Tools[0].Codec = &MethodCodecData{ResultEncode: "EncodeAddResult"}
+	data.Tools[0].Codec = &MethodCodecData{ResultEncode: testCodecPackage + ".EncodeAddResult"}
 
 	files := generateMCPTransport("example.com/calc/gen", svc, data)
 	require.NotEmpty(t, files)
@@ -59,7 +59,7 @@ func TestGenerateMCPTransport_RendersCurrentToolResults(t *testing.T) {
 				OutputSchema: `{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`,
 				Codec: &MethodCodecData{
 					PayloadDecode: "DecodeSummarizePayload",
-					ResultEncode:  "EncodeSummarizeResult",
+					ResultEncode:  "codec.EncodeSummarizeResult",
 				},
 			},
 		},

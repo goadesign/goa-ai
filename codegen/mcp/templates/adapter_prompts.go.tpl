@@ -103,13 +103,13 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
             span.SetStatus(codes.Error, err.Error())
             return nil, a.mapError(err)
         }
-        if err := {{ $.CodecPackage }}.{{ .Codec.ResultValidate }}(result); err != nil {
+        if err := {{ .Codec.ResultValidate }}(result); err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("internal_error", "%s", err.Error())
         }
-        messages := make([]*PromptMessage, 0, len(result.{{ .MessagesField }}))
-        for _, message := range result.{{ .MessagesField }} {
+        messages := make([]*PromptMessage, 0, len({{ .Endpoint.ResultValue }}.{{ .MessagesField }}))
+        for _, message := range {{ .Endpoint.ResultValue }}.{{ .MessagesField }} {
             content, err := {{ .ContentConversion }}(message.{{ .ContentField }})
             if err != nil {
                 span.RecordError(err)
@@ -121,11 +121,11 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
         response := &PromptsGetResult{ResultType: "complete", Meta: resultMeta(), Messages: messages}
         {{ if .DescriptionField }}
         {{ if .DescriptionPointer }}
-        if result.{{ .DescriptionField }} != nil {
-            response.Description = stringPtr(string(*result.{{ .DescriptionField }}))
+        if {{ .Endpoint.ResultValue }}.{{ .DescriptionField }} != nil {
+            response.Description = stringPtr(string(*{{ .Endpoint.ResultValue }}.{{ .DescriptionField }}))
         }
         {{ else }}
-        response.Description = stringPtr(string(result.{{ .DescriptionField }}))
+        response.Description = stringPtr(string({{ .Endpoint.ResultValue }}.{{ .DescriptionField }}))
         {{ end }}
         {{ end }}
         return response, nil

@@ -115,7 +115,7 @@ func (a *MCPAdapter) {{ .CallName }}(ctx context.Context{{ if .PayloadRef }}, pa
     if !ok {
         return zero, &endpointResultError{method: {{ quote .MethodName }}}
     }
-    return {{ if .ProjectedResult }}result.Projected{{ else if .ResultConstructor }}{{ .ResultConstructor }}(result){{ else }}result{{ end }}, nil
+    return {{ if .ProjectedResult }}result.Projected{{ else }}result{{ end }}, nil
     {{- else }}
     return err
     {{- end }}
@@ -133,4 +133,47 @@ type endpointResultError struct {
 func (e *endpointResultError) Error() string {
     return fmt.Sprintf("endpoint %s returned an unexpected Go result type", e.method)
 }
+{{- end }}
+
+{{- range .EndpointMethods }}
+{{- $endpoint := . }}
+{{- if .ExecutionView }}
+{{- with .Codec }}
+{{- if .ResultEncode }}
+// {{ .ResultEncode }} encodes the endpoint's selected view and its exact fields.
+// The declared OneOf tag keeps that choice visible to decoders and saved results.
+func {{ .ResultEncode }}(result {{ $endpoint.EndpointResultRef }}) ([]byte, error) {
+    switch result.View {
+    {{- range .ResultViews }}
+    case {{ quote .Name }}:
+        encoded, err := {{ $.CodecPackage }}.{{ .Encode }}(result.Projected)
+        if err != nil {
+            return nil, err
+        }
+        return json.Marshal(struct {
+            Type string `json:"type"`
+            Value json.RawMessage `json:"value"`
+        }{Type: {{ quote .Name }}, Value: json.RawMessage(encoded)})
+    {{- end }}
+    default:
+        return nil, fmt.Errorf("endpoint returned undeclared result view %q", result.View)
+    }
+}
+{{- end }}
+{{- if .ResultValidate }}
+// {{ .ResultValidate }} checks the fields of the endpoint's selected view
+// before a prompt, resource or suggestion is copied into its MCP response.
+func {{ .ResultValidate }}(result {{ $endpoint.EndpointResultRef }}) error {
+    switch result.View {
+    {{- range .ResultViews }}
+    case {{ quote .Name }}:
+        return {{ $.CodecPackage }}.{{ .Validate }}(result.Projected)
+    {{- end }}
+    default:
+        return fmt.Errorf("endpoint returned undeclared result view %q", result.View)
+    }
+}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- end }}

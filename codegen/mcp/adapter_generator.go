@@ -95,14 +95,12 @@ type (
 	// MethodCodecData names the generated JSON functions for one service method.
 	// Empty names mean the method has no value in that direction.
 	MethodCodecData struct {
-		// PayloadEncode converts a service payload into MCP JSON.
-		PayloadEncode string
 		// PayloadDecode converts MCP JSON into a validated service payload.
 		PayloadDecode string
 		// ResultEncode converts a service result into MCP JSON.
 		ResultEncode string
-		// ResultDecode converts MCP JSON into a validated service result.
-		ResultDecode string
+		// ResultViews records the declared execution-selected views.
+		ResultViews []*resultViewCodec
 		// ResultValidate checks the typed result before MCP conversion.
 		ResultValidate string
 	}

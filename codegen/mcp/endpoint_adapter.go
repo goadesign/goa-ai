@@ -27,8 +27,12 @@ type (
 		ResultRef string
 		// EndpointResultRef is the Go value returned by the endpoint.
 		EndpointResultRef string
-		// ResultConstructor copies an execution-selected view to its declared result type.
-		ResultConstructor string
+		// ExecutionView retains the view chosen by the original endpoint.
+		ExecutionView bool
+		// Codec encodes or validates the result under that view.
+		Codec *MethodCodecData
+		// ResultValue is the selected value used by typed content conversions.
+		ResultValue string
 		// ProjectedResult selects the view fields already returned by the endpoint.
 		ProjectedResult bool
 
@@ -53,7 +57,7 @@ func planEndpointAdapters(generation *codegen.Generation, services *goaservice.P
 				return err
 			}
 		}
-		call := &endpointMethodAdapter{method: method, CallName: fmt.Sprintf("invokeMCPMethod%d", index), DesignMethodName: method.Name}
+		call := &endpointMethodAdapter{method: method, CallName: fmt.Sprintf("invokeMCPMethod%d", index), DesignMethodName: method.Name, ResultValue: "result"}
 		for _, side := range []struct {
 			attribute *expr.AttributeExpr
 			layout    **codegen.GoTypePlan
@@ -114,7 +118,7 @@ func planEndpointAdapters(generation *codegen.Generation, services *goaservice.P
 }
 
 // bindEndpointAdapters uses Goa's saved declarations for selectors and type
-// references. A fixed view supplies its selected fields directly to its codec.
+// references. Viewed results keep their selected fields and the endpoint's view name.
 func bindEndpointAdapters(service *goaservice.Data, data *AdapterData) error {
 	data.EndpointsName = service.EndpointsDeclaration.Name()
 	for _, call := range data.EndpointMethods {
@@ -141,11 +145,15 @@ func bindEndpointAdapters(service *goaservice.Data, data *AdapterData) error {
 			if err != nil {
 				return fmt.Errorf("bind MCP endpoint view for %q: %w", call.method.Name, err)
 			}
-			call.EndpointResultRef = layout.Link(data.mcpImportPath, data.mcpPackage.ImportName).Ref()
+			// Goa returns collection wrappers by value and object wrappers by
+			// pointer. Keep that endpoint contract for the generated type check.
+			call.EndpointResultRef = layout.Link(data.mcpImportPath, data.mcpPackage.ImportName).RefWithPointer(!view.IsCollection)
 			if _, fixed := mcpcontract.FixedView(call.method); fixed {
 				call.ProjectedResult = true
 			} else {
-				call.ResultConstructor = data.Package + "." + view.ResultInit.Declaration.Name()
+				call.ExecutionView = true
+				call.ResultRef = call.EndpointResultRef
+				call.ResultValue = "result.Projected"
 			}
 		}
 	}

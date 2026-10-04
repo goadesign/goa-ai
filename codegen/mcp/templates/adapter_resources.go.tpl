@@ -41,7 +41,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
         {{- else if .TextResult }}
         text := string(result)
         {{- else }}
-        encoded, err := {{ $.CodecPackage }}.{{ .Codec.ResultEncode }}(result)
+        encoded, err := {{ .Codec.ResultEncode }}(result)
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
@@ -76,13 +76,13 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
             span.SetStatus(codes.Error, err.Error())
             return nil, a.mapError(err)
         }
-        if err := {{ $.CodecPackage }}.{{ .Codec.ResultValidate }}(result); err != nil {
+        if err := {{ .Codec.ResultValidate }}(result); err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("internal_error", "%s", err.Error())
         }
-        contents := make([]*ResourceContent, 0, len(result.{{ .ContentsField }}))
-        for _, item := range result.{{ .ContentsField }} {
+        contents := make([]*ResourceContent, 0, len({{ .Endpoint.ResultValue }}.{{ .ContentsField }}))
+        for _, item := range {{ .Endpoint.ResultValue }}.{{ .ContentsField }} {
             content, err := {{ .ContentConversion }}(item.{{ .ContentField }})
             if err != nil {
                 span.RecordError(err)

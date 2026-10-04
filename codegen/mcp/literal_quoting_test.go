@@ -60,7 +60,7 @@ func TestGeneratedAdapterQuotesStaticDSLText(t *testing.T) {
 	tools[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
 	tools[0].Codec = &MethodCodecData{
 		PayloadDecode: "DecodeSummarizePayload",
-		ResultEncode:  "EncodeSummarizeResult",
+		ResultEncode:  "codec.EncodeSummarizeResult",
 	}
 	data := &AdapterData{
 		CodecPackage:  "codec",

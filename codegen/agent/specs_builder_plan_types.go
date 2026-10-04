@@ -725,6 +725,10 @@ func (p *toolSpecsPackagePlan) declareTypeNames(key, preferred string, completio
 func (p *toolSpecsPackagePlan) declareLocalTypes(pkg *goacodegen.GeneratedPackage, declared map[localizedTypeKey]*goacodegen.TypeDeclaration, uses map[goaexpr.UserType]*goacodegen.NameDeclaration, types []*localizedType) error {
 	for _, localized := range types {
 		key := localizedTypeKey{source: localized.source, jsonContract: localized.jsonContract}
+		if result, ok := localized.source.(*goaexpr.ResultTypeExpr); ok {
+			key.resultIdentifier = result.Identifier
+			key.source = nil
+		}
 		if declaration := declared[key]; declaration != nil {
 			if err := pkg.BindGeneratedType(localized.generated, declaration); err != nil {
 				return err

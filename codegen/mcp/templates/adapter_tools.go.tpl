@@ -91,7 +91,7 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
             {{- end }}
             return toolCallError(failure.Error()), nil
         }
-        encoded, err := {{ $.CodecPackage }}.{{ .Codec.ResultEncode }}(result)
+        encoded, err := {{ .Codec.ResultEncode }}(result)
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())

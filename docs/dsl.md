@@ -1458,7 +1458,7 @@ context, interceptors and middleware. Static catalogs and prompts do not call
 an application endpoint. This replaces the constructor that accepted a bare
 service; regenerate and update application wiring together.
 
-### Fixed Goa result views
+### Goa result views
 
 A method with one Goa result view, or an explicit `Result(type, func() {
 View("name") })`, returns exactly that view's fields through MCP. The tool's
@@ -1469,9 +1469,23 @@ different views of the same result type, and each keeps its own field contract.
 
 Prompt, resource and completion views must retain the fields required by their
 MCP operation. Generation rejects a view that omits those fields. Regenerate
-servers and agent toolsets together when changing a view. Support for a service
-choosing among result views during execution remains an unfinished upgrade task;
-fixed-view support does not establish that path.
+servers and agent toolsets together when changing a view.
+
+When the service chooses among multiple views during execution, a tool or JSON
+resource returns Goa's tagged `OneOf` shape. For example, the `default` view
+returns `{"type":"default","value":{"visible":"shown"}}`, while a `detailed`
+view can retain additional fields inside `value`. The original endpoint supplies
+the view name; callers do not add a framework view argument. The advertised
+schema, generated agent decoder and stored result retain that name, even when
+two views contain identical fields. Each branch enforces its own required fields
+and rejects omitted fields. An empty viewed collection returns
+`{"type":"default","value":[]}`.
+
+Method-backed prompts, resource-template reads and completion still return their
+flat MCP protocol shape. Every selectable view must retain the fields required
+by that operation, and only the selected view is validated before conversion.
+Changing a fixed result to execution-selected views changes the result wire
+shape; regenerate servers and consumers and deploy them together.
 
 ### MCP progress from unary methods
 

@@ -76,7 +76,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
             span.SetStatus(codes.Error, err.Error())
             return nil, a.mapError(err)
         }
-        if err := {{ $.CodecPackage }}.{{ .Codec.ResultValidate }}(result); err != nil {
+        if err := {{ .Codec.ResultValidate }}(result); err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("internal_error", "%s", err.Error())

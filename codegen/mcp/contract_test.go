@@ -326,10 +326,10 @@ func TestPrepareServices_AcceptedMCPServiceAssignsEveryOriginalEndpoint(t *testi
 	data.CodecPackage = testCodecPackage
 	data.Tools[0].Codec = &MethodCodecData{
 		PayloadDecode: "DecodeAnalyzePayload",
-		ResultEncode:  "EncodeAnalyzeResult",
+		ResultEncode:  testCodecPackage + ".EncodeAnalyzeResult",
 	}
 	data.Resources[0].Codec = &MethodCodecData{
-		ResultEncode: "EncodeReadDocumentResult",
+		ResultEncode: testCodecPackage + ".EncodeReadDocumentResult",
 	}
 	data.EndpointsName = "Endpoints"
 	data.Tools[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}

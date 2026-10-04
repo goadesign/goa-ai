@@ -41,10 +41,8 @@ func TestBuildToolAdaptersClassifiesResultWireShape(t *testing.T) {
 func TestMCPToolResultContractGoldens(t *testing.T) {
 	codec := func(name string) *MethodCodecData {
 		return &MethodCodecData{
-			PayloadEncode: "Encode" + name + "Payload",
 			PayloadDecode: "Decode" + name + "Payload",
-			ResultEncode:  "Encode" + name + "Result",
-			ResultDecode:  "Decode" + name + "Result",
+			ResultEncode:  "mcpcodec.Encode" + name + "Result",
 		}
 	}
 	data := &AdapterData{

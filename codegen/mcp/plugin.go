@@ -1,6 +1,6 @@
 // Package codegen adds MCP services before Goa chooses Go names, then writes
-// files that register MCP tools, call the user service, and enforce MCP's HTTP
-// rules.
+// server and agent files that call configured service endpoints and enforce
+// MCP's HTTP rules.
 package codegen
 
 import (
@@ -42,10 +42,12 @@ type (
 	}
 
 	// plannedMethodCodec keeps each method side's codec and the exact Go layout
-	// supplied to it. Registration uses that layout for type-reference imports.
+	// supplied to it. Final service declarations supply its Go type references.
 	plannedMethodCodec struct {
-		payload *jsoncodec.Value
-		result  *jsoncodec.Value
+		payload  *jsoncodec.Value
+		result   *jsoncodec.Value
+		views    []*plannedResultView
+		endpoint *endpointMethodAdapter
 	}
 
 	// mcpPlugin stores the MCP services added during Prepare and the file data
@@ -411,6 +413,12 @@ func planMCPCodecs(
 	}
 	for _, method := range methods {
 		values := new(plannedMethodCodec)
+		for _, endpoint := range data.EndpointMethods {
+			if endpoint.method == method {
+				values.endpoint = endpoint
+				break
+			}
+		}
 		preferred := goacodegen.Goify(method.Name, true)
 		payloadDirection, resultDirection := mcpCodecDirections(data, method.Name)
 		if tool := toolMethods[method.Name]; tool != nil {
@@ -436,6 +444,15 @@ func planMCPCodecs(
 			}
 		}
 		if hasMCPValue(method.Result) && resultDirection != 0 {
+			_, fixed := mcpcontract.FixedView(method)
+			if _, viewed := method.Result.Type.(*expr.ResultTypeExpr); viewed && !fixed {
+				values.views, err = planExecutionViewCodecs(planned, services, method, resultDirection, preferred)
+				if err != nil {
+					return nil, nil, err
+				}
+				methodCodecs[method.Name] = values
+				continue
+			}
 			result, layout, layoutErr := planMCPResult(services, method)
 			if layoutErr != nil {
 				return nil, nil, fmt.Errorf("plan MCP result layout for method %q: %w", method.Name, layoutErr)
@@ -456,10 +473,8 @@ func planMCPCodecs(
 	for _, prompt := range data.MethodPrompts {
 		data.NeedsServerCodec = true
 		values := methodCodecs[prompt.prompt.Method.Name]
-		if values.result.ValidationDeclaration() == nil {
-			if err := values.result.PlanValidation(); err != nil {
-				return nil, nil, err
-			}
+		if err := values.planResultValidation(); err != nil {
+			return nil, nil, err
 		}
 		if values.payload != nil && values.payload.TransportConstructorDeclaration() == nil {
 			if err := values.payload.PlanTransportConstructor(); err != nil {
@@ -470,10 +485,8 @@ func planMCPCodecs(
 	if reader := data.ResourceReader; reader != nil {
 		data.NeedsServerCodec = true
 		values := methodCodecs[reader.method.Name]
-		if values.result.ValidationDeclaration() == nil {
-			if err := values.result.PlanValidation(); err != nil {
-				return nil, nil, err
-			}
+		if err := values.planResultValidation(); err != nil {
+			return nil, nil, err
 		}
 		if values.payload.TransportConstructorDeclaration() == nil {
 			if err := values.payload.PlanTransportConstructor(); err != nil {
@@ -484,10 +497,8 @@ func planMCPCodecs(
 	for _, completion := range data.Completions {
 		data.NeedsServerCodec = true
 		values := methodCodecs[completion.method.Name]
-		if values.result.ValidationDeclaration() == nil {
-			if err := values.result.PlanValidation(); err != nil {
-				return nil, nil, err
-			}
+		if err := values.planResultValidation(); err != nil {
+			return nil, nil, err
 		}
 		if values.payload.TransportConstructorDeclaration() == nil {
 			if err := values.payload.PlanTransportConstructor(); err != nil {
@@ -501,7 +512,7 @@ func planMCPCodecs(
 }
 
 // bindMCPCodecs joins codec types to Goa's final service declarations and adds
-// the chosen function names to the server and tool registration data.
+// the chosen function names to the server adapters.
 func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService) ([]*goacodegen.File, error) {
 	if planned.codecPlan == nil {
 		return nil, nil
@@ -518,12 +529,18 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 			}
 			writer := attributor
 			if value == values.result {
-				if _, fixed := mcpcontract.FixedView(method); fixed {
+				if _, viewed := method.Result.Type.(*expr.ResultTypeExpr); viewed {
 					writer = services.ViewAttributor(planned.prepared.userService.Name, planned.adapterData.CodecImportPath)
 				}
 			}
 			if err := value.BindService(writer); err != nil {
 				return nil, fmt.Errorf("bind MCP codec for method %q: %w", method.Name, err)
+			}
+		}
+		for _, view := range values.views {
+			writer := services.ViewAttributor(planned.prepared.userService.Name, planned.adapterData.CodecImportPath)
+			if err := view.value.BindService(writer); err != nil {
+				return nil, fmt.Errorf("bind MCP result view %q: %w", view.name, err)
 			}
 		}
 	}
@@ -538,41 +555,50 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 // bindMCPCodecData copies final generated function names to each mapped MCP
 // method and records which generated files import the private codec package.
 func bindMCPCodecData(data *AdapterData, methods map[string]*plannedMethodCodec) {
+	for _, endpoint := range data.EndpointMethods {
+		endpoint.Codec = methodCodecData(methods[endpoint.method.Name], data.CodecPackage)
+	}
 	for _, tool := range data.Tools {
-		tool.Codec = methodCodecData(methods[tool.userMethodName])
+		tool.Codec = methodCodecData(methods[tool.userMethodName], data.CodecPackage)
 	}
 	for _, resource := range data.Resources {
-		resource.Codec = methodCodecData(methods[resource.userMethodName])
+		resource.Codec = methodCodecData(methods[resource.userMethodName], data.CodecPackage)
 	}
 	for _, prompt := range data.MethodPrompts {
-		prompt.Codec = methodCodecData(methods[prompt.prompt.Method.Name])
+		prompt.Codec = methodCodecData(methods[prompt.prompt.Method.Name], data.CodecPackage)
 	}
 }
 
 // methodCodecData returns the final generated names for one service method.
-func methodCodecData(planned *plannedMethodCodec) *MethodCodecData {
-	if planned == nil || planned.payload == nil && planned.result == nil {
+func methodCodecData(planned *plannedMethodCodec, codecPackage string) *MethodCodecData {
+	if planned == nil || planned.payload == nil && planned.result == nil && len(planned.views) == 0 {
 		return nil
 	}
 	data := new(MethodCodecData)
 	if planned.payload != nil {
-		if declaration := planned.payload.EncodeDeclaration(); declaration != nil {
-			data.PayloadEncode = declaration.Name()
-		}
 		if declaration := planned.payload.DecodeDeclaration(); declaration != nil {
 			data.PayloadDecode = declaration.Name()
 		}
 	}
 	if planned.result != nil {
 		if declaration := planned.result.ValidationDeclaration(); declaration != nil {
-			data.ResultValidate = declaration.Name()
+			data.ResultValidate = codecPackage + "." + declaration.Name()
 		}
 		if declaration := planned.result.EncodeDeclaration(); declaration != nil {
-			data.ResultEncode = declaration.Name()
+			data.ResultEncode = codecPackage + "." + declaration.Name()
 		}
-		if declaration := planned.result.DecodeDeclaration(); declaration != nil {
-			data.ResultDecode = declaration.Name()
+	}
+	for _, view := range planned.views {
+		selected := &resultViewCodec{Name: view.name}
+		if declaration := view.value.EncodeDeclaration(); declaration != nil {
+			selected.Encode = declaration.Name()
+			data.ResultEncode = "encode" + planned.endpoint.CallName + "ViewResult"
 		}
+		if declaration := view.value.ValidationDeclaration(); declaration != nil {
+			selected.Validate = declaration.Name()
+			data.ResultValidate = "validate" + planned.endpoint.CallName + "ViewResult"
+		}
+		data.ResultViews = append(data.ResultViews, selected)
 	}
 	return data
 }
@@ -580,57 +606,38 @@ func methodCodecData(planned *plannedMethodCodec) *MethodCodecData {
 // mcpCodecDirections returns the conversions used by every MCP feature mapped
 // to methodName.
 func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Direction, jsoncodec.Direction) {
-	var payloadEncode, payloadDecode, resultEncode, resultDecode bool
+	var payload, result jsoncodec.Direction
 	for _, tool := range data.Tools {
 		if tool.userMethodName == methodName {
-			payloadEncode, payloadDecode = true, true
-			resultEncode, resultDecode = true, true
+			payload, result = jsoncodec.DecodeOnly, jsoncodec.EncodeOnly
 		}
 	}
 	for _, resource := range data.Resources {
 		if resource.userMethodName == methodName && !resource.TextResult && !resource.BinaryResult {
-			resultEncode = true
+			result = jsoncodec.EncodeOnly
 		}
 	}
+	needsConstruction := false
 	for _, prompt := range data.MethodPrompts {
-		if prompt.prompt.Method.Name != methodName {
-			continue
-		}
-		if payloadEncode || resultEncode {
-			return codecDirection(payloadEncode, payloadDecode), codecDirection(resultEncode, resultDecode)
-		}
-		return jsoncodec.ConstructOnly, jsoncodec.ValidateOnly
+		needsConstruction = needsConstruction || prompt.prompt.Method.Name == methodName
 	}
 	if reader := data.ResourceReader; reader != nil && reader.method.Name == methodName {
-		if payloadEncode || resultEncode {
-			return codecDirection(payloadEncode, payloadDecode), codecDirection(resultEncode, resultDecode)
-		}
-		return jsoncodec.ConstructOnly, jsoncodec.ValidateOnly
+		needsConstruction = true
 	}
 	for _, completion := range data.Completions {
-		if completion.method.Name == methodName {
-			if payloadEncode || resultEncode {
-				return codecDirection(payloadEncode, payloadDecode), codecDirection(resultEncode, resultDecode)
-			}
-			return jsoncodec.ConstructOnly, jsoncodec.ValidateOnly
+		needsConstruction = needsConstruction || completion.method.Name == methodName
+	}
+	if needsConstruction {
+		// Prompt, resource-template and suggestion inputs arrive in typed protocol
+		// fields. Their adapters need construction and validation, not JSON encoding.
+		if payload == 0 {
+			payload = jsoncodec.ConstructOnly
+		}
+		if result == 0 {
+			result = jsoncodec.ValidateOnly
 		}
 	}
-	return codecDirection(payloadEncode, payloadDecode), codecDirection(resultEncode, resultDecode)
-}
-
-// codecDirection converts the generation-time use flags to the codec plan's
-// direction.
-func codecDirection(encode, decode bool) jsoncodec.Direction {
-	switch {
-	case encode && decode:
-		return jsoncodec.EncodeAndDecode
-	case encode:
-		return jsoncodec.EncodeOnly
-	case decode:
-		return jsoncodec.DecodeOnly
-	default:
-		return 0
-	}
+	return payload, result
 }
 
 // mappedMCPMethods returns each original service method used by MCP once in
