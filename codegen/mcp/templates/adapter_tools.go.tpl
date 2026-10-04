@@ -30,7 +30,7 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
                 },
                 {{- end }}
                 InputSchema: json.RawMessage({{ quote .InputSchema }}),
-                {{- if .HasResult }}
+                {{- if .OutputSchema }}
                 OutputSchema: json.RawMessage({{ quote .OutputSchema }}),
                 {{- end }}
             },
@@ -91,7 +91,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
             {{- end }}
             return toolCallError(failure.Error()), nil
         }
+        {{- if .Content }}
+        content, encoded, err := {{ .Content.Name }}(result)
+        {{- else }}
         encoded, err := {{ .Codec.ResultEncode }}(result)
+        {{- end }}
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
@@ -100,7 +104,7 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
         return &ToolsCallResult{
             ResultType: "complete",
             Meta: resultMeta(),
-            Content: []*ContentItem{},
+            Content: {{ if .Content }}content{{ else }}[]*ContentItem{}{{ end }},
             StructuredContent: json.RawMessage(encoded),
         }, nil
         {{- else }}
@@ -122,4 +126,50 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
         return nil, goa.PermanentError("invalid_params", "unknown tool: %s", p.Name)
     }
 }
+{{- end }}
+
+{{- range .Tools }}
+{{- with .Content }}
+// {{ .Name }} validates the returned service value and separates content from
+// structured JSON. A service-selected view keeps both outputs within that view.
+func {{ .Name }}(result {{ .SourceRef }}) ([]*ContentItem, json.RawMessage, error) {
+    if err := {{ .Validate }}(result); err != nil { return nil, nil, err }
+    {{- if .ExecutionView }}
+    switch result.View {
+    {{- end }}
+    {{- $content := . }}
+    {{- range .Cases }}
+    {{- if $content.ExecutionView }}
+    case {{ quote .Name }}:
+    {{- end }}
+        content := []*ContentItem{}
+        {{- if .Field }}
+        for _, value := range {{ .Value }}.{{ .Field }} {
+            item, err := {{ .Convert }}(value.{{ .ElementField }})
+            if err != nil { return nil, nil, err }
+            content = append(content, item)
+        }
+        {{- end }}
+        {{- if .Encode }}
+        encoded, err := {{ .Encode }}({{ .Value }})
+        if err != nil { return nil, nil, err }
+        {{- if $content.ExecutionView }}
+        encoded, err = json.Marshal(struct {
+            Type string `json:"type"`
+            Value json.RawMessage `json:"value"`
+        }{Type: {{ quote .Name }}, Value: encoded})
+        if err != nil { return nil, nil, err }
+        {{- end }}
+        return content, encoded, nil
+        {{- else }}
+        return content, nil, nil
+        {{- end }}
+    {{- end }}
+    {{- if .ExecutionView }}
+    default:
+        return nil, nil, fmt.Errorf("endpoint returned undeclared result view %q", result.View)
+    }
+    {{- end }}
+}
+{{- end }}
 {{- end }}

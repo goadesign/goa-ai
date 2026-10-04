@@ -171,12 +171,12 @@ func {{ .Name }}(value {{ .SourceRef }}) ({{ .TargetRef }}, error) {
         {{ .Transform }}
         {{ if .CheckSize }}
         if out.Size != nil && (math.IsNaN(*out.Size) || math.IsInf(*out.Size, 0)) {
-            return nil, goa.PermanentError("invalid_content", "prompt resource size must be a finite JSON number")
+            return nil, goa.PermanentError("invalid_content", "resource size must be a finite JSON number")
         }
         {{ end }}
         {{ if .CheckPriority }}
         if out.Annotations != nil && out.Annotations.Priority != nil && (math.IsNaN(*out.Annotations.Priority) || math.IsInf(*out.Annotations.Priority, 0)) {
-            return nil, goa.PermanentError("invalid_content", "prompt content priority must be a finite JSON number")
+            return nil, goa.PermanentError("invalid_content", "content priority must be a finite JSON number")
         }
         {{ end }}
         {{ if $conversion.HasType }}out.Type = {{ quote .Name }}{{ end }}

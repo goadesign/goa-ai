@@ -17,7 +17,7 @@ func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.In
 	return &Caller{client: client, transport: transport}, nil
 }
 
-// CallTool sends the tool's exact arguments and returns its structured content.
+// CallTool sends exact arguments and returns validated content beside domain JSON.
 func (c *Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
 	payload := &mcpreports.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
 	request, err := c.client.BuildToolsCallRequest(ctx, payload)

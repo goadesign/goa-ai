@@ -338,8 +338,10 @@ old content type names in `runtime/mcp` are removed. Generated executors, saved
 agent results, child results and host events retain those blocks, including
 failed invocations. Model history, copying, replay and native provider encoding
 preserve supported content; unsupported media returns an explicit error. See
-[the content contract](docs/runtime.md#mcp-callers). Authored rich tool content,
-HTTP credential delivery and OAuth challenges remain release gates in the
+[the content contract](docs/runtime.md#mcp-callers). Methods author typed content
+with [ToolContent](docs/dsl.md#authored-mcp-tool-content); the attachment field is
+excluded from structured schemas, examples and codecs. HTTP credential delivery
+and server OAuth challenges remain release gates in the
 [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
 
 HTTP failures expose the received status and exact authorization challenges

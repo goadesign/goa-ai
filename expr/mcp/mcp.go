@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
 	"goa.design/goa/v3/eval"
@@ -59,6 +60,8 @@ type (
 		Description string
 		// Method is the Goa service method that implements this tool.
 		Method *expr.MethodExpr
+		// ContentField names the result array sent as MCP content instead of structured JSON.
+		ContentField string
 		// Annotations describes the tool behavior declared by its service author.
 		Annotations *ToolAnnotationsExpr
 	}
@@ -246,6 +249,27 @@ func (t *ToolExpr) Validate() error {
 	}
 	if t.Method != nil && hasValue(t.Method.Payload) && expr.AsObject(t.Method.Payload.Type) == nil {
 		verr.Add(t, "tool %q method %q payload must be an object", t.Name, t.Method.Name)
+	}
+	if t.ContentField != "" {
+		object := expr.AsObject(t.Method.Result.Type)
+		if object == nil || object.Attribute(t.ContentField) == nil {
+			verr.Add(t, "ToolContent(%q) must name a field on the method result", t.ContentField)
+		} else {
+			content := expr.AsArray(object.Attribute(t.ContentField).Type)
+			if content == nil || !content.NonNullableElems {
+				verr.Add(t, "ToolContent(%q) must use ArrayOfRequired with a required content OneOf field", t.ContentField)
+			} else {
+				element := expr.AsObject(content.ElemType.Type)
+				if element == nil || element.Attribute("content") == nil || expr.AsUnion(element.Attribute("content").Type) == nil || !content.ElemType.IsRequired("content") {
+					verr.Add(t, "ToolContent(%q) elements must declare a required content OneOf field", t.ContentField)
+				}
+			}
+			validation := expr.EffectiveValidation(object.Attribute(t.ContentField))
+			required := expr.EffectiveValidation(t.Method.Result)
+			if required != nil && slices.Contains(required.Required, t.ContentField) && (validation == nil || validation.MinLength == nil || *validation.MinLength < 1) {
+				verr.Add(t, "required ToolContent(%q) must declare MinLength(1)", t.ContentField)
+			}
+		}
 	}
 	if len(verr.Errors) > 0 {
 		return verr

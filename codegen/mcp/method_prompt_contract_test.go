@@ -22,6 +22,10 @@ import (
  genprompts "generated.local/gen/method_prompts"
  genmcpprompts "generated.local/gen/mcp_method_prompts"
  genserver "generated.local/gen/jsonrpc/mcp_method_prompts/server"
+ genrichspecs "generated.local/gen/method_prompts/toolsets/method_prompts"
+ genrichexec "generated.local/gen/method_prompts/toolsets/method_prompts/mcp"
+ agentruntime "goa.design/goa-ai/runtime/agent/runtime"
+ "goa.design/goa-ai/runtime/agent/tools"
  goahttp "goa.design/goa/v3/http"
  goa "goa.design/goa/v3/pkg"
  mcpruntime "goa.design/goa-ai/runtime/mcp"
@@ -36,6 +40,9 @@ type promptService struct {
  completionCalls int
  completionPayload *genprompts.CompleteStylePayload
  suggestions *genprompts.AuthoredSuggestions
+ richView string
+ richResult *genprompts.RichToolResult
+ contentResult *genprompts.ContentOnlyResult
 }
 func (s *promptService) CompleteStyle(ctx context.Context,p *genprompts.CompleteStylePayload)(*genprompts.AuthoredSuggestions,error) {
  if ctx.Value(configuredEndpointKey{})!=true{return nil,errors.New("configured completion middleware missing")}

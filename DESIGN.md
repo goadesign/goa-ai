@@ -2082,9 +2082,16 @@ runs only during design evaluation to validate syntax and derive completion
 names. Prompt and resource suggestions share one generated constructor and typed
 result conversion path. Fixed-resource dispatch remains exact.
 
-Tools still author structured results. Rich tool presentation,
-tasks, subscriptions and server-produced additional input
-require their own typed service bindings before they can be advertised.
+Tools select one typed attachment array with `ToolContent(field)`. Each item
+contains one required `content` OneOf, using the same content conversion as
+prompts. The marked field is absent from the structured result contract,
+including result examples and every selected Goa view. The configured original
+endpoint still returns its full typed result; generated code validates that
+result and converts content separately. A fixed result containing only the
+marked field returns content without structured JSON. Service-selected views
+retain their declared name and exclude content when that view omits the field.
+Tasks, subscriptions and server-produced additional input require their own
+typed service bindings before they can be advertised.
 See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
 [the upgrade plan](docs/mcp_protocol_upgrade_plan.md) for remaining proof and scope.
 

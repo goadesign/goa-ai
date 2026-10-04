@@ -113,6 +113,9 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err != nil {
 			return err
 		}
+		if err := planToolContent(plan.Generation(), servicePlan, prepared, adapter, codecPlan, methodCodecs); err != nil {
+			return err
+		}
 		if err := planMCPImports(plan.Generation(), adapter); err != nil {
 			return err
 		}
@@ -160,6 +163,9 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 			return nil, err
 		}
 		if err := bindContentConversions(services, planned); err != nil {
+			return nil, err
+		}
+		if err := bindToolContent(services, planned); err != nil {
 			return nil, err
 		}
 		if err := bindCompletionConversions(services, planned); err != nil {
@@ -544,6 +550,23 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 			}
 		}
 	}
+	for _, tool := range planned.adapterData.Tools {
+		if tool.Content == nil {
+			continue
+		}
+		writer := attributor
+		if _, viewed := tool.Content.tool.Method.Result.Type.(*expr.ResultTypeExpr); viewed {
+			writer = services.ViewAttributor(planned.prepared.userService.Name, planned.adapterData.CodecImportPath)
+		}
+		for _, selected := range tool.Content.Cases {
+			if selected.structured == nil {
+				continue
+			}
+			if err := selected.structured.BindService(writer); err != nil {
+				return nil, fmt.Errorf("bind tool %q structured result: %w", tool.Name, err)
+			}
+		}
+	}
 	bindMCPCodecData(planned.adapterData, planned.methodCodecs)
 	files, err := planned.codecPlan.Files("codec")
 	if err != nil {
@@ -609,7 +632,12 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 	var payload, result jsoncodec.Direction
 	for _, tool := range data.Tools {
 		if tool.userMethodName == methodName {
-			payload, result = jsoncodec.DecodeOnly, jsoncodec.EncodeOnly
+			payload = jsoncodec.DecodeOnly
+			if tool.Content == nil || result == jsoncodec.EncodeOnly {
+				result = jsoncodec.EncodeOnly
+			} else {
+				result = jsoncodec.ValidateOnly
+			}
 		}
 	}
 	for _, resource := range data.Resources {

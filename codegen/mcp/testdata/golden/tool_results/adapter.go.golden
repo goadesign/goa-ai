@@ -23,16 +23,14 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 				OutputSchema: json.RawMessage("{\"type\":\"object\",\"additionalProperties\":false}"),
 			},
 			{
-				Name:         "title",
-				Description:  stringPtr("Return a title"),
-				InputSchema:  json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-				OutputSchema: json.RawMessage(""),
+				Name:        "title",
+				Description: stringPtr("Return a title"),
+				InputSchema: json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
 			},
 			{
-				Name:         "tags",
-				Description:  stringPtr("Return report tags"),
-				InputSchema:  json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-				OutputSchema: json.RawMessage(""),
+				Name:        "tags",
+				Description: stringPtr("Return report tags"),
+				InputSchema: json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
 			},
 			{
 				Name:        "notify",

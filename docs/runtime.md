@@ -6528,9 +6528,10 @@ rejects non-finite authored priorities and resource sizes before response
 encoding, so clients receive an internal-error response.
 
 Generated MCP executors preserve validated `Content` in `planner.ToolResult.Blocks`
-while decoding domain JSON with the declared result codec. A method that declares
-a result must still return structured JSON; content alone cannot satisfy it.
-A method without a result can return content while omitting structured JSON.
+while decoding domain JSON with the declared result codec. A tool that declares
+structured fields must still return that JSON; content alone cannot satisfy it.
+A tool without structured fields can return content while omitting structured
+JSON, including a Goa method whose `ToolContent` field is its entire result.
 MCP tool failures also keep their returned blocks.
 
 Tool activities, externally supplied results, saved result events, planner outputs,
@@ -6541,7 +6542,11 @@ eleven stores content and verifies that the saved event and batch result agree;
 zero blocks has the same meaning whether its in-memory slice is nil or empty.
 Model history reads content from the accepted saved event for the exact call,
 including when the structured JSON is replaced by the existing omission preview.
-Authored rich tool content still requires its DSL and generated server conversion.
+Goa methods author rich content with [ToolContent](dsl.md#authored-mcp-tool-content).
+The generated adapter excludes the marked field from structured JSON, model
+schemas, examples and field metadata. Fixed and service-selected views retain
+only their selected content. Content-only methods use the same executor path
+without inventing an empty domain result.
 
 Model tool results now expose `model.ToolResultPart.Blocks` beside their semantic
 `Content`. Message JSON and independent copies retain every block, order and

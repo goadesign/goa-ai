@@ -136,6 +136,8 @@ type (
 		HasPayload bool
 		// HasResult reports whether the Goa method returns a result.
 		HasResult bool
+		// Content converts the authored content field for the selected view.
+		Content *toolContentAdapter
 		// InputSchema is the JSON Schema sent by tools/list.
 		InputSchema string
 		// Headers contains precomputed paths mirrored to HTTP headers.
@@ -143,8 +145,8 @@ type (
 		// ResultSchema is the JSON Schema used by the agent runtime for the
 		// authored result type.
 		ResultSchema string
-		// OutputSchema describes every authored result, including scalar and array roots.
-		// It is empty only when the method has no result.
+		// OutputSchema describes the structured fields, including scalar and array roots.
+		// It is empty when the tool returns only content or no result.
 		OutputSchema string
 		// Codec names the functions for the original method payload and result.
 		Codec *MethodCodecData
@@ -338,10 +340,21 @@ func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 			return nil, fmt.Errorf("tool %q header annotations: %w", tool.Name, err)
 		}
 		adapter.Headers = headers
-		if adapter.HasResult {
-			result, err := mcpcontract.Result(tool.Method)
+		if tool.ContentField != "" {
+			content, err := g.buildToolContentAdapter(tool)
 			if err != nil {
 				return nil, err
+			}
+			adapter.Content = content
+		}
+		if adapter.HasResult {
+			result, err := mcpcontract.ToolResult(tool)
+			if err != nil {
+				return nil, err
+			}
+			if !hasMCPValue(result) {
+				adapters = append(adapters, adapter)
+				continue
 			}
 			schema, err := jsonschema.Build(g.api, result, expr.MethodResultExampleIdentity(tool.Method))
 			if err != nil {

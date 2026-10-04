@@ -34,7 +34,7 @@ func populateMCPToolset(mcpRoot *mcpexpr.RootExpr, ts *ToolsetData) (bool, error
 		if tool.Method != nil {
 			payload = tool.Method.Payload
 			var err error
-			result, err = mcpcontract.Result(tool.Method)
+			result, err = mcpcontract.ToolResult(tool)
 			if err != nil {
 				return false, err
 			}

@@ -260,8 +260,9 @@ func runMCPPluginCorePlan(t *testing.T, executionSelected bool) {
 	fmtService, fmtMethods := testService("fmt", "echo", "health")
 	prompts, _ := testService("prompts")
 	staticPrompts, _ := testService("static_prompts")
-	methodPrompts, promptMethods := testService("method_prompts", "review", "empty", "complete_style")
+	methodPrompts, promptMethods := testService("method_prompts", "review", "empty", "complete_style", "rich", "content_only")
 	promptTypes := methodPromptFixture(promptMethods)
+	promptTypes = append(promptTypes, toolContentFixture(promptMethods)...)
 	promptTypes = append(promptTypes, promptCompletionFixture(promptMethods["complete_style"])...)
 	simplePrompt, simpleMethods := testService("simple_prompt", "build")
 	simpleText := promptFixtureType("SimpleText", &expr.Object{{Name: "text", Attribute: &expr.AttributeExpr{Type: expr.String}}}, "text")
@@ -277,13 +278,18 @@ func runMCPPluginCorePlan(t *testing.T, executionSelected bool) {
 	templated, templateMethods := testService("templated", "read")
 	promptTypes = append(promptTypes, resourceReaderFixture(templateMethods["read"])...)
 	if executionSelected {
-		for _, method := range []*expr.MethodExpr{promptMethods["review"], promptMethods["empty"], promptMethods["complete_style"], templateMethods["read"]} {
+		for _, method := range []*expr.MethodExpr{promptMethods["review"], promptMethods["empty"], promptMethods["complete_style"], promptMethods["rich"], templateMethods["read"]} {
 			result := method.Result.Type.(*expr.ResultTypeExpr)
 			if result.HasMultipleViews() {
 				continue
 			}
 			result.Views = append(result.Views, &expr.ViewExpr{Name: "detailed", Parent: result, AttributeExpr: expr.DupAtt(result.Views[0].AttributeExpr)})
 		}
+	}
+	if executionSelected {
+		result := promptMethods["rich"].Result.Type.(*expr.ResultTypeExpr)
+		summary := expr.AsObject(result.Type).Attribute("summary")
+		result.Views = append(result.Views, &expr.ViewExpr{Name: "summary", Parent: result, AttributeExpr: &expr.AttributeExpr{Type: &expr.Object{{Name: "summary", Attribute: summary}}}})
 	}
 	resources, resourceMethods := testService("resources", "read_document")
 	blobs, blobMethods := testService("blobs", "read_image")
@@ -385,8 +391,12 @@ func runMCPPluginCorePlan(t *testing.T, executionSelected bool) {
 			{Name: "empty", Description: "Return an empty message sequence", Method: promptMethods["empty"]},
 		},
 		PromptCompletions: []*mcpexpr.PromptCompletionExpr{{Prompt: "review", Argument: "style", Method: promptMethods["complete_style"]}},
-		Tools:             []*mcpexpr.ToolExpr{{Name: "empty-messages", Description: "Return the authored message record", Method: promptMethods["empty"]}},
-		Prompts:           []*mcpexpr.PromptExpr{{Name: "fixed", Messages: []*mcpexpr.MessageExpr{{Role: "assistant", Content: "Fixed instructions"}}}},
+		Tools: []*mcpexpr.ToolExpr{
+			{Name: "empty-messages", Description: "Return the authored message record", Method: promptMethods["empty"]},
+			{Name: "rich", Description: "Return domain data and content", Method: promptMethods["rich"], ContentField: "attachments"},
+			{Name: "content-only", Description: "Return content alone", Method: promptMethods["content_only"], ContentField: "attachments"},
+		},
+		Prompts: []*mcpexpr.PromptExpr{{Name: "fixed", Messages: []*mcpexpr.MessageExpr{{Role: "assistant", Content: "Fixed instructions"}}}},
 	})
 	mcpexpr.Root.RegisterMCP(prompts, &mcpexpr.MCPExpr{
 		Name:    "prompts",
@@ -585,11 +595,14 @@ replace goa.design/goa/v3 => %s
 	require.NoError(t, registerTest.Close())
 	promptTest, err := generatedRoot.OpenFile("jsonrpc/mcp_method_prompts/client/method_prompt_test.go", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	require.NoError(t, err)
-	promptSource := methodPromptGeneratedTestSource
+	promptSource := methodPromptGeneratedTestSource + toolContentGeneratedTestSource
 	if executionSelected {
+		promptSource = strings.ReplaceAll(promptSource, "(*genprompts.RichToolResult,error)", "(*genprompts.RichToolResult,string,error)")
+		promptSource = strings.ReplaceAll(promptSource, "return s.richResult,s.failure", `return s.richResult,s.richView,s.failure`)
 		promptSource = strings.ReplaceAll(promptSource, "(*genprompts.AuthoredPromptResult,error)", "(*genprompts.AuthoredPromptResult,string,error)")
 		promptSource = strings.ReplaceAll(promptSource, "(*genprompts.AuthoredSuggestions,error)", "(*genprompts.AuthoredSuggestions,string,error)")
 		promptSource = strings.ReplaceAll(promptSource, `return nil,errors.New("configured`, `return nil,"detailed",errors.New("configured`)
+		promptSource = strings.ReplaceAll(promptSource, `return nil,"detailed",errors.New("configured content middleware missing")`, `return nil,errors.New("configured content middleware missing")`)
 		promptSource = strings.ReplaceAll(promptSource, "return s.suggestions,s.failure", `return s.suggestions,"detailed",s.failure`)
 		promptSource = strings.ReplaceAll(promptSource, "return s.result,s.failure", `return s.result,"detailed",s.failure`)
 		promptSource = strings.ReplaceAll(promptSource, "return &genprompts.AuthoredPromptResult{},s.failure", `return &genprompts.AuthoredPromptResult{},"default",s.failure`)

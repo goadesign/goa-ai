@@ -83,6 +83,65 @@ required. There is no live target authorization configuration or telemetry for
 this greenfield framework path, so acceptance uses independent synthetic peers
 and actual generated clients without claiming deployed authorization behavior.
 
+### Server authorization: verified ownership and remaining design proof
+
+The exact merged Goa source supplies credential names from security annotations
+in `codegen/service/security_data.go`: Basic username/password, API-key fields
+for the declared scheme, Bearer tokens, JWT tokens and OAuth access tokens have
+distinct tags. The original payload, credential names, pointer representation,
+requiredness, scheme name and method scopes are already known during generation.
+An ordinary field named `token` without such an annotation remains domain input.
+The generated endpoint receives the original typed payload, calls its configured
+authentication function and passes the returned context to the service.
+`codegen/service/templates/service_endpoint_method.go.tpl` returns authentication
+errors unchanged. It also supports alternative authorization requirements and
+requirements containing several schemes. A generic error therefore does not
+identify an HTTP authorization status, a scope challenge or the scheme that must
+be used on the next request.
+
+The complete credential projection must cover these paths together:
+
+| Declared input or operation | Current verified behavior | Required terminal behavior and positive proof |
+| --- | --- | --- |
+| Secured tool with domain fields | Catalogs and codecs include the original credential field; the configured endpoint checks it | Model schema, examples, field metadata and exact codecs contain only domain arguments. The HTTP binding supplies the annotated credential before the same configured endpoint runs. Check exact domain input, authenticated context and one method authentication call. |
+| Payload containing only credentials | The framework treats it as a domain payload; fixed resources reject any payload | The domain input is empty while the original endpoint still receives its typed credential input. Check a secured fixed resource and a secured tool without invented arguments. |
+| Method-backed prompts, parameterized reads and completions | Original payload codecs and typed constructors retain all original fields | Apply the same projection and credential delivery; string-map, URI and suggestion contracts retain their existing meaning. |
+| Unannotated domain field named `token` | It is advertised, decoded and delivered to the service | Preserve it exactly and test it beside an annotated credential with a different field name. |
+| Basic or API-key security | Goa identifies distinct credential inputs and native transport bindings | Preserve the declared scheme's meaning. Never reinterpret an OAuth resource token as a password, API key or credential for a different owner. Establish the transport binding and supported authorization profile explicitly. |
+| Catalogs and discovery | Static generated methods do not call an original domain endpoint or expose its captured authentication function | Authenticate according to the authored service/resource policy without invoking a tool or resource as an authentication probe. A configured method endpoint is opaque; do not unwrap it or construct another endpoint set. |
+| Authentication failure | The original configured endpoint returns the callback's error unchanged | Preserve declared error meaning and produce the required HTTP status and challenge from an explicit typed contract. No string matching, guessed status or silent conversion into a completed tool error. |
+| Alternative or combined security requirements | Goa chooses the applicable requirement through its generated security flow | Preserve selection and exact required scopes. Do not merge every alternative's scopes into an overbroad authorization request. |
+
+The candidate architecture keeps authentication and method scopes with Goa,
+credential decoding with the generated transport, and OAuth resource metadata,
+token validation and challenges with the authorization owner. The configured
+original endpoints remain the execution dependencies. The current endpoint-only
+adapter constructor does not, by itself, give static catalog methods access to
+an authentication operation. Prove the smallest existing Goa composition path
+for that operation before adding a mechanism; if Goa lacks it, explain the
+necessary generic Goa change and its callers before implementation. A second
+application authentication callback is not a substitute for that proof.
+
+The original Goa endpoint validates selected service results before returning
+them, but returns those validation errors as ordinary input-validation errors.
+The existing `goa.ServiceError.Fault` contract already identifies server failures;
+no new public result-error type is needed. Goa must wrap the result-validation
+cause as a fault at that boundary, and MCP must honor that contract before
+mapping domain errors. The new ToolContent converter rejects invalid content it
+receives; earlier Goa view-validation failures still follow the original
+endpoint error path until that generic fix is integrated. Authentication error
+meaning requires its separate proof; neither classification may use error text.
+
+There is no deployed target configuration or telemetry for this new framework
+profile. Use complete synthetic generated-service paths for the design proof,
+then retain the separate external caller and worker cutover gate. The proof must
+include authorized catalog reads, malformed and missing credentials, invalid
+and expired tokens, insufficient scope, named domain errors, alternative schemes,
+credential-only inputs, ordinary fields with matching names and model-visible
+schema/codec agreement. Keep credentials, authorization proofs and HTTP requests
+out of workflow checkpoints, saved domain arguments and model input. These are
+open acceptance requirements, not implemented authorization claims.
+
 Fixed result views now use one selected field contract for catalog schemas,
 server encoding and generated agent decoding. An original endpoint returns
 already validated projected values; the MCP adapter encodes those values without
@@ -230,7 +289,7 @@ runtime tests pass after moving current synthetic suspension fixtures to version
 | --- | --- | --- | --- |
 | Current discovery and unary tools | Implemented | Implemented | Generated executors and canonical specs |
 | Fixed text/JSON/binary reads, parameterized typed reads and static/method-backed prompts | Implemented | Generated typed clients; exact text/blob validation | No implicit conversion into agent tools |
-| Structured tool results and rich content | Generated declared JSON result; no authored rich-tool binding yet | Generated tool/prompt and runtime clients preserve five content kinds, icons, metadata and exact structured JSON | Structured result codec; generated executors, activities, saved events, child results, model history and host events retain content |
+| Structured tool results and rich content | Generated declared JSON result plus typed ToolContent binding | Generated tool/prompt and runtime clients preserve five content kinds, icons, metadata and exact structured JSON | Structured result codec; generated executors, activities, saved events, child results, model history and host events retain content |
 | Prompt/resource argument completion | Typed `PromptCompletion` and `ResourceCompletion` method bindings | Generated `completion/complete` clients with bounded non-null string values | Client/user interaction; no model or terminal-answer routing |
 | Multi-round tool input | No producer advertised | Explicit unfinished result and successor request | Durable trusted form/URL/state-only continuation |
 | Subscriptions | Source bindings not implemented or advertised | HTTP and stdio `Listen` consumers implemented | Host callback owns observation; no implicit model tool |
@@ -244,7 +303,7 @@ Generated direct clients reject both/neither text/blob fields and malformed
 base64. The independent `resources-read-binary` scenario passed both operation
 and wire-schema checks on 2026-10-03. Compiled binary-only and mixed-resource
 clients and real generated HTTP scenarios passed. This completes the binary
-resource milestone; rich authored tool content remains separate.
+resource milestone. ToolContent now supplies the separate authored tool-content binding.
 
 Generated tool and prompt clients now use one `ContentItem` representation for
 all five content kinds. The generated schema declares field types, audience
@@ -252,10 +311,10 @@ values and per-item priority bounds; MCP-specific decoding checks fields whose
 presence depends on the discriminator and the embedded text/blob choice.
 Resource-link icons and embedded metadata survive decoding. Runtime consumers
 also validate base64 and retain icons when copying tool errors. These are
-direct-client capabilities. Rich authored tool presentation remains required;
-the agent, storage and model-consumer paths now retain content as described below. The ordinary Goa union envelope differs from MCP's flat
-content envelope, so that producer design must explicitly own conversion rather
-than exposing untyped application callbacks.
+direct-client capabilities. ToolContent now supplies typed authored tool
+presentation, and the agent, storage and model consumers retain content as
+described below. The generator converts Goa's typed union envelope to MCP's flat
+content envelope without exposing an untyped application callback.
 
 Method-backed prompts now use the `Prompt` method DSL with ordinary Goa string
 payloads and message results. The generator emits typed payload construction,
@@ -350,9 +409,9 @@ Open `_meta` data also makes these content-containing types ineligible for the
 generic standalone JSON helpers: `SupportsStandalone` excludes custom raw JSON
 fields. Repository callers use generated endpoints, not those helpers. The
 breaking upgrade removes the old standalone content/message/resource helpers;
-current consumers use the generated protocol endpoints. Rich authored tool methods
-must get a complete typed codec and protocol conversion rather than restoring
-text-only helpers or teaching service code to serialize MCP objects.
+current consumers use the generated protocol endpoints. ToolContent uses typed
+result validation and the shared content conversion; service code returns Goa
+values without serializing MCP objects.
 
 For this client increment, build and lint passed. The initial default parallel
 race run failed a killed generated-test subprocess, two Temporal non-yielding
@@ -421,7 +480,14 @@ no external catalog migration or deployed inventory has been verified here.
 The original generated MCP agent executor consumed only `StructuredContent` and
 dropped `Content`. That consumer gap is now closed: the executor keeps validated
 content beside domain JSON and preserves it on tool failures. The authored
-producer DSL remains required; consumer support alone does not complete it.
+producer uses `ToolContent(field)`: one typed attachment array becomes MCP
+content while remaining fields define structured JSON. Generated views,
+catalogs, agent specs, examples, field metadata and codecs exclude the marked
+field from that structured contract. Content conversion reuses the typed prompt
+converters; fixed content-only results omit structured JSON. Synthetic generated
+HTTP services and executors verify these paths, including a service-selected
+view that omits content. No model deployment or external caller cutover is
+claimed by those tests.
 
 The shared value foundation is implemented in `runtime/content`: the five
 existing variants now have one ordered `Blocks` JSON codec and independent
@@ -502,7 +568,8 @@ content-only and failed results. Additional tests cover provided results, native
 workflow conversion, saved hook records, independent host copies, checkpoint
 content disagreement, transcript replay and aggregate output budgets. This is
 synthetic framework evidence; it does not prove deployed provider acceptance or
-external caller cutover. Authored tool content remains a release gate.
+external caller cutover. The authored producer now has generated-service proof;
+full independent conformance and downstream cutover remain release gates.
 
 ## Baseline before the upgrade
 
@@ -877,9 +944,9 @@ error. The HTTP binding cannot infer this distinction from text. Use declared
 error contracts and their transport meaning; keep this decision open until the
 complete existing error mapping is traced. Invalid tokens, insufficient access
 and malformed authentication need distinct 401, 403 and 400 responses with
-intact challenges, rather than completed tool-error content. Shared HTTP callers
-currently parse protocol envelopes before retaining authorization challenges;
-fix this before claiming built-in OAuth. Credential refresh is an authorization
+intact challenges, rather than completed tool-error content. Shared HTTP callers now retain status and ordered authorization challenges
+through `HTTPResponseError`, including rejection before body decoding. Generated
+server challenges and built-in OAuth remain separate requirements. Credential refresh is an authorization
 operation, not a lost-response tool retry.
 
 OAuth clients must bind registration to the exact validated issuer and tokens
@@ -892,6 +959,29 @@ an upstream API. These are greenfield requirements, not evidence about deployed
 applications. Test issuer changes, two simultaneous resources/principals, scope
 changes for one operation and an ordinary sibling operation using its earlier
 grant. Do not promote one operation's challenge or retry allowance to all runs.
+
+The official Go SDK at `c1ed34844f98e4d0e7643ae398122d15d87ad865`
+separates its transport's token lookup from an authorization-code handler. Its
+`auth/authorization_code.go` still constructs old predefined authorization
+endpoints when metadata discovery fails, falls back to the MCP server as its
+issuer, supports deprecated Dynamic Client Registration, and exposes
+`AcceptUnadvertisedIss` to preserve an older issuer-validation policy. Those
+paths conflict with this current-only upgrade and must not be copied. A present
+matching issuer is accepted under the current specification even when the server
+did not advertise that response parameter; an advertised issuer parameter is
+required, and any mismatch is rejected before token exchange or error display.
+[SDK source](https://github.com/modelcontextprotocol/go-sdk/blob/c1ed34844f98e4d0e7643ae398122d15d87ad865/auth/authorization_code.go),
+[current issuer contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization#authorization-response-validation).
+
+The same SDK returns authorization success for an ordinary forbidden response,
+which lets its transport repeat that request without obtaining new credentials.
+This framework must preserve an ordinary forbidden response. Authorization
+retry follows an actual credential or consent change for the current resource;
+an insufficient-scope challenge is authoritative for that operation. Scope grants
+must be isolated by issuer, resource and host principal. Refresh operations use
+the active operation's cancellation context rather than permanently retaining
+an expired request context or creating an unbounded background request. These
+are design requirements, not implemented OAuth behavior.
 
 Authentication/consent remain host-owned. Self-reported client/server names, tool annotations, icon URLs, mirrored headers, and opaque continuation values do not grant authority. Preserve exact Origin validation. Do not fetch icon/schema URLs or follow arbitrary redirects while interpreting a tool result.
 

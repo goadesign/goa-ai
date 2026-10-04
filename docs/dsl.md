@@ -477,6 +477,7 @@ an estimate is not a context-window guarantee or a billing count.
 | ----------------------------------- | ---------------------------------- | ---------------------------------------------- |
 | `MCP(name, version)`       | Inside `Service`                   | Enables MCP protocol for the service           |
 | `Tool(name, description)`           | Inside `Method` (with MCP enabled) | Marks method as MCP tool                       |
+| `ToolContent(field)` | Inside an MCP method's `Tool` block | Sends a typed result array as MCP content, excluding it from structured JSON |
 | `Resource(name, uri, mime)`         | Inside `Method`                    | Marks method as MCP resource provider          |
 | `Prompt(name, description)` | Inside `Method` (with MCP enabled) | Exposes typed, parameterized MCP messages |
 | `StaticPrompt(name, desc, msgs...)` | Inside `Service` (with MCP)        | Defines static MCP prompt template             |
@@ -1722,7 +1723,68 @@ Generated tool and prompt clients can receive all five MCP content kinds,
 including media, links and embedded resources with annotations, icons and
 extension metadata. Their shared `ContentItem` retains absent versus empty
 content and rejects malformed selected variants. Method-backed prompts author
-these kinds through typed Goa results. Generated tools still return structured results; rich tool presentation is separate work.
+these kinds through typed Goa results. Tool methods use `ToolContent` to return
+typed attachments beside structured domain fields.
+
+### Authored MCP tool content
+
+Use `ToolContent(field)` inside a method's `Tool` block to select a top-level
+result array. Each element is an ordinary Goa object with one required
+`content` OneOf. The service returns typed values; generated code validates and
+converts each selected branch to MCP's flat content representation.
+
+```go
+var ReportText = Type("ReportText", func() {
+    Attribute("text", String, "Text shown to the recipient")
+    Required("text")
+})
+var ReportAttachment = Type("ReportAttachment", func() {
+    OneOf("content", "Selected report content", func() {
+        Attribute("text", ReportText, "Text content")
+    })
+    Required("content")
+})
+
+Service("reports", func() {
+    MCP("reports", "1.0")
+    JSONRPC(func() { POST("/reports") })
+    Method("read", func() {
+        Result(func() {
+            Attribute("summary", String, "Structured report summary")
+            Attribute("attachments", ArrayOfRequired(ReportAttachment), "Ordered content")
+            Required("summary")
+        })
+        Tool("read", "Read a report", func() {
+            ToolContent("attachments")
+        })
+    })
+})
+```
+
+This result advertises and returns `summary` as structured JSON. `attachments`
+becomes MCP `content`, retaining authored order and audience annotations. It is
+absent from the structured output schema, examples, field metadata and exact
+agent codecs. This separation also applies to user-only content, icons and
+extension metadata, which must not enter model requests as ordinary JSON.
+
+The supported union branches and their fields are the same as
+[method-backed prompt content](#method-backed-mcp-prompts): `text`, `image`,
+`audio`, `resource_link` and `resource`. Image/audio data and embedded resource
+blobs use `Bytes`; conversion writes base64 only at the protocol boundary.
+Extra fields with no MCP representation fail generation.
+
+An optional array can be empty. A required array must also declare
+`MinLength(1)`. `ArrayOfRequired` rejects null elements, and each item must select
+exactly one content branch. Goa result views select both domain fields and
+attachments. A view omitting the marked field returns no content. Fixed results
+with only that field return content without `structuredContent` or an output
+schema. Service-selected views retain the view name in the structured result,
+including views with no remaining domain fields.
+
+Regenerate servers and agent packages after adding the binding. The service
+method's typed result remains its Goa contract; generated MCP codecs use the
+separate structured result contract. There is no second result mode, untyped
+content field or compatibility decoder.
 
 ### MCP Capabilities
 
