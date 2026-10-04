@@ -32,8 +32,9 @@ type (
 		// Codec names the generated result validator.
 		Codec *MethodCodecData
 
-		method     *expr.MethodExpr
-		conversion *contentConversion
+		method          *expr.MethodExpr
+		conversion      *contentConversion
+		resultAttribute *expr.AttributeExpr
 	}
 )
 
@@ -70,10 +71,18 @@ func planResourceReader(generation *codegen.Generation, services *goaservice.Pla
 	if reader == nil {
 		return nil
 	}
-	layout, err := services.MethodTypeLayout(reader.method, reader.method.Result)
+	result, layout, err := planMCPResult(services, reader.method)
 	if err != nil {
 		return err
 	}
+	method := *reader.method
+	method.Result = result
+	selected := *prepared.mcp.ResourceTemplates[0]
+	selected.Method = &method
+	if err := selected.Validate(); err != nil {
+		return fmt.Errorf("resource reader selected result view: %w", err)
+	}
+	reader.resultAttribute = result
 	pkg := generation.Package(data.mcpImportPath)
 	imports := codegen.NewGeneratedImportPlan(pkg)
 	if err := imports.AddCompleteType(layout); err != nil {
@@ -85,6 +94,15 @@ func planResourceReader(generation *codegen.Generation, services *goaservice.Pla
 		}
 	}
 	target := expr.AsArray(expr.AsObject(prepared.mcpService.Method("resources/read").Result.Type).Attribute("contents").Type).ElemType
+	contents := expr.AsObject(result.Type).Attribute("contents")
+	if contents == nil {
+		return fmt.Errorf("resource reader selected view omits contents")
+	}
+	content := expr.AsObject(expr.AsArray(contents.Type).ElemType.Type).Attribute("content")
+	reader.conversion, err = buildContentConversion(content, target, false)
+	if err != nil {
+		return err
+	}
 	if err := planContentConversion(generation, pkg, reader.conversion, target, layout, "convertResourceContent"); err != nil {
 		return err
 	}
@@ -114,8 +132,11 @@ func bindResourceReader(services *goaservice.ServicesData, planned *plannedMCPSe
 		return err
 	}
 	source := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
+	if reader.Endpoint.ProjectedResult {
+		source = services.ViewAttributor(planned.prepared.userService.Name, data.mcpImportPath)
+	}
 	target := services.ServiceAttributor(planned.prepared.mcpService.Name, data.mcpImportPath)
-	contents := expr.AsObject(reader.method.Result.Type).Attribute("contents")
+	contents := expr.AsObject(reader.resultAttribute.Type).Attribute("contents")
 	reader.ContentsField = source.Field(contents, "contents", true)
 	content := expr.AsObject(expr.AsArray(contents.Type).ElemType.Type).Attribute("content")
 	reader.ContentField = source.Field(content, "content", true)

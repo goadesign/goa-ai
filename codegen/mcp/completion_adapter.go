@@ -47,8 +47,9 @@ type (
 		// Helpers contains the typed conversion functions used by that copy.
 		Helpers []*codegen.TransformFunctionData
 
-		method    *expr.MethodExpr
-		transform *codegen.TransformPlan
+		method       *expr.MethodExpr
+		transform    *codegen.TransformPlan
+		resultLayout *codegen.GoTypePlan
 	}
 )
 
@@ -62,14 +63,17 @@ func planCompletionConversions(generation *codegen.Generation, services *goaserv
 	pkg := generation.Package(data.mcpImportPath)
 	imports := codegen.NewGeneratedImportPlan(pkg)
 	for index, completion := range data.Completions {
-		layout, err := services.MethodTypeLayout(completion.method, completion.method.Result)
+		result, layout, err := planMCPResult(services, completion.method)
 		if err != nil {
 			return err
+		}
+		if expr.AsObject(result.Type).Attribute("values") == nil {
+			return fmt.Errorf("completion method %q selected view omits values", completion.method.Name)
 		}
 		if err := imports.AddCompleteType(layout); err != nil {
 			return err
 		}
-		transform, err := codegen.NewTransformPlan(completion.method.Result, target, "completion", nil)
+		transform, err := codegen.NewTransformPlan(result, target, "completion", nil)
 		if err != nil {
 			return err
 		}
@@ -82,7 +86,7 @@ func planCompletionConversions(generation *codegen.Generation, services *goaserv
 				return err
 			}
 		}
-		completion.transform = transform
+		completion.transform, completion.resultLayout = transform, layout
 	}
 	for _, importPath := range imports.Paths() {
 		if importPath != data.mcpImportPath {
@@ -96,12 +100,15 @@ func planCompletionConversions(generation *codegen.Generation, services *goaserv
 // typed result copy after Goa has assigned final service and field names.
 func bindCompletionConversions(services *goaservice.ServicesData, planned *plannedMCPService) error {
 	data := planned.adapterData
-	sourceScope := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
 	targetScope := services.ServiceAttributor(planned.prepared.mcpService.Name, data.mcpImportPath)
-	source := &codegen.AttributeContext{Scope: sourceScope, UseDefault: true}
 	target := &codegen.AttributeContext{Scope: targetScope, UseDefault: true}
 	for _, completion := range data.Completions {
 		method := completion.method
+		sourceScope := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
+		if completion.Endpoint.ProjectedResult {
+			sourceScope = services.ViewAttributor(planned.prepared.userService.Name, data.mcpImportPath)
+		}
+		source := &codegen.AttributeContext{Scope: sourceScope, UseDefault: true, Pointer: completion.resultLayout.Policy().Pointer}
 		values := planned.methodCodecs[method.Name]
 		completion.Codec = methodCodecData(values)
 		transport, err := values.payload.TransportTypeName(data.mcpImportPath, data.mcpPackage.ImportName)

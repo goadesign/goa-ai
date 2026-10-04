@@ -8,6 +8,7 @@ import (
 	"path"
 
 	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
+	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	goacodegen "goa.design/goa/v3/codegen"
 	goagenerator "goa.design/goa/v3/codegen/generator"
@@ -435,14 +436,14 @@ func planMCPCodecs(
 			}
 		}
 		if hasMCPValue(method.Result) && resultDirection != 0 {
-			layout, layoutErr := services.MethodTypeLayout(method, method.Result)
+			result, layout, layoutErr := planMCPResult(services, method)
 			if layoutErr != nil {
 				return nil, nil, fmt.Errorf("plan MCP result layout for method %q: %w", method.Name, layoutErr)
 			}
 			values.result, err = planned.Add(
 				prepared.userService.Name+":"+method.Name+":result",
 				preferred+"Result",
-				method.Result,
+				result,
 				layout,
 				resultDirection,
 			)
@@ -515,7 +516,13 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 			if value == nil {
 				continue
 			}
-			if err := value.BindService(attributor); err != nil {
+			writer := attributor
+			if value == values.result {
+				if _, fixed := mcpcontract.FixedView(method); fixed {
+					writer = services.ViewAttributor(planned.prepared.userService.Name, planned.adapterData.CodecImportPath)
+				}
+			}
+			if err := value.BindService(writer); err != nil {
 				return nil, fmt.Errorf("bind MCP codec for method %q: %w", method.Name, err)
 			}
 		}

@@ -19,9 +19,10 @@ func resourceReaderFixture(method *expr.MethodExpr) []expr.UserType {
 	}})
 	choice.Meta = expr.MetaExpr{"struct:pkg:path": {"resource/shared"}}
 	item := promptFixtureType("ReaderItem", &expr.Object{{Name: "content", Attribute: &expr.AttributeExpr{Type: choice}}}, "content")
-	result := promptFixtureType("ReaderResult", &expr.Object{{Name: "contents", Attribute: &expr.AttributeExpr{
+	resultShape := promptFixtureType("ReaderResult", &expr.Object{{Name: "contents", Attribute: &expr.AttributeExpr{
 		Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: item}, NonNullableElems: true},
 	}}})
+	result := fixedViewFixtureResult(resultShape)
 	method.Payload = &expr.AttributeExpr{Type: &expr.Object{{Name: "uri", Attribute: &expr.AttributeExpr{Type: uri}}}, Validation: &expr.ValidationExpr{Required: []string{"uri"}}}
 	method.Result = &expr.AttributeExpr{Type: result}
 	return []expr.UserType{uri, text, choice, item, result}

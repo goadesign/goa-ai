@@ -1458,6 +1458,21 @@ context, interceptors and middleware. Static catalogs and prompts do not call
 an application endpoint. This replaces the constructor that accepted a bare
 service; regenerate and update application wiring together.
 
+### Fixed Goa result views
+
+A method with one Goa result view, or an explicit `Result(type, func() {
+View("name") })`, returns exactly that view's fields through MCP. The tool's
+advertised output schema and generated agent result codec use those same fields
+and their required-field rules. A required field outside the selected view is
+omitted; it is never reconstructed as a zero value. Nested fields may select
+different views of the same result type, and each keeps its own field contract.
+
+Prompt, resource and completion views must retain the fields required by their
+MCP operation. Generation rejects a view that omits those fields. Regenerate
+servers and agent toolsets together when changing a view. Support for a service
+choosing among result views during execution remains an unfinished upgrade task;
+fixed-view support does not establish that path.
+
 ### MCP progress from unary methods
 
 Progress does not change a method's payload, result, or unary service interface.

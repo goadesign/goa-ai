@@ -2536,6 +2536,18 @@ error mapping. HTTP credential delivery and OAuth challenges remain unfinished
 release gates; endpoint composition alone does not establish MCP authorization
 conformance.
 
+Fixed MCP result views have one selected field contract shared by catalog
+schemas and agent specs. Server codecs consume the projected values already
+returned and validated by the original Goa endpoint. They do not convert a view
+back into a full authored result. Field selection retains Goa's declaration
+origins and actual pointer layouts. Different nested views receive separate
+private JSON types, even when they share one generated Goa view declaration;
+Goa's graph copier preserves those shapes and recursive references. Schema
+requirements apply per occurrence. A missing object result is rejected at the
+Goa endpoint before view conversion, while an empty collection remains valid.
+Execution-selected views require their own typed wire contract and remain a
+release gate.
+
 ## Error code mapping
 
 When an authored Goa method exposed as an MCP tool fails, the adapter returns a

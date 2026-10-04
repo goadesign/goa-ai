@@ -116,7 +116,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
                 span.SetStatus(codes.Error, err.Error())
                 return nil, goa.PermanentError("internal_error", "%s", err.Error())
             }
-            messages = append(messages, &PromptMessage{Role: string(message.{{ .RoleField }}), Content: content})
+            messages = append(messages, &PromptMessage{Role: string({{ if .RolePointer }}*{{ end }}message.{{ .RoleField }}), Content: content})
         }
         response := &PromptsGetResult{ResultType: "complete", Meta: resultMeta(), Messages: messages}
         {{ if .DescriptionField }}
@@ -181,7 +181,7 @@ func {{ .Name }}(value {{ .SourceRef }}) ({{ .TargetRef }}, error) {
         {{ end }}
         {{ if $conversion.HasType }}out.Type = {{ quote .Name }}{{ end }}
         {{ if .BytesField }}
-        encoded := base64.StdEncoding.EncodeToString(selected.{{ .BytesField }})
+        encoded := base64.StdEncoding.EncodeToString({{ if .BytesPointer }}*{{ end }}selected.{{ .BytesField }})
         out.{{ .TargetBytesField }} = &encoded
         {{ end }}
         {{ if .NestedConversion }}

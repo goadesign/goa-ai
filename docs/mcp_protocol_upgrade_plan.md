@@ -1,6 +1,6 @@
 # Upgrade goa-ai to MCP 2026-07-28
 
-Research and implementation plan, prepared 2026-10-02 and revised 2026-10-03 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
+Research and implementation plan, prepared 2026-10-02 and revised 2026-10-04 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
 
 ## Outcome and scope
 
@@ -18,7 +18,7 @@ The user explicitly requires a breaking upgrade with no compatibility or legacy 
 
 | Item | Evidence |
 | --- | --- |
-| Isolated clone | `/Users/raphael/src/goa-ai-mcp-upgrade` |
+| Isolated clone | a dedicated clone under the developer’s source directory |
 | Repository | `goadesign/goa-ai`, cloned from its remote rather than the dirty shared checkout |
 | Research starting commit | `52e69fd06b497f64b2d3d76ec58643a0db65b70f` |
 | Implementation starting commit | `f3f5203c1b5c5e5f30a9431172d9603ebe02a567` (remote `main`, including typed-output automatic tool choice) |
@@ -72,15 +72,41 @@ race suite, configured lint with zero issues, complete serial root race suite an
 quickstart, regenerated assistant fixture race suite and build passed. This does
 not complete credential-free schemas, HTTP credential delivery or OAuth challenges.
 
-Result views need a separate complete contract before release. A synthetic
-Goa result with a default view that omits a declared field fails the existing
-MCP schema generator because the full result codec and default-view schema
-disagree. Goa endpoints return validated selected fields, not the full service
-value. Converting that value back to the full result can invent zero values for
-omitted fields. Do not treat a passing full-field view test as proof of omitted
-field support. Resolve schemas, server encoding, generated agent decoding and
-stored results together; no view-specific compatibility mode or silent field
-reconstruction is acceptable.
+Fixed result views now use one selected field contract for catalog schemas,
+server encoding and generated agent decoding. An original endpoint returns
+already validated projected values; the MCP adapter encodes those values without
+reconstructing a full service result. Required omitted fields never become zero
+values. A compiled secured HTTP fixture verifies default and detailed views,
+different nested views of the same result type, missing required fields,
+rejection of omitted fields, and direct-client validation against advertised
+schemas. Prompt and resource fixtures exercise actual view pointers, located
+aliases and named unions, all five content kinds, completion values and empty
+collections. Recursive field selection retains its own references and leaves
+Goa's source type intact. The private codec uses Goa's existing graph copier
+rather than merging different selected shapes by their original declaration.
+The complete serial root race suite and quickstart, regenerated assistant
+fixture race suite, evaluation consumer and build passed against the exact
+merged remote Goa dependency. The MCP and agent generator suites and shared
+codec suite are included in the root checks. Configured lint reports zero issues. These checks establish fixed-view
+behavior, not execution-selected views or full release conformance.
+
+The required Goa generator fixes were verified in a separate isolated dependency
+clone: view package locations are removed before conversion identities are
+saved, named union validation retains the actual receiver, saved view layouts
+match their presence pointers, and missing object results fail at the endpoint
+before conversion. Empty collections remain valid. The complete uncached Goa
+root suite, configured lint and JSON-RPC integration suite passed with current
+dependencies. [Goa PR #4017](https://github.com/goadesign/goa/pull/4017) also passed
+its Linux and Windows CI matrix, CodeQL and dependency review before merging.
+The root and all three nested modules pin the merged source at
+`v3.32.1-0.20261004165214-99a12cec25bc`; no local Goa replacement remains.
+Build tools and CI actions use verified current releases.
+
+Views chosen by the service during execution remain a release gate. They need
+an honest typed wire contract shared by schemas, server encoding, generated
+agent decoders and stored results. A fixed-view test does not prove that path.
+No compatibility mode, blanket optional fields, or full-result reconstruction
+may substitute for that contract.
 
 
 Current main's text-only execution restriction is preserved alongside MCP
@@ -345,7 +371,7 @@ the two existing Go protobuf plugin pins already match the latest releases.
 The interrupted-SSE retry interpretation, external deployment inventory and
 cutover, all required capabilities, and website documentation remain release gates.
 The website belongs to `goadesign/goa.design`; its five translated MCP pages are
-being prepared in `/Users/raphael/src/goa-ai-mcp-website`. That repository requires
+being prepared in a separate documentation clone. That repository requires
 separate explicit authorization before PR creation. Local API/runtime, README,
 architecture, quickstart, and integration documentation are updated.
 No release or deployment has been performed. Review proceeds through a draft PR while these release gates remain open.
@@ -1075,7 +1101,7 @@ This is a breaking wire and generated-Go API change. Both locally generated side
 
 The isolated branch contains the implementation, regenerated consumers, dependency upgrades, tests, and this revised plan. Publish verified changes through a draft review PR and keep its description aligned with the current implementation and evidence. Commits and pushes may continue on that PR. Publication does not satisfy the release gates above.
 
-Keep the isolated clone until the work is complete and published without losing review work. After the task's PR is merged, use its actual base branch, verify a clean worktree and no commits in `git log @{upstream}..`, and remove the exact clone directory `/Users/raphael/src/goa-ai-mcp-upgrade`. If it contains uncommitted or unpushed work, stop and preserve it. This implements the user's cleanup request; do not delete the original shared checkout or delete the plan before publication.
+Keep the isolated clone until the work is complete and published without losing review work. After the task's PR is merged, use its actual base branch, verify a clean worktree and no commits in `git log @{upstream}..`, and remove only the verified task clone directory. If it contains uncommitted or unpushed work, stop and preserve it. This implements the user's cleanup request; do not delete the original shared checkout or delete the plan before publication.
 
 ### Definition of done
 

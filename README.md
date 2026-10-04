@@ -327,8 +327,11 @@ Generated MCP adapters accept the application's configured Goa endpoints.
 Authentication, method scopes, interceptors and endpoint middleware therefore run
 through the original service contract. Regenerate and replace bare-service
 adapter constructor calls; see [MCP server composition](docs/dsl.md#mcp-server-definition).
-HTTP credential delivery and OAuth challenges remain release gates in the
-[MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
+Fixed result views use the same selected fields in server output, advertised
+schemas and generated agent codecs, including different nested views of the
+same type. See [fixed result views](docs/dsl.md#fixed-goa-result-views).
+HTTP credential delivery, OAuth challenges and execution-selected result views
+remain release gates in the [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
 
 Application code owns planners, service behavior, authorization, side-effect
 idempotency, storage, and deployment. Deploy generated packages, callers, and

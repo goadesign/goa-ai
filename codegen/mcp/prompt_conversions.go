@@ -32,9 +32,26 @@ func planContentConversions(generation *codegen.Generation, services *goaservice
 	imports := codegen.NewGeneratedImportPlan(pkg)
 	conversions := make(map[*expr.AttributeExpr]*contentConversion)
 	for index, prompt := range data.MethodPrompts {
-		layout, err := services.MethodTypeLayout(prompt.prompt.Method, prompt.prompt.Method.Result)
+		result, layout, err := planMCPResult(services, prompt.prompt.Method)
 		if err != nil {
 			return err
+		}
+		method := *prompt.prompt.Method
+		method.Result = result
+		selected := *prompt.prompt
+		selected.Method = &method
+		if err := selected.Validate(); err != nil {
+			return fmt.Errorf("prompt %q selected result view: %w", prompt.Name, err)
+		}
+		prompt.resultAttribute, prompt.resultLayout = result, layout
+		messages := expr.AsObject(result.Type).Attribute("messages")
+		if messages == nil {
+			return fmt.Errorf("prompt %q selected view omits messages", prompt.Name)
+		}
+		message := expr.AsObject(expr.AsArray(messages.Type).ElemType.Type)
+		prompt.conversion, err = buildContentConversion(message.Attribute("content"), content, true)
+		if err != nil {
+			return fmt.Errorf("prompt %q selected result content: %w", prompt.Name, err)
 		}
 		if err := imports.AddCompleteType(layout); err != nil {
 			return err
@@ -146,23 +163,28 @@ func planContentConversion(generation *codegen.Generation, pkg *codegen.Generate
 // The adapter then fills arguments without serializing and parsing them again.
 func bindContentConversions(services *goaservice.ServicesData, planned *plannedMCPService) error {
 	data := planned.adapterData
-	sourceScope := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
 	targetScope := services.ServiceAttributor(planned.prepared.mcpService.Name, data.mcpImportPath)
 	for _, prompt := range data.MethodPrompts {
-		result := expr.AsObject(prompt.prompt.Method.Result.Type)
+		sourceScope := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
+		if prompt.Endpoint.ProjectedResult {
+			sourceScope = services.ViewAttributor(planned.prepared.userService.Name, data.mcpImportPath)
+		}
+		result := expr.AsObject(prompt.resultAttribute.Type)
 		messagesAttribute := result.Attribute("messages")
 		message := expr.AsObject(expr.AsArray(messagesAttribute.Type).ElemType.Type)
 		prompt.MessagesField = sourceScope.Field(messagesAttribute, "messages", true)
-		prompt.RoleField = sourceScope.Field(message.Attribute("role"), "role", true)
+		role := message.Attribute("role")
+		prompt.RoleField = sourceScope.Field(role, "role", true)
+		roleLayouts := prompt.resultLayout.PlansForOccurrence(role)
+		if len(roleLayouts) != 1 {
+			return fmt.Errorf("prompt role must have one planned field")
+		}
+		prompt.RolePointer = roleLayouts[0].IsPointer()
 		prompt.ContentField = sourceScope.Field(message.Attribute("content"), "content", true)
 		if description := result.Attribute("description"); description != nil {
-			// Goa chooses a pointer for an optional description and a value
-			// for a required or defaulted one. Retain that declared field shape.
-			layout, err := planned.servicePlan.MethodTypeLayout(prompt.prompt.Method, prompt.prompt.Method.Result)
-			if err != nil {
-				return err
-			}
-			matches := layout.PlansForOccurrence(description)
+			// Goa's saved layout records whether this selected description
+			// has a presence pointer. Keep that exact field representation.
+			matches := prompt.resultLayout.PlansForOccurrence(description)
 			if len(matches) != 1 {
 				return fmt.Errorf("prompt description must have one planned field")
 			}
@@ -199,7 +221,7 @@ func bindContentConversions(services *goaservice.ServicesData, planned *plannedM
 // bindContentConversion renders the typed branch copies after all names
 // are final. A validated service value cannot select an undeclared branch.
 func bindContentConversion(data *AdapterData, conversion *contentConversion, sourceScope, targetScope codegen.Attributor) error {
-	source := &codegen.AttributeContext{Scope: sourceScope, UseDefault: true}
+	source := &codegen.AttributeContext{Scope: sourceScope, UseDefault: true, Pointer: conversion.sourceLayout.Policy().Pointer}
 	target := &codegen.AttributeContext{Scope: targetScope, UseDefault: true}
 	linked := conversion.sourceLayout.Link(data.mcpImportPath, data.mcpPackage.ImportName)
 	conversion.data = &contentConversionData{
@@ -236,7 +258,13 @@ func bindContentConversion(data *AdapterData, conversion *contentConversion, sou
 			rendered.CheckPriority = expr.AsObject(annotations.Type).Attribute("priority") != nil
 		}
 		if branch.bytesField != "" {
-			rendered.BytesField = sourceScope.Field(object.Attribute(branch.bytesField), branch.bytesField, true)
+			bytesAttribute := object.Attribute(branch.bytesField)
+			rendered.BytesField = sourceScope.Field(bytesAttribute, branch.bytesField, true)
+			matches := conversion.sourceLayout.PlansForOccurrence(bytesAttribute)
+			if len(matches) != 1 {
+				return fmt.Errorf("content bytes must have one planned field")
+			}
+			rendered.BytesPointer = matches[0].IsPointer()
 			rendered.TargetBytesField = targetScope.Field(expr.AsObject(conversion.target.Type).Attribute(branch.bytesField), branch.bytesField, true)
 		}
 		if branch.metaField {

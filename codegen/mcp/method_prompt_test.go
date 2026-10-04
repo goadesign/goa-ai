@@ -70,10 +70,11 @@ func methodPromptFixture(methods map[string]*expr.MethodExpr) []expr.UserType {
 	}, "role", "content")
 	expr.AsObject(message.Type).Attribute("role").Meta = expr.MetaExpr{"struct:field:name": {"Author"}}
 	expr.AsObject(message.Type).Attribute("content").Meta = expr.MetaExpr{"struct:field:name": {"Selected"}}
-	result := promptFixtureType("AuthoredPromptResult", &expr.Object{
+	resultShape := promptFixtureType("AuthoredPromptResult", &expr.Object{
 		{Name: "description", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Prompt purpose"}},
 		{Name: "messages", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: message}, NonNullableElems: true}, Description: "Ordered prompt messages"}},
 	})
+	result := fixedViewFixtureResult(resultShape)
 	code := promptFixtureType("AuthoredCode", expr.String)
 	code.Validation = &expr.ValidationExpr{MinLength: new(1)}
 	methods["review"].Payload = &expr.AttributeExpr{Type: &expr.Object{
@@ -152,11 +153,20 @@ func promptCompletionFixture(method *expr.MethodExpr) []expr.UserType {
 		{Name: "value", Attribute: &expr.AttributeExpr{Type: value, Description: "Partial argument text", Meta: expr.MetaExpr{"struct:field:name": {"Partial"}}, Validation: &expr.ValidationExpr{MaxLength: new(20)}}},
 		{Name: "arguments", Attribute: &expr.AttributeExpr{Type: &expr.Map{KeyType: &expr.AttributeExpr{Type: key}, ElemType: &expr.AttributeExpr{Type: value}}, Description: "Prior values", Meta: expr.MetaExpr{"struct:field:name": {"Prior"}}}},
 	}, Validation: &expr.ValidationExpr{Required: []string{"value"}}}
-	result := promptFixtureType("AuthoredSuggestions", &expr.Object{
+	resultShape := promptFixtureType("AuthoredSuggestions", &expr.Object{
 		{Name: "values", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: expr.String}}, Description: "Ranked suggestions", Validation: &expr.ValidationExpr{MaxLength: new(100)}}},
 		{Name: "total", Attribute: &expr.AttributeExpr{Type: expr.Int64, Description: "All matches", Meta: expr.MetaExpr{"struct:field:name": {"Matches"}}}},
 		{Name: "hasMore", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "More matches exist"}},
 	})
+	result := fixedViewFixtureResult(resultShape)
 	method.Result = &expr.AttributeExpr{Type: result}
 	return []expr.UserType{key, value, result}
+}
+
+// fixedViewFixtureResult exercises Goa's pointer-backed view types while keeping
+// every authored field available to the existing content and suggestion checks.
+func fixedViewFixtureResult(shape *expr.UserTypeExpr) *expr.ResultTypeExpr {
+	result := &expr.ResultTypeExpr{UserTypeExpr: shape, Identifier: "application/vnd.fixture." + shape.Name()}
+	result.Views = []*expr.ViewExpr{{Name: expr.DefaultView, Parent: result, AttributeExpr: expr.DupAtt(shape.Attribute())}}
+	return result
 }

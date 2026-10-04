@@ -237,6 +237,21 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 		UseDefault: true,
 		Scope:      serviceWriter,
 	}
+	// Service-value codecs keep the exact Go fields supplied by Goa. Codecs
+	// for declarations created in this package use their original type writer.
+	if v.originalLayout == nil {
+		policy := v.serviceLayout.Policy()
+		serviceContext.Pointer = policy.Pointer
+		serviceContext.UseDefault = policy.UseDefault
+		serviceContext.IgnoreRequired = policy.IgnoreRequired
+		serviceContext.IgnoreRequiredCollections = policy.IgnoreRequiredCollections
+		serviceContext.UnionPointer = policy.UnionPointer
+		serviceContext.ArrayElementPointer = policy.ArrayElementPointer
+		serviceContext, err = serviceContext.WithGoTypeLayout(v.serviceLayout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName))
+		if err != nil {
+			return nil, nil, fmt.Errorf("link JSON value %q service layout: %w", v.key, err)
+		}
+	}
 	top := v.types[0]
 	data := &valueData{
 		Name:         v.preferredName,

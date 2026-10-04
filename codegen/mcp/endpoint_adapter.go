@@ -6,6 +6,7 @@ package codegen
 import (
 	"fmt"
 
+	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	"goa.design/goa/v3/codegen"
 	goaservice "goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/expr"
@@ -26,8 +27,10 @@ type (
 		ResultRef string
 		// EndpointResultRef is the Go value returned by the endpoint.
 		EndpointResultRef string
-		// ResultConstructor copies a selected Goa view to its declared result type.
+		// ResultConstructor copies an execution-selected view to its declared result type.
 		ResultConstructor string
+		// ProjectedResult selects the view fields already returned by the endpoint.
+		ProjectedResult bool
 
 		method        *expr.MethodExpr
 		payloadLayout *codegen.GoTypePlan
@@ -61,7 +64,13 @@ func planEndpointAdapters(generation *codegen.Generation, services *goaservice.P
 			if !hasMCPValue(side.attribute) {
 				continue
 			}
-			layout, err := services.MethodTypeLayout(method, side.attribute)
+			var layout *codegen.GoTypePlan
+			var err error
+			if side.attribute == method.Result {
+				_, layout, err = planMCPResult(services, method)
+			} else {
+				layout, err = services.MethodTypeLayout(method, side.attribute)
+			}
 			if err != nil {
 				return err
 			}
@@ -105,7 +114,7 @@ func planEndpointAdapters(generation *codegen.Generation, services *goaservice.P
 }
 
 // bindEndpointAdapters uses Goa's saved declarations for selectors and type
-// references. A viewed endpoint result is converted by Goa's existing constructor.
+// references. A fixed view supplies its selected fields directly to its codec.
 func bindEndpointAdapters(service *goaservice.Data, data *AdapterData) error {
 	data.EndpointsName = service.EndpointsDeclaration.Name()
 	for _, call := range data.EndpointMethods {
@@ -133,7 +142,11 @@ func bindEndpointAdapters(service *goaservice.Data, data *AdapterData) error {
 				return fmt.Errorf("bind MCP endpoint view for %q: %w", call.method.Name, err)
 			}
 			call.EndpointResultRef = layout.Link(data.mcpImportPath, data.mcpPackage.ImportName).Ref()
-			call.ResultConstructor = data.Package + "." + view.ResultInit.Declaration.Name()
+			if _, fixed := mcpcontract.FixedView(call.method); fixed {
+				call.ProjectedResult = true
+			} else {
+				call.ResultConstructor = data.Package + "." + view.ResultInit.Declaration.Name()
+			}
 		}
 	}
 	return nil

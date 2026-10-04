@@ -16,6 +16,7 @@ import (
 	goagrpc "goa.design/goa/v3/grpc"
 	goa "goa.design/goa/v3/pkg"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // Server implements the registrypb.RegistryServer interface.
@@ -89,8 +90,8 @@ func (s *Server) DeclareServiceToolset(ctx context.Context, message *registrypb.
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.DeclareServiceToolsetH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "admission_conflict":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
@@ -123,8 +124,8 @@ func (s *Server) AttachProvider(ctx context.Context, message *registrypb.AttachP
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.AttachProviderH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "admission_conflict":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
@@ -159,8 +160,8 @@ func (s *Server) Register(ctx context.Context, message *registrypb.RegisterReque
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.RegisterH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "admission_blocked":
 				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
@@ -195,8 +196,8 @@ func (s *Server) RenewProvider(ctx context.Context, message *registrypb.RenewPro
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.RenewProviderH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "provider_lease_lost":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
@@ -225,8 +226,8 @@ func (s *Server) ReleaseProvider(ctx context.Context, message *registrypb.Releas
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.ReleaseProviderH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "service_unavailable":
 				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
@@ -253,8 +254,8 @@ func (s *Server) DrainProvider(ctx context.Context, message *registrypb.DrainPro
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.DrainProviderH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "service_unavailable":
 				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
@@ -281,8 +282,8 @@ func (s *Server) Unregister(ctx context.Context, message *registrypb.UnregisterR
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.UnregisterH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "admission_conflict":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
@@ -331,8 +332,8 @@ func (s *Server) RegisterAgentToolset(ctx context.Context, message *registrypb.R
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.RegisterAgentToolsetH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "admission_conflict":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
@@ -363,8 +364,8 @@ func (s *Server) ReplaceAgentToolset(ctx context.Context, message *registrypb.Re
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.ReplaceAgentToolsetH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "admission_conflict":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
@@ -416,8 +417,8 @@ func (s *Server) GetToolset(ctx context.Context, message *registrypb.GetToolsetR
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.GetToolsetH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "not_found":
 				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
@@ -444,8 +445,8 @@ func (s *Server) ResolveToolset(ctx context.Context, message *registrypb.Resolve
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.ResolveToolsetH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "not_found":
 				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
@@ -474,8 +475,8 @@ func (s *Server) CheckAdmission(ctx context.Context, message *registrypb.CheckAd
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.CheckAdmissionH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "service_unavailable":
 				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
@@ -522,8 +523,8 @@ func (s *Server) CallTool(ctx context.Context, message *registrypb.CallToolReque
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.CallToolH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "not_found":
 				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
@@ -556,8 +557,8 @@ func (s *Server) CallResolvedTool(ctx context.Context, message *registrypb.CallR
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.CallResolvedToolH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "not_found":
 				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
@@ -592,8 +593,8 @@ func (s *Server) RetryTool(ctx context.Context, message *registrypb.RetryToolReq
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.RetryToolH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "not_found":
 				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
@@ -626,8 +627,8 @@ func (s *Server) CompleteToolCall(ctx context.Context, message *registrypb.Compl
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.CompleteToolCallH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
@@ -656,8 +657,8 @@ func (s *Server) PublishToolOutputDelta(ctx context.Context, message *registrypb
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.PublishToolOutputDeltaH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
@@ -686,8 +687,8 @@ func (s *Server) ReportToolCallOverload(ctx context.Context, message *registrypb
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.ReportToolCallOverloadH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
@@ -716,8 +717,8 @@ func (s *Server) ClaimToolCall(ctx context.Context, message *registrypb.ClaimToo
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.ClaimToolCallH.Handle(ctx, message)
 	if err != nil {
-		var en goa.GoaErrorNamer
-		if errors.As(err, &en) {
+		en, _, _ := errorOwner(err)
+		if en != nil {
 			switch en.GoaErrorName() {
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
@@ -728,4 +729,77 @@ func (s *Server) ClaimToolCall(ctx context.Context, message *registrypb.ClaimToo
 		return nil, goagrpc.EncodeError(err)
 	}
 	return resp.(*registrypb.ClaimToolCallResponse), nil
+}
+
+// errorOwner finds the name and value that supply a declared response.
+// If an error lists several causes, only a named error outside that list can
+// supply the response. Otherwise, the caller receives generic complete details.
+func errorOwner(err error) (goa.GoaErrorNamer, error, bool) {
+	var name goa.GoaErrorNamer
+	var owner error
+	var explicit interface{ GRPCStatus() *status.Status }
+	for current := err; current != nil; {
+		if name == nil {
+			if explicit == nil {
+				explicit, _ = current.(interface{ GRPCStatus() *status.Status })
+			}
+			if candidate, ok := current.(goa.GoaErrorNamer); ok {
+				name, owner = candidate, current
+			}
+		}
+		next, independent := nextError(current)
+		if independent {
+			if name == nil || (explicit != nil && explicit.GRPCStatus() != nil) {
+				return nil, nil, false
+			}
+			return name, owner, true
+		}
+		current = next
+	}
+
+	// If every error has at most one cause, keep the first name found through
+	// custom As methods. A status supplied before that name takes precedence.
+	statusSeen := false
+	for current := err; current != nil; {
+		if !statusSeen {
+			if explicit, ok := current.(interface{ GRPCStatus() *status.Status }); ok {
+				statusSeen = true
+				if explicit.GRPCStatus() != nil {
+					return nil, nil, false
+				}
+			}
+		}
+		if name, ok := current.(goa.GoaErrorNamer); ok {
+			return name, err, false
+		}
+		if as, ok := current.(interface{ As(any) bool }); ok {
+			var name goa.GoaErrorNamer
+			if as.As(&name) {
+				if name == nil {
+					panic("custom As returned a nil error name")
+				}
+				return name, err, false
+			}
+		}
+		current, _ = nextError(current)
+	}
+	return nil, nil, false
+}
+
+// nextError follows one non-nil cause. Several cause entries remain
+// independent even when they have equal values, names, or status codes.
+func nextError(err error) (error, bool) {
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		var next error
+		for _, cause := range joined.Unwrap() {
+			if cause != nil {
+				if next != nil {
+					return nil, true
+				}
+				next = cause
+			}
+		}
+		return next, false
+	}
+	return errors.Unwrap(err), false
 }

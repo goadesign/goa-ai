@@ -6461,6 +6461,14 @@ method scopes and authenticated context under Goa's ownership. Regenerate and
 replace bare-service constructor calls when upgrading. This endpoint composition
 does not complete the pending HTTP credential-delivery and OAuth challenge work.
 
+For a fixed Goa result view, server encoding, the advertised result schema and
+the generated agent decoder use only the selected fields. Required fields in
+that view remain required. Fields outside the view are rejected if they appear
+in the decoded response; they are never restored as zero values. Nested
+occurrences of the same result type can retain different views. A missing object returned by a service is an internal
+error; empty collections remain valid. Views selected during service execution
+still need a complete typed result contract before release.
+
 Generated JSON-RPC clients use the same transport implementation. Their tool
 caller is constructed with `NewCaller(client, clientInfo, inputSupport, retryPolicy)`.
 The generated client supplies precomputed tool bindings from the same design

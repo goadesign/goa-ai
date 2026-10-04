@@ -128,7 +128,11 @@ func buildToolsetData(
 		}
 		switch ts.MCP.Source {
 		case agentsExpr.MCPSourceGoa:
-			if !populateMCPToolset(mcpRoot, ts) {
+			populated, err := populateMCPToolset(mcpRoot, ts)
+			if err != nil {
+				return nil, err
+			}
+			if !populated {
 				return nil, fmt.Errorf(
 					"toolset %q could not resolve Goa-defined MCP toolset %q on service %q",
 					expr.Name,

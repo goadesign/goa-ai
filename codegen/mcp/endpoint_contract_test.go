@@ -62,10 +62,20 @@ var access=JWTSecurity("access",func(){
 })
 var viewed=ResultType("application/vnd.endpoint.record",func(){
  TypeName("ViewedRecord")
- Description("A synthetic record whose default view includes its declared fields")
+ Description("A synthetic record whose default view omits a required detailed field")
  Field(1,"visible",String,"The value returned through the default view")
- Required("visible")
+ Field(2,"hidden",String,"A required value available only in the detailed view")
+ Required("visible","hidden")
  View("default",func(){Attribute("visible")})
+ View("detailed",func(){Attribute("visible");Attribute("hidden")})
+})
+var nested=ResultType("application/vnd.endpoint.nested",func(){
+ TypeName("NestedRecord")
+ Description("Two occurrences of the same result type with different fixed views")
+ Field(1,"summary",viewed,"The default record view",func(){View("default")})
+ Field(2,"detail",viewed,"The detailed record view",func(){View("detailed")})
+ Required("summary","detail")
+ View("default",func(){Attribute("summary");Attribute("detail")})
 })
 var observe=Interceptor("observe")
 var _=API("endpoint_contract",func(){Description("Verify original endpoint composition")})
@@ -104,6 +114,18 @@ var _=Service("secured",func(){
   Tool("viewed","Return a synthetic record through its selected view")
   JSONRPC(func(){})
  })
+ Method("detailed",func(){
+  Description("Return both required fields through the fixed detailed view")
+  Result(viewed,func(){View("detailed")})
+  Tool("detailed","Return the synthetic detailed record")
+  JSONRPC(func(){})
+ })
+ Method("nested",func(){
+  Description("Return independent nested views of the same record type")
+  Result(nested)
+  Tool("nested","Return a record summary and details")
+  JSONRPC(func(){})
+ })
  Method("echo",func(){
   Description("Preserve a domain field whose spelling resembles a credential")
   Payload(func(){Field(1,"token",String,"A domain token with no security annotation");Required("token")})
@@ -125,6 +147,7 @@ import (
  genservice "endpoint-contract.local/gen/secured"
  genmcp "endpoint-contract.local/gen/mcp_secured"
  genserver "endpoint-contract.local/gen/jsonrpc/mcp_secured/server"
+ genspecs "endpoint-contract.local/gen/secured/toolsets/endpoint_contract"
  "goa.design/goa-ai/runtime/mcp"
  goahttp "goa.design/goa/v3/http"
  goa "goa.design/goa/v3/pkg"
@@ -146,8 +169,15 @@ func(s *service)Read(ctx context.Context,p *genservice.ReadPayload)(string,error
 }
 func(s *service)Ping(ctx context.Context)(string,error){s.pings.Add(1);if ctx.Value(middlewareKey{})!="configured"{return "",errors.New("middleware missing")};return "ready",nil}
 func(s *service)Notify(ctx context.Context,p *genservice.NotifyPayload)error{s.notices.Add(1);if ctx.Value(middlewareKey{})!="configured"||p.Key!="record"{return errors.New("domain input or middleware lost")};return nil}
-func(s *service)Viewed(ctx context.Context)(*genservice.ViewedRecord,error){if ctx.Value(middlewareKey{})!="configured"{return nil,errors.New("middleware missing")};return &genservice.ViewedRecord{Visible:"shown"},nil}
+func(s *service)Viewed(ctx context.Context)(*genservice.ViewedRecord,error){if ctx.Value(middlewareKey{})!="configured"{return nil,errors.New("middleware missing")};return &genservice.ViewedRecord{Visible:"shown",Hidden:"must-not-leak"},nil}
+func(s *service)Detailed(ctx context.Context)(*genservice.ViewedRecord,error){if ctx.Value(middlewareKey{})!="configured"{return nil,errors.New("middleware missing")};return &genservice.ViewedRecord{Visible:"shown",Hidden:"detail"},nil}
 func(s *service)Echo(ctx context.Context,p *genservice.EchoPayload)(string,error){s.echoes.Add(1);if ctx.Value(middlewareKey{})!="configured"{return "",errors.New("middleware missing")};return p.Token,nil}
+func(s *service)Nested(context.Context)(*genservice.NestedRecord,error){
+ return &genservice.NestedRecord{
+  Summary:&genservice.ViewedRecord{Visible:"summary",Hidden:"must-not-leak"},
+  Detail:&genservice.ViewedRecord{Visible:"detail",Hidden:"retained"},
+ },nil
+}
 type interceptors struct {calls atomic.Int64}
 func(i *interceptors)Observe(ctx context.Context,info genservice.ObserveInfo,next goa.Endpoint)(any,error){i.calls.Add(1);return next(ctx,info.RawPayload())}
 func TestConfiguredEndpoints(t *testing.T){
@@ -155,7 +185,7 @@ func TestConfiguredEndpoints(t *testing.T){
  i:=&interceptors{}
  endpoints:=genservice.NewEndpoints(s,i)
  var middlewareCalls atomic.Int64
- endpoints.Use(func(next goa.Endpoint)goa.Endpoint{return func(ctx context.Context,input any)(any,error){middlewareCalls.Add(1);if ctx.Value(goa.ServiceKey)!="secured"{return nil,errors.New("original service identity lost")};method,ok:=ctx.Value(goa.MethodKey).(string);if !ok{ return nil,errors.New("original method identity missing")};switch method{case "read","ping","notify","echo","viewed":default:return nil,errors.New("original method identity lost")};return next(context.WithValue(ctx,middlewareKey{},"configured"),input)}})
+ endpoints.Use(func(next goa.Endpoint)goa.Endpoint{return func(ctx context.Context,input any)(any,error){middlewareCalls.Add(1);if ctx.Value(goa.ServiceKey)!="secured"{return nil,errors.New("original service identity lost")};method,ok:=ctx.Value(goa.MethodKey).(string);if !ok{ return nil,errors.New("original method identity missing")};switch method{case "read","ping","notify","echo","viewed","detailed","nested":default:return nil,errors.New("original method identity lost")};return next(context.WithValue(ctx,middlewareKey{},"configured"),input)}})
  mux:=goahttp.NewMuxer()
  var mapped atomic.Int64
  adapter:=genmcp.NewMCPAdapter(endpoints,&genmcp.MCPAdapterOptions{ErrorMapper:func(err error)error{mapped.Add(1);return err}})
@@ -170,17 +200,56 @@ func TestConfiguredEndpoints(t *testing.T){
   {"notify","{\"key\":\"record\"}","",false},
   {"echo","{\"token\":\"domain-value\"}","\"domain-value\"",false},
   {"viewed","{}","{\"visible\":\"shown\"}",false},
+ {"detailed","{}","{\"visible\":\"shown\",\"hidden\":\"detail\"}",false},
+ {"nested","{}","{\"summary\":{\"visible\":\"summary\"},\"detail\":{\"visible\":\"detail\",\"hidden\":\"retained\"}}",false},
  }{
   result,err:=caller.CallTool(t.Context(),httpServer.URL+"/mcp",mcp.CallRequest{Tool:test.name,Payload:json.RawMessage(test.args)})
   var failure *mcp.ToolExecutionError
   failed:=errors.As(err,&failure)
   if failed!=test.failure||!test.failure&&err!=nil||string(result.StructuredContent)!=test.want{t.Fatalf("%s result=%+v err=%v",test.name,result,err)}
  }
- if s.checks.Load()!=2||s.reads.Load()!=1||s.pings.Load()!=1||s.notices.Load()!=1||s.echoes.Load()!=1||i.calls.Load()!=6||middlewareCalls.Load()!=6{t.Fatalf("checks=%d reads=%d pings=%d notices=%d echoes=%d interceptors=%d middleware=%d",s.checks.Load(),s.reads.Load(),s.pings.Load(),s.notices.Load(),s.echoes.Load(),i.calls.Load(),middlewareCalls.Load())}
+ if s.checks.Load()!=2||s.reads.Load()!=1||s.pings.Load()!=1||s.notices.Load()!=1||s.echoes.Load()!=1||i.calls.Load()!=8||middlewareCalls.Load()!=8{t.Fatalf("checks=%d reads=%d pings=%d notices=%d echoes=%d interceptors=%d middleware=%d",s.checks.Load(),s.reads.Load(),s.pings.Load(),s.notices.Load(),s.echoes.Load(),i.calls.Load(),middlewareCalls.Load())}
+ // The generated agent decoder uses the same required fields as each selected view.
+ foundViews := 0
+ for _, spec := range genspecs.Specs() {
+  var valid string
+  var invalid []string
+  switch spec.Name {
+  case "endpoint-contract.viewed":
+   valid = "{\"visible\":\"shown\"}"
+   invalid = []string{"{}", "{\"hidden\":\"detail\"}", "{\"visible\":\"shown\",\"hidden\":\"must-not-leak\"}"}
+  case "endpoint-contract.detailed":
+   valid = "{\"visible\":\"shown\",\"hidden\":\"detail\"}"
+   invalid = []string{"{}", "{\"visible\":\"shown\"}", "{\"hidden\":\"detail\"}"}
+  case "endpoint-contract.nested":
+   valid = "{\"summary\":{\"visible\":\"summary\"},\"detail\":{\"visible\":\"detail\",\"hidden\":\"retained\"}}"
+   invalid = []string{
+    "{\"summary\":{\"visible\":\"summary\"},\"detail\":{\"visible\":\"detail\"}}",
+    "{\"summary\":{\"visible\":\"summary\",\"hidden\":\"must-not-leak\"},\"detail\":{\"visible\":\"detail\",\"hidden\":\"retained\"}}",
+   }
+  default:
+   continue
+  }
+  foundViews++
+  value,err:=spec.Result.Codec.FromJSON([]byte(valid))
+  if err!=nil{t.Fatalf("%s decode selected view: %v",spec.Name,err)}
+  encoded,err:=spec.Result.Codec.ToJSON(value)
+  if err!=nil||string(encoded)!=valid{t.Fatalf("%s encode selected view=%s err=%v",spec.Name,encoded,err)}
+  for _,input:=range invalid{
+   if _,err:=spec.Result.Codec.FromJSON([]byte(input));err==nil{t.Fatalf("%s accepted invalid selected view: %s",spec.Name,input)}
+  }
+ }
+ if foundViews!=3 {t.Fatalf("generated fixed-view result specs: %d",foundViews)}
  // Invalid arguments must not enter endpoint middleware or authentication.
  result,err:=caller.CallTool(t.Context(),httpServer.URL+"/mcp",mcp.CallRequest{Tool:"read",Payload:json.RawMessage("{\"access_token\":\"authorized\"}")})
  var invalid *mcp.ToolExecutionError
- if !errors.As(err,&invalid)||s.checks.Load()!=2||middlewareCalls.Load()!=6{t.Fatalf("invalid arguments result=%+v err=%v",result,err)}
+ if !errors.As(err,&invalid)||s.checks.Load()!=2||middlewareCalls.Load()!=8{t.Fatalf("invalid arguments result=%+v err=%v",result,err)}
+ // The direct client validates both responses against the server's advertised schemas.
+ direct,err:=mcp.NewHTTPCaller(mcp.HTTPOptions{Endpoint:httpServer.URL+"/mcp",Client:httpServer.Client(),ClientInfo:mcp.ClientInfo{Name:"selected-view-client",Version:"1"}})
+ if err!=nil{t.Fatal(err)}
+ for _,name:=range []string{"viewed","detailed","nested"}{
+  if _,err:=direct.CallTool(t.Context(),mcp.CallRequest{Tool:name,Payload:json.RawMessage("{}")});err!=nil{t.Fatalf("%s advertised result contract: %v",name,err)}
+ }
  // A custom endpoint's wrong Go type must fail before result conversion.
  endpoints.Ping=func(context.Context,any)(any,error){return 42,nil}
  _,err=caller.CallTool(t.Context(),httpServer.URL+"/mcp",mcp.CallRequest{Tool:"ping",Payload:json.RawMessage("{}")})

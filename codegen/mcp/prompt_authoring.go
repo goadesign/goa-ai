@@ -40,13 +40,17 @@ type (
 		DescriptionPointer bool
 		// RoleField names the message role.
 		RoleField string
+		// RolePointer records the generated view's presence pointer for the role.
+		RolePointer bool
 		// ContentField names the message's OneOf value.
 		ContentField string
 		// ContentConversion names the generated OneOf-to-MCP function.
 		ContentConversion string
 
-		prompt     *mcpexpr.MethodPromptExpr
-		conversion *contentConversion
+		prompt          *mcpexpr.MethodPromptExpr
+		conversion      *contentConversion
+		resultAttribute *expr.AttributeExpr
+		resultLayout    *codegen.GoTypePlan
 	}
 	// PromptArgumentAdapter describes one statically known prompt argument.
 	PromptArgumentAdapter struct {
@@ -100,6 +104,7 @@ type (
 		Getter           string
 		Transform        string
 		BytesField       string
+		BytesPointer     bool
 		TargetBytesField string
 		ResourceField    string
 		NestedConversion string

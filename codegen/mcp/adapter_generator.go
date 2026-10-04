@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"goa.design/goa-ai/codegen/internal/jsonschema"
+	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/internal/mcpprotocol"
 	"goa.design/goa/v3/codegen"
@@ -340,7 +341,11 @@ func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 		}
 		adapter.Headers = headers
 		if adapter.HasResult {
-			schema, err := jsonschema.Build(g.api, tool.Method.Result, expr.MethodResultExampleIdentity(tool.Method))
+			result, err := mcpcontract.Result(tool.Method)
+			if err != nil {
+				return nil, err
+			}
+			schema, err := jsonschema.Build(g.api, result, expr.MethodResultExampleIdentity(tool.Method))
 			if err != nil {
 				return nil, fmt.Errorf("build output schema for tool %q: %w", tool.Name, err)
 			}

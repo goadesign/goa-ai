@@ -115,7 +115,7 @@ func (a *MCPAdapter) {{ .CallName }}(ctx context.Context{{ if .PayloadRef }}, pa
     if !ok {
         return zero, &endpointResultError{method: {{ quote .MethodName }}}
     }
-    return {{ if .ResultConstructor }}{{ .ResultConstructor }}(result){{ else }}result{{ end }}, nil
+    return {{ if .ProjectedResult }}result.Projected{{ else if .ResultConstructor }}{{ .ResultConstructor }}(result){{ else }}result{{ end }}, nil
     {{- else }}
     return err
     {{- end }}

@@ -10,6 +10,7 @@ import (
 	"path"
 	"slices"
 
+	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	"goa.design/goa-ai/codegen/ir"
 	"goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
@@ -487,7 +488,11 @@ func expandToolExpressions(mcpRoot *mcpexpr.RootExpr, name string, expr *agent.T
 		}
 		if tool.Method != nil {
 			planned.Args = tool.Method.Payload
-			planned.Return = tool.Method.Result
+			var err error
+			planned.Return, err = mcpcontract.Result(tool.Method)
+			if err != nil {
+				return nil, err
+			}
 		}
 		tools = append(tools, planned)
 	}

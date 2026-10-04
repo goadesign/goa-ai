@@ -35,7 +35,9 @@ func TestPopulateMCPToolsetUsesPassedRoot(t *testing.T) {
 			},
 		},
 	}
-	require.True(t, populateMCPToolset(exact, toolset))
+	populated, err := populateMCPToolset(exact, toolset)
+	require.NoError(t, err)
+	require.True(t, populated)
 	require.Len(t, toolset.Tools, 1)
 	require.Equal(t, "exact", toolset.Tools[0].Name)
 }
