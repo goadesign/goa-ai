@@ -126,6 +126,7 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 		ScopeName:                toolset,
 		Bounds:                   boundsData(tool.Bounds, tool.Method),
 		ModelHiddenPayloadFields: slices.Clone(tool.InjectedFields),
+		UIOnlyFields:             slices.Clone(tool.UIOnlyFields),
 	}
 	payload := tool.Args
 	if payload == nil || payload.Type == nil || payload.Type == goaexpr.Empty {
@@ -138,6 +139,18 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 		modelOwner := *owner
 		modelOwner.ModelHiddenPayloadFields = modelHiddenPayloadFields(tool)
 		if err := p.declareTypeImports(&modelOwner, payload, usageModelPayload, specJSONModel); err != nil {
+			return err
+		}
+	}
+	if len(tool.UIOnlyFields) > 0 && !tool.RequiresUI && tool.Confirmation == nil {
+		textOwner := *owner
+		textOwner.ModelHiddenPayloadFields = append(modelHiddenPayloadFields(tool), tool.UIOnlyFields...)
+		if err := p.declareTypeImports(&textOwner, payload, usageTextOnlyPayload, specJSONModel); err != nil {
+			return err
+		}
+	}
+	if len(tool.UIOnlyFields) > 0 && !tool.RequiresUI && tool.Confirmation == nil {
+		if err := p.declareTypeImports(owner, textOnlyExecutionShape(payload, tool.UIOnlyFields), usageTextOnlyExecution, specJSONModel); err != nil {
 			return err
 		}
 	}
@@ -185,6 +198,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 		ScopeName:                toolset,
 		Bounds:                   boundsData(tool.Bounds, tool.Method),
 		ModelHiddenPayloadFields: slices.Clone(tool.InjectedFields),
+		UIOnlyFields:             slices.Clone(tool.UIOnlyFields),
 	}
 	payload := tool.Args
 	if payload == nil || payload.Type == nil || payload.Type == goaexpr.Empty {
@@ -204,6 +218,22 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 		}
 		names.modelPayloadType = p.types[stableTypeKey(owner, usageModelPayload, "")]
 		names.modelPayloadType.jsonValidator.render = true
+	}
+	if len(tool.UIOnlyFields) > 0 && !tool.RequiresUI && tool.Confirmation == nil {
+		textOwner := *owner
+		textOwner.ModelHiddenPayloadFields = append(modelHiddenPayloadFields(tool), tool.UIOnlyFields...)
+		if err := p.declareType(&textOwner, payload, usageTextOnlyPayload, "", specJSONModel); err != nil {
+			return err
+		}
+		names.textOnlyPayloadType = p.types[stableTypeKey(owner, usageTextOnlyPayload, "")]
+		names.textOnlyPayloadType.jsonValidator.render = true
+	}
+	if len(tool.UIOnlyFields) > 0 && !tool.RequiresUI && tool.Confirmation == nil {
+		if err := p.declareType(owner, textOnlyExecutionShape(payload, tool.UIOnlyFields), usageTextOnlyExecution, "", specJSONModel); err != nil {
+			return err
+		}
+		names.textOnlyExecutionType = p.types[stableTypeKey(owner, usageTextOnlyExecution, "")]
+		names.textOnlyExecutionType.jsonValidator.render = true
 	}
 	publicPayload := effectiveObject(names.payloadType.publicShape)
 	for _, name := range tool.InjectedFields {
@@ -324,6 +354,10 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		preferred += "Payload"
 	case usageModelPayload:
 		preferred += "ModelInput"
+	case usageTextOnlyPayload:
+		preferred += "TextOnlyInput"
+	case usageTextOnlyExecution:
+		preferred += "TextOnlyExecution"
 	case usageResult:
 		preferred += "Result"
 	case usageServerData:
@@ -345,7 +379,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		publicLayout      *goacodegen.GoTypePlan
 		err               error
 	)
-	if usage == usageModelPayload {
+	if usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution {
 		// Both decoders return the existing typed payload. Only the model's
 		// JSON transport omits values that execution supplies later.
 		execution := p.types[stableTypeKey(owner, usagePayload, "")]
@@ -430,7 +464,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		key,
 		preferred,
 		owner.Kind == contractTypeOwnerCompletion,
-		usage == usageModelPayload,
+		usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution,
 		publicDeclaration,
 		transportDeclaration,
 	)
@@ -516,10 +550,10 @@ func localizedSpecShapes(owner *contractTypeOwner, attribute *goaexpr.AttributeE
 	}
 	public, publicTypes := localizeNestedTypes(shape, false, nil, specJSONModel)
 	transportSource := public
-	if (usage == usagePayload || usage == usageModelPayload) && len(owner.ModelHiddenPayloadFields) > 0 {
+	if (usage == usagePayload || usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution) && len(owner.ModelHiddenPayloadFields) > 0 {
 		transportSource = modelTransportShape(public, owner.ModelHiddenPayloadFields)
 	}
-	if usage == usagePayload && owner.Bounds != nil && owner.Bounds.Paging != nil && owner.Bounds.Paging.ContinueTool != "" {
+	if (usage == usagePayload || usage == usageTextOnlyExecution) && owner.Bounds != nil && owner.Bounds.Paging != nil && owner.Bounds.Paging.ContinueTool != "" {
 		paging := owner.Bounds.Paging
 		for _, field := range *effectiveObject(transportSource) {
 			if modelJSONName(field.Name) != paging.CursorField {
@@ -834,4 +868,21 @@ func declareAttributeUnions(pkg *goacodegen.GeneratedPackage, fixed map[string]*
 		return nil
 	}
 	return visit(attribute)
+}
+
+// textOnlyExecutionShape copies the complete tool input and requires every
+// rendering control to be false. Paging and server-supplied fields remain valid.
+func textOnlyExecutionShape(input *goaexpr.AttributeExpr, fields []string) *goaexpr.AttributeExpr {
+	shape := goaexpr.DupAtt(input)
+	for _, name := range fields {
+		field := effectiveObject(shape).Attribute(name)
+		if field.Validation == nil {
+			field.Validation = &goaexpr.ValidationExpr{}
+		}
+		field.Validation.Values = []any{false}
+		field.DefaultValue = false
+		field.UserExamples = nil
+	}
+	shape.UserExamples = nil
+	return shape
 }

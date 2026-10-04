@@ -26,6 +26,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/mcp"
+	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
 type (
@@ -253,16 +254,39 @@ func plannerResultValidationProjection(result *PlanResult) *planner.PlanResult {
 // normalizePlanResultForExecution validates generated tool payload contracts
 // before planner events are published or the workflow accepts tool work.
 func (r *Runtime) normalizePlanResultForExecution(result *PlanResult, runContext run.Context, executor agent.Ident) error {
+	if runContext.TextOnly && result.FinalToolResult != nil {
+		if err := toolserverdata.ValidateTextOnly(result.FinalToolResult.ServerData); err != nil {
+			return planner.NewOutputContractError(fmt.Errorf("text-only child result: %w", err))
+		}
+	}
+	if runContext.TextOnly && result.Await != nil {
+		return planner.NewOutputContractError(errors.New("text-only runs cannot request external input"))
+	}
 	if _, err := r.normalizePlanResultContract(result, runContext, executor); err != nil {
 		return err
 	}
 	for index, call := range result.ToolCalls {
+		result.ToolCalls[index].TextOnly = runContext.TextOnly
+		call.TextOnly = runContext.TextOnly
 		spec, ok, err := lookupCallSpec(call, r.toolSpec)
 		if err != nil {
 			return err
 		}
 		if !ok {
 			return planner.NewOutputContractError(fmt.Errorf("tool %q has no payload codec", call.Name))
+		}
+		if call.TextOnly {
+			if spec.RequiresUI || spec.Confirmation != nil || spec.TextOnly == nil {
+				return planner.NewOutputContractError(fmt.Errorf("tool %q requires UI or has no text-only contract", call.Name))
+			}
+			if call.ContinuationRootToolCallID == "" && call.ModelName == call.Name && len(call.ModelPayload) > 0 {
+				if _, err := spec.TextOnly.Payload.Codec.FromJSON(call.ModelPayload); err != nil {
+					return planner.NewOutputContractError(fmt.Errorf("text-only tool %q arguments: %w", call.Name, err))
+				}
+			}
+		}
+		if call.TextOnly {
+			spec = spec.ForTextOnly()
 		}
 		if _, err := spec.ExecutionPayloadCodec.FromJSON(call.Payload); err != nil {
 			return planner.NewOutputContractError(
@@ -886,7 +910,7 @@ func (l *workflowLoop) advanceStep(batch stepBatch) (*RunOutput, error) {
 	// A successful sibling query still owns its unfinished pages. Preserve
 	// the finish failure while the planner chooses another page or submission.
 	if finishRecovery(pendingRecovery) {
-		continuations, err := l.r.availableContinuationActions(l.input.AgentID, l.st.ToolOutputs)
+		continuations, err := l.r.availableContinuationActions(l.input.AgentID, l.st.ToolOutputs, l.base.RunContext.TextOnly)
 		if err != nil {
 			return nil, err
 		}

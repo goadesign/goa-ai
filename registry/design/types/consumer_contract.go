@@ -28,7 +28,20 @@ var ConsumerContract = Type("ConsumerContract", func() {
 	Field(12, "agent", AgentToolTarget, "Worker and immutable application configuration used by a dynamically registered Agent tool.", func() {
 		Meta("struct:tag:json", "Agent,omitempty")
 	})
+	Field(13, "requires_ui", Boolean, "Whether executing this tool requires rendering or an interactive client protocol.", func() { Default(false) })
+	Field(14, "text_only", TextOnlyToolContract, "Generated model contract for execution using ordinary messages only.")
 	Required("kind", "title", "search", "payload")
+})
+
+// TextOnlyToolContract supplies the exact generated model contract without UI controls.
+var TextOnlyToolContract = Type("TextOnlyToolContract", func() {
+	Field(1, "description", String, "Domain instructions without optional UI guidance.")
+	Field(2, "search", ToolSearchDocument, "Generated word counts for these domain instructions.")
+	Field(3, "payload_schema", Bytes, "Exact model argument schema without UI-only controls.", func() { MinLength(1) })
+	Field(4, "payload", ToolTypeMetadata, "Generated examples and field descriptions matching this schema.")
+	Field(5, "result_reminder", String, "Domain result guidance without claiming UI output.")
+	Field(6, "execution_schema", Bytes, "Complete input schema requiring disabled rendering controls.", func() { MinLength(1) })
+	Required("description", "search", "payload_schema", "payload", "execution_schema")
 })
 
 // ToolSearchDocument describes the word frequencies used to find relevant tools.

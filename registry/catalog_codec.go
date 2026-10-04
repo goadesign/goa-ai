@@ -33,6 +33,7 @@ type (
 		info             *genregistry.ToolsetInfo
 		fingerprint      string
 		executionSchemas map[string]*jsonschema.Schema
+		textOnlySchemas  map[string]*jsonschema.Schema
 	}
 )
 
@@ -46,14 +47,23 @@ func newCatalogToolset(toolset *genregistry.Toolset, fingerprint string, validat
 		return nil, fmt.Errorf("marshal toolset %q: %w", toolset.Name, err)
 	}
 	schemas := make(map[string]*jsonschema.Schema, len(toolset.Tools))
+	textOnlySchemas := make(map[string]*jsonschema.Schema)
 	for _, tool := range toolset.Tools {
 		schema, err := validator.compiledSchema(tool.ExecutionPayloadSchema)
 		if err != nil {
 			return nil, err
 		}
 		schemas[tool.Name] = schema
+		contract := tool.ConsumerContract
+		if contract != nil && contract.TextOnly != nil && !contract.RequiresUI && contract.Confirmation == nil && contract.Kind == "service" {
+			disabledSchema, err := validator.compiledSchema(contract.TextOnly.ExecutionSchema)
+			if err != nil {
+				return nil, err
+			}
+			textOnlySchemas[tool.Name] = disabledSchema
+		}
 	}
-	return &catalogToolset{raw: raw, info: toolsetToInfo(&definition), fingerprint: fingerprint, executionSchemas: schemas}, nil
+	return &catalogToolset{raw: raw, info: toolsetToInfo(&definition), fingerprint: fingerprint, executionSchemas: schemas, textOnlySchemas: textOnlySchemas}, nil
 }
 
 // toolsetToInfo retains only the fields needed for discovery and health.

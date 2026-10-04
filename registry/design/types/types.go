@@ -51,6 +51,7 @@ var ToolCallMeta = Type("ToolCallMeta", func() {
 	Field(6, "labels", MapOf(String, String), "Run labels and runtime-supplied values fixed for this call. Providers use them to fill fields declared with Inject; models never see them.", func() {
 		Example(map[string]string{"site_id": "site-123"})
 	})
+	Field(7, "text_only", Boolean, "Accepted execution restriction prohibiting UI output or external interaction.", func() { Default(false) })
 	Required("run_id", "session_id", "tool_call_id")
 })
 

@@ -99,6 +99,10 @@ type (
 	// ToolMetadata describes a candidate tool available to the agent. The runtime
 	// provides this metadata to the policy engine for filtering and allowlist decisions.
 	ToolMetadata struct {
+		// RequiresUI identifies tools that need rendering or external interaction.
+		RequiresUI bool
+		// TextOnlyContract reports whether a generated text-only contract is available.
+		TextOnlyContract bool
 		// ID is the fully qualified tool identifier (e.g., "weather.search.forecast").
 		// Format: <service>.<toolset>.<tool>.
 		ID tools.Ident

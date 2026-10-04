@@ -533,7 +533,8 @@ policies, and MCP servers within Goa service designs.
 | `CallHintTemplate(tmpl)` | Go template for tool call `DisplayHint` (typed payload; rendered by runtime) |
 | `ResultHintTemplate(tmpl)` | Go template for successful tool result display (`.Args`, `.Result`, optional `.Bounds`; rendered by runtime) |
 | `BoundedResult()` | Mark result as bounded view over larger data |
-| `ResultReminder(text)` | Static system reminder injected after tool result |
+| `ResultReminder(text)` | Static result guidance in ordinary and text-only runs |
+| `UIResultReminder(text)` | Static result guidance only for runs that support interactive output |
 | `TerminalRun()` | Tool becomes bookkeeping and completes the run after successful execution |
 | `Bookkeeping()` | Durable control record: no tool-call budget; no automatic resume after success |
 

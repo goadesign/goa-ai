@@ -657,6 +657,9 @@ type (
 		// supplies paging fields before registry delivery. The provider supplies
 		// Inject fields after delivery.
 		ModelHiddenPayloadFields []string
+		RequiresUI               bool
+		UIOnlyFields             []string
+		UIInstructions           string
 
 		// Bounds describes result limits such as returned rows and a next cursor.
 		// Generated helpers read these values without changing the tool result.
@@ -677,6 +680,9 @@ type (
 		// conversation after the tool result is returned. It provides backstage
 		// guidance to the model about how to interpret or present the result.
 		ResultReminder string
+
+		// UIResultReminder is result guidance omitted from text-only contracts.
+		UIResultReminder string
 
 		// Confirmation configures design-time confirmation requirements for this tool.
 		Confirmation *ToolConfirmationData

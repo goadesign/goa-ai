@@ -306,6 +306,7 @@ if redis.call("EXISTS", KEYS[1]) == 0 then
     "terminal_cause", "",
     "outcome_unknown_payload", ARGV[6],
     "catalog_field", ARGV[7],
+    "text_only", ARGV[8],
     "output_delta_count", "0",
     "overload_event_id", "",
     "overload_retry_after_ms", "0",
@@ -451,6 +452,7 @@ func (s *callAdmissionStore) Ensure(
 	toolset, toolUseID, registrationToken, digest string,
 	executionTimeout, ttl time.Duration,
 	outcomeUnknownPayload []byte,
+	textOnly bool,
 ) (callAdmission, bool, error) {
 	key := s.callKey(toolUseID)
 	value, err := ensureCallAdmissionScript.Run(
@@ -464,6 +466,7 @@ func (s *callAdmissionStore) Ensure(
 		ttl.Milliseconds(),
 		outcomeUnknownPayload,
 		toolsetCatalogKey(toolset),
+		strconv.FormatBool(textOnly),
 	).Slice()
 	if err != nil {
 		return callAdmission{}, false, fmt.Errorf("ensure call admission: %w", err)

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"maps"
 	"reflect"
+	"slices"
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -51,6 +52,14 @@ func (r *Runtime) validateToolSpecRegistrations(
 			}
 			if spec.ExecutionPayloadCodec.FromJSON == nil || spec.ExecutionPayloadCodec.ToJSON == nil {
 				return nil, fmt.Errorf("%w: tool %q execution payload codec must define both ToJSON and FromJSON", ErrInvalidConfig, spec.Name)
+			}
+			if spec.TextOnly != nil {
+				if spec.TextOnly.Payload.Codec.FromJSON == nil || spec.TextOnly.Payload.Codec.ToJSON == nil || spec.TextOnly.ExecutionCodec.FromJSON == nil || spec.TextOnly.ExecutionCodec.ToJSON == nil {
+					return nil, fmt.Errorf("%w: tool %q text-only codecs are required", ErrInvalidConfig, spec.Name)
+				}
+				if _, err := model.NewToolDefinitionFromSpec(spec.ForTextOnly()); err != nil {
+					return nil, fmt.Errorf("%w: tool %q text-only model contract: %w", ErrInvalidConfig, spec.Name, err)
+				}
 			}
 			if err := validateToolResultSpec(spec); err != nil {
 				return nil, err
@@ -131,6 +140,10 @@ func equivalentToolSpec(a, b tools.ToolSpec) bool {
 func toolSpecShape(spec tools.ToolSpec) tools.ToolSpec {
 	spec = cloneToolSpec(spec)
 	spec.Payload.Codec = tools.JSONCodec[any]{}
+	if spec.TextOnly != nil {
+		spec.TextOnly.Payload.Codec = tools.JSONCodec[any]{}
+		spec.TextOnly.ExecutionCodec = tools.JSONCodec[any]{}
+	}
 	spec.ExecutionPayloadCodec = tools.JSONCodec[any]{}
 	spec.Result.Codec = tools.JSONCodec[any]{}
 	spec.CanonicalizeServerData = nil
@@ -176,6 +189,13 @@ func cloneToolSpecs(specs []tools.ToolSpec) []tools.ToolSpec {
 // cloneToolSpec copies every mutable declarative field while retaining codec
 // functions, which become owned by the first accepted registration.
 func cloneToolSpec(spec tools.ToolSpec) tools.ToolSpec {
+	if spec.TextOnly != nil {
+		contract := *spec.TextOnly
+		contract.Search.Terms = maps.Clone(contract.Search.Terms)
+		contract.Payload = cloneTypeSpec(contract.Payload)
+		contract.ExecutionSchema = slices.Clone(contract.ExecutionSchema)
+		spec.TextOnly = &contract
+	}
 	spec.Search.Terms = maps.Clone(spec.Search.Terms)
 	spec.Tags = append([]string(nil), spec.Tags...)
 	spec.ExecutionPayloadSchema = append(tools.RawJSON(nil), spec.ExecutionPayloadSchema...)

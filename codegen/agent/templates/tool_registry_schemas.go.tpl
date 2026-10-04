@@ -32,6 +32,22 @@ func ({{ if or (eq .Kind "schema") (and (eq .Kind "metadata") .Value.Fields) }}d
         Length: {{ .Search.Length }},
         Terms: map[string]int{ {{ range $word, $count := .Search.Terms }}{{ printf "%q" $word }}: {{ $count }}, {{ end }} },
     },
+    RequiresUI: {{ .RequiresUI }},
+    {{- with .TextOnly }}
+    TextOnly: &genregistry.TextOnlyToolContract{
+        ExecutionSchema: []byte({{ printf "%q" .ExecutionSchema }}),
+        {{- if .ResultReminder }}
+        ResultReminder: {{ pointer .ResultReminder }},
+        {{- end }}
+        Description: {{ printf "%q" .Description }},
+        Search: &genregistry.ToolSearchDocument{
+            Length: {{ .Search.Length }},
+            Terms: map[string]int{ {{ range $word, $count := .Search.Terms }}{{ printf "%q" $word }}: {{ $count }}, {{ end }} },
+        },
+        PayloadSchema: []byte({{ printf "%q" .PayloadSchema }}),
+        Payload: {{ reference .Payload }},
+    },
+    {{- end }}
     Payload: {{ reference .Payload }},
     {{- if .Result }}
     Result: {{ reference .Result }},

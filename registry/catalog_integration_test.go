@@ -251,12 +251,14 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 	first, created, err := firstStore.Ensure(
 		ctx, toolset, toolUseID, token, digest, time.Second, 5*time.Second,
 		outcomeUnknownPayload(token, toolUseID),
+		false,
 	)
 	require.NoError(t, err)
 	require.True(t, created)
 	second, created, err := secondStore.Ensure(
 		ctx, toolset, toolUseID, token, digest, time.Second, 5*time.Second,
 		outcomeUnknownPayload(token, toolUseID),
+		false,
 	)
 	require.NoError(t, err)
 	require.False(t, created)
@@ -389,6 +391,7 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 	replayed, _, err := firstStore.Ensure(
 		ctx, toolset, toolUseID, token, digest, time.Second, 5*time.Second,
 		outcomeUnknownPayload(token, toolUseID),
+		false,
 	)
 	require.NoError(t, err)
 	assert.True(t, replayed.terminal)
@@ -401,6 +404,7 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 		time.Second,
 		5*time.Second,
 		outcomeUnknownPayload(strings.Repeat("b", 64), toolUseID),
+		false,
 	)
 	require.ErrorIs(t, err, errCallAdmissionConflict)
 
@@ -414,6 +418,7 @@ func TestCallAdmissionAtomicallyPublishesInitialAndOverloadOnce(t *testing.T) {
 		time.Second,
 		5*time.Second,
 		outcomeUnknownPayload(token, drainingToolUseID),
+		false,
 	)
 	require.NoError(t, err)
 	require.NoError(t, catalog.DrainProvider(
@@ -505,6 +510,7 @@ func TestUnpublishedCallMovesToReplacementProvider(t *testing.T) {
 		time.Minute,
 		5*time.Minute,
 		outcomeUnknownPayload(oldRegistration.RegistrationToken, toolUseID),
+		false,
 	)
 	require.NoError(t, err)
 	require.True(t, created)
@@ -553,6 +559,7 @@ func TestUnpublishedCallMovesToReplacementProvider(t *testing.T) {
 		time.Minute,
 		5*time.Minute,
 		outcomeUnknownPayload(newRegistration.RegistrationToken, toolUseID),
+		false,
 	)
 	require.NoError(t, err)
 	assert.False(t, created)
@@ -607,6 +614,7 @@ func TestUnpublishedCallMovesToReplacementProvider(t *testing.T) {
 		time.Minute,
 		5*time.Minute,
 		outcomeUnknownPayload(oldRegistration.RegistrationToken, toolUseID),
+		false,
 	)
 	require.NoError(t, err)
 	assert.True(t, replayed.published)
@@ -666,6 +674,7 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 		time.Second,
 		5*time.Second,
 		outcomeUnknownPayload(token, "reject-first"),
+		false,
 	)
 	require.ErrorAs(t, err, &rejected)
 	require.Equal(t, rejection, rejected.rejection)
@@ -681,6 +690,7 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 		time.Second,
 		5*time.Second,
 		outcomeUnknownPayload(token, fractionalCountID),
+		false,
 	)
 	require.NoError(t, err)
 	fractionalCountKey := firstStore.callKey(fractionalCountID)
@@ -734,6 +744,7 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 		time.Second,
 		5*time.Second,
 		outcomeUnknownPayload(token, missingOutcomeID),
+		false,
 	)
 	require.NoError(t, err)
 	missingOutcomeKey := firstStore.callKey(missingOutcomeID)
@@ -754,6 +765,7 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 		time.Second,
 		5*time.Second,
 		outcomeUnknownPayload(token, missingTTLID),
+		false,
 	)
 	require.NoError(t, err)
 	missingTTLKey := firstStore.callKey(missingTTLID)
@@ -775,6 +787,7 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 		time.Second,
 		5*time.Second,
 		outcomeUnknownPayload(token, orphanOverloadID),
+		false,
 	)
 	require.NoError(t, err)
 	orphanOverloadKey := firstStore.callKey(orphanOverloadID)
@@ -797,6 +810,7 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 		time.Second,
 		5*time.Second,
 		outcomeUnknownPayload(token, orphanDispatchID),
+		false,
 	)
 	require.NoError(t, err)
 	orphanDispatchKey := firstStore.callKey(orphanDispatchID)
@@ -900,6 +914,7 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 				time.Second,
 				5*time.Second,
 				outcomeUnknownPayload(token, toolUseID),
+				false,
 			)
 			results <- decisionResult{admitted: err == nil, err: err}
 		}()
@@ -962,6 +977,7 @@ func TestCallDecisionRejectsInvalidDiscriminatorWithoutMutation(t *testing.T) {
 				time.Second,
 				5*time.Second,
 				outcomeUnknownPayload(token, toolUseID),
+				false,
 			)
 			require.NoError(t, err)
 			key := firstStore.callKey(toolUseID)
@@ -988,6 +1004,7 @@ func TestCallDecisionRejectsInvalidDiscriminatorWithoutMutation(t *testing.T) {
 				time.Second,
 				5*time.Second,
 				outcomeUnknownPayload(token, toolUseID),
+				false,
 			)
 			require.ErrorContains(t, err, "CALLDECISIONINVALID")
 			assertCallHashUnchanged(t, ctx, key, wantFields, wantExpiration)
@@ -1250,4 +1267,41 @@ func getRedis(t *testing.T) *redis.Client {
 	t.Helper()
 	require.NoError(t, testRedisClient.FlushDB(context.Background()).Err())
 	return testRedisClient
+}
+
+// A registry restart reads the accepted policy before publishing a provider's result.
+func TestTextOnlyAdmissionSurvivesRestartAndRejectsVisualCompletion(t *testing.T) {
+	ctx := t.Context()
+	name := "text-only-" + uuid.NewString()
+	const toolset, toolUseID = "text-only-records", "read-records"
+	catalog := newToolsetCatalog(newRedisCatalogStore(testRedisClient, name), newRedisTimeSource(testRedisClient))
+	registration, err := catalog.Register(ctx, testCatalogDefinition(t, testCatalogToolset(toolset, "Read records", nil)), testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
+	require.NoError(t, err)
+	token := registration.RegistrationToken
+	store := newCallAdmissionStore(testRedisClient, name)
+	admission, created, err := store.Ensure(ctx, toolset, toolUseID, token, "request-digest", time.Second, 5*time.Second, outcomeUnknownPayload(token, toolUseID), true)
+	require.NoError(t, err)
+	require.True(t, created)
+	requestEventID, err := publishAdmittedBounded(ctx, testRedisClient, "text-only:requests:"+name, maxQueuedToolCalls, string(toolregistry.MessageTypeCall), []byte(`{"type":"call"}`), admission, "")
+	require.NoError(t, err)
+	lease := providerLeaseKey("provider", testIncarnationA)
+	resultStreamID := toolregistry.ResultStreamID(toolUseID)
+	disposition, err := store.Claim(ctx, toolset, toolUseID, token, token, lease, requestEventID, uuid.NewString(), resultStreamID, []byte(`{}`))
+	require.NoError(t, err)
+	require.Equal(t, callClaimExecute, disposition)
+	restarted := newCallAdmissionStore(testRedisClient, name)
+	result := toolregistry.NewToolResultMessageWithServerData(token, toolUseID, []byte(`{"count":2}`), []*toolregistry.ServerDataItem{{Kind: "record.card", Audience: "timeline", Data: []byte(`{"count":2}`)}})
+	visual, err := json.Marshal(result)
+	require.NoError(t, err)
+	accepted, err := restarted.Complete(ctx, toolset, toolUseID, token, token, lease, requestEventID, resultStreamID, visual)
+	require.Error(t, err)
+	assert.False(t, accepted)
+	assert.EqualValues(t, 0, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+resultStreamID).Val())
+	result.ServerData = nil
+	ordinary, err := json.Marshal(result)
+	require.NoError(t, err)
+	accepted, err = restarted.Complete(ctx, toolset, toolUseID, token, token, lease, requestEventID, resultStreamID, ordinary)
+	require.NoError(t, err)
+	assert.True(t, accepted)
+	assert.EqualValues(t, 1, testRedisClient.XLen(ctx, pulseStreamKeyPrefix+resultStreamID).Val())
 }

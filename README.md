@@ -377,3 +377,7 @@ Normal `make` targets verify those versions before building or generating code.
 ## License
 
 MIT License (C) Raphael Simon and the [Goa community](https://goa.design).
+
+Text-only runs use generated tool contracts without interactive rendering or
+confirmation tools. Domain result guidance remains available; declare guidance
+that assumes rendered output with `UIResultReminder(...)`. See [text-only execution](docs/runtime.md#text-only-execution).

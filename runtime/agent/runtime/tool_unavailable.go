@@ -37,8 +37,14 @@ var (
 		},
 	}
 	toolUnavailableSpec = tools.ToolSpec{
-		Name:                   tools.ToolUnavailable,
-		Description:            "Runtime-owned tool that represents unavailable tool calls.",
+		Name:        tools.ToolUnavailable,
+		Description: "Runtime-owned tool that represents unavailable tool calls.",
+		TextOnly: &tools.ModelContract{
+			ExecutionSchema: toolUnavailableSchema,
+			ExecutionCodec:  toolUnavailablePayloadCodec,
+			Description:     "Runtime-owned tool that represents unavailable tool calls.",
+			Payload:         tools.TypeSpec{Schema: toolUnavailableSchema, SchemaWithoutRootExample: toolUnavailableSchema, Codec: toolUnavailablePayloadCodec},
+		},
 		ExecutionPayloadSchema: toolUnavailableSchema,
 		ExecutionPayloadCodec:  toolUnavailablePayloadCodec,
 		Payload: tools.TypeSpec{

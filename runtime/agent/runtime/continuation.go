@@ -82,7 +82,7 @@ func IsGeneratedContinuationToolName(name tools.Ident) bool {
 // availableContinuationActions returns one empty-input model action for every
 // unfinished bounded query. Each action has a stable model name derived from
 // the source tool call and executes the generated continuation tool.
-func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*planner.ToolOutput) ([]continuationAction, error) {
+func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*planner.ToolOutput, textOnly bool) ([]continuationAction, error) {
 	var actions []continuationAction
 	names := make(map[tools.Ident]struct{})
 	groups, err := r.continuationGroups(agentID, outputs)
@@ -91,7 +91,21 @@ func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*p
 	}
 	for _, group := range groups {
 		spec := group.spec
-		states, err := continuationStates(spec, group.source, group.outputs)
+		source := group.source
+		if textOnly {
+			if spec.RequiresUI || spec.Confirmation != nil || spec.TextOnly == nil ||
+				source.RequiresUI || source.Confirmation != nil || source.TextOnly == nil {
+				continue
+			}
+			if r.toolConfirmation != nil {
+				if _, requires := r.toolConfirmation.Confirm[spec.Name]; requires {
+					continue
+				}
+			}
+			spec = spec.ForTextOnly()
+			source = source.ForTextOnly()
+		}
+		states, err := continuationStates(spec, source, group.outputs)
 		if err != nil {
 			return nil, err
 		}

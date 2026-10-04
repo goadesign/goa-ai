@@ -387,6 +387,11 @@ type ConsumerContract struct {
 	// Worker and immutable application configuration used by a dynamically
 	// registered Agent tool.
 	Agent *AgentToolTarget `json:"Agent,omitempty"`
+	// Whether executing this tool requires rendering or an interactive client
+	// protocol.
+	RequiresUI bool
+	// Generated model contract for execution using ordinary messages only.
+	TextOnly *TextOnlyToolContract
 }
 
 // DrainProviderPayload is the payload type of the registry service
@@ -636,6 +641,21 @@ type ServiceToolsetDeclaration struct {
 	Tools []*ToolSchema
 }
 
+type TextOnlyToolContract struct {
+	// Domain instructions without optional UI guidance.
+	Description string
+	// Generated word counts for these domain instructions.
+	Search *ToolSearchDocument
+	// Exact model argument schema without UI-only controls.
+	PayloadSchema []byte
+	// Generated examples and field descriptions matching this schema.
+	Payload *ToolTypeMetadata
+	// Domain result guidance without claiming UI output.
+	ResultReminder *string
+	// Complete input schema requiring disabled rendering controls.
+	ExecutionSchema []byte
+}
+
 // Declares that successful results include the runtime's canonical result
 // bounds.
 type ToolBounds struct {
@@ -659,6 +679,8 @@ type ToolCallMeta struct {
 	// Run labels and runtime-supplied values fixed for this call. Providers use
 	// them to fill fields declared with Inject; models never see them.
 	Labels map[string]string
+	// Accepted execution restriction prohibiting UI output or external interaction.
+	TextOnly bool
 }
 
 // Marks one array index or map key without prescribing its value.

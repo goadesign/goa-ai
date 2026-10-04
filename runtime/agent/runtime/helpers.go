@@ -719,14 +719,18 @@ func canonicalToolMetadata(spec tools.ToolSpec, lookup ToolMetadataLookup) polic
 		if !ok {
 			panic(fmt.Sprintf("runtime: missing policy metadata for tool %q", spec.Name))
 		}
+		meta.RequiresUI = spec.RequiresUI || spec.Confirmation != nil
+		meta.TextOnlyContract = spec.TextOnly != nil
 		return cloneToolMetadata(meta)
 	}
 	return policy.ToolMetadata{
-		ID:          spec.Name,
-		Title:       defaultToolTitle(spec.Name),
-		Description: spec.Description,
-		Tags:        append([]string(nil), spec.Tags...),
-		BudgetClass: toolBudgetClass(spec.Bookkeeping),
+		ID:               spec.Name,
+		RequiresUI:       spec.RequiresUI || spec.Confirmation != nil,
+		TextOnlyContract: spec.TextOnly != nil,
+		Title:            defaultToolTitle(spec.Name),
+		Description:      spec.Description,
+		Tags:             append([]string(nil), spec.Tags...),
+		BudgetClass:      toolBudgetClass(spec.Bookkeeping),
 	}
 }
 

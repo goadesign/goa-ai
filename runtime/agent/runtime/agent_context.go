@@ -123,6 +123,11 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 		if isDedicatedContinuationSpec(spec) {
 			continue
 		}
+		if c.policy.textOnly && c.rt.toolConfirmation != nil {
+			if _, requires := c.rt.toolConfirmation.Confirm[spec.Name]; requires {
+				continue
+			}
+		}
 		visible = append(visible, spec)
 	}
 	var definitions []*model.ToolDefinition
@@ -148,8 +153,16 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 			!c.policy.allowsTool(action.spec.Name, toolPolicyFactsFromSpec(action.spec)) {
 			continue
 		}
-		definition := *action.definition
-		definition.Search.Terms = maps.Clone(action.definition.Search.Terms)
+		selected := action.definition
+		if c.policy.textOnly {
+			var err error
+			selected, err = model.NewToolDefinitionFromSpec(action.spec.ForTextOnly())
+			if err != nil {
+				panic(err)
+			}
+		}
+		definition := *selected
+		definition.Search.Terms = maps.Clone(selected.Search.Terms)
 		definition.Name = action.modelName.String()
 		definition.Description = action.description
 		definition.NoArguments = true

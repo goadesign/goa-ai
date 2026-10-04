@@ -44,6 +44,17 @@ func (declarations registryDeclarations) schema1() *genregistry.ToolSchema {
 				Length: 8,
 				Terms:  map[string]int{"image": 1, "inspect": 1, "one": 1, "pictures": 1, "retained": 1, "selected": 1, "view": 2},
 			},
+			RequiresUI: false,
+			TextOnly: &genregistry.TextOnlyToolContract{
+				ExecutionSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Exact image selected for inspection.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
+				Description:     "Inspect one selected retained image.",
+				Search: &genregistry.ToolSearchDocument{
+					Length: 8,
+					Terms:  map[string]int{"image": 1, "inspect": 1, "one": 1, "pictures": 1, "retained": 1, "selected": 1, "view": 2},
+				},
+				PayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Exact image selected for inspection.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
+				Payload:       declarations.metadata14(),
+			},
 			Payload: declarations.metadata2(),
 			Result:  declarations.metadata5(),
 			ServerData: []*genregistry.ToolServerData{
@@ -200,6 +211,40 @@ func (registryDeclarations) field13() *genregistry.ToolFieldMetadata {
 	return &genregistry.ToolFieldMetadata{
 		Path: []*genregistry.ToolFieldPathSegment{
 			{Segment: genregistry.NewToolFieldSegmentField("sha256")},
+		},
+		JSONType:    &registryText1,
+		Description: &registryText2,
+	}
+}
+
+// metadata14 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata14() *genregistry.ToolTypeMetadata {
+	registryText1 := "ViewPayload"
+	return &genregistry.ToolTypeMetadata{
+		Name:                     &registryText1,
+		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Exact image selected for inspection.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
+		Fields: []*genregistry.ToolFieldMetadata{
+			declarations.field15(),
+			declarations.field16(),
+		},
+	}
+}
+
+// field15 constructs one generated field declaration.
+func (registryDeclarations) field15() *genregistry.ToolFieldMetadata {
+	registryText1 := "object"
+	return &genregistry.ToolFieldMetadata{
+		JSONType: &registryText1,
+	}
+}
+
+// field16 constructs one generated field declaration.
+func (registryDeclarations) field16() *genregistry.ToolFieldMetadata {
+	registryText1 := "string"
+	registryText2 := "Exact image selected for inspection."
+	return &genregistry.ToolFieldMetadata{
+		Path: []*genregistry.ToolFieldPathSegment{
+			{Segment: genregistry.NewToolFieldSegmentField("id")},
 		},
 		JSONType:    &registryText1,
 		Description: &registryText2,

@@ -62,6 +62,17 @@ func prepareRegistrySchema(tool *ToolData, entry *toolEntry) error {
 		RequiredLabels: requiredLabels([]*ToolData{tool}),
 		ResultReminder: registryOptionalString(entry.ResultReminder),
 	}
+	contract.RequiresUI = entry.RequiresUI
+	if entry.TextOnlyPayload != nil {
+		contract.TextOnly = &genregistry.TextOnlyToolContract{
+			Description:     entry.TextOnlyDescription,
+			Search:          &genregistry.ToolSearchDocument{Length: entry.TextOnlySearch.Length, Terms: entry.TextOnlySearch.Terms},
+			PayloadSchema:   entry.TextOnlyPayload.SchemaJSON,
+			ExecutionSchema: entry.TextOnlyExecution.ExecutionSchemaJSON,
+			ResultReminder:  registryOptionalString(entry.TextOnlyResultReminder),
+			Payload:         registryTypeMetadata(entry.TextOnlyPayload),
+		}
+	}
 	if len(entry.Meta) > 0 {
 		contract.Meta = entry.Meta
 	}

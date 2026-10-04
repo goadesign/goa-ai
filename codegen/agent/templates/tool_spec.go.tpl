@@ -76,6 +76,28 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
     return tools.ToolSpec{
         Name:        {{ .ConstName }},
         Description: {{ printf "%q" .Description }},
+        RequiresUI: {{ .RequiresUI }},
+        {{- if .TextOnlyPayload }}
+        TextOnly: &tools.ModelContract{
+            ExecutionSchema: tools.RawJSON({{ printf "%q" .TextOnlyExecution.ExecutionSchemaJSON }}),
+            ExecutionCodec: {{ .TextOnlyExecution.GenericCodec }},
+            ResultReminder: {{ printf "%q" .TextOnlyResultReminder }},
+            Description: {{ printf "%q" .TextOnlyDescription }},
+            Search: tools.SearchDocument{Length: {{ .TextOnlySearch.Length }}, Terms: map[string]int{
+            {{- range $term, $count := .TextOnlySearch.Terms }}
+                {{ printf "%q" $term }}: {{ $count }},
+            {{- end }}
+            }},
+            Payload: tools.TypeSpec{
+                Name: {{ printf "%q" .TextOnlyPayload.TypeName }},
+                Schema: tools.RawJSON({{ printf "%q" .TextOnlyPayload.SchemaJSON }}),
+                SchemaWithoutRootExample: tools.RawJSON({{ printf "%q" .TextOnlyPayload.SchemaWithoutRootExampleJSON }}),
+                ExampleJSON: {{ if .TextOnlyPayload.ExampleJSON }}tools.RawJSON({{ printf "%q" .TextOnlyPayload.ExampleJSON }}){{ else }}nil{{ end }},
+                Fields: {{ if .TextOnlyPayload.Fields }}tools.CloneFieldMetadata({{ .TextOnlyPayload.FieldsVar }}){{ else }}nil{{ end }},
+                Codec: {{ .TextOnlyPayload.GenericCodec }},
+            },
+        },
+        {{- end }}
         Search: tools.SearchDocument{
             Length: {{ .Search.Length }},
             Terms: map[string]int{

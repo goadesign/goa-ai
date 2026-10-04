@@ -124,7 +124,7 @@ func TestHistoricalContinuationRetiresCompletedChainAfterContractChange(t *testi
 	}}})), rt.toolSpecs)
 	require.NoError(t, err)
 	require.Len(t, outputs, 2)
-	actions, err := rt.availableContinuationActions("svc.agent", outputs)
+	actions, err := rt.availableContinuationActions("svc.agent", outputs, false)
 	require.NoError(t, err)
 	assert.Empty(t, actions)
 }

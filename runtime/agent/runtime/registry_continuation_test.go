@@ -33,7 +33,7 @@ func TestRegistryContinuationsKeepIndependentRegistrations(t *testing.T) {
 		output.Registry = binding
 		outputs = append(outputs, output)
 	}
-	actions, err := rt.availableContinuationActions(definition.route.ID, outputs)
+	actions, err := rt.availableContinuationActions(definition.route.ID, outputs, false)
 	require.NoError(t, err)
 	require.Len(t, actions, 2)
 	assert.NotEqual(t, actions[0].modelName, actions[1].modelName)
@@ -63,7 +63,7 @@ func TestRegistryContinuationsKeepIndependentRegistrations(t *testing.T) {
 	registration := rt.agents[definition.route.ID]
 	registration.Definition.registryTools = nil
 	rt.agents[definition.route.ID] = registration
-	actions, err = rt.availableContinuationActions(definition.route.ID, outputs)
+	actions, err = rt.availableContinuationActions(definition.route.ID, outputs, false)
 	require.NoError(t, err)
 	assert.Empty(t, actions, "historical contracts cannot grant current consumption")
 }
@@ -83,7 +83,7 @@ func TestRegistrySelfPagingDoesNotCreateDedicatedContinuation(t *testing.T) {
 	require.NoError(t, err)
 	output := sourceContinuationOutput("records.find", "query", `{"value":1}`, "next")
 	output.Registry = binding
-	actions, err := rt.availableContinuationActions(definition.route.ID, []*planner.ToolOutput{output})
+	actions, err := rt.availableContinuationActions(definition.route.ID, []*planner.ToolOutput{output}, false)
 	require.NoError(t, err)
 	assert.Empty(t, actions)
 }

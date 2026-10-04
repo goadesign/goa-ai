@@ -19,18 +19,18 @@ import (
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 )
 
-// RegisterReaderAgent registers the generated agent components with the local runtime.
-// This helper registers only with the runtime in this process. It does not
-// publish the agent to a registry service.
-func RegisterReaderAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ReaderAgentConfig) error {
+// NewReaderAgentRegistration creates the generated registration without
+// registering workers or toolsets. Applications may compose its immutable
+// Definition before creating a client and registering this same value.
+func NewReaderAgentRegistration(rt *agentsruntime.Runtime, cfg ReaderAgentConfig) (agentsruntime.AgentRegistration, error) {
 	if rt == nil {
-		return errors.New("runtime is required")
+		return agentsruntime.AgentRegistration{}, errors.New("runtime is required")
 	}
 	agent, err := NewReaderAgent(cfg)
 	if err != nil {
-		return err
+		return agentsruntime.AgentRegistration{}, err
 	}
-	if err := rt.RegisterAgent(ctx, agentsruntime.AgentRegistration{
+	return agentsruntime.AgentRegistration{
 		Definition:       Definition(),
 		Planner:          agent.Planner,
 		WorkflowHandler:  rt.ExecuteWorkflow,
@@ -59,7 +59,18 @@ func RegisterReaderAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Rea
 			},
 		},
 		Policy: agentsruntime.RunPolicy{},
-	}); err != nil {
+	}, nil
+}
+
+// RegisterReaderAgent registers the generated agent components with the local runtime.
+// This helper registers only with the runtime in this process. It does not
+// publish the agent to a registry service.
+func RegisterReaderAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg ReaderAgentConfig) error {
+	registration, err := NewReaderAgentRegistration(rt, cfg)
+	if err != nil {
+		return err
+	}
+	if err := rt.RegisterAgent(ctx, registration); err != nil {
 		return err
 	}
 

@@ -1755,7 +1755,7 @@ func TestGeneratedContinuationRejectsModelCallForDifferentToolBeforeExecution(t 
 	rt, search, _ := continuationTestRuntime()
 	actions, err := rt.availableContinuationActions("svc.agent", []*planner.ToolOutput{
 		sourceContinuationOutput(search.Name, "source-1", `{"query":"alarms"}`, "next"),
-	})
+	}, false)
 	require.NoError(t, err)
 	require.Len(t, actions, 1)
 	result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{

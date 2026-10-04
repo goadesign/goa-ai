@@ -12,7 +12,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	genrecords "goa.design/goa-ai/internal/testpresentation/gen/records/toolsets/records"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 const (
@@ -737,4 +739,20 @@ func mutateDefinitionResult(toolset *genregistry.Toolset) {
 	contract.Meta["audience"][0] = mutatedDefinitionValue
 	contract.Payload.SchemaWithoutRootExample[0] = '!'
 	contract.Payload.Fields[0].Path[0].Segment.SetField(mutatedDefinitionValue)
+}
+
+func TestTextOnlyRegistryAdmissionUsesGeneratedExecutionContract(t *testing.T) {
+	declarations := genrecords.ToolSchemas()
+	catalog, err := newCatalogToolset(&genregistry.Toolset{Name: "records", Tools: declarations}, "fixture", newSchemaValidator())
+	require.NoError(t, err)
+	schema, found := catalog.textOnlySchemas[genrecords.Read.String()]
+	require.True(t, found)
+	require.NoError(t, validatePayload(schema, []byte(`{"query":"active","render_ui":false}`)))
+	require.Error(t, validatePayload(schema, []byte(`{"query":"active","render_ui":true}`)))
+	assert.NotContains(t, catalog.textOnlySchemas, genrecords.Show.String())
+	assert.NotContains(t, catalog.textOnlySchemas, genrecords.Erase.String())
+	service := &Service{healthTracker: unitHealthTracker{}}
+	registration := catalogEntry{Toolset: catalog, catalogState: catalogState{RegistrationToken: strings.Repeat("a", 64)}}
+	require.NoError(t, service.validatePreparedToolCall(t.Context(), preparedToolCall{toolset: "records", tool: genrecords.Read, payload: []byte(`{"query":"active"}`), meta: &toolregistry.ToolCallMeta{TextOnly: true}}, registration))
+	require.Error(t, service.validatePreparedToolCall(t.Context(), preparedToolCall{toolset: "records", tool: genrecords.Show, payload: []byte(`{}`), meta: &toolregistry.ToolCallMeta{TextOnly: true}}, registration))
 }

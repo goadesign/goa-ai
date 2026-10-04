@@ -169,6 +169,9 @@ func (r *Runtime) appendUserToolRecordResults(
 				imageParts = append(imageParts, sources...)
 			}
 		}
+		if call.TextOnly {
+			spec = spec.ForTextOnly()
+		}
 		if hasSpec && spec.ResultReminder != "" && tr.Failure == nil {
 			reminders = append(reminders, spec.ResultReminder)
 		}

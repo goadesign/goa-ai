@@ -26,7 +26,9 @@ func registryCallMetadata(call ToolCall) (policy.ToolMetadata, error) {
 		}
 		spec := resolved.Specs[call.Name]
 		return policy.ToolMetadata{
-			ID: call.Name, Title: declaration.ConsumerContract.Title,
+			RequiresUI:       spec.RequiresUI || spec.Confirmation != nil,
+			TextOnlyContract: spec.TextOnly != nil,
+			ID:               call.Name, Title: declaration.ConsumerContract.Title,
 			Description: spec.Description, Tags: spec.Tags,
 			BudgetClass: policy.ToolBudgetClassBudgeted,
 		}, nil

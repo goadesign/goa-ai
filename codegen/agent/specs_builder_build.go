@@ -56,6 +56,26 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 				return nil, err
 			}
 		}
+		textOnlyPayload := modelPayload
+		if names.textOnlyPayloadType != nil {
+			textOwner := *owner
+			textOwner.ModelHiddenPayloadFields = append(slices.Clone(tool.ModelHiddenPayloadFields), tool.UIOnlyFields...)
+			textOnlyPayload, err = builder.typeFor(&textOwner, tool.Args, usageTextOnlyPayload)
+			if err != nil {
+				return nil, err
+			}
+		}
+		textOnlyExecution := payload
+		if names.textOnlyExecutionType != nil {
+			textOnlyExecution, err = builder.typeFor(owner, textOnlyExecutionShape(tool.Args, tool.UIOnlyFields), usageTextOnlyExecution)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if tool.RequiresUI || tool.Confirmation != nil {
+			textOnlyPayload = nil
+			textOnlyExecution = nil
+		}
 		if payload != nil && len(tool.Injected) > 0 {
 			// Custom executors use this function to decode the input and fill fields
 			// supplied by the server.
@@ -86,28 +106,41 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 			}
 		}
 		metaPairs := toolMetaPairs(tool.Meta)
+		resultReminder := tool.ResultReminder
+		if tool.UIResultReminder != "" {
+			if resultReminder != "" {
+				resultReminder += "\n"
+			}
+			resultReminder += tool.UIResultReminder
+		}
 		entry := &toolEntry{
 			// Name is the qualified tool ID used at runtime (toolset.tool).
-			Name:            tool.QualifiedName,
-			GoName:          goName,
-			ConstName:       constName,
-			Title:           tool.Title,
-			Description:     tool.Description,
-			Search:          toolcontracts.NewSearchDocument(tool.QualifiedName + " " + tool.Title + " " + tool.Description),
-			ServerData:      serverDataEntries,
-			Tags:            tool.Tags,
-			Meta:            tool.Meta,
-			MetaPairs:       metaPairs,
-			Payload:         payload,
-			ModelPayload:    modelPayload,
-			Result:          result,
-			HasResult:       tool.HasResult,
-			Bounds:          tool.Bounds,
-			TerminalRun:     tool.TerminalRun,
-			Bookkeeping:     tool.Bookkeeping,
-			ReplanOnTimeout: tool.ReplanOnTimeout,
-			ResultReminder:  tool.ResultReminder,
-			Confirmation:    tool.Confirmation,
+			Name:                   tool.QualifiedName,
+			GoName:                 goName,
+			ConstName:              constName,
+			Title:                  tool.Title,
+			Description:            tool.Description + tool.UIInstructions,
+			RequiresUI:             tool.RequiresUI,
+			TextOnlyDescription:    tool.Description,
+			TextOnlySearch:         toolcontracts.NewSearchDocument(tool.QualifiedName + " " + tool.Title + " " + tool.Description),
+			TextOnlyPayload:        textOnlyPayload,
+			TextOnlyExecution:      textOnlyExecution,
+			Search:                 toolcontracts.NewSearchDocument(tool.QualifiedName + " " + tool.Title + " " + tool.Description + tool.UIInstructions),
+			ServerData:             serverDataEntries,
+			Tags:                   tool.Tags,
+			Meta:                   tool.Meta,
+			MetaPairs:              metaPairs,
+			Payload:                payload,
+			ModelPayload:           modelPayload,
+			Result:                 result,
+			HasResult:              tool.HasResult,
+			Bounds:                 tool.Bounds,
+			TerminalRun:            tool.TerminalRun,
+			Bookkeeping:            tool.Bookkeeping,
+			ReplanOnTimeout:        tool.ReplanOnTimeout,
+			ResultReminder:         resultReminder,
+			TextOnlyResultReminder: tool.ResultReminder,
+			Confirmation:           tool.Confirmation,
 		}
 		if err := prepareRegistrySchema(tool, entry); err != nil {
 			return nil, err
@@ -179,6 +212,7 @@ func newToolContractTypeOwner(tool *ToolData) *contractTypeOwner {
 		MethodResultAttr:         tool.MethodResultAttr,
 		Bounds:                   tool.Bounds,
 		ModelHiddenPayloadFields: tool.ModelHiddenPayloadFields,
+		UIOnlyFields:             tool.UIOnlyFields,
 	}
 }
 
@@ -206,6 +240,7 @@ func (d *toolSpecsData) addTool(entry *toolEntry) {
 	d.tools = append(d.tools, entry)
 	d.addType(entry.Payload)
 	d.addType(entry.ModelPayload)
+	d.addType(entry.TextOnlyPayload)
 	d.addType(entry.Result)
 	for _, sd := range entry.ServerData {
 		if sd == nil {

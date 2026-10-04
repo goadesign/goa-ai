@@ -51,6 +51,7 @@ type (
 	}
 
 	checkpointRunContext struct {
+		TextOnly         bool `json:",omitempty"` //nolint:tagliatelle // Saved checkpoints retain Go field names.
 		ParentToolCallID string
 		ParentRunID      string
 		ParentAgentID    agent.Ident
@@ -647,6 +648,7 @@ func checkpointContextFromRun(context run.Context) checkpointRunContext {
 		Tool:             context.Tool,
 		ToolArgs:         append(rawjson.Message(nil), context.ToolArgs...),
 		ToolRegistry:     context.ToolRegistry.Clone(),
+		TextOnly:         context.TextOnly,
 		Attempt:          context.Attempt,
 		Labels:           cloneLabels(context.Labels),
 		Metadata:         cloneMetadata(context.Metadata),
@@ -667,6 +669,7 @@ func restoreCheckpointRunContext(saved checkpointRunContext, input *RunInput) ru
 		Tool:             saved.Tool,
 		ToolArgs:         append(rawjson.Message(nil), saved.ToolArgs...),
 		ToolRegistry:     saved.ToolRegistry.Clone(),
+		TextOnly:         saved.TextOnly,
 		Attempt:          saved.Attempt,
 		Labels:           cloneLabels(saved.Labels),
 		Metadata:         cloneMetadata(saved.Metadata),
@@ -789,6 +792,7 @@ func retargetToolRequest(call ToolCall, input *RunInput, runContext *run.Context
 	call.TurnID = input.TurnID
 	call.ParentToolCallID = runContext.ParentToolCallID
 	call.Labels = input.Labels
+	call.TextOnly = input.Policy != nil && input.Policy.TextOnly
 	return call
 }
 

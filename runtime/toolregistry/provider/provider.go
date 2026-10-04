@@ -616,6 +616,13 @@ func (run *providerRun) serve(
 						handlerErr.Error(),
 					)
 				}
+				if item.msg.Meta != nil && item.msg.Meta.TextOnly {
+					if err := toolregistry.ValidateTextOnlyResult(res); err != nil {
+						span.RecordError(err)
+						span.SetStatus(codes.Error, "text-only output contract violation")
+						res = toolregistry.NewToolResultErrorMessage(item.msg.RegistrationToken, item.msg.ToolUseID, "output_contract_violation", err.Error())
+					}
+				}
 				res.RegistrationToken = item.msg.RegistrationToken
 				res.ToolUseID = item.msg.ToolUseID
 				if resultErr := toolregistry.ValidateToolResultMessage(res); resultErr != nil {
