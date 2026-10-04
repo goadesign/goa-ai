@@ -335,7 +335,7 @@ func decodeMessagePart(raw json.RawMessage) (Part, error) {
 			Kind string `json:"kind"`
 			ToolResultPart
 		}
-		if err := decodeCanonicalPartJSON(raw, &encoded, "kind", "tool_use_id", "content", "is_error"); err != nil {
+		if err := decodeCanonicalPartJSON(raw, &encoded, "kind", "tool_use_id", "content", "blocks", "is_error"); err != nil {
 			return nil, fmt.Errorf("decode ToolResultPart: %w", err)
 		}
 		part := encoded.ToolResultPart

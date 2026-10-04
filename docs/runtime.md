@@ -6511,9 +6511,26 @@ services can also author these five kinds through typed Goa results; see
 [the prompt contract](dsl.md#method-backed-mcp-prompts). The generated adapter
 rejects non-finite authored priorities and resource sizes before response
 encoding, so clients receive an internal-error response. The generated agent
-executor still consumes only structured JSON; carrying
-content through agent results, history, host events and provider requests
-remains a required release gate.
+executor still consumes only structured JSON; connecting it to agent results,
+stored events and host streams remains a required release gate.
+
+Model tool results now expose `model.ToolResultPart.Blocks` beside their semantic
+`Content`. Message JSON and independent copies retain every block, order and
+metadata. The complete-request byte and work checks include blocks before
+copying or decoding media; this adds no per-run content limit. Native provider
+encoders keep text, supported images and documents inside the matching tool
+result. OpenAI and Bedrock encode PDF, plain text, CSV, Word, Excel, HTML and
+Markdown in the nine formats represented by `model.DocumentFormat`. Anthropic
+and Vertex encode PDF and plain text and reject the other document formats.
+Explicit user-only content, icons and opaque `_meta` stay out of provider requests. Resource links remain descriptions; encoding does
+not open their addresses. `model.ErrToolContentUnsupported` identifies media
+that the selected tool-result API cannot represent, including audio in the
+current adapters and GIF images in Vertex function responses. Empty media
+remains valid MCP content but cannot be sent as a native model image or file.
+Storage and host content must retain those values. Vertex uses the documented
+Gemini 3 function-response media contract; selected-model acceptance remains
+owned by the provider. Regenerate or update both sides of any model gateway
+before sending content-bearing message records to older decoders.
 
 Content types now contain raw JSON extension metadata. The generic standalone
 codec generator deliberately excludes custom raw JSON fields, so it no longer

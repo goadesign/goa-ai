@@ -1128,7 +1128,7 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 				blocks = append(blocks, &brtypes.ContentBlockMemberToolUse{Value: tb})
 			case model.ToolResultPart:
 				// Bedrock expects tool_result blocks in user messages, correlated to a prior tool_use.
-				// Encode content as text when Content is a string; otherwise as a JSON document.
+				// Keep semantic JSON and native media inside that same tool_result.
 				tr := brtypes.ToolResultBlock{}
 				if id := toolUseIDs.ID(v.ToolUseID); id != "" {
 					tr.ToolUseId = aws.String(id)
@@ -1137,7 +1137,7 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 					tr.Content = []brtypes.ToolResultContentBlock{
 						&brtypes.ToolResultContentBlockMemberText{Value: s},
 					}
-				} else {
+				} else if v.Content != nil {
 					doc, err := toDocument(v.Content)
 					if err != nil {
 						return nil, nil, fmt.Errorf("bedrock: encode tool_result %q content: %w", v.ToolUseID, err)
@@ -1145,6 +1145,14 @@ func encodeMessages(msgs []*model.Message, nameMap map[string]string, cacheAfter
 					tr.Content = []brtypes.ToolResultContentBlock{
 						&brtypes.ToolResultContentBlockMemberJson{Value: doc},
 					}
+				}
+				native, err := encodeToolContent(v.Blocks)
+				if err != nil {
+					return nil, nil, fmt.Errorf("bedrock: tool result %q: %w", v.ToolUseID, err)
+				}
+				tr.Content = append(tr.Content, native...)
+				if v.IsError {
+					tr.Status = brtypes.ToolResultStatusError
 				}
 				blocks = append(blocks, &brtypes.ContentBlockMemberToolResult{Value: tr})
 			case model.CacheCheckpointPart:

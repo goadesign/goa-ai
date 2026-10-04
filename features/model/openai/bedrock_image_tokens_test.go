@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
+	content "goa.design/goa-ai/runtime/content"
 )
 
 func TestBedrockImageCountFormats(t *testing.T) {
@@ -176,4 +178,36 @@ func TestBedrockImageCountCapabilityAndMalformedImage(t *testing.T) {
 	body, err := json.Marshal(prepared.request)
 	require.NoError(t, err)
 	assert.Contains(t, string(body), base64.StdEncoding.EncodeToString([]byte("provider-owned-image")))
+}
+
+// Function-output media shares the per-image estimate used for user images.
+// Counting changes only its fresh SDK request, leaving inference bytes intact.
+func TestBedrockImageCountIncludesNativeToolResults(t *testing.T) {
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, image.NewGray(image.Rect(0, 0, 1, 1))))
+	data := base64.StdEncoding.EncodeToString(encoded.Bytes())
+	raw, err := newProvider(Options{DefaultModel: bedrockTestModel, ThinkingEffort: "medium", transport: &mockTransport{}}, true)
+	require.NoError(t, err)
+	request := bedrockTestRequest()
+	request.Messages = []*model.Message{
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID: "call-1", Name: "screen.select", Input: rawjson.Message(bedrockTestArguments)}}},
+		{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{ToolUseID: "call-1", Blocks: content.Blocks{
+			&content.ImageContent{Data: data, MIMEType: "image/png"},
+			&content.ImageContent{Data: data, MIMEType: "image/png"},
+		}}}},
+	}
+	prepared, err := raw.prepareRequest(request)
+	require.NoError(t, err)
+	count, err := bedrockImageTokens(prepared)
+	require.NoError(t, err)
+	assert.Equal(t, 4, count)
+	output := prepared.request.Input.OfInputItemList[1].OfFunctionCallOutput.Output.OfResponseFunctionCallOutputItemArray
+	assert.Empty(t, output[1].OfInputImage.ImageURL.Value)
+	assert.Empty(t, output[2].OfInputImage.ImageURL.Value)
+	assert.Equal(t, data, request.Messages[1].Parts[0].(model.ToolResultPart).Blocks[0].(*content.ImageContent).Data)
+	// Preparing the inference request still emits exact supplied bytes.
+	inference, err := raw.prepareRequest(request)
+	require.NoError(t, err)
+	image := inference.request.Input.OfInputItemList[1].OfFunctionCallOutput.Output.OfResponseFunctionCallOutputItemArray[1].OfInputImage
+	assert.Equal(t, "data:image/png;base64,"+data, image.ImageURL.Value)
 }

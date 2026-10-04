@@ -2559,8 +2559,14 @@ block at transport and saved-value boundaries, retaining annotations, icons and
 raw extension metadata. Copying retains nested values without opening resource
 addresses. The workflow codec admits this exact typed codec and still checks
 its complete payload byte budget; unrelated custom JSON encoders remain
-rejected. The generic agent result and model paths still need explicit content
-fields before rich tool presentation is complete.
+rejected. Model tool results expose that same value through `ToolResultPart.Blocks`;
+JSON replay, copying, character estimates and complete-request preflight include
+it. Provider translation honors the assistant audience and keeps extension
+metadata and display icons private. It returns explicit unsupported-media
+errors instead of changing media into text. Resource references never authorize
+a fetch. Native images and documents remain inside the originating tool result,
+including Gemini named media references. The generic agent result and stored
+event paths still need explicit content fields before the capability is complete.
 
 ## Error code mapping
 

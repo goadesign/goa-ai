@@ -334,7 +334,9 @@ view name through agent decoding and stored results. See
 [result views](docs/dsl.md#goa-result-views).
 `runtime/content` owns the five ordered tool-content variants, their validating
 JSON codec and independent copies. Runtime MCP callers use `content.Blocks`;
-old content type names in `runtime/mcp` are removed. See
+old content type names in `runtime/mcp` are removed. Model tool results can carry
+those blocks through message copying, replay and native provider encoding;
+unsupported media returns an explicit error. See
 [the content contract](docs/runtime.md#mcp-callers). The generated agent content
 path, HTTP credential delivery and OAuth challenges remain release gates in the
 [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).

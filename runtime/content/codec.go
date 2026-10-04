@@ -45,19 +45,24 @@ type (
 func (blocks Blocks) MarshalJSON() ([]byte, error) {
 	items := make([]contentItem, len(blocks))
 	for index, block := range blocks {
-		item, err := encodeBlock(block)
+		item, err := validatedItem(block)
 		if err != nil {
-			return nil, fmt.Errorf("content[%d]: %w", index, err)
-		}
-		if err := validateWireText(item); err != nil {
-			return nil, fmt.Errorf("content[%d]: %w", index, err)
-		}
-		if _, err := normalizeContentBlock(item); err != nil {
 			return nil, fmt.Errorf("content[%d]: %w", index, err)
 		}
 		items[index] = item
 	}
 	return json.Marshal(items)
+}
+
+// Validate checks caller-built blocks before another component copies or uses
+// them. It returns the first invalid block's position without changing content.
+func (blocks Blocks) Validate() error {
+	for index, block := range blocks {
+		if _, err := validatedItem(block); err != nil {
+			return fmt.Errorf("content[%d]: %w", index, err)
+		}
+	}
+	return nil
 }
 
 // UnmarshalJSON validates the incoming content array before replacing the
@@ -83,6 +88,22 @@ func (blocks *Blocks) UnmarshalJSON(data []byte) error {
 	}
 	*blocks = decoded
 	return nil
+}
+
+// validatedItem checks one caller-built value against the same contract used
+// when decoding peer content, then returns its flat JSON fields.
+func validatedItem(block ContentBlock) (contentItem, error) {
+	item, err := encodeBlock(block)
+	if err != nil {
+		return contentItem{}, err
+	}
+	if err := validateWireText(item); err != nil {
+		return contentItem{}, err
+	}
+	if _, err := normalizeContentBlock(item); err != nil {
+		return contentItem{}, err
+	}
+	return item, nil
 }
 
 // encodeBlock copies one typed value into the matching flat wire variant.

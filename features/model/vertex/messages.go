@@ -152,7 +152,12 @@ func encodePart(part model.Part, canonToProv map[string]string, toolUseNames map
 		if !ok {
 			return nil, fmt.Errorf("vertex: tool result %q has no matching tool use in transcript", p.ToolUseID)
 		}
+		resp, media, err := encodeToolContent(p, resp)
+		if err != nil {
+			return nil, fmt.Errorf("vertex: tool result %q: %w", p.ToolUseID, err)
+		}
 		return &genai.Part{FunctionResponse: &genai.FunctionResponse{
+			Parts:    media,
 			ID:       p.ToolUseID,
 			Name:     providerName,
 			Response: resp,

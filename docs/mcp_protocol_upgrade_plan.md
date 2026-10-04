@@ -416,8 +416,14 @@ The shared value foundation is implemented in `runtime/content`: the five
 existing variants now have one ordered `Blocks` JSON codec and independent
 copies. Runtime MCP callers use that contract, and the workflow codec admits
 that exact type while preserving its existing complete-payload checks. The old
-MCP type locations are removed without aliases. This foundation does not yet
-add content to agent result events or provider requests.
+MCP type locations are removed without aliases. Model messages now retain the
+same typed blocks, and provider encoders use native tool-result text, image and
+document variants with explicit
+unsupported-media errors. Complete-request preflight includes every mutable
+content field before copying. The OpenAI adapter's Bedrock image estimate also
+counts images nested in function outputs without changing inference bytes or
+its existing per-image rules. The foundation still does not add content to
+agent result events or connect the generated executor to this model contract.
 
 The implementation must preserve one ordered, typed content value alongside the
 structured result through these owners:
@@ -447,9 +453,12 @@ Inspect `codegen/agent/templates/mcp_executor.go.tpl`,
 `runtime/agent/runtime/tool_output_hydration.go`, `runtime/agent/model/model.go`,
 `runtime/agent/transcript/runlog_replay.go` and `runtime/agent/stream/subscriber.go`.
 The activity and event envelopes currently contain structured results and private
-server data, with no rich-content field. The model tool-result contract likewise
-contains only semantic JSON and error status. Those contracts must change
-explicitly rather than hiding typed content inside `any`.
+server data, with no rich-content field. The model tool-result contract now has
+typed `Blocks` beside semantic JSON and error status; its copies and JSON replay
+retain metadata, and native provider
+encoding omits host metadata and honors the assistant audience. Activity and
+event contracts must adopt this value explicitly rather than hiding content
+inside `any`.
 
 The current provider documentation and installed SDK unions were checked before
 implementation. This table names tool-result support, not general user-message
@@ -457,10 +466,14 @@ media support, and does not prove a configured model deployment accepts it.
 
 | Adapter | Verified tool-result representation | Constraint |
 | --- | --- | --- |
-| OpenAI Responses | String or typed array containing text, image and file items | The current SDK tool-result union has no audio variant. [Contract](https://developers.openai.com/api/docs/guides/function-calling) |
-| Anthropic | Nested text, image, document and search-result blocks | Content stays inside the matching tool result; the current union has no audio variant. [Contract](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls) |
-| Bedrock Converse | Text, JSON, image, document, search-result and video variants | Image support depends on the model; the current tool-result union has no audio variant. [Contract](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultContentBlock.html) |
+| OpenAI Responses | String or typed array containing text, image and file items | All nine shared document formats use MIME-qualified inline file data. The current SDK tool-result union has no audio variant. [Tool results](https://developers.openai.com/api/docs/guides/function-calling), [file formats](https://developers.openai.com/api/docs/guides/file-inputs) |
+| Anthropic | Nested text, image, document and search-result blocks | This adapter accepts PDF/plain-text documents and rejects other shared document formats. Content stays inside the matching tool result; the current union has no audio variant. [Contract](https://platform.claude.com/docs/en/agents-and-tools/tool-use/handle-tool-calls) |
+| Bedrock Converse | Text, JSON, image, document, search-result and video variants | All nine shared document formats use typed byte sources. Image support depends on the model; the current tool-result union has no audio variant. [Tool results](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ToolResultContentBlock.html), [document formats](https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_DocumentBlock.html) |
 | Vertex Gen AI | Typed `FunctionResponse.Parts` containing inline or file data | Gemini 3 and later supports PNG/JPEG/WebP images and PDF/plain-text documents; the documented function-response media set excludes audio. [Contract](https://docs.cloud.google.com/vertex-ai/generative-ai/docs/multimodal/function-calling) |
+
+Provider tests also cover content-only Bedrock results and native media on
+failed results. Vertex retains its top-level error field, and Bedrock retains
+its native error status, while both keep invocation correlation.
 
 Acceptance must use all five content variants with ordering, empty text and
 bytes, annotations, icons and extension metadata; combine content with a typed

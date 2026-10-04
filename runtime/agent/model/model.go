@@ -16,6 +16,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
+	toolcontent "goa.design/goa-ai/runtime/content"
 )
 
 type (
@@ -243,6 +244,13 @@ type (
 		//     100,000 visited values, or more than 16 MiB of strings, byte
 		//     slices, and map keys are rejected.
 		Content any `json:"content"`
+
+		// Blocks retains ordered tool text, media and resource descriptions beside
+		// Content. History keeps every block and its metadata. Provider adapters
+		// send assistant-audience content inside the matching tool result, omit
+		// opaque extension metadata and reject unsupported media without fetching
+		// resource addresses.
+		Blocks toolcontent.Blocks `json:"blocks,omitempty"`
 
 		// IsError reports whether Content represents an error from the tool.
 		IsError bool `json:"is_error"`
@@ -1092,6 +1100,10 @@ var ErrStructuredOutputUnsupported = errors.New("model: structured output not su
 // discover deferred tool definitions. The adapter does not expose them eagerly.
 var ErrToolSearchUnsupported = errors.New("model: deferred tool search not supported")
 
+// ErrToolContentUnsupported indicates that the selected provider cannot send
+// a tool's media through its native tool-result API. Stored content is retained.
+var ErrToolContentUnsupported = errors.New("model: tool content not supported")
+
 // ErrRateLimited indicates the provider rejected the request due to rate
 // limiting after exhausting any configured retries. Callers must not retry
 // in a tight loop and should treat this as a transient infrastructure
@@ -1497,7 +1509,7 @@ func partCharacterCount(part Part) int {
 	case ToolUsePart:
 		return len(v.ID) + len(v.Name) + encodedCharacterCount(v.Input)
 	case ToolResultPart:
-		return len(v.ToolUseID) + encodedCharacterCount(v.Content)
+		return len(v.ToolUseID) + encodedCharacterCount(v.Content) + encodedCharacterCount(v.Blocks)
 	case CacheCheckpointPart:
 		return 0
 	default:
