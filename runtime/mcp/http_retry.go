@@ -32,8 +32,7 @@ type (
 	// interruptedResponseError identifies a response that ended before a final
 	// message, rather than a malformed message or a completed tool error.
 	interruptedResponseError struct {
-		cause      error
-		httpStatus int
+		cause error
 	}
 )
 

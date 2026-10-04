@@ -2536,6 +2536,16 @@ error mapping. HTTP credential delivery and OAuth challenges remain unfinished
 release gates; endpoint composition alone does not establish MCP authorization
 conformance.
 
+The shared MCP HTTP transport retains each failed attempt's response status
+and exact authorization challenge values in `HTTPResponseError`. The error wraps
+validated JSON-RPC errors so generated and imported clients can inspect both
+contracts. HTTP authorization rejections close their bodies without waiting for
+protocol messages. Explicit request rejections do not authorize interrupted-tool
+retries; the authorization client owns fresh credentials, challenge validation
+and consent. Challenge headers and HTTP bodies are excluded from error text.
+Built-in OAuth and generated server credential delivery remain separate release
+gates. No HTTP authentication state enters workflow checkpoints or model inputs.
+
 Fixed MCP result views have one selected field contract shared by catalog
 schemas and agent specs. Server codecs consume the projected values already
 returned and validated by the original Goa endpoint. They do not convert a view

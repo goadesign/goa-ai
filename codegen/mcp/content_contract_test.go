@@ -8,6 +8,7 @@ const contentContractGeneratedTestSource = `package client
 import (
  "context"
  "encoding/json"
+ "errors"
  "net/http"
  "net/http/httptest"
  "net/url"
@@ -17,6 +18,7 @@ import (
  genmcpprompts "generated.local/gen/mcp_prompts"
  genpromptclient "generated.local/gen/jsonrpc/mcp_prompts/client"
  goahttp "goa.design/goa/v3/http"
+ mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
 func TestRichContentReplies(t *testing.T) {
@@ -102,6 +104,37 @@ func TestRichContentReplies(t *testing.T) {
      }
     }
    })
+  }
+ }
+}
+
+func TestGeneratedClientsRetainHTTPAuthorization(t *testing.T) {
+ for _, status:=range []int{http.StatusBadRequest,http.StatusUnauthorized,http.StatusForbidden} {
+  for _, typedCaller:=range []bool{false,true} {
+   calls:=0
+   challenge:="Bearer resource_metadata=\"https://example.test/metadata\", scope=\"records:write\""
+   server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+    calls++
+    w.Header().Set("WWW-Authenticate",challenge)
+    w.WriteHeader(status)
+   }))
+   t.Cleanup(server.Close)
+   location,err:=url.Parse(server.URL);if err!=nil{t.Fatal(err)}
+   client:=NewClient(location.Scheme,location.Host,server.Client(),goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
+   if typedCaller {
+    caller,createErr:=NewCaller(client,mcpruntime.ClientInfo{Name:"tests",Version:"1"},mcpruntime.InputSupport{},mcpruntime.HTTPRetryPolicy{MaxAttempts:3,TrustToolAnnotations:true})
+    if createErr!=nil {t.Fatal(createErr)}
+    _,err=caller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"echo",Payload:json.RawMessage("{}")})
+   } else {
+    _,err=client.ToolsCall()(t.Context(),&genmcpfmt.ToolsCallPayload{Name:"echo"})
+   }
+   server.Close()
+   var failure *mcpruntime.HTTPResponseError
+   if !errors.As(err,&failure) {t.Fatalf("authorization response lost: %v",err)}
+   if failure.StatusCode!=status || !reflect.DeepEqual(failure.WWWAuthenticate,[]string{challenge}) {t.Fatalf("challenge changed: %+v",failure)}
+   var unknown *mcpruntime.OutcomeUnknownError
+   if errors.As(err,&unknown) {t.Fatal("rejected request reported unknown execution")}
+   if calls!=1 {t.Fatalf("rejected request dispatched %d times",calls)}
   }
  }
 }

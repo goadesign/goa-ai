@@ -6447,6 +6447,21 @@ caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
 })
 ```
 
+HTTP failures return `HTTPResponseError` with the response's `StatusCode` and
+an independent copy of its exact `WWWAuthenticate` header values. Use
+`errors.As` to inspect it. Valid JSON-RPC errors remain available as `mcp.Error`
+through unwrapping. HTTP 401 and 403, and HTTP 400 carrying an authorization
+challenge, are handled before decoding an MCP body; a missing content type or
+an event-stream body does not hide the challenge. The transport closes that
+body without reading it. Explicit HTTP 400/401/403 rejections are not unknown
+execution outcomes and never trigger interrupted-stream retries. Other response
+loss still follows the existing tool trust and retry contract.
+
+The authorization client owns challenge parsing, credential renewal and consent.
+Error text omits the challenge headers and HTTP body. Built-in OAuth and generated
+server credential delivery remain release gates; this response contract does not
+implement those flows. No checkpoint or model argument carries a credential.
+
 For a subprocess, use `NewStdioCaller(ctx, StdioOptions{...})`. Each message
 carries the same request metadata. Canceling a call sends its actual request ID;
 a late response cannot finish another call. `caller.Close(ctx)` closes standard

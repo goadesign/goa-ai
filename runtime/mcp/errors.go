@@ -4,6 +4,7 @@ package mcp
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 
 	toolcontent "goa.design/goa-ai/runtime/content"
@@ -23,6 +24,19 @@ type (
 
 	// InternalError reports a bug in the MCP client.
 	InternalError struct {
+		cause error
+	}
+
+	// HTTPResponseError retains an HTTP failure before a caller handles its
+	// protocol error or authorization challenge. Error() describes the failure
+	// without including the challenge header values.
+	HTTPResponseError struct {
+		// StatusCode is the HTTP status returned for this request attempt.
+		StatusCode int
+		// WWWAuthenticate preserves the response's challenge header values in
+		// their received order. The authorization client owns their interpretation.
+		WWWAuthenticate []string
+
 		cause error
 	}
 
@@ -111,11 +125,28 @@ func (e *ToolExecutionError) Error() string {
 	return "MCP tool execution error: " + strings.Join(messages, "\n")
 }
 
-// unknownToolOutcome preserves explicit protocol errors and marks other failures
-// after a tool request was sent, so callers cannot mistake them for a rejection.
+// Error describes the HTTP status and underlying failure without including
+// challenge headers or the response body.
+func (e *HTTPResponseError) Error() string {
+	return fmt.Sprintf("MCP HTTP response %d: %v", e.StatusCode, e.cause)
+}
+
+// Unwrap returns the protocol, response-read or body-close failure. Callers can
+// still inspect a JSON-RPC error without parsing the HTTP error's text.
+func (e *HTTPResponseError) Unwrap() error {
+	return e.cause
+}
+
+// unknownToolOutcome preserves explicit protocol and HTTP request rejections.
+// Other failures after dispatch lack proof of completion; callers receive an
+// unknown outcome rather than permission to repeat the tool.
 func unknownToolOutcome(err error) error {
 	var protocol *Error
 	if err == nil || errors.As(err, &protocol) {
+		return err
+	}
+	var response *HTTPResponseError
+	if errors.As(err, &response) && (response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden) {
 		return err
 	}
 	return NewOutcomeUnknownError(err)

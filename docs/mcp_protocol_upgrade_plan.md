@@ -72,6 +72,17 @@ race suite, configured lint with zero issues, complete serial root race suite an
 quickstart, regenerated assistant fixture race suite and build passed. This does
 not complete credential-free schemas, HTTP credential delivery or OAuth challenges.
 
+The shared HTTP client now preserves failed-attempt status and exact
+`WWW-Authenticate` values through `HTTPResponseError`; valid protocol errors
+remain available by unwrapping. HTTP 401/403 and challenged HTTP 400 responses
+close their bodies before content-type or MCP decoding, including event streams.
+Explicit HTTP request rejections never use the interrupted-stream retry path.
+This is the client response boundary needed by authorization; generated credential
+projection, server challenges, metadata discovery and built-in OAuth flows remain
+required. There is no live target authorization configuration or telemetry for
+this greenfield framework path, so acceptance uses independent synthetic peers
+and actual generated clients without claiming deployed authorization behavior.
+
 Fixed result views now use one selected field contract for catalog schemas,
 server encoding and generated agent decoding. An original endpoint returns
 already validated projected values; the MCP adapter encodes those values without
@@ -241,8 +252,8 @@ values and per-item priority bounds; MCP-specific decoding checks fields whose
 presence depends on the discriminator and the embedded text/blob choice.
 Resource-link icons and embedded metadata survive decoding. Runtime consumers
 also validate base64 and retain icons when copying tool errors. These are
-direct-client capabilities. Rich authored tool presentation and the complete
-agent, storage and model-consumer path remain required work. The ordinary Goa union envelope differs from MCP's flat
+direct-client capabilities. Rich authored tool presentation remains required;
+the agent, storage and model-consumer paths now retain content as described below. The ordinary Goa union envelope differs from MCP's flat
 content envelope, so that producer design must explicitly own conversion rather
 than exposing untyped application callbacks.
 

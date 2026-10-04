@@ -342,6 +342,11 @@ preserve supported content; unsupported media returns an explicit error. See
 HTTP credential delivery and OAuth challenges remain release gates in the
 [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
 
+HTTP failures expose the received status and exact authorization challenges
+through `mcp.HTTPResponseError`, while preserving valid protocol errors for
+`errors.As`. Authorization rejections do not wait for an event stream or repeat
+a tool with unchanged credentials. Built-in OAuth remains a release gate.
+
 Application code owns planners, service behavior, authorization, side-effect
 idempotency, storage, and deployment. Deploy generated packages, callers, and
 workers as a coordinated release. Read the [production configuration](docs/runtime.md#production-configuration),

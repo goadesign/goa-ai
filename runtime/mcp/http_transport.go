@@ -14,6 +14,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/google/uuid"
@@ -165,7 +166,8 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		attemptRequest.ContentLength = int64(len(body))
 		response, err = t.send(attemptRequest, request.HasID, envelope, receiver, subscription)
 		var interrupted *interruptedResponseError
-		if err == nil || !errors.As(err, &interrupted) || interrupted.httpStatus != http.StatusOK || original.Context().Err() != nil || attempt == attempts {
+		var failedResponse *HTTPResponseError
+		if err == nil || !errors.As(err, &interrupted) || !errors.As(err, &failedResponse) || failedResponse.StatusCode != http.StatusOK || original.Context().Err() != nil || attempt == attempts {
 			if err == nil && attempt > 1 {
 				// The network reply was checked against this attempt's ID. Restore
 				// the original ID only for the generated caller's private decoder.
@@ -198,36 +200,54 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 
 // send consumes and validates one HTTP response. A lost SSE response is marked
 // separately so the caller can apply trust and attempt limits before repeating.
-func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[string]json.RawMessage, receiver *progressReceiver, subscription *subscriptionReceiver) (*http.Response, error) {
-	response, err := t.next.Do(outgoing)
+func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[string]json.RawMessage, receiver *progressReceiver, subscription *subscriptionReceiver) (response *http.Response, err error) {
+	received, err := t.next.Do(outgoing)
 	if err != nil {
 		return nil, err
 	}
-	if !hasID {
-		if response.StatusCode != http.StatusAccepted {
-			return nil, closeResponseWithError(response, fmt.Errorf("mcp notification HTTP status %d", response.StatusCode))
+	// An HTTP failure retains its status and challenge headers independently
+	// of the MCP envelope. A valid protocol error remains available by unwrapping.
+	defer func() {
+		if err != nil {
+			err = &HTTPResponseError{
+				StatusCode:      received.StatusCode,
+				WWWAuthenticate: slices.Clone(received.Header.Values("WWW-Authenticate")),
+				cause:           err,
+			}
 		}
-		data, readErr := io.ReadAll(response.Body)
-		closeErr := response.Body.Close()
+	}()
+	// Authorization can reject the request without an MCP response body. Close
+	// that body without waiting for stream events; the credential owner receives
+	// the exact HTTP challenge and decides whether to obtain fresh credentials.
+	if received.StatusCode == http.StatusUnauthorized || received.StatusCode == http.StatusForbidden ||
+		(received.StatusCode == http.StatusBadRequest && len(received.Header.Values("WWW-Authenticate")) != 0) {
+		return nil, closeResponseWithError(received, errors.New("authorization rejected"))
+	}
+	if !hasID {
+		if received.StatusCode != http.StatusAccepted {
+			return nil, closeResponseWithError(received, fmt.Errorf("mcp notification HTTP status %d", received.StatusCode))
+		}
+		data, readErr := io.ReadAll(received.Body)
+		closeErr := received.Body.Close()
 		if err := errors.Join(readErr, closeErr); err != nil {
 			return nil, err
 		}
 		if len(data) != 0 {
 			return nil, NewMalformedResponseError(errors.New("notification response must be empty"))
 		}
-		response.Body = io.NopCloser(bytes.NewReader(nil))
-		return response, nil
+		received.Body = io.NopCloser(bytes.NewReader(nil))
+		return received, nil
 	}
-	mediaType, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
+	mediaType, _, err := mime.ParseMediaType(received.Header.Get("Content-Type"))
 	if err != nil {
-		return nil, closeResponseWithError(response, NewMalformedResponseError(err))
+		return nil, closeResponseWithError(received, NewMalformedResponseError(err))
 	}
 	var data []byte
 	switch mediaType {
 	case "application/json":
-		data, err = io.ReadAll(response.Body)
+		data, err = io.ReadAll(received.Body)
 	case "text/event-stream":
-		data, err = readEventStream(response.Body, func(message rpcMessage) error {
+		data, err = readEventStream(received.Body, func(message rpcMessage) error {
 			if subscription != nil {
 				if message.Method == methodCancelled {
 					return NewMalformedResponseError(errors.New("server cancellation is only supported on stdio"))
@@ -239,14 +259,10 @@ func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[st
 			}
 			return receiver.notification(outgoing.Context(), message)
 		})
-		var interrupted *interruptedResponseError
-		if errors.As(err, &interrupted) {
-			interrupted.httpStatus = response.StatusCode
-		}
 	default:
 		err = NewMalformedResponseError(fmt.Errorf("unsupported content type %q", mediaType))
 	}
-	closeErr := response.Body.Close()
+	closeErr := received.Body.Close()
 	if err := errors.Join(err, closeErr); err != nil {
 		return nil, err
 	}
@@ -267,8 +283,8 @@ func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[st
 	if rpcErr != nil {
 		return nil, rpcErr.callerError()
 	}
-	if response.StatusCode != http.StatusOK {
-		return nil, NewMalformedResponseError(fmt.Errorf("success result with HTTP status %d", response.StatusCode))
+	if received.StatusCode != http.StatusOK {
+		return nil, NewMalformedResponseError(fmt.Errorf("success result with HTTP status %d", received.StatusCode))
 	}
 	var result struct {
 		ResultType string `json:"resultType"` //nolint:tagliatelle // MCP defines this wire field name.
@@ -284,10 +300,10 @@ func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[st
 			return nil, err
 		}
 	}
-	response.Body = io.NopCloser(bytes.NewReader(data))
-	response.ContentLength = int64(len(data))
-	response.Header.Set("Content-Type", "application/json")
-	return response, nil
+	received.Body = io.NopCloser(bytes.NewReader(data))
+	received.ContentLength = int64(len(data))
+	received.Header.Set("Content-Type", "application/json")
+	return received, nil
 }
 
 // readEventStream consumes comments and notifications until a complete response
