@@ -1,17 +1,21 @@
-// Package mcp represents every content block allowed in an MCP result.
-// Transport clients decode the wire format into these values so callers keep
-// images, audio, resource links, and embedded resources without losing data.
-package mcp
+// Package content owns ordered tool-result content shared by transport clients,
+// saved runtime events and model messages. Its closed variants preserve text,
+// media, resource references and metadata without opening resource addresses.
+package content
 
 import "encoding/json"
 
 type (
-	// ContentBlock is one typed item returned by an MCP tool.
+	// Blocks retains typed content in the order returned by one tool invocation.
+	// Its JSON codec uses the MCP content shape for transport and saved values.
+	Blocks []ContentBlock
+
+	// ContentBlock is one typed item returned by a tool.
 	ContentBlock interface {
 		isContentBlock()
 	}
 
-	// Role identifies an MCP message audience.
+	// Role identifies a tool-content audience.
 	Role string
 
 	// Annotations describe who should see a content block and its importance.
@@ -24,7 +28,7 @@ type (
 		LastModified *string `json:"lastModified,omitempty"` //nolint:tagliatelle // MCP requires this field name.
 	}
 
-	// TextContent is a text block returned by an MCP tool.
+	// TextContent is a text block returned by a tool.
 	TextContent struct {
 		// Text is the returned text.
 		Text string
@@ -34,7 +38,7 @@ type (
 		Meta json.RawMessage
 	}
 
-	// ImageContent is a base64-encoded image returned by an MCP tool.
+	// ImageContent is a base64-encoded image returned by a tool.
 	ImageContent struct {
 		// Data is the base64-encoded image data.
 		Data string
@@ -46,7 +50,7 @@ type (
 		Meta json.RawMessage
 	}
 
-	// AudioContent is base64-encoded audio returned by an MCP tool.
+	// AudioContent is base64-encoded audio returned by a tool.
 	AudioContent struct {
 		// Data is the base64-encoded audio data.
 		Data string
@@ -58,7 +62,7 @@ type (
 		Meta json.RawMessage
 	}
 
-	// ResourceLink is a link to a resource returned by an MCP tool.
+	// ResourceLink is a link to a resource returned by a tool.
 	ResourceLink struct {
 		// Name is the resource name.
 		Name string
@@ -80,7 +84,7 @@ type (
 		Meta json.RawMessage
 	}
 
-	// Icon describes an image URI supplied by an MCP peer. Decoding retains the
+	// Icon describes an image URI supplied by a tool. Decoding retains the
 	// description without fetching or rendering the image.
 	Icon struct {
 		// Src is the image URI.
@@ -93,7 +97,7 @@ type (
 		Theme *string `json:"theme,omitempty"`
 	}
 
-	// EmbeddedResource contains resource data returned directly by an MCP tool.
+	// EmbeddedResource contains resource data returned directly by a tool.
 	EmbeddedResource struct {
 		// Resource is text or base64-encoded binary resource data.
 		Resource ResourceContents
@@ -103,7 +107,7 @@ type (
 		Meta json.RawMessage
 	}
 
-	// ResourceContents is the data stored in an embedded MCP resource.
+	// ResourceContents is the data stored in an embedded resource.
 	ResourceContents interface {
 		isResourceContents()
 	}

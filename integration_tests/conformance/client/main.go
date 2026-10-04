@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"goa.design/goa-ai/runtime/mcp"
+
+	toolcontent "goa.design/goa-ai/runtime/content"
 )
 
 func main() {
@@ -49,7 +51,7 @@ func exercise() error {
 		if result.InputRequired != nil || len(result.Content) != 1 {
 			return errors.New("addition did not return one completed content block")
 		}
-		text, ok := result.Content[0].(*mcp.TextContent)
+		text, ok := result.Content[0].(*toolcontent.TextContent)
 		if !ok || text.Text != "The sum of 17 and 25 is 42" {
 			return errors.New("addition returned unexpected content")
 		}

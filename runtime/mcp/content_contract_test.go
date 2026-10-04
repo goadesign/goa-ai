@@ -9,6 +9,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	toolcontent "goa.design/goa-ai/runtime/content"
 )
 
 func TestContentDecoderRejectsMalformedPeerValues(t *testing.T) {
@@ -31,10 +33,8 @@ func TestContentDecoderRejectsMalformedPeerValues(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var result toolsCallResult
-			require.NoError(t, json.Unmarshal([]byte(`{"resultType":"complete","content":[`+test.content+`]}`), &result))
-			_, err := normalizeToolResult(result)
-			var malformed *MalformedResponseError
-			assert.ErrorAs(t, err, &malformed)
+			err := json.Unmarshal([]byte(`{"resultType":"complete","content":[`+test.content+`]}`), &result)
+			assert.Error(t, err)
 		})
 	}
 }
@@ -55,7 +55,7 @@ func TestContentDecoderPreservesLinkIconsAndNumericSize(t *testing.T) {
 	response, err := normalizeToolResult(result)
 	require.NoError(t, err)
 	require.Len(t, response.Content, 5)
-	link := response.Content[0].(*ResourceLink)
+	link := response.Content[0].(*toolcontent.ResourceLink)
 	assert.Equal(t, new(42.5), link.Size)
 	require.Len(t, link.Icons, 1)
 	assert.Equal(t, "data:image/png;base64,AQI=", link.Icons[0].Src)
@@ -63,18 +63,18 @@ func TestContentDecoderPreservesLinkIconsAndNumericSize(t *testing.T) {
 	assert.Equal(t, []string{"any"}, link.Icons[0].Sizes)
 	assert.Equal(t, "dark", *link.Icons[0].Theme)
 	assert.JSONEq(t, `{"example.org/source":{"id":1}}`, string(link.Meta))
-	assert.Empty(t, response.Content[1].(*TextContent).Text)
-	assert.Empty(t, response.Content[2].(*ImageContent).Data)
-	assert.Empty(t, response.Content[3].(*AudioContent).Data)
-	assert.Empty(t, response.Content[4].(*EmbeddedResource).Resource.(*BlobResourceContents).Blob)
+	assert.Empty(t, response.Content[1].(*toolcontent.TextContent).Text)
+	assert.Empty(t, response.Content[2].(*toolcontent.ImageContent).Data)
+	assert.Empty(t, response.Content[3].(*toolcontent.AudioContent).Data)
+	assert.Empty(t, response.Content[4].(*toolcontent.EmbeddedResource).Resource.(*toolcontent.BlobResourceContents).Blob)
 
 	// Each item's priority is valid even when their sum exceeds one. The protocol
 	// bounds an individual annotation, not the complete response's importance.
 	assert.Equal(t, new(1.0), link.Annotations.Priority)
-	assert.Equal(t, new(1.0), response.Content[1].(*TextContent).Annotations.Priority)
+	assert.Equal(t, new(1.0), response.Content[1].(*toolcontent.TextContent).Annotations.Priority)
 
 	failure := NewToolExecutionError(response)
-	copied := failure.Response.Content[0].(*ResourceLink)
+	copied := failure.Response.Content[0].(*toolcontent.ResourceLink)
 	*link.Size = 99
 	*link.Icons[0].MIMEType = "changed"
 	*link.Icons[0].Theme = "light"

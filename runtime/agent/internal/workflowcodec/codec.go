@@ -21,6 +21,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	toolcontent "goa.design/goa-ai/runtime/content"
 )
 
 type (
@@ -63,6 +64,7 @@ var (
 	textMarshalerType     = reflect.TypeFor[encoding.TextMarshaler]()
 	plannerToolResultType = reflect.TypeFor[planner.ToolResult]()
 	modelMessageType      = reflect.TypeFor[model.Message]()
+	contentBlocksType     = reflect.TypeFor[toolcontent.Blocks]()
 	rawJSONMessageType    = reflect.TypeFor[rawjson.Message]()
 	standardRawJSONType   = reflect.TypeFor[json.RawMessage]()
 )
@@ -237,8 +239,8 @@ func (c *strictJSONPayloadConverter) FromPayload(payload *commonpb.Payload, valu
 }
 
 // walk inspects nested values before encoding/json may invoke custom code.
-// model.Message is the one accepted custom object encoder and is still checked
-// through its fields. Raw JSON messages are already validated byte values and
+// Framework message and content encoders remain visible to field traversal.
+// Raw JSON messages are already validated byte values and
 // contribute their complete size directly. Byte slices at any nesting depth
 // are one byte block rather than one visited value per byte.
 func (p *workflowJSONPreflight) walk(value reflect.Value, depth int) error {
@@ -476,11 +478,13 @@ func (p *workflowJSONPreflight) enter(
 }
 
 // unsupportedWorkflowJSONMarshaler rejects encoders whose output can conceal a
-// workflow-only typed value. The established model.Message encoder remains
-// visible to recursive traversal.
+// workflow-only typed value. The framework-owned message and content encoders
+// remain visible to recursive field traversal and byte accounting.
 func unsupportedWorkflowJSONMarshaler(typ reflect.Type) (string, bool) {
 	if typ == modelMessageType ||
-		(typ.Kind() == reflect.Pointer && typ.Elem() == modelMessageType) {
+		(typ.Kind() == reflect.Pointer && typ.Elem() == modelMessageType) ||
+		typ == contentBlocksType ||
+		(typ.Kind() == reflect.Pointer && typ.Elem() == contentBlocksType) {
 		return "", false
 	}
 	if typ.Implements(jsonMarshalerType) ||

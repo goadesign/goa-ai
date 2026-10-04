@@ -6479,8 +6479,13 @@ caller is constructed with `NewCaller(client, clientInfo, inputSupport, retryPol
 The generated client supplies precomputed tool bindings from the same design
 that defines the server catalog.
 
-`CallResponse.Content` contains typed text, image, audio, resource-link, or
-embedded-resource blocks. `StructuredContent` retains the exact JSON value,
+`CallResponse.Content` is `content.Blocks` from `runtime/content`. It contains
+ordered, typed text, image, audio, resource-link, or embedded-resource blocks.
+The same closed value contract has a validating JSON codec and deep-copy method
+for transport replies and saved values. Decoding checks every block before
+replacing the receiver; encoding rejects malformed caller-built values.
+An empty sequence encodes as `[]`. `StructuredContent` retains the exact JSON
+value,
 including primitive values, arrays, and explicit null. Generated executors decode
 it using the declared result codec. Text content is never parsed as a substitute
 for a missing structured result.
@@ -6496,14 +6501,19 @@ is no sum or operation-wide priority limit.
 
 This is a breaking generated Go contract: regenerate direct clients, replace
 references to the removed `MessageContent` with `ContentItem`, and dereference
-`Text` only after selecting a text item. Runtime `ResourceLink.Size` now preserves
-MCP's JSON number as `*float64`, and `Icons` retains the supplied descriptions.
+`Text` only after selecting a text item. Runtime content types now live in
+`runtime/content`; replace references such as
+`mcp.TextContent` with `content.TextContent`. The old namespace has no aliases.
+`content.ResourceLink.Size` preserves MCP's JSON number as `*float64`, and
+`Icons` retains the supplied descriptions.
 Decoding icons never fetches or renders their URIs. Method-backed prompt
 services can also author these five kinds through typed Goa results; see
 [the prompt contract](dsl.md#method-backed-mcp-prompts). The generated adapter
 rejects non-finite authored priorities and resource sizes before response
-encoding, so clients receive an internal-error response. Rich tool presentation
-remains separate work.
+encoding, so clients receive an internal-error response. The generated agent
+executor still consumes only structured JSON; carrying
+content through agent results, history, host events and provider requests
+remains a required release gate.
 
 Content types now contain raw JSON extension metadata. The generic standalone
 codec generator deliberately excludes custom raw JSON fields, so it no longer

@@ -11,6 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/trace"
+
+	toolcontent "goa.design/goa-ai/runtime/content"
 )
 
 func TestRPCMessageRejectsMalformedMethodMessages(t *testing.T) {
@@ -163,10 +165,7 @@ func TestNormalizeToolResultReturnsTypedExecutionError(t *testing.T) {
 
 	message := "device alias does not exist"
 	detail := "choose an alias returned by devices/list"
-	content := []contentItem{
-		{Type: "text", Text: &message},
-		{Type: "text", Text: &detail},
-	}
+	content := textContent(message, detail)
 	_, err := normalizeToolResult(toolsCallResult{ResultType: "complete",
 		Content:           &content,
 		StructuredContent: json.RawMessage(`{"code":"unknown_alias"}`),
@@ -219,13 +218,13 @@ func TestNormalizeToolResultPreservesEveryContentType(t *testing.T) {
 	response, err := normalizeToolResult(result)
 	require.NoError(t, err)
 	require.Len(t, response.Content, 6)
-	assert.Equal(t, "hello", response.Content[0].(*TextContent).Text)
-	assert.Equal(t, RoleUser, response.Content[0].(*TextContent).Annotations.Audience[0])
-	assert.Equal(t, "aW1hZ2U=", response.Content[1].(*ImageContent).Data)
-	assert.Equal(t, "YXVkaW8=", response.Content[2].(*AudioContent).Data)
-	assert.Equal(t, "doc://guide", response.Content[3].(*ResourceLink).URI)
-	assert.Equal(t, "inline", response.Content[4].(*EmbeddedResource).Resource.(*TextResourceContents).Text)
-	assert.Equal(t, "YmxvYg==", response.Content[5].(*EmbeddedResource).Resource.(*BlobResourceContents).Blob)
+	assert.Equal(t, "hello", response.Content[0].(*toolcontent.TextContent).Text)
+	assert.Equal(t, toolcontent.RoleUser, response.Content[0].(*toolcontent.TextContent).Annotations.Audience[0])
+	assert.Equal(t, "aW1hZ2U=", response.Content[1].(*toolcontent.ImageContent).Data)
+	assert.Equal(t, "YXVkaW8=", response.Content[2].(*toolcontent.AudioContent).Data)
+	assert.Equal(t, "doc://guide", response.Content[3].(*toolcontent.ResourceLink).URI)
+	assert.Equal(t, "inline", response.Content[4].(*toolcontent.EmbeddedResource).Resource.(*toolcontent.TextResourceContents).Text)
+	assert.Equal(t, "YmxvYg==", response.Content[5].(*toolcontent.EmbeddedResource).Resource.(*toolcontent.BlobResourceContents).Blob)
 }
 
 func TestNormalizeToolResultAcceptsEmptyContent(t *testing.T) {
@@ -253,7 +252,7 @@ func TestNormalizeToolResultRejectsMissingContent(t *testing.T) {
 func TestNormalizeToolResultAcceptsEmptyExecutionError(t *testing.T) {
 	t.Parallel()
 
-	content := []contentItem{}
+	content := toolcontent.Blocks{}
 	_, err := normalizeToolResult(toolsCallResult{ResultType: "complete", Content: &content, IsError: true})
 	require.EqualError(t, err, "MCP tool execution error")
 }
@@ -262,7 +261,7 @@ func TestNormalizeToolResultDoesNotInferStructuredContentFromText(t *testing.T) 
 	t.Parallel()
 
 	text := `{"temperature":22.5}`
-	content := []contentItem{{Type: "text", Text: &text}}
+	content := textContent(text)
 	response, err := normalizeToolResult(toolsCallResult{ResultType: "complete",
 		Content: &content,
 	})
@@ -274,22 +273,16 @@ func TestNormalizeToolResultDoesNotInferStructuredContentFromText(t *testing.T) 
 func TestNormalizeToolResultRejectsIncompleteImageContent(t *testing.T) {
 	t.Parallel()
 
-	text := "supported"
-	content := []contentItem{
-		{Type: "text", Text: &text},
-		{Type: "image"},
-	}
-	_, err := normalizeToolResult(toolsCallResult{ResultType: "complete",
-		Content: &content,
-	})
-	require.EqualError(t, err, "malformed MCP response: content[1]: image content requires data and mimeType")
+	var result toolsCallResult
+	err := json.Unmarshal([]byte(`{"resultType":"complete","content":[{"type":"text","text":"supported"},{"type":"image"}]}`), &result)
+	require.ErrorContains(t, err, "content[1]: image content requires data and mimeType")
 }
 
 // textContent builds the typed text blocks expected from a tool response.
-func textContent(values ...string) []ContentBlock {
-	content := make([]ContentBlock, len(values))
+func textContent(values ...string) toolcontent.Blocks {
+	content := make(toolcontent.Blocks, len(values))
 	for i, value := range values {
-		content[i] = &TextContent{Text: value}
+		content[i] = &toolcontent.TextContent{Text: value}
 	}
 	return content
 }

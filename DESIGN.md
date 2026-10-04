@@ -2553,6 +2553,15 @@ Prompt, resource-template and completion conversions retain their flat protocol
 shape; generation checks the required operation fields in every selectable view.
 Private server codecs encode results; only consumer codecs decode results.
 
+`runtime/content` owns one closed, ordered value contract for text, images,
+audio, resource links and embedded resources. Its JSON codec validates every
+block at transport and saved-value boundaries, retaining annotations, icons and
+raw extension metadata. Copying retains nested values without opening resource
+addresses. The workflow codec admits this exact typed codec and still checks
+its complete payload byte budget; unrelated custom JSON encoders remain
+rejected. The generic agent result and model paths still need explicit content
+fields before rich tool presentation is complete.
+
 ## Error code mapping
 
 When an authored Goa method exposed as an MCP tool fails, the adapter returns a

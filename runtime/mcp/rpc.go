@@ -6,11 +6,12 @@ package mcp
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+
+	toolcontent "goa.design/goa-ai/runtime/content"
 )
 
 type (
@@ -54,33 +55,9 @@ type (
 		InputRequests     map[string]InputRequest `json:"inputRequests"` //nolint:tagliatelle // MCP defines this wire field name.
 		RequestState      *string                 `json:"requestState"`  //nolint:tagliatelle // MCP defines this wire field name.
 		Meta              json.RawMessage         `json:"_meta"`         //nolint:tagliatelle // MCP defines this wire field name.
-		Content           *[]contentItem          `json:"content"`
+		Content           *toolcontent.Blocks     `json:"content"`
 		StructuredContent json.RawMessage         `json:"structuredContent,omitempty"` //nolint:tagliatelle // MCP protocol field.
 		IsError           bool                    `json:"isError"`                     //nolint:tagliatelle // MCP protocol field.
-	}
-
-	contentItem struct {
-		Type        string          `json:"type"`
-		Text        *string         `json:"text"`
-		Data        *string         `json:"data"`
-		MIMEType    *string         `json:"mimeType"` //nolint:tagliatelle // MCP protocol field.
-		Name        *string         `json:"name"`
-		Title       *string         `json:"title"`
-		URI         *string         `json:"uri"`
-		Description *string         `json:"description"`
-		Size        *float64        `json:"size"`
-		Icons       []Icon          `json:"icons"`
-		Resource    json.RawMessage `json:"resource"`
-		Annotations *Annotations    `json:"annotations"`
-		Meta        json.RawMessage `json:"_meta,omitempty"` //nolint:tagliatelle // MCP protocol field.
-	}
-
-	resourceContents struct {
-		URI      *string         `json:"uri"`
-		MIMEType *string         `json:"mimeType"` //nolint:tagliatelle // MCP protocol field.
-		Text     *string         `json:"text"`
-		Blob     *string         `json:"blob"`
-		Meta     json.RawMessage `json:"_meta,omitempty"` //nolint:tagliatelle // MCP protocol field.
 	}
 )
 
@@ -244,128 +221,15 @@ func normalizeToolResult(result toolsCallResult) (CallResponse, error) {
 	if result.Content == nil {
 		return CallResponse{}, NewMalformedResponseError(errors.New("tool response is missing content"))
 	}
-	content := make([]ContentBlock, len(*result.Content))
-	for i, raw := range *result.Content {
-		item, err := normalizeContentBlock(raw)
-		if err != nil {
-			return CallResponse{}, NewMalformedResponseError(fmt.Errorf("content[%d]: %w", i, err))
-		}
-		content[i] = item
-	}
+
 	response := CallResponse{
-		Content:           content,
+		Content:           *result.Content,
 		StructuredContent: append(json.RawMessage(nil), result.StructuredContent...),
 	}
 	if result.IsError {
 		return CallResponse{}, NewToolExecutionError(response)
 	}
 	return response, nil
-}
-
-// normalizeContentBlock decodes one MCP content union after the JSON-RPC
-// response has been accepted.
-func normalizeContentBlock(item contentItem) (ContentBlock, error) {
-	if err := validateContentMetadata(item.Annotations, item.Meta); err != nil {
-		return nil, err
-	}
-	switch item.Type {
-	case "text":
-		if item.Text == nil {
-			return nil, errors.New("text content is missing text")
-		}
-		return &TextContent{Text: *item.Text, Annotations: item.Annotations, Meta: cloneRaw(item.Meta)}, nil
-	case "image":
-		if item.Data == nil || item.MIMEType == nil {
-			return nil, errors.New("image content requires data and mimeType")
-		}
-		if err := validateBase64(*item.Data); err != nil {
-			return nil, err
-		}
-		return &ImageContent{Data: *item.Data, MIMEType: *item.MIMEType, Annotations: item.Annotations, Meta: cloneRaw(item.Meta)}, nil
-	case "audio":
-		if item.Data == nil || item.MIMEType == nil {
-			return nil, errors.New("audio content requires data and mimeType")
-		}
-		if err := validateBase64(*item.Data); err != nil {
-			return nil, err
-		}
-		return &AudioContent{Data: *item.Data, MIMEType: *item.MIMEType, Annotations: item.Annotations, Meta: cloneRaw(item.Meta)}, nil
-	case "resource_link":
-		if item.Name == nil || item.URI == nil {
-			return nil, errors.New("resource link requires name and uri")
-		}
-		if err := validateContentURI(*item.URI); err != nil {
-			return nil, err
-		}
-		for _, icon := range item.Icons {
-			if err := validateContentURI(icon.Src); err != nil {
-				return nil, err
-			}
-			if icon.Theme != nil && *icon.Theme != "light" && *icon.Theme != "dark" {
-				return nil, errors.New("icon theme must be light or dark")
-			}
-		}
-		if item.Size != nil && *item.Size < 0 {
-			return nil, errors.New("resource link size must not be negative")
-		}
-		return &ResourceLink{
-			Name: *item.Name, URI: *item.URI, Title: item.Title,
-			Description: item.Description, MIMEType: item.MIMEType, Size: item.Size,
-			Icons: item.Icons, Annotations: item.Annotations, Meta: cloneRaw(item.Meta),
-		}, nil
-	case "resource":
-		resource, err := normalizeResourceContents(item.Resource)
-		if err != nil {
-			return nil, err
-		}
-		return &EmbeddedResource{Resource: resource, Annotations: item.Annotations, Meta: cloneRaw(item.Meta)}, nil
-	default:
-		return nil, fmt.Errorf("unsupported MCP content type %q", item.Type)
-	}
-}
-
-// normalizeResourceContents decodes the text-or-blob union carried by an
-// embedded resource.
-func normalizeResourceContents(raw json.RawMessage) (ResourceContents, error) {
-	if len(raw) == 0 {
-		return nil, errors.New("embedded resource is missing resource")
-	}
-	var resource resourceContents
-	if err := json.Unmarshal(raw, &resource); err != nil || resource.URI == nil {
-		return nil, errors.New("embedded resource requires a resource object with uri")
-	}
-	if err := validateContentURI(*resource.URI); err != nil {
-		return nil, err
-	}
-	if err := validateMeta(resource.Meta); err != nil {
-		return nil, err
-	}
-	if (resource.Text == nil) == (resource.Blob == nil) {
-		return nil, errors.New("embedded resource must contain exactly one of text or blob")
-	}
-	if resource.Text != nil {
-		return &TextResourceContents{URI: *resource.URI, MIMEType: resource.MIMEType, Text: *resource.Text, Meta: cloneRaw(resource.Meta)}, nil
-	}
-	if err := validateBase64(*resource.Blob); err != nil {
-		return nil, err
-	}
-	return &BlobResourceContents{URI: *resource.URI, MIMEType: resource.MIMEType, Blob: *resource.Blob, Meta: cloneRaw(resource.Meta)}, nil
-}
-
-// validateContentMetadata checks the closed MCP annotation values and the
-// object shape required for extension metadata.
-func validateContentMetadata(annotations *Annotations, meta json.RawMessage) error {
-	if annotations != nil {
-		for _, role := range annotations.Audience {
-			if role != RoleUser && role != RoleAssistant {
-				return fmt.Errorf("unsupported annotation audience %q", role)
-			}
-		}
-		if annotations.Priority != nil && (*annotations.Priority < 0 || *annotations.Priority > 1) {
-			return errors.New("annotation priority must be between zero and one")
-		}
-	}
-	return validateMeta(meta)
 }
 
 // validateMeta requires MCP extension metadata to be a JSON object.
@@ -401,15 +265,6 @@ func normalizeCallResult(ctx context.Context, result toolsCallResult, support In
 		}
 	}
 	return response, nil
-}
-
-// validateBase64 checks the encoded bytes in one media or resource item. Empty
-// data remains valid; decoding does not impose an operation-wide size limit.
-func validateBase64(data string) error {
-	if _, err := base64.StdEncoding.DecodeString(data); err != nil {
-		return fmt.Errorf("content must contain base64 data: %w", err)
-	}
-	return nil
 }
 
 // validateContentURI checks one resource or icon address without opening it.

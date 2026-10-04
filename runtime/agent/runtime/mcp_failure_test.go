@@ -12,6 +12,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/mcp"
+
+	toolcontent "goa.design/goa-ai/runtime/content"
 )
 
 func TestMCPCallFailure(t *testing.T) {
@@ -26,7 +28,7 @@ func TestMCPCallFailure(t *testing.T) {
 		{"deadline", context.DeadlineExceeded, planner.FailureTimeout, planner.RecoveryFinish},
 		{"malformed response", mcp.NewMalformedResponseError(errors.New("bad result")), planner.FailureMalformedResult, planner.RecoveryFinish},
 		{"client bug", mcp.NewInternalError(errors.New("bad state")), planner.FailureInternal, planner.RecoveryFinish},
-		{"tool rejected call", mcp.NewToolExecutionError(mcp.CallResponse{Content: []mcp.ContentBlock{&mcp.TextContent{Text: "rejected"}}}), planner.FailureDomainRejection, planner.RecoveryReplan},
+		{"tool rejected call", mcp.NewToolExecutionError(mcp.CallResponse{Content: toolcontent.Blocks{&toolcontent.TextContent{Text: "rejected"}}}), planner.FailureDomainRejection, planner.RecoveryReplan},
 		{"invalid arguments", &mcp.Error{Code: mcp.JSONRPCInvalidParams, Message: "bad arguments"}, planner.FailureInvalidCall, planner.RecoveryCorrectCall},
 		{"missing method", &mcp.Error{Code: mcp.JSONRPCMethodNotFound, Message: "missing"}, planner.FailureInvalidCall, planner.RecoveryReplan},
 		{"other protocol error", &mcp.Error{Code: mcp.JSONRPCInternalError, Message: "failed"}, planner.FailureInternal, planner.RecoveryFinish},

@@ -412,6 +412,13 @@ only `StructuredContent` and drops `Content`. This is a verified consumer gap,
 not only an absent producer DSL. Adding an authored content binding alone cannot
 complete the capability.
 
+The shared value foundation is implemented in `runtime/content`: the five
+existing variants now have one ordered `Blocks` JSON codec and independent
+copies. Runtime MCP callers use that contract, and the workflow codec admits
+that exact type while preserving its existing complete-payload checks. The old
+MCP type locations are removed without aliases. This foundation does not yet
+add content to agent result events or provider requests.
+
 The implementation must preserve one ordered, typed content value alongside the
 structured result through these owners:
 
@@ -477,7 +484,7 @@ This is a partial implementation of the older protocol, not a complete implement
 | Generated client | Wraps its Goa HTTP client in `HTTPSession`; initializes, sends the initialized notification, and starts replacement initialization after session expiry. | [client session template](https://github.com/goadesign/goa-ai/blob/f3f5203c1b5c5e5f30a9431172d9603ebe02a567/codegen/mcp/templates/mcp_client_session.go.tpl), [caller template](../codegen/mcp/templates/mcp_client_caller.go.tpl) |
 | Handwritten callers | HTTP and stdio constructors initialize. HTTP retains session headers and treats some 404s as expiry. Both handle independent server requests, including ping. | [HTTP caller](../runtime/mcp/httpcaller.go), [HTTP session](https://github.com/goadesign/goa-ai/blob/f3f5203c1b5c5e5f30a9431172d9603ebe02a567/runtime/mcp/http_session.go), [stdio caller](../runtime/mcp/stdiocaller.go) |
 | Tool results | Object results have an output schema and structured content. Strings become plain text. Other JSON values become serialized text. Generated executors decode those three cases differently. | [adapter planning](../codegen/mcp/adapter_generator.go), [tool adapter](../codegen/mcp/templates/adapter_tools.go.tpl), [agent executor](../codegen/agent/templates/mcp_executor.go.tpl) |
-| External content | Runtime callers already preserve text, image, audio, resource links, embedded resources, annotations, and content metadata. Generated authored tools produce text only. | [content types](../runtime/mcp/content.go), [wire decoding](../runtime/mcp/rpc.go) |
+| External content | Runtime callers already preserve text, image, audio, resource links, embedded resources, annotations, and content metadata. Generated authored tools produce text only. | [baseline content types](https://github.com/goadesign/goa-ai/blob/f3f5203c1b5c5e5f30a9431172d9603ebe02a567/runtime/mcp/content.go), [wire decoding](../runtime/mcp/rpc.go) |
 | Errors | Invalid tool arguments become JSON-RPC invalid-params errors. Service failures become `isError` tool results. Runtime protocol errors retain code/message but drop `error.data`. | [tool adapter](../codegen/mcp/templates/adapter_tools.go.tpl), [caller contract](../runtime/mcp/caller.go), [failure classification](../runtime/agent/runtime/mcp_failure.go) |
 | Schemas | Shared code emits inline schemas, rejects recursive types, and incorrectly documents inline expansion as an MCP requirement. | [schema generator](../codegen/shared/json_schema.go) |
 | Resources and prompts | Fixed resource URIs, unary text/JSON resource methods without payloads, and static text prompt messages. Lists are one page and reject supplied cursors. | [resource adapter](../codegen/mcp/templates/adapter_resources.go.tpl), [prompt adapter](../codegen/mcp/templates/adapter_prompts.go.tpl), [design validation](../codegen/mcp/mcp_contract.go) |
@@ -934,7 +941,7 @@ These are dependency-ordered work packages for one breaking release. Intermediat
 6. Make shutdown follow the current stdio contract. Establish any grace-period value through the numeric-policy gate rather than copying an arbitrary timeout.
 7. Keep every pending operation's outcome honest on EOF, wrong IDs, malformed results, and process exit. Never auto-replay an uncertain side effect.
 
-**Files:** [caller contract](../runtime/mcp/caller.go), [wire decoding](../runtime/mcp/rpc.go), [HTTP caller](../runtime/mcp/httpcaller.go), [HTTP session to delete](https://github.com/goadesign/goa-ai/blob/f3f5203c1b5c5e5f30a9431172d9603ebe02a567/runtime/mcp/http_session.go), [stdio caller](../runtime/mcp/stdiocaller.go), [content](../runtime/mcp/content.go), [errors](../runtime/mcp/errors.go), [trace propagation](../runtime/mcp/trace.go).
+**Files:** [caller contract](../runtime/mcp/caller.go), [wire decoding](../runtime/mcp/rpc.go), [HTTP caller](../runtime/mcp/httpcaller.go), [HTTP session to delete](https://github.com/goadesign/goa-ai/blob/f3f5203c1b5c5e5f30a9431172d9603ebe02a567/runtime/mcp/http_session.go), [stdio caller](../runtime/mcp/stdiocaller.go), [content contract](../runtime/content/content.go), [content codec](../runtime/content/codec.go), [errors](../runtime/mcp/errors.go), [trace propagation](../runtime/mcp/trace.go).
 
 **Acceptance:** constructors reject older endpoints; every request is independently valid; HTTP 404 never restarts initialization; concurrent stdio responses are correlated correctly; no legacy envelope default, server-request reply, or stream-resumption path remains.
 

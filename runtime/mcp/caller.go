@@ -7,6 +7,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+
+	toolcontent "goa.design/goa-ai/runtime/content"
 )
 
 type (
@@ -47,7 +49,7 @@ type (
 	// CallResponse captures the MCP tool result returned by the caller.
 	CallResponse struct {
 		// Content contains every typed block in the order returned by the MCP server.
-		Content []ContentBlock
+		Content toolcontent.Blocks
 		// StructuredContent is a present JSON value; zero bytes means absent, while null is present.
 		StructuredContent json.RawMessage
 		// InputRequired describes an unfinished call instead of a successful result.

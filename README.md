@@ -332,7 +332,12 @@ schemas and generated agent codecs, including different nested views of the
 same type. Views selected by the service return a tagged value that retains the
 view name through agent decoding and stored results. See
 [result views](docs/dsl.md#goa-result-views).
-HTTP credential delivery and OAuth challenges remain release gates in the [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
+`runtime/content` owns the five ordered tool-content variants, their validating
+JSON codec and independent copies. Runtime MCP callers use `content.Blocks`;
+old content type names in `runtime/mcp` are removed. See
+[the content contract](docs/runtime.md#mcp-callers). The generated agent content
+path, HTTP credential delivery and OAuth challenges remain release gates in the
+[MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
 
 Application code owns planners, service behavior, authorization, side-effect
 idempotency, storage, and deployment. Deploy generated packages, callers, and
