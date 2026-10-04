@@ -57,10 +57,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		result, err := a.invokeMCPMethod0(ctx, payload)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			return toolCallError(failure.Error()), nil
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := codec.EncodeSummarizeResult(result)
 		if err != nil {

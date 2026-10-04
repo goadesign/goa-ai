@@ -29,6 +29,8 @@ type (
 		EndpointResultRef string
 		// ExecutionView retains the view chosen by the original endpoint.
 		ExecutionView bool
+		// FaultNames lists authored error names declared as server faults.
+		FaultNames []string
 		// Codec encodes or validates the result under that view.
 		Codec *MethodCodecData
 		// ResultValue is the selected value used by typed content conversions.
@@ -58,6 +60,11 @@ func planEndpointAdapters(generation *codegen.Generation, services *goaservice.P
 			}
 		}
 		call := &endpointMethodAdapter{method: method, CallName: fmt.Sprintf("invokeMCPMethod%d", index), DesignMethodName: method.Name, ResultValue: "result"}
+		for _, failure := range method.Errors {
+			if _, fault := failure.Meta["goa:error:fault"]; fault {
+				call.FaultNames = append(call.FaultNames, failure.Name)
+			}
+		}
 		for _, side := range []struct {
 			attribute *expr.AttributeExpr
 			layout    **codegen.GoTypePlan

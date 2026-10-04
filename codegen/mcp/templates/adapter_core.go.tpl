@@ -10,8 +10,15 @@ type (
     // MCPAdapterOptions configures how application errors are exposed to clients.
     MCPAdapterOptions struct {
         // ErrorMapper replaces a service error with an application-approved error.
-        // It must return a non-nil error; returning nil violates this contract.
+        // It controls the disclosed message, while the original error determines
+        // whether the failure is internal. It must return a non-nil error.
         ErrorMapper func(error) error
+    }
+    // endpointFailure keeps the disclosed error and its original server-fault
+    // classification together. Redacting a message cannot change who caused it.
+    endpointFailure struct {
+        err error
+        internal bool
     }
 )
 
@@ -43,19 +50,80 @@ func validateNoArguments(arguments json.RawMessage) error {
 }
 {{- end }}
 
-// mapError turns invalid endpoint result types into internal protocol errors
-// and applies the host's disclosure policy to application failures.
-func (a *MCPAdapter) mapError(err error) error {
+// mapError applies the host's disclosure policy after classifying the original
+// endpoint error. Internal failures remain protocol errors after redaction.
+func (a *MCPAdapter) mapError(err error, internal bool) endpointFailure {
     {{- if .NeedsEndpointResultCheck }}
     if failure, ok := err.(*endpointResultError); ok {
-        return goa.PermanentError("internal_error", "%s", failure.Error())
+        return endpointFailure{err: goa.PermanentError("internal_error", "%s", failure.Error()), internal: true}
     }
     {{- end }}
+    disclosed := err
     if a.opts.ErrorMapper != nil {
-        return a.opts.ErrorMapper(err)
+        disclosed = a.opts.ErrorMapper(err)
     }
-    return err
+    if internal {
+        disclosed = goa.NewServiceError(disclosed, "internal_error", false, false, true)
+    }
+    return endpointFailure{err: disclosed, internal: internal}
 }
+
+{{- if .EndpointMethods }}
+// endpointErrorOwner follows one wrapped failure to its first named Goa error.
+// A join of independent errors keeps its own meaning instead of borrowing one
+// child's fault flag or declared name.
+func endpointErrorOwner(err error) error {
+    for err != nil {
+        if _, named := err.(goa.GoaErrorNamer); named {
+            return err
+        }
+        if joined, ok := err.(interface{ Unwrap() []error }); ok {
+            causes := joined.Unwrap()
+            if len(causes) != 1 {
+                return err
+            }
+            err = causes[0]
+        } else {
+            cause := errors.Unwrap(err)
+            if cause == nil {
+                return err
+            }
+            err = cause
+        }
+    }
+    return nil
+}
+
+{{- $needsGenericFault := false }}
+{{- range .EndpointMethods }}
+{{- if not .FaultNames }}{{- $needsGenericFault = true }}{{- end }}
+{{- end }}
+{{- if $needsGenericFault }}
+// isEndpointFault recognizes the owning Goa error's explicit server-fault flag.
+func isEndpointFault(err error) bool {
+    failure, ok := endpointErrorOwner(err).(*goa.ServiceError)
+    return ok && failure.Fault
+}
+{{- end }}
+{{- range .EndpointMethods }}
+{{- if .FaultNames }}
+// is{{ .CallName }}Fault also recognizes this method's authored fault errors.
+func is{{ .CallName }}Fault(err error) bool {
+    owner := endpointErrorOwner(err)
+    if failure, ok := owner.(*goa.ServiceError); ok && failure.Fault {
+        return true
+    }
+    if named, ok := owner.(goa.GoaErrorNamer); ok {
+        switch named.GoaErrorName() {
+        case {{ range $index, $name := .FaultNames }}{{ if $index }}, {{ end }}{{ quote $name }}{{ end }}:
+            return true
+        }
+    }
+    return false
+}
+{{- end }}
+{{- end }}
+{{- end }}
 
 func stringPtr(value string) *string {
     return &value

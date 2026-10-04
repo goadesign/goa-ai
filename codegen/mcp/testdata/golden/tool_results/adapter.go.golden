@@ -71,10 +71,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		result, err := a.invokeMCPMethod0(ctx, payload)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			return toolCallError(failure.Error()), nil
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeSummarizeResult(result)
 		if err != nil {
@@ -94,10 +97,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		result, err := a.invokeMCPMethod1(ctx)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			return toolCallError(failure.Error()), nil
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeTitleResult(result)
 		if err != nil {
@@ -117,10 +123,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		result, err := a.invokeMCPMethod2(ctx)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			return toolCallError(failure.Error()), nil
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeTagsResult(result)
 		if err != nil {
@@ -140,10 +149,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		err := a.invokeMCPMethod3(ctx)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			return toolCallError(failure.Error()), nil
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
 		}
 		return &ToolsCallResult{ResultType: "complete", Meta: resultMeta(), Content: []*ContentItem{}}, nil
 	default:

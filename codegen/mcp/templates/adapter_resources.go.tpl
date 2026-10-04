@@ -34,7 +34,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
-            return nil, a.mapError(err)
+            return nil, a.mapError(err, {{ if .Endpoint.FaultNames }}is{{ .Endpoint.CallName }}Fault{{ else }}isEndpointFault{{ end }}(err)).err
         }
         {{- if .BinaryResult }}
         blob := base64.StdEncoding.EncodeToString(result)
@@ -74,7 +74,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
-            return nil, a.mapError(err)
+            return nil, a.mapError(err, {{ if .Endpoint.FaultNames }}is{{ .Endpoint.CallName }}Fault{{ else }}isEndpointFault{{ end }}(err)).err
         }
         if err := {{ .Codec.ResultValidate }}(result); err != nil {
             span.RecordError(err)

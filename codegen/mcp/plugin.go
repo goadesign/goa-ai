@@ -238,6 +238,10 @@ func planMCPImports(
 		"go.opentelemetry.io/otel",
 		"go.opentelemetry.io/otel/codes",
 	)
+	if len(data.EndpointMethods) > 0 {
+		serverFixed = append(serverFixed, goacodegen.SimpleImport("errors"))
+		data.serverImportPaths = append(data.serverImportPaths, "errors")
+	}
 	for _, resource := range data.Resources {
 		if !resource.BinaryResult {
 			continue

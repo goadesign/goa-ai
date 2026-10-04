@@ -34,6 +34,7 @@ replace goa.design/goa/v3 => %s
 		"go.mod":           module,
 		"design/design.go": endpointContractDesign,
 		"endpoint_test.go": endpointContractTest,
+		"fault_test.go":    endpointFailureTest,
 	} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600))
 	}
@@ -79,6 +80,13 @@ var nested=ResultType("application/vnd.endpoint.nested",func(){
  Required("summary","detail")
  View("default",func(){Attribute("summary");Attribute("detail")})
 })
+var failure=Type("EndpointFailure",func(){
+ Description("A synthetic named domain or server failure")
+ Field(1,"name",String,"The declared error name")
+ Field(2,"message",String,"The safe error message")
+ ErrorName("name")
+ Required("name","message")
+})
 var observe=Interceptor("observe")
 var _=API("endpoint_contract",func(){Description("Verify original endpoint composition")})
 var _=Service("secured",func(){
@@ -100,12 +108,15 @@ var _=Service("secured",func(){
  })
  Method("ping",func(){
   Description("Call a payload-free endpoint through its configured middleware")
+  Error("server_failure",failure,func(){Fault()})
+  Error("denied",failure)
   Result(String)
   Tool("ping","Return the synthetic endpoint status")
   JSONRPC(func(){})
  })
  Method("notify",func(){
   Description("Call a method without a result through its configured middleware")
+  Error("server_failure",failure)
   Payload(func(){Field(1,"key",String,"Exact domain key to record");Required("key")})
   Tool("notify","Record one synthetic domain key")
   JSONRPC(func(){})

@@ -6534,6 +6534,17 @@ A tool without structured fields can return content while omitting structured
 JSON, including a Goa method whose `ToolContent` field is its entire result.
 MCP tool failures also keep their returned blocks.
 
+A domain error from a configured service endpoint becomes a completed tool-error
+result. A Goa server fault, a method's declared fault error, an invalid returned
+value, or an undeclared result view becomes an internal protocol error instead.
+`MCPAdapterOptions.ErrorMapper` controls the disclosed message while the original
+error keeps its classification. For example, replacing a result-validation fault
+with `errors.New("service unavailable")` still returns an internal error; replacing
+a domain rejection with `goa.Fault("request rejected")` still returns a tool error.
+The generated executor records an internal failure with `RecoveryFinish` and
+does not replay the service operation. A fault response does not prove that the
+service rolled back effects that occurred before returning it.
+
 Tool activities, externally supplied results, saved result events, planner outputs,
 child final results and host `ToolEndPayload.Blocks` retain the same ordered value.
 `NewToolResultReceivedEvent` requires a blocks argument; pass the validated content

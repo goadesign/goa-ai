@@ -39,7 +39,7 @@ func TestGenerateMCPTransport_RendersUnaryToolsCall(t *testing.T) {
 
 	require.Contains(t, rendered, "func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error)")
 	require.Contains(t, rendered, `ResultType: "complete"`)
-	require.Contains(t, rendered, "return toolCallError(failure.Error()), nil")
+	require.Contains(t, rendered, "return toolCallError(failure.err.Error()), nil")
 	require.NotContains(t, rendered, "ToolsCallServerStream")
 	require.NotContains(t, rendered, "StreamBridge")
 	require.NotContains(t, rendered, "SendAndClose")

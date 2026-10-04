@@ -74,7 +74,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
-            return nil, a.mapError(err)
+            return nil, a.mapError(err, {{ if .Endpoint.FaultNames }}is{{ .Endpoint.CallName }}Fault{{ else }}isEndpointFault{{ end }}(err)).err
         }
         if err := {{ .Codec.ResultValidate }}(result); err != nil {
             span.RecordError(err)

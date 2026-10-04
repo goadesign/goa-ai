@@ -81,15 +81,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
         result, err := a.{{ .Endpoint.CallName }}(ctx)
         {{- end }}
         if err != nil {
-            failure := a.mapError(err)
-            span.RecordError(failure)
-            span.SetStatus(codes.Error, failure.Error())
-            {{- if $.NeedsEndpointResultCheck }}
-            if _, invalid := err.(*endpointResultError); invalid {
-                return nil, failure
+            failure := a.mapError(err, {{ if .Endpoint.FaultNames }}is{{ .Endpoint.CallName }}Fault{{ else }}isEndpointFault{{ end }}(err))
+            span.RecordError(failure.err)
+            span.SetStatus(codes.Error, failure.err.Error())
+            if failure.internal {
+                return nil, failure.err
             }
-            {{- end }}
-            return toolCallError(failure.Error()), nil
+            return toolCallError(failure.err.Error()), nil
         }
         {{- if .Content }}
         content, encoded, err := {{ .Content.Name }}(result)
@@ -114,10 +112,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
         err := a.{{ .Endpoint.CallName }}(ctx)
         {{- end }}
         if err != nil {
-            failure := a.mapError(err)
-            span.RecordError(failure)
-            span.SetStatus(codes.Error, failure.Error())
-            return toolCallError(failure.Error()), nil
+            failure := a.mapError(err, {{ if .Endpoint.FaultNames }}is{{ .Endpoint.CallName }}Fault{{ else }}isEndpointFault{{ end }}(err))
+            span.RecordError(failure.err)
+            span.SetStatus(codes.Error, failure.err.Error())
+            if failure.internal {
+                return nil, failure.err
+            }
+            return toolCallError(failure.err.Error()), nil
         }
         return &ToolsCallResult{ResultType: "complete", Meta: resultMeta(), Content: []*ContentItem{}}, nil
         {{- end }}

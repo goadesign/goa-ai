@@ -2001,7 +2001,13 @@ declared transports and do not enter MCP catalogs, codecs, or executors. Tool sc
 including exact JSON field names, local recursive definitions, and union branches.
 Tools accept object arguments. Their structured results may be any declared JSON
 root kind; text is not a fallback decoder. Adapters emit OpenTelemetry spans and
-use the optional `ErrorMapper` to map authored-service errors.
+use the optional `ErrorMapper` to control disclosed error messages. The original
+endpoint error determines whether the response is a domain tool failure or an
+internal protocol error. Goa server-fault flags and each method's declared fault
+errors remain internal after redaction. Classification follows one wrapped error
+to its first named owner; independent joined errors cannot borrow a child's name
+or flag. Invalid returned fields and undeclared result views are server faults,
+not arguments the model should correct. These failures do not authorize replay.
 
 The application composition root constructs HTTP dependencies and callers, then
 registers one generated MCP executor for each runtime binding. Agent registration
@@ -2009,7 +2015,7 @@ owns agent definitions. It does not construct callers or register duplicate
 executables. The same binding can serve multiple agents and aliases.
 
 An unfinished remote call returns `input_required`. The runtime stores its
-original arguments and opaque state in a version-10 checkpoint, publishes typed
+original arguments and opaque state in a version-11 checkpoint, publishes typed
 host input requests, and validates the exact answers before the next activity.
 Only a finished call enters completed tool history. MCP network rounds allow one
 activity attempt; an engine retry must not silently duplicate remote work.

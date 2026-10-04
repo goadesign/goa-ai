@@ -169,8 +169,11 @@ before conversion. Empty collections remain valid. The complete uncached Goa
 root suite, configured lint and JSON-RPC integration suite passed with current
 dependencies. [Goa PR #4017](https://github.com/goadesign/goa/pull/4017) also passed
 its Linux and Windows CI matrix, CodeQL and dependency review before merging.
-The root and all three nested modules pin the merged source at
-`v3.32.1-0.20261004165214-99a12cec25bc`; no local Goa replacement remains.
+[Goa PR #4018](https://github.com/goadesign/goa/pull/4018) subsequently corrected
+selected-result validation to return a server fault while retaining its original
+cause; its uncached root race suite, lint and complete CI matrix passed. The root
+and all three nested modules now pin that merged source at
+`v3.33.1-0.20261004223413-d8a93d7cffdc`; no local Goa replacement remains.
 Build tools and CI actions use verified current releases.
 
 Views chosen by the service during execution use Goa's tagged OneOf contract
@@ -447,7 +450,7 @@ These results do not establish a complete released-requirement-set pass.
 Root and all three nested application modules were updated with `go get -u ./...`
 and tidied. Final audits of the root and all three nested modules found no
 updates for their explicit direct or indirect requirements. Goa is pinned to
-`v3.32.1-0.20261004165214-99a12cec25bc`; Pulse to
+`v3.33.1-0.20261004223413-d8a93d7cffdc`; Pulse to
 `v1.10.3-0.20261002205507-b34ad25e317d`. Provider SDKs, Temporal, MongoDB,
 OpenTelemetry, schema validation, and test dependencies are updated in the module
 files. The linter is pinned separately to `v2.14.0` in `.go-install` so its private
@@ -832,6 +835,18 @@ Keep the five existing runtime content kinds and their metadata. Add current res
 ### Decision 4: separate protocol rejection from tool rejection
 
 **Before:** invalid arguments and application errors take different routes, but protocol error data disappears and agent recovery sometimes asks the model to correct transport-owned facts.
+
+**Implemented server-fault classification:** Goa PR [4018](https://github.com/goadesign/goa/pull/4018)
+wraps failed service-selected result validation as an existing Goa server fault,
+preserving its original cause. Generated MCP adapters classify original endpoint
+errors before applying the application's message disclosure policy. Goa fault
+flags and method-specific declared fault names become internal protocol errors;
+domain failures keep completed tool-error results. Wrappers preserve the first
+named error's meaning, and independent joined errors do not borrow a child's
+fault classification. This changes invalid output from a model-correctable tool
+failure into a server failure without authorizing a retry. Regenerate producers
+and pin the merged Goa implementation; no new public error type or callback is
+needed.
 
 **After:** the transport preserves protocol code/message/raw data. Generated argument-codec errors for a known tool become sanitized `isError` results. Unknown tools and malformed MCP envelopes remain protocol errors. Preserve `ErrorMapper` for application-owned error redaction; internal failures must not leak payloads or credentials.
 

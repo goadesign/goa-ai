@@ -327,6 +327,9 @@ Generated MCP adapters accept the application's configured Goa endpoints.
 Authentication, method scopes, interceptors and endpoint middleware therefore run
 through the original service contract. Regenerate and replace bare-service
 adapter constructor calls; see [MCP server composition](docs/dsl.md#mcp-server-definition).
+Generated adapters distinguish domain tool failures from invalid server results.
+Server faults remain internal protocol errors after application message redaction
+and never authorize replaying a tool call.
 Fixed result views use the same selected fields in server output, advertised
 schemas and generated agent codecs, including different nested views of the
 same type. Views selected by the service return a tagged value that retains the

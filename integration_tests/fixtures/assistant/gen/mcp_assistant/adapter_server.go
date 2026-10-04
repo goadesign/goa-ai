@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	assistant "example.com/assistant/gen/assistant"
@@ -33,8 +34,15 @@ type (
 	// MCPAdapterOptions configures how application errors are exposed to clients.
 	MCPAdapterOptions struct {
 		// ErrorMapper replaces a service error with an application-approved error.
-		// It must return a non-nil error; returning nil violates this contract.
+		// It controls the disclosed message, while the original error determines
+		// whether the failure is internal. It must return a non-nil error.
 		ErrorMapper func(error) error
+	}
+	// endpointFailure keeps the disclosed error and its original server-fault
+	// classification together. Redacting a message cannot change who caused it.
+	endpointFailure struct {
+		err      error
+		internal bool
 	}
 )
 
@@ -64,16 +72,51 @@ func validateNoArguments(arguments json.RawMessage) error {
 	return nil
 }
 
-// mapError turns invalid endpoint result types into internal protocol errors
-// and applies the host's disclosure policy to application failures.
-func (a *MCPAdapter) mapError(err error) error {
+// mapError applies the host's disclosure policy after classifying the original
+// endpoint error. Internal failures remain protocol errors after redaction.
+func (a *MCPAdapter) mapError(err error, internal bool) endpointFailure {
 	if failure, ok := err.(*endpointResultError); ok {
-		return goa.PermanentError("internal_error", "%s", failure.Error())
+		return endpointFailure{err: goa.PermanentError("internal_error", "%s", failure.Error()), internal: true}
 	}
+	disclosed := err
 	if a.opts.ErrorMapper != nil {
-		return a.opts.ErrorMapper(err)
+		disclosed = a.opts.ErrorMapper(err)
 	}
-	return err
+	if internal {
+		disclosed = goa.NewServiceError(disclosed, "internal_error", false, false, true)
+	}
+	return endpointFailure{err: disclosed, internal: internal}
+}
+
+// endpointErrorOwner follows one wrapped failure to its first named Goa error.
+// A join of independent errors keeps its own meaning instead of borrowing one
+// child's fault flag or declared name.
+func endpointErrorOwner(err error) error {
+	for err != nil {
+		if _, named := err.(goa.GoaErrorNamer); named {
+			return err
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			causes := joined.Unwrap()
+			if len(causes) != 1 {
+				return err
+			}
+			err = causes[0]
+		} else {
+			cause := errors.Unwrap(err)
+			if cause == nil {
+				return err
+			}
+			err = cause
+		}
+	}
+	return nil
+}
+
+// isEndpointFault recognizes the owning Goa error's explicit server-fault flag.
+func isEndpointFault(err error) bool {
+	failure, ok := endpointErrorOwner(err).(*goa.ServiceError)
+	return ok && failure.Fault
 }
 
 func stringPtr(value string) *string {
@@ -517,13 +560,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		result, err := a.invokeMCPMethod1(ctx, payload)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			if _, invalid := err.(*endpointResultError); invalid {
-				return nil, failure
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
 			}
-			return toolCallError(failure.Error()), nil
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeAnalyzeSentimentResult(result)
 		if err != nil {
@@ -548,13 +591,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		result, err := a.invokeMCPMethod5(ctx, payload)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			if _, invalid := err.(*endpointResultError); invalid {
-				return nil, failure
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
 			}
-			return toolCallError(failure.Error()), nil
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeExecuteCodeResult(result)
 		if err != nil {
@@ -579,13 +622,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		result, err := a.invokeMCPMethod2(ctx, payload)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			if _, invalid := err.(*endpointResultError); invalid {
-				return nil, failure
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
 			}
-			return toolCallError(failure.Error()), nil
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeExtractKeywordsResult(result)
 		if err != nil {
@@ -610,13 +653,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		result, err := a.invokeMCPMethod6(ctx, payload)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			if _, invalid := err.(*endpointResultError); invalid {
-				return nil, failure
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
 			}
-			return toolCallError(failure.Error()), nil
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeProcessBatchResult(result)
 		if err != nil {
@@ -641,13 +684,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		result, err := a.invokeMCPMethod4(ctx, payload)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			if _, invalid := err.(*endpointResultError); invalid {
-				return nil, failure
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
 			}
-			return toolCallError(failure.Error()), nil
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeSearchResult(result)
 		if err != nil {
@@ -672,13 +715,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		result, err := a.invokeMCPMethod3(ctx, payload)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			if _, invalid := err.(*endpointResultError); invalid {
-				return nil, failure
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
 			}
-			return toolCallError(failure.Error()), nil
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeSummarizeTextResult(result)
 		if err != nil {
@@ -698,13 +741,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		result, err := a.invokeMCPMethod0(ctx)
 		if err != nil {
-			failure := a.mapError(err)
-			span.RecordError(failure)
-			span.SetStatus(codes.Error, failure.Error())
-			if _, invalid := err.(*endpointResultError); invalid {
-				return nil, failure
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
 			}
-			return toolCallError(failure.Error()), nil
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeReportWorkResult(result)
 		if err != nil {
@@ -758,7 +801,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		encoded, err := mcpcodec.EncodeListDocumentsResult(result)
 		if err != nil {
@@ -780,7 +823,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		encoded, err := mcpcodec.EncodeSystemInfoResult(result)
 		if err != nil {
@@ -802,7 +845,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		blob := base64.StdEncoding.EncodeToString(result)
 		res := &ResourcesReadResult{
@@ -818,7 +861,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		blob := base64.StdEncoding.EncodeToString(result)
 		res := &ResourcesReadResult{
@@ -843,7 +886,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		if err := mcpcodec.ValidateReadResourceResultValue(result); err != nil {
 			span.RecordError(err)
@@ -993,7 +1036,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		if err := mcpcodec.ValidateArgumentPromptResultValue(result); err != nil {
 			span.RecordError(err)
@@ -1046,7 +1089,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		if err := mcpcodec.ValidateResourcePromptResultValue(result); err != nil {
 			span.RecordError(err)
@@ -1080,7 +1123,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		if err := mcpcodec.ValidateImagePromptResultValue(result); err != nil {
 			span.RecordError(err)
@@ -1114,7 +1157,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		if err := mcpcodec.ValidateSimplePromptResultValue(result); err != nil {
 			span.RecordError(err)
@@ -1515,7 +1558,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		if err := mcpcodec.ValidateSuggestArgumentResultValue(result); err != nil {
 			span.RecordError(err)
@@ -1560,7 +1603,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		if err := mcpcodec.ValidateSuggestArgumentResultValue(result); err != nil {
 			span.RecordError(err)
@@ -1605,7 +1648,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
-			return nil, a.mapError(err)
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		if err := mcpcodec.ValidateSuggestArgumentResultValue(result); err != nil {
 			span.RecordError(err)
