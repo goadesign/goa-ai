@@ -1498,15 +1498,22 @@ inconsistent fingerprints or summaries, and disagreement with retirement
 history. Startup reports invalid data without rewriting or reconstructing it.
 
 Definition-dependent reads fetch current state, definition and retirement
-membership in one Redis snapshot and validate the complete pair. Semantic
-fingerprints ignore ordering, and native replacements can reuse their token;
-no per-name definition cache may substitute earlier saved bytes. Each caller
+membership in one Redis snapshot and validate the complete pair. Declaration
+fingerprints ignore tool and tag ordering, and native replacements can reuse
+their token; no per-name definition cache may substitute earlier saved bytes. Each caller
 receives an independently owned definition with the selected state's time and
 token. The schema validator's digest-keyed cache still reuses compiled execution
 schemas. Full definition transfer, decoding and fingerprinting occur for each
 resolution or call-preparation read, including availability retries. Lease and
 health operations retain compact-only reads. Every consequential call operation
 still checks current authority.
+
+Saved consumer-contract JSON enters the fingerprint calculation in its original
+encoding, after strict decoding. Reads retain the complete saved definition
+instead of serializing it with today's generated types. This preserves existing
+identity when new optional fields are added, while mismatched definitions still
+fail validation. The [saved declaration identity contract](docs/runtime.md#saved-declaration-identity)
+defines decoding, registration, and upgrade behavior.
 
 Attachment and same-token Register may preserve a pong only while a previous
 routable provider remains live at the atomic write. The commit checks Redis time

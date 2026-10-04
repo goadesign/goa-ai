@@ -376,6 +376,12 @@ semantic-result and bounds checks before forwarding a successful result.
 Server-data validation remains separate. See the [result envelope contract](docs/runtime.md#registry-result-envelope-decoding)
 for identity, retry, parser semantics, and tool-value validation responsibilities.
 
+Registry reads verify saved consumer contracts using their original JSON bytes.
+New fields added by a framework upgrade do not change a saved declaration's
+fingerprint or routing token merely because its Go type has changed. This
+correction needs no storage conversion or provider regeneration; see
+[saved declaration identity](docs/runtime.md#saved-declaration-identity).
+
 Provider hosts can use `toolprovider.ServeAndWait` with the same arguments as
 `Serve` to join invocation-owned work before returning. `Serve` keeps its bounded
 settlement return. The joined call may wait longer for dependencies, preserves
