@@ -1,6 +1,6 @@
 // This test loads only DSL in a separate module and uses the actual plugin
 // command. A shared parent outside the MCP method selects its direct child.
-// The child is nonrecursive because this MCP generator expands schemas inline.
+// Both server codec directions keep the located child type and field validation.
 // TestInheritedStandaloneLayoutsAcrossRoots covers recursive original values.
 package jsoncodec
 
@@ -57,19 +57,21 @@ const inheritedMCPBehavior = `package codec
 import (
     "reflect"
     "testing"
-    shared "codec.local/gen/shared/types"
+    genshared "codec.local/gen/shared/types"
 )
-var _ func(*shared.Child) ([]byte, error) = EncodeExchangePayload
-var _ func([]byte) (*shared.Child, error) = DecodeExchangeResult
+var _ func([]byte) (*genshared.Child, error) = DecodeExchangePayload
+var _ func(*genshared.Child) ([]byte, error) = EncodeExchangeResult
 func TestDirectInheritedChild(t *testing.T) {
-    input := &shared.Child{Value: "child"}
-    data, err := EncodeExchangePayload(input)
-    if err != nil { t.Fatal(err) }
-    result, err := DecodeExchangeResult(data)
-    if err != nil || !reflect.DeepEqual(input, result) {
-        t.Fatalf("MCP child changed: %#v %v", result, err)
+    expected := &genshared.Child{Value: "child"}
+    input, err := DecodeExchangePayload([]byte("{\"value\":\"child\"}"))
+    if err != nil || !reflect.DeepEqual(expected, input) {
+        t.Fatalf("MCP child input changed: %#v %v", input, err)
     }
-    if _, err := DecodeExchangeResult([]byte("{\"value\":\"x\",\"extra\":true}")); err == nil {
+    data, err := EncodeExchangeResult(input)
+    if err != nil || string(data) != "{\"value\":\"child\"}" {
+        t.Fatalf("MCP child result changed: %s %v", data, err)
+    }
+    if _, err := DecodeExchangePayload([]byte("{\"value\":\"x\",\"extra\":true}")); err == nil {
         t.Fatal("MCP codec accepted an unknown field")
     }
 }

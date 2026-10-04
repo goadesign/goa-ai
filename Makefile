@@ -29,9 +29,11 @@ build: tools
 lint: tools
 	$(GOLANGCI_LINT) run --timeout=5m
 
+# Generator tests compile other repository packages in separate modules. Go's
+# test cache cannot track those subprocess inputs, so acceptance runs uncached.
 test: tools
-	$(GO) test -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests'`
-	cd quickstart && $(GO) test ./...
+	$(GO) test -count=1 -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests'`
+	cd quickstart && $(GO) test -count=1 ./...
 
 # Run integration tests: end-to-end scenarios under integration_tests/ and
 # Docker-backed tests guarded by the `integration` build tag (registry health
