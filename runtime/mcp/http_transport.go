@@ -400,11 +400,15 @@ func setParameterHeaders(headers http.Header, arguments json.RawMessage, binding
 // CallTool sends one tools/call round to a generated or discovered endpoint.
 // The transport owns IDs and full protocol decoding, including unfinished input.
 func (t *HTTPTransport) CallTool(ctx context.Context, endpoint string, request CallRequest) (CallResponse, error) {
-	var result toolsCallResult
-	if err := t.call(ctx, endpoint, methodToolsCall, toolParams(request), &result); err != nil {
+	params, err := toolParams(ctx, request)
+	if err != nil {
 		return CallResponse{}, err
 	}
-	return normalizeCallResult(result, t.inputSupport)
+	var result toolsCallResult
+	if err := t.call(ctx, endpoint, methodToolsCall, params, &result); err != nil {
+		return CallResponse{}, err
+	}
+	return normalizeCallResult(ctx, result, t.inputSupport)
 }
 
 // call assigns a fresh UUID so a new caller after worker replacement cannot

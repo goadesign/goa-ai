@@ -2,6 +2,9 @@
 // sends tool calls through MCP and uses generated JSON converters for results.
 func {{ .Constructor }}(caller mcpruntime.Caller) runtime.ToolCallExecutor {
     return runtime.ToolCallExecutorFunc(func(ctx context.Context, _ *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
+        if call.TextOnly {
+            ctx = mcpruntime.WithoutHostInput(ctx)
+        }
         switch call.Name {
         {{- range .Tools }}
         case {{ $.SpecsAlias }}.{{ .ConstName }}:

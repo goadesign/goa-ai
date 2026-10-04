@@ -6626,6 +6626,15 @@ can present those interactions and return trusted answers. A form uses the
 protocol's flat primitive schema. URL consent, decline, and cancel carry no form
 content.
 
+`WithoutHostInput(ctx)` restricts one operation and its child contexts. Shared
+HTTP and stdio callers then omit form and URL capabilities, reject continuation
+data before any network request, and reject unfinished results, including
+state-only results. Other operations on that caller retain configured support.
+Generated executors derive this restriction from `ToolCall.TextOnly`; the model
+cannot choose it. Custom executor outcomes and restored checkpoints also cannot
+introduce MCP host input into a text-only run. These rejections do not dispatch a
+continuation, publish an input prompt or retry an accepted tool operation.
+
 Generated MCP executors return this unfinished outcome to the agent runtime.
 The runtime saves the original tool arguments and opaque state in a version-10
 run suspension, then publishes `await_mcp_input` to the trusted host. The host
@@ -7033,3 +7042,6 @@ output. UI server data from a completed text-only call fails before publication
 or persistence; it is not silently removed and the runtime does not repeat a
 completed side effect to repair the result. Questions use ordinary assistant
 responses instead of a structured wait.
+Generated MCP calls omit host input capabilities for these runs. Form, URL and
+state-only unfinished replies fail before suspension, while ordinary calls on
+the same caller retain their configured capabilities.

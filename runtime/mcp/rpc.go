@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -384,13 +385,17 @@ func cloneRaw(raw json.RawMessage) json.RawMessage {
 	return append(json.RawMessage(nil), raw...)
 }
 
-// normalizeCallResult validates host support after decoding the wire result.
-func normalizeCallResult(result toolsCallResult, support InputSupport) (CallResponse, error) {
+// normalizeCallResult decodes one wire result and checks the operation's host
+// input restriction and configured capabilities before returning unfinished input.
+func normalizeCallResult(ctx context.Context, result toolsCallResult, support InputSupport) (CallResponse, error) {
 	response, err := normalizeToolResult(result)
 	if err != nil {
 		return CallResponse{}, err
 	}
 	if response.InputRequired != nil {
+		if ctx.Value(hostInputDisabledKey{}) != nil {
+			return CallResponse{}, NewMalformedResponseError(errors.New("host input is disabled for this operation"))
+		}
 		if err := response.InputRequired.Validate(support); err != nil {
 			return CallResponse{}, NewMalformedResponseError(err)
 		}

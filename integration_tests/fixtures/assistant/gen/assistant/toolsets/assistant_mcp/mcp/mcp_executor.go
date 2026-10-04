@@ -23,6 +23,9 @@ import (
 // sends tool calls through MCP and uses generated JSON converters for results.
 func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 	return runtime.ToolCallExecutorFunc(func(ctx context.Context, _ *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
+		if call.TextOnly {
+			ctx = mcpruntime.WithoutHostInput(ctx)
+		}
 		switch call.Name {
 		case genassistant_mcp.AnalyzeSentiment:
 			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{

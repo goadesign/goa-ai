@@ -715,6 +715,9 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 	}
 
 	if out.MCPInput != nil {
+		if info.call.TextOnly {
+			return nil, errors.New("text-only tools cannot request MCP host input")
+		}
 		if len(out.Payload) != 0 || len(out.ServerData) != 0 || out.Bounds != nil || out.Telemetry != nil || out.Failure != nil || out.Clarification != nil {
 			return nil, errors.New("MCP input cannot accompany a completed activity result")
 		}

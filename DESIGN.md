@@ -2034,6 +2034,13 @@ session stream profile. These updates are not persisted results or model input.
 The final result and continuation paths retain completion ownership. See
 [the progress contract](docs/runtime.md#request-scoped-mcp-progress).
 
+An accepted text-only run also restricts each MCP operation's host input.
+Generated executors derive a one-way context restriction; shared callers omit
+form and URL capabilities, reject continuation data before dispatch, and reject
+unfinished results including state-only replies. Runtime activity, workflow and
+checkpoint boundaries reject custom executor input before host suspension.
+Ordinary operations retain their support; no caller-wide setting changes.
+
 HTTP and stdio callers can open a distinct `subscriptions/listen` request.
 The transport checks acknowledgment order, the accepted subset of the requested
 filter, and each message's exact originating request ID. Callbacks run in the

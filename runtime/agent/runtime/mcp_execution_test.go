@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	genrecords "goa.design/goa-ai/internal/testpresentation/gen/records/toolsets/records"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -185,5 +186,93 @@ func TestMCPCheckpointCorrelatesParallelCalls(t *testing.T) {
 		require.NoError(t, json.Unmarshal(raw, &changed))
 		mutate(&changed)
 		require.Error(t, validateCheckpointMCPInputs(&changed))
+	}
+}
+
+// TestTextOnlyMCPInputBoundaries proves external and custom executor input cannot
+// create a suspension in a restricted run. Ordinary runs keep all three modes.
+func TestTextOnlyMCPInputBoundaries(t *testing.T) {
+	state := "saved"
+	for _, test := range []struct {
+		name  string
+		input *mcp.InputRequired
+	}{
+		{"state", &mcp.InputRequired{RequestState: &state}},
+		{"form", &mcp.InputRequired{Requests: map[string]mcp.InputRequest{"form": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{"value":{"type":"string"}}}}`)}}}},
+		{"url", &mcp.InputRequired{Requests: map[string]mcp.InputRequest{"url": {Method: "elicitation/create", Params: json.RawMessage(`{"mode":"url","message":"Continue outside the client","url":"https://example.test/consent"}`)}}}},
+	} {
+		input := test.input
+		for _, restricted := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/restricted=%t", test.name, restricted), func(t *testing.T) {
+				rt := New(newTestStore())
+				spec := genrecords.SpecRead()
+				calls := 0
+				require.NoError(t, rt.RegisterToolset(ToolsetRegistration{Name: "records", Specs: []tools.ToolSpec{spec}, Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
+					calls++
+					return AwaitMCPInput(input), nil
+				}}))
+				output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{ToolName: genrecords.Read, ToolsetName: "records", RunID: "run", ToolCallID: "read", Payload: []byte(`{"query":"active"}`), TextOnly: restricted})
+				assert.Equal(t, 1, calls)
+				if restricted {
+					assert.Nil(t, output)
+					require.ErrorContains(t, err, "text-only tools cannot request MCP host input")
+					assert.True(t, engine.IsActivityErrorNonRetryable(err))
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, input, output.MCPInput)
+				}
+				call := ToolCall{Name: genrecords.Read, ToolCallID: "read", TextOnly: restricted}
+				execution := &toolBatchExec{r: rt}
+				outcome, err := execution.executionFromActivityOutput(t.Context(), futureInfo{call: call}, &ToolOutput{MCPInput: input}, 0)
+				if restricted {
+					assert.Nil(t, outcome)
+					require.ErrorContains(t, err, "text-only tools cannot request MCP host input")
+				} else {
+					require.NoError(t, err)
+					assert.Equal(t, input, outcome.mcpInput)
+					assert.Equal(t, "read", outcome.mcpToolCallID)
+				}
+			})
+		}
+	}
+}
+
+func TestTextOnlyMCPContinuationCannotDispatch(t *testing.T) {
+	rt := New(newTestStore())
+	spec := genrecords.SpecRead()
+	calls := 0
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{Name: "records", Specs: []tools.ToolSpec{spec}, Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
+		calls++
+		return Executed(&planner.ToolResult{Name: genrecords.Read, Result: &genrecords.ReadResult{Count: 1}}), nil
+	}}))
+	output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{ToolName: genrecords.Read, ToolsetName: "records", Payload: []byte(`{"query":"active"}`), TextOnly: true, MCPContinuation: &mcp.CallContinuation{}})
+	assert.Nil(t, output)
+	require.ErrorContains(t, err, "text-only tools cannot continue MCP host input")
+	assert.True(t, engine.IsActivityErrorNonRetryable(err))
+	assert.Zero(t, calls)
+}
+
+func TestTextOnlyCheckpointCannotRetainMCPInput(t *testing.T) {
+	state := "saved"
+	input := &mcp.InputRequired{RequestState: &state}
+	for _, restriction := range []string{"call", "context", "policy"} {
+		t.Run(restriction, func(t *testing.T) {
+			call := ToolCall{Name: "remote.lookup", ToolCallID: "call", Payload: []byte(`{}`)}
+			checkpoint := &workflowCheckpoint{}
+			switch restriction {
+			case "call":
+				call.TextOnly = true
+			case "context":
+				checkpoint.Context.TextOnly = true
+			case "policy":
+				checkpoint.Policy = &PolicyOverrides{TextOnly: true}
+			}
+			checkpoint.Batch = checkpointStepBatch{Calls: []ToolCall{call}, Records: []checkpointToolRecord{{Call: call, MCPInput: input}}}
+			checkpoint.Pending = []checkpointPendingInput{{MCP: pendingMCPInput(call, input)}}
+			require.ErrorContains(t, validateCheckpointMCPInputs(checkpoint), "text-only checkpoint cannot contain MCP host input")
+			checkpoint.Batch.Records[0].MCPInput = nil
+			checkpoint.Pending = nil
+			require.NoError(t, validateCheckpointMCPInputs(checkpoint))
+		})
 	}
 }

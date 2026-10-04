@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 )
 
 type (
+	hostInputDisabledKey struct{}
+
 	// InputSupport declares interactions the application can present and answer.
 	// The caller advertises only these modes on each request.
 	InputSupport struct {
@@ -41,6 +44,14 @@ type (
 		Content json.RawMessage `json:"content"`
 	}
 )
+
+// WithoutHostInput prevents one operation and its child contexts from requesting
+// further host input. It omits form and URL capabilities, rejects continuation
+// data before sending a tool call, and rejects unfinished results, including
+// state-only results. Other operations on the same caller retain their support.
+func WithoutHostInput(ctx context.Context) context.Context {
+	return context.WithValue(ctx, hostInputDisabledKey{}, struct{}{})
+}
 
 // Validate checks that an unfinished result can be fulfilled by this host.
 func (r *InputRequired) Validate(support InputSupport) error {

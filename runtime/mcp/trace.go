@@ -24,6 +24,9 @@ func injectTraceHeaders(ctx context.Context, header http.Header) {
 // requestMeta starts with the caller's extension metadata, then derives the
 // version, capabilities and trace context owned by this client invocation.
 func requestMeta(ctx context.Context, info ClientInfo, support InputSupport, existing map[string]json.RawMessage) (map[string]json.RawMessage, error) {
+	if ctx.Value(hostInputDisabledKey{}) != nil {
+		support = InputSupport{}
+	}
 	meta := make(map[string]json.RawMessage, len(existing)+3)
 	for key, value := range existing {
 		meta[key] = cloneRaw(value)
@@ -68,8 +71,12 @@ func requestMeta(ctx context.Context, info ClientInfo, support InputSupport, exi
 }
 
 // toolParams adds continuation data to the original tool name and arguments.
+// A restricted operation rejects continuation data before any network dispatch.
 // Transport metadata is attached when the request is sent.
-func toolParams(req CallRequest) map[string]any {
+func toolParams(ctx context.Context, req CallRequest) (map[string]any, error) {
+	if req.Continuation != nil && ctx.Value(hostInputDisabledKey{}) != nil {
+		return nil, &Error{Code: JSONRPCInvalidParams, Message: "host input is disabled for this operation"}
+	}
 	params := map[string]any{"name": req.Tool}
 	if len(req.Payload) > 0 {
 		params["arguments"] = req.Payload
@@ -80,5 +87,5 @@ func toolParams(req CallRequest) map[string]any {
 	if req.Continuation != nil && len(req.Continuation.InputResponses) > 0 {
 		params["inputResponses"] = req.Continuation.InputResponses
 	}
-	return params
+	return params, nil
 }

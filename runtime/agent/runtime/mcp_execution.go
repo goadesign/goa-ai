@@ -115,6 +115,9 @@ func validateCheckpointMCPInputs(checkpoint *workflowCheckpoint) error {
 		if record.MCPInput == nil {
 			continue
 		}
+		if record.Call.TextOnly || checkpoint.Context.TextOnly || checkpoint.Policy != nil && checkpoint.Policy.TextOnly {
+			return errors.New("text-only checkpoint cannot contain MCP host input")
+		}
 		if record.Result != nil || record.ResultRecord != nil || record.ResultPublished || len(record.ResultJSON) != 0 || record.Clarification != nil || record.ChildSuspension != nil {
 			return errors.New("unfinished MCP call has a completed result")
 		}

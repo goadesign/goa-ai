@@ -40,6 +40,37 @@ All three packages passed. The first attempt could not access Go's build cache; 
 
 ## Implementation progress
 
+Endpoint and authentication composition is required before the generated
+subscription source. A compiled synthetic secured service confirmed that the
+ordinary Goa endpoint rejects its credential through the declared JWT callback,
+while the current MCP adapter calls the service directly without that callback.
+This is evidence about generated composition, not a claim about deployed
+application middleware. The terminal adapter must consume configured Goa
+endpoints so declared authentication, method scopes, interceptors and endpoint
+middleware keep their owner. Derive credential fields from the HTTP transport;
+do not expose them as model-authored arguments. Preserve ordinary domain fields
+with the same spelling when they have no security annotation. Apply this to
+all authored tool, resource, prompt, completion and subscription paths, including
+payload-free methods, before release. Verify rejected credentials never reach
+the service, authorized calls retain exact domain input and authenticated
+context, and middleware runs once. Do not add a second authentication callback
+surface or silently exclude secured declarations. The generator must derive the
+credential distinction from Goa's design, not field-name guesses.
+
+
+Current main's text-only execution restriction is preserved alongside MCP
+continuation ownership. A generated executor restricts host input per operation;
+HTTP and stdio callers omit form/URL capabilities and reject continuation data
+before dispatch. Unfinished results, including state-only results, cannot create
+restricted host suspensions. Activity, workflow and checkpoint boundaries also
+reject custom executor input. Ordinary calls on the same caller retain their
+support. Independent raw HTTP/stdio peers, a compiled generated executor using
+real HTTP, ordinary successor-run tests and restricted checkpoint checks passed.
+After merging remote main `216b59827daf648ede5888bccc922a4b92064f53`,
+the complete serial root race suite and quickstart, configured lint, build and
+regenerated fixture race suite passed again.
+
+
 The shared HTTP/stdio consumer now supports distinct `subscriptions/listen`
 operations. Typed filters and events retain exact request IDs and notification
 metadata. Receivers enforce acknowledgment before changes, accepted subsets,
@@ -635,7 +666,7 @@ The protocol revision and the set of optional capabilities are different decisio
 | Parameterized prompts | Implemented with ordinary string payloads and typed rich message results | Generated construction, Goa validation and declared union conversion preserve aliases and field names. Static prompts remain a distinct authoring form. Five frozen producer scenarios passed. |
 | Resource templates | Current resources reject payloads and route only exact fixed URIs | Implemented through one generated typed reader. Pass the exact URI to one typed service reader; templates guide discovery and suggestions, while the service owns interpretation, existence and authorization. Prefix expansion can discard values and composite expansion can be ambiguous, so do not invert variables or select a first matching handler. Requires a real URI-template contract; never reinterpret free-form URIs as filesystem authority. |
 | `completion/complete` | Prompt suggestions implemented through typed `PromptCompletion` bindings | Service owns ranked values; generated adapters own reference routing and validation. Compiled HTTP checks cover bounded arrays and exact context. URI-template suggestions now use the same typed path; full-suite conformance remains outstanding; assistant `Completion(...)` stays separate. |
-| Additional input / form elicitation | HTTP/stdio consumers and durable agent suspensions are implemented; generated server production is incomplete | Preserve the verified multi-round consumer path. Add a typed authored producer with operation-owned state and authorization before release. No-host callers reject unsupported interactions. |
+| Additional input / form elicitation | HTTP/stdio consumers and durable agent suspensions are implemented; generated server production is incomplete | Preserve the verified multi-round consumer path. Add a typed authored producer with operation-owned state and authorization before release. No-host callers reject unsupported interactions. Accepted text-only runs forbid form, URL and state-only host suspensions per operation, while ordinary shared callers retain support. |
 | URL elicitation | Consumers preserve URL requests and host consent across successor runs; generated server production is incomplete | The service must verify out-of-band completion independently of consent and bind it to the authenticated user. Host capabilities remain explicit; secrets never become form answers. |
 | Progress | Implemented through unary service contexts, HTTP/stdio callers and the agent host stream | Transports own per-request tokens and ordering; activities own invocation correlation. Generated HTTP and parallel stdio checks passed; the frozen referee passed 2/2. Private host events are not public MCP payloads. |
 | Subscriptions | Core HTTP/stdio listeners are implemented; generated server production is incomplete | Receivers enforce acknowledgment, accepted filters, exact request IDs, graceful closure and cancellation. Add the producer through an owned authenticated change source and a generated `subscriptions/listen` binding. A fixed catalog needs no pretend notifications. Do not reuse private session streams, GET channels, or old broadcasters. |

@@ -155,12 +155,15 @@ func (c *StdioCaller) Close(ctx context.Context) error {
 
 // CallTool invokes tools/call over the stdio transport.
 func (c *StdioCaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
-	params := toolParams(req)
+	params, err := toolParams(ctx, req)
+	if err != nil {
+		return CallResponse{}, err
+	}
 	var result toolsCallResult
 	if err := c.call(ctx, methodToolsCall, params, &result); err != nil {
 		return CallResponse{}, err
 	}
-	return normalizeCallResult(result, c.inputSupport)
+	return normalizeCallResult(ctx, result, c.inputSupport)
 }
 
 // call writes one request and waits for the read loop to return the response

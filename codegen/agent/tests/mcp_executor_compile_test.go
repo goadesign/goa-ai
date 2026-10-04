@@ -29,9 +29,11 @@ func TestGeneratedMCPExecutorDecodesEveryStringControlCharacter(t *testing.T) {
 import (
 	"context"
     "encoding/json"
+    "net/http"
+    "net/http/httptest"
 	"testing"
 
-	calccore "generated.local/gen/calc/toolsets/core"
+	gencalccore "generated.local/gen/calc/toolsets/core"
 	"goa.design/goa-ai/runtime/agent/runtime"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
@@ -45,7 +47,7 @@ func TestStringResultControlCharacters(t *testing.T) {
 	})
 	executor := NewMCPExecutor(caller)
 	result, err := executor.Execute(context.Background(), &runtime.ToolCallMeta{}, &runtime.ToolCall{
-		Name:    calccore.Label,
+		Name:    gencalccore.Label,
 		Payload: []byte(` + "`{}`" + `),
 	})
 	if err != nil {
@@ -62,6 +64,52 @@ func TestStringResultControlCharacters(t *testing.T) {
 		t.Fatalf("string result = %q, want %q", got, want)
 	}
 }
+func TestMCPExecutorRestrictsHostInputPerCall(t *testing.T) {
+    advertised := make(chan bool, 3)
+    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        var request struct {
+            ID json.RawMessage "json:\"id\""
+            Params struct {
+                Meta map[string]json.RawMessage "json:\"_meta\""
+            } "json:\"params\""
+        }
+        if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+            t.Error(err)
+            return
+        }
+        var capabilities struct {
+            Elicitation map[string]json.RawMessage "json:\"elicitation\""
+        }
+        if err := json.Unmarshal(request.Params.Meta["io.modelcontextprotocol/clientCapabilities"], &capabilities); err != nil {
+            t.Error(err)
+            return
+        }
+        advertised <- len(capabilities.Elicitation) == 2
+        w.Header().Set("Content-Type", "application/json")
+        if err := json.NewEncoder(w).Encode(map[string]any{"jsonrpc":"2.0", "id":request.ID, "result":map[string]any{"resultType":"complete", "content":[]any{}, "structuredContent":"done"}}); err != nil {
+            t.Error(err)
+        }
+    }))
+    defer server.Close()
+    transport := mcpruntime.NewHTTPTransport(server.Client(), mcpruntime.ClientInfo{Name:"generated-test",Version:"1"}, nil, mcpruntime.InputSupport{Form:true,URL:true}, mcpruntime.HTTPRetryPolicy{})
+    caller := mcpruntime.CallerFunc(func(ctx context.Context, request mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
+        return transport.CallTool(ctx, server.URL, request)
+    })
+    executor := NewMCPExecutor(caller)
+    for _, textOnly := range []bool{false, true, false} {
+        result, err := executor.Execute(t.Context(), &runtime.ToolCallMeta{}, &runtime.ToolCall{Name:gencalccore.Label, Payload:[]byte(` + "`{}`" + `), TextOnly:textOnly})
+        if err != nil {
+            t.Fatal(err)
+        }
+        if result.ToolResult.Failure != nil {
+            t.Fatalf("execution failed: %s", result.ToolResult.Failure.Error.Message)
+        }
+        if supported := <-advertised; supported == textOnly {
+            t.Fatalf("textOnly=%t advertised host input=%t", textOnly, supported)
+        }
+    }
+}
+
 `
 	testPath := filepath.Join(root, "gen", "alpha", "agents", "scribe", "core", "mcp_executor_runtime_test.go")
 	require.NoError(t, os.WriteFile(testPath, []byte(testSource), 0o600))

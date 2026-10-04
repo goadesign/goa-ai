@@ -78,6 +78,10 @@ func NewHTTPCaller(opts HTTPOptions) (*HTTPCaller, error) {
 // CallTool loads header annotations for this authorization context, sends the
 // tool arguments with the host's retry policy, and returns a result or request for input.
 func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
+	params, err := toolParams(ctx, req)
+	if err != nil {
+		return CallResponse{}, err
+	}
 	contract, err := c.toolContract(ctx, req.Tool)
 	if err != nil {
 		return CallResponse{}, err
@@ -91,10 +95,10 @@ func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallRespons
 	}
 	transport := NewHTTPTransport(c.transport.next, c.transport.clientInfo, map[string]ToolBinding{req.Tool: contract.binding}, c.transport.inputSupport, c.transport.retry)
 	var result toolsCallResult
-	if err := transport.call(ctx, c.endpoint, methodToolsCall, toolParams(req), &result); err != nil {
+	if err := transport.call(ctx, c.endpoint, methodToolsCall, params, &result); err != nil {
 		return CallResponse{}, err
 	}
-	response, err := normalizeCallResult(result, transport.inputSupport)
+	response, err := normalizeCallResult(ctx, result, transport.inputSupport)
 	if err != nil {
 		return CallResponse{}, err
 	}

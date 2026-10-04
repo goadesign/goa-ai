@@ -1393,6 +1393,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if req == nil {
 		return nil, errors.New("tool input is required")
 	}
+	if req.TextOnly && req.MCPContinuation != nil {
+		return nil, engine.MarkActivityErrorNonRetryable(errors.New("text-only tools cannot continue MCP host input"))
+	}
 	if req.ToolName == "" {
 		return nil, errors.New("tool name is required")
 	}
@@ -1490,6 +1493,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		return nil, errors.New("tool execution returned nil execution result")
 	}
 	if execResult.mcpInput != nil {
+		if call.TextOnly {
+			return nil, engine.MarkActivityErrorNonRetryable(errors.New("text-only tools cannot request MCP host input"))
+		}
 		if execResult.ToolResult != nil || execResult.Clarification != nil || execResult.childSuspension != nil {
 			return nil, errors.New("MCP input cannot accompany a completed tool result")
 		}
