@@ -116,4 +116,15 @@ type (
 		// Summary
 		Summary *string `json:"summary,omitempty"`
 	}
+	// TestToolWithProgressPayloadTransport is the internal JSON transport type for TestToolWithProgressPayload.
+	// It lives in the toolset-local http package and is used only for JSON
+	// decode + validation (missing-field detection) before transforming into
+	// the public tool type.
+	TestToolWithProgressPayloadTransport struct {
+	}
+	// TestToolWithProgressResultTransport is the internal JSON transport type for TestToolWithProgressResult.
+	// It lives in the toolset-local http package and is used only for JSON
+	// decode + validation (missing-field detection) before transforming into
+	// the public tool type.
+	TestToolWithProgressResultTransport string
 )

@@ -36,6 +36,7 @@ type (
 	rpcMessage struct {
 		JSONRPC string          `json:"jsonrpc"`
 		Method  string          `json:"method"`
+		Params  json.RawMessage `json:"params"`
 		ID      json.RawMessage `json:"id"`
 		Result  json.RawMessage `json:"result"`
 		Error   json.RawMessage `json:"error"`

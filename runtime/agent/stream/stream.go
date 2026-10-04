@@ -635,6 +635,8 @@ type (
 		ToolStart bool
 		// ToolUpdate controls emission of tool_update events.
 		ToolUpdate bool
+		// ToolProgress controls emission of service-reported work updates.
+		ToolProgress bool
 		// ToolOutputDelta controls emission of incremental tool output.
 		ToolOutputDelta bool
 		// ToolEnd controls emission of tool_end events.
@@ -674,6 +676,7 @@ func RuntimeHostProfile() StreamProfile {
 		PromptRendered:     true,
 		ToolStart:          true,
 		ToolUpdate:         true,
+		ToolProgress:       true,
 		ToolOutputDelta:    true,
 		ToolEnd:            true,
 		AwaitClarification: true,

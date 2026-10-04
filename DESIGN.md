@@ -2004,9 +2004,23 @@ activity attempt; an engine retry must not silently duplicate remote work.
 Inside that activity, explicit host trust and a per-round HTTP attempt allowance
 permit retrying a lost SSE response only for tools declared read-only or
 idempotent. Generated callers use precomputed design hints; imported callers
-read credential-scoped catalogs. A retry changes only the network request ID.
+read credential-scoped catalogs. A retry changes the network request ID and any requested progress token.
 The service owns preventing additional effects; missing hints, cancellation,
 malformed replies, and completed tool errors never authorize this retry path.
+
+Unary services report work through `mcp.ReportProgress` on the request context.
+The shared transport owns client tokens, strict per-request ordering, event
+framing and terminal response delivery. HTTP and stdio callers receive typed
+updates through a context-bound handler. Callbacks run in the operation's
+goroutine; stdio applies bounded per-call backpressure and releases blocked
+reads when that call ends. A callback or write failure is terminal, not a retry
+trigger. Generated decoders receive their original request ID only after the
+transport verifies a successful retry against its actual network ID.
+
+The activity owns host correlation and forwards progress through the existing
+session stream profile. These updates are not persisted results or model input.
+The final result and continuation paths retain completion ownership. See
+[the progress contract](docs/runtime.md#request-scoped-mcp-progress).
 
 Generated servers advertise only their implemented unary tools, fixed resource
 reads, parameterized resource reads, static or method-backed prompts, and

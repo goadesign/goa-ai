@@ -33,6 +33,7 @@ func ToolSchemas() []*genregistry.ToolSchema {
 		declarations.schema24(),
 		declarations.schema36(),
 		declarations.schema45(),
+		declarations.schema52(),
 	}
 } // schema1 constructs one generated schema declaration.
 func (declarations registryDeclarations) schema1() *genregistry.ToolSchema {
@@ -700,5 +701,67 @@ func (registryDeclarations) field51() *genregistry.ToolFieldMetadata {
 		},
 		JSONType:    &registryText1,
 		Description: &registryText2,
+	}
+}
+
+// schema52 constructs one generated schema declaration.
+func (declarations registryDeclarations) schema52() *genregistry.ToolSchema {
+	registryText1 := "Perform synthetic work with progress updates"
+	return &genregistry.ToolSchema{
+		Name:                   "assistant-mcp.test_tool_with_progress",
+		Description:            &registryText1,
+		PayloadSchema:          []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}"),
+		ExecutionPayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}"),
+		ResultSchema:           []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+		ConsumerContract: &genregistry.ConsumerContract{
+			Kind:  "service",
+			Title: "Test Tool With Progress",
+			Search: &genregistry.ToolSearchDocument{
+				Length: 16,
+				Terms:  map[string]int{"assistant": 1, "mcp": 1, "perform": 1, "progress": 3, "synthetic": 1, "test": 2, "tool": 2, "updates": 1, "with": 3, "work": 1},
+			},
+			Payload: declarations.metadata53(),
+			Result:  declarations.metadata55(),
+		},
+	}
+}
+
+// metadata53 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata53() *genregistry.ToolTypeMetadata {
+	registryText1 := "TestToolWithProgressPayload"
+	return &genregistry.ToolTypeMetadata{
+		Name:                     &registryText1,
+		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}"),
+		Fields: []*genregistry.ToolFieldMetadata{
+			declarations.field54(),
+		},
+	}
+}
+
+// field54 constructs one generated field declaration.
+func (registryDeclarations) field54() *genregistry.ToolFieldMetadata {
+	registryText1 := "object"
+	return &genregistry.ToolFieldMetadata{
+		JSONType: &registryText1,
+	}
+}
+
+// metadata55 constructs one generated metadata declaration.
+func (declarations registryDeclarations) metadata55() *genregistry.ToolTypeMetadata {
+	registryText1 := "TestToolWithProgressResult"
+	return &genregistry.ToolTypeMetadata{
+		Name:                     &registryText1,
+		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+		Fields: []*genregistry.ToolFieldMetadata{
+			declarations.field56(),
+		},
+	}
+}
+
+// field56 constructs one generated field declaration.
+func (registryDeclarations) field56() *genregistry.ToolFieldMetadata {
+	registryText1 := "string"
+	return &genregistry.ToolFieldMetadata{
+		JSONType: &registryText1,
 	}
 }

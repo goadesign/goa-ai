@@ -40,6 +40,21 @@ All three packages passed. The first attempt could not access Go's build cache; 
 
 ## Implementation progress
 
+Progress now works through generated unary HTTP services, shared HTTP/stdio
+callers, and the agent tool activity's host stream. `ReportProgress` uses the
+service context; `WithProgress` binds a typed client callback. Transports own
+unique tokens, increasing finite values, exact request IDs, cancellation and
+per-call backpressure. Retries create separate sequences. A successful network
+reply is checked against its actual ID before restoring the original ID for the
+generated decoder. Callback failures stop the request without implicit retry.
+Live host events retain invocation identity and create no durable result or
+model input. The frozen `tools-call-with-progress` referee passed both operation
+and wire-schema checks at 2026-10-04 00:22 UTC (2026-10-03 locally). Actual
+generated clients/servers and parallel stdio calls passed race tests; focused
+activity tests verify profile visibility and host failure. The complete serial race suite and quickstart passed, as did configured lint
+with zero issues and uncached regenerated HTTP integration scenarios. The mount
+golden and catalog expectations were regenerated or updated for the new producer.
+
 Composition validation no longer requires every method in an MCP-enabled service
 to have an MCP declaration. Only declared operations enter MCP catalogs, codecs,
 agent specs and executors. Ordinary methods retain their authored transports.
@@ -599,12 +614,12 @@ The protocol revision and the set of optional capabilities are different decisio
 | --- | --- | --- |
 | Tools and direct/agent clients | Implemented with old envelopes and several result modes | Required upgrade: one current transport, canonical generated contracts, one structured typed-result path, and complete composition |
 | Binary resource reads | Implemented from Goa byte-valued results, including aliases and empty content | The existing Resource DSL selects the URI/MIME. Generation emits blobs and strict client decoding. Compiled modules, HTTP scenarios, and the independent binary-resource referee passed. |
-| Parameterized prompts | Implemented with ordinary string payloads and typed rich message results | Generated construction, Goa validation and declared union conversion preserve aliases and field names. Static prompts remain a distinct authoring form. Independent producer conformance remains outstanding. |
+| Parameterized prompts | Implemented with ordinary string payloads and typed rich message results | Generated construction, Goa validation and declared union conversion preserve aliases and field names. Static prompts remain a distinct authoring form. Five frozen producer scenarios passed. |
 | Resource templates | Current resources reject payloads and route only exact fixed URIs | Implemented through one generated typed reader. Pass the exact URI to one typed service reader; templates guide discovery and suggestions, while the service owns interpretation, existence and authorization. Prefix expansion can discard values and composite expansion can be ambiguous, so do not invert variables or select a first matching handler. Requires a real URI-template contract; never reinterpret free-form URIs as filesystem authority. |
 | `completion/complete` | Prompt suggestions implemented through typed `PromptCompletion` bindings | Service owns ranked values; generated adapters own reference routing and validation. Compiled HTTP checks cover bounded arrays and exact context. URI-template suggestions now use the same typed path; full-suite conformance remains outstanding; assistant `Completion(...)` stays separate. |
-| Additional input / form elicitation | Durable suspensions, ordered pending input, generated codecs, and host events exist; MCP caller/executor has no unfinished-call branch | Include the durable unfinished-call integration in the upgrade sequence. Advertise form support only with a real configured host and verified schema/response path. No-host callers reject honestly. |
-| URL elicitation | Host input can pause a run; no MCP URL consent/completion integration exists | Feasible host integration with consent, authenticated completion, and fresh-credential handling. Do not launch arbitrary URLs or return secrets through form answers. Advertise only the implemented mode. |
-| Progress | Shared callers can consume request-scoped SSE; agent hooks already carry execution progress | Add current request-ID/progress-token correlation in the transport. Any generated progress producer needs an explicit operation binding. Private agent events are not a public MCP payload. |
+| Additional input / form elicitation | HTTP/stdio consumers and durable agent suspensions are implemented; generated server production is incomplete | Preserve the verified multi-round consumer path. Add a typed authored producer with operation-owned state and authorization before release. No-host callers reject unsupported interactions. |
+| URL elicitation | Consumers preserve URL requests and host consent across successor runs; generated server production is incomplete | The service must verify out-of-band completion independently of consent and bind it to the authenticated user. Host capabilities remain explicit; secrets never become form answers. |
+| Progress | Implemented through unary service contexts, HTTP/stdio callers and the agent host stream | Transports own per-request tokens and ordering; activities own invocation correlation. Generated HTTP and parallel stdio checks passed; the frozen referee passed 2/2. Private host events are not public MCP payloads. |
 | Subscriptions | Private session/run stream and hooks exist; generated resource-change producers and MCP listeners were removed | Technically feasible, not implemented. Add only with an owned change source and a generated `subscriptions/listen` binding; filter by authenticated subscription and exact request. A fixed catalog needs no pretend notifications. Do not reuse session streams, GET channels, or old broadcasters. |
 | Tasks extension | Asynchronous starts, durable engine, completion queries, suspension, and cancellation exist | Viable workflow-backed extension milestone. The server owns durable work and task identity; the adapter maps its typed API. Arbitrary unary methods are not automatically tasks. Pin the extension separately and verify the complete lifecycle before advertising. |
 | Roots / sampling / logging | File/domain inputs, model clients, and tracing exist, but these old protocol features are deprecated | Their absence is a deliberate new-protocol design choice, not evidence the framework cannot access files or models. Do not implement deprecated request variants. |

@@ -25,6 +25,7 @@ type Endpoints struct {
 	ImagePrompt         goa.Endpoint
 	SuggestArgument     goa.Endpoint
 	ReadResource        goa.Endpoint
+	ReportWork          goa.Endpoint
 	AnalyzeSentiment    goa.Endpoint
 	ExtractKeywords     goa.Endpoint
 	SummarizeText       goa.Endpoint
@@ -46,6 +47,7 @@ func NewEndpoints(s Service) *Endpoints {
 		ImagePrompt:         NewImagePromptEndpoint(s),
 		SuggestArgument:     NewSuggestArgumentEndpoint(s),
 		ReadResource:        NewReadResourceEndpoint(s),
+		ReportWork:          NewReportWorkEndpoint(s),
 		AnalyzeSentiment:    NewAnalyzeSentimentEndpoint(s),
 		ExtractKeywords:     NewExtractKeywordsEndpoint(s),
 		SummarizeText:       NewSummarizeTextEndpoint(s),
@@ -67,6 +69,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ImagePrompt = m(e.ImagePrompt)
 	e.SuggestArgument = m(e.SuggestArgument)
 	e.ReadResource = m(e.ReadResource)
+	e.ReportWork = m(e.ReportWork)
 	e.AnalyzeSentiment = m(e.AnalyzeSentiment)
 	e.ExtractKeywords = m(e.ExtractKeywords)
 	e.SummarizeText = m(e.SummarizeText)
@@ -156,6 +159,14 @@ func NewReadResourceEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*ReadResourcePayload)
 		return s.ReadResource(ctx, p)
+	}
+}
+
+// NewReportWorkEndpoint returns an endpoint function that calls the method
+// "report_work" of service "assistant".
+func NewReportWorkEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		return s.ReportWork(ctx)
 	}
 }
 

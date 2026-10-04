@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 
 	assistant "example.com/assistant/gen/assistant"
 	mcpcodec "example.com/assistant/gen/mcp_assistant/internal/codec"
@@ -43,6 +44,22 @@ func NewMCPAdapter(service assistant.Service, opts *MCPAdapterOptions) *MCPAdapt
 		adapter.opts = *opts
 	}
 	return adapter
+}
+
+// validateNoArguments accepts omitted arguments or an empty JSON object for a
+// method with no payload. Any supplied property is an argument error.
+func validateNoArguments(arguments json.RawMessage) error {
+	if len(arguments) == 0 {
+		return nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(arguments, &fields); err != nil {
+		return fmt.Errorf("arguments must be an empty JSON object: %w", err)
+	}
+	if fields == nil || len(fields) > 0 {
+		return fmt.Errorf("arguments must be an empty JSON object")
+	}
+	return nil
 }
 
 // mapError applies the host's error disclosure policy to a service failure.
@@ -136,6 +153,12 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 				Description:  stringPtr("Summarize text"),
 				InputSchema:  json.RawMessage("{\"$defs\":{\"SummarizeTextPayload\":{\"properties\":{\"text\":{\"description\":\"Input text to summarize\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"SummarizeTextPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text to summarize\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"SummarizeTextPayload\",\"type\":\"object\"}"),
 				OutputSchema: json.RawMessage("{\"$defs\":{\"SummarizeTextResult\":{\"properties\":{\"summary\":{\"description\":\"Summary\",\"type\":\"string\"}},\"title\":\"SummarizeTextResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"summary\":{\"description\":\"Summary\",\"type\":\"string\"}},\"title\":\"SummarizeTextResult\",\"type\":\"object\"}"),
+			},
+			{
+				Name:         "test_tool_with_progress",
+				Description:  stringPtr("Perform synthetic work with progress updates"),
+				InputSchema:  json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+				OutputSchema: json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
 			},
 		},
 	}, nil
@@ -317,6 +340,29 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			return toolCallError(failure.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeSummarizeTextResult(result)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		return &ToolsCallResult{
+			ResultType:        "complete",
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
+			StructuredContent: json.RawMessage(encoded),
+		}, nil
+	case "test_tool_with_progress":
+		if err := validateNoArguments(p.Arguments); err != nil {
+			return toolCallError("invalid arguments: " + err.Error()), nil
+		}
+		result, err := a.service.ReportWork(ctx)
+		if err != nil {
+			failure := a.mapError(err)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return toolCallError(failure.Error()), nil
+		}
+		encoded, err := mcpcodec.EncodeReportWorkResult(result)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())

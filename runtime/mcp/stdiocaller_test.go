@@ -67,7 +67,12 @@ func TestStdioProtocolPeer(_ *testing.T) {
 func serveStdioProtocolPeer() error {
 	reader := bufio.NewReader(os.Stdin)
 	encoder := json.NewEncoder(os.Stdout)
-	var blocked json.RawMessage
+	var blocked, blockedToken json.RawMessage
+	type peerCall struct {
+		id, token json.RawMessage
+		name      string
+	}
+	var pair []peerCall
 	for {
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
@@ -91,10 +96,15 @@ func serveStdioProtocolPeer() error {
 			if string(blocked) != string(request.Params["requestId"]) {
 				return errors.New("cancellation ID changed")
 			}
+			if len(blockedToken) > 0 {
+				if err := writePeerProgress(encoder, blockedToken, 200); err != nil {
+					return err
+				}
+			}
 			if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": blocked, "result": map[string]any{"resultType": "complete", "content": []any{}, "structuredContent": "late"}}); err != nil {
 				return err
 			}
-			blocked = nil
+			blocked, blockedToken = nil, nil
 			continue
 		}
 		if request.Method != "tools/call" {
@@ -127,6 +137,43 @@ func serveStdioProtocolPeer() error {
 			blocked = request.ID
 			continue
 		}
+		if name == "progress" || name == "progress-fail" {
+			token := meta["progressToken"]
+			if len(token) == 0 {
+				return errors.New("progress token missing")
+			}
+			if name == "progress-fail" {
+				blocked, blockedToken = request.ID, token
+			}
+			for _, value := range []float64{0, 50, 100} {
+				if err := writePeerProgress(encoder, token, value); err != nil {
+					return err
+				}
+			}
+			if name == "progress-fail" {
+				continue
+			}
+		}
+		if name == "pair-one" || name == "pair-two" {
+			pair = append(pair, peerCall{request.ID, meta["progressToken"], name})
+			if len(pair) < 2 {
+				continue
+			}
+			for _, value := range []float64{0, 50, 100} {
+				for _, call := range pair {
+					if err := writePeerProgress(encoder, call.token, value); err != nil {
+						return err
+					}
+				}
+			}
+			for _, call := range pair {
+				if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": call.id, "result": map[string]any{"resultType": "complete", "content": []any{}, "structuredContent": call.name}}); err != nil {
+					return err
+				}
+			}
+			pair = nil
+			continue
+		}
 		if name == "error" {
 			if err := encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": request.ID, "error": map[string]any{"code": UnsupportedProtocolVersion, "message": "unsupported", "data": map[string]any{"requested": "unsupported", "supported": []string{ProtocolVersion}}}}); err != nil {
 				return err
@@ -137,4 +184,61 @@ func serveStdioProtocolPeer() error {
 			return err
 		}
 	}
+}
+
+// writePeerProgress emits an independent protocol notification using the exact
+// client token so the tests exercise stdio correlation without server helpers.
+func writePeerProgress(encoder *json.Encoder, token json.RawMessage, value float64) error {
+	return encoder.Encode(map[string]any{"jsonrpc": "2.0", "method": "notifications/progress", "params": map[string]any{"progressToken": token, "progress": value, "total": 100}})
+}
+
+func TestStdioProgressParallelCallsAndCallbackFailure(t *testing.T) {
+	caller, err := NewStdioCaller(t.Context(), StdioOptions{Command: os.Args[0], Args: []string{"-test.run=^TestStdioProtocolPeer$"}, Env: []string{"GOA_AI_MCP_PROTOCOL_PEER=1"}, ClientInfo: ClientInfo{Name: "progress-tests", Version: "1"}, InputSupport: InputSupport{Form: true}})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		assert.NoError(t, caller.Close(ctx))
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	type observation struct {
+		name     string
+		updates  []Progress
+		response CallResponse
+		err      error
+	}
+	finished := make(chan observation, 2)
+	for _, name := range []string{"pair-one", "pair-two"} {
+		go func() {
+			var updates []Progress
+			callCtx := WithProgress(ctx, func(_ context.Context, p Progress) error { updates = append(updates, p); return nil })
+			response, err := caller.CallTool(callCtx, CallRequest{Tool: name, Payload: json.RawMessage(`{}`)})
+			finished <- observation{name, updates, response, err}
+		}()
+	}
+	requestIDs := make([]json.RawMessage, 0, 2)
+	for range 2 {
+		result := <-finished
+		require.NoError(t, result.err)
+		assert.JSONEq(t, fmt.Sprintf("%q", result.name), string(result.response.StructuredContent))
+		require.Len(t, result.updates, 3)
+		requestIDs = append(requestIDs, result.updates[0].RequestID)
+		for index, update := range result.updates {
+			assert.InDelta(t, float64(index*50), update.Value, 0)
+			assert.Equal(t, result.updates[0].RequestID, update.RequestID)
+		}
+	}
+	assert.NotEqual(t, requestIDs[0], requestIDs[1])
+	failure := errors.New("host stopped progress")
+	failedCtx := WithProgress(ctx, func(context.Context, Progress) error { return failure })
+	_, err = caller.CallTool(failedCtx, CallRequest{Tool: "progress-fail", Payload: json.RawMessage(`{}`)})
+	require.ErrorIs(t, err, failure)
+	var observed []Progress
+	goodCtx := WithProgress(ctx, func(_ context.Context, p Progress) error { observed = append(observed, p); return nil })
+	response, err := caller.CallTool(goodCtx, CallRequest{Tool: "progress", Payload: json.RawMessage(`{}`)})
+	require.NoError(t, err)
+	assert.JSONEq(t, `"progress"`, string(response.StructuredContent))
+	require.Len(t, observed, 3)
+	assert.Zero(t, observed[0].Value)
 }

@@ -234,6 +234,41 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 				Name:   call.Name,
 				Result: value,
 			}), nil
+		case genassistant_mcp.TestToolWithProgress:
+			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
+				Tool:         "test_tool_with_progress",
+				Payload:      json.RawMessage(call.Payload),
+				Continuation: call.MCPContinuation,
+			})
+			if err != nil {
+				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
+			}
+			if resp.InputRequired != nil {
+				return runtime.AwaitMCPInput(resp.InputRequired), nil
+			}
+			var value any
+			if len(resp.StructuredContent) == 0 {
+				return runtime.Executed(failedMCPToolResult(
+					call.Name,
+					planner.FailureMalformedResult,
+					planner.RecoveryFinish,
+					mcpruntime.NewMalformedResponseError(errors.New("MCP response is missing structured content")),
+				)), nil
+			}
+			v, err := genassistant_mcp.SpecTestToolWithProgress().Result.Codec.FromJSON(resp.StructuredContent)
+			if err != nil {
+				return runtime.Executed(failedMCPToolResult(
+					call.Name,
+					planner.FailureMalformedResult,
+					planner.RecoveryFinish,
+					err,
+				)), nil
+			}
+			value = v
+			return runtime.Executed(&planner.ToolResult{
+				Name:   call.Name,
+				Result: value,
+			}), nil
 		default:
 			return runtime.Executed(failedMCPToolResult(
 				call.Name,

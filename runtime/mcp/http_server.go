@@ -40,6 +40,11 @@ func ValidateHTTPRequest(request *http.Request, body []byte, bindings map[string
 	if raw := meta[protocolVersionKey]; bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &version) != nil {
 		return &Error{Code: JSONRPCInvalidParams, Message: "protocolVersion metadata is required"}
 	}
+	if token, present := meta["progressToken"]; present {
+		if _, err := progressTokenKey(token); err != nil {
+			return &Error{Code: JSONRPCInvalidParams, Message: err.Error()}
+		}
+	}
 	var capabilities map[string]json.RawMessage
 	if json.Unmarshal(meta[clientCapabilitiesKey], &capabilities) != nil || capabilities == nil {
 		return &Error{Code: JSONRPCInvalidParams, Message: "clientCapabilities metadata must be an object"}

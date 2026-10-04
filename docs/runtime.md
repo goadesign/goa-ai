@@ -6491,6 +6491,40 @@ or `EncodeResourceContent`/`DecodeResourceContent`. Use the generated MCP endpoi
 clients and servers to encode and decode protocol envelopes; their content
 validators enforce MCP's selected variant. No text-only codec alias remains.
 
+### Request-scoped MCP progress
+
+A unary service method can call `mcp.ReportProgress(ctx, value, total, message)`
+and check its error. The generated HTTP adapter supplies the client's token and
+sends updates before the final result. Reporting without a requested token is a
+no-op, so the same method remains usable through ordinary transports. Progress
+values must be finite and strictly increase within that request. They are not
+normalized percentages; the protocol does not require a non-negative value or
+that progress stay below the optional total.
+
+Direct HTTP and stdio callers request updates with
+`mcp.WithProgress(ctx, handler)`. The transport creates a unique token and gives
+the handler a typed `mcp.Progress` containing the actual request ID, work value,
+optional total and optional message. A permitted HTTP retry gets a new token and
+request ID, so its work values start a separate sequence. The transport verifies
+the final reply against the network attempt's ID before restoring the original
+ID solely for Goa's generated decoder.
+
+Handlers run synchronously in the operation's goroutine before its final reply.
+Keep them short, honor their context, and check delivery errors. Stdio retains
+one waiting message per operation and applies backpressure instead of growing an
+unbounded notification queue. Cancellation or a callback error stops waiting and
+sends cancellation for that actual stdio request. Late notifications cannot
+complete or update a different call. A callback failure does not authorize a
+retry; a tool's outcome may be unknown.
+
+Tool activities forward updates to `stream.ToolProgress` when a session and host
+stream exist. `StreamProfile.ToolProgress` controls visibility;
+`RuntimeHostProfile()` enables it. Each event retains runtime-owned tool-call,
+parent-call, run and session identity alongside the transport request ID.
+Progress is live host information. It creates no completed tool result, model
+argument, durable run event or continuation state. The trusted host owns any
+smaller public representation it shows to users.
+
 ### Interrupted HTTP responses
 
 Retries belong to the application's HTTP caller, inside one worker activity.

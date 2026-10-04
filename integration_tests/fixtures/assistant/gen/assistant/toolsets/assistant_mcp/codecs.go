@@ -118,6 +118,22 @@ func SummarizeTextResultCodec() tools.JSONCodec[*SummarizeTextResult] {
 	}
 }
 
+// TestToolWithProgressPayloadCodec returns a fresh codec for *TestToolWithProgressPayload.
+func TestToolWithProgressPayloadCodec() tools.JSONCodec[*TestToolWithProgressPayload] {
+	return tools.JSONCodec[*TestToolWithProgressPayload]{
+		ToJSON:   MarshalTestToolWithProgressPayload,
+		FromJSON: UnmarshalTestToolWithProgressPayload,
+	}
+}
+
+// TestToolWithProgressResultCodec returns a fresh codec for TestToolWithProgressResult.
+func TestToolWithProgressResultCodec() tools.JSONCodec[TestToolWithProgressResult] {
+	return tools.JSONCodec[TestToolWithProgressResult]{
+		ToJSON:   MarshalTestToolWithProgressResult,
+		FromJSON: UnmarshalTestToolWithProgressResult,
+	}
+}
+
 var (
 	// analyzeSentimentPayloadCodec provides an untyped codec for *AnalyzeSentimentPayload.
 	analyzeSentimentPayloadCodec = tools.JSONCodec[any]{
@@ -273,6 +289,32 @@ var (
 		},
 		FromJSON: func(data []byte) (any, error) {
 			return UnmarshalSummarizeTextResult(data)
+		},
+	}
+	// testToolWithProgressPayloadCodec provides an untyped codec for *TestToolWithProgressPayload.
+	testToolWithProgressPayloadCodec = tools.JSONCodec[any]{
+		ToJSON: func(v any) ([]byte, error) {
+			// Prefer typed marshal when the value matches the expected type.
+			if typed, ok := v.(*TestToolWithProgressPayload); ok {
+				return MarshalTestToolWithProgressPayload(typed)
+			}
+			return nil, fmt.Errorf("invalid value type for *TestToolWithProgressPayload: %T", v)
+		},
+		FromJSON: func(data []byte) (any, error) {
+			return UnmarshalTestToolWithProgressPayload(data)
+		},
+	}
+	// testToolWithProgressResultCodec provides an untyped codec for TestToolWithProgressResult.
+	testToolWithProgressResultCodec = tools.JSONCodec[any]{
+		ToJSON: func(v any) ([]byte, error) {
+			// Prefer typed marshal when the value matches the expected type.
+			if typed, ok := v.(TestToolWithProgressResult); ok {
+				return MarshalTestToolWithProgressResult(typed)
+			}
+			return nil, fmt.Errorf("invalid value type for TestToolWithProgressResult: %T", v)
+		},
+		FromJSON: func(data []byte) (any, error) {
+			return UnmarshalTestToolWithProgressResult(data)
 		},
 	}
 )
@@ -439,6 +481,16 @@ var summarizeTextResultFields = []tools.FieldMetadata{
 		Path:        []tools.FieldPathSegment{tools.FixedField("summary")},
 		JSONType:    "string",
 		Description: "Summary",
+	},
+}
+var testToolWithProgressPayloadFields = []tools.FieldMetadata{
+	{
+		JSONType: "object",
+	},
+}
+var testToolWithProgressResultFields = []tools.FieldMetadata{
+	{
+		JSONType: "string",
 	},
 }
 
@@ -947,6 +999,68 @@ func invalidSummarizeTextResultFieldTypeError(err error) error {
 		nil,
 	)
 }
+func invalidTestToolWithProgressPayloadFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "TestToolWithProgressPayloadTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	metadata, ok := tools.LookupFieldMetadata(testToolWithProgressPayloadFields, field)
+	if !ok || metadata.JSONType == "" {
+		return err
+	}
+	actual := generatedUnmarshalJSONType(typeErr.Value)
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: metadata.JSONType,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
+func invalidTestToolWithProgressResultFieldTypeError(err error) error {
+	var typeErr *json.UnmarshalTypeError
+	if !errors.As(err, &typeErr) {
+		return err
+	}
+	field := typeErr.Field
+	field = strings.TrimPrefix(field, "TestToolWithProgressResultTransport.")
+	if field == "" {
+		field = "$payload"
+	}
+	metadata, ok := tools.LookupFieldMetadata(testToolWithProgressResultFields, field)
+	if !ok || metadata.JSONType == "" {
+		return err
+	}
+	actual := generatedUnmarshalJSONType(typeErr.Value)
+	if actual == "" {
+		return err
+	}
+	return tools.NewValidationError(
+		err.Error(),
+		[]*tools.FieldIssue{
+			{
+				Field:            field,
+				Constraint:       "invalid_field_type",
+				ExpectedJSONType: metadata.JSONType,
+				ActualJSONType:   actual,
+			},
+		},
+		nil,
+	)
+}
 
 // MarshalAnalyzeSentimentPayload serializes *AnalyzeSentimentPayload into JSON.
 func MarshalAnalyzeSentimentPayload(v *AnalyzeSentimentPayload) ([]byte, error) {
@@ -1432,6 +1546,97 @@ func UnmarshalSummarizeTextResult(data []byte) (*SummarizeTextResult, error) {
 	return out, nil
 }
 
+// MarshalTestToolWithProgressPayload serializes *TestToolWithProgressPayload into JSON.
+func MarshalTestToolWithProgressPayload(v *TestToolWithProgressPayload) ([]byte, error) {
+	if v == nil {
+		return nil, fmt.Errorf("testToolWithProgressPayload is nil")
+	}
+	in := v
+	_ = in
+	var out *toolhttp.TestToolWithProgressPayloadTransport
+	out = &toolhttp.TestToolWithProgressPayloadTransport{}
+	return json.Marshal(out)
+}
+
+// UnmarshalTestToolWithProgressPayload deserializes JSON into *TestToolWithProgressPayload.
+func UnmarshalTestToolWithProgressPayload(data []byte) (*TestToolWithProgressPayload, error) {
+	if len(data) == 0 {
+		var v *TestToolWithProgressPayload
+		return v, nil
+	}
+	var tv toolhttp.TestToolWithProgressPayloadTransport
+	if err := validateTestToolWithProgressPayloadJSON(data); err != nil {
+		return nil, invalidTestToolWithProgressPayloadFieldTypeError(err)
+	}
+	if err := json.Unmarshal(data, &tv); err != nil {
+		return nil, invalidTestToolWithProgressPayloadFieldTypeError(err)
+	}
+	in := &tv
+	_ = in
+	var out *TestToolWithProgressPayload
+	out = &TestToolWithProgressPayload{}
+	return out, nil
+}
+
+// MarshalTestToolWithProgressResult serializes TestToolWithProgressResult into JSON.
+func MarshalTestToolWithProgressResult(v TestToolWithProgressResult) ([]byte, error) {
+	in := v
+	_ = in
+	var out toolhttp.TestToolWithProgressResultTransport
+	out = toolhttp.TestToolWithProgressResultTransport(in)
+	return json.Marshal(out)
+}
+
+// UnmarshalTestToolWithProgressResult deserializes JSON into TestToolWithProgressResult.
+func UnmarshalTestToolWithProgressResult(data []byte) (TestToolWithProgressResult, error) {
+	var zero TestToolWithProgressResult
+	if len(data) == 0 {
+		return zero, fmt.Errorf("testToolWithProgressResult JSON is empty")
+	}
+	var tv toolhttp.TestToolWithProgressResultTransport
+	if err := validateTestToolWithProgressResultJSON(data); err != nil {
+		return zero, invalidTestToolWithProgressResultFieldTypeError(err)
+	}
+	if err := json.Unmarshal(data, &tv); err != nil {
+		return zero, invalidTestToolWithProgressResultFieldTypeError(err)
+	}
+	in := tv
+	_ = in
+	var out TestToolWithProgressResult
+	out = TestToolWithProgressResult(in)
+	return out, nil
+}
+
+// validateTestToolWithProgressPayloadJSON parses one JSON document and checks the exact value
+// shapes known from this generated Goa type.
+func validateTestToolWithProgressPayloadJSON(data []byte) error {
+	var root any
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return validateTestToolWithProgressPayloadJSONValue("", root, "")
+}
+
+// validateTestToolWithProgressResultJSON parses one JSON document and checks the exact value
+// shapes known from this generated Goa type.
+func validateTestToolWithProgressResultJSON(data []byte) error {
+	var root any
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&root); err != nil {
+		return err
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		return fmt.Errorf("multiple JSON documents")
+	}
+	return validateStringJSONValue("", root, "")
+}
+
 // validateAnalyzeSentimentPayloadJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateAnalyzeSentimentPayloadJSON(data []byte) error {
@@ -1612,6 +1817,49 @@ func validateProcessBatchResultJSON(data []byte) error {
 	return validateProcessBatchResultJSONValue("", root, "")
 }
 
+// validateTestToolWithProgressPayloadJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTestToolWithProgressPayloadJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
+	}
+	return nil
+}
+
+// validateStringJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateStringJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
 // validateAnalyzeSentimentPayloadJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validateAnalyzeSentimentPayloadJSONValue(path string, value any, description string) error {
 	field := path
@@ -1644,22 +1892,6 @@ func validateAnalyzeSentimentPayloadJSONValue(path string, value any, descriptio
 				"text",
 			})
 		}
-	}
-	return nil
-}
-
-// validateStringJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateStringJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }

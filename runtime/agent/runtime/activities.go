@@ -1458,7 +1458,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	meta := ToolCallMetaFromCall(call)
 	start := time.Now()
 	executorCall := cloneToolCall(call)
-	execResult, err := reg.Execute(ctx, &executorCall)
+	execResult, err := reg.Execute(r.withMCPProgress(ctx, call), &executorCall)
 	if err != nil {
 		return nil, err
 	}

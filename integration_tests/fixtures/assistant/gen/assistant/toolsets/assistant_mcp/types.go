@@ -80,4 +80,9 @@ type (
 		// Summary
 		Summary *string
 	}
+	// TestToolWithProgressPayload defines the JSON payload for the assistant-mcp.test_tool_with_progress tool.
+	TestToolWithProgressPayload = struct {
+	}
+	// TestToolWithProgressResult defines the JSON result for the assistant-mcp.test_tool_with_progress tool.
+	TestToolWithProgressResult = string
 )

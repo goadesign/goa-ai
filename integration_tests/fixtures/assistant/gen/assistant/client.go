@@ -25,6 +25,7 @@ type Client struct {
 	ImagePromptEndpoint         goa.Endpoint
 	SuggestArgumentEndpoint     goa.Endpoint
 	ReadResourceEndpoint        goa.Endpoint
+	ReportWorkEndpoint          goa.Endpoint
 	AnalyzeSentimentEndpoint    goa.Endpoint
 	ExtractKeywordsEndpoint     goa.Endpoint
 	SummarizeTextEndpoint       goa.Endpoint
@@ -34,7 +35,7 @@ type Client struct {
 }
 
 // NewClient initializes a "assistant" service client given the endpoints.
-func NewClient(listDocuments, systemInfo, binaryResource, emptyBinaryResource, simplePrompt, argumentPrompt, resourcePrompt, imagePrompt, suggestArgument, readResource, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch goa.Endpoint) *Client {
+func NewClient(listDocuments, systemInfo, binaryResource, emptyBinaryResource, simplePrompt, argumentPrompt, resourcePrompt, imagePrompt, suggestArgument, readResource, reportWork, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch goa.Endpoint) *Client {
 	return &Client{
 		ListDocumentsEndpoint:       listDocuments,
 		SystemInfoEndpoint:          systemInfo,
@@ -46,6 +47,7 @@ func NewClient(listDocuments, systemInfo, binaryResource, emptyBinaryResource, s
 		ImagePromptEndpoint:         imagePrompt,
 		SuggestArgumentEndpoint:     suggestArgument,
 		ReadResourceEndpoint:        readResource,
+		ReportWorkEndpoint:          reportWork,
 		AnalyzeSentimentEndpoint:    analyzeSentiment,
 		ExtractKeywordsEndpoint:     extractKeywords,
 		SummarizeTextEndpoint:       summarizeText,
@@ -158,6 +160,16 @@ func (c *Client) ReadResource(ctx context.Context, p *ReadResourcePayload) (res 
 		return
 	}
 	return ires.(*ReadResourceResult), nil
+}
+
+// ReportWork calls the "report_work" endpoint of the "assistant" service.
+func (c *Client) ReportWork(ctx context.Context) (res string, err error) {
+	var ires any
+	ires, err = c.ReportWorkEndpoint(ctx, nil)
+	if err != nil {
+		return
+	}
+	return ires.(string), nil
 }
 
 // AnalyzeSentiment calls the "analyze_sentiment" endpoint of the "assistant"

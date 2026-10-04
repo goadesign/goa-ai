@@ -690,6 +690,15 @@ func ValidateReadResourceResultTransport(value *ReadResourceResultTransport) (er
 	return err
 }
 
+// ReportWorkResultTransport stores JSON fields until they have been validated.
+type ReportWorkResultTransport string
+
+// ValidateReportWorkResultTransport checks decoded JSON before it becomes a service value.
+func ValidateReportWorkResultTransport(value ReportWorkResultTransport) (err error) {
+
+	return err
+}
+
 // ResourcePromptPayloadTransport stores JSON fields until they have been validated.
 type ResourcePromptPayloadTransport struct {
 	// Requested embedded resource identifier
@@ -2369,6 +2378,45 @@ func ValidateReadResourceResultValue(in *assistant.ReadResourceResult) error {
 		return fmt.Errorf("validate ReadResourceResult value: %w", err)
 	}
 	return nil
+}
+
+// EncodeReportWorkResult turns a service value into JSON using the field names in the Goa design.
+func EncodeReportWorkResult(in string) ([]byte, error) {
+	var body ReportWorkResultTransport
+	{
+		body = ReportWorkResultTransport(in)
+	}
+	if err := ValidateReportWorkResultTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ReportWorkResult JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ReportWorkResult JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeReportWorkResult checks JSON field names from the Goa design and returns a service value.
+func DecodeReportWorkResult(data []byte) (out string, err error) {
+	var body ReportWorkResultTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ReportWorkResult JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ReportWorkResult JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ReportWorkResult JSON after first value: %w", err)
+	}
+	if err := ValidateReportWorkResultTransport(body); err != nil {
+		return out, fmt.Errorf("validate ReportWorkResult JSON: %w", err)
+	}
+	{
+		out = string(body)
+	}
+	return out, nil
 }
 
 // NewResourcePromptPayload validates a decoded transport value and returns the service value.

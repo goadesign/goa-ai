@@ -169,16 +169,16 @@ func TestHTTPEventStreamFraming(t *testing.T) {
 	for _, separator := range []string{"\n", "\r\n", "\r"} {
 		t.Run(fmt.Sprintf("separator %q", separator), func(t *testing.T) {
 			stream := "\uFEFF: comment" + separator + separator + "data: " + message + separator + separator
-			result, err := readEventStream(strings.NewReader(stream))
+			result, err := readEventStream(strings.NewReader(stream), nil)
 			require.NoError(t, err)
 			assert.JSONEq(t, message, string(result))
 		})
 	}
-	result, err := readEventStream(strings.NewReader("data: {\ndata: \"jsonrpc\":\"2.0\",\"id\":\"reply\",\"result\":{\"resultType\":\"complete\"}}\n\n"))
+	result, err := readEventStream(strings.NewReader("data: {\ndata: \"jsonrpc\":\"2.0\",\"id\":\"reply\",\"result\":{\"resultType\":\"complete\"}}\n\n"), nil)
 	require.NoError(t, err)
 	assert.JSONEq(t, message, string(result))
 	for _, empty := range []string{"data\n\n", "data:\n\n"} {
-		_, err := readEventStream(strings.NewReader(empty))
+		_, err := readEventStream(strings.NewReader(empty), nil)
 		var malformed *MalformedResponseError
 		assert.ErrorAs(t, err, &malformed)
 	}

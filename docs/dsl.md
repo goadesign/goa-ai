@@ -1439,6 +1439,16 @@ bindings enter the generated MCP catalog and executor. Other methods in the same
 service retain their ordinary HTTP or gRPC contract. For example, an HTTP-only
 `health` method can serve `/health` without becoming a model-callable tool.
 
+### MCP progress from unary methods
+
+Progress does not change a method's payload, result, or unary service interface.
+Its implementation calls `mcp.ReportProgress` through the ordinary request
+context and handles delivery errors. The generated transport owns the client
+token, ordered notifications and final response. HTTP and stdio consumers use
+`mcp.WithProgress`; agent activities forward typed updates to the selected host
+stream. See [request-scoped progress](runtime.md#request-scoped-mcp-progress)
+for callback, cancellation and retry behavior.
+
 ### MCP resource content
 
 Resource methods have no payload and return the content for their declared URI.

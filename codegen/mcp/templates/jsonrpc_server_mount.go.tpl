@@ -106,7 +106,9 @@ func withMCPTransport(h *{{ .Transport.ServerStructDeclaration.Name }}, allowedO
         }
 
 		response := &mcpResponseWriter{ResponseWriter: w}
-		next(response, r)
+		if err := mcpruntime.ServeProgress(response, r, request.Params, next); err != nil {
+			h.errhandler(r.Context(), response, err)
+		}
 		if !response.written {
 			w.WriteHeader(http.StatusAccepted)
 		}
@@ -148,4 +150,9 @@ func (w *mcpResponseWriter) WriteHeader(statusCode int) {
 func (w *mcpResponseWriter) Write(data []byte) (int, error) {
 	w.written = true
 	return w.ResponseWriter.Write(data)
+}
+
+// Unwrap gives HTTP response control access to the underlying network writer.
+func (w *mcpResponseWriter) Unwrap() http.ResponseWriter {
+    return w.ResponseWriter
 }

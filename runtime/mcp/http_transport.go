@@ -98,23 +98,11 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 	if err != nil {
 		return nil, err
 	}
-	params["_meta"], err = json.Marshal(meta)
-	if err != nil {
-		return nil, NewInternalError(err)
-	}
-	request.Params, err = json.Marshal(params)
-	if err != nil {
-		return nil, NewInternalError(err)
-	}
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return nil, NewInternalError(err)
 	}
-	envelope["params"] = request.Params
-	body, err = json.Marshal(envelope)
-	if err != nil {
-		return nil, NewInternalError(err)
-	}
+	originalID := cloneRaw(envelope["id"])
 	outgoing := original.Clone(original.Context())
 	outgoing.GetBody = nil
 	outgoing.Header.Set("Content-Type", "application/json")
@@ -149,20 +137,52 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 	}
 	span.SetAttributes(attribute.String("rpc.method", request.Method))
 	for attempt := 1; ; attempt++ {
-		attemptRequest := outgoing.Clone(outgoing.Context())
-		attemptRequest.Body = io.NopCloser(bytes.NewReader(body))
-		attemptRequest.ContentLength = int64(len(body))
-		response, err = t.send(attemptRequest, request.HasID, envelope)
-		var interrupted *interruptedResponseError
-		if err == nil || !errors.As(err, &interrupted) || interrupted.httpStatus != http.StatusOK || original.Context().Err() != nil || attempt == attempts {
-			return response, err
+		receiver, receiverErr := newProgressReceiver(ctx, envelope["id"], meta)
+		if receiverErr != nil {
+			return nil, NewInternalError(receiverErr)
 		}
-		span.AddEvent("mcp.response_interrupted", trace.WithAttributes(attribute.Int("attempt", attempt)))
-		envelope["id"], err = json.Marshal(uuid.NewString())
+		params["_meta"], err = json.Marshal(meta)
+		if err != nil {
+			return nil, NewInternalError(err)
+		}
+		envelope["params"], err = json.Marshal(params)
 		if err != nil {
 			return nil, NewInternalError(err)
 		}
 		body, err = json.Marshal(envelope)
+		if err != nil {
+			return nil, NewInternalError(err)
+		}
+		attemptRequest := outgoing.Clone(outgoing.Context())
+		attemptRequest.Body = io.NopCloser(bytes.NewReader(body))
+		attemptRequest.ContentLength = int64(len(body))
+		response, err = t.send(attemptRequest, request.HasID, envelope, receiver)
+		var interrupted *interruptedResponseError
+		if err == nil || !errors.As(err, &interrupted) || interrupted.httpStatus != http.StatusOK || original.Context().Err() != nil || attempt == attempts {
+			if err == nil && attempt > 1 {
+				// The network reply was checked against this attempt's ID. Restore
+				// the original ID only for the generated caller's private decoder.
+				var completed map[string]json.RawMessage
+				data, readErr := io.ReadAll(response.Body)
+				closeErr := response.Body.Close()
+				if err := errors.Join(readErr, closeErr); err != nil {
+					return nil, NewInternalError(err)
+				}
+				if err := json.Unmarshal(data, &completed); err != nil {
+					return nil, NewInternalError(err)
+				}
+				completed["id"] = originalID
+				data, err = json.Marshal(completed)
+				if err != nil {
+					return nil, NewInternalError(err)
+				}
+				response.Body = io.NopCloser(bytes.NewReader(data))
+				response.ContentLength = int64(len(data))
+			}
+			return response, err
+		}
+		span.AddEvent("mcp.response_interrupted", trace.WithAttributes(attribute.Int("attempt", attempt)))
+		envelope["id"], err = json.Marshal(uuid.NewString())
 		if err != nil {
 			return nil, NewInternalError(err)
 		}
@@ -171,7 +191,7 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 
 // send consumes and validates one HTTP response. A lost SSE response is marked
 // separately so the caller can apply trust and attempt limits before repeating.
-func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[string]json.RawMessage) (*http.Response, error) {
+func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[string]json.RawMessage, receiver *progressReceiver) (*http.Response, error) {
 	response, err := t.next.Do(outgoing)
 	if err != nil {
 		return nil, err
@@ -200,7 +220,7 @@ func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[st
 	case "application/json":
 		data, err = io.ReadAll(response.Body)
 	case "text/event-stream":
-		data, err = readEventStream(response.Body)
+		data, err = readEventStream(response.Body, func(message rpcMessage) error { return receiver.notification(outgoing.Context(), message) })
 		var interrupted *interruptedResponseError
 		if errors.As(err, &interrupted) {
 			interrupted.httpStatus = response.StatusCode
@@ -250,7 +270,7 @@ func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[st
 // readEventStream consumes comments and notifications until a complete response
 // event. A lost stream discards unfinished event data; a fully framed malformed
 // message fails validation instead of permitting a retry.
-func readEventStream(body io.Reader) ([]byte, error) {
+func readEventStream(body io.Reader, notification func(rpcMessage) error) ([]byte, error) {
 	reader := bufio.NewReader(body)
 	var line, data strings.Builder
 	first := true
@@ -298,6 +318,11 @@ func readEventStream(body io.Reader) ([]byte, error) {
 				}
 				if len(message.ID) > 0 {
 					return nil, NewMalformedResponseError(errors.New("independent server requests are not supported by this protocol"))
+				}
+				if notification != nil {
+					if err := notification(message); err != nil {
+						return nil, err
+					}
 				}
 				data.Reset()
 			}

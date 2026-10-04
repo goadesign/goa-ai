@@ -13,6 +13,7 @@ scenarios:
               - { name: "process_batch" }
               - { name: "search" }
               - { name: "summarize_text" }
+              - { name: "test_tool_with_progress" }
 
   - name: tools_list_schema
     steps:
@@ -36,6 +37,7 @@ scenarios:
               - { name: "process_batch" }
               - { name: "search" }
               - { name: "summarize_text" }
+              - { name: "test_tool_with_progress" }
 
   - name: tools_call_each_unary_method
     steps:
@@ -99,6 +101,15 @@ scenarios:
           result:
             content: []
             structuredContent: { ok: true }
+
+      - name: progress_without_listener
+        op: ToolsCall
+        input: { name: "test_tool_with_progress", arguments: {} }
+        expect:
+          status: success
+          result:
+            content: []
+            structuredContent: "Work complete"
 
   - name: tools_list_rejects_cursor
     steps:

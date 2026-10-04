@@ -75,6 +75,7 @@ Verified on 2026-10-03 with the pinned referee:
 | Server / `completion-complete` | 2 passed after prompt-completion implementation | A typed service returns two suggestions and their total through the generated endpoint. Template-variable suggestions have local generated HTTP checks; this referee scenario selects a prompt. |
 | Server / `caching` | 7 passed, 1 failed; overall failure | URI-template listing is not implemented or advertised. Fixed-resource and other tested cache fields pass. |
 | Server / `resources-templates-read` | 2 passed after resource-template implementation | The typed service receives the exact expanded URI through the generated adapter. Lossy and overlapping declarations have local HTTP checks. |
+| Server / `tools-call-with-progress` | 2 passed after progress implementation | Actual generated unary service emits 0/50/100 with the exact supplied token before its final result. Local race checks cover HTTP/stdio consumers, separate retry identities, callback failure and activity host visibility. |
 | Server / `caching` after resource-template implementation | 8 passed | Template listing now returns the required cache fields through the generated endpoint. The earlier baseline failure remains in the full audit. |
 
 The custom-header driver's second call omits the optional `verbose` property.

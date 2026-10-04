@@ -109,6 +109,19 @@ unknown names fail before service dispatch. The referee's completion scenario
 selects a prompt, so resource suggestions currently have local independent-module
 and generated HTTP evidence rather than a dedicated referee scenario.
 
+## Subsequent progress verification
+
+On 2026-10-04 at 00:22 UTC (2026-10-03 locally), the frozen
+`tools-call-with-progress` scenario passed 2/2 checks. The unchanged referee
+selected `2026-07-28`; it received three progress notifications with the exact
+client token from a real generated unary service. Each message passed its wire
+schema. Local race tests verify live delivery before completion, increasing
+finite values, token/ID separation across HTTP retries, typed decoder identity,
+interleaved stdio calls, cancellation after callback failure and isolation of
+late notifications. Activity checks verify host visibility and terminal sink
+failure without a premature completed result. These targeted checks do not
+rerun or alter the failing baseline.
+
 ## Scenario results
 
 Success, failure, warning and skip columns count individual checks. Informational

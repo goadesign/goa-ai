@@ -71,7 +71,7 @@ func TestHTTPTransportResponseBoundary(t *testing.T) {
 		{"non-200 protocol error", 400, "application/json", `{"jsonrpc":"2.0","id":"a","error":{"code":-32022,"message":"unsupported","data":{"requested":"old","supported":["2026-07-28"]}}}`, -32022, ""},
 		{"exact ID", 200, "application/json", `{"jsonrpc":"2.0","id":"b","result":{"resultType":"complete"}}`, 0, "response ID does not match"},
 		{"legacy result", 200, "application/json", `{"jsonrpc":"2.0","id":"a","result":{}}`, 0, "resultType"},
-		{"SSE progress and comments", 200, "text/event-stream", ": keepalive\n\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{}}\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"a\",\"result\":{\"resultType\":\"complete\"}}\n\n", 0, ""},
+		{"SSE progress and comments", 200, "text/event-stream", ": keepalive\n\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":\"updates\",\"progress\":0}}\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":\"a\",\"result\":{\"resultType\":\"complete\"}}\n\n", 0, ""},
 		{"SSE server request", 200, "text/event-stream", "data: {\"jsonrpc\":\"2.0\",\"id\":\"server\",\"method\":\"ping\"}\n\n", 0, "independent server requests"},
 		{"SSE disconnect", 200, "text/event-stream", ": keepalive\n\n", 0, "ended before"},
 	} {
@@ -82,7 +82,7 @@ func TestHTTPTransportResponseBoundary(t *testing.T) {
 				require.NoError(t, req.Body.Close())
 				return &http.Response{StatusCode: test.status, Header: http.Header{"Content-Type": {test.contentType}}, Body: io.NopCloser(strings.NewReader(test.body))}, nil
 			}), ClientInfo{}, nil, InputSupport{}, HTTPRetryPolicy{})
-			req, err := http.NewRequestWithContext(context.Background(), "POST", "https://example.test/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":"a","method":"server/discover","params":{}}`))
+			req, err := http.NewRequestWithContext(context.Background(), "POST", "https://example.test/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":"a","method":"server/discover","params":{"_meta":{"progressToken":"updates"}}}`))
 			require.NoError(t, err)
 			response, err := transport.Do(req)
 			switch {

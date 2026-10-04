@@ -42,6 +42,8 @@ type Service interface {
 	SuggestArgument(context.Context, *SuggestArgumentPayload) (res *SuggestArgumentResult, err error)
 	// Read synthetic parameterized resources by their exact URI
 	ReadResource(context.Context, *ReadResourcePayload) (res *ReadResourceResult, err error)
+	// Perform synthetic work and report completion before returning its result
+	ReportWork(context.Context) (res string, err error)
 	// Analyze sentiment of text
 	AnalyzeSentiment(context.Context, *AnalyzeSentimentPayload) (res *AnalyzeSentimentResult, err error)
 	// Extract keywords from text
@@ -70,7 +72,7 @@ const ServiceName = "assistant"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [16]string{"list_documents", "system_info", "binary_resource", "empty_binary_resource", "simple_prompt", "argument_prompt", "resource_prompt", "image_prompt", "suggest_argument", "read_resource", "analyze_sentiment", "extract_keywords", "summarize_text", "search", "execute_code", "process_batch"}
+var MethodNames = [17]string{"list_documents", "system_info", "binary_resource", "empty_binary_resource", "simple_prompt", "argument_prompt", "resource_prompt", "image_prompt", "suggest_argument", "read_resource", "report_work", "analyze_sentiment", "extract_keywords", "summarize_text", "search", "execute_code", "process_batch"}
 
 // AnalyzeSentimentPayload is the payload type of the assistant service
 // analyze_sentiment method.
