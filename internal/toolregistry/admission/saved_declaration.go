@@ -1,4 +1,4 @@
-// Saved declaration decoding validates JSON before binding it to generated types.
+// Package admission validates saved JSON before binding it to generated types.
 // It retains each original consumer contract, including its member order and
 // escaping, because those bytes are part of the accepted registration identity.
 package admission
@@ -81,8 +81,7 @@ func savedMemberType(target reflect.Type, name string) (reflect.Type, error) {
 			return nil, fmt.Errorf("unknown field %q in tool field segment", name)
 		}
 	}
-	switch target.Kind() {
-	case reflect.Struct:
+	if target.Kind() == reflect.Struct {
 		for i := range target.NumField() {
 			field := target.Field(i)
 			if !field.IsExported() {
@@ -100,11 +99,11 @@ func savedMemberType(target reflect.Type, name string) (reflect.Type, error) {
 			}
 		}
 		return nil, fmt.Errorf("unknown field %q in %s; saved member names must match generated JSON names exactly", name, target.Name())
-	case reflect.Map:
-		return target.Elem(), nil
-	default:
-		return nil, nil
 	}
+	if target.Kind() == reflect.Map {
+		return target.Elem(), nil
+	}
+	return nil, nil
 }
 
 // readValue consumes one JSON value, rejects duplicate and unknown object keys,

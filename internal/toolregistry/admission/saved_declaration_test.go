@@ -122,7 +122,7 @@ func TestSavedDeclarationContractSpansStayAligned(t *testing.T) {
 		require.NotEqual(t, -1, start)
 		// The original input owns these bytes; comparing their addresses proves
 		// that capturing a contract did not allocate and copy its JSON again.
-		assert.True(t, &raw[start] == &contracts[index][0])
+		assert.Same(t, &raw[start], &contracts[index][0])
 	}
 	_, got, err := SavedToolsetFingerprint(raw)
 	require.NoError(t, err)

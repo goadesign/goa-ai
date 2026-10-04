@@ -1,4 +1,4 @@
-// This file derives declaration identities for current writers and saved records.
+// Package admission derives declaration identities for current writers and saved records.
 // Saved records keep their original contract bytes so added generated defaults
 // cannot change an already accepted registration's identity.
 package admission

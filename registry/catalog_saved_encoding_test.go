@@ -105,10 +105,10 @@ func TestCatalogSavedEncodingPreservesRegistration(t *testing.T) {
 					}
 					if retired {
 						_, err = cold.ActiveRegistration(ctx, toolset.Name)
-						assert.ErrorIs(t, err, errToolsetNotFound)
+						require.ErrorIs(t, err, errToolsetNotFound)
 						if !native {
 							_, err = cold.Register(ctx, definition, testAdmissionRevisionA, "provider", testIncarnationB, time.Minute)
-							assert.ErrorIs(t, err, errAdmissionRetired)
+							require.ErrorIs(t, err, errAdmissionRetired)
 						}
 					} else {
 						resolved, err := (&Service{catalog: cold}).ResolveToolset(ctx, &genregistry.GetToolsetPayload{Name: toolset.Name})
