@@ -2707,9 +2707,9 @@ upgrade](#registry-storage-upgrade).
 Every definition-dependent read fetches state, definition, and retirement
 membership together and validates the complete snapshot. This includes
 `GetToolset`, `ResolveToolset`, and call preparation or its availability retries.
-A semantic fingerprint can ignore ordering, and native replacement can reuse a
-token, so neither selects a previously cached definition. Returned definitions
-are independently owned and carry the selected state's token and time.
+Declaration fingerprints ignore tool and tag ordering, and native replacement
+can reuse a token, so neither selects a previously cached definition. Returned
+definitions are independently owned and carry the selected state's token and time.
 
 The existing schema validator still reuses compiled schemas by digest. Each
 snapshot prepares its tool-name map from those compiled objects; dynamic
@@ -2717,6 +2717,35 @@ arguments are checked against that map. Full definition transfer, decoding and
 fingerprinting therefore remain part of each definition-dependent read. Lease
 and health operations continue to read only compact state. This does not change
 live authorization or the consumer's per-planning-activity catalog lifetime.
+
+##### Saved declaration identity
+
+When loading a saved definition, Registry strictly decodes its fields and
+validates its schemas, state, routing token, and retirement history. The shared
+fingerprint calculation uses each consumer contract's original saved JSON bytes,
+including member order and escaping. A missing or JSON-null consumer contract
+contributes no bytes, as it does during registration. Duplicate members,
+conflicting field-name spellings, unknown fields, and trailing JSON values are
+rejected rather than interpreted differently by the decoder and hash calculation.
+Generated fields use their exact saved names; application metadata map keys
+remain case-sensitive data.
+
+Registry retains the original complete definition after validation. It does not
+serialize it again using the current generated Go types to establish identity.
+For example, adding an optional Boolean field to those types must not insert
+`false` into the bytes used to verify an older saved contract. Both older and
+newer saved encodings retain their existing fingerprint and token; changed
+contract bytes must still match the saved fingerprint.
+
+New declarations continue to use the current generated representation and the
+same fingerprint and token algorithms. This read correction changes no public
+API or wire protocol and requires no stored-data conversion or provider
+regeneration. It does not make declaration retries independent of serializer
+changes: resending an older declaration through newer generated types can
+produce a different fingerprint and remains subject to existing admission
+conflict and retirement checks.
+
+##### Provider health and leases
 
 A change between zero and nonzero routable providers advances the health epoch
 and clears pong freshness. Draining or releasing an already non-routable lease
