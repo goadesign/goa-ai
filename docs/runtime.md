@@ -6525,6 +6525,59 @@ Progress is live host information. It creates no completed tool result, model
 argument, durable run event or continuation state. The trusted host owns any
 smaller public representation it shows to users.
 
+### MCP change subscriptions
+
+HTTP and stdio callers expose `Listen(ctx, filter, handler)`. One invocation
+sends `subscriptions/listen` and waits until the server completes it, the host
+cancels it, the handler fails, or the connection ends. The handler first receives
+`SubscriptionAcknowledged` with the subset of requested changes the server
+supports. It then receives the accepted catalog changes or resource updates.
+Check that acknowledgment before relying on a notification kind.
+
+```go
+err := caller.Listen(ctx, mcp.SubscriptionFilter{
+    ResourcesListChanged: true,
+    ResourceSubscriptions: []string{"file:///documents/readme"},
+}, func(ctx context.Context, event mcp.SubscriptionEvent) error {
+    return handleMCPChange(ctx, event)
+})
+```
+
+The application supplies `handleMCPChange`. A catalog-change event tells it to
+reload that catalog; a resource-update event supplies the address to read again.
+An updated address may identify a sub-resource of an accepted resource, so the
+transport does not invent a URI-prefix or filesystem authorization rule. The
+resource service owns access and which changes belong to a subscription.
+
+The transport owns the exact listen request ID and checks every notification's
+subscription metadata. A change before acknowledgment, duplicate acknowledgment,
+unrequested notification kind, or mismatched request ID fails that listener.
+The acknowledgment can omit unsupported kinds; it cannot add unrequested kinds or
+resource addresses. An empty filter and an empty acknowledgment are valid.
+Resource strings retain their exact values without trimming or normalization.
+
+Handlers run synchronously in their operation's goroutine and must honor their
+context. Stdio retains one waiting message per operation; a slow callback applies
+backpressure to the shared reader. Cancellation releases its blocked delivery.
+Late events for a finished request cannot reach another listener or tool call.
+Host cancellation sends the actual stdio request ID. A server's valid stdio
+cancellation returns `SubscriptionCancelledError` with its optional reason;
+invalid or already-finished cancellation messages are ignored. HTTP cancellation
+closes the request's response body instead of sending a notification.
+
+A graceful completion must include the same subscription ID. A connection ending
+without it returns an interruption error. `Listen` sends no automatic reconnect
+and retains no protocol session or resume cursor. The host decides whether to
+open a new listener with a fresh request ID. Callback failures also end the
+listener and are not retry signals.
+
+This consumer contract implements the core notification filter. Generated servers
+still need a typed, authenticated change source before they can advertise
+subscriptions. Fixed generated catalogs do not emit pretend catalog changes, and
+private agent/session streams are not MCP subscription sources. See the
+[remaining implementation work](mcp_protocol_upgrade_plan.md#optional-features-and-security-boundaries)
+and the [released subscription contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions).
+
 ### Interrupted HTTP responses
 
 Retries belong to the application's HTTP caller, inside one worker activity.

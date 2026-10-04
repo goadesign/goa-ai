@@ -41,7 +41,7 @@ func ValidateHTTPRequest(request *http.Request, body []byte, bindings map[string
 		return &Error{Code: JSONRPCInvalidParams, Message: "protocolVersion metadata is required"}
 	}
 	if token, present := meta["progressToken"]; present {
-		if _, err := progressTokenKey(token); err != nil {
+		if _, err := protocolIDKey(token); err != nil {
 			return &Error{Code: JSONRPCInvalidParams, Message: err.Error()}
 		}
 	}

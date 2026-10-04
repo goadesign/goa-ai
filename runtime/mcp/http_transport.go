@@ -137,7 +137,14 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 	}
 	span.SetAttributes(attribute.String("rpc.method", request.Method))
 	for attempt := 1; ; attempt++ {
-		receiver, receiverErr := newProgressReceiver(ctx, envelope["id"], meta)
+		var receiver *progressReceiver
+		var subscription *subscriptionReceiver
+		var receiverErr error
+		if request.Method == methodSubscriptionsListen {
+			subscription, receiverErr = newSubscriptionReceiver(ctx, envelope["id"], params["notifications"])
+		} else {
+			receiver, receiverErr = newProgressReceiver(ctx, envelope["id"], meta)
+		}
 		if receiverErr != nil {
 			return nil, NewInternalError(receiverErr)
 		}
@@ -156,7 +163,7 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		attemptRequest := outgoing.Clone(outgoing.Context())
 		attemptRequest.Body = io.NopCloser(bytes.NewReader(body))
 		attemptRequest.ContentLength = int64(len(body))
-		response, err = t.send(attemptRequest, request.HasID, envelope, receiver)
+		response, err = t.send(attemptRequest, request.HasID, envelope, receiver, subscription)
 		var interrupted *interruptedResponseError
 		if err == nil || !errors.As(err, &interrupted) || interrupted.httpStatus != http.StatusOK || original.Context().Err() != nil || attempt == attempts {
 			if err == nil && attempt > 1 {
@@ -191,7 +198,7 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 
 // send consumes and validates one HTTP response. A lost SSE response is marked
 // separately so the caller can apply trust and attempt limits before repeating.
-func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[string]json.RawMessage, receiver *progressReceiver) (*http.Response, error) {
+func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[string]json.RawMessage, receiver *progressReceiver, subscription *subscriptionReceiver) (*http.Response, error) {
 	response, err := t.next.Do(outgoing)
 	if err != nil {
 		return nil, err
@@ -220,7 +227,18 @@ func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[st
 	case "application/json":
 		data, err = io.ReadAll(response.Body)
 	case "text/event-stream":
-		data, err = readEventStream(response.Body, func(message rpcMessage) error { return receiver.notification(outgoing.Context(), message) })
+		data, err = readEventStream(response.Body, func(message rpcMessage) error {
+			if subscription != nil {
+				if message.Method == methodCancelled {
+					return NewMalformedResponseError(errors.New("server cancellation is only supported on stdio"))
+				}
+				return subscription.notification(outgoing.Context(), message)
+			}
+			if isSubscriptionNotification(message.Method) {
+				return NewMalformedResponseError(errors.New("subscription notification arrived on another request"))
+			}
+			return receiver.notification(outgoing.Context(), message)
+		})
 		var interrupted *interruptedResponseError
 		if errors.As(err, &interrupted) {
 			interrupted.httpStatus = response.StatusCode
@@ -260,6 +278,11 @@ func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[st
 	}
 	if result.ResultType == resultInputRequired && outgoing.Header.Get("Mcp-Method") != methodToolsCall && outgoing.Header.Get("Mcp-Method") != "resources/read" && outgoing.Header.Get("Mcp-Method") != methodPromptsGet {
 		return nil, NewMalformedResponseError(errors.New("input_required is not permitted for this method"))
+	}
+	if subscription != nil {
+		if err := subscription.finish(incoming.Result); err != nil {
+			return nil, err
+		}
 	}
 	response.Body = io.NopCloser(bytes.NewReader(data))
 	response.ContentLength = int64(len(data))

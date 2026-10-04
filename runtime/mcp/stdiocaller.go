@@ -1,5 +1,5 @@
 // This file starts an MCP server process and exchanges one JSON message per
-// line over standard input and output while the agent runtime calls tools.
+// line over standard input and output while clients call tools or listen for changes.
 
 package mcp
 
@@ -12,6 +12,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
 
 	"go.opentelemetry.io/otel"
@@ -55,13 +57,15 @@ type (
 	}
 
 	callResult struct {
-		resp     rpcResponse
-		progress *progressWire
+		resp         rpcResponse
+		progress     *progressWire
+		subscription *rpcMessage
 	}
 	pendingCall struct {
-		ctx      context.Context
-		results  chan callResult
-		progress *progressReceiver
+		ctx          context.Context
+		results      chan callResult
+		progress     *progressReceiver
+		subscription *subscriptionReceiver
 	}
 )
 
@@ -185,12 +189,22 @@ func (c *StdioCaller) call(ctx context.Context, method string, params map[string
 	if err != nil {
 		return NewInternalError(err)
 	}
-	receiver, err := newProgressReceiver(ctx, encodedID, meta)
+	var receiver *progressReceiver
+	var subscription *subscriptionReceiver
+	if method == methodSubscriptionsListen {
+		filter, encodeErr := json.Marshal(params["notifications"])
+		if encodeErr != nil {
+			return NewInternalError(encodeErr)
+		}
+		subscription, err = newSubscriptionReceiver(ctx, encodedID, filter)
+	} else {
+		receiver, err = newProgressReceiver(ctx, encodedID, meta)
+	}
 	if err != nil {
 		return NewInternalError(err)
 	}
 	params["_meta"] = meta
-	pending := &pendingCall{ctx: ctx, results: make(chan callResult, 1), progress: receiver}
+	pending := &pendingCall{ctx: ctx, results: make(chan callResult, 1), progress: receiver, subscription: subscription}
 	c.pendingMu.Lock()
 	c.pending[id] = pending
 	if receiver != nil {
@@ -208,16 +222,33 @@ func (c *StdioCaller) call(ctx context.Context, method string, params map[string
 	for {
 		select {
 		case res := <-pending.results:
+			if res.subscription != nil {
+				if err := subscription.notification(ctx, *res.subscription); err != nil {
+					c.removePending(id)
+					var cancelled *SubscriptionCancelledError
+					if errors.As(err, &cancelled) {
+						return err
+					}
+					cancelErr := c.notify(methodCancelled, map[string]any{"requestId": id})
+					return errors.Join(err, cancelErr)
+				}
+				continue
+			}
 			if res.progress != nil {
 				if err := receiver.accept(ctx, res.progress); err != nil {
 					c.removePending(id)
-					cancelErr := c.notify("notifications/cancelled", map[string]any{"requestId": id})
+					cancelErr := c.notify(methodCancelled, map[string]any{"requestId": id})
 					return errors.Join(err, cancelErr)
 				}
 				continue
 			}
 			if res.resp.Error != nil {
 				return res.resp.Error.callerError()
+			}
+			if subscription != nil {
+				if err := subscription.finish(res.resp.Result); err != nil {
+					return err
+				}
 			}
 			if result != nil && res.resp.Result != nil {
 				if err := json.Unmarshal(res.resp.Result, result); err != nil {
@@ -227,7 +258,7 @@ func (c *StdioCaller) call(ctx context.Context, method string, params map[string
 			return nil
 		case <-ctx.Done():
 			if c.removePending(id) {
-				err := c.notify("notifications/cancelled", map[string]any{"requestId": id})
+				err := c.notify(methodCancelled, map[string]any{"requestId": id})
 				return errors.Join(ctx.Err(), err)
 			}
 			return ctx.Err()
@@ -282,6 +313,13 @@ func (c *StdioCaller) readLoop(stdout io.Reader) {
 				c.failPending(NewMalformedResponseError(errors.New("independent server requests are not supported by this protocol")))
 				return
 			}
+			if isSubscriptionNotification(incoming.Method) {
+				if err := c.deliverSubscription(incoming); err != nil {
+					c.failPending(err)
+					return
+				}
+				continue
+			}
 			if incoming.Method == "notifications/progress" {
 				update, err := decodeProgress(incoming.Params)
 				if err != nil {
@@ -333,7 +371,7 @@ func (c *StdioCaller) failPending(err error) {
 // waiting slot applies backpressure without running host callbacks in the read
 // loop. Cancellation releases a blocked send; late tokens reach no other call.
 func (c *StdioCaller) deliverProgress(update *progressWire) error {
-	key, err := progressTokenKey(update.Token)
+	key, err := protocolIDKey(update.Token)
 	if err != nil {
 		return NewMalformedResponseError(err)
 	}
@@ -393,4 +431,48 @@ func (c *StdioCaller) closeError() error {
 		return errors.New("stdio caller closed")
 	}
 	return c.closeErr
+}
+
+// deliverSubscription routes a notification by the originating listen ID.
+// One waiting slot applies backpressure; cancellation releases a blocked send.
+func (c *StdioCaller) deliverSubscription(message rpcMessage) error {
+	if message.Method == methodCancelled {
+		if _, err := decodeSubscriptionCancellation(message.Params); err != nil {
+			// A malformed cancellation does not identify valid work to stop.
+			// The cancellation contract asks receivers to ignore it.
+			return nil //nolint:nilerr // The protocol asks receivers to ignore malformed cancellation notifications.
+		}
+	}
+	rawID, err := subscriptionMessageID(message)
+	if err != nil {
+		return NewMalformedResponseError(err)
+	}
+	key, err := protocolIDKey(rawID)
+	if err != nil {
+		return NewMalformedResponseError(err)
+	}
+	id, err := strconv.ParseUint(strings.TrimPrefix(key, "integer:"), 10, 64)
+	if err != nil {
+		// A valid ID outside this caller's numeric sequence cannot name an
+		// active request. Late or unknown cancellation and changes are ignored.
+		return nil //nolint:nilerr // A valid but unassigned ID cannot identify an active request.
+	}
+	c.pendingMu.Lock()
+	pending := c.pending[id]
+	c.pendingMu.Unlock()
+	if pending == nil {
+		return nil
+	}
+	if pending.subscription == nil {
+		if message.Method == methodCancelled {
+			return nil
+		}
+		return NewMalformedResponseError(errors.New("subscription notification does not identify a listen request"))
+	}
+	select {
+	case pending.results <- callResult{subscription: &message}:
+	case <-pending.ctx.Done():
+	case <-c.closed:
+	}
+	return nil
 }

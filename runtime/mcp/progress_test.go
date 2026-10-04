@@ -18,13 +18,13 @@ func TestProgressTokens(t *testing.T) {
 		{`""`, "string:"}, {`" a "`, "string: a "}, {`9007199254740993`, "integer:9007199254740993"}, {`1.0`, "integer:1"}, {`1e2`, "integer:100"}, {`-1`, "integer:-1"},
 	} {
 		t.Run(test.raw, func(t *testing.T) {
-			key, err := progressTokenKey(json.RawMessage(test.raw))
+			key, err := protocolIDKey(json.RawMessage(test.raw))
 			require.NoError(t, err)
 			assert.Equal(t, test.key, key)
 		})
 	}
 	for _, raw := range []string{`null`, `true`, `{}`, `[]`, `1.5`, ``, `"broken`} {
-		t.Run(raw, func(t *testing.T) { _, err := progressTokenKey(json.RawMessage(raw)); require.Error(t, err) })
+		t.Run(raw, func(t *testing.T) { _, err := protocolIDKey(json.RawMessage(raw)); require.Error(t, err) })
 	}
 }
 

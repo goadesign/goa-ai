@@ -96,7 +96,7 @@ func newProgressReceiver(ctx context.Context, id json.RawMessage, meta map[strin
 	if !present {
 		return nil, nil
 	}
-	key, err := progressTokenKey(token)
+	key, err := protocolIDKey(token)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +118,7 @@ func decodeProgress(raw json.RawMessage) (*progressWire, error) {
 	if err := json.Unmarshal(raw, &update); err != nil {
 		return nil, err
 	}
-	if _, err := progressTokenKey(update.Token); err != nil {
+	if _, err := protocolIDKey(update.Token); err != nil {
 		return nil, err
 	}
 	if update.Value == nil {
@@ -133,11 +133,11 @@ func decodeProgress(raw json.RawMessage) (*progressWire, error) {
 	return &update, nil
 }
 
-// progressTokenKey compares integer tokens by value while preserving their
-// original bytes for the server's reply. Strings keep their exact characters.
-func progressTokenKey(raw json.RawMessage) (string, error) {
+// protocolIDKey compares integer request IDs and progress tokens by value.
+// Strings keep their exact characters; callers retain the original wire bytes.
+func protocolIDKey(raw json.RawMessage) (string, error) {
 	if !json.Valid(raw) {
-		return "", errors.New("progress token must be a string or integer")
+		return "", errors.New("protocol identifier must be a string or integer")
 	}
 	var text string
 	if json.Unmarshal(raw, &text) == nil && !bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
@@ -145,7 +145,7 @@ func progressTokenKey(raw json.RawMessage) (string, error) {
 	}
 	number, ok := new(big.Rat).SetString(string(bytes.TrimSpace(raw)))
 	if !ok || !number.IsInt() {
-		return "", errors.New("progress token must be a string or integer")
+		return "", errors.New("protocol identifier must be a string or integer")
 	}
 	return "integer:" + number.Num().String(), nil
 }
@@ -161,7 +161,7 @@ func validateProgressValues(value float64, total *float64) error {
 
 // accept checks one request's token and ordering before the host observes it.
 func (r *progressReceiver) accept(ctx context.Context, update *progressWire) error {
-	key, err := progressTokenKey(update.Token)
+	key, err := protocolIDKey(update.Token)
 	if err != nil {
 		return err
 	}

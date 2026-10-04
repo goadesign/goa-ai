@@ -40,6 +40,24 @@ All three packages passed. The first attempt could not access Go's build cache; 
 
 ## Implementation progress
 
+The shared HTTP/stdio consumer now supports distinct `subscriptions/listen`
+operations. Typed filters and events retain exact request IDs and notification
+metadata. Receivers enforce acknowledgment before changes, accepted subsets,
+per-request routing, graceful completion and cancellation. They neither share
+protocol sessions nor reconnect implicitly. Resource filter strings follow the
+released schema without a new URI-format restriction; updated-resource
+notifications retain the protocol's explicit URI requirement. Malformed or late
+stdio cancellations are ignored according to the released cancellation rules.
+The generated server producer remains unfinished and unadvertised. A source
+must own authenticated selection and delivery before advertisement. Fixed
+catalogs cannot truthfully emit catalog-change notifications; private agent
+streams are not a substitute for that source. The complete serial root race
+suite and quickstart, build, lint, and the uncached MCP transport race suite
+passed. Independent raw peers cover interleaved listeners, cancellation during
+quiet streams and blocked callbacks, exact filter selection, invalid notification
+scope and one dispatch after an interruption. These checks do not establish full
+subscription or release conformance.
+
 Progress now works through generated unary HTTP services, shared HTTP/stdio
 callers, and the agent tool activity's host stream. `ReportProgress` uses the
 service context; `WithProgress` binds a typed client callback. Transports own
@@ -620,7 +638,7 @@ The protocol revision and the set of optional capabilities are different decisio
 | Additional input / form elicitation | HTTP/stdio consumers and durable agent suspensions are implemented; generated server production is incomplete | Preserve the verified multi-round consumer path. Add a typed authored producer with operation-owned state and authorization before release. No-host callers reject unsupported interactions. |
 | URL elicitation | Consumers preserve URL requests and host consent across successor runs; generated server production is incomplete | The service must verify out-of-band completion independently of consent and bind it to the authenticated user. Host capabilities remain explicit; secrets never become form answers. |
 | Progress | Implemented through unary service contexts, HTTP/stdio callers and the agent host stream | Transports own per-request tokens and ordering; activities own invocation correlation. Generated HTTP and parallel stdio checks passed; the frozen referee passed 2/2. Private host events are not public MCP payloads. |
-| Subscriptions | Private session/run stream and hooks exist; generated resource-change producers and MCP listeners were removed | Technically feasible, not implemented. Add only with an owned change source and a generated `subscriptions/listen` binding; filter by authenticated subscription and exact request. A fixed catalog needs no pretend notifications. Do not reuse session streams, GET channels, or old broadcasters. |
+| Subscriptions | Core HTTP/stdio listeners are implemented; generated server production is incomplete | Receivers enforce acknowledgment, accepted filters, exact request IDs, graceful closure and cancellation. Add the producer through an owned authenticated change source and a generated `subscriptions/listen` binding. A fixed catalog needs no pretend notifications. Do not reuse private session streams, GET channels, or old broadcasters. |
 | Tasks extension | Asynchronous starts, durable engine, completion queries, suspension, and cancellation exist | Viable workflow-backed extension milestone. The server owns durable work and task identity; the adapter maps its typed API. Arbitrary unary methods are not automatically tasks. Pin the extension separately and verify the complete lifecycle before advertising. |
 | Roots / sampling / logging | File/domain inputs, model clients, and tracing exist, but these old protocol features are deprecated | Their absence is a deliberate new-protocol design choice, not evidence the framework cannot access files or models. Do not implement deprecated request variants. |
 | OAuth | Authorized HTTP client injection and application middleware exist; built-in discovery/grant/token storage do not | Keep host/application authorization ownership. Preserve challenges/status/headers. A built-in profile needs its own complete security design and synthetic tests; do not label injection as built-in OAuth compliance. |
@@ -629,7 +647,7 @@ The protocol revision and the set of optional capabilities are different decisio
 
 The user requires every missing capability identified in this review before release. Protocol optionality does not make these implementation milestones optional for this upgrade. Keep PR #409 draft while work proceeds; commits and pushes are authorized, release is not. The required capability set is binary resources, rich authored content, parameterized prompts, URI templates, argument suggestions, server-produced additional input, progress, subscriptions, Tasks, built-in OAuth, and complete Apps and Skills integrations. Pin each extension separately. Extensions remain explicitly enabled by applications; do not advertise them before the complete path works. Deprecated roots, sampling, logging, and Dynamic Client Registration remain excluded by the from-scratch requirement. Any referee scenario that depends on a deprecated feature must be reported explicitly rather than implemented as a legacy path or silently ignored.
 
-New long-lived notifications are scoped to a subscription request and correlated by its exact ID; ordinary progress is scoped to its originating operation. Those requirements must govern any future subscription API. [Subscriptions](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions), [progress](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/progress).
+New long-lived notifications are scoped to a subscription request and correlated by its exact ID; ordinary progress is scoped to its originating operation. The shared consumer enforces these requirements; the generated producer must preserve them. [Subscriptions](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions), [progress](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/progress).
 
 Elicitation form and URL modes have different security responsibilities. A configured host must not request sensitive secrets in forms, and must explain a URL interaction before opening it. Server continuation state is untrusted input on return; when authorization-sensitive, it needs principal/request binding, integrity, expiry, and server-enforced replay rules. Signing data alone does not make it single-use. [Elicitation](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation), [state requirements](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr#server-requirements-basic-workflow).
 

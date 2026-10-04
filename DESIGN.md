@@ -2022,6 +2022,16 @@ session stream profile. These updates are not persisted results or model input.
 The final result and continuation paths retain completion ownership. See
 [the progress contract](docs/runtime.md#request-scoped-mcp-progress).
 
+HTTP and stdio callers can open a distinct `subscriptions/listen` request.
+The transport checks acknowledgment order, the accepted subset of the requested
+filter, and each message's exact originating request ID. Callbacks run in the
+owning operation; cancellation releases bounded stdio delivery. A graceful reply
+closes the listener, while connection loss returns an interruption without an
+implicit reconnect. The host chooses a new listen request. This consumer does
+not make fixed catalogs dynamic or turn private session streams into public
+change sources. Generated producer bindings remain a separate release gate.
+See [the subscription contract](docs/runtime.md#mcp-change-subscriptions).
+
 Generated servers advertise only their implemented unary tools, fixed resource
 reads, parameterized resource reads, static or method-backed prompts, and
 prompt/resource argument suggestion methods.
