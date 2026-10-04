@@ -1443,6 +1443,21 @@ bindings enter the generated MCP catalog and executor. Other methods in the same
 service retain their ordinary HTTP or gRPC contract. For example, an HTTP-only
 `health` method can serve `/health` without becoming a model-callable tool.
 
+Construct the MCP adapter with the application's configured Goa endpoints:
+
+```go
+endpoints := genservice.NewEndpoints(service, interceptors)
+endpoints.Use(middleware)
+adapter := genmcp.NewMCPAdapter(endpoints, nil)
+```
+
+Omit the interceptor argument when the design declares none. The adapter calls
+these endpoints for tools, resource reads, method-backed prompts and completion.
+The original endpoint owns authentication, method scopes, the authenticated
+context, interceptors and middleware. Static catalogs and prompts do not call
+an application endpoint. This replaces the constructor that accepted a bare
+service; regenerate and update application wiring together.
+
 ### MCP progress from unary methods
 
 Progress does not change a method's payload, result, or unary service interface.

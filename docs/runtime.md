@@ -6453,6 +6453,14 @@ a late response cannot finish another call. `caller.Close(ctx)` closes standard
 input and waits for exit, killing and reaping the process if the supplied context
 ends. The application chooses that shutdown deadline.
 
+Generated MCP servers receive the application's configured Goa endpoints through
+`NewMCPAdapter(endpoints, options)`. Configure authentication, interceptors and
+endpoint middleware before constructing the adapter. Tools, resource reads,
+method-backed prompts and completion call the same endpoint instances, keeping
+method scopes and authenticated context under Goa's ownership. Regenerate and
+replace bare-service constructor calls when upgrading. This endpoint composition
+does not complete the pending HTTP credential-delivery and OAuth challenge work.
+
 Generated JSON-RPC clients use the same transport implementation. Their tool
 caller is constructed with `NewCaller(client, clientInfo, inputSupport, retryPolicy)`.
 The generated client supplies precomputed tool bindings from the same design

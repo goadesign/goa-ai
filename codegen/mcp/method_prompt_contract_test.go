@@ -17,14 +17,17 @@ import (
  "net/url"
  "reflect"
  "strings"
+ "sync/atomic"
  "testing"
  genprompts "generated.local/gen/method_prompts"
  genmcpprompts "generated.local/gen/mcp_method_prompts"
  genserver "generated.local/gen/jsonrpc/mcp_method_prompts/server"
  goahttp "goa.design/goa/v3/http"
+ goa "goa.design/goa/v3/pkg"
  mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
+type configuredEndpointKey struct{}
 type promptService struct {
  calls int
  code,style string
@@ -34,16 +37,29 @@ type promptService struct {
  completionPayload *genprompts.CompleteStylePayload
  suggestions *genprompts.AuthoredSuggestions
 }
-func (s *promptService) CompleteStyle(_ context.Context,p *genprompts.CompleteStylePayload)(*genprompts.AuthoredSuggestions,error) {
+func (s *promptService) CompleteStyle(ctx context.Context,p *genprompts.CompleteStylePayload)(*genprompts.AuthoredSuggestions,error) {
+ if ctx.Value(configuredEndpointKey{})!=true{return nil,errors.New("configured completion middleware missing")}
  s.completionCalls++;s.completionPayload=p
  return s.suggestions,s.failure
 }
-func (s *promptService) Review(_ context.Context,p *genprompts.ReviewPayload)(*genprompts.AuthoredPromptResult,error) {
+func (s *promptService) Review(ctx context.Context,p *genprompts.ReviewPayload)(*genprompts.AuthoredPromptResult,error) {
+ if ctx.Value(configuredEndpointKey{})!=true{return nil,errors.New("configured prompt middleware missing")}
  s.calls++;s.code=string(p.Code);s.style=p.Style
  return s.result,s.failure
 }
-func (s *promptService) Empty(context.Context)(*genprompts.AuthoredPromptResult,error) {
+func (s *promptService) Empty(ctx context.Context)(*genprompts.AuthoredPromptResult,error) {
+ if ctx.Value(configuredEndpointKey{})!=true{return nil,errors.New("configured empty prompt middleware missing")}
  s.calls++;return &genprompts.AuthoredPromptResult{},s.failure
+}
+
+// configuredPromptEndpoints marks each original endpoint call and verifies that
+// catalogs and rejected arguments do not invoke application middleware.
+func configuredPromptEndpoints(t *testing.T,s *promptService)*genprompts.Endpoints {
+ endpoints:=genprompts.NewEndpoints(s)
+ var calls atomic.Int64
+ endpoints.Use(func(next goa.Endpoint)goa.Endpoint{return func(ctx context.Context,p any)(any,error){calls.Add(1);return next(context.WithValue(ctx,configuredEndpointKey{},true),p)}})
+ t.Cleanup(func(){if calls.Load()!=int64(s.calls+s.completionCalls){t.Fatalf("middleware calls=%d service calls=%d",calls.Load(),s.calls+s.completionCalls)}})
+ return endpoints
 }
 
 // decodeAuthoredPrompt loads synthetic values using the authored Go field names.
@@ -57,7 +73,7 @@ func decodeAuthoredPrompt(source string,result *genprompts.AuthoredPromptResult)
 func TestMethodBackedPrompts(t *testing.T) {
  service:=&promptService{}
  mux:=goahttp.NewMuxer()
- adapter:=genmcpprompts.NewMCPAdapter(service,nil)
+ adapter:=genmcpprompts.NewMCPAdapter(configuredPromptEndpoints(t,service),nil)
  server:=genserver.New(genmcpprompts.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil)
  genserver.Mount(mux,server)
  endpoint:=httptest.NewServer(mux);defer endpoint.Close()
@@ -163,7 +179,7 @@ func TestMethodBackedPrompts(t *testing.T) {
 
 func TestPromptArgumentCompletion(t *testing.T) {
  service:=&promptService{suggestions:&genprompts.AuthoredSuggestions{Values:[]string{"detailed","brief"},Matches:new(int64(250)),HasMore:new(true)}}
- adapter:=genmcpprompts.NewMCPAdapter(service,nil)
+ adapter:=genmcpprompts.NewMCPAdapter(configuredPromptEndpoints(t,service),nil)
  mux:=goahttp.NewMuxer()
  server:=genserver.New(genmcpprompts.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil)
  genserver.Mount(mux,server)
@@ -245,7 +261,7 @@ func TestCompletionPeerValidation(t *testing.T) {
 
 func TestCompletionRawRequestValidation(t *testing.T) {
  service:=&promptService{suggestions:&genprompts.AuthoredSuggestions{}}
- adapter:=genmcpprompts.NewMCPAdapter(service,nil)
+ adapter:=genmcpprompts.NewMCPAdapter(configuredPromptEndpoints(t,service),nil)
  mux:=goahttp.NewMuxer();server:=genserver.New(genmcpprompts.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil);genserver.Mount(mux,server)
  endpoint:=httptest.NewServer(mux);defer endpoint.Close()
  for _,context:=range []string{"null","[]","{\"arguments\":null}","{\"arguments\":{\"code\":null}}","{\"arguments\":{\"code\":5}}","{\"arguments\":{\"missing\":\"x\"}}"} {

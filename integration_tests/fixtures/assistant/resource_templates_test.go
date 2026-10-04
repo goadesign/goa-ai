@@ -51,7 +51,7 @@ func (s *resourceTestService) SuggestArgument(_ context.Context, p *genassistant
 func TestResourceTemplateHTTP(t *testing.T) {
 	service := &resourceTestService{Service: NewAssistant()}
 	mux := goahttp.NewMuxer()
-	adapter := genmcp.NewMCPAdapter(service, nil)
+	adapter := genmcp.NewMCPAdapter(genassistant.NewEndpoints(service), nil)
 	server := genserver.New(genmcp.NewEndpoints(adapter), mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, nil)
 	genserver.Mount(mux, server)
 	endpoint := httptest.NewServer(mux)

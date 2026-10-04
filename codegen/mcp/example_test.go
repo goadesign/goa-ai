@@ -28,10 +28,12 @@ func TestGenerateExampleAdapterStubs_ReplacesStub(t *testing.T) {
 
 	files, err := generateExampleAdapterStubs(
 		[]exampleMCPService{{
-			service:             svc,
-			mcpConstructorName:  "NewMCPOrchestratorEndpoint",
-			userConstructorName: "NewOrchestratorEndpoint",
-			mcpServiceInterface: "ServiceEndpoint",
+			service:                  svc,
+			mcpConstructorName:       "NewMCPOrchestratorEndpoint",
+			userConstructorName:      "NewOrchestratorEndpoint",
+			mcpServiceInterface:      "ServiceEndpoint",
+			userImport:               codegen.NewImport("genorchestrator", "example.com/assistant/gen/orchestrator"),
+			userEndpointsConstructor: "NewEndpoints",
 		}},
 		[]*codegen.File{stub},
 	)
@@ -42,7 +44,7 @@ func TestGenerateExampleAdapterStubs_ReplacesStub(t *testing.T) {
 	for _, s := range files[0].SectionTemplates {
 		if s.Name == "example-mcp-stub" &&
 			strings.Contains(s.Source, "func NewMCPOrchestratorEndpoint() mcporchestrator.ServiceEndpoint") &&
-			strings.Contains(s.Source, "NewMCPAdapter(NewOrchestratorEndpoint()") {
+			strings.Contains(s.Source, "NewMCPAdapter(genorchestrator.NewEndpoints(NewOrchestratorEndpoint()") {
 			found = true
 		}
 	}

@@ -40,6 +40,12 @@ type (
 		CodecPackage string
 		// NeedsServerCodec reports whether the MCP server adapter calls a codec.
 		NeedsServerCodec bool
+		// EndpointsName is Goa's final name for the configured endpoint collection.
+		EndpointsName string
+		// NeedsEndpointResultCheck reports whether endpoints return typed results.
+		NeedsEndpointResultCheck bool
+		// EndpointMethods contains one typed call per authored MCP method.
+		EndpointMethods []*endpointMethodAdapter
 		// Tools contains the Goa methods exposed as MCP tools.
 		Tools []*ToolAdapter
 		// Resources contains the Goa methods exposed as MCP resources.
@@ -125,8 +131,8 @@ type (
 		ReadOnly bool
 		// Idempotent is the design-time promise that repeated arguments have no additional effects.
 		Idempotent bool
-		// ServiceMethodName is Goa's final Go name for the original service method.
-		ServiceMethodName string
+		// Endpoint calls the configured Goa endpoint for this method.
+		Endpoint *endpointMethodAdapter
 		// HasPayload reports whether the Goa method accepts a payload.
 		HasPayload bool
 		// HasResult reports whether the Goa method returns a result.
@@ -160,8 +166,8 @@ type (
 		URI string
 		// MimeType describes the resource content.
 		MimeType string
-		// ServiceMethodName is Goa's final Go name for the original service method.
-		ServiceMethodName string
+		// Endpoint calls the configured Goa endpoint for this method.
+		Endpoint *endpointMethodAdapter
 		// TextResult reports that the method result is a string returned without
 		// JSON quoting because the resource declares a text MIME type.
 		TextResult bool

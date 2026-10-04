@@ -91,6 +91,9 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planMCPPackagePaths(servicePlan, prepared, adapter); err != nil {
 			return err
 		}
+		if err := planEndpointAdapters(plan.Generation(), servicePlan, prepared, adapter); err != nil {
+			return err
+		}
 		if err := planResourceReader(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
@@ -134,9 +137,6 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 		if userService == nil {
 			return nil, fmt.Errorf("goa did not plan original service %q", planned.prepared.userService.Name)
 		}
-		if err := bindUserServiceMethods(userService, planned); err != nil {
-			return nil, err
-		}
 		if err := planned.adapterData.jsonrpcClientImports.Link(); err != nil {
 			return nil, err
 		}
@@ -144,6 +144,9 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 			return nil, fmt.Errorf("link MCP JSON-RPC server imports: %w", err)
 		}
 		bindMCPImports(planned.adapterData)
+		if err := bindEndpointAdapters(userService, planned.adapterData); err != nil {
+			return nil, err
+		}
 		planned.adapterData.MCPPackage = mcpService.PkgName
 		codecFiles, err := bindMCPCodecs(services, planned)
 		if err != nil {
@@ -246,7 +249,7 @@ func planMCPImports(
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("fmt"))
 		data.serverImportPaths = append(data.serverImportPaths, "fmt")
 	}
-	if data.NeedsNoArgumentsValidation {
+	if data.NeedsNoArgumentsValidation || data.NeedsEndpointResultCheck {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("fmt"))
 		data.serverImportPaths = append(data.serverImportPaths, "fmt")
 	}
@@ -368,32 +371,6 @@ func packageImports(pkg *goacodegen.GeneratedPackage, paths []string) []*goacode
 		imports = append(imports, pkg.Import(importPath))
 	}
 	return imports
-}
-
-// bindUserServiceMethods copies the original selectors after Goa assigns names.
-func bindUserServiceMethods(service *goaservice.Data, planned *plannedMCPService) error {
-	for _, tool := range planned.adapterData.Tools {
-		method := service.Method(tool.userMethodName)
-		if method == nil {
-			return fmt.Errorf("goa did not plan tool method %q", tool.userMethodName)
-		}
-		tool.ServiceMethodName = method.VarName
-	}
-	for _, resource := range planned.adapterData.Resources {
-		method := service.Method(resource.userMethodName)
-		if method == nil {
-			return fmt.Errorf("goa did not plan resource method %q", resource.userMethodName)
-		}
-		resource.ServiceMethodName = method.VarName
-	}
-	for _, prompt := range planned.adapterData.MethodPrompts {
-		method := service.Method(prompt.prompt.Method.Name)
-		if method == nil {
-			return fmt.Errorf("goa did not plan prompt method %q", prompt.prompt.Method.Name)
-		}
-		prompt.ServiceMethodName = method.VarName
-	}
-	return nil
 }
 
 // planMCPCodecs records the private JSON package and every mapped service value
@@ -699,6 +676,11 @@ func declareMCPNames(generation *goacodegen.Generation, data *AdapterData) error
 		goacodegen.NewExactName(goacodegen.NameFunction, "resultMeta"),
 	} {
 		if err := mcpPackage.DeclareName(declaration); err != nil {
+			return err
+		}
+	}
+	if data.NeedsEndpointResultCheck {
+		if err := mcpPackage.DeclareName(goacodegen.NewExactName(goacodegen.NameType, "endpointResultError")); err != nil {
 			return err
 		}
 	}

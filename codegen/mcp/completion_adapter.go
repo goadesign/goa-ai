@@ -30,8 +30,8 @@ type (
 		Reference string
 		// Argument is the declared argument being completed.
 		Argument string
-		// ServiceMethodName is Goa's final service method name.
-		ServiceMethodName string
+		// Endpoint calls the configured Goa endpoint for this method.
+		Endpoint *endpointMethodAdapter
 		// PayloadTransportRef is the private decoded-input type filled by the adapter.
 		PayloadTransportRef string
 		// PayloadConstructor is the generated constructor that applies defaults and validation.
@@ -102,7 +102,6 @@ func bindCompletionConversions(services *goaservice.ServicesData, planned *plann
 	target := &codegen.AttributeContext{Scope: targetScope, UseDefault: true}
 	for _, completion := range data.Completions {
 		method := completion.method
-		completion.ServiceMethodName = services.Get(planned.prepared.userService.Name).Method(method.Name).VarName
 		values := planned.methodCodecs[method.Name]
 		completion.Codec = methodCodecData(values)
 		transport, err := values.payload.TransportTypeName(data.mcpImportPath, data.mcpPackage.ImportName)

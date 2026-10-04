@@ -3,6 +3,7 @@ package codegen
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -22,12 +23,16 @@ type (
 
 	// exampleMCPService stores the generated names needed to replace one example stub.
 	exampleMCPService struct {
-		service             *expr.ServiceExpr
-		stubPath            string
-		mcpPackagePath      string
-		mcpConstructorName  string
-		userConstructorName string
-		mcpServiceInterface string
+		service                     *expr.ServiceExpr
+		stubPath                    string
+		mcpPackagePath              string
+		mcpConstructorName          string
+		userConstructorName         string
+		mcpServiceInterface         string
+		userImport                  *codegen.ImportSpec
+		userEndpointsConstructor    string
+		userInterceptorsConstructor string
+		userInterceptorsImport      *codegen.ImportSpec
 	}
 )
 
@@ -104,6 +109,21 @@ func bindExampleMCPServices(
 		service.mcpConstructorName = mcp.ExampleConstructorDeclaration.Name()
 		service.userConstructorName = user.ExampleConstructorDeclaration.Name()
 		service.mcpServiceInterface = mcp.ServiceDeclaration.Name()
+		service.userImport = codegen.NewImport("gen"+user.PkgName, path.Join(planned.GenPkg(), user.PathName))
+		service.userEndpointsConstructor = user.NewEndpointsDeclaration.Name()
+		if len(user.ServerInterceptors) > 0 {
+			service.userInterceptorsConstructor = user.ExampleServerInterceptorsConstructorDeclaration.Name()
+			interceptorsPath := path.Join(path.Dir(planned.GenPkg()), "interceptors")
+			for _, spec := range plan.Service(root).ExampleImports() {
+				if spec.Path == interceptorsPath {
+					service.userInterceptorsImport = spec
+					break
+				}
+			}
+			if service.userInterceptorsImport == nil {
+				return fmt.Errorf("goa did not plan example interceptor import for service %q", service.service.Name)
+			}
+		}
 	}
 	return nil
 }
@@ -164,11 +184,21 @@ func generateExampleAdapterStubs(
 		if err != nil {
 			return nil, err
 		}
+		codegen.AddImport(header, mcpService.userImport)
+		interceptorsAlias := ""
+		if mcpService.userInterceptorsImport != nil {
+			codegen.AddImport(header, mcpService.userInterceptorsImport)
+			interceptorsAlias = mcpService.userInterceptorsImport.Name
+		}
 		body := mcpTemplates.MustRender("example_mcp_stub", map[string]any{
-			"MCPConstructorName":  mcpService.mcpConstructorName,
-			"UserConstructorName": mcpService.userConstructorName,
-			"MCPServiceInterface": mcpService.mcpServiceInterface,
-			"MCPAlias":            mcpAlias,
+			"MCPConstructorName":          mcpService.mcpConstructorName,
+			"UserConstructorName":         mcpService.userConstructorName,
+			"MCPServiceInterface":         mcpService.mcpServiceInterface,
+			"MCPAlias":                    mcpAlias,
+			"UserAlias":                   mcpService.userImport.Name,
+			"UserEndpointsConstructor":    mcpService.userEndpointsConstructor,
+			"UserInterceptorsConstructor": mcpService.userInterceptorsConstructor,
+			"UserInterceptorsAlias":       interceptorsAlias,
 		})
 		// Replace file content except header with our body
 		f.SectionTemplates = []*codegen.SectionTemplate{header, {Name: exampleMCPStubSection, Source: body}}

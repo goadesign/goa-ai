@@ -79,6 +79,11 @@ func configureCollidingExampleDesign(t *testing.T) {
 		jsonrpcService(first, "/first"),
 		jsonrpcService(second, "/second"),
 	})
+	// The first service requires its generated interceptor constructor; the
+	// second has none, so the example must specialize both endpoint constructors.
+	observe := &expr.InterceptorExpr{Name: "observe"}
+	root.Interceptors = []*expr.InterceptorExpr{observe}
+	first.ServerInterceptors = []*expr.InterceptorExpr{observe}
 	root.API.Name = "colliding_examples"
 	root.API.Version = "1.0"
 	root.API.GRPC = &expr.GRPCExpr{}

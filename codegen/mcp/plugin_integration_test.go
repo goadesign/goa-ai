@@ -53,7 +53,7 @@ func (s *echoService) Health(context.Context) (string,error) {return "ready",nil
 
 func TestGeneratedStatelessProtocol(t *testing.T) {
  service:=&echoService{}
- adapter:=genmcpfmt.NewMCPAdapter(service,nil)
+ adapter:=genmcpfmt.NewMCPAdapter(genfmt.NewEndpoints(service),nil)
  mux:=goahttp.NewMuxer()
  server:=genmcpfmtsrv.New(genmcpfmt.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil)
  genmcpfmtsrv.MountWithOrigins(mux,server,[]string{"https://allowed.test"})
@@ -506,8 +506,8 @@ replace goa.design/goa/v3 => %s
 	require.Contains(t, string(selectorService), "ReadValueEndpoint(context.Context) (res string, err error)")
 	selectorServer, err := generatedRoot.ReadFile("mcp_selector/adapter_server.go")
 	require.NoError(t, err)
-	require.Contains(t, string(selectorServer), "a.service.ReadValue(ctx)")
-	require.Contains(t, string(selectorServer), "a.service.ReadValueEndpoint(ctx)")
+	require.Contains(t, string(selectorServer), "a.endpoints.ReadValue(ctx, nil)")
+	require.Contains(t, string(selectorServer), "a.endpoints.ReadValueEndpoint(ctx, nil)")
 	selectorJSONRPCStream, err := generatedRoot.ReadFile("jsonrpc/mcp_selector/client/stream.go")
 	require.Error(t, err)
 	require.Empty(t, selectorJSONRPCStream)
@@ -527,7 +527,7 @@ replace goa.design/goa/v3 => %s
 	resourceServer, err := generatedRoot.ReadFile("mcp_resources/adapter_server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(resourceServer), `case "doc://list":`)
-	require.Contains(t, string(resourceServer), "result, err := a.service.ReadDocument(ctx)")
+	require.Contains(t, string(resourceServer), "raw, err := a.endpoints.ReadDocument(ctx, nil)")
 	require.NotContains(t, string(resourceServer), "ParseQuery")
 	_, err = generatedRoot.Stat("mcp_blobs/internal/codec/codec.go")
 	require.ErrorIs(t, err, os.ErrNotExist)

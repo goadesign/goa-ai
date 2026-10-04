@@ -19,8 +19,6 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
-const readDocumentMethod = "ReadDocument"
-
 func TestPrepareServices_PreservesMethodsWithoutMCPDeclarations(t *testing.T) {
 	restore := resetMCPCodegenState(t)
 	defer restore()
@@ -333,8 +331,9 @@ func TestPrepareServices_AcceptedMCPServiceAssignsEveryOriginalEndpoint(t *testi
 	data.Resources[0].Codec = &MethodCodecData{
 		ResultEncode: "EncodeReadDocumentResult",
 	}
-	data.Tools[0].ServiceMethodName = "Analyze"
-	data.Resources[0].ServiceMethodName = readDocumentMethod
+	data.EndpointsName = "Endpoints"
+	data.Tools[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
+	data.Resources[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod1"}
 
 	data.NeedsServerCodec = true
 	data.MCPPackage = "mcpassistant"

@@ -97,7 +97,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
             return nil, failure
         }
         {{ end }}
-        result, err := a.service.{{ .ServiceMethodName }}(ctx{{ if .HasPayload }}, payload{{ end }})
+        result, err := a.{{ .Endpoint.CallName }}(ctx{{ if .HasPayload }}, payload{{ end }})
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())

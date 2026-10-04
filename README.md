@@ -323,6 +323,13 @@ types without those encoders. Strict lifecycle and rejection record reads
 reject invalid raw UTF-8 instead of replacing bytes during JSON decoding.
 See the [JSON boundary contract](docs/runtime.md#json-boundary-contract).
 
+Generated MCP adapters accept the application's configured Goa endpoints.
+Authentication, method scopes, interceptors and endpoint middleware therefore run
+through the original service contract. Regenerate and replace bare-service
+adapter constructor calls; see [MCP server composition](docs/dsl.md#mcp-server-definition).
+HTTP credential delivery and OAuth challenges remain release gates in the
+[MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
+
 Application code owns planners, service behavior, authorization, side-effect
 idempotency, storage, and deployment. Deploy generated packages, callers, and
 workers as a coordinated release. Read the [production configuration](docs/runtime.md#production-configuration),

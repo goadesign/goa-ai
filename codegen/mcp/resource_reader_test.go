@@ -33,23 +33,32 @@ import (
  "context"
  "net/http/httptest"
  "net/url"
+ "errors"
+ "sync/atomic"
  "testing"
  genreader "generated.local/gen/templated"
  genresourceshared "generated.local/gen/resource/shared"
  genmcp "generated.local/gen/mcp_templated"
  genserver "generated.local/gen/jsonrpc/mcp_templated/server"
  goahttp "goa.design/goa/v3/http"
+ goa "goa.design/goa/v3/pkg"
 )
 
+type configuredResourceKey struct{}
 type resourceService struct {address string; calls int; result *genreader.ReaderResult}
-func(s *resourceService)Read(_ context.Context,p *genreader.ReadPayload)(*genreader.ReaderResult,error) {
+func(s *resourceService)Read(ctx context.Context,p *genreader.ReadPayload)(*genreader.ReaderResult,error) {
+ if ctx.Value(configuredResourceKey{})!=true{return nil,errors.New("configured resource middleware missing")}
  s.calls++;s.address=string(p.URI);return s.result,nil
 }
 func TestResourceOnlyReader(t *testing.T) {
  content:=genresourceshared.ReaderContent(genresourceshared.NewReaderChoiceText(&genresourceshared.ReaderText{URI:genresourceshared.ReaderURI("test://items/abc"),Text:""}))
  service:=&resourceService{result:&genreader.ReaderResult{Contents:[]*genreader.ReaderItem{{Content:content}}}}
  mux:=goahttp.NewMuxer()
- adapter:=genmcp.NewMCPAdapter(service,nil)
+ endpoints:=genreader.NewEndpoints(service)
+ var middlewareCalls atomic.Int64
+ endpoints.Use(func(next goa.Endpoint)goa.Endpoint{return func(ctx context.Context,p any)(any,error){middlewareCalls.Add(1);return next(context.WithValue(ctx,configuredResourceKey{},true),p)}})
+ t.Cleanup(func(){if middlewareCalls.Load()!=int64(service.calls){t.Fatalf("middleware calls=%d service calls=%d",middlewareCalls.Load(),service.calls)}})
+ adapter:=genmcp.NewMCPAdapter(endpoints,nil)
  server:=genserver.New(genmcp.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil)
  genserver.Mount(mux,server)
  endpoint:=httptest.NewServer(mux);defer endpoint.Close()

@@ -58,6 +58,31 @@ surface or silently exclude secured declarations. The generator must derive the
 credential distinction from Goa's design, not field-name guesses.
 
 
+Generated MCP adapters now consume the application's configured original Goa
+endpoints across tools, fixed and parameterized resources, method-backed prompts
+and completion. Original service/method context names are derived before dispatch.
+A compiled real HTTP service verifies exact JWT scopes and authenticated context,
+rejection without service execution, configured middleware and interceptors once,
+payload-free and no-result methods, and an ordinary domain field named `token`.
+Resource-only, prompt and completion peers verify middleware context and call
+counts. An unexpected endpoint Go result type returns an internal protocol error
+without application error remapping. The adapter constructor now requires the
+endpoint collection; examples and callers change together. The uncached MCP
+race suite, configured lint with zero issues, complete serial root race suite and
+quickstart, regenerated assistant fixture race suite and build passed. This does
+not complete credential-free schemas, HTTP credential delivery or OAuth challenges.
+
+Result views need a separate complete contract before release. A synthetic
+Goa result with a default view that omits a declared field fails the existing
+MCP schema generator because the full result codec and default-view schema
+disagree. Goa endpoints return validated selected fields, not the full service
+value. Converting that value back to the full result can invent zero values for
+omitted fields. Do not treat a passing full-field view test as proof of omitted
+field support. Resolve schemas, server encoding, generated agent decoding and
+stored results together; no view-specific compatibility mode or silent field
+reconstruction is acceptable.
+
+
 Current main's text-only execution restriction is preserved alongside MCP
 continuation ownership. A generated executor restricts host input per operation;
 HTTP and stdio callers omit form/URL capabilities and reject continuation data
@@ -686,13 +711,46 @@ Tasks are no longer a core experiment. Pin the [dated extension contract](https:
 
 Roots, sampling, logging, the old HTTP+SSE transport, and Dynamic Client Registration are deprecated. Avoid them in a new implementation even where the specification retains them during its deprecation window. [Deprecated-feature registry](https://modelcontextprotocol.io/specification/2026-07-28/deprecated).
 
-### Authorization work, if a built-in profile is separately chosen
+### Required authorization implementation
 
 Existing applications can supply authorized HTTP clients and mount authentication middleware. This investigation found no built-in MCP OAuth implementation and no live target credentials/configuration to validate. Treat a future built-in profile as greenfield; do not infer deployed authorization behavior from framework defaults.
 
-Such a profile needs protected-resource metadata and challenges, authorization-server/OIDC discovery, PKCE, resource/audience-bound access tokens, and intact 401/403 handling. [Authorization contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization), [authorization-server discovery](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/authorization-server-discovery).
+The required profile needs protected-resource metadata and challenges, authorization-server/OIDC discovery, PKCE, resource/audience-bound access tokens, and intact 401/403 handling. [Authorization contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization), [authorization-server discovery](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/authorization-server-discovery).
 
 Use preregistered credentials or Client ID Metadata Documents; do not build a deprecated Dynamic Client Registration fallback. Validate a present authorization-response issuer and bind stored credentials to that issuer. [Client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration), [security requirements](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations).
+
+The producer-to-consumer trace separates two credentials: MCP OAuth access to
+this protected resource and the credential declared by an original Goa method.
+Bearer/JWT/OAuth method annotations can identify a bearer field, but Basic
+credentials and API keys are not equivalent OAuth tokens. Reuse exact authored
+HTTP bindings where they exist; do not reinterpret one scheme as another or
+invent a header from a field's spelling. The generated HTTP decoder already
+supports header-derived payload values, so investigate that path before adding
+an exported context credential record. Derive the credential-free domain payload
+once and use it for catalogs, examples, codecs, agent field metadata and registry
+declarations. Verify secured resources, prompts and completion as well as tools.
+
+Goa authentication callbacks return errors without identifying whether the
+failure was an invalid token, insufficient scope, a method failure or an internal
+error. The HTTP binding cannot infer this distinction from text. Use declared
+error contracts and their transport meaning; keep this decision open until the
+complete existing error mapping is traced. Invalid tokens, insufficient access
+and malformed authentication need distinct 401, 403 and 400 responses with
+intact challenges, rather than completed tool-error content. Shared HTTP callers
+currently parse protocol envelopes before retaining authorization challenges;
+fix this before claiming built-in OAuth. Credential refresh is an authorization
+operation, not a lost-response tool retry.
+
+OAuth clients must bind registration to the exact validated issuer and tokens
+to that issuer, resource and host principal. Validate discovery issuer equality
+and S256 support before user authorization. Bind authorization responses to that
+operation's issuer, redirect, state and verifier; check a present issuer before
+sending either a code or an error to another component. Host code owns consent
+and private credential storage. The framework must never forward an MCP token to
+an upstream API. These are greenfield requirements, not evidence about deployed
+applications. Test issuer changes, two simultaneous resources/principals, scope
+changes for one operation and an ordinary sibling operation using its earlier
+grant. Do not promote one operation's challenge or retry allowance to all runs.
 
 Authentication/consent remain host-owned. Self-reported client/server names, tool annotations, icon URLs, mirrored headers, and opaque continuation values do not grant authority. Preserve exact Origin validation. Do not fetch icon/schema URLs or follow arbitrary redirects while interpreting a tool result.
 

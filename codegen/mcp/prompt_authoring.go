@@ -20,8 +20,8 @@ type (
 		Name string
 		// Description explains when the client should select the prompt.
 		Description string
-		// ServiceMethodName is Goa's final service method name.
-		ServiceMethodName string
+		// Endpoint calls the configured Goa endpoint for this method.
+		Endpoint *endpointMethodAdapter
 		// HasPayload reports whether the service method accepts arguments.
 		HasPayload bool
 		// Arguments lists the declared string arguments in design order.

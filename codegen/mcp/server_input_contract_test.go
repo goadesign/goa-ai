@@ -34,7 +34,8 @@ func TestGenerateMCPTransportUsesOneExactURIForEachResource(t *testing.T) {
 	data.CodecImportPath = testCodecImportPath
 	data.CodecPackage = testCodecPackage
 	data.NeedsServerCodec = true
-	data.Resources[0].ServiceMethodName = "ReadDocument"
+	data.EndpointsName = "Endpoints"
+	data.Resources[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
 	data.Resources[0].Codec = &MethodCodecData{
 		ResultEncode: "EncodeReadDocumentResult",
 	}
@@ -45,7 +46,7 @@ func TestGenerateMCPTransportUsesOneExactURIForEachResource(t *testing.T) {
 
 	require.Contains(t, rendered, `switch p.URI`)
 	require.Contains(t, rendered, `case "doc://list":`)
-	require.Contains(t, rendered, `result, err := a.service.ReadDocument(ctx)`)
+	require.Contains(t, rendered, `result, err := a.invokeMCPMethod0(ctx)`)
 	require.NotContains(t, rendered, "ParseQuery")
 	require.NotContains(t, rendered, "PayloadTransport")
 }
@@ -73,6 +74,9 @@ func TestGenerateMCPTransportRejectsInputForMethodsWithoutPayloads(t *testing.T)
 	data.CodecImportPath = testCodecImportPath
 	data.CodecPackage = testCodecPackage
 	data.NeedsServerCodec = true
+	data.EndpointsName = "Endpoints"
+	data.Tools[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
+	data.Resources[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod1"}
 	data.Tools[0].Codec = &MethodCodecData{ResultEncode: "EncodeRunResult"}
 	data.Resources[0].Codec = &MethodCodecData{ResultEncode: "EncodeReadStatusResult"}
 

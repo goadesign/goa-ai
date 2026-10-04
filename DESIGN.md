@@ -2526,6 +2526,16 @@ The `goa example` phase generates application-owned scaffold under `internal/age
 - Registry authentication: use Goa security schemes (`APIKeySecurity`, `OAuth2Security`, etc.)
 - Logging: avoid logging sensitive payloads and results in production
 
+Generated MCP adapters invoke configured original Goa endpoints for every
+method-backed tool, resource, prompt and completion. They neither call the bare
+service nor build a second endpoint set. Goa owns declared authentication, method
+scopes, authenticated context, interceptors and endpoint middleware; the MCP
+adapter owns argument decoding and protocol results. A returned value outside an
+endpoint's declared Go type is an internal protocol error and bypasses application
+error mapping. HTTP credential delivery and OAuth challenges remain unfinished
+release gates; endpoint composition alone does not establish MCP authorization
+conformance.
+
 ## Error code mapping
 
 When an authored Goa method exposed as an MCP tool fails, the adapter returns a

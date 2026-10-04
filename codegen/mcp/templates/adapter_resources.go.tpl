@@ -30,7 +30,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
     switch p.URI {
     {{- range .Resources }}
     case {{ quote .URI }}:
-        result, err := a.service.{{ .ServiceMethodName }}(ctx)
+        result, err := a.{{ .Endpoint.CallName }}(ctx)
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
@@ -70,7 +70,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
             span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("invalid_params", "%s", err.Error())
         }
-        result, err := a.service.{{ .ServiceMethodName }}(ctx, payload)
+        result, err := a.{{ .Endpoint.CallName }}(ctx, payload)
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())

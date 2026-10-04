@@ -1,9 +1,10 @@
-// MCPAdapter calls the authored Goa service after the HTTP binding and generated
-// argument codecs accept the request. It returns only this release's MCP contract.
+// MCPAdapter calls the configured Goa endpoints after the HTTP binding and
+// argument codecs accept the request. Endpoint authentication and middleware
+// retain their existing owner; results use only this release's MCP contract.
 type (
     // MCPAdapter translates protocol requests into authored service operations.
     MCPAdapter struct {
-        service {{ .Package }}.Service
+        endpoints *{{ .Package }}.{{ .EndpointsName }}
         opts MCPAdapterOptions
     }
     // MCPAdapterOptions configures how application errors are exposed to clients.
@@ -14,9 +15,10 @@ type (
     }
 )
 
-// NewMCPAdapter connects an already-built service to the MCP protocol methods.
-func NewMCPAdapter(service {{ .Package }}.Service, opts *MCPAdapterOptions) *MCPAdapter {
-    adapter := &MCPAdapter{service: service}
+// NewMCPAdapter connects already-configured Goa endpoints to MCP methods.
+// Configure authentication, interceptors and middleware before constructing it.
+func NewMCPAdapter(endpoints *{{ .Package }}.{{ .EndpointsName }}, opts *MCPAdapterOptions) *MCPAdapter {
+    adapter := &MCPAdapter{endpoints: endpoints}
     if opts != nil {
         adapter.opts = *opts
     }
@@ -41,8 +43,14 @@ func validateNoArguments(arguments json.RawMessage) error {
 }
 {{- end }}
 
-// mapError applies the host's error disclosure policy to a service failure.
+// mapError turns invalid endpoint result types into internal protocol errors
+// and applies the host's disclosure policy to application failures.
 func (a *MCPAdapter) mapError(err error) error {
+    {{- if .NeedsEndpointResultCheck }}
+    if failure, ok := err.(*endpointResultError); ok {
+        return goa.PermanentError("internal_error", "%s", failure.Error())
+    }
+    {{- end }}
     if a.opts.ErrorMapper != nil {
         return a.opts.ErrorMapper(err)
     }
@@ -89,3 +97,40 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*D
         CacheScope: "private",
     }, nil
 }
+
+{{ range .EndpointMethods }}
+// {{ .CallName }} sends validated input to the configured {{ .MethodName }} endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) {{ .CallName }}(ctx context.Context{{ if .PayloadRef }}, payload {{ .PayloadRef }}{{ end }}) ({{ if .ResultRef }}{{ .ResultRef }}, {{ end }}error) {
+    // The original endpoint middleware observes its authored service and method.
+    ctx = context.WithValue(ctx, goa.ServiceKey, {{ quote $.ServiceName }})
+    ctx = context.WithValue(ctx, goa.MethodKey, {{ quote .DesignMethodName }})
+    {{ if .ResultRef }}raw{{ else }}_{{ end }}, err := a.endpoints.{{ .MethodName }}(ctx, {{ if .PayloadRef }}payload{{ else }}nil{{ end }})
+    {{- if .ResultRef }}
+    var zero {{ .ResultRef }}
+    if err != nil {
+        return zero, err
+    }
+    result, ok := raw.({{ .EndpointResultRef }})
+    if !ok {
+        return zero, &endpointResultError{method: {{ quote .MethodName }}}
+    }
+    return {{ if .ResultConstructor }}{{ .ResultConstructor }}(result){{ else }}result{{ end }}, nil
+    {{- else }}
+    return err
+    {{- end }}
+}
+{{ end }}
+
+{{- if .NeedsEndpointResultCheck }}
+// endpointResultError identifies a configured endpoint that returned a value
+// outside its declared Go contract. Applications cannot remap this invariant error.
+type endpointResultError struct {
+    method string
+}
+
+// Error identifies the endpoint whose result failed the generated type check.
+func (e *endpointResultError) Error() string {
+    return fmt.Sprintf("endpoint %s returned an unexpected Go result type", e.method)
+}
+{{- end }}

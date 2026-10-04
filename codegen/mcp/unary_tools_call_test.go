@@ -29,6 +29,8 @@ func TestGenerateMCPTransport_RendersUnaryToolsCall(t *testing.T) {
 	data.CodecImportPath = "example.com/calc/gen/mcp_calc/internal/codec"
 	data.CodecPackage = testCodecPackage
 	data.NeedsServerCodec = true
+	data.EndpointsName = "Endpoints"
+	data.Tools[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
 	data.Tools[0].Codec = &MethodCodecData{ResultEncode: "EncodeAddResult"}
 
 	files := generateMCPTransport("example.com/calc/gen", svc, data)
@@ -48,13 +50,13 @@ func TestGenerateMCPTransport_RendersCurrentToolResults(t *testing.T) {
 		CodecPackage: "codec",
 		Tools: []*ToolAdapter{
 			{
-				Name:              "summarize",
-				Description:       "Summarize one document",
-				ServiceMethodName: "Summarize",
-				HasPayload:        true,
-				HasResult:         true,
-				InputSchema:       `{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}`,
-				OutputSchema:      `{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`,
+				Name:         "summarize",
+				Description:  "Summarize one document",
+				Endpoint:     &endpointMethodAdapter{CallName: "invokeMCPMethod0"},
+				HasPayload:   true,
+				HasResult:    true,
+				InputSchema:  `{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}`,
+				OutputSchema: `{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`,
 				Codec: &MethodCodecData{
 					PayloadDecode: "DecodeSummarizePayload",
 					ResultEncode:  "EncodeSummarizeResult",

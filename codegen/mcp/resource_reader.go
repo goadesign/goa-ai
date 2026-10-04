@@ -15,8 +15,8 @@ import (
 type (
 	// resourceReaderAdapter contains the private constructor and result copy.
 	resourceReaderAdapter struct {
-		// ServiceMethodName is the final service method name.
-		ServiceMethodName string
+		// Endpoint calls the configured Goa endpoint for this method.
+		Endpoint *endpointMethodAdapter
 		// PayloadTransportRef is the private decoded-input type.
 		PayloadTransportRef string
 		// PayloadConstructor validates input and constructs the service payload.
@@ -100,7 +100,6 @@ func bindResourceReader(services *goaservice.ServicesData, planned *plannedMCPSe
 	if reader == nil {
 		return nil
 	}
-	reader.ServiceMethodName = services.Get(planned.prepared.userService.Name).Method(reader.method.Name).VarName
 	values := planned.methodCodecs[reader.method.Name]
 	reader.Codec = methodCodecData(values)
 	var err error

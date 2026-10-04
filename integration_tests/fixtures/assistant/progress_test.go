@@ -48,7 +48,7 @@ func TestGeneratedHTTPProgressBeforeResult(t *testing.T) {
 	release := make(chan struct{})
 	service := &progressTestService{Service: NewAssistant(), release: release}
 	mux := goahttp.NewMuxer()
-	server := genserver.New(genmcp.NewEndpoints(genmcp.NewMCPAdapter(service, nil)), mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, nil)
+	server := genserver.New(genmcp.NewEndpoints(genmcp.NewMCPAdapter(genassistant.NewEndpoints(service), nil)), mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, nil)
 	genserver.Mount(mux, server)
 	endpoint := httptest.NewServer(mux)
 	defer endpoint.Close()

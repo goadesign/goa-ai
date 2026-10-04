@@ -21,13 +21,14 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// MCPAdapter calls the authored Goa service after the HTTP binding and generated
-// argument codecs accept the request. It returns only this release's MCP contract.
+// MCPAdapter calls the configured Goa endpoints after the HTTP binding and
+// argument codecs accept the request. Endpoint authentication and middleware
+// retain their existing owner; results use only this release's MCP contract.
 type (
 	// MCPAdapter translates protocol requests into authored service operations.
 	MCPAdapter struct {
-		service assistant.Service
-		opts    MCPAdapterOptions
+		endpoints *assistant.Endpoints
+		opts      MCPAdapterOptions
 	}
 	// MCPAdapterOptions configures how application errors are exposed to clients.
 	MCPAdapterOptions struct {
@@ -37,9 +38,10 @@ type (
 	}
 )
 
-// NewMCPAdapter connects an already-built service to the MCP protocol methods.
-func NewMCPAdapter(service assistant.Service, opts *MCPAdapterOptions) *MCPAdapter {
-	adapter := &MCPAdapter{service: service}
+// NewMCPAdapter connects already-configured Goa endpoints to MCP methods.
+// Configure authentication, interceptors and middleware before constructing it.
+func NewMCPAdapter(endpoints *assistant.Endpoints, opts *MCPAdapterOptions) *MCPAdapter {
+	adapter := &MCPAdapter{endpoints: endpoints}
 	if opts != nil {
 		adapter.opts = *opts
 	}
@@ -62,8 +64,12 @@ func validateNoArguments(arguments json.RawMessage) error {
 	return nil
 }
 
-// mapError applies the host's error disclosure policy to a service failure.
+// mapError turns invalid endpoint result types into internal protocol errors
+// and applies the host's disclosure policy to application failures.
 func (a *MCPAdapter) mapError(err error) error {
+	if failure, ok := err.(*endpointResultError); ok {
+		return goa.PermanentError("internal_error", "%s", failure.Error())
+	}
 	if a.opts.ErrorMapper != nil {
 		return a.opts.ErrorMapper(err)
 	}
@@ -99,6 +105,323 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*D
 		TTLMs:             0,
 		CacheScope:        "private",
 	}, nil
+}
+
+// invokeMCPMethod0 sends validated input to the configured ReportWork endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod0(ctx context.Context) (string, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "report_work")
+	raw, err := a.endpoints.ReportWork(ctx, nil)
+	var zero string
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(string)
+	if !ok {
+		return zero, &endpointResultError{method: "ReportWork"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod1 sends validated input to the configured AnalyzeSentiment endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod1(ctx context.Context, payload *assistant.AnalyzeSentimentPayload) (*assistant.AnalyzeSentimentResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "analyze_sentiment")
+	raw, err := a.endpoints.AnalyzeSentiment(ctx, payload)
+	var zero *assistant.AnalyzeSentimentResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.AnalyzeSentimentResult)
+	if !ok {
+		return zero, &endpointResultError{method: "AnalyzeSentiment"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod2 sends validated input to the configured ExtractKeywords endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod2(ctx context.Context, payload *assistant.ExtractKeywordsPayload) (*assistant.ExtractKeywordsResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "extract_keywords")
+	raw, err := a.endpoints.ExtractKeywords(ctx, payload)
+	var zero *assistant.ExtractKeywordsResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.ExtractKeywordsResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ExtractKeywords"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod3 sends validated input to the configured SummarizeText endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod3(ctx context.Context, payload *assistant.SummarizeTextPayload) (*assistant.SummarizeTextResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "summarize_text")
+	raw, err := a.endpoints.SummarizeText(ctx, payload)
+	var zero *assistant.SummarizeTextResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.SummarizeTextResult)
+	if !ok {
+		return zero, &endpointResultError{method: "SummarizeText"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod4 sends validated input to the configured Search endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod4(ctx context.Context, payload *assistant.SearchPayload) (*assistant.SearchResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "search")
+	raw, err := a.endpoints.Search(ctx, payload)
+	var zero *assistant.SearchResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.SearchResult)
+	if !ok {
+		return zero, &endpointResultError{method: "Search"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod5 sends validated input to the configured ExecuteCode endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod5(ctx context.Context, payload *assistant.ExecuteCodePayload) (*assistant.ExecuteCodeResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "execute_code")
+	raw, err := a.endpoints.ExecuteCode(ctx, payload)
+	var zero *assistant.ExecuteCodeResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.ExecuteCodeResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ExecuteCode"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod6 sends validated input to the configured ProcessBatch endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod6(ctx context.Context, payload *assistant.ProcessBatchPayload) (*assistant.ProcessBatchResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "process_batch")
+	raw, err := a.endpoints.ProcessBatch(ctx, payload)
+	var zero *assistant.ProcessBatchResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.ProcessBatchResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ProcessBatch"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod7 sends validated input to the configured ListDocuments endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod7(ctx context.Context) (*assistant.Documents, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "list_documents")
+	raw, err := a.endpoints.ListDocuments(ctx, nil)
+	var zero *assistant.Documents
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.Documents)
+	if !ok {
+		return zero, &endpointResultError{method: "ListDocuments"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod8 sends validated input to the configured SystemInfo endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod8(ctx context.Context) (*assistant.SystemInfoResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "system_info")
+	raw, err := a.endpoints.SystemInfo(ctx, nil)
+	var zero *assistant.SystemInfoResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.SystemInfoResult)
+	if !ok {
+		return zero, &endpointResultError{method: "SystemInfo"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod9 sends validated input to the configured BinaryResource endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod9(ctx context.Context) (assistant.Image, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "binary_resource")
+	raw, err := a.endpoints.BinaryResource(ctx, nil)
+	var zero assistant.Image
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(assistant.Image)
+	if !ok {
+		return zero, &endpointResultError{method: "BinaryResource"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod10 sends validated input to the configured EmptyBinaryResource endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod10(ctx context.Context) ([]byte, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "empty_binary_resource")
+	raw, err := a.endpoints.EmptyBinaryResource(ctx, nil)
+	var zero []byte
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.([]byte)
+	if !ok {
+		return zero, &endpointResultError{method: "EmptyBinaryResource"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod11 sends validated input to the configured ReadResource endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod11(ctx context.Context, payload *assistant.ReadResourcePayload) (*assistant.ReadResourceResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "read_resource")
+	raw, err := a.endpoints.ReadResource(ctx, payload)
+	var zero *assistant.ReadResourceResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.ReadResourceResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ReadResource"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod12 sends validated input to the configured SimplePrompt endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod12(ctx context.Context) (*assistant.RefereePromptResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "simple_prompt")
+	raw, err := a.endpoints.SimplePrompt(ctx, nil)
+	var zero *assistant.RefereePromptResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.RefereePromptResult)
+	if !ok {
+		return zero, &endpointResultError{method: "SimplePrompt"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod13 sends validated input to the configured ArgumentPrompt endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod13(ctx context.Context, payload *assistant.ArgumentPromptPayload) (*assistant.RefereePromptResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "argument_prompt")
+	raw, err := a.endpoints.ArgumentPrompt(ctx, payload)
+	var zero *assistant.RefereePromptResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.RefereePromptResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ArgumentPrompt"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod14 sends validated input to the configured ResourcePrompt endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod14(ctx context.Context, payload *assistant.ResourcePromptPayload) (*assistant.RefereePromptResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "resource_prompt")
+	raw, err := a.endpoints.ResourcePrompt(ctx, payload)
+	var zero *assistant.RefereePromptResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.RefereePromptResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ResourcePrompt"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod15 sends validated input to the configured ImagePrompt endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod15(ctx context.Context) (*assistant.RefereePromptResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "image_prompt")
+	raw, err := a.endpoints.ImagePrompt(ctx, nil)
+	var zero *assistant.RefereePromptResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.RefereePromptResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ImagePrompt"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod16 sends validated input to the configured SuggestArgument endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod16(ctx context.Context, payload *assistant.SuggestArgumentPayload) (*assistant.SuggestArgumentResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "suggest_argument")
+	raw, err := a.endpoints.SuggestArgument(ctx, payload)
+	var zero *assistant.SuggestArgumentResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.SuggestArgumentResult)
+	if !ok {
+		return zero, &endpointResultError{method: "SuggestArgument"}
+	}
+	return result, nil
+}
+
+// endpointResultError identifies a configured endpoint that returned a value
+// outside its declared Go contract. Applications cannot remap this invariant error.
+type endpointResultError struct {
+	method string
+}
+
+// Error identifies the endpoint whose result failed the generated type check.
+func (e *endpointResultError) Error() string {
+	return fmt.Sprintf("endpoint %s returned an unexpected Go result type", e.method)
 }
 
 // ToolsList returns the stable catalog declared by the design. A supplied
@@ -178,7 +501,7 @@ func toolCallError(message string) *ToolsCallResult {
 }
 
 // ToolsCall decodes the named tool's arguments through its generated codec,
-// calls its service, and encodes one structured result through that same contract.
+// calls its configured endpoint, and encodes one structured result through that contract.
 func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/call")
 	defer span.End()
@@ -192,11 +515,14 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		if err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		result, err := a.service.AnalyzeSentiment(ctx, payload)
+		result, err := a.invokeMCPMethod1(ctx, payload)
 		if err != nil {
 			failure := a.mapError(err)
 			span.RecordError(failure)
 			span.SetStatus(codes.Error, failure.Error())
+			if _, invalid := err.(*endpointResultError); invalid {
+				return nil, failure
+			}
 			return toolCallError(failure.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeAnalyzeSentimentResult(result)
@@ -220,11 +546,14 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		if err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		result, err := a.service.ExecuteCode(ctx, payload)
+		result, err := a.invokeMCPMethod5(ctx, payload)
 		if err != nil {
 			failure := a.mapError(err)
 			span.RecordError(failure)
 			span.SetStatus(codes.Error, failure.Error())
+			if _, invalid := err.(*endpointResultError); invalid {
+				return nil, failure
+			}
 			return toolCallError(failure.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeExecuteCodeResult(result)
@@ -248,11 +577,14 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		if err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		result, err := a.service.ExtractKeywords(ctx, payload)
+		result, err := a.invokeMCPMethod2(ctx, payload)
 		if err != nil {
 			failure := a.mapError(err)
 			span.RecordError(failure)
 			span.SetStatus(codes.Error, failure.Error())
+			if _, invalid := err.(*endpointResultError); invalid {
+				return nil, failure
+			}
 			return toolCallError(failure.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeExtractKeywordsResult(result)
@@ -276,11 +608,14 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		if err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		result, err := a.service.ProcessBatch(ctx, payload)
+		result, err := a.invokeMCPMethod6(ctx, payload)
 		if err != nil {
 			failure := a.mapError(err)
 			span.RecordError(failure)
 			span.SetStatus(codes.Error, failure.Error())
+			if _, invalid := err.(*endpointResultError); invalid {
+				return nil, failure
+			}
 			return toolCallError(failure.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeProcessBatchResult(result)
@@ -304,11 +639,14 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		if err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		result, err := a.service.Search(ctx, payload)
+		result, err := a.invokeMCPMethod4(ctx, payload)
 		if err != nil {
 			failure := a.mapError(err)
 			span.RecordError(failure)
 			span.SetStatus(codes.Error, failure.Error())
+			if _, invalid := err.(*endpointResultError); invalid {
+				return nil, failure
+			}
 			return toolCallError(failure.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeSearchResult(result)
@@ -332,11 +670,14 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		if err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		result, err := a.service.SummarizeText(ctx, payload)
+		result, err := a.invokeMCPMethod3(ctx, payload)
 		if err != nil {
 			failure := a.mapError(err)
 			span.RecordError(failure)
 			span.SetStatus(codes.Error, failure.Error())
+			if _, invalid := err.(*endpointResultError); invalid {
+				return nil, failure
+			}
 			return toolCallError(failure.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeSummarizeTextResult(result)
@@ -355,11 +696,14 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		if err := validateNoArguments(p.Arguments); err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		result, err := a.service.ReportWork(ctx)
+		result, err := a.invokeMCPMethod0(ctx)
 		if err != nil {
 			failure := a.mapError(err)
 			span.RecordError(failure)
 			span.SetStatus(codes.Error, failure.Error())
+			if _, invalid := err.(*endpointResultError); invalid {
+				return nil, failure
+			}
 			return toolCallError(failure.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeReportWorkResult(result)
@@ -410,7 +754,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 
 	switch p.URI {
 	case "doc://list":
-		result, err := a.service.ListDocuments(ctx)
+		result, err := a.invokeMCPMethod7(ctx)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -432,7 +776,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 
 		return res, nil
 	case "system://info":
-		result, err := a.service.SystemInfo(ctx)
+		result, err := a.invokeMCPMethod8(ctx)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -454,7 +798,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 
 		return res, nil
 	case "test://empty-binary":
-		result, err := a.service.EmptyBinaryResource(ctx)
+		result, err := a.invokeMCPMethod10(ctx)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -470,7 +814,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 
 		return res, nil
 	case "test://static-binary":
-		result, err := a.service.BinaryResource(ctx)
+		result, err := a.invokeMCPMethod9(ctx)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -495,7 +839,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
 		}
-		result, err := a.service.ReadResource(ctx, payload)
+		result, err := a.invokeMCPMethod11(ctx, payload)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -645,7 +989,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
 		}
 
-		result, err := a.service.ArgumentPrompt(ctx, payload)
+		result, err := a.invokeMCPMethod13(ctx, payload)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -698,7 +1042,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
 		}
 
-		result, err := a.service.ResourcePrompt(ctx, payload)
+		result, err := a.invokeMCPMethod14(ctx, payload)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -732,7 +1076,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 			return nil, failure
 		}
 
-		result, err := a.service.ImagePrompt(ctx)
+		result, err := a.invokeMCPMethod15(ctx)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -766,7 +1110,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 			return nil, failure
 		}
 
-		result, err := a.service.SimplePrompt(ctx)
+		result, err := a.invokeMCPMethod12(ctx)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -1167,7 +1511,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
 		}
-		result, err := a.service.SuggestArgument(ctx, payload)
+		result, err := a.invokeMCPMethod16(ctx, payload)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -1212,7 +1556,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
 		}
-		result, err := a.service.SuggestArgument(ctx, payload)
+		result, err := a.invokeMCPMethod16(ctx, payload)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())
@@ -1257,7 +1601,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
 		}
-		result, err := a.service.SuggestArgument(ctx, payload)
+		result, err := a.invokeMCPMethod16(ctx, payload)
 		if err != nil {
 			span.RecordError(err)
 			span.SetStatus(codes.Error, err.Error())

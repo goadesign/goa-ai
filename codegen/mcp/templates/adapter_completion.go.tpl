@@ -70,7 +70,7 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
             span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("invalid_params", "%s", err.Error())
         }
-        result, err := a.service.{{ .ServiceMethodName }}(ctx, payload)
+        result, err := a.{{ .Endpoint.CallName }}(ctx, payload)
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())

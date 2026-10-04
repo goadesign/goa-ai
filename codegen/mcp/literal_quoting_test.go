@@ -57,7 +57,7 @@ func TestGeneratedAdapterQuotesStaticDSLText(t *testing.T) {
 	tools, err := generator.buildToolAdapters()
 	require.NoError(t, err)
 	require.Len(t, tools, 1)
-	tools[0].ServiceMethodName = "Summarize"
+	tools[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
 	tools[0].Codec = &MethodCodecData{
 		PayloadDecode: "DecodeSummarizePayload",
 		ResultEncode:  "EncodeSummarizeResult",

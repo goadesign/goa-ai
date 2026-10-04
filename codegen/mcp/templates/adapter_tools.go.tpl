@@ -53,7 +53,7 @@ func toolCallError(message string) *ToolsCallResult {
 }
 
 // ToolsCall decodes the named tool's arguments through its generated codec,
-// calls its service, and encodes one structured result through that same contract.
+// calls its configured endpoint, and encodes one structured result through that contract.
 func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/call")
     defer span.End()
@@ -76,14 +76,19 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
         {{- end }}
         {{- if .HasResult }}
         {{- if .HasPayload }}
-        result, err := a.service.{{ .ServiceMethodName }}(ctx, payload)
+        result, err := a.{{ .Endpoint.CallName }}(ctx, payload)
         {{- else }}
-        result, err := a.service.{{ .ServiceMethodName }}(ctx)
+        result, err := a.{{ .Endpoint.CallName }}(ctx)
         {{- end }}
         if err != nil {
             failure := a.mapError(err)
             span.RecordError(failure)
             span.SetStatus(codes.Error, failure.Error())
+            {{- if $.NeedsEndpointResultCheck }}
+            if _, invalid := err.(*endpointResultError); invalid {
+                return nil, failure
+            }
+            {{- end }}
             return toolCallError(failure.Error()), nil
         }
         encoded, err := {{ $.CodecPackage }}.{{ .Codec.ResultEncode }}(result)
@@ -100,9 +105,9 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
         }, nil
         {{- else }}
         {{- if .HasPayload }}
-        err := a.service.{{ .ServiceMethodName }}(ctx, payload)
+        err = a.{{ .Endpoint.CallName }}(ctx, payload)
         {{- else }}
-        err := a.service.{{ .ServiceMethodName }}(ctx)
+        err := a.{{ .Endpoint.CallName }}(ctx)
         {{- end }}
         if err != nil {
             failure := a.mapError(err)
