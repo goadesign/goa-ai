@@ -93,11 +93,10 @@ requiredness, scheme name and method scopes are already known during generation.
 An ordinary field named `token` without such an annotation remains domain input.
 The generated endpoint receives the original typed payload, calls its configured
 authentication function and passes the returned context to the service.
-`codegen/service/templates/service_endpoint_method.go.tpl` returns authentication
-errors unchanged. It also supports alternative authorization requirements and
-requirements containing several schemes. A generic error therefore does not
-identify an HTTP authorization status, a scope challenge or the scheme that must
-be used on the next request.
+`codegen/service/templates/service_endpoint_method.go.tpl` supports alternative
+authorization requirements and requirements containing several schemes. A generic
+error therefore does not identify an HTTP authorization status, a scope challenge
+or the scheme that must be used on the next request.
 
 The complete credential projection must cover these paths together:
 
@@ -109,36 +108,76 @@ The complete credential projection must cover these paths together:
 | Unannotated domain field named `token` | It is advertised, decoded and delivered to the service | Preserve it exactly and test it beside an annotated credential with a different field name. |
 | Basic or API-key security | Goa identifies distinct credential inputs and native transport bindings | Preserve the declared scheme's meaning. Never reinterpret an OAuth resource token as a password, API key or credential for a different owner. Establish the transport binding and supported authorization profile explicitly. |
 | Catalogs and discovery | Static generated methods do not call an original domain endpoint or expose its captured authentication function | Authenticate according to the authored service/resource policy without invoking a tool or resource as an authentication probe. A configured method endpoint is opaque; do not unwrap it or construct another endpoint set. |
-| Authentication failure | The original configured endpoint returns the callback's error unchanged | Preserve declared error meaning and produce the required HTTP status and challenge from an explicit typed contract. No string matching, guessed status or silent conversion into a completed tool error. |
+| Authentication failure | Authentication callbacks, nested service calls and middleware can return the same error before or after the outer method runs | The HTTP resource authorizer rejects invalid tokens and insufficient scope before invoking the entire configured endpoint pipeline. Errors returned after invocation retain their service meaning and never become OAuth challenges or authorize a credential retry. |
 | Alternative or combined security requirements | Goa chooses the applicable requirement through its generated security flow | Preserve selection and exact required scopes. Do not merge every alternative's scopes into an overbroad authorization request. |
 
-The candidate architecture keeps authentication and method scopes with Goa,
-credential decoding with the generated transport, and OAuth resource metadata,
-token validation and challenges with the authorization owner. The configured
-original endpoints remain the execution dependencies. The current endpoint-only
-adapter constructor does not, by itself, give static catalog methods access to
-an authentication operation. Prove the smallest existing Goa composition path
-for that operation before adding a mechanism; if Goa lacks it, explain the
-necessary generic Goa change and its callers before implementation. A second
-application authentication callback is not a substitute for that proof.
+The HTTP transport owns the OAuth resource boundary: resource metadata, token
+issuer and audience validation, expiration, required OAuth scopes and HTTP
+challenges. It must finish every challenge-producing check before invoking the
+configured MCP endpoints, including their outer middleware. Successful requests
+carry the verified principal context and their original HTTP credentials into
+the same configured endpoint. Goa continues to own the declared method's
+security alternatives, authentication callback and returned context; service
+methods continue to own domain authorization and effects. These responsibilities
+are distinct. Do not add a second copy of a method authentication callback,
+reconstruct endpoints, skip their configured authentication or infer HTTP
+challenges from errors returned after dispatch.
+
+Generate the scope requirements and credential paths already known by the Goa
+design. Preserve alternative requirements instead of requiring the union of all
+alternatives. Catalog authorization is a resource policy, not a call to an
+arbitrary service method as an authentication probe. The composition root
+constructs the token validation dependency using the resource owner's issuer,
+audience and principal contract. Establish the smallest constructor and generated
+binding that expresses this dependency before adding a public mechanism. A
+configured endpoint is opaque and does not expose its captured authentication
+callback or prove that its middleware is free of effects.
 
 The earlier result-validation problem is fixed by merged Goa PR #4018 and the
 current dependency pin. Invalid selected service output carries the existing
 `goa.ServiceError.Fault` contract through MCP as an internal failure. That flag
-does not identify authentication rejection or permit a retry; authentication
-requires its own complete proof.
+does not identify authentication rejection or permit a retry.
 
-Published [Goa PR #4019](https://github.com/goadesign/goa/pull/4019) passes local
-lint and the full uncached root race suite; its remote checks and merge remain
-pending. Its generated endpoints wrap only the final authentication callback rejection in
-`security.AuthenticationError`, retaining the original cause, error name and
-native transport mapping. The business method is not dispatched on that path;
-the same error returned by a business method remains unmarked. Authentication
-callbacks and outer middleware may already have performed work, so the marker
-adds no general retry permission. It carries no HTTP status, selected scheme or
-scope challenge. The OAuth owner must supply those meanings through a precise
-contract before MCP can turn a rejection into an authorization response. This
-change is not yet integrated into the current Goa AI dependency.
+Merged [Goa PR #4020](https://github.com/goadesign/goa/pull/4020) removes the
+unreleased error marker added by Goa PR #4019 before this integration is
+enabled. Compiled generated-endpoint reproductions establish two
+counterexamples: an outer method can return an inner authentication rejection
+after doing work, and configured middleware can return that rejection after the
+outer method succeeds. The proposed method-return wrapper fixes only the first
+case; it cannot establish what happened outside that method. The corrected
+source removes the marker without adding error records, invocation tracking or
+compatibility aliases. Callback error identity and native transport mappings are
+preserved. No OAuth retry behavior has been enabled by this prototype. All four
+modules pin the exact corrective merge. Its full uncached race suite, lint,
+Linux and Windows CI matrix, CodeQL and dependency review passed. The tested and
+merged source trees have the same Git tree identifier; the completed isolated
+Goa clone was verified clean and fully pushed, then removed.
+
+A compiled standalone transport probe also confirms that existing Goa JSON-RPC
+HTTP headers can provide typed protocol payload fields while remaining absent
+from the generated request-body type and JSON-RPC parameters. A real generated
+client/server round trip passed under the race detector: the server received the
+exact header credential and unchanged domain arguments, including an ordinary
+field named `token`. Prefer these generated transport fields over a public raw
+HTTP-request context accessor or an untyped credential map. This proves only the
+native transport mechanism; complete schema projection, all authored operation
+bindings and resource authorization still require integrated proof.
+
+Native credential bindings must also remain representable on one HTTP request.
+Goa's Basic scheme always reads `Authorization`; the MCP OAuth resource profile
+requires a Bearer value in that same header. Those two inbound credentials cannot
+share the slot. Reject a conflicting protected binding explicitly during its
+generation or composition instead of choosing an owner, inventing another header
+or translating a Bearer token into Basic credentials. Preserve native profiles
+whose declared bindings are valid. This check is required before implementation;
+it does not authorize removing Basic or API-key support from unrelated services.
+
+MCP defines authorization at the HTTP transport level. The pinned official Go
+SDK also verifies bearer credentials before calling its HTTP handler. Reuse this
+ordering, while proving operation-specific scope selection and preservation of
+Goa's method contracts independently.
+[MCP authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization),
+[official Go SDK authorization middleware](https://github.com/modelcontextprotocol/go-sdk/blob/c1ed34844f98e4d0e7643ae398122d15d87ad865/auth/auth.go).
 
 The synthetic generator proof also confirms that credential annotations are
 method-specific: Goa rejects a payload that declares credentials for schemes
@@ -167,8 +206,10 @@ There is no deployed target configuration or telemetry for this new framework
 profile. Use complete synthetic generated-service paths for the design proof,
 then retain the separate external caller and worker cutover gate. The proof must
 include authorized catalog reads, malformed and missing credentials, invalid
-and expired tokens, insufficient scope, named domain errors, alternative schemes,
-credential-only inputs, ordinary fields with matching names and model-visible
+and expired tokens, insufficient scope, named domain errors after effects,
+nested authentication failures returned by methods and outer middleware,
+alternative schemes, credential-only inputs, ordinary fields with matching names
+and model-visible
 schema/codec agreement. Keep credentials, authorization proofs and HTTP requests
 out of workflow checkpoints, saved domain arguments and model input. These are
 open acceptance requirements, not implemented authorization claims.
@@ -202,9 +243,12 @@ dependencies. [Goa PR #4017](https://github.com/goadesign/goa/pull/4017) also pa
 its Linux and Windows CI matrix, CodeQL and dependency review before merging.
 [Goa PR #4018](https://github.com/goadesign/goa/pull/4018) subsequently corrected
 selected-result validation to return a server fault while retaining its original
-cause; its uncached root race suite, lint and complete CI matrix passed. The root
-and all three nested modules now pin that merged source at
-`v3.33.1-0.20261004223413-d8a93d7cffdc`; no local Goa replacement remains.
+cause; its uncached root race suite, lint and complete CI matrix passed.
+The root and all three nested modules pin the exact merged corrective source at
+`v3.33.1-0.20261005005355-043852cdd9bf`; no local Goa replacement remains.
+Merged Goa PR #4020 removes the unreleased authentication-marker prototype;
+its compiled tests preserve exact callback errors, native transport mappings and
+both nested method and outer middleware counterexamples.
 Build tools and CI actions use verified current releases.
 
 Views chosen by the service during execution use Goa's tagged OneOf contract
@@ -481,7 +525,7 @@ These results do not establish a complete released-requirement-set pass.
 Root and all three nested application modules were updated with `go get -u ./...`
 and tidied. Final audits of the root and all three nested modules found no
 updates for their explicit direct or indirect requirements. Goa is pinned to
-`v3.33.1-0.20261004223413-d8a93d7cffdc`; Pulse to
+`v3.33.1-0.20261005005355-043852cdd9bf`; Pulse to
 `v1.10.3-0.20261002205507-b34ad25e317d`. Provider SDKs, Temporal, MongoDB,
 OpenTelemetry, schema validation, and test dependencies are updated in the module
 files. The linter is pinned separately to `v2.14.0` in `.go-install` so its private
