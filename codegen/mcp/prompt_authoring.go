@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/expr"
 )
@@ -22,7 +23,7 @@ type (
 		Description string
 		// Endpoint calls the configured Goa endpoint for this method.
 		Endpoint *endpointMethodAdapter
-		// HasPayload reports whether the service method accepts arguments.
+		// HasPayload records whether the original method receives a typed payload.
 		HasPayload bool
 		// Arguments lists the declared string arguments in design order.
 		Arguments []*PromptArgumentAdapter
@@ -186,7 +187,11 @@ func (g *adapterGenerator) buildMethodPromptAdapters() ([]*MethodPromptAdapter, 
 		}
 		adapter := &MethodPromptAdapter{Name: prompt.Name, Description: prompt.Description, HasPayload: hasMCPValue(prompt.Method.Payload), prompt: prompt, conversion: conversion}
 		if adapter.HasPayload {
-			for _, argument := range *expr.AsObject(prompt.Method.Payload.Type) {
+			arguments, err := mcpinput.Arguments(prompt.Method.Payload)
+			if err != nil {
+				return nil, fmt.Errorf("prompt %q arguments: %w", prompt.Name, err)
+			}
+			for _, argument := range *expr.AsObject(arguments.Type) {
 				adapter.Arguments = append(adapter.Arguments, &PromptArgumentAdapter{Name: argument.Name, Description: argument.Attribute.Description, Required: prompt.Method.Payload.IsRequired(argument.Name)})
 			}
 		}

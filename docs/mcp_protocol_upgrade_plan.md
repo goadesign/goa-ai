@@ -69,19 +69,42 @@ counts. An unexpected endpoint Go result type returns an internal protocol error
 without application error remapping. The adapter constructor now requires the
 endpoint collection; examples and callers change together. The uncached MCP
 race suite, configured lint with zero issues, complete serial root race suite and
-quickstart, regenerated assistant fixture race suite and build passed. This does
-not complete credential-free schemas, HTTP credential delivery or OAuth challenges.
+quickstart, regenerated assistant fixture race suite and build passed.
+Credential-free schemas and native HTTP credential delivery are implemented
+as described below. HTTP OAuth resource authorization and
+challenges remain incomplete.
 
 The shared HTTP client now preserves failed-attempt status and exact
 `WWW-Authenticate` values through `HTTPResponseError`; valid protocol errors
 remain available by unwrapping. HTTP 401/403 and challenged HTTP 400 responses
 close their bodies before content-type or MCP decoding, including event streams.
 Explicit HTTP request rejections never use the interrupted-stream retry path.
-This is the client response boundary needed by authorization; generated credential
-projection, server challenges, metadata discovery and built-in OAuth flows remain
-required. There is no live target authorization configuration or telemetry for
+This is the client response boundary needed by authorization; server challenges,
+metadata discovery and built-in OAuth flows remain required. There is no live target authorization configuration or telemetry for
 this greenfield framework path, so acceptance uses independent synthetic peers
 and actual generated clients without claiming deployed authorization behavior.
+
+The generated credential path now separates domain input from every annotated
+Goa security field. Argument schemas, authored examples, field metadata and exact
+codecs contain only domain arguments. Private generated helpers fill the original
+typed service payload from native HTTP bindings, run Goa's complete payload
+validation and invoke the existing configured endpoint. They do not reconstruct
+endpoints or call authentication functions separately. Ordinary fields named
+`token` remain unchanged. Credential-only tools accept empty domain input, and
+credential-only payloads are valid for fixed resources.
+
+Synthetic generated HTTP peers verify JWT, OAuth, Bearer, Basic and API-key
+callbacks, exact scopes and returned authentication context; header, query and
+cookie bindings; named and renamed credential fields; combined schemes with
+distinct inputs; and optional Basic/Bearer alternatives with inactive fields
+absent. Tools, fixed and parameterized resources, method-backed prompts and both
+completion paths use the same credential separation. A second secured service
+verifies independent protocol payloads. Actual HTTP bodies contain neither
+credential values nor transport-only fields; missing or malformed native
+credentials do not invoke configured endpoint middleware. This proof establishes
+native credential delivery, not issuer, audience, expiry or transport OAuth
+conformance. Those checks still require a resource guard before the entire
+configured endpoint pipeline.
 
 ### Server authorization: verified ownership and remaining design proof
 
@@ -100,7 +123,7 @@ or the scheme that must be used on the next request.
 
 The complete credential projection must cover these paths together:
 
-| Declared input or operation | Current verified behavior | Required terminal behavior and positive proof |
+| Declared input or operation | Behavior before credential separation | Required terminal behavior and positive proof |
 | --- | --- | --- |
 | Secured tool with domain fields | Catalogs and codecs include the original credential field; the configured endpoint checks it | Model schema, examples, field metadata and exact codecs contain only domain arguments. The HTTP binding supplies the annotated credential before the same configured endpoint runs. Check exact domain input, authenticated context and one method authentication call. |
 | Payload containing only credentials | The framework treats it as a domain payload; fixed resources reject any payload | The domain input is empty while the original endpoint still receives its typed credential input. Check a secured fixed resource and a secured tool without invented arguments. |
@@ -148,10 +171,39 @@ case; it cannot establish what happened outside that method. The corrected
 source removes the marker without adding error records, invocation tracking or
 compatibility aliases. Callback error identity and native transport mappings are
 preserved. No OAuth retry behavior has been enabled by this prototype. All four
-modules pin the exact corrective merge. Its full uncached race suite, lint,
+modules include the corrective merge. Its full uncached race suite, lint,
 Linux and Windows CI matrix, CodeQL and dependency review passed. The tested and
 merged source trees have the same Git tree identifier; the completed isolated
 Goa clone was verified clean and fully pushed, then removed.
+
+Merged [Goa PR #4021](https://github.com/goadesign/goa/pull/4021) fixes native
+authentication references to credential fields renamed with
+`Meta("struct:field:name", ...)`. Merged
+[Goa PR #4022](https://github.com/goadesign/goa/pull/4022) retains explicit HTTP
+query bindings in generated JSON-RPC clients and servers. The latter was
+reproduced independently without the MCP plugin: the old server referred to
+undeclared query variables, and the client omitted those query values. The
+corrected client and server preserve named optional values, integer validation,
+arrays, maps and unchanged JSON-RPC body values.
+
+All four modules use exact merge
+`2aa4cfc90cfa3879e3109771ff17ac7c01dcd130`
+(`v3.33.1-0.20261005031206-2aa4cfc90cfa`). Both prerequisites passed native
+compiled HTTP checks, full uncached race suites, configured lint, Linux/Windows
+CI, CodeQL and dependency review. Their tested head trees match their merged
+trees. The integrated credential increment passes configured `make lint` with
+zero issues, serial `make test` with the uncached root race suite and quickstart,
+`make build`, the regenerated assistant's uncached race suite, and the generated
+evaluation consumer against this published pin. Quickstart, assistant and registry
+were regenerated with their owning tools and pinned protoc 36.2; tracked generated
+output is unchanged. The compiled HTTP fixture verifies all five Goa security
+schemes, renamed and named credential fields, native header/query/cookie bindings,
+ordered alternatives, combined distinct headers, all authored MCP operation paths
+and independent secured services. It proves credential-free arguments and rejection
+of missing or malformed credentials before endpoint middleware or service work.
+These checks do not establish OAuth resource authorization, complete released-set
+conformance or external caller cutover. Tests using a local Goa replacement remain
+development evidence only.
 
 A compiled standalone transport probe also confirms that existing Goa JSON-RPC
 HTTP headers can provide typed protocol payload fields while remaining absent
@@ -159,18 +211,23 @@ from the generated request-body type and JSON-RPC parameters. A real generated
 client/server round trip passed under the race detector: the server received the
 exact header credential and unchanged domain arguments, including an ordinary
 field named `token`. Prefer these generated transport fields over a public raw
-HTTP-request context accessor or an untyped credential map. This proves only the
-native transport mechanism; complete schema projection, all authored operation
-bindings and resource authorization still require integrated proof.
+HTTP-request context accessor or an untyped credential map. The integrated fixtures now prove argument separation and all authored operation
+bindings. Resource authorization remains a release gate.
 
 Native credential bindings must also remain representable on one HTTP request.
 Goa's Basic scheme always reads `Authorization`; the MCP OAuth resource profile
 requires a Bearer value in that same header. Those two inbound credentials cannot
-share the slot. Reject a conflicting protected binding explicitly during its
-generation or composition instead of choosing an owner, inventing another header
-or translating a Bearer token into Basic credentials. Preserve native profiles
-whose declared bindings are valid. This check is required before implementation;
-it does not authorize removing Basic or API-key support from unrelated services.
+share the slot in one requirement. Separate Basic/Bearer alternatives remain
+valid when their inactive credential fields allow absence; Goa's original ordered
+authentication flow selects the accepted requirement. Reject a combined
+requirement or required inactive fields during generation instead of choosing an
+owner, inventing another header or translating a Bearer token into Basic
+credentials. A future OAuth-protected resource using the same header must also
+reject a conflicting inner Basic binding during composition. Preserve native
+profiles whose declared bindings are valid. The current native binding checks cover
+combined schemes and valid optional alternatives; the future OAuth resource
+composition needs its own conflict checks. This does not authorize removing Basic
+or API-key support from unrelated services.
 
 MCP defines authorization at the HTTP transport level. The pinned official Go
 SDK also verifies bearer credentials before calling its HTTP handler. Reuse this
@@ -1028,11 +1085,13 @@ an exported context credential record. Derive the credential-free domain payload
 once and use it for catalogs, examples, codecs, agent field metadata and registry
 declarations. Verify secured resources, prompts and completion as well as tools.
 
-Goa authentication callbacks return errors without identifying whether the
-failure was an invalid token, insufficient scope, a method failure or an internal
-error. The HTTP binding cannot infer this distinction from text. Use declared
-error contracts and their transport meaning; keep this decision open until the
-complete existing error mapping is traced. Invalid tokens, insufficient access
+Goa authentication callbacks, service methods and endpoint middleware can return
+the same errors before or after work occurs. The HTTP binding cannot infer a safe
+OAuth rejection from their text, type, name or transport mapping. The HTTP resource
+guard must make every challenge-producing decision before dispatch; returned
+endpoint errors retain their original service meaning. The generated mount's
+`withMCPTransport` already checks method and name headers against the actual body
+before dispatch and is the insertion point to assess for this guard. Invalid tokens, insufficient access
 and malformed authentication need distinct 401, 403 and 400 responses with
 intact challenges, rather than completed tool-error content. Shared HTTP callers now retain status and ordered authorization challenges
 through `HTTPResponseError`, including rejection before body decoding. Generated

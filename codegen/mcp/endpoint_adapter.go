@@ -23,6 +23,8 @@ type (
 		DesignMethodName string
 		// PayloadRef is the original service input type; empty means no input.
 		PayloadRef string
+		// PayloadValueRef names the original payload without its object pointer.
+		PayloadValueRef string
 		// ResultRef is the original service output type; empty means no output.
 		ResultRef string
 		// EndpointResultRef is the Go value returned by the endpoint.
@@ -31,6 +33,10 @@ type (
 		ExecutionView bool
 		// FaultNames lists authored error names declared as server faults.
 		FaultNames []string
+		// Credentials supplies native HTTP input before endpoint invocation.
+		Credentials []*credentialInput
+		// InputValidate checks the complete service payload after credentials are filled.
+		InputValidate string
 		// Codec encodes or validates the result under that view.
 		Codec *MethodCodecData
 		// ResultValue is the selected value used by typed content conversions.
@@ -59,7 +65,11 @@ func planEndpointAdapters(generation *codegen.Generation, services *goaservice.P
 				return err
 			}
 		}
-		call := &endpointMethodAdapter{method: method, CallName: fmt.Sprintf("invokeMCPMethod%d", index), DesignMethodName: method.Name, ResultValue: "result"}
+		call := &endpointMethodAdapter{
+			method: method, CallName: fmt.Sprintf("invokeMCPMethod%d", index),
+			DesignMethodName: method.Name, ResultValue: "result",
+			Credentials: prepared.credentials[method.Name],
+		}
 		for _, failure := range method.Errors {
 			if _, fault := failure.Meta["goa:error:fault"]; fault {
 				call.FaultNames = append(call.FaultNames, failure.Name)
@@ -133,6 +143,7 @@ func bindEndpointAdapters(service *goaservice.Data, data *AdapterData) error {
 		call.MethodName = method.VarName
 		if call.payloadLayout != nil {
 			call.PayloadRef = call.payloadLayout.Link(data.mcpImportPath, data.mcpPackage.ImportName).Ref()
+			call.PayloadValueRef = call.payloadLayout.Link(data.mcpImportPath, data.mcpPackage.ImportName).RefWithPointer(false)
 		}
 		if call.resultLayout == nil {
 			continue

@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/codegen/ir"
 	"goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -489,8 +490,11 @@ func expandToolExpressions(mcpRoot *mcpexpr.RootExpr, name string, expr *agent.T
 			Description: tool.Description,
 		}
 		if tool.Method != nil {
-			planned.Args = tool.Method.Payload
 			var err error
+			planned.Args, err = mcpinput.Arguments(tool.Method.Payload)
+			if err != nil {
+				return nil, err
+			}
 			planned.Return, err = mcpcontract.ToolResult(tool)
 			if err != nil {
 				return nil, err

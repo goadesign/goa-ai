@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/expr"
 )
 
@@ -14,7 +15,11 @@ import (
 // resource URI without hidden inputs.
 func validateMCPResources(svc *expr.ServiceExpr, resources []*mcpexpr.ResourceExpr) error {
 	for _, resource := range resources {
-		if resource.Method.Payload == nil || resource.Method.Payload.Type == expr.Empty {
+		arguments, err := mcpinput.Arguments(resource.Method.Payload)
+		if err != nil {
+			return err
+		}
+		if !hasMCPValue(arguments) || (expr.AsObject(arguments.Type) != nil && len(*expr.AsObject(arguments.Type)) == 0) {
 			continue
 		}
 		return fmt.Errorf(

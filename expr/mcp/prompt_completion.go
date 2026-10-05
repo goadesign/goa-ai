@@ -6,6 +6,7 @@ package mcp
 import (
 	"errors"
 
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
@@ -37,15 +38,20 @@ func validateCompletionMethod(owner eval.Expression, method *expr.MethodExpr) er
 	if method.IsStreaming() {
 		verr.Add(owner, "completion method must be unary")
 	}
+	input, err := mcpinput.Arguments(method.Payload)
+	if err != nil {
+		verr.Add(owner, "%s", err.Error())
+		return verr
+	}
 	var payload *expr.Object
-	if hasValue(method.Payload) {
-		payload = expr.AsObject(method.Payload.Type)
+	if hasValue(input) {
+		payload = expr.AsObject(input.Type)
 	}
 	if payload == nil {
 		verr.Add(owner, "completion payload must contain required value and optional arguments")
 	} else {
 		value := payload.Attribute("value")
-		if value == nil || !isPrimitive(value.Type, expr.String) || !method.Payload.IsRequired("value") {
+		if value == nil || !isPrimitive(value.Type, expr.String) || !input.IsRequired("value") {
 			verr.Add(owner, "completion payload value must be a required string")
 		}
 		if payload.Attribute("arguments") == nil {
@@ -60,7 +66,7 @@ func validateCompletionMethod(owner eval.Expression, method *expr.MethodExpr) er
 				continue
 			}
 			arguments := expr.AsMap(field.Attribute.Type)
-			if arguments == nil || !isPrimitive(arguments.KeyType.Type, expr.String) || !isPrimitive(arguments.ElemType.Type, expr.String) || method.Payload.IsRequired(field.Name) {
+			if arguments == nil || !isPrimitive(arguments.KeyType.Type, expr.String) || !isPrimitive(arguments.ElemType.Type, expr.String) || input.IsRequired(field.Name) {
 				verr.Add(owner, "completion arguments must be an optional map of strings")
 			}
 		}
@@ -120,7 +126,15 @@ func (m *MCPExpr) validatePromptCompletions(verr *eval.ValidationErrors) {
 				break
 			}
 		}
-		if selected == nil || selected.Method == nil || !hasValue(selected.Method.Payload) || expr.AsObject(selected.Method.Payload.Type) == nil || expr.AsObject(selected.Method.Payload.Type).Attribute(completion.Argument) == nil {
+		var arguments *expr.AttributeExpr
+		if selected != nil && selected.Method != nil {
+			var err error
+			arguments, err = mcpinput.Arguments(selected.Method.Payload)
+			if err != nil {
+				verr.Add(completion, "%s", err.Error())
+			}
+		}
+		if !hasValue(arguments) || expr.AsObject(arguments.Type) == nil || expr.AsObject(arguments.Type).Attribute(completion.Argument) == nil {
 			verr.Add(completion, "completion must select a declared prompt argument")
 		}
 		if err := completion.Validate(); err != nil {

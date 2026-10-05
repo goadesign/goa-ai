@@ -245,3 +245,51 @@ func {{ .ResultValidate }}(result {{ $endpoint.EndpointResultRef }}) error {
 {{- end }}
 {{- end }}
 {{- end }}
+
+{{- range .EndpointMethods }}
+{{- if .Credentials }}
+// fill{{ .CallName }}Credentials places native HTTP credentials in the original
+// service payload and checks its authored constraints before endpoint dispatch.
+// Invalid credentials return a fixed error without disclosing their values.
+func fill{{ .CallName }}Credentials(payload {{ .PayloadRef }}{{ range $index, $field := .Credentials }}, credential{{ $index }} *string{{ end }}) error {
+    {{- range $index, $field := .Credentials }}
+    {{- if .Required }}
+    if credential{{ $index }} == nil {
+        return goa.PermanentError("invalid_params", "missing required HTTP credential")
+    }
+    {{- end }}
+    {{- if .AlternativeScheme }}
+    if credential{{ $index }} != nil && !strings.EqualFold(strings.SplitN(*credential{{ $index }}, " ", 2)[0], {{ quote .AlternativeScheme }}) {
+    {{- else }}
+    if credential{{ $index }} != nil {
+    {{- end }}
+        {{- if .Basic }}
+        request := &http.Request{Header: http.Header{"Authorization": []string{*credential{{ $index }}}}}
+        {{ if .Username }}username, _{{ else }}_, password{{ end }}, valid := request.BasicAuth()
+        if !valid {
+            return goa.PermanentError("invalid_params", "invalid HTTP Basic credential")
+        }
+        {{- if .Username }}
+        value := {{ .TypeRef }}(username)
+        {{- else }}
+        value := {{ .TypeRef }}(password)
+        {{- end }}
+        {{- else if .Bearer }}
+        scheme, token, present := strings.Cut(*credential{{ $index }}, " ")
+        if !present || !strings.EqualFold(scheme, "Bearer") || token == "" || strings.ContainsAny(token, " \t\r\n") {
+            return goa.PermanentError("invalid_params", "invalid HTTP Bearer credential")
+        }
+        value := {{ .TypeRef }}(token)
+        {{- else }}
+        value := {{ .TypeRef }}(*credential{{ $index }})
+        {{- end }}
+        payload.{{ .Target }} = {{ if .Pointer }}&{{ end }}value
+    }
+    {{- end }}
+    if err := {{ .InputValidate }}(payload); err != nil {
+        return goa.PermanentError("invalid_params", "HTTP credentials do not match the service contract")
+    }
+    return nil
+}
+{{- end }}
+{{- end }}

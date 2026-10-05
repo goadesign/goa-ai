@@ -97,6 +97,13 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
             return nil, failure
         }
         {{ end }}
+        {{- if .Endpoint.Credentials }}
+        if err := fill{{ .Endpoint.CallName }}Credentials(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "prompts/get" }}{{ end }}); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, err
+        }
+        {{- end }}
         result, err := a.{{ .Endpoint.CallName }}(ctx{{ if .HasPayload }}, payload{{ end }})
         if err != nil {
             span.RecordError(err)

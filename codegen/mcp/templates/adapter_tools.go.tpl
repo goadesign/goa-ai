@@ -74,6 +74,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
             return toolCallError("invalid arguments: " + err.Error()), nil
         }
         {{- end }}
+        {{- if .Endpoint.Credentials }}
+        if err := fill{{ .Endpoint.CallName }}Credentials(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "tools/call" }}{{ end }}); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return toolCallError(err.Error()), nil
+        }
+        {{- end }}
         {{- if .HasResult }}
         {{- if .HasPayload }}
         result, err := a.{{ .Endpoint.CallName }}(ctx, payload)

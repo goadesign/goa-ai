@@ -10,6 +10,7 @@ import (
 	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
 	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	goacodegen "goa.design/goa/v3/codegen"
 	goagenerator "goa.design/goa/v3/codegen/generator"
 	goaservice "goa.design/goa/v3/codegen/service"
@@ -29,6 +30,7 @@ type (
 		userService *expr.ServiceExpr
 		mcpService  *expr.ServiceExpr
 		mcp         *mcpexpr.MCPExpr
+		credentials map[string][]*credentialInput
 	}
 
 	// plannedMCPService stores the attached service, Goa's saved service types,
@@ -44,10 +46,11 @@ type (
 	// plannedMethodCodec keeps each method side's codec and the exact Go layout
 	// supplied to it. Final service declarations supply its Go type references.
 	plannedMethodCodec struct {
-		payload  *jsoncodec.Value
-		result   *jsoncodec.Value
-		views    []*plannedResultView
-		endpoint *endpointMethodAdapter
+		payload         *jsoncodec.Value
+		inputValidation *jsoncodec.Value
+		result          *jsoncodec.Value
+		views           []*plannedResultView
+		endpoint        *endpointMethodAdapter
 	}
 
 	// mcpPlugin stores the MCP services added during Prepare and the file data
@@ -116,6 +119,12 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planToolContent(plan.Generation(), servicePlan, prepared, adapter, codecPlan, methodCodecs); err != nil {
 			return err
 		}
+		for _, dependency := range credentialInputImports(prepared.credentials) {
+			adapter.serverImportPaths = append(adapter.serverImportPaths, dependency.Path)
+			if err := requireImports(plan.Generation().Package(adapter.mcpImportPath), []*goacodegen.ImportSpec{dependency}); err != nil {
+				return err
+			}
+		}
 		if err := planMCPImports(plan.Generation(), adapter); err != nil {
 			return err
 		}
@@ -151,6 +160,9 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 		}
 		bindMCPImports(planned.adapterData)
 		if err := bindEndpointAdapters(userService, planned.adapterData); err != nil {
+			return nil, err
+		}
+		if err := bindCredentialSelectors(planned.servicePlan, planned.prepared, planned.adapterData); err != nil {
 			return nil, err
 		}
 		planned.adapterData.MCPPackage = mcpService.PkgName
@@ -398,7 +410,7 @@ func planMCPCodecs(
 	hasValues := false
 	for _, method := range methods {
 		payloadDirection, resultDirection := mcpCodecDirections(data, method.Name)
-		if (hasMCPValue(method.Payload) && payloadDirection != 0) || (hasMCPValue(method.Result) && resultDirection != 0) {
+		if len(prepared.credentials[method.Name]) > 0 || (hasMCPValue(method.Payload) && payloadDirection != 0) || (hasMCPValue(method.Result) && resultDirection != 0) {
 			hasValues = true
 			break
 		}
@@ -438,19 +450,34 @@ func planMCPCodecs(
 			data.NeedsServerCodec = data.NeedsServerCodec || (!resource.TextResult && !resource.BinaryResult)
 		}
 		if hasMCPValue(method.Payload) && payloadDirection != 0 {
-			layout, layoutErr := services.MethodTypeLayout(method, method.Payload)
+			arguments, argumentErr := mcpinput.Arguments(method.Payload)
+			if argumentErr != nil {
+				return nil, nil, argumentErr
+			}
+			layout, layoutErr := services.MethodTypeLayout(method, arguments)
 			if layoutErr != nil {
 				return nil, nil, fmt.Errorf("plan MCP payload layout for method %q: %w", method.Name, layoutErr)
 			}
 			values.payload, err = planned.Add(
 				prepared.userService.Name+":"+method.Name+":payload",
 				preferred+"Payload",
-				method.Payload,
+				arguments,
 				layout,
 				payloadDirection,
 			)
 			if err != nil {
 				return nil, nil, fmt.Errorf("plan MCP payload codec for method %q: %w", method.Name, err)
+			}
+		}
+		if len(prepared.credentials[method.Name]) > 0 {
+			data.NeedsServerCodec = true
+			layout, layoutErr := services.MethodTypeLayout(method, method.Payload)
+			if layoutErr != nil {
+				return nil, nil, layoutErr
+			}
+			values.inputValidation, err = planned.Add(prepared.userService.Name+":"+method.Name+":input-validation", preferred+"Input", method.Payload, layout, jsoncodec.ValidateOnly)
+			if err != nil {
+				return nil, nil, err
 			}
 		}
 		if hasMCPValue(method.Result) && resultDirection != 0 {
@@ -533,7 +560,7 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 	)
 	for _, method := range mappedMCPMethods(planned.prepared) {
 		values := planned.methodCodecs[method.Name]
-		for _, value := range []*jsoncodec.Value{values.payload, values.result} {
+		for _, value := range []*jsoncodec.Value{values.payload, values.inputValidation, values.result} {
 			if value == nil {
 				continue
 			}
@@ -584,6 +611,9 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 func bindMCPCodecData(data *AdapterData, methods map[string]*plannedMethodCodec) {
 	for _, endpoint := range data.EndpointMethods {
 		endpoint.Codec = methodCodecData(methods[endpoint.method.Name], data.CodecPackage)
+		if values := methods[endpoint.method.Name]; values != nil && values.inputValidation != nil {
+			endpoint.InputValidate = data.CodecPackage + "." + values.inputValidation.ValidationDeclaration().Name()
+		}
 	}
 	for _, tool := range data.Tools {
 		tool.Codec = methodCodecData(methods[tool.userMethodName], data.CodecPackage)
@@ -722,6 +752,14 @@ func declareMCPNames(generation *goacodegen.Generation, data *AdapterData) error
 		goacodegen.NewExactName(goacodegen.NameFunction, "resultMeta"),
 	} {
 		if err := mcpPackage.DeclareName(declaration); err != nil {
+			return err
+		}
+	}
+	for _, endpoint := range data.EndpointMethods {
+		if len(endpoint.Credentials) == 0 {
+			continue
+		}
+		if err := mcpPackage.DeclareName(goacodegen.NewExactName(goacodegen.NameFunction, "fill"+endpoint.CallName+"Credentials")); err != nil {
 			return err
 		}
 	}

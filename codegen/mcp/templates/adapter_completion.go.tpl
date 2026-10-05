@@ -70,6 +70,13 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
             span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("invalid_params", "%s", err.Error())
         }
+        {{- if .Endpoint.Credentials }}
+        if err := fill{{ .Endpoint.CallName }}Credentials(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "completion/complete" }}{{ end }}); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, err
+        }
+        {{- end }}
         result, err := a.{{ .Endpoint.CallName }}(ctx, payload)
         if err != nil {
             span.RecordError(err)

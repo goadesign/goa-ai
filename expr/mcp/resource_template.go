@@ -8,6 +8,7 @@ import (
 	"mime"
 
 	"github.com/yosida95/uritemplate/v3"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
@@ -56,11 +57,16 @@ func (r *ResourceTemplateExpr) Validate() error {
 	if r.Method.IsStreaming() {
 		verr.Add(r, "resource template method must be unary")
 	}
-	var payload *expr.Object
-	if hasValue(r.Method.Payload) {
-		payload = expr.AsObject(r.Method.Payload.Type)
+	arguments, argumentErr := mcpinput.Arguments(r.Method.Payload)
+	if argumentErr != nil {
+		verr.Add(r, "%s", argumentErr.Error())
+		return verr
 	}
-	if payload == nil || len(*payload) != 1 || payload.Attribute("uri") == nil || !isPrimitive(payload.Attribute("uri").Type, expr.String) || !r.Method.Payload.IsRequired("uri") {
+	var payload *expr.Object
+	if hasValue(arguments) {
+		payload = expr.AsObject(arguments.Type)
+	}
+	if payload == nil || len(*payload) != 1 || payload.Attribute("uri") == nil || !isPrimitive(payload.Attribute("uri").Type, expr.String) || !arguments.IsRequired("uri") {
 		verr.Add(r, "resource template payload must contain only a required uri string")
 	}
 	var result *expr.Object

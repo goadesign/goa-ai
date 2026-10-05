@@ -16,9 +16,10 @@ type (
 	// mcpExprBuilder builds the Goa service that handles MCP requests.
 	mcpExprBuilder struct {
 		*shared.ProtocolExprBuilderBase
-		originalService *expr.ServiceExpr
-		mcp             *mcpexpr.MCPExpr
-		mcpService      *expr.ServiceExpr
+		originalService  *expr.ServiceExpr
+		mcp              *mcpexpr.MCPExpr
+		mcpService       *expr.ServiceExpr
+		credentialInputs map[string]*protocolCredentialInputs
 	}
 
 	// mcpHTTPServiceConfig gives the shared route builder the JSON-RPC path.
@@ -151,6 +152,9 @@ func (b *mcpExprBuilder) Attach(root *expr.RootExpr, mcpService *expr.ServiceExp
 func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr, jsonrpcPath string) *expr.HTTPServiceExpr {
 	httpService := shared.BuildHTTPServiceBase(mcpService, mcpHTTPServiceConfig{jsonrpcPath: jsonrpcPath})
 	for _, endpoint := range httpService.HTTPEndpoints {
+		if inputs := b.credentialInputs[endpoint.MethodExpr.Name]; inputs != nil {
+			bindProtocolCredentialInputs(endpoint, inputs)
+		}
 		if len(endpoint.MethodExpr.Errors) > 0 {
 			endpoint.HTTPErrors = buildMCPHTTPErrorMappings(endpoint)
 		}

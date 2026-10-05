@@ -9,6 +9,7 @@ import (
 	"goa.design/goa-ai/codegen/naming"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
@@ -32,8 +33,11 @@ func populateMCPToolset(mcpRoot *mcpexpr.RootExpr, ts *ToolsetData) (bool, error
 	for _, tool := range mcp.Tools {
 		var payload, result *goaexpr.AttributeExpr
 		if tool.Method != nil {
-			payload = tool.Method.Payload
 			var err error
+			payload, err = mcpinput.Arguments(tool.Method.Payload)
+			if err != nil {
+				return false, err
+			}
 			result, err = mcpcontract.ToolResult(tool)
 			if err != nil {
 				return false, err

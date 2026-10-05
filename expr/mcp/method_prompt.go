@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
@@ -30,8 +31,13 @@ func (p *MethodPromptExpr) Validate() error {
 	if p.Method.IsStreaming() {
 		verr.Add(p, "prompt method must be unary")
 	}
-	if hasValue(p.Method.Payload) {
-		payload := expr.AsObject(p.Method.Payload.Type)
+	arguments, err := mcpinput.Arguments(p.Method.Payload)
+	if err != nil {
+		verr.Add(p, "%s", err.Error())
+		return verr
+	}
+	if hasValue(arguments) {
+		payload := expr.AsObject(arguments.Type)
 		if payload == nil {
 			verr.Add(p, "prompt payload must be an object of named strings")
 		} else {

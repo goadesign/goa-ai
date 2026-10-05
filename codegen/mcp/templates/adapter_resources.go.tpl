@@ -30,7 +30,17 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
     switch p.URI {
     {{- range .Resources }}
     case {{ quote .URI }}:
-        result, err := a.{{ .Endpoint.CallName }}(ctx)
+        {{- if .Endpoint.PayloadRef }}
+        payload := new({{ .Endpoint.PayloadValueRef }})
+        {{- if .Endpoint.Credentials }}
+        if err := fill{{ .Endpoint.CallName }}Credentials(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "resources/read" }}{{ end }}); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, err
+        }
+        {{- end }}
+        {{- end }}
+        result, err := a.{{ .Endpoint.CallName }}(ctx{{ if .Endpoint.PayloadRef }}, payload{{ end }})
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
@@ -70,6 +80,13 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
             span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("invalid_params", "%s", err.Error())
         }
+        {{- if .Endpoint.Credentials }}
+        if err := fill{{ .Endpoint.CallName }}Credentials(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "resources/read" }}{{ end }}); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, err
+        }
+        {{- end }}
         result, err := a.{{ .Endpoint.CallName }}(ctx, payload)
         if err != nil {
             span.RecordError(err)

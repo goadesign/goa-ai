@@ -343,8 +343,13 @@ failed invocations. Model history, copying, replay and native provider encoding
 preserve supported content; unsupported media returns an explicit error. See
 [the content contract](docs/runtime.md#mcp-callers). Methods author typed content
 with [ToolContent](docs/dsl.md#authored-mcp-tool-content); the attachment field is
-excluded from structured schemas, examples and codecs. HTTP credential delivery
-and server OAuth challenges remain release gates in the
+excluded from structured schemas, examples and codecs. Annotated Goa credentials
+also stay outside model schemas, examples, field metadata and argument codecs.
+Generated HTTP bindings fill the original typed service payload from its declared
+header, query or cookie before calling the configured endpoint. An unannotated
+field named `token` remains an ordinary argument. See
+[secured MCP methods](docs/dsl.md#secured-mcp-methods). HTTP OAuth resource
+validation and server challenges remain release gates in the
 [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
 
 HTTP failures expose the received status and exact authorization challenges

@@ -168,6 +168,7 @@ import (
  "context"
  "encoding/json"
  "errors"
+ "net/http"
  "net/http/httptest"
  "net/url"
  "sync/atomic"
@@ -189,6 +190,11 @@ import (
  goa "goa.design/goa/v3/pkg"
  "goa.design/goa/v3/security"
 )
+type credentialDoer struct { client *http.Client; token string }
+func(d *credentialDoer)Do(request *http.Request)(*http.Response,error){
+ request.Header.Set("Authorization","Bearer "+d.token)
+ return d.client.Do(request)
+}
 type authKey struct{}
 type middlewareKey struct{}
 type service struct {checks,reads,pings,notices,echoes atomic.Int64}
@@ -230,17 +236,19 @@ func TestConfiguredEndpoints(t *testing.T){
  server:=genserver.New(genmcp.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil)
  genserver.Mount(mux,server)
  httpServer:=httptest.NewServer(mux);defer httpServer.Close()
- caller:=mcp.NewHTTPTransport(httpServer.Client(),mcp.ClientInfo{Name:"endpoint-contract",Version:"1"},nil,mcp.InputSupport{},mcp.HTTPRetryPolicy{})
- for _,test:=range []struct{name,args,want string;failure bool}{
-  {"read","{\"access_token\":\"rejected\",\"key\":\"record\"}","",true},
-  {"read","{\"access_token\":\"authorized\",\"key\":\"record\"}","\"record\"",false},
-  {"ping","{}","\"ready\"",false},
-  {"notify","{\"key\":\"record\"}","",false},
-  {"echo","{\"token\":\"domain-value\"}","\"domain-value\"",false},
-  {"viewed","{}","{\"visible\":\"shown\"}",false},
- {"detailed","{}","{\"visible\":\"shown\",\"hidden\":\"detail\"}",false},
- {"nested","{}","{\"summary\":{\"visible\":\"summary\"},\"detail\":{\"visible\":\"detail\",\"hidden\":\"retained\"}}",false},
+ transport:=&credentialDoer{client:httpServer.Client(),token:"authorized"}
+ caller:=mcp.NewHTTPTransport(transport,mcp.ClientInfo{Name:"endpoint-contract",Version:"1"},nil,mcp.InputSupport{},mcp.HTTPRetryPolicy{})
+ for _,test:=range []struct{name,args,want string;failure bool;credential string}{
+  {"read","{\"key\":\"record\"}","",true,"rejected"},
+  {"read","{\"key\":\"record\"}","\"record\"",false,"authorized"},
+  {"ping","{}","\"ready\"",false,"authorized"},
+  {"notify","{\"key\":\"record\"}","",false,"authorized"},
+  {"echo","{\"token\":\"domain-value\"}","\"domain-value\"",false,"authorized"},
+  {"viewed","{}","{\"visible\":\"shown\"}",false,"authorized"},
+ {"detailed","{}","{\"visible\":\"shown\",\"hidden\":\"detail\"}",false,"authorized"},
+ {"nested","{}","{\"summary\":{\"visible\":\"summary\"},\"detail\":{\"visible\":\"detail\",\"hidden\":\"retained\"}}",false,"authorized"},
  }{
+  transport.token=test.credential
   result,err:=caller.CallTool(t.Context(),httpServer.URL+"/mcp",mcp.CallRequest{Tool:test.name,Payload:json.RawMessage(test.args)})
   var failure *mcp.ToolExecutionError
   failed:=errors.As(err,&failure)
@@ -279,9 +287,17 @@ func TestConfiguredEndpoints(t *testing.T){
  }
  if foundViews!=3 {t.Fatalf("generated fixed-view result specs: %d",foundViews)}
  // Invalid arguments must not enter endpoint middleware or authentication.
- result,err:=caller.CallTool(t.Context(),httpServer.URL+"/mcp",mcp.CallRequest{Tool:"read",Payload:json.RawMessage("{\"access_token\":\"authorized\"}")})
+ result,err:=caller.CallTool(t.Context(),httpServer.URL+"/mcp",mcp.CallRequest{Tool:"read",Payload:json.RawMessage("{}")})
  var invalid *mcp.ToolExecutionError
  if !errors.As(err,&invalid)||s.checks.Load()!=2||middlewareCalls.Load()!=8{t.Fatalf("invalid arguments result=%+v err=%v",result,err)}
+ // An injected credential fails before the original middleware and authentication.
+ _,err=caller.CallTool(t.Context(),httpServer.URL+"/mcp",mcp.CallRequest{Tool:"read",Payload:json.RawMessage("{\"access_token\":\"spoofed\",\"key\":\"record\"}")})
+ if !errors.As(err,&invalid)||s.checks.Load()!=2||middlewareCalls.Load()!=8{t.Fatalf("injected credential reached endpoint: %v",err)}
+ for _,spec:=range genspecs.Specs(){
+  if spec.Name!="endpoint-contract.read"{continue}
+  if _,err:=spec.Payload.Codec.FromJSON([]byte("{\"key\":\"record\"}"));err!=nil{t.Fatalf("domain arguments require a credential: %v",err)}
+  if _,err:=spec.Payload.Codec.FromJSON([]byte("{\"access_token\":\"spoofed\",\"key\":\"record\"}"));err==nil{t.Fatal("agent codec accepted a credential argument")}
+ }
  // The direct client validates both responses against the server's advertised schemas.
  direct,err:=mcp.NewHTTPCaller(mcp.HTTPOptions{Endpoint:httpServer.URL+"/mcp",Client:httpServer.Client(),ClientInfo:mcp.ClientInfo{Name:"selected-view-client",Version:"1"}})
  if err!=nil{t.Fatal(err)}

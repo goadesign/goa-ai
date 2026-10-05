@@ -55,6 +55,11 @@ func prepareMCPServicesFromRoot(
 				builder.Types()[name] = userType
 			}
 			mcpService := builder.BuildServiceExpr()
+			credentials, inputs, err := prepareCredentialInputs(r, svc, mcp, mcpService)
+			if err != nil {
+				return nil, err
+			}
+			builder.credentialInputs = inputs
 			for _, server := range r.API.Servers {
 				if slices.Contains(server.Services, svc.Name) &&
 					!slices.Contains(server.Services, mcpService.Name) {
@@ -83,6 +88,7 @@ func prepareMCPServicesFromRoot(
 				userService: svc,
 				mcpService:  mcpService,
 				mcp:         mcp,
+				credentials: credentials,
 			})
 		}
 		if len(attachedServices) > 0 {

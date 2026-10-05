@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/codegen"
 	goaservice "goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/expr"
@@ -188,12 +189,16 @@ func (g *adapterGenerator) buildCompletionAdapters() ([]*completionAdapter, erro
 
 // buildCompletionReferences derives accepted names from authored declarations.
 // Runtime selection does not parse templates or rebuild prompt schemas.
-func (g *adapterGenerator) buildCompletionReferences(templates []*resourceTemplateAdapter) []*completionReferenceAdapter {
+func (g *adapterGenerator) buildCompletionReferences(templates []*resourceTemplateAdapter) ([]*completionReferenceAdapter, error) {
 	references := make([]*completionReferenceAdapter, 0, len(g.mcp.MethodPrompts)+len(templates))
 	for _, prompt := range g.mcp.MethodPrompts {
 		reference := &completionReferenceAdapter{Type: "ref/prompt", Name: prompt.Name}
-		if hasMCPValue(prompt.Method.Payload) {
-			for _, field := range *expr.AsObject(prompt.Method.Payload.Type) {
+		arguments, err := mcpinput.Arguments(prompt.Method.Payload)
+		if err != nil {
+			return nil, err
+		}
+		if hasMCPValue(arguments) {
+			for _, field := range *expr.AsObject(arguments.Type) {
 				reference.Arguments = append(reference.Arguments, field.Name)
 			}
 		}
@@ -202,5 +207,5 @@ func (g *adapterGenerator) buildCompletionReferences(templates []*resourceTempla
 	for _, template := range templates {
 		references = append(references, &completionReferenceAdapter{Type: "ref/resource", Name: template.URI, Arguments: template.Variables})
 	}
-	return references
+	return references, nil
 }

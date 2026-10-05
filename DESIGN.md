@@ -2552,9 +2552,22 @@ service nor build a second endpoint set. Goa owns declared authentication, metho
 scopes, authenticated context, interceptors and endpoint middleware; the MCP
 adapter owns argument decoding and protocol results. A returned value outside an
 endpoint's declared Go type is an internal protocol error and bypasses application
-error mapping. HTTP credential delivery and OAuth challenges remain unfinished
-release gates; endpoint composition alone does not establish MCP authorization
-conformance.
+error mapping. Goa security annotations distinguish credentials from domain
+arguments during generation. Catalogs, examples, field metadata and exact argument
+codecs exclude those credentials; ordinary unannotated fields keep their meaning.
+Generated native HTTP bindings supply headers, query values and cookies outside
+JSON-RPC parameters. Private typed adapter code fills the original service payload
+and runs its complete generated validation before invoking the configured endpoint.
+Credential-only methods accept empty domain input, including fixed resources.
+
+OAuth credentials require `Authorization: Bearer`. Basic and Bearer schemes can
+be alternatives when their inactive payload fields allow absence; they cannot be
+combined in one authorization requirement. Unsupported body bindings, conflicting
+field bindings and protocol-owned headers fail generation. This does not add a
+second method authentication callback. HTTP OAuth issuer, audience, expiry and
+scope validation before the complete endpoint pipeline, protected resource
+metadata and server challenges remain unfinished release gates; native credential
+delivery alone does not establish MCP authorization conformance.
 
 The shared MCP HTTP transport retains each failed attempt's response status
 and exact authorization challenge values in `HTTPResponseError`. The error wraps
@@ -2563,7 +2576,7 @@ contracts. HTTP authorization rejections close their bodies without waiting for
 protocol messages. Explicit request rejections do not authorize interrupted-tool
 retries; the authorization client owns fresh credentials, challenge validation
 and consent. Challenge headers and HTTP bodies are excluded from error text.
-Built-in OAuth and generated server credential delivery remain separate release
+Built-in OAuth clients and server resource authorization remain separate release
 gates. No HTTP authentication state enters workflow checkpoints or model inputs.
 
 Fixed MCP result views have one selected field contract shared by catalog

@@ -1459,6 +1459,36 @@ context, interceptors and middleware. Static catalogs and prompts do not call
 an application endpoint. This replaces the constructor that accepted a bare
 service; regenerate and update application wiring together.
 
+### Secured MCP methods
+
+Declare credentials with Goa's security DSL, such as `Token`, `AccessToken`,
+`BearerToken`, `APIKey`, `Username` and `Password`. The generator excludes those
+annotated fields from tool schemas, examples, field metadata and argument codecs.
+It preserves ordinary domain fields, including a field named `token` that has no
+security annotation. A credential-only tool accepts omitted arguments or `{}`;
+a fixed resource may also use a payload containing only credentials.
+
+The generated HTTP binding supplies credentials separately from JSON-RPC
+parameters. It uses the method's authored JSON-RPC binding when present,
+otherwise its HTTP binding, or Goa's implicit `Authorization` header. The adapter
+fills the original typed service payload, validates it with Goa's generated
+validator and calls the same configured endpoint. Authentication callbacks,
+required method scopes and returned context retain their Goa behavior. This
+applies to tools, resource reads, method-backed prompts and completions.
+
+OAuth access tokens must use `Authorization: Bearer`. Basic and Bearer may be
+separate authentication alternatives when every inactive credential field is
+optional. They cannot both be required in one request because they share one
+`Authorization` header. Generation rejects body credentials, conflicting native
+bindings, and credentials bound to MCP's protocol headers instead of silently
+choosing another location. Goa also rejects defaults on security fields.
+
+This credential delivery does not implement MCP's HTTP OAuth resource guard.
+Issuer, audience, expiry and resource scope validation, protected resource
+metadata and HTTP challenges remain required before release. Static catalog
+methods do not call a domain method to authenticate a request. See the
+[remaining authorization work](mcp_protocol_upgrade_plan.md#server-authorization-verified-ownership-and-remaining-design-proof).
+
 ### Goa result views
 
 A method with one Goa result view, or an explicit `Result(type, func() {

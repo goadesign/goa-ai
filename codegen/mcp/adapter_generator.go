@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/codegen/internal/jsonschema"
 	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa-ai/internal/mcpprotocol"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/expr"
@@ -95,7 +96,7 @@ type (
 	// MethodCodecData names the generated JSON functions for one service method.
 	// Empty names mean the method has no value in that direction.
 	MethodCodecData struct {
-		// PayloadDecode converts MCP JSON into a validated service payload.
+		// PayloadDecode validates domain JSON and constructs the original typed payload.
 		PayloadDecode string
 		// ResultEncode converts a service result into MCP JSON.
 		ResultEncode string
@@ -246,6 +247,10 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 	if err != nil {
 		return nil, err
 	}
+	references, err := g.buildCompletionReferences(templates)
+	if err != nil {
+		return nil, err
+	}
 	data := &AdapterData{
 		ServiceName:          g.originalService.Name,
 		ServiceGoName:        codegen.Goify(g.originalService.Name, true),
@@ -258,7 +263,7 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 		ResourceReader:       reader,
 		MethodPrompts:        prompts,
 		Completions:          completions,
-		CompletionReferences: g.buildCompletionReferences(templates),
+		CompletionReferences: references,
 		NeedsBoolPtr:         len(tools)+len(prompts) > 0,
 	}
 
@@ -317,10 +322,15 @@ func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 			adapter.Idempotent = tool.Annotations.IdempotentHint != nil && *tool.Annotations.IdempotentHint
 		}
 
+		arguments, err := mcpinput.Arguments(tool.Method.Payload)
+		if err != nil {
+			return nil, fmt.Errorf("tool %q arguments: %w", tool.Name, err)
+		}
+
 		// Set payload type reference only for real payloads
 		if hasRealPayload {
 			// Generate a minimal JSON Schema for MCP tools/list
-			schema, err := jsonschema.Build(g.api, tool.Method.Payload, expr.MethodPayloadExampleIdentity(tool.Method))
+			schema, err := jsonschema.Build(g.api, arguments, expr.MethodPayloadExampleIdentity(tool.Method))
 			if err != nil {
 				return nil, fmt.Errorf("build schema for tool %q: %w", tool.Name, err)
 			}
@@ -412,7 +422,10 @@ func hasMCPValue(attribute *expr.AttributeExpr) bool {
 
 // buildExampleJSON returns a repeatable JSON example for a method payload.
 func (g *adapterGenerator) buildExampleJSON(method *expr.MethodExpr) (string, error) {
-	attr := method.Payload
+	attr, err := mcpinput.Arguments(method.Payload)
+	if err != nil {
+		return "", err
+	}
 	if attr == nil || attr.Type == nil || attr.Type == expr.Empty {
 		return "{}", nil
 	}

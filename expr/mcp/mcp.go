@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
@@ -296,8 +297,13 @@ func (r *ResourceExpr) Validate() error {
 	if r.Method != nil && r.Method.IsStreaming() {
 		verr.Add(r, "resource %q uses streaming method %q; MCP resources must return one result from one request", r.Name, r.Method.Name)
 	}
-	if r.Method != nil && hasValue(r.Method.Payload) {
-		verr.Add(r, "resource %q method %q must not define a payload", r.Name, r.Method.Name)
+	if r.Method != nil {
+		arguments, err := mcpinput.Arguments(r.Method.Payload)
+		if err != nil {
+			verr.Add(r, "%s", err.Error())
+		} else if hasValue(arguments) && (expr.AsObject(arguments.Type) == nil || len(*expr.AsObject(arguments.Type)) > 0) {
+			verr.Add(r, "resource %q method %q must not define a payload with domain arguments", r.Name, r.Method.Name)
+		}
 	}
 	if r.Method != nil && !hasValue(r.Method.Result) {
 		verr.Add(r, "resource %q method %q must define a result", r.Name, r.Method.Name)
