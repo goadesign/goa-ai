@@ -26,11 +26,14 @@ type (
 	// preparedMCPService stores the design root, user service, and attached MCP
 	// service for one user service.
 	preparedMCPService struct {
-		root        *expr.RootExpr
-		userService *expr.ServiceExpr
-		mcpService  *expr.ServiceExpr
-		mcp         *mcpexpr.MCPExpr
-		credentials map[string][]*credentialInput
+		root            *expr.RootExpr
+		userService     *expr.ServiceExpr
+		mcpService      *expr.ServiceExpr
+		mcp             *mcpexpr.MCPExpr
+		credentials     map[string][]*credentialInput
+		paths           *expr.MappedAttributeExpr
+		transport       *expr.HTTPServiceExpr
+		protocolLayouts map[string]*goacodegen.GoTypePlan
 	}
 
 	// plannedMCPService stores the attached service, Goa's saved service types,
@@ -100,6 +103,9 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planEndpointAdapters(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
+		if err := planRouteInputs(plan.Generation(), servicePlan, prepared, adapter); err != nil {
+			return err
+		}
 		if err := planResourceReader(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
@@ -122,7 +128,7 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planToolContent(plan.Generation(), servicePlan, prepared, adapter, codecPlan, methodCodecs); err != nil {
 			return err
 		}
-		for _, dependency := range credentialInputImports(prepared.credentials) {
+		for _, dependency := range append(credentialInputImports(prepared.credentials), routeInputImports(adapter)...) {
 			adapter.serverImportPaths = append(adapter.serverImportPaths, dependency.Path)
 			if err := requireImports(plan.Generation().Package(adapter.mcpImportPath), []*goacodegen.ImportSpec{dependency}); err != nil {
 				return err
@@ -165,7 +171,10 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 		if err := bindEndpointAdapters(userService, planned.adapterData); err != nil {
 			return nil, err
 		}
-		if err := bindCredentialSelectors(planned.servicePlan, planned.prepared, planned.adapterData); err != nil {
+		if err := bindRouteInputs(planned.servicePlan, planned.prepared, planned.adapterData); err != nil {
+			return nil, err
+		}
+		if err := bindCredentialSelectors(planned.prepared, planned.adapterData); err != nil {
 			return nil, err
 		}
 		planned.adapterData.MCPPackage = mcpService.PkgName
@@ -383,7 +392,6 @@ func bindMCPImports(data *AdapterData) {
 	}
 	if data.ClientCaller != nil {
 		data.ClientCaller.imports = packageImports(data.ClientCaller.clientPackage, data.ClientCaller.clientImportPaths)
-		data.ClientCaller.MCPPackage = data.ClientCaller.clientPackage.ImportName(data.mcpImportPath)
 	}
 }
 
@@ -423,7 +431,7 @@ func planMCPCodecs(
 	hasValues := false
 	for _, method := range methods {
 		payloadDirection, resultDirection := mcpCodecDirections(data, method.Name)
-		if len(prepared.credentials[method.Name]) > 0 || (hasMCPValue(method.Payload) && payloadDirection != 0) || (hasMCPValue(method.Result) && resultDirection != 0) {
+		if (len(prepared.credentials[method.Name]) > 0 || !prepared.paths.IsEmpty()) || (hasMCPValue(method.Payload) && payloadDirection != 0) || (hasMCPValue(method.Result) && resultDirection != 0) {
 			hasValues = true
 			break
 		}
@@ -482,7 +490,7 @@ func planMCPCodecs(
 				return nil, nil, fmt.Errorf("plan MCP payload codec for method %q: %w", method.Name, err)
 			}
 		}
-		if len(prepared.credentials[method.Name]) > 0 {
+		if len(prepared.credentials[method.Name]) > 0 || len(values.endpoint.Paths) > 0 {
 			data.NeedsServerCodec = true
 			layout, layoutErr := services.MethodTypeLayout(method, method.Payload)
 			if layoutErr != nil {

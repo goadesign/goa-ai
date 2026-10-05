@@ -2,7 +2,7 @@
 {{ comment "Prompts handling" }}
 
 // PromptsList describes the fixed prompts and service-owned prompt operations.
-func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*PromptsListResult, error) {
+func (a *MCPAdapter) PromptsList(ctx context.Context, p {{ index .PayloadRefs "prompts/list" }}) (*PromptsListResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/list")
     defer span.End()
 
@@ -30,7 +30,7 @@ func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*P
 }
 
 // PromptsGet returns fixed messages or calls the service with validated arguments.
-func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*PromptsGetResult, error) {
+func (a *MCPAdapter) PromptsGet(ctx context.Context, p {{ index .PayloadRefs "prompts/get" }}) (*PromptsGetResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/get")
     defer span.End()
 
@@ -97,8 +97,8 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
             return nil, failure
         }
         {{ end }}
-        {{- if .Endpoint.Credentials }}
-        if err := fill{{ .Endpoint.CallName }}Credentials(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "prompts/get" }}{{ end }}); err != nil {
+        {{- if or .Endpoint.Credentials .Endpoint.Paths }}
+        if err := fill{{ .Endpoint.CallName }}Inputs(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "prompts/get" }}{{ end }}{{ range .Endpoint.Paths }}, p.{{ index .Sources "prompts/get" }}{{ end }}); err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return nil, err

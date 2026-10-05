@@ -63,6 +63,7 @@ func TestGeneratedAdapterQuotesStaticDSLText(t *testing.T) {
 		ResultEncode:  "codec.EncodeSummarizeResult",
 	}
 	data := &AdapterData{
+		PayloadRefs:   testProtocolPayloadRefs(),
 		CodecPackage:  "codec",
 		Tools:         tools,
 		StaticPrompts: generator.buildStaticPrompts(),

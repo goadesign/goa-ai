@@ -24,28 +24,44 @@ func BindTransport(service *expr.HTTPServiceExpr) {
 	}
 }
 
-// methodPathFields reads explicit endpoint mappings or the shared route's
-// inherited URL variables. Only fields present on the method become inputs to
-// its service call; route values absent from that payload remain transport data.
-func methodPathFields(service *expr.HTTPServiceExpr, method *expr.MethodExpr) []string {
-	var names []string
+// PathParams returns Goa's mapped URL fields for the original method. An
+// explicit endpoint already carries inherited bindings. For an MCP-only method,
+// Goa prepares a detached method copy against the same shared route, so parent
+// and API mappings are resolved without changing the original payload.
+func PathParams(service *expr.HTTPServiceExpr, method *expr.MethodExpr) *expr.MappedAttributeExpr {
 	for _, endpoint := range service.HTTPEndpoints {
-		if endpoint.MethodExpr != method {
-			continue
+		if endpoint.MethodExpr == method {
+			return endpoint.PathParams()
 		}
-		for _, field := range *expr.AsObject(endpoint.PathParams().Type) {
-			names = append(names, field.Name)
-		}
-		return names
 	}
 	if service.JSONRPCRoute == nil {
-		return nil
+		return expr.NewEmptyMappedAttributeExpr()
 	}
 	route := *service.JSONRPCRoute
 	route.Endpoint = &expr.HTTPEndpointExpr{Service: service}
-	for _, name := range route.Params() {
-		if method.Payload != nil && method.Payload.Find(name) != nil {
-			names = append(names, name)
+	if len(route.Params()) == 0 {
+		return expr.NewEmptyMappedAttributeExpr()
+	}
+	copy := *method
+	copy.Payload = expr.DupAtt(method.Payload)
+	endpoint := &expr.HTTPEndpointExpr{
+		MethodExpr: &copy,
+		Service:    service,
+		Routes:     []*expr.RouteExpr{&route},
+	}
+	route.Endpoint = endpoint
+	endpoint.Prepare()
+	return endpoint.PathParams()
+}
+
+// methodPathFields records only mapped fields present in the original payload.
+// Other URL values still address the protocol server, but do not become inputs
+// to this method's domain call or disappear from unrelated method arguments.
+func methodPathFields(service *expr.HTTPServiceExpr, method *expr.MethodExpr) []string {
+	var names []string
+	for _, field := range *expr.AsObject(PathParams(service, method).Type) {
+		if method.Payload.Find(field.Name) != nil {
+			names = append(names, field.Name)
 		}
 	}
 	return names

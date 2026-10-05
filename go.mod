@@ -12,8 +12,8 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/leanovate/gopter v0.2.11
 	github.com/nexus-rpc/sdk-go v0.7.0
-	github.com/openai/openai-go/v3 v3.71.1
-	github.com/redis/go-redis/v9 v9.22.0
+	github.com/openai/openai-go/v3 v3.71.2
+	github.com/redis/go-redis/v9 v9.23.0
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.3
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.44.0
@@ -27,7 +27,7 @@ require (
 	go.temporal.io/sdk v1.49.0
 	go.temporal.io/sdk/contrib/opentelemetry v0.8.1
 	goa.design/clue v1.3.0
-	goa.design/goa/v3 v3.33.1-0.20261005065914-a5e621d460df
+	goa.design/goa/v3 v3.33.1-0.20261005233735-562176f1e1b5
 	goa.design/pulse v1.10.3-0.20261002205507-b34ad25e317d
 	golang.org/x/image v0.46.0
 	golang.org/x/oauth2 v0.37.0
@@ -115,7 +115,7 @@ require (
 	github.com/sirupsen/logrus v1.10.2 // indirect
 	github.com/standard-webhooks/standard-webhooks/libraries v0.0.1 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
-	github.com/tidwall/gjson v1.19.0 // indirect
+	github.com/tidwall/gjson v1.20.0 // indirect
 	github.com/tidwall/match v1.2.0 // indirect
 	github.com/tidwall/pretty v1.2.2 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
@@ -142,6 +142,6 @@ require (
 	golang.org/x/time v0.16.0 // indirect
 	golang.org/x/tools v0.51.0 // indirect
 	google.golang.org/api v0.300.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260928230214-8a89bd6388cc // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260928230214-8a89bd6388cc // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20261005182115-fad411399dd8 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
 )

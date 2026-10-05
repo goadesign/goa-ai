@@ -52,7 +52,7 @@ func TestMCPDispatchMethodsDeclareAndMapProtocolErrors(t *testing.T) {
 		require.Nil(t, mcpService.Method(methodName), methodName)
 	}
 
-	httpService := builder.buildHTTPService(mcpService, "/rpc")
+	httpService := builder.buildHTTPService(mcpService, []string{"/rpc"})
 	require.Empty(t, httpService.HTTPErrors)
 	for _, methodName := range []string{"tools/list", "resources/list", "prompts/list"} {
 		method := mcpService.Method(methodName)

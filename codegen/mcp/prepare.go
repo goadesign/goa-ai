@@ -61,18 +61,19 @@ func prepareMCPServicesFromRoot(
 				builder.Types()[name] = userType
 			}
 			mcpService := builder.BuildServiceExpr()
-			credentials, inputs, err := prepareCredentialInputs(r, svc, mcp, mcpService)
+			paths, routePaths := prepareRouteInputs(transport)
+			credentials, inputs, err := prepareHTTPInputs(r, svc, mcp, mcpService, paths)
 			if err != nil {
 				return nil, err
 			}
-			builder.credentialInputs = inputs
+			builder.httpInputs = inputs
 			for _, server := range r.API.Servers {
 				if slices.Contains(server.Services, svc.Name) &&
 					!slices.Contains(server.Services, mcpService.Name) {
 					server.Services = append(server.Services, mcpService.Name)
 				}
 			}
-			_, protocolTypes := builder.Attach(r, mcpService, transport.JSONRPCRoute.Path)
+			_, protocolTypes := builder.Attach(r, mcpService, routePaths)
 
 			for _, userType := range protocolTypes {
 				name := userType.Name()
@@ -95,6 +96,8 @@ func prepareMCPServicesFromRoot(
 				mcpService:  mcpService,
 				mcp:         mcp,
 				credentials: credentials,
+				paths:       paths,
+				transport:   transport,
 			})
 		}
 		if len(attachedServices) > 0 {

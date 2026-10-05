@@ -1,7 +1,7 @@
 {{- if .Tools }}
 // ToolsList returns the stable catalog declared by the design. A supplied
 // cursor is invalid because this generated catalog has only one page.
-func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*ToolsListResult, error) {
+func (a *MCPAdapter) ToolsList(ctx context.Context, p {{ index .PayloadRefs "tools/list" }}) (*ToolsListResult, error) {
     _, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/list")
     defer span.End()
     if p.Cursor != nil {
@@ -54,7 +54,7 @@ func toolCallError(message string) *ToolsCallResult {
 
 // ToolsCall decodes the named tool's arguments through its generated codec,
 // calls its configured endpoint, and encodes one structured result through that contract.
-func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error) {
+func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "tools/call" }}) (*ToolsCallResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/call")
     defer span.End()
     switch p.Name {
@@ -74,8 +74,8 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
             return toolCallError("invalid arguments: " + err.Error()), nil
         }
         {{- end }}
-        {{- if .Endpoint.Credentials }}
-        if err := fill{{ .Endpoint.CallName }}Credentials(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "tools/call" }}{{ end }}); err != nil {
+        {{- if or .Endpoint.Credentials .Endpoint.Paths }}
+        if err := fill{{ .Endpoint.CallName }}Inputs(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "tools/call" }}{{ end }}{{ range .Endpoint.Paths }}, p.{{ index .Sources "tools/call" }}{{ end }}); err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return toolCallError(err.Error()), nil

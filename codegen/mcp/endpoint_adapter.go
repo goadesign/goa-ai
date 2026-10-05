@@ -37,7 +37,11 @@ type (
 		FaultNames []string
 		// Credentials supplies native HTTP input before endpoint invocation.
 		Credentials []*credentialInput
-		// InputValidate checks the complete service payload after credentials are filled.
+		// Paths supplies URL values before endpoint invocation.
+		Paths []*methodRouteInput
+		// RouteHelpers contains named conversions used for URL collections.
+		RouteHelpers []*codegen.TransformFunctionData
+		// InputValidate checks the complete payload after native inputs are filled.
 		InputValidate string
 		// Codec encodes or validates the result under that view.
 		Codec *MethodCodecData

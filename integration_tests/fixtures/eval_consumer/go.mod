@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	goa.design/goa-ai v0.0.0
-	goa.design/goa/v3 v3.33.1-0.20261005065914-a5e621d460df
+	goa.design/goa/v3 v3.33.1-0.20261005233735-562176f1e1b5
 )
 
 require (
@@ -34,7 +34,7 @@ require (
 	golang.org/x/term v0.46.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/tools v0.51.0 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260928230214-8a89bd6388cc // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20261005182115-fad411399dd8 // indirect
 	google.golang.org/grpc v1.84.0 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect

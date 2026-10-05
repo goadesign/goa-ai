@@ -140,7 +140,7 @@ func resultMeta() json.RawMessage {
 }
 
 // ServerDiscover describes declared capabilities without creating client state.
-func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*DiscoverResult, error) {
+func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ {{ index .PayloadRefs "server/discover" }}) (*DiscoverResult, error) {
     _, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.server/discover")
     defer span.End()
     capabilities := &ServerCapabilities{}
@@ -249,11 +249,26 @@ func {{ .ResultValidate }}(result {{ $endpoint.EndpointResultRef }}) error {
 {{- end }}
 
 {{- range .EndpointMethods }}
-{{- if .Credentials }}
-// fill{{ .CallName }}Credentials places native HTTP credentials in the original
-// service payload and checks its authored constraints before endpoint dispatch.
-// Invalid credentials return a fixed error without disclosing their values.
-func fill{{ .CallName }}Credentials(payload {{ .PayloadRef }}{{ range $index, $field := .Credentials }}, credential{{ $index }} *string{{ end }}) error {
+{{- if or .Credentials .Paths }}
+// fill{{ .CallName }}Inputs decodes URL values and places native credentials in
+// the original service payload. Full validation runs before endpoint dispatch;
+// invalid credentials return a fixed error without disclosing their values.
+func fill{{ .CallName }}Inputs(payload {{ .PayloadRef }}{{ range $index, $field := .Credentials }}, credential{{ $index }} *string{{ end }}{{ range .Paths }}, {{ .ValueName }}Raw string{{ end }}) error {
+    {{- if .Paths }}
+    var err error
+    {{- range .Paths }}
+    var {{ .ValueName }} {{ .ValueRef }}
+    {
+        {{ .Decode }}
+    }
+    {{- end }}
+    if err != nil {
+        return goa.PermanentError("invalid_params", "%s", err.Error())
+    }
+    {{- range .Paths }}
+    {{ .Conversion }}
+    {{- end }}
+    {{- end }}
     {{- range $index, $field := .Credentials }}
     {{- if .Required }}
     if credential{{ $index }} == nil {
@@ -290,9 +305,15 @@ func fill{{ .CallName }}Credentials(payload {{ .PayloadRef }}{{ range $index, $f
     }
     {{- end }}
     if err := {{ .InputValidate }}(payload); err != nil {
-        return goa.PermanentError("invalid_params", "HTTP credentials do not match the service contract")
+        return goa.PermanentError("invalid_params", "HTTP {{ if .Paths }}inputs{{ else }}credentials{{ end }} do not match the service contract")
     }
     return nil
 }
+{{- range .RouteHelpers }}
+// {{ .Name }} converts decoded URL values into the authored service type.
+func {{ .Name }}(v {{ .ParamTypeRef }}) {{ .ResultTypeRef }} {
+    {{ .Code }}
+}
+{{- end }}
 {{- end }}
 {{- end }}

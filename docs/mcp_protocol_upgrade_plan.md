@@ -114,6 +114,11 @@ for the declared scheme, Bearer tokens, JWT tokens and OAuth access tokens have
 distinct tags. The original payload, credential names, pointer representation,
 requiredness, scheme name and method scopes are already known during generation.
 An ordinary field named `token` without such an annotation remains domain input.
+The normal generated constructor obtains authentication functions from the
+service's generated `Auther` interface. Individual endpoint constructors already
+accept `security.AuthOAuth2Func`. Compare these existing contracts and the
+resource owner's verifier before adding a public verifier interface; neither a
+scheme declaration nor an opaque configured endpoint proves token validity.
 The generated endpoint receives the original typed payload, calls its configured
 authentication function and passes the returned context to the service.
 `codegen/service/templates/service_endpoint_method.go.tpl` supports alternative
@@ -292,8 +297,8 @@ paths, renamed bindings, named types, validation and generated clients, rather
 than copying raw path strings or introducing a public raw-request bag. Verify
 catalogs, calls, resources, prompts, completions and agent specifications against
 that same projection, including ordinary domain fields on routes that do not
-bind them. The MCP probe proves the generation failure only; implementation and
-positive end-to-end evidence remain required.
+bind them. That initial probe established the generation failure only. The complete
+implementation and positive compiled evidence are recorded below.
 
 The native Goa prerequisite is independently verified in
 [Goa PR #4024](https://github.com/goadesign/goa/pull/4024). Its JSON-RPC snapshot
@@ -347,21 +352,70 @@ verify that an unbound field remains a rejected domain argument for that same
 fixed-resource contract, and that sharing a named, located payload does not
 change the unscoped method's fields, required list or examples. Separate roots
 with matching service names retain separate transport bindings. Missing route
-configuration still reports a design error. These tests prove projection and
-binding ownership only: protocol route generation, method-specific URL decoding,
-full-payload validation and native caller construction remain required.
+configuration still reports a design error. That milestone proved projection and binding ownership only. The subsequent
+implementation below verifies protocol route generation, method-specific URL
+decoding, full-payload validation and native caller construction.
 
-A further probe distinguishes authored Go field renames from wildcard aliases.
-The current Goa parser recognizes `{field}` and `{*field}`, with names matching
-payload fields. The colon alias example in the
-[HTTP guide](https://goa.design/docs/1-goa/http-guide/) disagrees with the current
-parser: a colon wildcard compiled as a literal client path and left the value
-in protocol parameters. An explicit `Param("organization_id:organization")`
-with `{organization}` was rejected because that wildcard was absent from the
-payload. These results establish no alias support. Preserve recognized native
-path contracts and authored Go field renames; arbitrary wildcard aliases need
-an owner-level design and verification before they can be claimed. Correct the
-documentation mismatch separately rather than inventing an MCP-only parser.
+The follow-up trace corrected the earlier alias assessment. Goa's mapped
+attribute contract separates the service payload name from the URL name through
+`Param("organization_id:organization")` with `{organization}`. Colon notation
+belongs in `Param`, not in the wildcard. Native route preparation, path/query
+classification, validation and path constructors had inconsistently consumed
+those mappings. [Goa PR #4026](https://github.com/goadesign/goa/pull/4026) fixes
+that shared mechanism and exposes the existing pure HTTP attribute-copy
+algorithm as `http/codegen.WireAttribute`; MCP does not rewrite wildcards or
+maintain another alias implementation.
+
+The MCP generator now retains complete native routes and mapped attributes.
+Private protocol fields carry raw URL values outside MCP bodies. Each selected
+method uses the existing HTTP parser templates and retained Goa conversion
+plans to fill its original typed payload fields before complete validation and
+configured endpoint execution. Protocol payload references and selectors come
+from retained Goa layouts, including when native credentials change a complete
+input's generated type. The generated caller fixes URL values at construction,
+so individual tool arguments cannot select a different URL scope.
+
+Compiled scoped client/server fixtures pass service-level and API-level
+mappings, inherited path prefixes, independent domain fields with the URL name,
+custom Go field selectors, located named scalar and collection types, optional
+payload fields, numeric validation, fixed resources, method-backed prompts,
+completion, subscriptions and the native tool caller. Invalid URL values and
+argument injection stop before endpoint execution. A payload-free tool on the
+same route receives no invented domain fields. The combined credential fixture
+also exercises inherited mapped URLs, located named types and custom Go field
+selectors with every authored credential and operation binding. Original scopes,
+authenticated context and one configured endpoint invocation remain intact.
+
+Goa PR #4026 merged the native mapping corrections as
+`8e702ac6fa7633247e0009c0d8fbff981a649786`. The dependency refresh also updates
+OpenAI, Redis, GJSON and Google API/RPC contracts to the current versions selected
+by each module. Regeneration uses the owning tools and pinned compiler versions.
+The registry's generated gRPC client retains remote cancellation and deadline
+errors through the reviewed Goa correction; protocol schemas are unchanged.
+The assistant's caller comment reflects construction-time URL binding.
+Configured lint, root build, regenerated assistant race tests, the generated
+evaluation-consumer check, the full uncached root race suite and quickstart
+passed against that published source.
+
+A subsequent negative authored-design probe found that an object-array URL field
+reached type planning and returned an unrelated binder error. The correction
+reuses Goa's existing parameter-validation stage before MCP type planning and
+removes both MCP-specific URL-type checks. Authored HTTP endpoints and MCP-only
+method bindings therefore use the same rules.
+[Goa PR #4027](https://github.com/goadesign/goa/pull/4027) is merged as
+`562176f1e1b5ea65458cc443a2322feedad07a5e`. Its complete root suite, configured
+lint, Linux/Windows CI matrix, CodeQL and dependency review passed, and the merged
+tree equals the tested tree. All four Goa AI modules now select
+`v3.33.1-0.20261005233735-562176f1e1b5` without a local Goa replacement. Against
+that published pin, the complete affected MCP generator, expression,
+input-binding and DSL race suites, configured lint, root build, regenerated
+assistant race suite and generated evaluation consumer pass. The subsequent
+checks cover the compiler composition change; the earlier full root and
+quickstart acceptance remains recorded against PR #4026 above.
+
+Both completed Goa clones were fast-forwarded to their actual merged target
+branch, verified clean with no unpushed commits, and deleted. Their captured
+verification remains in the ignored Goa AI cache.
 
 Bearer header parsing must retain the token while accepting the one-or-more
 ASCII spaces that separate it from the scheme. The current compiled credential
@@ -766,8 +820,8 @@ These results do not establish a complete released-requirement-set pass.
 
 Root and all three nested application modules were updated with `go get -u ./...`
 and tidied. Final audits of the root and all three nested modules found no
-updates for their explicit direct or indirect requirements. Goa is pinned to
-`v3.33.1-0.20261005065914-a5e621d460df`; Pulse to
+updates for their explicit direct or indirect requirements. The final Goa dependency is
+`v3.33.1-0.20261005233735-562176f1e1b5`; Pulse remains at
 `v1.10.3-0.20261002205507-b34ad25e317d`. Provider SDKs, Temporal, MongoDB,
 OpenTelemetry, schema validation, and test dependencies are updated in the module
 files. The linter is pinned separately to `v2.14.0` in `.go-install` so its private
@@ -1102,6 +1156,26 @@ flowchart TD
     H --> P
     P --> E[Typed agent executor]
 ```
+
+Owning both compilers means a missing reusable stage should be corrected in Goa
+rather than copied into the MCP plugin. Trace the normal path and the failing
+variation before adding a mechanism. Retain existing contracts, names, layouts,
+codecs and configured endpoints; generate only the MCP-specific adaptation.
+Delete any duplicate mechanism once the shared owner can serve every caller.
+
+| Responsibility | Shared owner to compose | MCP-specific responsibility |
+| --- | --- | --- |
+| URL names, payload types and conversions | Goa mapped attributes, parameter validation, HTTP parsing and retained conversion plans | Select original bound fields and keep URL values outside MCP arguments |
+| Credential delivery and endpoint execution | Goa security requirements, transport bindings and configured endpoints | Apply resource authorization and protocol challenges before endpoint work |
+| Request envelopes, IDs and typed payloads | Goa JSON-RPC contracts and generated codecs | Current revision metadata, MCP operation mappings and HTTP header agreement |
+| Suspension and completed side effects | Existing durable execution, trusted checkpoints and typed saved results | Translate MCP input exchanges and task operations into those owned flows |
+| Tool contracts and returned media | Generated tool specs, typed content and provider adapters | MCP catalog and result representations |
+
+These are ownership requirements, not claims that each remaining capability is
+already supported. OAuth verification and discovery, durable task operations,
+dynamic catalogs, Apps and Skills still require complete path evidence. Add a
+responsibility only after showing which existing owner cannot perform it; do
+not build a second validator, authentication system or completion store.
 
 The generated adapter is the sole owner of translating between MCP operations and the authored service. The runtime owns transport metadata, request IDs, stream decoding, cancellation, and protocol error classification. The application owns domain authorization and durable side effects. No layer invents model-visible protocol controls. Canonical contracts also feed policy, provider validation, registration, persistence, host-input delivery, and evaluation evidence; those consumers are included in the path and work-package sections.
 
@@ -1480,6 +1554,43 @@ Every milestone below is required before this upgrade can release. Define the ty
 **Files:** [scenario runner](../integration_tests/framework/runner.go), [runner tests](../integration_tests/framework/runner_test.go), [MCP integration suite](../integration_tests/tests/mcp_integration_test.go), [fixture](../integration_tests/fixtures/assistant/mcp_assistant.go), [protocol](../integration_tests/scenarios/protocol.yaml), [tools](../integration_tests/scenarios/tools.yaml), [resources](../integration_tests/scenarios/resources.yaml), [prompts](../integration_tests/scenarios/prompts.yaml), fixture design files and docs above.
 
 **Acceptance:** tests no longer depend on prior protocol state; documented examples compile after regeneration; supported-feature claims match capabilities and independently exercised behavior.
+
+### 9. Present the completed MCP capability on the website homepage
+
+Do this after the protocol upgrade passes its complete capability and conformance
+gates. Update the homepage and final MCP guidance together; do not advertise
+unfinished capabilities. The user requested a dedicated vertical MCP section on
+`goa.design`, with a professional graphic showing authored DSL on the left and
+concrete generated results on the right.
+
+Design for a developer deciding whether to build an MCP server with Goa AI.
+Show one small, useful, runnable service example and the actual tools, resources
+or prompts it produces. Make the relationship between the DSL and those results
+obvious. Use a polished diagram that fits the site's visual language, remains
+legible on mobile and has an accessible text equivalent. Choose the final layout
+and copy after reviewing the existing homepage and the shipped authoring path.
+
+Explain the benefits separately and concretely. For human developers, show how
+one reviewable contract provides typed service inputs and outputs, generated
+protocol handling and validation, and composition with existing Goa services.
+For coding LLMs, show how the concise DSL, explicit contracts and repeatable
+regeneration reduce the amount of transport code they must invent and provide
+compiler and validation feedback. Distinguish coding assistance from an MCP
+client model using the generated tool schemas. Support each claim with the
+finished implementation; avoid broad promises about correctness or productivity.
+
+Provide one unmistakable primary action leading to a tested MCP quickstart.
+The visitor should understand what they write, what Goa AI generates, what
+service behavior they still implement, and how to run their first server. Use
+that developer journey to judge the section rather than the number of features
+listed. Keep the homepage's other audiences and primary navigation coherent.
+
+**Acceptance:** the displayed DSL compiles and generates the illustrated results;
+the linked quickstart works from a clean environment using the available version;
+copy and translations describe shipped capabilities; responsive and accessible
+behavior passes browser and visual review; website tests, links and the production
+build pass. Keep the work reviewable in the isolated website clone, follow its
+publication rules, and clean up the clone only after the published work is complete.
 
 ## Verification and release gates
 

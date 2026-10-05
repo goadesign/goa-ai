@@ -1467,6 +1467,35 @@ Protocol checks run first; the middleware then receives the valid request and
 may change its context or return its own response before service dispatch.
 Regenerate the server with the pinned Goa dependency to enable this behavior.
 
+### URL values and mapped attributes
+
+Use Goa's native `Param("payload_field:url_name")` notation when a URL wildcard
+has a different name from its service payload field:
+
+```go
+JSONRPC(func() {
+    POST("/organizations/{organization}/mcp")
+    Param("organization_id:organization")
+})
+```
+
+API and parent service prefixes retain their authored paths and mappings. The
+URL supplies `organization_id`; tool and prompt arguments, examples, field
+metadata and argument codecs exclude it. An independent domain field named
+`organization` remains an argument. Each selected method keeps its own type,
+custom Go field name and validation, even when several tools share that URL.
+Invalid URL values stop before the configured endpoint runs. URL fields use
+scalar values or arrays of scalar values, following Goa's HTTP contract.
+Unsupported object collections fail generation with the method and field named.
+
+Generated protocol clients carry URL values in their typed request payload,
+separate from JSON-RPC parameters. A generated `NewCaller` accepts the URL values
+in route order after its retry policy and fixes them for that caller's lifetime.
+For this route, pass `"blue"` as its final argument. Tool calls then supply only
+domain arguments. The imported `NewHTTPCaller` instead receives a complete
+endpoint URL, such as `https://example.com/organizations/blue/mcp`.
+Regenerate clients, servers and agent contracts together when upgrading.
+
 ### Secured MCP methods
 
 Declare credentials with Goa's security DSL, such as `Token`, `AccessToken`,

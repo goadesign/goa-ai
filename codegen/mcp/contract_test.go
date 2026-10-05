@@ -68,7 +68,7 @@ func TestPrepareServices_AttachesGeneratedMCPDesign(t *testing.T) {
 	require.Empty(t, root.API.HTTP.Services)
 	require.Len(t, root.API.JSONRPC.Services, 1)
 	require.Same(t, root.Services[1], root.API.JSONRPC.Services[0].ServiceExpr)
-	require.Equal(t, "/rpc", root.API.JSONRPC.Services[0].JSONRPCRoute.Path)
+	require.Equal(t, []string{"/rpc"}, root.API.JSONRPC.Services[0].HTTPEndpoints[0].Routes[0].FullPaths())
 	mcpService := root.Services[1]
 	discover := mcpService.Method("server/discover")
 	require.NotNil(t, discover)
@@ -222,7 +222,8 @@ func TestBuildAdapterDataRejectsAnExampleThatCannotBeEncodedAsJSON(t *testing.T)
 
 func TestStaticPromptsRenderWithoutAProvider(t *testing.T) {
 	data := &AdapterData{
-		MCPPackage: "mcpassistant",
+		PayloadRefs: testProtocolPayloadRefs(),
+		MCPPackage:  "mcpassistant",
 		StaticPrompts: []*StaticPromptAdapter{{
 			Name:        "daily_report",
 			Description: "Summarize the day",
@@ -508,4 +509,21 @@ func prepareServices(roots []eval.Root) error {
 // testSchemaAPI gives isolated generator tests a deterministic example source.
 func testSchemaAPI() *expr.APIExpr {
 	return &expr.APIExpr{RandomizerFactory: expr.NewDeterministicRandomizerFactory()}
+}
+
+// testProtocolPayloadRefs supplies the exact synthetic method types used by
+// isolated template tests. Generated runtime tests resolve actual Goa layouts.
+func testProtocolPayloadRefs() map[string]string {
+	return map[string]string{
+		"server/discover":          "*DiscoverPayload",
+		"tools/list":               "*ToolsListPayload",
+		"tools/call":               "*ToolsCallPayload",
+		"resources/list":           "*ResourcesListPayload",
+		"resources/read":           "*ResourcesReadPayload",
+		"resources/templates/list": "*ResourceTemplatesListPayload",
+		"prompts/list":             "*PromptsListPayload",
+		"prompts/get":              "*PromptsGetPayload",
+		"completion/complete":      "*CompletionCompletePayload",
+		"subscriptions/listen":     "*SubscriptionsListenPayload",
+	}
 }

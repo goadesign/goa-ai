@@ -47,14 +47,14 @@ type (
 		transportName string
 	}
 
-	// protocolCredentialInputs stores transport fields separately from parameters.
-	protocolCredentialInputs struct {
+	// protocolHTTPInputs keeps native URL and credential fields outside MCP parameters.
+	protocolHTTPInputs struct {
 		body   *expr.AttributeExpr
-		fields []*protocolCredentialField
+		fields []*protocolHTTPField
 	}
 
-	// protocolCredentialField describes one native input shared within a method.
-	protocolCredentialField struct {
+	// protocolHTTPField describes one native input shared within a protocol method.
+	protocolHTTPField struct {
 		name          string
 		attribute     *expr.AttributeExpr
 		location      string
@@ -67,10 +67,10 @@ const (
 	credentialHeaderLocation      = "header"
 )
 
-// prepareCredentialInputs adds typed native HTTP fields only to methods that
-// dispatch secured operations. The original parameter body is retained, and
-// each service credential records the source field for its operation.
-func prepareCredentialInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, protocol *expr.ServiceExpr) (map[string][]*credentialInput, map[string]*protocolCredentialInputs, error) {
+// prepareHTTPInputs adds URL values to every protocol method and credentials
+// to methods that dispatch secured operations. MCP parameter bodies stay
+// unchanged; selected service calls receive these native inputs separately.
+func prepareHTTPInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp *mcpexpr.MCPExpr, protocol *expr.ServiceExpr, paths *expr.MappedAttributeExpr) (map[string][]*credentialInput, map[string]*protocolHTTPInputs, error) {
 	operations := make(map[string][]*expr.MethodExpr)
 	for _, tool := range mcp.Tools {
 		operations["tools/call"] = append(operations["tools/call"], tool.Method)
@@ -94,7 +94,7 @@ func prepareCredentialInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp
 		operations["subscriptions/listen"] = []*expr.MethodExpr{source.Method}
 	}
 	credentials := make(map[string][]*credentialInput)
-	bodies := make(map[string]*protocolCredentialInputs)
+	bodies := make(map[string]*protocolHTTPInputs)
 	for _, operation := range protocol.Methods {
 		methods := slices.Clone(operations[operation.Name])
 		slices.SortFunc(methods, func(left, right *expr.MethodExpr) int {
@@ -107,8 +107,16 @@ func prepareCredentialInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp
 			return 0
 		})
 		methods = slices.Compact(methods)
-		inputs := &protocolCredentialInputs{body: operation.Payload}
-		fields := make(map[[2]string]*protocolCredentialField)
+		inputs := &protocolHTTPInputs{body: operation.Payload}
+		for _, path := range *expr.AsObject(paths.Type) {
+			inputs.fields = append(inputs.fields, &protocolHTTPField{
+				name:          path.Name,
+				attribute:     expr.DupAtt(path.Attribute),
+				location:      "path",
+				transportName: paths.ElemName(path.Name),
+			})
+		}
+		fields := make(map[[2]string]*protocolHTTPField)
 		for _, method := range methods {
 			selected, known := credentials[method.Name]
 			if !known {
@@ -123,7 +131,7 @@ func prepareCredentialInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp
 				key := [2]string{credential.location, credential.transportName}
 				source := fields[key]
 				if source == nil {
-					source = &protocolCredentialField{
+					source = &protocolHTTPField{
 						name:          fmt.Sprintf("httpCredential%d", len(inputs.fields)),
 						attribute:     &expr.AttributeExpr{Type: expr.String, Description: "Native HTTP authentication input; excluded from MCP parameters."},
 						location:      credential.location,
@@ -139,7 +147,7 @@ func prepareCredentialInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp
 			continue
 		}
 		// An inline payload lets Goa name each service's complete protocol input.
-		// The shared MCP body declaration remains free of HTTP credentials.
+		// The shared MCP body declaration remains free of URL values and credentials.
 		operation.Payload = expr.DupAtt(operation.Payload.Type.(expr.UserType).Attribute())
 		object := expr.AsObject(operation.Payload.Type)
 		for _, field := range inputs.fields {
@@ -272,28 +280,31 @@ func nativeCredentialRequirements(root *expr.RootExpr, service *expr.ServiceExpr
 	return expr.EffectiveSecurityRequirements(method.Requirements)
 }
 
-// bindProtocolCredentialInputs gives Goa the parameter-only body and native
-// mappings. Its client and server generators own header, query and cookie I/O.
-func bindProtocolCredentialInputs(endpoint *expr.HTTPEndpointExpr, inputs *protocolCredentialInputs) {
+// bindProtocolHTTPInputs gives Goa the parameter-only body and native
+// mappings. Goa generates URL, header, query, and cookie decoding and encoding.
+func bindProtocolHTTPInputs(endpoint *expr.HTTPEndpointExpr, inputs *protocolHTTPInputs) {
 	endpoint.Body = inputs.body
 	for _, field := range inputs.fields {
 		var mapped *expr.MappedAttributeExpr
 		switch field.location {
 		case credentialHeaderLocation:
 			mapped = endpoint.Headers
-		case "query":
+		case "path", "query":
 			mapped = endpoint.Params
 		case "cookie":
 			mapped = endpoint.Cookies
 		}
 		expr.AsObject(mapped.Type).Set(field.name, field.attribute)
 		mapped.Map(field.transportName, field.name)
+		if field.location == "path" {
+			endpoint.MethodExpr.Payload.Validation.AddRequired(field.name)
+		}
 	}
 }
 
 // bindCredentialSelectors resolves original and protocol fields through Goa's
 // saved layouts. Named strings and optional pointers retain their authored types.
-func bindCredentialSelectors(services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
+func bindCredentialSelectors(prepared *preparedMCPService, data *AdapterData) error {
 	for _, endpoint := range data.EndpointMethods {
 		if len(endpoint.Credentials) == 0 {
 			continue
@@ -309,10 +320,7 @@ func bindCredentialSelectors(services *goaservice.Plan, prepared *preparedMCPSer
 			credential.Pointer = field.IsPointer()
 			for operation, name := range credential.sourceNames {
 				method := prepared.mcpService.Method(operation)
-				layout, err := services.MethodTypeLayout(method, method.Payload)
-				if err != nil {
-					return err
-				}
+				layout := prepared.protocolLayouts[operation]
 				sources := layout.PlansForOccurrence(method.Payload.Find(name))
 				if len(sources) != 1 || sources[0].FieldName(true) == "" {
 					return fmt.Errorf("MCP operation %q credential input must resolve to one protocol payload field", operation)

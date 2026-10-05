@@ -2,7 +2,7 @@
 {{ comment "Resources handling" }}
 
 // ResourcesList returns the fixed resources declared in the Goa design.
-func (a *MCPAdapter) ResourcesList(ctx context.Context, p *ResourcesListPayload) (*ResourcesListResult, error) {
+func (a *MCPAdapter) ResourcesList(ctx context.Context, p {{ index .PayloadRefs "resources/list" }}) (*ResourcesListResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/list")
     defer span.End()
 
@@ -23,7 +23,7 @@ func (a *MCPAdapter) ResourcesList(ctx context.Context, p *ResourcesListPayload)
 }
 
 // ResourcesRead calls the Goa method that owns the requested resource.
-func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload) (*ResourcesReadResult, error) {
+func (a *MCPAdapter) ResourcesRead(ctx context.Context, p {{ index .PayloadRefs "resources/read" }}) (*ResourcesReadResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/read")
     defer span.End()
 
@@ -32,8 +32,8 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
     case {{ quote .URI }}:
         {{- if .Endpoint.PayloadRef }}
         payload := new({{ .Endpoint.PayloadValueRef }})
-        {{- if .Endpoint.Credentials }}
-        if err := fill{{ .Endpoint.CallName }}Credentials(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "resources/read" }}{{ end }}); err != nil {
+        {{- if or .Endpoint.Credentials .Endpoint.Paths }}
+        if err := fill{{ .Endpoint.CallName }}Inputs(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "resources/read" }}{{ end }}{{ range .Endpoint.Paths }}, p.{{ index .Sources "resources/read" }}{{ end }}); err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return nil, err
@@ -80,8 +80,8 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
             span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("invalid_params", "%s", err.Error())
         }
-        {{- if .Endpoint.Credentials }}
-        if err := fill{{ .Endpoint.CallName }}Credentials(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "resources/read" }}{{ end }}); err != nil {
+        {{- if or .Endpoint.Credentials .Endpoint.Paths }}
+        if err := fill{{ .Endpoint.CallName }}Inputs(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "resources/read" }}{{ end }}{{ range .Endpoint.Paths }}, p.{{ index .Sources "resources/read" }}{{ end }}); err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return nil, err
@@ -124,7 +124,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 {{- if or .Resources .ResourceTemplates }}
 // ResourcesTemplatesList returns the URI templates advertised by the service.
 // Templates guide discovery; the typed reader owns URI interpretation and access.
-func (a *MCPAdapter) ResourcesTemplatesList(ctx context.Context, p *ResourceTemplatesListPayload) (*ResourceTemplatesListResult, error) {
+func (a *MCPAdapter) ResourcesTemplatesList(ctx context.Context, p {{ index .PayloadRefs "resources/templates/list" }}) (*ResourceTemplatesListResult, error) {
     _, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/templates/list")
     defer span.End()
     if p.Cursor != nil {

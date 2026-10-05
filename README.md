@@ -331,6 +331,10 @@ Mounted MCP requests also run HTTP middleware installed with the generated
 server's `Use` method, including middleware installed after mounting and before
 requests begin. Protocol checks run before that middleware; its context reaches
 the service and request-scoped progress.
+Authored URL mappings use Goa's `Param("payload_field:url_name")` notation.
+Generated clients retain the complete API and service path; adapters decode and
+validate each method's own typed URL values before endpoint execution. These
+values stay outside model arguments. See [URL values](docs/dsl.md#url-values-and-mapped-attributes).
 Generated adapters distinguish domain tool failures from invalid server results.
 Server faults remain internal protocol errors after application message redaction
 and never authorize replaying a tool call.

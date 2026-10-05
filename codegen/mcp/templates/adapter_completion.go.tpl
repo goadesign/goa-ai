@@ -2,7 +2,7 @@
 // CompletionComplete selects a declared prompt or resource argument and asks its service
 // method for suggestions. Missing bindings return an empty list for a valid
 // argument; unknown names fail before any service method runs.
-func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionCompletePayload) (*CompletionCompleteResult, error) {
+func (a *MCPAdapter) CompletionComplete(ctx context.Context, p {{ index .PayloadRefs "completion/complete" }}) (*CompletionCompleteResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.completion/complete")
     defer span.End()
     var reference string
@@ -70,8 +70,8 @@ func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionComple
             span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("invalid_params", "%s", err.Error())
         }
-        {{- if .Endpoint.Credentials }}
-        if err := fill{{ .Endpoint.CallName }}Credentials(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "completion/complete" }}{{ end }}); err != nil {
+        {{- if or .Endpoint.Credentials .Endpoint.Paths }}
+        if err := fill{{ .Endpoint.CallName }}Inputs(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "completion/complete" }}{{ end }}{{ range .Endpoint.Paths }}, p.{{ index .Sources "completion/complete" }}{{ end }}); err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return nil, err

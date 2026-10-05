@@ -26,6 +26,7 @@ func TestGenerateMCPTransport_RendersUnaryToolsCall(t *testing.T) {
 		mcp,
 	).buildAdapterData()
 	require.NoError(t, err)
+	data.PayloadRefs = testProtocolPayloadRefs()
 	data.CodecImportPath = "example.com/calc/gen/mcp_calc/internal/codec"
 	data.CodecPackage = testCodecPackage
 	data.NeedsServerCodec = true
@@ -47,6 +48,7 @@ func TestGenerateMCPTransport_RendersUnaryToolsCall(t *testing.T) {
 
 func TestGenerateMCPTransport_RendersCurrentToolResults(t *testing.T) {
 	rendered := renderTemplateSection(t, "adapter_tools", &AdapterData{
+		PayloadRefs:  testProtocolPayloadRefs(),
 		CodecPackage: "codec",
 		Tools: []*ToolAdapter{
 			{
@@ -70,9 +72,10 @@ func TestGenerateMCPTransport_RendersCurrentToolResults(t *testing.T) {
 
 func TestClientCaller_RendersUnaryToolsCall(t *testing.T) {
 	file := clientCallerFile(&AdapterData{
+		PayloadRefs: testProtocolPayloadRefs(),
 		mcpPathName: "mcp_calc",
 		ClientCaller: &ClientCallerData{
-			MCPPackage: "mcppkg",
+			PayloadRef: "mcppkg.ToolsCallPayload",
 			Tools:      []*ToolAdapter{{Name: "add"}},
 			imports: []*gcodegen.ImportSpec{
 				gcodegen.SimpleImport("context"),

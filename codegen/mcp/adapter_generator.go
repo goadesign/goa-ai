@@ -35,6 +35,8 @@ type (
 		Package string
 		// MCPPackage is the import name of the generated MCP service package.
 		MCPPackage string
+		// PayloadRefs names each protocol input using Goa's linked method layout.
+		PayloadRefs map[string]string
 		// CodecImportPath is the private generated package that converts service
 		// values to and from the JSON carried by MCP.
 		CodecImportPath string
@@ -111,10 +113,12 @@ type (
 	// ClientCallerData contains the names and result shapes used by the generated
 	// MCP caller.
 	ClientCallerData struct {
-		// MCPPackage is the final import name for the generated MCP service.
-		MCPPackage string
+		// PayloadRef is Goa's linked tools/call type used by the native caller.
+		PayloadRef string
 		// Tools describes the statically known result contract for each tool.
 		Tools []*ToolAdapter
+		// Paths binds required URL inputs outside model-facing tool arguments.
+		Paths []*callerRouteInput
 
 		clientPackage     *codegen.GeneratedPackage
 		clientImportPaths []string

@@ -21,8 +21,9 @@ type Caller struct {
 	transport *mcpruntime.HTTPTransport
 }
 
-// NewCaller checks application identity and binds it to each request. It does
-// not contact the server or require a discovery request before invoking a tool.
+// NewCaller checks application identity and fixes the authored URL values for
+// this caller. Each request keeps those values outside tool arguments; creating
+// the caller does not contact the server.
 func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport, retry mcpruntime.HTTPRetryPolicy) (mcpruntime.Caller, error) {
 	if err := retry.Validate(); err != nil {
 		return nil, err

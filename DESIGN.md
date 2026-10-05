@@ -2577,6 +2577,17 @@ JSON-RPC parameters. Private typed adapter code fills the original service paylo
 and runs its complete generated validation before invoking the configured endpoint.
 Credential-only methods accept empty domain input, including fixed resources.
 
+MCP route generation retains the original Goa mapped attributes and complete
+API and service paths. Private protocol fields carry raw URL values outside the
+JSON-RPC body. For each selected method, the generator plans the native HTTP
+wire attribute, parser and service-field conversion before names freeze, then
+renders from retained layouts. It fills the original payload field without
+replacing the decoded domain payload. Optional fields retain their native
+pointers, named values retain their types, and complete Goa validation runs
+before dispatch. Protocol signatures and selectors come from the same generated
+layouts as the native HTTP transport; no wildcard rewrite or runtime field map
+implements a second binding system.
+
 The MCP mount checks the HTTP protocol envelope before invoking Goa's public
 server entry point. That entry point calls the current configured HTTP handler,
 so middleware installed with `Server.Use` runs even after route registration.

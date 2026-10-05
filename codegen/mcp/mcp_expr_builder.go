@@ -16,10 +16,10 @@ type (
 	// mcpExprBuilder builds the Goa service that handles MCP requests.
 	mcpExprBuilder struct {
 		*shared.ProtocolExprBuilderBase
-		originalService  *expr.ServiceExpr
-		mcp              *mcpexpr.MCPExpr
-		mcpService       *expr.ServiceExpr
-		credentialInputs map[string]*protocolCredentialInputs
+		originalService *expr.ServiceExpr
+		mcp             *mcpexpr.MCPExpr
+		mcpService      *expr.ServiceExpr
+		httpInputs      map[string]*protocolHTTPInputs
 	}
 
 	// mcpHTTPServiceConfig gives the shared route builder the JSON-RPC path.
@@ -134,9 +134,9 @@ func (b *mcpExprBuilder) userTypeAttr(name string, builder func() *expr.Attribut
 
 // Attach adds the MCP service, types, and JSON-RPC transport to root. Goa plans
 // and writes these expressions with the rest of the design.
-func (b *mcpExprBuilder) Attach(root *expr.RootExpr, mcpService *expr.ServiceExpr, jsonrpcPath string) (*expr.HTTPServiceExpr, []expr.UserType) {
+func (b *mcpExprBuilder) Attach(root *expr.RootExpr, mcpService *expr.ServiceExpr, routePaths []string) (*expr.HTTPServiceExpr, []expr.UserType) {
 	b.buildMCPTypes()
-	httpService := b.buildHTTPService(mcpService, jsonrpcPath)
+	httpService := b.buildHTTPService(mcpService, routePaths)
 	httpService.Root = &root.API.JSONRPC.HTTPExpr
 	root.Services = append(root.Services, mcpService)
 	root.API.JSONRPC.Services = replaceHTTPServiceByName(
@@ -149,11 +149,15 @@ func (b *mcpExprBuilder) Attach(root *expr.RootExpr, mcpService *expr.ServiceExp
 
 // buildHTTPService gives the generated MCP service the JSON-RPC path declared
 // by the user service.
-func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr, jsonrpcPath string) *expr.HTTPServiceExpr {
-	httpService := shared.BuildHTTPServiceBase(mcpService, mcpHTTPServiceConfig{jsonrpcPath: jsonrpcPath})
+func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr, routePaths []string) *expr.HTTPServiceExpr {
+	httpService := shared.BuildHTTPServiceBase(mcpService, mcpHTTPServiceConfig{jsonrpcPath: "/"})
+	// Absolute service paths retain inherited prefixes exactly once.
+	for _, routePath := range routePaths {
+		httpService.Paths = append(httpService.Paths, "/"+routePath)
+	}
 	for _, endpoint := range httpService.HTTPEndpoints {
-		if inputs := b.credentialInputs[endpoint.MethodExpr.Name]; inputs != nil {
-			bindProtocolCredentialInputs(endpoint, inputs)
+		if inputs := b.httpInputs[endpoint.MethodExpr.Name]; inputs != nil {
+			bindProtocolHTTPInputs(endpoint, inputs)
 		}
 		if len(endpoint.MethodExpr.Errors) > 0 {
 			endpoint.HTTPErrors = buildMCPHTTPErrorMappings(endpoint)

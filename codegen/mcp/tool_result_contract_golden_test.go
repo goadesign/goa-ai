@@ -46,6 +46,7 @@ func TestMCPToolResultContractGoldens(t *testing.T) {
 		}
 	}
 	data := &AdapterData{
+		PayloadRefs:  testProtocolPayloadRefs(),
 		CodecPackage: "mcpcodec",
 	}
 
@@ -83,7 +84,7 @@ func TestMCPToolResultContractGoldens(t *testing.T) {
 			InputSchema: noArgumentsSchema,
 		},
 	}
-	data.ClientCaller = &ClientCallerData{MCPPackage: "mcpreports", Tools: data.Tools}
+	data.ClientCaller = &ClientCallerData{PayloadRef: "mcpreports.ToolsCallPayload", Tools: data.Tools}
 
 	testutil.AssertGo(
 		t,

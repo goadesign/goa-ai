@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,23 @@ import (
 )
 
 func TestMCPNativeCredentialPaths(t *testing.T) {
+	for _, scoped := range []bool{false, true} {
+		name := "credentials only"
+		design, runtime := nativeCredentialDesign, nativeCredentialTest
+		if scoped {
+			name = "mapped URL and credentials"
+			design, runtime = scopedCredentialFixture()
+		}
+		t.Run(name, func(t *testing.T) {
+			runNativeCredentialPaths(t, design, runtime)
+		})
+	}
+}
+
+// runNativeCredentialPaths compiles the selected service and runs its generated
+// clients against real servers, including the original authentication callbacks.
+func runNativeCredentialPaths(t *testing.T, design, runtime string) {
+	t.Helper()
 	dir := t.TempDir()
 	module := fmt.Sprintf(`module credential-paths.local
 
@@ -32,8 +50,8 @@ replace goa.design/goa/v3 => %s
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "design"), 0o700))
 	for name, source := range map[string]string{
 		"go.mod":             module,
-		"design/design.go":   nativeCredentialDesign,
-		"credential_test.go": nativeCredentialTest,
+		"design/design.go":   design,
+		"credential_test.go": runtime,
 	} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600))
 	}
@@ -50,6 +68,48 @@ replace goa.design/goa/v3 => %s
 		output, err := command.CombinedOutput()
 		require.NoError(t, err, string(output))
 	}
+}
+
+// scopedCredentialFixture adds an inherited mapped URL to the same secured
+// service. Its HTTP-only method keeps its separate native binding, while the
+// JSON-RPC methods receive a typed URL field beside their existing credentials.
+func scopedCredentialFixture() (string, string) {
+	design := strings.Replace(nativeCredentialDesign, `POST("/mcp")`, `POST("/organizations/{organization}/mcp");Param("organization_id:organization")`, 1)
+	design = strings.Replace(design, `var credential=`, `var organization=Type("Organization",String,func(){Pattern("^[a-z]+$");Meta("struct:pkg:path","credential/shared")})
+var credential=`, 1)
+	beforeHTTP, httpAndRest, found := strings.Cut(design, ` Method("http_key",`)
+	if !found {
+		panic("secured fixture lacks its HTTP-only method")
+	}
+	http, rest, found := strings.Cut(httpAndRest, ` Method("query_key",`)
+	if !found {
+		panic("secured fixture lacks its query method")
+	}
+	protected, secondary, found := strings.Cut(rest, `var _=Service("secondary",`)
+	if !found {
+		panic("secured fixture lacks its independent service")
+	}
+	field := `Payload(func(){Field(20,"organization_id",organization,"Organization supplied by the mapped URL",func(){Meta("struct:field:name","OrganizationScope")});Required("organization_id");`
+	beforeHTTP = strings.ReplaceAll(beforeHTTP, `Payload(func(){`, field)
+	protected = strings.ReplaceAll(protected, `Payload(func(){`, field)
+	design = beforeHTTP + ` Method("http_key",` + http + ` Method("query_key",` + protected + `var _=Service("secondary",` + secondary
+	runtime := nativeCredentialTest
+	for _, name := range []string{"ToolsList", "ToolsCall", "ResourcesRead", "PromptsList", "PromptsGet", "CompletionComplete"} {
+		runtime = strings.ReplaceAll(runtime, "&genmcp."+name+"Payload{", "&genmcp."+name+`Payload{HTTPPath0:"blue",`)
+	}
+	runtime = strings.ReplaceAll(runtime, `peer.URL+"/mcp"`, `peer.URL+"/organizations/blue/mcp"`)
+	runtime = strings.Replace(runtime, `"private_password","private_key"`, `"private_password","private_key","organization_id"`, 1)
+	runtime = strings.Replace(runtime, `assert.NotContains(t,string(tool.InputSchema),"private_")`, `assert.NotContains(t,string(tool.InputSchema),"private_");assert.NotContains(t,string(tool.InputSchema),"organization_id")`, 1)
+	runtime = strings.Replace(runtime, `middleware.Add(1);return next(ctx,input)`, `middleware.Add(1)
+ switch p:=input.(type){
+ case *genservice.JWTPayload:assert.Equal(t,"blue",string(p.OrganizationScope))
+ case *genservice.FixedPayload:assert.Equal(t,"blue",string(p.OrganizationScope))
+ case *genservice.PromptPayload:assert.Equal(t,"blue",string(p.OrganizationScope))
+ case *genservice.ResourcePayload:assert.Equal(t,"blue",string(p.OrganizationScope))
+ case *genservice.SuggestPayload:assert.Equal(t,"blue",string(p.OrganizationScope))
+ }
+ return next(ctx,input)`, 1)
+	return design, runtime
 }
 
 const nativeCredentialDesign = `package design

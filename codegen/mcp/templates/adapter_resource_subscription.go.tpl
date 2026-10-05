@@ -2,7 +2,7 @@
 // SubscriptionsListen supplies requested URIs to the configured resource source.
 // Goa endpoint authentication and middleware run before that source can send
 // an acknowledgment. The shared transport owns the final result's request ID.
-func (a *MCPAdapter) SubscriptionsListen(ctx context.Context, p *SubscriptionsListenPayload) (*SubscriptionsListenResult, error) {
+func (a *MCPAdapter) SubscriptionsListen(ctx context.Context, p {{ index $.PayloadRefs "subscriptions/listen" }}) (*SubscriptionsListenResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.subscriptions/listen")
     defer span.End()
     body := &{{ .PayloadTransportRef }}{}
@@ -16,8 +16,8 @@ func (a *MCPAdapter) SubscriptionsListen(ctx context.Context, p *SubscriptionsLi
         span.SetStatus(codes.Error, err.Error())
         return nil, goa.PermanentError("invalid_params", "%s", err.Error())
     }
-    {{- if .Endpoint.Credentials }}
-    if err := fill{{ .Endpoint.CallName }}Credentials(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "subscriptions/listen" }}{{ end }}); err != nil {
+    {{- if or .Endpoint.Credentials .Endpoint.Paths }}
+    if err := fill{{ .Endpoint.CallName }}Inputs(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "subscriptions/listen" }}{{ end }}{{ range .Endpoint.Paths }}, p.{{ index .Sources "subscriptions/listen" }}{{ end }}); err != nil {
         span.RecordError(err)
         span.SetStatus(codes.Error, err.Error())
         return nil, err
