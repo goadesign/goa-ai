@@ -2062,6 +2062,12 @@ closes the listener, while connection loss returns an interruption without an
 implicit reconnect. The host chooses a new listen request. This consumer does
 not make fixed catalogs dynamic or turn private session streams into public
 change sources. Generated producer bindings remain a separate release gate.
+The shared HTTP producer keeps source authorization and change selection in the
+configured handler, while its transport owns acknowledgment order, exact request
+IDs, serialized writes and graceful completion. Producer and receiver use one
+private filter-state implementation. Source errors before acknowledgment retain
+their original protocol response; delivery failures stop the request. This
+transport does not advertise a source or replace the required generated binding.
 See [the subscription contract](docs/runtime.md#mcp-change-subscriptions).
 
 Generated servers advertise only their implemented unary tools, fixed resource

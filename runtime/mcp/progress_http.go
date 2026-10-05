@@ -125,8 +125,9 @@ func acceptsEventStream(headers []string) bool {
 	return selectedQuality > 0
 }
 
-// writeProgressEvent retains each line of an encoded JSON message as SSE data.
-func writeProgressEvent(writer http.ResponseWriter, data []byte) error {
+// writeSSEMessage writes an encoded JSON message as event data and flushes it.
+// Progress and subscription responses share this framing and delivery contract.
+func writeSSEMessage(writer http.ResponseWriter, data []byte) error {
 	var event bytes.Buffer
 	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte{'\n'}) {
 		event.WriteString("data: ")
@@ -171,7 +172,7 @@ func (r *progressHTTPResponse) send(ctx context.Context, value float64, total *f
 		r.writer.WriteHeader(http.StatusOK)
 		r.started = true
 	}
-	if err := writeProgressEvent(r.writer, data); err != nil {
+	if err := writeSSEMessage(r.writer, data); err != nil {
 		r.failure = err
 		return err
 	}
@@ -207,7 +208,7 @@ func (r *progressHTTPResponse) finish() error {
 	if err := response.validateResponse(); err != nil {
 		return err
 	}
-	return writeProgressEvent(r.writer, r.body.Bytes())
+	return writeSSEMessage(r.writer, r.body.Bytes())
 }
 
 // close stops retained service contexts from reporting after the handler returns

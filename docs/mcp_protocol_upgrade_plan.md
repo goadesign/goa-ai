@@ -485,6 +485,28 @@ quiet streams and blocked callbacks, exact filter selection, invalid notificatio
 scope and one dispatch after an interruption. These checks do not establish full
 subscription or release conformance.
 
+The shared HTTP subscription producer now separates source selection from wire
+ownership. The source acknowledges its authorized subset, then reports typed
+change kinds. The transport supplies the exact request ID, shares private filter
+and ordering checks with the consumer, serializes delivery, and preserves the
+first write failure. Source rejection before acknowledgment retains the protocol
+error and HTTP status. Complete results preserve raw metadata and receive the
+transport-owned subscription ID; malformed completion is rejected. Contexts
+cannot report after completion, and closing a quiet HTTP listener cancels its
+source. Header changes before the first event remain on the response. Configured
+lint reports zero issues and the complete uncached transport race suite passes
+with the final notification spans and header/cancellation checks. This is shared transport
+production, not a generated source binding, source authorization or capability
+advertisement. Those complete-path requirements remain release gates.
+
+The dependency-adoption CI failure exposed a Registry test ordering mistake:
+provider renewal extends its existing lease without synchronously restoring a
+lost stream. The existing reader and periodic ping perform that recovery. The
+corrected test observes the restored original generation before opening another
+sink, then verifies its original registration token. The complete uncached
+Docker-backed Registry race suite passes. No runtime recovery or explicit
+stream-destruction semantics changed.
+
 Progress now works through generated unary HTTP services, shared HTTP/stdio
 callers, and the agent tool activity's host stream. `ReportProgress` uses the
 service context; `WithProgress` binds a typed client callback. Transports own

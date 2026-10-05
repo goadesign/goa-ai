@@ -59,12 +59,10 @@ type (
 	subscriptionHandlerKey struct{}
 	subscriptionHandler    func(context.Context, SubscriptionEvent) error
 	subscriptionReceiver   struct {
-		requestID    json.RawMessage
-		key          string
-		requested    SubscriptionFilter
-		accepted     SubscriptionFilter
-		acknowledged bool
-		handler      subscriptionHandler
+		requestID json.RawMessage
+		key       string
+		subscriptionState
+		handler subscriptionHandler
 	}
 )
 
@@ -135,7 +133,7 @@ func newSubscriptionReceiver(ctx context.Context, id, filter json.RawMessage) (*
 		return nil, err
 	}
 	handler, _ := ctx.Value(subscriptionHandlerKey{}).(subscriptionHandler)
-	return &subscriptionReceiver{requestID: cloneRaw(id), key: key, requested: requested, handler: handler}, nil
+	return &subscriptionReceiver{requestID: cloneRaw(id), key: key, subscriptionState: subscriptionState{requested: requested}, handler: handler}, nil
 }
 
 // decodeSubscriptionFilter rejects null and invalid field values before they
@@ -261,41 +259,22 @@ func (r *subscriptionReceiver) notification(ctx context.Context, message rpcMess
 	}
 	event := SubscriptionEvent{RequestID: cloneRaw(r.requestID), Kind: SubscriptionEventKind(message.Method), Meta: cloneRaw(fields["_meta"])}
 	if event.Kind == SubscriptionAcknowledged {
-		if r.acknowledged {
-			return NewMalformedResponseError(errors.New("subscription was acknowledged more than once"))
-		}
 		accepted, err := decodeSubscriptionFilter(fields["notifications"])
 		if err != nil {
 			return NewMalformedResponseError(err)
 		}
-		if err := r.checkAccepted(accepted); err != nil {
+		if err := r.acknowledge(accepted); err != nil {
 			return NewMalformedResponseError(err)
 		}
-		r.acknowledged, r.accepted = true, cloneSubscriptionFilter(accepted)
 		event.Accepted = accepted
 	} else {
-		if !r.acknowledged {
-			return NewMalformedResponseError(errors.New("subscription change arrived before acknowledgment"))
-		}
-		allowed := false
-		switch message.Method {
-		case string(SubscriptionToolsChanged):
-			allowed = r.accepted.ToolsListChanged
-		case string(SubscriptionPromptsChanged):
-			allowed = r.accepted.PromptsListChanged
-		case string(SubscriptionResourcesChanged):
-			allowed = r.accepted.ResourcesListChanged
-		case string(SubscriptionResourceUpdated):
-			allowed = len(r.accepted.ResourceSubscriptions) > 0
+		if event.Kind == SubscriptionResourceUpdated {
 			if bytes.Equal(bytes.TrimSpace(fields["uri"]), []byte("null")) || json.Unmarshal(fields["uri"], &event.URI) != nil {
 				return NewMalformedResponseError(errors.New("updated resource URI is required"))
 			}
-			if err := validateContentURI(event.URI); err != nil {
-				return NewMalformedResponseError(err)
-			}
 		}
-		if !allowed {
-			return NewMalformedResponseError(fmt.Errorf("notification %q was not acknowledged", message.Method))
+		if err := r.change(event.Kind, event.URI); err != nil {
+			return NewMalformedResponseError(err)
 		}
 	}
 	trace.SpanFromContext(ctx).AddEvent("mcp.subscription.notification", trace.WithAttributes(attribute.String("notification.method", message.Method)))
@@ -321,20 +300,6 @@ func (r *subscriptionReceiver) finish(raw json.RawMessage) error {
 	key, err := protocolIDKey(result.Meta[subscriptionIDKey])
 	if err != nil || key != r.key || result.ResultType != resultComplete || !r.acknowledged {
 		return NewMalformedResponseError(errors.New("invalid subscription completion or missing acknowledgment"))
-	}
-	return nil
-}
-
-// checkAccepted enforces that acknowledgment can narrow a requested filter but
-// cannot authorize extra notification kinds or extra resource subscriptions.
-func (r *subscriptionReceiver) checkAccepted(accepted SubscriptionFilter) error {
-	if accepted.ToolsListChanged && !r.requested.ToolsListChanged || accepted.PromptsListChanged && !r.requested.PromptsListChanged || accepted.ResourcesListChanged && !r.requested.ResourcesListChanged {
-		return errors.New("acknowledgment includes an unrequested notification kind")
-	}
-	for _, uri := range accepted.ResourceSubscriptions {
-		if !slices.Contains(r.requested.ResourceSubscriptions, uri) {
-			return fmt.Errorf("acknowledgment includes unrequested resource %q", uri)
-		}
 	}
 	return nil
 }

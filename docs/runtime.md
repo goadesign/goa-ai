@@ -6702,6 +6702,24 @@ and retains no protocol session or resume cursor. The host decides whether to
 open a new listener with a fresh request ID. Callback failures also end the
 listener and are not retry signals.
 
+The shared HTTP producer uses `ServeSubscriptions` around a validated
+`subscriptions/listen` handler. The configured source first authenticates and
+selects the authorized subset, then calls `AcknowledgeSubscription(ctx, filter)`.
+`ReportToolsChanged`, `ReportPromptsChanged`, `ReportResourcesChanged` and
+`ReportResourceUpdated(ctx, uri)` send only acknowledged change kinds. These
+functions require the active listen context; ordinary service contexts return an
+error. The source owns whether an updated URI belongs to an accepted resource,
+including a sub-resource, and must handle every returned delivery error.
+
+The transport supplies the exact request ID, serializes concurrent sends and
+retains the first failed write. Acknowledgment narrows the requested filter once.
+The final generated response must be complete and contain only standard result
+fields; the transport adds its subscription ID while preserving other raw
+metadata. A source rejection before acknowledgment retains its JSON-RPC error
+and HTTP status. Cancellation ends delivery; retained contexts cannot send after
+the handler returns. Response headers written before acknowledgment remain on
+the stream. The producer neither authorizes a source nor advertises capability.
+
 This consumer contract implements the core notification filter. Generated servers
 still need a typed, authenticated change source before they can advertise
 subscriptions. Fixed generated catalogs do not emit pretend catalog changes, and
