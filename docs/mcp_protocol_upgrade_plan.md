@@ -186,7 +186,7 @@ undeclared query variables, and the client omitted those query values. The
 corrected client and server preserve named optional values, integer validation,
 arrays, maps and unchanged JSON-RPC body values.
 
-All four modules use exact merge
+The credential increment was verified against exact merge
 `2aa4cfc90cfa3879e3109771ff17ac7c01dcd130`
 (`v3.33.1-0.20261005031206-2aa4cfc90cfa`). Both prerequisites passed native
 compiled HTTP checks, full uncached race suites, configured lint, Linux/Windows
@@ -204,6 +204,34 @@ of missing or malformed credentials before endpoint middleware or service work.
 These checks do not establish OAuth resource authorization, complete released-set
 conformance or external caller cutover. Tests using a local Goa replacement remain
 development evidence only.
+
+Merged [Goa PR #4023](https://github.com/goadesign/goa/pull/4023) fixes a
+separate middleware bypass. Native JSON-RPC mounts called their dispatch
+functions directly, and direct ordinary/mixed serving also skipped the handler
+wrapped by `Server.Use`. Eight compiled cases now prove direct and mounted
+ordinary, event-only and mixed responses, ordered middleware context, exact
+successful results and rejection before endpoint work. Middleware installed
+after mounting also runs; installation still precedes requests. Linux/Windows
+CI, CodeQL and dependency review pass, and the tested and merged trees match.
+The local full uncached race run passed every package except the X-Ray test,
+whose UDP listener could not bind its fixed port. Its owner during the failure
+is unverified; the failed package passed an independent uncached race rerun.
+
+All four Goa AI modules now use exact merged source
+`9ad0a1523ac8782b491cf69ad7d9d20cac9c8df1`
+(`v3.33.1-0.20261005052106-9ad0a1523ac8`). The MCP generator supplies the private
+request processor selected by Goa's constructor and mounts the common public
+entry point. Duplicate transport-selection branches are removed. Protocol
+checks remain outside HTTP middleware, while accepted requests carry middleware
+context through original authentication and service progress. Registry,
+quickstart and assistant regeneration passed with protoc 36.2. The complete
+published-pin acceptance passes configured lint, the uncached root race suite,
+quickstart, build, regenerated assistant race checks and the evaluation consumer.
+The completed Goa clone was fast-forwarded to merged `v3`, verified clean with
+no unpushed commits, then deleted; all 37 capture files were moved to the ignored
+Goa AI cache with matching SHA-256 hashes.
+This correction supplies no OAuth verifier or challenge and does not authorize
+retrying an endpoint error after effects.
 
 A compiled standalone transport probe also confirms that existing Goa JSON-RPC
 HTTP headers can provide typed protocol payload fields while remaining absent

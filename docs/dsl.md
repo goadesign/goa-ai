@@ -1459,6 +1459,12 @@ context, interceptors and middleware. Static catalogs and prompts do not call
 an application endpoint. This replaces the constructor that accepted a bare
 service; regenerate and update application wiring together.
 
+The generated HTTP server's `Use` method applies HTTP middleware to mounted MCP
+requests. It may be called before or after mounting, but before requests begin.
+Protocol checks run first; the middleware then receives the valid request and
+may change its context or return its own response before service dispatch.
+Regenerate the server with the pinned Goa dependency to enable this behavior.
+
 ### Secured MCP methods
 
 Declare credentials with Goa's security DSL, such as `Token`, `AccessToken`,

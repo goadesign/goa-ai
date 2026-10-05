@@ -10,24 +10,11 @@ func MountWithOrigins(mux goahttp.Muxer, h *{{ .Transport.ServerStructDeclaratio
 	for _, origin := range origins {
 		allowedOrigins[origin] = struct{}{}
 	}
-{{- if .Transport.HasMixed }}
-	// ServeHTTP checks the Accept header and chooses one response or a stream of events.
+	// Mounted requests pass through the configured HTTP middleware before the
+	// server sends a JSON-RPC response or a stream of events.
 	{{- range (index .Transport.Endpoints 0).Routes }}
 	mux.Handle("{{ .Verb }}", "{{ .Path }}", withMCPTransport(h, allowedOrigins, h.ServeHTTP))
 	{{- end }}
-{{- else if .Transport.HasSSE }}
-	// Every method in this server writes a stream of events.
-	{{- range .Transport.Endpoints }}
-		{{- range .Routes }}
-	mux.Handle("{{ .Verb }}", "{{ .Path }}", withMCPTransport(h, allowedOrigins, h.handleSSE))
-		{{- end }}
-	{{- end }}
-{{- else }}
-	// Every method in this server writes one JSON-RPC response.
-	{{- range (index .Transport.Endpoints 0).Routes }}
-	mux.Handle("{{ .Verb }}", "{{ .Path }}", withMCPTransport(h, allowedOrigins, h.ServeHTTP))
-	{{- end }}
-{{- end }}
 	{{- range (index .Transport.Endpoints 0).Routes }}
 	mux.Handle("GET", "{{ .Path }}", mcpMethodNotAllowed(allowedOrigins))
 	mux.Handle("DELETE", "{{ .Path }}", mcpMethodNotAllowed(allowedOrigins))

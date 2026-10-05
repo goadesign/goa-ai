@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +25,8 @@ import (
 )
 
 type (
+	progressTransportKey struct{}
+
 	progressTestService struct {
 		genassistant.Service
 		release <-chan struct{}
@@ -31,6 +34,9 @@ type (
 )
 
 func (s *progressTestService) ReportWork(ctx context.Context) (string, error) {
+	if ctx.Value(progressTransportKey{}) != true {
+		return "", fmt.Errorf("transport middleware context missing")
+	}
 	for _, value := range []float64{0, 50, 100} {
 		if err := mcpruntime.ReportProgress(ctx, value, new(float64(100)), nil); err != nil {
 			return "", err
@@ -49,7 +55,15 @@ func TestGeneratedHTTPProgressBeforeResult(t *testing.T) {
 	service := &progressTestService{Service: NewAssistant(), release: release}
 	mux := goahttp.NewMuxer()
 	server := genserver.New(genmcp.NewEndpoints(genmcp.NewMCPAdapter(genassistant.NewEndpoints(service), nil)), mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, nil)
+	var transportCalls atomic.Int64
 	genserver.Mount(mux, server)
+	server.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			transportCalls.Add(1)
+			ctx := context.WithValue(request.Context(), progressTransportKey{}, true)
+			next.ServeHTTP(writer, request.WithContext(ctx))
+		})
+	})
 	endpoint := httptest.NewServer(mux)
 	defer endpoint.Close()
 	location, err := url.Parse(endpoint.URL)
@@ -91,6 +105,7 @@ func TestGeneratedHTTPProgressBeforeResult(t *testing.T) {
 	close(release)
 	result := <-final
 	require.NoError(t, result.err)
+	assert.Equal(t, int64(1), transportCalls.Load())
 	assert.JSONEq(t, `"finished"`, string(result.result.(*genmcp.ToolsCallResult).StructuredContent))
 }
 

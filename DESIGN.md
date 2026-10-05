@@ -2560,6 +2560,14 @@ JSON-RPC parameters. Private typed adapter code fills the original service paylo
 and runs its complete generated validation before invoking the configured endpoint.
 Credential-only methods accept empty domain input, including fixed resources.
 
+The MCP mount checks the HTTP protocol envelope before invoking Goa's public
+server entry point. That entry point calls the current configured HTTP handler,
+so middleware installed with `Server.Use` runs even after route registration.
+The constructor chooses private dispatch once; the MCP mount does not repeat
+transport selection or capture a handler before middleware is installed. Install
+middleware before requests begin. Its context reaches original endpoint
+authentication, service execution and request-scoped progress.
+
 OAuth credentials require `Authorization: Bearer`. Basic and Bearer schemes can
 be alternatives when their inactive payload fields allow absence; they cannot be
 combined in one authorization requirement. Unsupported body bindings, conflicting

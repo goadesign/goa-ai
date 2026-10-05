@@ -195,10 +195,14 @@ import (
  "goa.design/goa/v3/security"
  "goa.design/goa-ai/runtime/agent/tools"
 )
-type principalKey struct{}
-type service struct {auth,work,basicCalls atomic.Int64;last string}
+type (
+ principalKey struct{}
+ transportContextKey struct{}
+ service struct {auth,work,basicCalls atomic.Int64;last string}
+)
 func(s *service)authorize(ctx context.Context,value string)(context.Context,error){
  s.auth.Add(1)
+ if ctx.Value(transportContextKey{})!=true{return ctx,errors.New("transport middleware context missing")}
  if value!="authorized"{return ctx,errors.New("credential rejected")}
  return context.WithValue(ctx,principalKey{},true),nil
 }
@@ -268,7 +272,13 @@ func TestCredentialsRemainOutsideArguments(t *testing.T){
  mux:=goahttp.NewMuxer()
  adapter:=genmcp.NewMCPAdapter(endpoints,nil)
  server:=genserver.New(genmcp.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil)
+ var transportMiddleware atomic.Int64
  genserver.Mount(mux,server)
+ server.Use(func(next http.Handler)http.Handler{return http.HandlerFunc(func(writer http.ResponseWriter,request *http.Request){
+  transportMiddleware.Add(1)
+  ctx:=context.WithValue(request.Context(),transportContextKey{},true)
+  next.ServeHTTP(writer,request.WithContext(ctx))
+ })})
  peer:=httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter,request *http.Request){
   body,err:=io.ReadAll(request.Body);if err!=nil{t.Fatal(err)}
   if err:=request.Body.Close();err!=nil{t.Fatal(err)}
@@ -342,6 +352,7 @@ func TestCredentialsRemainOutsideArguments(t *testing.T){
  assert.Equal(t,int64(17),s.work.Load())
  assert.Equal(t,s.work.Load()+1,s.auth.Load())
  assert.Equal(t,s.work.Load(),middleware.Load())
+ assert.Equal(t,int64(19),transportMiddleware.Load())
  // Bearer headers with extra separating spaces or mixed-case names return the same domain result.
  for _,header:=range []string{"Bearer  authorized","bEaReR   authorized"}{
   beforeAuth,beforeWork,beforeMiddleware:=s.auth.Load(),s.work.Load(),middleware.Load()
@@ -366,6 +377,19 @@ func TestCredentialsRemainOutsideArguments(t *testing.T){
   failure,err:=uncredentialed.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:"jwt",Arguments:json.RawMessage("{\"token\":\"domain\"}")})
   if err!=nil{t.Fatal(err)}
   if failure.(*genmcp.ToolsCallResult).IsError==nil||!*failure.(*genmcp.ToolsCallResult).IsError{t.Fatalf("invalid credential accepted: %q",header)}
+  assert.Equal(t,before,s.work.Load())
+  assert.Equal(t,before,middleware.Load())
+ }
+ // Invalid protocol envelopes stop before transport middleware or endpoint work.
+ beforeTransport,beforeAuth:=transportMiddleware.Load(),s.auth.Load()
+ for _,body:=range []string{"{invalid","{}","{\"jsonrpc\":\"2.0\",\"id\":\"bad\",\"method\":\"server/discover\",\"params\":{}}"}{
+  request,err:=http.NewRequestWithContext(t.Context(),http.MethodPost,peer.URL+"/mcp",strings.NewReader(body));if err!=nil{t.Fatal(err)}
+  request.Header.Set("Content-Type","application/json")
+  response,err:=peer.Client().Do(request);if err!=nil{t.Fatal(err)}
+  if err:=response.Body.Close();err!=nil{t.Fatal(err)}
+  assert.Equal(t,http.StatusBadRequest,response.StatusCode)
+  assert.Equal(t,beforeTransport,transportMiddleware.Load())
+  assert.Equal(t,beforeAuth,s.auth.Load())
   assert.Equal(t,before,s.work.Load())
   assert.Equal(t,before,middleware.Load())
  }

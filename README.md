@@ -327,6 +327,10 @@ Generated MCP adapters accept the application's configured Goa endpoints.
 Authentication, method scopes, interceptors and endpoint middleware therefore run
 through the original service contract. Regenerate and replace bare-service
 adapter constructor calls; see [MCP server composition](docs/dsl.md#mcp-server-definition).
+Mounted MCP requests also run HTTP middleware installed with the generated
+server's `Use` method, including middleware installed after mounting and before
+requests begin. Protocol checks run before that middleware; its context reaches
+the service and request-scoped progress.
 Generated adapters distinguish domain tool failures from invalid server results.
 Server faults remain internal protocol errors after application message redaction
 and never authorize replaying a tool call.

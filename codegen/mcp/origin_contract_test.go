@@ -18,8 +18,6 @@ type (
 		ServerStructDeclaration *goacodegen.NameDeclaration
 		Service                 originMountService
 		Endpoints               []originMountEndpoint
-		HasMixed                bool
-		HasSSE                  bool
 	}
 
 	// originMountService names the generated MCP service and package.

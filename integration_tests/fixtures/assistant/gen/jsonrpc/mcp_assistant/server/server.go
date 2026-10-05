@@ -114,8 +114,8 @@ func New(
 		errhandler:             errhandler,
 	}
 	// Install the request handler required by this service's methods.
-	// ServeHTTP handles ordinary JSON-RPC request bodies.
-	s.Handler = http.HandlerFunc(s.ServeHTTP)
+	// handleHTTP handles ordinary JSON-RPC request bodies.
+	s.Handler = http.HandlerFunc(s.handleHTTP)
 	return s
 }
 
@@ -134,12 +134,18 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.Handler = m(s.Handler)
 }
 
+// ServeHTTP sends each HTTP request through the installed middleware before
+// the generated handler writes its JSON-RPC response or stream.
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	s.Handler.ServeHTTP(w, r)
+}
+
 // MethodNames returns the methods served.
 func (s *Server) MethodNames() []string { return mcpassistant.MethodNames[:] }
 
-// ServeHTTP decodes one MCP request and dispatches its generated protocol method.
+// handleHTTP decodes one MCP request and dispatches its generated protocol method.
 // The mount validates the current metadata and headers before this function runs.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	var request jsonrpc.RawRequest
 	if err := s.decoder(r).Decode(&request); err != nil {
 		s.encodeJSONRPCError(r.Context(), w, &request, jsonrpc.ParseError, "Parse error", nil)
@@ -199,7 +205,8 @@ func MountWithOrigins(mux goahttp.Muxer, h *Server, origins []string) {
 	for _, origin := range origins {
 		allowedOrigins[origin] = struct{}{}
 	}
-	// Every method in this server writes one JSON-RPC response.
+	// Mounted requests pass through the configured HTTP middleware before the
+	// server sends a JSON-RPC response or a stream of events.
 	mux.Handle("POST", "/rpc", withMCPTransport(h, allowedOrigins, h.ServeHTTP))
 	mux.Handle("GET", "/rpc", mcpMethodNotAllowed(allowedOrigins))
 	mux.Handle("DELETE", "/rpc", mcpMethodNotAllowed(allowedOrigins))

@@ -6488,7 +6488,7 @@ loss still follows the existing tool trust and retry contract.
 
 The authorization client owns challenge parsing, credential renewal and consent.
 Error text omits the challenge headers and HTTP body. Built-in OAuth and generated
-server credential delivery remain release gates; this response contract does not
+server OAuth challenges remain release gates; this response contract does not
 implement those flows. No checkpoint or model argument carries a credential.
 
 For a subprocess, use `NewStdioCaller(ctx, StdioOptions{...})`. Each message
@@ -6503,7 +6503,16 @@ endpoint middleware before constructing the adapter. Tools, resource reads,
 method-backed prompts and completion call the same endpoint instances, keeping
 method scopes and authenticated context under Goa's ownership. Regenerate and
 replace bare-service constructor calls when upgrading. This endpoint composition
-does not complete the pending HTTP credential-delivery and OAuth challenge work.
+preserves the implemented native HTTP credential delivery but does not complete
+the pending OAuth resource validation and challenge work.
+
+Mounted MCP requests pass protocol checks before running HTTP middleware
+installed with the generated server's `Use` method. The middleware may be
+installed before or after mounting, but before requests start. Its context reaches
+original endpoint authentication, service work and progress delivery. A middleware
+rejection returns its own HTTP response without calling the next handler.
+Regenerate with the pinned Goa dependency; older generated mounts can bypass
+this middleware.
 
 For a fixed Goa result view, server encoding, the advertised result schema and
 the generated agent decoder use only the selected fields. Required fields in
