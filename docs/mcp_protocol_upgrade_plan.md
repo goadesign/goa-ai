@@ -217,7 +217,7 @@ The local full uncached race run passed every package except the X-Ray test,
 whose UDP listener could not bind its fixed port. Its owner during the failure
 is unverified; the failed package passed an independent uncached race rerun.
 
-All four Goa AI modules now use exact merged source
+The middleware adoption used exact merged source
 `9ad0a1523ac8782b491cf69ad7d9d20cac9c8df1`
 (`v3.33.1-0.20261005052106-9ad0a1523ac8`). The MCP generator supplies the private
 request processor selected by Goa's constructor and mounts the common public
@@ -258,13 +258,18 @@ composition needs its own conflict checks. This does not authorize removing Basi
 or API-key support from unrelated services.
 
 A separate native Goa metadata prototype confirms that its generated HTTP
-handler can be mounted at the resource owner's metadata path. The generated
-response decoder retains the exact resource identifier, issuer list and basic
-scope list. One mux serves distinct resources on the same host, root and
-path-specific metadata, query-bearing resource identifiers and percent-encoded
-slashes; the unrelated design route remains unmounted. The uncached race suite
-passes against the published Goa pin. This establishes a typed metadata response
-path, not token validation, OAuth client discovery or framework authorization.
+handler can be mounted at the resource owner's metadata path. Two resource
+identifiers that differ only in their query exposed a flaw in the first proof:
+registering a fixed response for each identifier at the same path made the last
+registration replace the earlier response. The corrected handler derives the
+resource identifier per request from a configured trusted origin, the exact
+escaped resource path and the raw query. It passes that private request value
+to the metadata service through context, while Goa still owns response encoding
+and decoding. One mux registers each metadata path once and serves six cases:
+root, path-specific, sibling, two query variants and a percent-encoded slash.
+The uncached race suite passes against the published Goa pin. This establishes
+a typed metadata response path, not token validation, OAuth client discovery,
+reverse-proxy origin configuration or framework authorization.
 Prefer an owned generated metadata contract over a second handwritten HTTP JSON
 response. Keep the verifier and metadata configuration at construction; a
 protected generated server must require the verifier while retaining Goa's
@@ -273,6 +278,68 @@ runtime branch. Goa's existing `SecurityHolder` interface permits framework
 expressions to reuse `Security` and scope declarations; verify the complete
 resource policy and constructor design before adding another policy DSL or a
 public parsed-request record.
+
+A compiled design probe also found that the current MCP generator cannot
+represent the authored route `/organizations/{organization_id}/mcp`.
+Generation fails because discovery, list and call payloads lack the named route
+parameter. Correct the generator before adding resource authorization. Goa's
+generated transport must decode route values, and generated adapters must fill
+matching fields in the original service payload before full validation and
+configured endpoint execution. Route values must remain outside MCP parameters,
+argument schemas, examples, field metadata and argument codecs; clients must
+not select a different organization through a tool argument. Trace inherited
+paths, renamed bindings, named types, validation and generated clients, rather
+than copying raw path strings or introducing a public raw-request bag. Verify
+catalogs, calls, resources, prompts, completions and agent specifications against
+that same projection, including ordinary domain fields on routes that do not
+bind them. The MCP probe proves the generation failure only; implementation and
+positive end-to-end evidence remain required.
+
+The native Goa prerequisite is independently verified in
+[Goa PR #4024](https://github.com/goadesign/goa/pull/4024). Its JSON-RPC snapshot
+had discarded typed path records, its import planning omitted path constructors,
+and its path-only encoder declared an unused payload. The shared HTTP request
+builder also ignored authored service field renames. The correction retains
+method-specific path conversion and validation, plans path imports and resolves
+service field declarations. A compiled client/server fixture verifies named
+strings, numeric values, arrays, optional service fields, renamed fields,
+notifications, mapped request IDs, domain bodies, streaming and middleware
+installed after mounting. Invalid URL values fail before configured endpoint
+work. Configured lint, the full uncached root race suite and the existing
+JSON-RPC integration suite pass. Linux and Windows CI, CodeQL and dependency
+review passed, with no review findings. The merged commit is `a5e621d460dfecbe9888980409984bf40cd87e7d`;
+its tree matches the tested head. All four Goa AI modules now select that exact
+source (`v3.33.1-0.20261005065914-a5e621d460df`), without a local Goa
+replacement. Registry, quickstart and assistant regeneration succeeds with no
+tracked generated output changes. Configured lint reports zero issues. The
+complete uncached root race suite, quickstart, regenerated assistant race suite,
+root build and generated evaluation-consumer check pass against this exact pin.
+Tidying all four modules removes the obsolete Goa checksums without changing
+other selected versions.
+
+This prerequisite does not by itself correct MCP composition. One `tools/call`
+operation can dispatch methods with different route-field types. Keep each
+method's typed conversions and validations; choosing one tool's field as a
+shared type would change the others' contracts. The original binding must also
+remain available to expression validation, catalogs, argument codecs and agent
+specifications after the original JSON-RPC service is replaced. Preserve full
+inherited paths as well as route suffixes. Verify that independent generation
+roots cannot reuse another root's bindings. No public HTTP request accessor,
+untyped route map or new caller-owned conversion step is required by the
+protocol; justify any proposed public contract against the complete producer
+and consumer path before implementation.
+
+A further probe distinguishes authored Go field renames from wildcard aliases.
+The current Goa parser recognizes `{field}` and `{*field}`, with names matching
+payload fields. The colon alias example in the
+[HTTP guide](https://goa.design/docs/1-goa/http-guide/) disagrees with the current
+parser: a colon wildcard compiled as a literal client path and left the value
+in protocol parameters. An explicit `Param("organization_id:organization")`
+with `{organization}` was rejected because that wildcard was absent from the
+payload. These results establish no alias support. Preserve recognized native
+path contracts and authored Go field renames; arbitrary wildcard aliases need
+an owner-level design and verification before they can be claimed. Correct the
+documentation mismatch separately rather than inventing an MCP-only parser.
 
 Bearer header parsing must retain the token while accepting the one-or-more
 ASCII spaces that separate it from the scheme. The current compiled credential

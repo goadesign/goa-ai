@@ -8,7 +8,7 @@ require (
 	go.opentelemetry.io/otel v1.47.0
 	goa.design/clue v1.3.0
 	goa.design/goa-ai v0.0.0
-	goa.design/goa/v3 v3.33.1-0.20261005052106-9ad0a1523ac8
+	goa.design/goa/v3 v3.33.1-0.20261005065914-a5e621d460df
 )
 
 require (
