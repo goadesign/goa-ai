@@ -1206,6 +1206,19 @@ func TestLiveRegistryRecoversStreamLossWithRetainedAdmission(t *testing.T) {
 		ExpectedRegistrationToken: first.RegistrationToken,
 	})
 	require.NoError(t, err)
+	// Renewal extends the retained provider lease. The existing stream reader
+	// and periodic ping restore lost stream state asynchronously, so wait for
+	// that original generation before opening the new observer.
+	require.Eventually(t, func() bool {
+		lifecycle, err := rdb.HGetAll(ctx, streamKey+":lifecycle").Result()
+		if err != nil {
+			t.Errorf("read recovering stream lifecycle: %v", err)
+			return false
+		}
+		return lifecycle["generation"] == "1" && lifecycle["state"] == "active" &&
+			lifecycle["physical_key"] == streamKey
+	}, 10*time.Second, 20*time.Millisecond,
+		"the existing reader and ping must restore the original active stream generation")
 	recoveredSink, err := stream.NewSink(ctx, "loss-observer-recovered")
 	require.NoError(t, err)
 	t.Cleanup(func() {
