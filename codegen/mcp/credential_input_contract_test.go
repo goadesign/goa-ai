@@ -342,6 +342,17 @@ func TestCredentialsRemainOutsideArguments(t *testing.T){
  assert.Equal(t,int64(17),s.work.Load())
  assert.Equal(t,s.work.Load()+1,s.auth.Load())
  assert.Equal(t,s.work.Load(),middleware.Load())
+ // Bearer headers with extra separating spaces or mixed-case names return the same domain result.
+ for _,header:=range []string{"Bearer  authorized","bEaReR   authorized"}{
+  beforeAuth,beforeWork,beforeMiddleware:=s.auth.Load(),s.work.Load(),middleware.Load()
+  spaced:=genclient.NewClient(address.Scheme,address.Host,&authorizationDoer{client:peer.Client(),value:header},goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
+  result,err:=spaced.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:"jwt",Arguments:json.RawMessage("{\"token\":\"domain\"}")})
+  if err!=nil{t.Fatal(err)}
+  assert.Equal(t,"\"domain\"",string(result.(*genmcp.ToolsCallResult).StructuredContent))
+  assert.Equal(t,beforeAuth+1,s.auth.Load())
+  assert.Equal(t,beforeWork+1,s.work.Load())
+  assert.Equal(t,beforeMiddleware+1,middleware.Load())
+ }
  // Domain injection is rejected before middleware, even with a valid header.
  before:=s.work.Load()
  rejected,err:=client.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:"jwt",Arguments:json.RawMessage("{\"token\":\"domain\",\"private_jwt\":\"injected\"}")})
@@ -350,7 +361,7 @@ func TestCredentialsRemainOutsideArguments(t *testing.T){
  assert.Equal(t,before,s.work.Load())
  assert.Equal(t,before,middleware.Load())
  // Missing and malformed Bearer inputs fail before the configured endpoint.
- for _,header:=range []string{"","Basic bad","Bearer two tokens"}{
+ for _,header:=range []string{"","Basic bad","Bearer two tokens","Bearer\t authorized","Bearer \tauthorized","Bearer    "}{
   uncredentialed:=genclient.NewClient(address.Scheme,address.Host,&authorizationDoer{client:peer.Client(),value:header},goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
   failure,err:=uncredentialed.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:"jwt",Arguments:json.RawMessage("{\"token\":\"domain\"}")})
   if err!=nil{t.Fatal(err)}

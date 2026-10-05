@@ -229,6 +229,36 @@ combined schemes and valid optional alternatives; the future OAuth resource
 composition needs its own conflict checks. This does not authorize removing Basic
 or API-key support from unrelated services.
 
+A separate native Goa metadata prototype confirms that its generated HTTP
+handler can be mounted at the resource owner's metadata path. The generated
+response decoder retains the exact resource identifier, issuer list and basic
+scope list. One mux serves distinct resources on the same host, root and
+path-specific metadata, query-bearing resource identifiers and percent-encoded
+slashes; the unrelated design route remains unmounted. The uncached race suite
+passes against the published Goa pin. This establishes a typed metadata response
+path, not token validation, OAuth client discovery or framework authorization.
+Prefer an owned generated metadata contract over a second handwritten HTTP JSON
+response. Keep the verifier and metadata configuration at construction; a
+protected generated server must require the verifier while retaining Goa's
+`Mount(mux)` interface. A nil or omitted verifier must never select an unprotected
+runtime branch. Goa's existing `SecurityHolder` interface permits framework
+expressions to reuse `Security` and scope declarations; verify the complete
+resource policy and constructor design before adding another policy DSL or a
+public parsed-request record.
+
+Bearer header parsing must retain the token while accepting the one-or-more
+ASCII spaces that separate it from the scheme. The current compiled credential
+fixture verifies multiple spaces and mixed-case scheme names, exact domain
+results and one endpoint invocation. Embedded spaces or tabs, a tab replacing
+the scheme separator and an empty token remain rejected before endpoint work.
+This is HTTP syntax handling, not token issuer, audience or expiry verification.
+The final spacing correction passes configured lint with zero issues and the
+complete uncached race suites for `codegen/mcp` and `internal/mcpinput`. The full
+root, quickstart, regenerated assistant and downstream consumer acceptance above
+applies to the preceding credential increment; it was not rerun for this syntax
+correction.
+[RFC 6750 §2.1](https://www.rfc-editor.org/rfc/rfc6750.html#section-2.1).
+
 MCP defines authorization at the HTTP transport level. The pinned official Go
 SDK also verifies bearer credentials before calling its HTTP handler. Reuse this
 ordering, while proving operation-specific scope selection and preservation of

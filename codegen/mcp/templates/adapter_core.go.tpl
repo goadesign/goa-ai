@@ -276,6 +276,7 @@ func fill{{ .CallName }}Credentials(payload {{ .PayloadRef }}{{ range $index, $f
         {{- end }}
         {{- else if .Bearer }}
         scheme, token, present := strings.Cut(*credential{{ $index }}, " ")
+        token = strings.TrimLeft(token, " ")
         if !present || !strings.EqualFold(scheme, "Bearer") || token == "" || strings.ContainsAny(token, " \t\r\n") {
             return goa.PermanentError("invalid_params", "invalid HTTP Bearer credential")
         }
