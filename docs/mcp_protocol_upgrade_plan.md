@@ -1,6 +1,6 @@
 # Upgrade goa-ai to MCP 2026-07-28
 
-Research and implementation plan, prepared 2026-10-02 and revised 2026-10-04 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
+Research and implementation plan, prepared 2026-10-02 and revised 2026-10-05 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
 
 ## Outcome and scope
 
@@ -427,7 +427,7 @@ its Linux and Windows CI matrix, CodeQL and dependency review before merging.
 selected-result validation to return a server fault while retaining its original
 cause; its uncached root race suite, lint and complete CI matrix passed.
 The root and all three nested modules pin the exact merged corrective source at
-`v3.33.1-0.20261005005355-043852cdd9bf`; no local Goa replacement remains.
+`v3.33.1-0.20261005065914-a5e621d460df`; no local Goa replacement remains.
 Merged Goa PR #4020 removes the unreleased authentication-marker prototype;
 its compiled tests preserve exact callback errors, native transport mappings and
 both nested method and outer middleware counterexamples.
@@ -475,8 +475,8 @@ protocol sessions nor reconnect implicitly. Resource filter strings follow the
 released schema without a new URI-format restriction; updated-resource
 notifications retain the protocol's explicit URI requirement. Malformed or late
 stdio cancellations are ignored according to the released cancellation rules.
-The generated server producer remains unfinished and unadvertised. A source
-must own authenticated selection and delivery before advertisement. Fixed
+Generated HTTP resource sources now own authenticated selection and delivery.
+Dynamic catalog sources and generated stdio production remain unfinished. Fixed
 catalogs cannot truthfully emit catalog-change notifications; private agent
 streams are not a substitute for that source. The complete serial root race
 suite and quickstart, build, lint, and the uncached MCP transport race suite
@@ -495,9 +495,25 @@ transport-owned subscription ID; malformed completion is rejected. Contexts
 cannot report after completion, and closing a quiet HTTP listener cancels its
 source. Header changes before the first event remain on the response. Configured
 lint reports zero issues and the complete uncached transport race suite passes
-with the final notification spans and header/cancellation checks. This is shared transport
-production, not a generated source binding, source authorization or capability
-advertisement. Those complete-path requirements remain release gates.
+with the final notification spans and header/cancellation checks. The generated HTTP resource producer now binds an authored Goa stream with
+`ResourceSubscription()`. Its configured endpoint preserves authentication,
+scopes, interceptors and middleware. Generated constructors receive URI filters;
+generated codecs validate acknowledgment/update unions before transmission.
+Renamed fields and located URI declarations retain their owning Go types. The
+source owns accepted URIs and related sub-resources. HTTP cancellation reaches
+that source, and missing acknowledgment returns a structured internal error.
+Only bound services advertise resource subscription support. Dynamic catalog
+sources and generated stdio production remain release gates.
+Generated clients bind their notification handler with `WithSubscriptionEvents`
+and call the typed `SubscriptionsListen` endpoint. Missing handlers fail before
+network dispatch instead of silently discarding notifications. The generated
+HTTP fixture verifies delivery, cancellation and callback errors alongside native
+authentication, scopes, interceptors, middleware and renamed/located types.
+The resource-source implementation passed the complete uncached serial root race
+and coverage suite plus quickstart; the final generated-consumer addition passed
+focused independent HTTP/stdio and compiled generated-module race checks.
+Configured lint reports zero issues. The final complete MCP runtime and generator
+race suites also pass. These checks do not complete the other release gates.
 
 The dependency-adoption CI failure exposed a Registry test ordering mistake:
 provider renewal extends its existing lease without synchronously restoring a
@@ -574,7 +590,7 @@ runtime tests pass after moving current synthetic suspension fixtures to version
 | Structured tool results and rich content | Generated declared JSON result plus typed ToolContent binding | Generated tool/prompt and runtime clients preserve five content kinds, icons, metadata and exact structured JSON | Structured result codec; generated executors, activities, saved events, child results, model history and host events retain content |
 | Prompt/resource argument completion | Typed `PromptCompletion` and `ResourceCompletion` method bindings | Generated `completion/complete` clients with bounded non-null string values | Client/user interaction; no model or terminal-answer routing |
 | Multi-round tool input | No producer advertised | Explicit unfinished result and successor request | Durable trusted form/URL/state-only continuation |
-| Subscriptions | Source bindings not implemented or advertised | HTTP and stdio `Listen` consumers implemented | Host callback owns observation; no implicit model tool |
+| Subscriptions | Generated authenticated HTTP resource source; dynamic catalogs and stdio production incomplete | HTTP and stdio `Listen` consumers implemented | Host callback owns observation; no implicit model tool |
 | Tasks | Not implemented or advertised | Consumer not implemented | Durable task milestone remains required |
 | OAuth and Apps | Host-owned dependencies; no built-in extension claimed | Host-built HTTP dependency | No grant/view ownership in the planner |
 
@@ -729,7 +745,7 @@ These results do not establish a complete released-requirement-set pass.
 Root and all three nested application modules were updated with `go get -u ./...`
 and tidied. Final audits of the root and all three nested modules found no
 updates for their explicit direct or indirect requirements. Goa is pinned to
-`v3.33.1-0.20261005005355-043852cdd9bf`; Pulse to
+`v3.33.1-0.20261005065914-a5e621d460df`; Pulse to
 `v1.10.3-0.20261002205507-b34ad25e317d`. Provider SDKs, Temporal, MongoDB,
 OpenTelemetry, schema validation, and test dependencies are updated in the module
 files. The linter is pinned separately to `v2.14.0` in `.go-install` so its private
@@ -738,9 +754,14 @@ the two existing Go protobuf plugin pins already match the latest releases.
 
 The interrupted-SSE retry interpretation, external deployment inventory and
 cutover, all required capabilities, and website documentation remain release gates.
-The website belongs to `goadesign/goa.design`; its five translated MCP pages are
-being prepared in a separate documentation clone. That repository requires
-separate explicit authorization before PR creation. Local API/runtime, README,
+The website belongs to `goadesign/goa.design`. Its MCP integration and DSL
+reference pages now cover current callers, generated registration, typed content,
+progress, resource sources and retry ownership in all five languages. The
+registration and planner snippets compile against freshly generated contracts.
+Website checks pass: 70 tests, the production Hugo build and 166 rendered pages
+with no broken internal links. The user authorized pushing the documentation
+branch. Website PR creation still requires separate explicit authorization; the
+branch must remain separate from live documentation until the upgrade is ready. Local API/runtime, README,
 architecture, quickstart, and integration documentation are updated.
 No release or deployment has been performed. Review proceeds through a draft PR while these release gates remain open.
 
@@ -1196,7 +1217,7 @@ The protocol revision and the set of optional capabilities are different decisio
 | Additional input / form elicitation | HTTP/stdio consumers and durable agent suspensions are implemented; generated server production is incomplete | Preserve the verified multi-round consumer path. Add a typed authored producer with operation-owned state and authorization before release. No-host callers reject unsupported interactions. Accepted text-only runs forbid form, URL and state-only host suspensions per operation, while ordinary shared callers retain support. |
 | URL elicitation | Consumers preserve URL requests and host consent across successor runs; generated server production is incomplete | The service must verify out-of-band completion independently of consent and bind it to the authenticated user. Host capabilities remain explicit; secrets never become form answers. |
 | Progress | Implemented through unary service contexts, HTTP/stdio callers and the agent host stream | Transports own per-request tokens and ordering; activities own invocation correlation. Generated HTTP and parallel stdio checks passed; the frozen referee passed 2/2. Private host events are not public MCP payloads. |
-| Subscriptions | Core HTTP/stdio listeners are implemented; generated server production is incomplete | Receivers enforce acknowledgment, accepted filters, exact request IDs, graceful closure and cancellation. Add the producer through an owned authenticated change source and a generated `subscriptions/listen` binding. A fixed catalog needs no pretend notifications. Do not reuse private session streams, GET channels, or old broadcasters. |
+| Subscriptions | Core HTTP/stdio listeners and generated HTTP resource sources are implemented; dynamic catalogs and stdio production are incomplete | Receivers enforce acknowledgment, accepted filters, exact request IDs, graceful closure and cancellation. `ResourceSubscription()` calls an owned authenticated Goa stream through generated `subscriptions/listen`; codecs validate its typed events. A fixed catalog needs no pretend notifications. Do not reuse private session streams, GET channels, or old broadcasters. |
 | Tasks extension | Asynchronous starts, durable engine, completion queries, suspension, and cancellation exist | Viable workflow-backed extension milestone. The server owns durable work and task identity; the adapter maps its typed API. Arbitrary unary methods are not automatically tasks. Pin the extension separately and verify the complete lifecycle before advertising. |
 | Roots / sampling / logging | File/domain inputs, model clients, and tracing exist, but these old protocol features are deprecated | Their absence is a deliberate new-protocol design choice, not evidence the framework cannot access files or models. Do not implement deprecated request variants. |
 | OAuth | Authorized HTTP client injection and application middleware exist; built-in discovery/grant/token storage do not | Keep host/application authorization ownership. Preserve challenges/status/headers. A built-in profile needs its own complete security design and synthetic tests; do not label injection as built-in OAuth compliance. |

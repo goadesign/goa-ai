@@ -225,8 +225,11 @@ func (r *subscriptionHTTPResponse) finish(ctx context.Context) error {
 				return fmt.Errorf("generated MCP subscription completion contains unexpected field %q", name)
 			}
 		}
+		if !r.state.acknowledged {
+			return &Error{Code: JSONRPCInternalError, Message: "MCP subscription completion requires acknowledgment before a finished result"}
+		}
 		var resultType string
-		if err := json.Unmarshal(result["resultType"], &resultType); err != nil || resultType != resultComplete || !r.state.acknowledged {
+		if err := json.Unmarshal(result["resultType"], &resultType); err != nil || resultType != resultComplete {
 			return errors.New("generated MCP subscription completion requires acknowledgment and resultType complete")
 		}
 		meta := make(map[string]json.RawMessage)

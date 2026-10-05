@@ -93,6 +93,26 @@ func withMCPTransport(h *{{ .Transport.ServerStructDeclaration.Name }}, allowedO
         }
 
 		response := &mcpResponseWriter{ResponseWriter: w}
+        {{- if .ResourceSubscription }}
+        if request.Method == "subscriptions/listen" {
+            id, err := json.Marshal(request.ID)
+            if err != nil {
+                h.errhandler(r.Context(), response, err)
+                return
+            }
+            if err := mcpruntime.ServeSubscriptions(response, r, id, request.Params, next); err != nil {
+                var failure *mcpruntime.Error
+                if !response.written && errors.As(err, &failure) {
+                    if err := mcpruntime.WriteProtocolError(response, body, failure); err != nil {
+                        h.errhandler(r.Context(), response, err)
+                    }
+                } else {
+                    h.errhandler(r.Context(), response, err)
+                }
+            }
+            return
+        }
+        {{- end }}
 		if err := mcpruntime.ServeProgress(response, r, request.Params, next); err != nil {
 			h.errhandler(r.Context(), response, err)
 		}

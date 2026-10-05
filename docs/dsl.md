@@ -1439,8 +1439,9 @@ Service("calculator", func() {
 })
 ```
 
-Only methods with `Tool`, `Resource`, `ResourceTemplate`, `Prompt`, or completion
-bindings enter the generated MCP catalog and executor. Other methods in the same
+Tool, resource, prompt and completion bindings select their generated MCP
+operations. `ResourceSubscription()` selects a distinct resource change stream;
+it does not create a model tool or executor. Other methods in the same
 service retain their ordinary HTTP or gRPC contract. For example, an HTTP-only
 `health` method can serve `/health` without becoming a model-callable tool.
 
@@ -1453,7 +1454,8 @@ adapter := genmcp.NewMCPAdapter(endpoints, nil)
 ```
 
 Omit the interceptor argument when the design declares none. The adapter calls
-these endpoints for tools, resource reads, method-backed prompts and completion.
+these endpoints for tools, resource reads, method-backed prompts, completion and
+authored resource subscription streams.
 The original endpoint owns authentication, method scopes, the authenticated
 context, interceptors and middleware. Static catalogs and prompts do not call
 an application endpoint. This replaces the constructor that accepted a bare
@@ -1596,6 +1598,73 @@ exact declared template. Variable names are derived during generation, including
 prefix and composite variables. Unknown templates, variables and prior names
 fail before dispatch; a declared variable without a provider returns `[]`.
 Completion does not expand a URI or read the resource.
+
+### Resource update subscriptions
+
+`ResourceSubscription()` binds one server-streaming Goa method per MCP service.
+The service must already declare a `Resource` or `ResourceTemplate`. Its input
+contains only optional `resources`, an array of URI strings, apart from native
+annotated credentials. Each URI declares `Format(FormatURI)`. Empty selections
+are valid, so the array is optional.
+
+The stream result contains only a required `change` OneOf with two object
+branches. `acknowledged` contains only optional `resources` with the same URI
+constraints. `updated` contains only a required `uri` string with `FormatURI`.
+Declare types before the service, then bind its streaming method:
+
+```go
+var SubscriptionURI = Type("SubscriptionURI", String, func() {
+    Format(FormatURI)
+})
+var AcceptedResources = Type("AcceptedResources", func() {
+    Attribute("resources", ArrayOf(SubscriptionURI), "Authorized requested URIs")
+})
+var UpdatedResource = Type("UpdatedResource", func() {
+    Attribute("uri", SubscriptionURI, "The changed resource URI")
+    Required("uri")
+})
+var ResourceChange = Type("ResourceChange", func() {
+    OneOf("change", "One acknowledgment or resource update", func() {
+        Attribute("acknowledged", AcceptedResources, "Accepted URI subset")
+        Attribute("updated", UpdatedResource, "Changed resource or sub-resource")
+    })
+    Required("change")
+})
+
+// Add this method to a service with Resource or ResourceTemplate declarations.
+Method("watch_resources", func() {
+    Description("Authorize requested resources and report their changes")
+    Payload(func() {
+        Attribute("resources", ArrayOf(SubscriptionURI), "Requested resource URIs")
+    })
+    StreamingResult(ResourceChange)
+    ResourceSubscription()
+})
+```
+
+The implementation sends one `acknowledged` value with an authorized subset of
+requested URIs before sending updates. It can acknowledge an empty subset and
+return successfully. An update can identify a related sub-resource: the service
+owns that relationship and access checks. The transport does not infer access
+from URI prefixes, templates or filesystem paths. Check every `Send` or
+`SendWithContext` error and honor the method context's cancellation.
+
+Generated code calls the application's configured Goa endpoint, preserving
+security scopes, authenticated context, interceptors and middleware. It uses the
+generated input constructor and result validator, including renamed fields and
+located types. Results with missing fields, unset variants or invalid URIs fail
+before transmission. Acknowledgment outside the requested subset, repeated
+acknowledgment and updates before acknowledgment fail the source operation.
+Returning successfully without an acknowledgment returns `internal_error`.
+Normal return supplies the finished result; `Close`, when present on Goa's stream
+interface, prevents further authored sends.
+
+The generated HTTP mount owns each listen request's exact ID and event framing.
+Applications do not call raw protocol reporting functions or choose IDs. Closing
+the HTTP listener cancels its service context; no reconnect or replay occurs.
+Only services with this binding advertise `resources.subscribe`. Fixed catalogs
+remain fixed, and unsupported catalog-change requests are omitted from the
+acknowledgment. See [client subscription behavior](runtime.md#mcp-change-subscriptions).
 
 ### Method-backed MCP prompts
 
@@ -1832,6 +1901,7 @@ content field or compatibility decoder.
 | `Prompt(name, desc)` in Method | `prompts/list`, `prompts/get` with typed arguments and messages |
 | `StaticPrompt(...)`          | `prompts/list`, `prompts/get`      |
 | `ResourceTemplate(name, template, mime)` in Method | `resources/templates/list` and the service-owned URI reader |
+| `ResourceSubscription()` in Method | `subscriptions/listen` for service-owned resource updates over HTTP |
 | `ResourceCompletion(template, variable)` in Method | `completion/complete` for declared template variables |
 | `PromptCompletion(prompt, argument)` in Method | `completion/complete` for declared prompt arguments |
 

@@ -54,7 +54,11 @@ func (b *mcpExprBuilder) buildServerCapabilitiesType() *expr.AttributeExpr {
 		return &expr.AttributeExpr{Type: &expr.Object{}, Description: "Tool capabilities"}
 	})
 	resources := b.getOrCreateType("ResourcesCapability", func() *expr.AttributeExpr {
-		return &expr.AttributeExpr{Type: &expr.Object{}, Description: "Resource capabilities"}
+		fields := expr.Object{}
+		if b.mcp.ResourceSubscription != nil {
+			fields = append(fields, &expr.NamedAttributeExpr{Name: "subscribe", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "Accept resource update subscriptions through subscriptions/listen"}})
+		}
+		return &expr.AttributeExpr{Type: &fields, Description: "Resource capabilities"}
 	})
 	prompts := b.getOrCreateType("PromptsCapability", func() *expr.AttributeExpr {
 		return &expr.AttributeExpr{Type: &expr.Object{}, Description: "Prompt capabilities"}

@@ -56,6 +56,8 @@ type (
 		ResourceTemplates []*resourceTemplateAdapter
 		// ResourceReader owns reads that are not fixed resource bindings.
 		ResourceReader *resourceReaderAdapter
+		// ResourceSubscription connects an authored stream to resource notifications.
+		ResourceSubscription *resourceSubscriptionAdapter
 		// StaticPrompts contains the prompts written directly in the Goa design.
 		StaticPrompts []*StaticPromptAdapter
 		// MethodPrompts contains prompt operations implemented by service methods.
@@ -251,6 +253,10 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 	if err != nil {
 		return nil, err
 	}
+	subscription, err := g.buildResourceSubscriptionAdapter()
+	if err != nil {
+		return nil, err
+	}
 	data := &AdapterData{
 		ServiceName:          g.originalService.Name,
 		ServiceGoName:        codegen.Goify(g.originalService.Name, true),
@@ -261,10 +267,11 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 		Resources:            resources,
 		ResourceTemplates:    templates,
 		ResourceReader:       reader,
+		ResourceSubscription: subscription,
 		MethodPrompts:        prompts,
 		Completions:          completions,
 		CompletionReferences: references,
-		NeedsBoolPtr:         len(tools)+len(prompts) > 0,
+		NeedsBoolPtr:         len(tools)+len(prompts) > 0 || subscription != nil,
 	}
 
 	// Static prompts are handled directly in the adapter

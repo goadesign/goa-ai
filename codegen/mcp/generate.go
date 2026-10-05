@@ -13,8 +13,9 @@ import (
 type (
 	// mcpTransportData adds tool headers to Goa's finalized transport names.
 	mcpTransportData struct {
-		Transport any
-		Tools     []*ToolAdapter
+		Transport            any
+		Tools                []*ToolAdapter
+		ResourceSubscription *resourceSubscriptionAdapter
 	}
 )
 
@@ -74,7 +75,11 @@ func applyMCPHTTPRulesToJSONRPCMount(files []*codegen.File, services []*plannedM
 			switch s.Name {
 			case "jsonrpc-server-mount":
 				s.Source = mcpTemplates.Read("jsonrpc_server_mount")
-				s.Data = mcpTransportData{Transport: s.Data, Tools: service.adapterData.Tools}
+				s.Data = mcpTransportData{
+					Transport:            s.Data,
+					Tools:                service.adapterData.Tools,
+					ResourceSubscription: service.adapterData.ResourceSubscription,
+				}
 				found = true
 			case "jsonrpc-server-handler":
 				s.Source = mcpTemplates.Read("jsonrpc_server_handler")
@@ -141,6 +146,12 @@ func generateMCPTransport(_ string, svc *expr.ServiceExpr, data *AdapterData) []
 					"comment": codegen.Comment,
 					"quote":   func(s string) string { return fmt.Sprintf("%q", s) },
 				},
+			},
+			{
+				Name:    "mcp-adapter-resource-subscription",
+				Source:  mcpTemplates.Read("adapter_resource_subscription"),
+				Data:    data,
+				FuncMap: map[string]any{"quote": func(s string) string { return fmt.Sprintf("%q", s) }},
 			},
 			{
 				Name:    "mcp-adapter-completion",

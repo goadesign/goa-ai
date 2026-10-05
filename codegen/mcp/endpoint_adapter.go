@@ -21,6 +21,8 @@ type (
 		MethodName string
 		// DesignMethodName is the authored method identity observed by middleware.
 		DesignMethodName string
+		// Streaming keeps this source out of ordinary endpoint result assertions.
+		Streaming bool
 		// PayloadRef is the original service input type; empty means no input.
 		PayloadRef string
 		// PayloadValueRef names the original payload without its object pointer.
@@ -100,7 +102,11 @@ func planEndpointAdapters(generation *codegen.Generation, services *goaservice.P
 			}
 			*side.layout = layout
 		}
-		data.NeedsEndpointResultCheck = data.NeedsEndpointResultCheck || call.resultLayout != nil
+		if source := data.ResourceSubscription; source != nil && source.method == method {
+			call.Streaming = true
+			source.Endpoint = call
+		}
+		data.NeedsEndpointResultCheck = data.NeedsEndpointResultCheck || (call.resultLayout != nil && !call.Streaming)
 		data.EndpointMethods = append(data.EndpointMethods, call)
 		for _, tool := range data.Tools {
 			if tool.userMethodName == method.Name {

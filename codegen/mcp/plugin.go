@@ -109,6 +109,9 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planCompletionConversions(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
+		if err := planResourceSubscription(plan.Generation(), adapter); err != nil {
+			return err
+		}
 		if err := declareMCPNames(plan.Generation(), adapter); err != nil {
 			return err
 		}
@@ -181,6 +184,9 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 			return nil, err
 		}
 		if err := bindCompletionConversions(services, planned); err != nil {
+			return nil, err
+		}
+		if err := bindResourceSubscription(plan.Generation(), services, planned); err != nil {
 			return nil, err
 		}
 		if caller := clientCallerFile(planned.adapterData); caller != nil {
@@ -262,6 +268,10 @@ func planMCPImports(
 		data.serverImportPaths = append(data.serverImportPaths, "encoding/base64")
 		break
 	}
+	if data.ResourceSubscription != nil {
+		serverFixed = append(serverFixed, goacodegen.SimpleImport("sync"))
+		data.serverImportPaths = append(data.serverImportPaths, "sync")
+	}
 	if data.NeedsContentBytes {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("encoding/base64"))
 		data.serverImportPaths = append(data.serverImportPaths, "encoding/base64")
@@ -325,6 +335,9 @@ func planMCPJSONRPCServerImports(generation *goacodegen.Generation, data *Adapte
 		goacodegen.SimpleImport("net/http"),
 		goacodegen.NewImport("goahttp", "goa.design/goa/v3/http"),
 		goacodegen.NewImport("mcpruntime", "goa.design/goa-ai/runtime/mcp"),
+	}
+	if data.ResourceSubscription != nil {
+		fixed = append(fixed, goacodegen.SimpleImport("encoding/json"))
 	}
 	if err := data.jsonrpcServerImports.Require(fixed...); err != nil {
 		return fmt.Errorf("plan MCP JSON-RPC server imports: %w", err)
@@ -543,6 +556,13 @@ func planMCPCodecs(
 			}
 		}
 	}
+	if source := data.ResourceSubscription; source != nil {
+		data.NeedsServerCodec = true
+		values := methodCodecs[source.method.Name]
+		if err := values.payload.PlanTransportConstructor(); err != nil {
+			return nil, nil, err
+		}
+	}
 	data.CodecImportPath = codecImportPath
 	data.CodecPackage = codecPackageName
 	return planned, methodCodecs, nil
@@ -689,9 +709,12 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 	for _, completion := range data.Completions {
 		needsConstruction = needsConstruction || completion.method.Name == methodName
 	}
+	if source := data.ResourceSubscription; source != nil && source.method.Name == methodName {
+		needsConstruction = true
+	}
 	if needsConstruction {
-		// Prompt, resource-template and suggestion inputs arrive in typed protocol
-		// fields. Their adapters need construction and validation, not JSON encoding.
+		// Typed protocol fields supply prompt, resource, suggestion and subscription
+		// inputs. Generated constructors validate and build their service payloads.
 		if payload == 0 {
 			payload = jsoncodec.ConstructOnly
 		}
@@ -734,6 +757,9 @@ func mappedMCPMethods(prepared *preparedMCPService) []*expr.MethodExpr {
 	}
 	for _, completion := range prepared.mcp.ResourceCompletions {
 		add(completion.Method)
+	}
+	if source := prepared.mcp.ResourceSubscription; source != nil {
+		add(source.Method)
 	}
 	return methods
 }

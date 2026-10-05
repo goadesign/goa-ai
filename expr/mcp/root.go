@@ -103,6 +103,13 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 		}
 	}
 	walk(completions)
+	var subscriptions eval.ExpressionSet
+	for _, server := range r.MCPServers {
+		if server.ResourceSubscription != nil {
+			subscriptions = append(subscriptions, server.ResourceSubscription)
+		}
+	}
+	walk(subscriptions)
 }
 
 // RegisterMCP registers an MCP server configuration for a service

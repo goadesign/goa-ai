@@ -3949,12 +3949,14 @@ For MCP services:
 - Add a service-level `JSONRPC` block with one `POST` route. `MCP(...)` no
   longer chooses an HTTP path implicitly.
 - Replace `WatchableResource` with `Resource` when the method is a fixed unary
-  read. Generated resource subscriptions are no longer supported.
+  read. Bind a separate typed Goa stream with `ResourceSubscription()` when the
+  service owns resource update detection and authorization.
 - Replace `DynamicPrompt` with `StaticPrompt` only when the prompt is fixed in
   the design. Goa-AI no longer generates dynamic prompt providers.
 - Remove uses of the generated `Notification`, `Subscription`, and
-  `SubscriptionMonitor` APIs. This preview has no generated replacement for
-  server notifications or subscriptions.
+  `SubscriptionMonitor` APIs. The replacement uses a distinct authored stream
+  and the originating listen request, as described in
+  [resource subscriptions](dsl.md#resource-update-subscriptions).
 - Remove `AllowedResourceURIs`, `DeniedResourceURIs`,
   `StructuredStreamJSON`, and `ProtocolVersionOverride` from generated
   `MCPAdapterOptions`. Enforce resource authorization in the Goa service, return
@@ -6674,6 +6676,13 @@ err := caller.Listen(ctx, mcp.SubscriptionFilter{
 })
 ```
 
+For a generated Goa JSON-RPC client, bind the same event handler with
+`WithSubscriptionEvents(ctx, handler)`, then call its typed
+`SubscriptionsListen` endpoint with the generated filter payload. The handler
+receives validated acknowledgment and update events; the endpoint returns the
+final typed result. Calling that endpoint without an event handler fails before
+network dispatch. The shared callers' `Listen` methods bind the handler for you.
+
 The application supplies `handleMCPChange`. A catalog-change event tells it to
 reload that catalog; a resource-update event supplies the address to read again.
 An updated address may identify a sub-resource of an accepted resource, so the
@@ -6720,9 +6729,14 @@ and HTTP status. Cancellation ends delivery; retained contexts cannot send after
 the handler returns. Response headers written before acknowledgment remain on
 the stream. The producer neither authorizes a source nor advertises capability.
 
-This consumer contract implements the core notification filter. Generated servers
-still need a typed, authenticated change source before they can advertise
-subscriptions. Fixed generated catalogs do not emit pretend catalog changes, and
+Generated HTTP servers bind a typed resource source with
+[`ResourceSubscription()`](dsl.md#resource-update-subscriptions). The original
+configured Goa endpoint authenticates the request and receives typed URI
+selections. Its source sends an acknowledgment/update union through the ordinary
+Goa streaming interface. Generated codecs validate each value; the shared
+transport owns IDs, ordering and framing. Only this bound service advertises
+`resources.subscribe`. Unsupported catalog-change flags are omitted from its
+acknowledgment; dynamic catalog sources remain required work. Fixed generated catalogs do not emit pretend catalog changes, and
 private agent/session streams are not MCP subscription sources. See the
 [remaining implementation work](mcp_protocol_upgrade_plan.md#optional-features-and-security-boundaries)
 and the [released subscription contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions).

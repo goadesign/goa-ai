@@ -79,6 +79,14 @@ func ValidateHTTPRequest(request *http.Request, body []byte, bindings map[string
 		}
 	}
 
+	// A listen filter is checked before the source endpoint or its middleware
+	// runs. The same decoder supplies the transport's accepted-filter state.
+	if envelope.Method == methodSubscriptionsListen {
+		if _, err := decodeSubscriptionFilter(params["notifications"]); err != nil {
+			return &Error{Code: JSONRPCInvalidParams, Message: err.Error()}
+		}
+	}
+
 	name, err := requestName(envelope.Method, params)
 	if err != nil {
 		return &Error{Code: JSONRPCInvalidParams, Message: err.Error()}

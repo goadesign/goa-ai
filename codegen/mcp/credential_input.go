@@ -90,6 +90,9 @@ func prepareCredentialInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp
 	for _, completion := range mcp.ResourceCompletions {
 		operations["completion/complete"] = append(operations["completion/complete"], completion.Method)
 	}
+	if source := mcp.ResourceSubscription; source != nil {
+		operations["subscriptions/listen"] = []*expr.MethodExpr{source.Method}
+	}
 	credentials := make(map[string][]*credentialInput)
 	bodies := make(map[string]*protocolCredentialInputs)
 	for _, operation := range protocol.Methods {

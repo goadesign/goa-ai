@@ -45,6 +45,8 @@ type (
 		PromptCompletions []*PromptCompletionExpr
 		// ResourceCompletions binds template variables to suggestion methods.
 		ResourceCompletions []*ResourceCompletionExpr
+		// ResourceSubscription selects the owned resource update stream.
+		ResourceSubscription *ResourceSubscriptionExpr
 		// Service is the Goa service expression this MCP server is
 		// bound to.
 		Service *expr.ServiceExpr
@@ -230,6 +232,17 @@ func (m *MCPExpr) Validate() error {
 	m.validateResourceTemplates(verr)
 	m.validatePromptCompletions(verr)
 	m.validateResourceCompletions(verr)
+	if source := m.ResourceSubscription; source != nil {
+		if len(m.Resources)+len(m.ResourceTemplates) == 0 {
+			verr.Add(source, "resource subscription requires a declared resource or resource template")
+		}
+		if err := source.Validate(); err != nil {
+			var validation *eval.ValidationErrors
+			if errors.As(err, &validation) {
+				verr.Merge(validation)
+			}
+		}
+	}
 	if len(verr.Errors) > 0 {
 		return verr
 	}

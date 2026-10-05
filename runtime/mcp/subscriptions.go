@@ -83,6 +83,18 @@ const (
 	subscriptionIDKey         = "io.modelcontextprotocol/subscriptionId"
 )
 
+// WithSubscriptionEvents delivers validated notifications from each generated
+// subscriptions/listen call using the returned context. The generated payload
+// selects the filter; the handler receives its acknowledgment and later changes.
+// Handlers run synchronously, and an error ends that request without reconnecting.
+// A nil handler is a construction error and panics.
+func WithSubscriptionEvents(ctx context.Context, handler func(context.Context, SubscriptionEvent) error) context.Context {
+	if handler == nil {
+		panic("mcp: subscription handler is required")
+	}
+	return context.WithValue(ctx, subscriptionHandlerKey{}, subscriptionHandler(handler))
+}
+
 // Listen receives requested changes over HTTP until graceful completion, host
 // cancellation, callback failure, or transport loss. It sends one POST and does
 // not reconnect. The handler also receives the peer's acknowledgment first.
@@ -97,7 +109,7 @@ func (c *StdioCaller) Listen(ctx context.Context, filter SubscriptionFilter, han
 	if handler == nil {
 		return errors.New("mcp: subscription handler is required")
 	}
-	ctx = context.WithValue(ctx, subscriptionHandlerKey{}, subscriptionHandler(handler))
+	ctx = WithSubscriptionEvents(ctx, handler)
 	var result json.RawMessage
 	return c.call(ctx, methodSubscriptionsListen, map[string]any{"notifications": cloneSubscriptionFilter(filter)}, &result)
 }
@@ -108,7 +120,7 @@ func (t *HTTPTransport) Listen(ctx context.Context, endpoint string, filter Subs
 	if handler == nil {
 		return errors.New("mcp: subscription handler is required")
 	}
-	ctx = context.WithValue(ctx, subscriptionHandlerKey{}, subscriptionHandler(handler))
+	ctx = WithSubscriptionEvents(ctx, handler)
 	var result json.RawMessage
 	return t.call(ctx, endpoint, methodSubscriptionsListen, map[string]any{"notifications": cloneSubscriptionFilter(filter)}, &result)
 }
@@ -132,12 +144,15 @@ func newSubscriptionReceiver(ctx context.Context, id, filter json.RawMessage) (*
 	if err != nil {
 		return nil, err
 	}
-	handler, _ := ctx.Value(subscriptionHandlerKey{}).(subscriptionHandler)
+	handler, ok := ctx.Value(subscriptionHandlerKey{}).(subscriptionHandler)
+	if !ok {
+		return nil, errors.New("mcp: subscription handler is required")
+	}
 	return &subscriptionReceiver{requestID: cloneRaw(id), key: key, subscriptionState: subscriptionState{requested: requested}, handler: handler}, nil
 }
 
-// decodeSubscriptionFilter rejects null and invalid field values before they
-// can become the zero values that mean a notification was not requested.
+// decodeSubscriptionFilter rejects unknown fields, null and invalid values
+// before they can be discarded or become an unrequested notification kind.
 func decodeSubscriptionFilter(raw json.RawMessage) (SubscriptionFilter, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
@@ -160,7 +175,9 @@ func decodeSubscriptionFilter(raw json.RawMessage) (SubscriptionFilter, error) {
 		}
 	}
 	var filter SubscriptionFilter
-	if err := json.Unmarshal(raw, &filter); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&filter); err != nil {
 		return SubscriptionFilter{}, err
 	}
 	return filter, nil
@@ -278,9 +295,6 @@ func (r *subscriptionReceiver) notification(ctx context.Context, message rpcMess
 		}
 	}
 	trace.SpanFromContext(ctx).AddEvent("mcp.subscription.notification", trace.WithAttributes(attribute.String("notification.method", message.Method)))
-	if r.handler == nil {
-		return nil
-	}
 	if err := r.handler(ctx, event); err != nil {
 		return fmt.Errorf("deliver MCP subscription notification: %w", err)
 	}

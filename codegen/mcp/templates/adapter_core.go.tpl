@@ -148,7 +148,7 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*D
     capabilities.Tools = &ToolsCapability{}
     {{- end }}
     {{- if or .Resources .ResourceTemplates }}
-    capabilities.Resources = &ResourcesCapability{}
+    capabilities.Resources = &ResourcesCapability{ {{ if .ResourceSubscription }}Subscribe: boolPtr(true),{{ end }} }
     {{- end }}
     {{- if or .StaticPrompts .MethodPrompts }}
     capabilities.Prompts = &PromptsCapability{}
@@ -167,6 +167,7 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*D
 }
 
 {{ range .EndpointMethods }}
+{{- if not .Streaming }}
 // {{ .CallName }} sends validated input to the configured {{ .MethodName }} endpoint
 // and returns its declared result. An unexpected Go type is an internal error.
 func (a *MCPAdapter) {{ .CallName }}(ctx context.Context{{ if .PayloadRef }}, payload {{ .PayloadRef }}{{ end }}) ({{ if .ResultRef }}{{ .ResultRef }}, {{ end }}error) {
@@ -190,6 +191,7 @@ func (a *MCPAdapter) {{ .CallName }}(ctx context.Context{{ if .PayloadRef }}, pa
 }
 {{ end }}
 
+{{ end }}
 {{- if .NeedsEndpointResultCheck }}
 // endpointResultError identifies a configured endpoint that returned a value
 // outside its declared Go contract. Applications cannot remap this invariant error.
