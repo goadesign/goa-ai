@@ -35,7 +35,7 @@ func (s *ResourceSubscriptionExpr) Validate() error {
 	if method.Stream != expr.ServerStreamKind || method.HasMixedResults() {
 		verr.Add(s, "resource subscription method must use only StreamingResult")
 	}
-	arguments, err := mcpinput.Arguments(method.Payload)
+	arguments, err := mcpinput.Arguments(method)
 	if err != nil {
 		verr.Add(s, "%s", err.Error())
 		return verr

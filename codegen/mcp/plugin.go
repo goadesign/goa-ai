@@ -463,7 +463,7 @@ func planMCPCodecs(
 			data.NeedsServerCodec = data.NeedsServerCodec || (!resource.TextResult && !resource.BinaryResult)
 		}
 		if hasMCPValue(method.Payload) && payloadDirection != 0 {
-			arguments, argumentErr := mcpinput.Arguments(method.Payload)
+			arguments, argumentErr := mcpinput.Arguments(method)
 			if argumentErr != nil {
 				return nil, nil, argumentErr
 			}

@@ -311,7 +311,7 @@ func (r *ResourceExpr) Validate() error {
 		verr.Add(r, "resource %q uses streaming method %q; MCP resources must return one result from one request", r.Name, r.Method.Name)
 	}
 	if r.Method != nil {
-		arguments, err := mcpinput.Arguments(r.Method.Payload)
+		arguments, err := mcpinput.Arguments(r.Method)
 		if err != nil {
 			verr.Add(r, "%s", err.Error())
 		} else if hasValue(arguments) && (expr.AsObject(arguments.Type) == nil || len(*expr.AsObject(arguments.Type)) > 0) {

@@ -31,7 +31,7 @@ func (p *MethodPromptExpr) Validate() error {
 	if p.Method.IsStreaming() {
 		verr.Add(p, "prompt method must be unary")
 	}
-	arguments, err := mcpinput.Arguments(p.Method.Payload)
+	arguments, err := mcpinput.Arguments(p.Method)
 	if err != nil {
 		verr.Add(p, "%s", err.Error())
 		return verr

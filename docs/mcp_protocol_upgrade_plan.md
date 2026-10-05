@@ -329,6 +329,28 @@ untyped route map or new caller-owned conversion step is required by the
 protocol; justify any proposed public contract against the complete producer
 and consumer path before implementation.
 
+The argument projection now derives URL-owned fields per original method.
+During DSL evaluation it uses Goa's authored shared route and inherited service
+paths for methods selected only by MCP, and exact native mappings for methods
+with an explicit JSON-RPC endpoint. Generation repeats that derivation from
+its own source roots before replacing the transport. Private method metadata
+retains only those field names; it does not annotate shared payload types or
+add a runtime lookup. Source transports and MCP configuration are selected by
+service identity rather than service name alone. Expression validation, MCP
+schemas, examples, codecs and agent tool specifications consume one shared
+projection. An equally named field without a URL binding remains domain input.
+
+Uncached race tests pass for `internal/mcpinput`, `expr/mcp`, `dsl`,
+`codegen/mcp` and `codegen/agent`. Positive DSL tests verify a fixed resource
+whose organization field comes from an inherited service route. Counterexamples
+verify that an unbound field remains a rejected domain argument for that same
+fixed-resource contract, and that sharing a named, located payload does not
+change the unscoped method's fields, required list or examples. Separate roots
+with matching service names retain separate transport bindings. Missing route
+configuration still reports a design error. These tests prove projection and
+binding ownership only: protocol route generation, method-specific URL decoding,
+full-payload validation and native caller construction remain required.
+
 A further probe distinguishes authored Go field renames from wildcard aliases.
 The current Goa parser recognizes `{field}` and `{*field}`, with names matching
 payload fields. The colon alias example in the

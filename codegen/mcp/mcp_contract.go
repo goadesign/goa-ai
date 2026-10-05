@@ -15,7 +15,7 @@ import (
 // resource URI without hidden inputs.
 func validateMCPResources(svc *expr.ServiceExpr, resources []*mcpexpr.ResourceExpr) error {
 	for _, resource := range resources {
-		arguments, err := mcpinput.Arguments(resource.Method.Payload)
+		arguments, err := mcpinput.Arguments(resource.Method)
 		if err != nil {
 			return err
 		}

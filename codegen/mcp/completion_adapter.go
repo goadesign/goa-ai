@@ -193,7 +193,7 @@ func (g *adapterGenerator) buildCompletionReferences(templates []*resourceTempla
 	references := make([]*completionReferenceAdapter, 0, len(g.mcp.MethodPrompts)+len(templates))
 	for _, prompt := range g.mcp.MethodPrompts {
 		reference := &completionReferenceAdapter{Type: "ref/prompt", Name: prompt.Name}
-		arguments, err := mcpinput.Arguments(prompt.Method.Payload)
+		arguments, err := mcpinput.Arguments(prompt.Method)
 		if err != nil {
 			return nil, err
 		}

@@ -329,7 +329,7 @@ func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 			adapter.Idempotent = tool.Annotations.IdempotentHint != nil && *tool.Annotations.IdempotentHint
 		}
 
-		arguments, err := mcpinput.Arguments(tool.Method.Payload)
+		arguments, err := mcpinput.Arguments(tool.Method)
 		if err != nil {
 			return nil, fmt.Errorf("tool %q arguments: %w", tool.Name, err)
 		}
@@ -429,7 +429,7 @@ func hasMCPValue(attribute *expr.AttributeExpr) bool {
 
 // buildExampleJSON returns a repeatable JSON example for a method payload.
 func (g *adapterGenerator) buildExampleJSON(method *expr.MethodExpr) (string, error) {
-	attr, err := mcpinput.Arguments(method.Payload)
+	attr, err := mcpinput.Arguments(method)
 	if err != nil {
 		return "", err
 	}

@@ -491,7 +491,7 @@ func expandToolExpressions(mcpRoot *mcpexpr.RootExpr, name string, expr *agent.T
 		}
 		if tool.Method != nil {
 			var err error
-			planned.Args, err = mcpinput.Arguments(tool.Method.Payload)
+			planned.Args, err = mcpinput.Arguments(tool.Method)
 			if err != nil {
 				return nil, err
 			}

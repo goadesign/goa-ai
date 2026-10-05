@@ -185,3 +185,32 @@ func preparedServiceNames(services []*preparedMCPService) []string {
 	}
 	return names
 }
+
+// Separate design roots may name services alike. Their source transports and
+// selected MCP configurations must still belong to the exact service pointer.
+func TestSourceSnapshotKeepsSameNamedServicesSeparate(t *testing.T) {
+	first, _ := testService("records", "read")
+	second, _ := testService("records", "read")
+	firstTransport := jsonrpcService(first, "/first/mcp")
+	secondTransport := jsonrpcService(second, "/second/mcp")
+	source := collectSourceSnapshot([]eval.Root{
+		testRootExpr([]*expr.ServiceExpr{first}, []*expr.HTTPServiceExpr{firstTransport}),
+		testRootExpr([]*expr.ServiceExpr{second}, []*expr.HTTPServiceExpr{secondTransport}),
+	})
+	require.Same(t, firstTransport, source.transports[first])
+	require.Same(t, secondTransport, source.transports[second])
+	mcpRoot := mcpexpr.NewRoot()
+	mcpRoot.RegisterMCP(first, &mcpexpr.MCPExpr{Name: "records", Version: "1"})
+	require.True(t, mcpRoot.HasMCP(first))
+	require.False(t, mcpRoot.HasMCP(second))
+}
+
+func TestMCPPluginRejectsMissingAuthoredTransport(t *testing.T) {
+	service, methods := testService("records", "read")
+	root := testRootExpr([]*expr.ServiceExpr{service}, nil)
+	mcpRoot := mcpexpr.NewRoot()
+	mcpRoot.RegisterMCP(service, testMCPExpr("records", methods["read"]))
+	plugin := new(mcpPlugin)
+	err := plugin.prepare("", []eval.Root{root, mcpRoot})
+	require.ErrorContains(t, err, "no authored JSON-RPC transport")
+}

@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
@@ -45,6 +46,18 @@ func (r *RootExpr) DependsOn() []eval.Root {
 // reporting.
 func (r *RootExpr) Packages() []string {
 	return []string{"goa.design/goa-ai/dsl"}
+}
+
+// Prepare records path fields after Goa has prepared each authored endpoint.
+// Subsequent MCP validation sees domain arguments without URL-owned values.
+func (r *RootExpr) Prepare() {
+	for _, service := range expr.Root.API.JSONRPC.Services {
+		mcp := r.GetMCP(service.ServiceExpr)
+		if mcp == nil {
+			continue
+		}
+		mcpinput.BindTransport(service)
+	}
 }
 
 // WalkSets exposes the nested expressions to the eval engine.
@@ -120,7 +133,11 @@ func (r *RootExpr) RegisterMCP(svc *expr.ServiceExpr, mcp *MCPExpr) {
 
 // GetMCP returns the MCP configuration for a service.
 func (r *RootExpr) GetMCP(svc *expr.ServiceExpr) *MCPExpr {
-	return r.MCPServers[svc.Name]
+	mcp := r.MCPServers[svc.Name]
+	if mcp == nil || mcp.Service != svc {
+		return nil
+	}
+	return mcp
 }
 
 // ServiceMCP returns the MCP configuration for a service name and optional
@@ -139,6 +156,5 @@ func (r *RootExpr) ServiceMCP(service, toolset string) *MCPExpr {
 
 // HasMCP returns true if the service has an MCP configuration.
 func (r *RootExpr) HasMCP(svc *expr.ServiceExpr) bool {
-	_, ok := r.MCPServers[svc.Name]
-	return ok
+	return r.GetMCP(svc) != nil
 }

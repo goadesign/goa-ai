@@ -26,7 +26,7 @@ func TestArguments(t *testing.T) {
 				Validation:   &expr.ValidationExpr{Required: []string{"credential", "token"}},
 				UserExamples: []*expr.ExampleExpr{{Value: map[string]any{"credential": "secret", "token": "domain"}}},
 			}
-			selected, err := Arguments(payload)
+			selected, err := Arguments(&expr.MethodExpr{Payload: payload})
 			require.NoError(t, err)
 			selectedType := selected.Type.(expr.UserType)
 			assert.Same(t, named.Origin(), selectedType.Origin())
@@ -46,7 +46,7 @@ func TestArguments(t *testing.T) {
 
 func TestArgumentsWithoutCredentials(t *testing.T) {
 	for _, payload := range []*expr.AttributeExpr{nil, {Type: expr.Empty}, {Type: expr.String}, {Type: &expr.Object{{Name: "token", Attribute: &expr.AttributeExpr{Type: expr.String}}}}} {
-		selected, err := Arguments(payload)
+		selected, err := Arguments(&expr.MethodExpr{Payload: payload})
 		require.NoError(t, err)
 		assert.Same(t, payload, selected)
 	}
@@ -59,7 +59,7 @@ func TestArgumentsCredentialOnlyAndNestedDomain(t *testing.T) {
 		if withDomain {
 			fields = append(fields, &expr.NamedAttributeExpr{Name: "domain", Attribute: nested})
 		}
-		selected, err := Arguments(&expr.AttributeExpr{Type: &fields})
+		selected, err := Arguments(&expr.MethodExpr{Payload: &expr.AttributeExpr{Type: &fields}})
 		require.NoError(t, err)
 		if withDomain {
 			assert.Same(t, nested, expr.AsObject(selected.Type).Attribute("domain"))
@@ -74,7 +74,7 @@ func TestArgumentsRejectMalformedExample(t *testing.T) {
 		Type:         &expr.Object{{Name: "credential", Attribute: &expr.AttributeExpr{Type: expr.String, Meta: expr.MetaExpr{"security:token": nil}}}},
 		UserExamples: []*expr.ExampleExpr{{Value: "not an object"}},
 	}
-	_, err := Arguments(payload)
+	_, err := Arguments(&expr.MethodExpr{Payload: payload})
 	assert.ErrorContains(t, err, "MCP payload example must be an object")
 }
 
@@ -93,7 +93,7 @@ func TestArgumentExamplesPreserveJSON(t *testing.T) {
 			Type:         &expr.Object{{Name: "credential", Attribute: &expr.AttributeExpr{Type: expr.String, Meta: expr.MetaExpr{"security:token": nil}}}, {Name: "token", Attribute: &expr.AttributeExpr{Type: expr.String}}, {Name: "number", Attribute: &expr.AttributeExpr{Type: expr.Int64}}},
 			UserExamples: []*expr.ExampleExpr{{Value: example}},
 		}
-		selected, err := Arguments(payload)
+		selected, err := Arguments(&expr.MethodExpr{Payload: payload})
 		require.NoError(t, err)
 		fields := selected.UserExamples[0].Value.(map[string]json.RawMessage)
 		assert.NotContains(t, fields, "credential")

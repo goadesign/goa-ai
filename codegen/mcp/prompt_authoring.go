@@ -187,7 +187,7 @@ func (g *adapterGenerator) buildMethodPromptAdapters() ([]*MethodPromptAdapter, 
 		}
 		adapter := &MethodPromptAdapter{Name: prompt.Name, Description: prompt.Description, HasPayload: hasMCPValue(prompt.Method.Payload), prompt: prompt, conversion: conversion}
 		if adapter.HasPayload {
-			arguments, err := mcpinput.Arguments(prompt.Method.Payload)
+			arguments, err := mcpinput.Arguments(prompt.Method)
 			if err != nil {
 				return nil, fmt.Errorf("prompt %q arguments: %w", prompt.Name, err)
 			}

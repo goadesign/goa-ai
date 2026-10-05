@@ -464,6 +464,7 @@ func testRootExpr(services []*expr.ServiceExpr, jsonrpcServices []*expr.HTTPServ
 func jsonrpcService(svc *expr.ServiceExpr, path string) *expr.HTTPServiceExpr {
 	return &expr.HTTPServiceExpr{
 		ServiceExpr: svc,
+		Root:        &expr.HTTPExpr{},
 		JSONRPCRoute: &expr.RouteExpr{
 			Method: http.MethodPost,
 			Path:   path,

@@ -38,7 +38,7 @@ func validateCompletionMethod(owner eval.Expression, method *expr.MethodExpr) er
 	if method.IsStreaming() {
 		verr.Add(owner, "completion method must be unary")
 	}
-	input, err := mcpinput.Arguments(method.Payload)
+	input, err := mcpinput.Arguments(method)
 	if err != nil {
 		verr.Add(owner, "%s", err.Error())
 		return verr
@@ -129,7 +129,7 @@ func (m *MCPExpr) validatePromptCompletions(verr *eval.ValidationErrors) {
 		var arguments *expr.AttributeExpr
 		if selected != nil && selected.Method != nil {
 			var err error
-			arguments, err = mcpinput.Arguments(selected.Method.Payload)
+			arguments, err = mcpinput.Arguments(selected.Method)
 			if err != nil {
 				verr.Add(completion, "%s", err.Error())
 			}

@@ -1,4 +1,4 @@
-// Package mcpinput separates Goa authentication fields from MCP arguments.
+// Package mcpinput separates Goa authentication and URL fields from MCP arguments.
 // Design validation and code generation use the same remaining fields, required
 // constraints and examples. The original service payload keeps its credentials
 // and type identity so configured endpoints still receive their authored input.
@@ -14,10 +14,12 @@ import (
 )
 
 // Arguments returns the payload fields that clients may supply as MCP arguments.
-// Only Goa's authentication annotations select excluded fields; an ordinary
-// domain field named token remains an argument. The input is never changed.
-func Arguments(payload *expr.AttributeExpr) (*expr.AttributeExpr, error) {
-	names := Credentials(payload)
+// Goa authentication annotations and the method's recorded path bindings select
+// excluded fields. Unbound domain fields keep their names, types, and examples.
+// The original payload is never changed.
+func Arguments(method *expr.MethodExpr) (*expr.AttributeExpr, error) {
+	payload := method.Payload
+	names := append(Credentials(payload), method.Meta[pathFieldsKey]...)
 	if len(names) == 0 {
 		return payload, nil
 	}
@@ -45,7 +47,7 @@ func Credentials(payload *expr.AttributeExpr) []string {
 
 // selectArguments copies each named wrapper and its top-level object while
 // retaining the original field declarations and locations for generated types.
-// Examples and required lists lose precisely the excluded credential fields.
+// Examples and required lists lose precisely the excluded transport fields.
 func selectArguments(payload *expr.AttributeExpr, names []string) (*expr.AttributeExpr, error) {
 	selected := *payload
 	if named, ok := payload.Type.(expr.UserType); ok {

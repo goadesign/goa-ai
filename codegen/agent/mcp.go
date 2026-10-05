@@ -34,7 +34,7 @@ func populateMCPToolset(mcpRoot *mcpexpr.RootExpr, ts *ToolsetData) (bool, error
 		var payload, result *goaexpr.AttributeExpr
 		if tool.Method != nil {
 			var err error
-			payload, err = mcpinput.Arguments(tool.Method.Payload)
+			payload, err = mcpinput.Arguments(tool.Method)
 			if err != nil {
 				return false, err
 			}

@@ -57,7 +57,7 @@ func (r *ResourceTemplateExpr) Validate() error {
 	if r.Method.IsStreaming() {
 		verr.Add(r, "resource template method must be unary")
 	}
-	arguments, argumentErr := mcpinput.Arguments(r.Method.Payload)
+	arguments, argumentErr := mcpinput.Arguments(r.Method)
 	if argumentErr != nil {
 		verr.Add(r, "%s", argumentErr.Error())
 		return verr

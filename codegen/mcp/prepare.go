@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
@@ -46,6 +47,11 @@ func prepareMCPServicesFromRoot(
 				continue
 			}
 			mcp := mcpRoot.GetMCP(svc)
+			transport, ok := source.transports[svc]
+			if !ok {
+				return nil, fmt.Errorf("MCP service %q has no authored JSON-RPC transport in its generation roots", svc.Name)
+			}
+			mcpinput.BindTransport(transport)
 			if err := validateMCPResources(svc, mcp.Resources); err != nil {
 				return nil, err
 			}
@@ -66,7 +72,7 @@ func prepareMCPServicesFromRoot(
 					server.Services = append(server.Services, mcpService.Name)
 				}
 			}
-			_, protocolTypes := builder.Attach(r, mcpService, source.jsonrpcPaths[svc.Name])
+			_, protocolTypes := builder.Attach(r, mcpService, transport.JSONRPCRoute.Path)
 
 			for _, userType := range protocolTypes {
 				name := userType.Name()
