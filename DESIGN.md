@@ -19,7 +19,9 @@ contract. The host selects fields and translates them into its own public
 events. The debug profile also sends every event to make the diagnostic
 purpose explicit at its call sites. An accepted response keeps the complete
 provider response in the internal transcript, including thinking needed for an
-exact later provider request. A rejected response or ordinary
+exact later provider request. Live thinking events carry only new text
+fragments; a complete signed reasoning block is retained in the provider
+transcript without repeating its text in the live stream. A rejected response or ordinary
 failure reported before activity cancellation keeps only assistant text already
 delivered to the trusted host. Cancellation may prevent that text from reaching
 durable storage.

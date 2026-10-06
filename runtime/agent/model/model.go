@@ -189,8 +189,9 @@ type (
 		// Index is the position of this block in the reasoning sequence.
 		Index int `json:"index"`
 
-		// Final reports whether this reasoning block is the last one for the
-		// current turn.
+		// Final is true when this part contains the complete reasoning block,
+		// including any provider signature. A false value carries new text to
+		// append; consumers must not append a complete block a second time.
 		Final bool `json:"final"`
 	}
 
