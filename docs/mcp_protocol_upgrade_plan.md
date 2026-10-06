@@ -401,10 +401,23 @@ suite, quickstart, the regenerated assistant race suite and `TestEvalConsumer`
 all pass. The last check generates and executes a downstream application.
 The completed native clone was verified clean on merged `v3` with no unpushed
 commits, its verification evidence was preserved with matching hashes, and it
-was deleted. Next, let the MCP plugin declare its protected resource dependency
-through this shared plan. Preserve native constructor names and example calls;
-MCP's generated HTTP sections must consume the same planned dependency fields
-and required arguments before its final origin collection. Do not add an
+was deleted. A compiled MCP design probe exposed a remaining consumer gap:
+native example startup passes its planned typed dependencies, but MCP's custom
+constructor treated them as origin strings and its server fields discarded them.
+The MCP constructor and struct templates now consume the native dependency
+fields and required arguments, before the final origin collection. Native
+generation still owns types, names, imports, ordering and application factories.
+Servers with no declared dependency retain the same output and caller contract.
+The reproducible generated example and routed direct/mounted client fixture
+pass under the race detector. They verify two required imported dependency
+types, exact retained values, native factory-name collisions and final origin
+arguments. The no-dependency example also compiles. Configured lint, root build,
+the complete uncached MCP generator race suite, registry/quickstart/assistant
+regeneration and the assistant race suite pass after this composition change;
+regeneration leaves their existing generated output unchanged.
+Next, let the MCP plugin declare its protected resource dependency
+through this shared plan. Preserve native constructor names and example calls.
+Do not add an
 optional verifier, reconstruct domain endpoints, or introduce MCP-only startup
 code. This prerequisite proves constructor composition, not built-in OAuth,
 cryptographic verification, client grants or deployed authorization. Those
@@ -1461,6 +1474,31 @@ Roots, sampling, logging, the old HTTP+SSE transport, and Dynamic Client Registr
 Existing applications can supply authorized HTTP clients and mount authentication middleware. This investigation found no built-in MCP OAuth implementation and no live target credentials/configuration to validate. Treat a future built-in profile as greenfield; do not infer deployed authorization behavior from framework defaults.
 
 The required profile needs protected-resource metadata and challenges, authorization-server/OIDC discovery, PKCE, resource/audience-bound access tokens, and intact 401/403 handling. [Authorization contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization), [authorization-server discovery](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/authorization-server-discovery).
+
+Token verification must enforce an access-token contract. An OpenID ID-token
+verifier checks an identity token's client audience and is not a replacement
+for resource-bound access-token verification. For a JWT access-token profile,
+verify its access-token type, issuer, resource audience, signature and expiration
+as required by that profile; reject an ID token even when the same issuer signed
+it. An authenticated token-introspection profile can support opaque access tokens.
+Choose the server's verification profile from constructed issuer configuration,
+not from token punctuation or a failed JWT parse. MCP does not universally require
+JWT tokens, and clients must treat their access tokens as opaque.
+[JWT access-token validation](https://www.rfc-editor.org/rfc/rfc9068.html#section-4),
+[token introspection](https://www.rfc-editor.org/rfc/rfc7662.html#section-2.2),
+[OpenID verifier contract](https://github.com/coreos/go-oidc/blob/v3/oidc/verify.go).
+
+Before the protected profile adds any public runtime type, separate facts already
+owned by the design from per-request facts. Goa knows scheme names, scopes,
+credential annotations and generated transport bindings. The application
+constructs trusted origin, issuer and credential dependencies before serving;
+the HTTP request supplies the exact resource address and token. Native OAuth
+callbacks already return the authenticated context. Use the shared constructor
+plan and this existing context flow, and prove precise rejection before
+middleware. A parsed request record or another verifier interface is not required
+merely to pass these values between helpers. Built-in cryptographic or
+introspection verification remains necessary; injecting a callback alone does
+not complete it.
 
 Use preregistered credentials or Client ID Metadata Documents; do not build a deprecated Dynamic Client Registration fallback. Validate a present authorization-response issuer and bind stored credentials to that issuer. [Client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration), [security requirements](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations).
 

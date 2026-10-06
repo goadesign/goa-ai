@@ -336,6 +336,9 @@ final variadic arguments to the generated server's `New` constructor, then use
 An empty origin list rejects requests carrying an Origin header. The old
 `MountWithOrigins` API and public inner `Handler` field are removed. Use
 `ServeHTTP` for direct serving.
+Dependencies declared through Goa's server construction plan remain required
+typed arguments before the origin list. Native example startup uses the same
+planned factories; MCP retains the supplied values in private server fields.
 Authored URL mappings use Goa's `Param("payload_field:url_name")` notation.
 Generated clients retain the complete API and service path; adapters decode and
 validate each method's own typed URL values before endpoint execution. These

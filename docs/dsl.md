@@ -1465,6 +1465,10 @@ HTTP methods and origins before running configured middleware. Origin settings
 belong to construction; `MountWithOrigins` and the public inner `Handler` field
 are removed in this breaking upgrade. Use `ServeHTTP` for direct serving.
 Regenerate the server and update its constructor callers together.
+When a generator plugin declares a required server dependency through Goa's
+construction plan, pass that typed value before the final origin arguments.
+Native example startup calls the matching application factory. Fill in that
+factory's application configuration before starting the example server.
 For routes with URL parameters, register `ServeHTTP` with the same mux passed
 to `New`, or use `Mount(mux)`. The mux supplies path values to generated decoders.
 

@@ -7,9 +7,15 @@ func {{ .ServerInitDeclaration.Name }}(
     decoder func(*http.Request) goahttp.Decoder,
     encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
     errhandler func(context.Context, http.ResponseWriter, error),
+    {{- range .ConstructorDependencies }}
+    {{ .Name }} {{ .TypeRef }},
+    {{- end }}
     origins ...string,
 ) *{{ .ServerStructDeclaration.Name }} {
     s := &{{ .ServerStructDeclaration.Name }}{
+        {{- range .ConstructorDependencies }}
+        {{ .Name }}: {{ .Name }},
+        {{- end }}
         Methods: []string{
             {{- range .Endpoints }}
             {{ printf "%q" .Method.Name }},

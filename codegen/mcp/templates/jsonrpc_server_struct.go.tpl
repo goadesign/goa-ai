@@ -1,5 +1,8 @@
 {{ printf "%s handles guarded MCP requests through the configured Goa handlers." .ServerStructDeclaration.Name | comment }}
 type {{ .ServerStructDeclaration.Name }} struct {
+    {{- range .ConstructorDependencies }}
+    {{ .Name }} {{ .TypeRef }}
+    {{- end }}
     handler http.Handler
     // Methods is the list of protocol methods served by this server.
     Methods []string

@@ -2598,6 +2598,11 @@ The inner HTTP handler is private; callers serve the checked server itself.
 still runs. Protocol request checks also own notification acceptance and response
 stream selection; the inner handler only decodes and dispatches a protocol method.
 There is no separate mount policy or a second direct-serving implementation.
+Required dependencies come from Goa's shared constructor plan. MCP's server
+sections consume its retained types, private names and ordering for fields and
+arguments before the final origin collection. Native imports, application
+factories and example startup use the same facts; MCP adds no construction path.
+With no declared dependency, the existing MCP constructor remains unchanged.
 
 OAuth credentials require `Authorization: Bearer`. Basic and Bearer schemes can
 be alternatives when their inactive payload fields allow absence; they cannot be
