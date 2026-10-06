@@ -359,7 +359,7 @@ result views, including empty origin policies and middleware installed after
 mounting. A second assistant regeneration produces identical output hashes.
 Resource OAuth remains a separate incomplete milestone after this prerequisite.
 
-The next native composition prerequisite is
+The merged native composition prerequisite is
 [Goa PR #4028](https://github.com/goadesign/goa/pull/4028). Native constructors
 previously exposed only fixed transport arguments. The existing ordinary HTTP
 mount wrapper receives only `http.Handler` and is unavailable on JSON-RPC; it
@@ -376,19 +376,32 @@ services only, and client commands do not construct server dependencies. An
 unimplemented example factory stops startup with a configuration message.
 Servers that declare no dependency keep their constructor contract.
 
-The published head `721209db1f0d4f138e4b2492c8e4c250e262cb72` passes the final
+Goa PR #4028 is merged as `0841789c6202ca603b7265c06e6e0d2e1a448383`.
+Its tested and merged trees are identical. The implementation passes the
 uncached repository-wide race suite, configured lint, and native JSON-RPC
-integration tests. Ten compiled generated-module cases cover HTTP, JSON-RPC,
+integration tests. The final constructor-name correction additionally passes
+the complete affected HTTP, JSON-RPC and example-generator race suites and lint.
+All Linux/Windows CI, CodeQL and dependency checks pass; there are no unresolved
+review comments. Eleven compiled generated-module cases cover HTTP, JSON-RPC,
 combined startup, two imported dependencies, required nonvariadic signatures,
 exact retained values, files-only services, multipart, WebSocket and SSE,
-colliding names, and declaration before or after example planning. Focused
+colliding names, declaration before or after example planning, and the valid
+plain-HTTP dependency name `http`. JSON-RPC and file-serving constructors reject
+that name because their bodies require the `http` import. Focused
 checks cover invalid declarations, multipart/file argument collisions, copied
 JSON-RPC snapshots and unconfigured services. The existing HTTP `Plan.Service`
 API continues to return shared template data; copied JSON-RPC data retains its
 independent-read contract.
 
-Wait for CI and applicable reviews before merging this prerequisite. Adopt its
-merge commit, then let the MCP plugin declare its protected resource dependency
+All four Goa AI modules select the merged source as
+`v3.33.1-0.20261006020533-0841789c6202`, without a local Goa replacement.
+Against that pin, registry, quickstart and assistant regeneration pass without
+generated changes. Configured lint, root build, the full uncached root race
+suite, quickstart, the regenerated assistant race suite and `TestEvalConsumer`
+all pass. The last check generates and executes a downstream application.
+The completed native clone was verified clean on merged `v3` with no unpushed
+commits, its verification evidence was preserved with matching hashes, and it
+was deleted. Next, let the MCP plugin declare its protected resource dependency
 through this shared plan. Preserve native constructor names and example calls;
 MCP's generated HTTP sections must consume the same planned dependency fields
 and required arguments before its final origin collection. Do not add an
@@ -518,7 +531,7 @@ method bindings therefore use the same rules.
 [Goa PR #4027](https://github.com/goadesign/goa/pull/4027) is merged as
 `562176f1e1b5ea65458cc443a2322feedad07a5e`. Its complete root suite, configured
 lint, Linux/Windows CI matrix, CodeQL and dependency review passed, and the merged
-tree equals the tested tree. All four Goa AI modules now select
+tree equals the tested tree. All four Goa AI modules then selected
 `v3.33.1-0.20261005233735-562176f1e1b5` without a local Goa replacement. Against
 that published pin, the complete affected MCP generator, expression,
 input-binding and DSL race suites, configured lint, root build, regenerated
@@ -933,8 +946,8 @@ These results do not establish a complete released-requirement-set pass.
 
 Root and all three nested application modules were updated with `go get -u ./...`
 and tidied. Final audits of the root and all three nested modules found no
-updates for their explicit direct or indirect requirements. The final Goa dependency is
-`v3.33.1-0.20261005233735-562176f1e1b5`; Pulse remains at
+updates for their explicit direct or indirect requirements. The current Goa dependency is
+`v3.33.1-0.20261006020533-0841789c6202`; Pulse remains at
 `v1.10.3-0.20261002205507-b34ad25e317d`. Provider SDKs, Temporal, MongoDB,
 OpenTelemetry, schema validation, and test dependencies are updated in the module
 files. The linter is pinned separately to `v2.14.0` in `.go-install` so its private
@@ -1450,6 +1463,30 @@ Existing applications can supply authorized HTTP clients and mount authenticatio
 The required profile needs protected-resource metadata and challenges, authorization-server/OIDC discovery, PKCE, resource/audience-bound access tokens, and intact 401/403 handling. [Authorization contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization), [authorization-server discovery](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/authorization-server-discovery).
 
 Use preregistered credentials or Client ID Metadata Documents; do not build a deprecated Dynamic Client Registration fallback. Validate a present authorization-response issuer and bind stored credentials to that issuer. [Client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration), [security requirements](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations).
+
+The client acceptance fixture must exercise the protocol's actual discovery
+order. Prefer a resource metadata address supplied by the Bearer challenge;
+otherwise try the endpoint-specific well-known resource address before the
+origin-root address. For an issuer with a path, try OAuth metadata with path
+insertion, OIDC metadata with path insertion, then OIDC metadata with path
+appending. For an issuer without a path, try OAuth metadata then OIDC metadata.
+Every accepted document must identify exactly the issuer used for that request.
+Test these ordered current-protocol alternatives and reject an issuer mismatch;
+do not substitute normalization or deprecated registration paths.
+[Discovery requirements](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/authorization-server-discovery).
+
+The same fixture must cover two issuers for one protected resource and two
+resources for one issuer. Host-owned preregistered credentials and tokens remain
+associated with their issuing authorization server; switching the advertised
+issuer must not silently reuse another issuer's credentials. Client ID Metadata
+Documents retain their exact HTTPS client identifier and declared redirects.
+Prove concurrent calls under distinct principals and resources, as well as a
+changed issuer during a new authorization exchange. Scope challenges select the
+permissions for that operation, not the union of every catalog method's scopes.
+These facts belong to protocol and credential ownership; none becomes a tool
+argument or a model-selected transport value.
+[Client registration and issuer binding](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration),
+[scope selection](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization#scope-selection-strategy).
 
 The producer-to-consumer trace separates two credentials: MCP OAuth access to
 this protected resource and the credential declared by an original Goa method.
