@@ -2620,6 +2620,13 @@ scope validation before the complete endpoint pipeline, protected resource
 metadata and server challenges remain unfinished release gates; native credential
 delivery alone does not establish MCP authorization conformance.
 
+The shared MCP HTTP transport records whether any attempt reached its
+configured HTTP dependency. Preparation failures retain their local error;
+cancellation observed before delegation sends nothing. Once dispatch has occurred,
+later failures cannot erase the possibility of completed work. This evidence belongs
+to one complete invocation across its attempts, not just the final attempt.
+Generated and discovered clients use the same implementation and agent recovery.
+
 The shared MCP HTTP transport retains each failed attempt's response status
 and exact authorization challenge values in `HTTPResponseError`. The error wraps
 validated JSON-RPC errors so generated and imported clients can inspect both

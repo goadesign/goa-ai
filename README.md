@@ -368,6 +368,12 @@ field named `token` remains an ordinary argument. See
 validation and server challenges remain release gates in the
 [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
 
+The shared MCP HTTP transport keeps local preparation failures distinct from
+lost tool responses. Cancellation observed before dispatch sends no request.
+After an attempt reaches the HTTP dependency, a later failure cannot prove that the tool
+did not run. Both local client failures and unknown outcomes stop agent recovery;
+explicit remote rejections retain their original meaning.
+
 HTTP failures expose the received status and exact authorization challenges
 through `mcp.HTTPResponseError`, while preserving valid protocol errors for
 `errors.As`. Authorization rejections do not wait for an event stream or repeat

@@ -1508,6 +1508,32 @@ issues. All four module tidies preserve their dependency versions and sums.
 [metadata extensions](https://www.rfc-editor.org/rfc/rfc9728.html#section-3.2),
 [Go 1.27 JSON support](https://go.dev/doc/go1.27#encodingjsonv2).
 
+### Dispatch evidence before authorization retries
+
+The shared HTTP path now records whether this invocation handed any attempt to
+its configured HTTP dependency. An invalid local progress token previously
+returned an unknown tool outcome despite zero HTTP calls. It now retains the
+local client error. Cancellation before an attempt stops before delegation.
+Once an attempt has been delegated, that fact remains true across retries:
+a later local failure cannot prove that earlier tool work never happened.
+Explicit protocol and HTTP authorization rejections retain their existing
+classification; lost responses remain unknown outcomes.
+
+This is private request state in the existing transport, not a new public error
+record or an authorization-specific exception. The same transport serves typed
+generated clients and discovered callers. Agent recovery keeps local client
+failures distinct from remote uncertainty, and both remain terminal. Built-in
+credential acquisition must complete before this dispatch point; failures from
+an opaque host HTTP wrapper cannot establish whether it sent a request. Test the
+whole invocation, including earlier interrupted attempts, rather than interpreting
+only the final attempt's failure.
+
+Acceptance passes all MCP runtime tests under the race detector, the agent
+failure and HTTP-to-agent recovery tests under the race detector, configured
+lint with zero issues and the root build. Positive cases retain empty/string,
+zero and large integer progress tokens; negative cases verify zero calls before
+dispatch, one call for remote failures, and unchanged explicit rejection meaning.
+
 ### Required authorization implementation
 
 Existing applications can supply authorized HTTP clients and mount authentication middleware. This investigation found no built-in MCP OAuth implementation and no live target credentials/configuration to validate. Treat a future built-in profile as greenfield; do not infer deployed authorization behavior from framework defaults.
@@ -1538,6 +1564,18 @@ middleware. A parsed request record or another verifier interface is not require
 merely to pass these values between helpers. Built-in cryptographic or
 introspection verification remains necessary; injecting a callback alone does
 not complete it.
+
+The independently pinned [client-credentials draft](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/draft/oauth-client-credentials.mdx)
+requires secret credentials in request content but lists `client_secret_basic`
+in its metadata requirement. Treat that inconsistency explicitly. A Basic-only
+metadata advertisement cannot authorize a POST-body secret. A server truthfully
+advertising both Basic and `client_secret_post` can satisfy the literal clauses;
+the body-secret profile may select only its explicitly advertised POST method.
+The JWT assertion profile has a separate declared method and signing algorithm.
+Do not auto-detect credential placement or copy an SDK fallback. These are
+unimplemented profile requirements, not a claim of complete draft conformance.
+The Go OAuth library's default authentication style tries both placements; any
+use must select an explicit style from the verified external contract.
 
 Use preregistered credentials or Client ID Metadata Documents; do not build a deprecated Dynamic Client Registration fallback. Validate a present authorization-response issuer and bind stored credentials to that issuer. [Client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration), [security requirements](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations).
 

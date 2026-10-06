@@ -123,8 +123,13 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		}
 	}
 	injectTraceHeaders(original.Context(), outgoing.Header)
+	dispatched := false
 	if request.Method == methodToolsCall {
-		defer func() { err = unknownToolOutcome(err) }()
+		defer func() {
+			if dispatched {
+				err = unknownToolOutcome(err)
+			}
+		}()
 	}
 	// A lost response permits repeated execution only when the host trusts the
 	// tool's declaration. The same arguments, input answers and server state stay
@@ -138,6 +143,9 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 	}
 	span.SetAttributes(attribute.String("rpc.method", request.Method))
 	for attempt := 1; ; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var receiver *progressReceiver
 		var subscription *subscriptionReceiver
 		var receiverErr error
@@ -164,6 +172,9 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		attemptRequest := outgoing.Clone(outgoing.Context())
 		attemptRequest.Body = io.NopCloser(bytes.NewReader(body))
 		attemptRequest.ContentLength = int64(len(body))
+		// Once an attempt reaches the HTTP dependency, a later local failure
+		// cannot prove that the tool never ran. Keep that fact across retries.
+		dispatched = true
 		response, err = t.send(attemptRequest, request.HasID, envelope, receiver, subscription)
 		var interrupted *interruptedResponseError
 		var failedResponse *HTTPResponseError

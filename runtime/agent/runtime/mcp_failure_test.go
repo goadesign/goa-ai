@@ -6,6 +6,10 @@ package runtime
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -44,6 +48,59 @@ func TestMCPCallFailure(t *testing.T) {
 			require.Equal(t, test.kind, result.Failure.Kind)
 			require.Equal(t, test.action, result.Failure.Recovery.Action)
 			require.Equal(t, test.err.Error(), result.Failure.Error.Message)
+			require.Empty(t, result.Failure.Recovery.PriorInput)
+			require.Empty(t, result.Failure.Recovery.ExampleJSON)
+		})
+	}
+}
+
+// TestMCPHTTPFailureUsesDispatchEvidence follows transport errors into agent
+// recovery. Local preparation bugs and remote uncertainty both stop execution,
+// but only a dispatched request can leave the remote tool's outcome unknown.
+func TestMCPHTTPFailureUsesDispatchEvidence(t *testing.T) {
+	cases := []struct {
+		name, meta  string
+		cancel      bool
+		wantCalls   int32
+		wantKind    planner.FailureKind
+		wantUnknown bool
+	}{
+		{name: "local progress token", meta: `"progressToken":{}`, wantKind: planner.FailureInternal},
+		{name: "cancelled before dispatch", cancel: true, wantKind: planner.FailureUnavailable},
+		{name: "invalid remote result", wantCalls: 1, wantKind: planner.FailureUnavailable, wantUnknown: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls atomic.Int32
+			peer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				calls.Add(1)
+				writer.Header().Set("Content-Type", "application/json")
+				_, err := writer.Write([]byte(`{"jsonrpc":"2.0","id":"call-1","result":null}`))
+				if err != nil {
+					t.Error(err)
+				}
+			}))
+			t.Cleanup(peer.Close)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			if tc.cancel {
+				cancel()
+			}
+			transport := mcp.NewHTTPTransport(peer.Client(), mcp.ClientInfo{}, nil, mcp.InputSupport{}, mcp.HTTPRetryPolicy{})
+			body := `{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"write","arguments":{},"_meta":{` + tc.meta + `}}}`
+			request, err := http.NewRequestWithContext(ctx, http.MethodPost, peer.URL, strings.NewReader(body))
+			require.NoError(t, err)
+			response, err := transport.Do(request)
+			if response != nil {
+				require.NoError(t, response.Body.Close())
+			}
+			require.Error(t, err)
+			require.Equal(t, tc.wantCalls, calls.Load())
+			var unknown *mcp.OutcomeUnknownError
+			require.Equal(t, tc.wantUnknown, errors.As(err, &unknown))
+			result := MCPCallFailure(tools.Ident("remote.write"), err)
+			require.Equal(t, tc.wantKind, result.Failure.Kind)
+			require.Equal(t, planner.RecoveryFinish, result.Failure.Recovery.Action)
 			require.Empty(t, result.Failure.Recovery.PriorInput)
 			require.Empty(t, result.Failure.Recovery.ExampleJSON)
 		})
