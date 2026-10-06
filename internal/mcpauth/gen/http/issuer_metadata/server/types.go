@@ -17,17 +17,30 @@ type ReadResponseBody struct {
 	// HTTPS endpoint that accepts token grants
 	TokenEndpoint string `form:"token_endpoint" json:"token_endpoint" xml:"token_endpoint"`
 	// Token grants supported by the issuer
-	GrantTypesSupported []string `form:"grant_types_supported,omitempty" json:"grant_types_supported,omitempty" xml:"grant_types_supported,omitempty"`
+	GrantTypesSupported []string `form:"grant_types_supported" json:"grant_types_supported" xml:"grant_types_supported"`
 	// Client authentication methods accepted at the token endpoint
 	TokenEndpointAuthMethodsSupported []string `form:"token_endpoint_auth_methods_supported,omitempty" json:"token_endpoint_auth_methods_supported,omitempty" xml:"token_endpoint_auth_methods_supported,omitempty"`
+	// HTTPS endpoint for user sign-in and consent
+	AuthorizationEndpoint *string `form:"authorization_endpoint,omitempty" json:"authorization_endpoint,omitempty" xml:"authorization_endpoint,omitempty"`
+	// Advertised PKCE methods used to protect authorization codes
+	CodeChallengeMethodsSupported []string `form:"code_challenge_methods_supported,omitempty" json:"code_challenge_methods_supported,omitempty" xml:"code_challenge_methods_supported,omitempty"`
+	// Whether every authorization response must identify its issuer
+	AuthorizationResponseIssParameterSupported *bool `form:"authorization_response_iss_parameter_supported,omitempty" json:"authorization_response_iss_parameter_supported,omitempty" xml:"authorization_response_iss_parameter_supported,omitempty"`
+	// Whether this issuer accepts HTTPS client metadata documents
+	ClientIDMetadataDocumentSupported *bool `form:"client_id_metadata_document_supported,omitempty" json:"client_id_metadata_document_supported,omitempty" xml:"client_id_metadata_document_supported,omitempty"`
+	// Permissions that the issuer accepts, including optional offline access
+	ScopesSupported []string `form:"scopes_supported,omitempty" json:"scopes_supported,omitempty" xml:"scopes_supported,omitempty"`
 }
 
 // NewReadResponseBody builds the HTTP response body from the result of the
 // "read" endpoint of the "issuer_metadata" service.
 func NewReadResponseBody(res *issuermetadata.ReadResult) *ReadResponseBody {
 	body := &ReadResponseBody{
-		Issuer:        res.Issuer,
-		TokenEndpoint: res.TokenEndpoint,
+		Issuer:                res.Issuer,
+		TokenEndpoint:         res.TokenEndpoint,
+		AuthorizationEndpoint: res.AuthorizationEndpoint,
+		AuthorizationResponseIssParameterSupported: res.AuthorizationResponseIssParameterSupported,
+		ClientIDMetadataDocumentSupported:          res.ClientIDMetadataDocumentSupported,
 	}
 	if res.GrantTypesSupported != nil {
 		body.GrantTypesSupported = make([]string, len(res.GrantTypesSupported))
@@ -35,10 +48,25 @@ func NewReadResponseBody(res *issuermetadata.ReadResult) *ReadResponseBody {
 			body.GrantTypesSupported[i] = val
 		}
 	}
+	if res.GrantTypesSupported == nil {
+		body.GrantTypesSupported = []string{"authorization_code", "implicit"}
+	}
 	if res.TokenEndpointAuthMethodsSupported != nil {
 		body.TokenEndpointAuthMethodsSupported = make([]string, len(res.TokenEndpointAuthMethodsSupported))
 		for i, val := range res.TokenEndpointAuthMethodsSupported {
 			body.TokenEndpointAuthMethodsSupported[i] = val
+		}
+	}
+	if res.CodeChallengeMethodsSupported != nil {
+		body.CodeChallengeMethodsSupported = make([]string, len(res.CodeChallengeMethodsSupported))
+		for i, val := range res.CodeChallengeMethodsSupported {
+			body.CodeChallengeMethodsSupported[i] = val
+		}
+	}
+	if res.ScopesSupported != nil {
+		body.ScopesSupported = make([]string, len(res.ScopesSupported))
+		for i, val := range res.ScopesSupported {
+			body.ScopesSupported[i] = val
 		}
 	}
 	return body

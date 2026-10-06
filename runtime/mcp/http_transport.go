@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	genaccesstokens "goa.design/goa-ai/internal/mcpauth/gen/access_tokens"
 	"goa.design/goa-ai/internal/mcpprotocol"
 	"goa.design/goa/v3/jsonrpc"
 )
@@ -41,7 +42,7 @@ type (
 		inputSupport  InputSupport
 		tools         map[string]ToolBinding
 		retry         HTTPRetryPolicy
-		authorization *clientSecretGrant
+		authorization *authorizationClient
 	}
 )
 
@@ -54,7 +55,7 @@ func NewHTTPTransport(next interface {
 	if err := retry.Validate(); err != nil {
 		panic(err)
 	}
-	var authorization *clientSecretGrant
+	var authorization *authorizationClient
 	if existing, ok := next.(*HTTPTransport); ok {
 		next = existing.next
 		authorization = existing.authorization
@@ -127,9 +128,12 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 	}
 	injectTraceHeaders(original.Context(), outgoing.Header)
 	dispatched := false
+	lostResponse := false
 	if request.Method == methodToolsCall {
 		defer func() {
-			if dispatched {
+			if lostResponse && err != nil {
+				err = NewOutcomeUnknownError(err)
+			} else if dispatched {
 				err = unknownToolOutcome(err)
 			}
 		}()
@@ -144,6 +148,10 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 			attempts = max(1, t.retry.MaxAttempts)
 		}
 	}
+	// One credential recovery applies to this HTTP request round, including its
+	// stream retries. A second rejection returns to the host; a later host-input
+	// round starts another request with its own allowance.
+	authorizationRecoveries := 0
 	span.SetAttributes(attribute.String("rpc.method", request.Method))
 	for attempt := 1; ; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -177,17 +185,40 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		attemptRequest.ContentLength = int64(len(body))
 		// Local request preparation must finish before a credential exchange.
 		// Each attempt checks token expiry with this operation's context.
+		var sentGrant *genaccesstokens.BearerToken
 		if t.authorization != nil {
-			if err := t.authorization.prepare(attemptRequest); err != nil {
+			sentGrant, err = t.authorization.prepare(attemptRequest)
+			if err != nil {
 				return nil, err
 			}
 		}
 		// Once an attempt reaches the HTTP dependency, a later local failure
 		// cannot prove that the tool never ran. Keep that fact across retries.
+		priorDispatch := dispatched
 		dispatched = true
 		response, err = t.send(attemptRequest, request.HasID, envelope, receiver, subscription)
 		var interrupted *interruptedResponseError
 		var failedResponse *HTTPResponseError
+		if errors.As(err, &failedResponse) && (failedResponse.StatusCode == http.StatusUnauthorized || failedResponse.StatusCode == http.StatusForbidden) {
+			// This rejection proves this attempt did not execute the operation.
+			// A previous lost response still keeps its uncertain outcome.
+			dispatched = priorDispatch
+			if t.authorization != nil && authorizationRecoveries == 0 {
+				recovered, recoveryErr := t.authorization.recover(attemptRequest, failedResponse, sentGrant)
+				if recoveryErr != nil {
+					return nil, recoveryErr
+				}
+				if recovered {
+					authorizationRecoveries++
+					attemptRequest.Body = io.NopCloser(bytes.NewReader(body))
+					dispatched = true
+					response, err = t.send(attemptRequest, request.HasID, envelope, receiver, subscription)
+					if errors.As(err, &failedResponse) && (failedResponse.StatusCode == http.StatusUnauthorized || failedResponse.StatusCode == http.StatusForbidden) {
+						dispatched = priorDispatch
+					}
+				}
+			}
+		}
 		if err == nil || !errors.As(err, &interrupted) || !errors.As(err, &failedResponse) || failedResponse.StatusCode != http.StatusOK || original.Context().Err() != nil || attempt == attempts {
 			if err == nil && attempt > 1 {
 				// The network reply was checked against this attempt's ID. Restore
@@ -211,6 +242,9 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 			}
 			return response, err
 		}
+		// A later request rejection describes only that attempt. Once a stream
+		// loses its result, a failed retry cannot prove the earlier tool did not run.
+		lostResponse = true
 		span.AddEvent("mcp.response_interrupted", trace.WithAttributes(attribute.Int("attempt", attempt)))
 		envelope["id"], err = json.Marshal(uuid.NewString())
 		if err != nil {

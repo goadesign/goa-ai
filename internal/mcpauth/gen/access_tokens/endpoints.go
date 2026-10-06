@@ -15,13 +15,17 @@ import (
 
 // Endpoints wraps the "access_tokens" service endpoints.
 type Endpoints struct {
-	Secret goa.Endpoint
+	Secret  goa.Endpoint
+	Code    goa.Endpoint
+	Refresh goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "access_tokens" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		Secret: NewSecretEndpoint(s),
+		Secret:  NewSecretEndpoint(s),
+		Code:    NewCodeEndpoint(s),
+		Refresh: NewRefreshEndpoint(s),
 	}
 }
 
@@ -29,6 +33,8 @@ func NewEndpoints(s Service) *Endpoints {
 // endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Secret = m(e.Secret)
+	e.Code = m(e.Code)
+	e.Refresh = m(e.Refresh)
 }
 
 // NewSecretEndpoint returns an endpoint function that calls the method
@@ -37,5 +43,23 @@ func NewSecretEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*SecretPayload)
 		return s.Secret(ctx, p)
+	}
+}
+
+// NewCodeEndpoint returns an endpoint function that calls the method "code" of
+// service "access_tokens".
+func NewCodeEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*CodePayload)
+		return s.Code(ctx, p)
+	}
+}
+
+// NewRefreshEndpoint returns an endpoint function that calls the method
+// "refresh" of service "access_tokens".
+func NewRefreshEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*RefreshPayload)
+		return s.Refresh(ctx, p)
 	}
 }

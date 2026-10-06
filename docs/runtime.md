@@ -6676,12 +6676,84 @@ token or redirect failures stop before MCP dispatch. Returned errors exclude
 secrets, token values and issuer response diagnostics. HTTP 401/403 responses
 cause no automatic repeat with unchanged credentials.
 
-This first profile does not handle challenge-selected metadata URLs, PKCE,
-consent, refresh-token grants, JWT client assertions, enterprise exchange or
-scope changes for an operation. It does not advertise the authorization
-extension as complete. Full OAuth and resource-server verification remain
+When well-known resource metadata is absent, discovery asks `server/discover`
+for a Bearer challenge and reads its advertised HTTPS metadata document. It does
+not execute a domain tool to discover authorization. This machine profile does
+not initiate browser consent or scope upgrades. JWT client assertions, enterprise
+exchange and resource-server verification remain unfinished. It does not
+advertise the authorization extension as complete. Full OAuth and resource-server verification remain
 required before the breaking release. See the
 [upgrade plan](mcp_protocol_upgrade_plan.md#built-in-client-secret-grant-milestone).
+
+### Browser authorization
+
+A host can supply a browser consent callback to `NewAuthorizationCodeHTTPTransport`
+for a preregistered public client. Construct a separate transport for each host
+user or application, issuer and protected resource. Supply the transport to `HTTPOptions.Client`
+or a generated HTTP client, just as with the client-secret profile.
+
+```go
+transport, err := mcp.NewAuthorizationCodeHTTPTransport(mcp.HTTPOptions{
+    Endpoint: "https://records.example/mcp",
+    Client: httpClient,
+    ClientInfo: mcp.ClientInfo{Name: "records-host", Version: "1"},
+}, mcp.AuthorizationCode{
+    Issuer: "https://identity.example/tenant",
+    ClientID: registeredPublicClientID,
+    RedirectURI: "https://host.example/oauth/callback",
+    Authorize: authorizeInBrowser,
+})
+```
+
+`Authorize(ctx, authorizationURL)` must open sign-in and consent for that host's
+user or application, return the complete redirect URL, and respect cancellation. It must
+not log either URL. The runtime generates a fresh state and private PKCE verifier
+for every exchange. It verifies advertised S256 support and public token
+authentication, checks the exact redirect and returned issuer, and exchanges the
+code through the generated typed client. Issuers must advertise `none` token
+authentication; authorization-code support uses the standard metadata default
+when the grant list is omitted. A present response `iss` must always match the
+selected issuer, including error responses. When the issuer advertises response
+issuer support, omission is rejected.
+
+`NewClientMetadataHTTPTransport` accepts the same configuration with `ClientID`
+set to the HTTPS URL of the host's published registration document. The issuer
+must advertise client-metadata support. The document must identify that exact
+URL, provide a client name, include the configured redirect and use `none`
+authentication. Its grant and response lists use their standard authorization-code
+and code defaults when omitted. Shared-secret properties are forbidden. URLs
+with dot path segments or no path component are rejected. The host owns publishing
+and making this document reachable; the transport checks it before consent and
+uses the same browser flow. It does not use deprecated dynamic registration.
+
+An expired token can use its private refresh credential when the issuer supports
+refresh. A client-metadata registration must also include `refresh_token` in its
+registered grant list. A rotated refresh credential replaces the previous value;
+omission retains it. A rejected refresh stops with an error instead of opening a
+second consent flow. Refresh requests use the current operation's cancellation
+context, and refresh credentials never enter MCP arguments, checkpoints or errors.
+
+A fresh grant can retain the same opaque token value; the runtime tracks the
+private grant result rather than interpreting token bytes. A browser client may
+recover once after an explicit HTTP authorization rejection
+within one HTTP request round, including its stream retries. A 401 can obtain a
+fresh credential; a 403 requires an `insufficient_scope` Bearer challenge naming new scopes. Advertised
+metadata takes priority over well-known locations and must bind the configured
+resource and issuer. The new request preserves prior requested and returned
+scopes alongside the challenged scopes. Returned scope names are issuer facts;
+the resource server owns their hierarchy and decides whether a token permits an
+operation. Ordinary 403s, repeated scope requests and a second
+rejection stop. Concurrent calls share a refresh exchange.
+
+This recovery applies to a request rejected before tool execution. A lost event
+stream still follows the separate trusted read-only or idempotent retry policy.
+The authorization limit applies across all such stream attempts for that
+request round. A later host-input round receives its own allowance. If an
+earlier stream lost its tool result, a later rejected attempt
+returns `OutcomeUnknownError`; its HTTP rejection remains available through
+`errors.As`. That rejection cannot establish that the earlier tool never ran.
+These clients do not yet complete server resource authorization,
+JWT client assertions or enterprise exchange, which remain release requirements.
 
 ### Request-scoped MCP progress
 
@@ -6813,10 +6885,13 @@ retryPolicy := mcp.HTTPRetryPolicy{
 }
 ```
 
-`MaxAttempts` counts POSTs for one request round, including the first. Zero
-selects one attempt; negative values are rejected. A later host-input round gets
-its own allowance. This setting does not change run-wide tool budgets or enable
-worker retries. MCP activities still execute at most once after worker loss.
+`MaxAttempts` counts attempts governed by the interrupted-stream policy for one
+request round, including the first. Zero selects one attempt; negative values are
+rejected. An OAuth rejection can add one separately bounded resend after a fresh
+grant; it does not consume this stream allowance because the rejected attempt did
+not execute the tool. For example, two stream attempts plus one credential
+recovery can send three POSTs. A later host-input round gets its own allowance.
+This setting does not change run-wide tool budgets or enable worker retries. MCP activities still execute at most once after worker loss.
 
 Enable `TrustToolAnnotations` only for a server whose behavior declarations the
 application trusts. A trusted `readOnlyHint: true` or `idempotentHint: true`

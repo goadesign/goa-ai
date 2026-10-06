@@ -14,6 +14,10 @@ Reassessment changes the earlier feature assessment: goa-ai already has typed sc
 
 The user explicitly requires a breaking upgrade with no compatibility or legacy code. That authorizes removal of the old MCP contract; it does not justify removing unrelated service behavior or changing registry protocols.
 
+### Deferred stdio server support
+
+On 2026-10-06, the user authorized delaying stdio support. Generated stdio server production and the server-side stdio acceptance checks move to a follow-up and do not block this release. The current release targets generated HTTP servers. Existing HTTP and stdio callers remain supported and must preserve their verified behavior; this deferral does not authorize removing them. Dynamic HTTP catalog subscription sources, Tasks, Apps, Skills, authorization and generated server additional input remain required. Historical milestone descriptions below retain the evidence available when they were recorded; this scope decision supersedes their stdio server release gates.
+
 ### Reproducible baseline
 
 | Item | Evidence |
@@ -718,7 +722,7 @@ Renamed fields and located URI declarations retain their owning Go types. The
 source owns accepted URIs and related sub-resources. HTTP cancellation reaches
 that source, and missing acknowledgment returns a structured internal error.
 Only bound services advertise resource subscription support. Dynamic catalog
-sources and generated stdio production remain release gates.
+sources remain a release gate; generated stdio production is deferred under the scope decision above.
 Generated clients bind their notification handler with `WithSubscriptionEvents`
 and call the typed `SubscriptionsListen` endpoint. Missing handlers fail before
 network dispatch instead of silently discarding notifications. The generated
@@ -1728,6 +1732,76 @@ and authoritative challenges remain required. The authorization extension is not
 advertised from this partial profile. No release or caller cutover is authorized
 until these and the other listed capability gates pass.
 
+## Browser authorization and challenge milestone
+
+The current client implementation shares one resource-bound credential owner
+across client-secret and public browser grants. Native Goa contracts now describe
+code exchange, refresh exchange, browser callback query fields and self-hosted
+client metadata. Callback `issuer` is mapped to transport `iss`; no parallel
+query decoder owns the OAuth response. Standard grant defaults are declared in
+the design. Regeneration produces all clients, servers and validators.
+
+Browser constructors select preregistered public clients or current HTTPS
+client metadata documents. A host callback owns sign-in and consent; the runtime
+owns state, PKCE, exact issuer and redirect checks, private refresh rotation, and
+cancellation. Client metadata must bind its document URL and configured redirect,
+use public authentication and contain no shared-secret members. Deprecated
+dynamic registration is absent. This public-client profile requires explicit
+`none` token authentication and S256 support in issuer metadata.
+
+Shared discovery uses a syntactically valid Bearer challenge when well-known
+resource metadata is absent. Runtime browser rejections prioritize their
+advertised metadata document. Multiple fields and realms remain separate; exact
+resource and configured issuer checks precede any credential exchange. Initial
+challenged scopes take priority for browser grants. Machine grants preserve
+configured permissions and return rejections without automatic escalation.
+
+A browser operation may recover once after a definite authorization rejection
+and only resend after a successful fresh grant. Insufficient scope requires a new
+challenged scope; prior requested and granted scopes are preserved. The limit
+protects one HTTP request round from a consent loop, including its possible
+stream retries. A second rejection stops; stream-loss retry eligibility remains
+a separate tool-trust decision. Concurrent calls share credential replacement,
+including when an issuer renews the same opaque token value. Private grant
+identity distinguishes renewal from unchanged cached credentials. The resource
+server owns scope hierarchies. The earlier client-secret milestone's exact
+returned-scope subset check is removed: valid broader scopes must reach the
+resource owner rather than be rejected by a client string comparison.
+
+A lost response remains an unknown tool outcome when a later attempt is rejected.
+The later HTTP status and challenge remain inspectable through the error chain.
+A compiled HTTPS test renews one grant, loses an accepted SSE response and receives
+a later 401; it observes three POSTs, two token exchanges and no second recovery.
+This also proves the two limits have different owners: the stream policy bounds
+execution attempts within one request round; authorization recovery is at most
+one within the complete HTTP request round. Two successive request rounds may
+each renew one rejected credential; the synthetic HTTPS test verifies both
+finish. The stream allowance does not count a separately bounded resend after an authorization rejection. This is an explicit
+change from the former documentation that counted every physical POST.
+
+The complete MCP runtime race suite and generated OAuth client fixture pass.
+Initial challenges, the full advertised/unadvertised callback issuer matrix,
+public metadata defaults, registered refresh, JSON suffix media types and private
+host isolation have synthetic acceptance checks. Owning regeneration preserves
+all 67 generated artifact hashes. Serial `make test` passes the uncached root
+race suite and quickstart. After the final scope-cache correction, the complete
+MCP runtime, MCP generator and agent runtime race suites pass. Configured lint
+reports no issues; root build and the assistant race suite pass. The evaluation
+fixture initially failed before tests because its module lacked the already-pinned
+OAuth SDK checksum. Its corrected module manifest passes compilation, and
+`TestEvalConsumer` passes generation, example scaffolding, compilation and
+execution of the downstream application.
+
+The earlier concurrent acceptance run failed generator and workflow deadlines and
+was interrupted. Its failures are retained; the subsequent serial run verifies
+the same checks without increasing their timeouts.
+
+This is greenfield framework behavior verified with synthetic HTTPS peers; no
+deployed OAuth configuration or telemetry establishes a production cutover.
+Resource-server token verification and generated policy, JWT client assertions,
+enterprise exchange, independent conformance and all other nondeferred capability
+gates remain required. OAuth is not complete and no release is authorized.
+
 ## Removal and preservation matrix
 
 Remove obsolete source and generated output in the same breaking change. Keep no deprecated forwarding alias, alternate decoder, negotiated older version, or runtime feature flag.
@@ -1856,7 +1930,7 @@ These are dependency-ordered work packages for one breaking release. Intermediat
 
 ### 7. Implement all required authoring and extension capabilities
 
-Every milestone below is required before this upgrade can release. Define the typed caller experience and complete generated fixture before editing each public contract. The current framework foundations are evidence of feasibility, not proof that the capability already exists.
+Every milestone below is required before this upgrade can release, except generated stdio server production and its server-side acceptance checks, which are deferred above. Define the typed caller experience and complete generated fixture before editing each public contract. The current framework foundations are evidence of feasibility, not proof that the capability already exists.
 
 1. **Resource/prompt authoring:** prove byte-valued resource reads and parameterized prompt methods using existing Goa types. Bind static facts at generation time, including MIME, messages, arguments, and routing. Use URI templates for discovery and pass exact URI inputs to the service-owned reader; suggestions use declared variable names; framework assistant `Completion` remains separate. Use generated transforms, not runtime payload coercion. Preserve fixed URI and static message outcomes.
 2. **Subscriptions/progress:** identify the owning change/progress producer, authenticated selection, ordering, cancellation, and backpressure. Add request-scoped protocol events through a purpose-built generated binding and shared transport. Do not forward private session streams or install a generic global broadcaster. A subscription is a distinct operation, not streamed chunks of an otherwise unary tool/resource result.
@@ -1977,7 +2051,8 @@ Run focused package/generator tests while iterating, including `./runtime/mcp`, 
 
 | Value | Owner and purpose | Units, boundary, lifetime | Required counterexample |
 | --- | --- | --- | --- |
-| HTTP `MaxAttempts` | Application bounds repeated POST dispatches after unexpected SSE interruption | Counts the first attempt; zero selects one; negative is rejected; applies to one HTTP request round | Two host-input rounds may each use two attempts without exceeding either round's allowance |
+| HTTP `MaxAttempts` | Application bounds execution attempts after unexpected SSE interruption | Counts the first attempt; zero selects one; negative is rejected; applies to one HTTP request round; a resend after a definite authorization rejection has a separate allowance | Two host-input rounds may each use two stream attempts; one round with two stream attempts and one successful credential recovery may send three POSTs |
+| Browser authorization recovery | Credential owner prevents repeated consent or refresh after definite resource rejection | At most one fresh-grant resend within one HTTP request round, including its stream attempts | Two later request rounds may each recover once; a second rejection after stream loss stops without erasing the first attempt's unknown outcome |
 | Mirrored integer range | MCP HTTP binding preserves exact interoperability with JavaScript header consumers | Inclusive `[-9007199254740991, 9007199254740991]`; one annotated field in one HTTP request | A larger integer in an unannotated field or a stdio tool remains valid if its declared codec permits it |
 | Generated `ttlMs: 0` | Server result declares no freshness claim | Integer milliseconds; a result is fresh only before its receipt time plus TTL; zero allows no subsequent freshness interval | Multiple pages/results do not share a cumulative TTL or quota |
 | Existing HTTP timeout | Caller/application transport policy | One HTTP request, not a complete agent run or all transport calls | Several individually valid calls may exceed that duration in aggregate |
@@ -2090,6 +2165,6 @@ Keep the isolated clone until the work is complete and published without losing 
 
 ### Definition of done
 
-The replacement is complete when every claimed current-protocol path passes independent validation; all local generated consumers and docs use the new contract; no old version/lifecycle/session/text-coercion/compatibility path remains; domain outcomes in the preservation matrix are proven; complete generation/composition and configured host-input paths pass; every requested capability is implemented and its complete path independently verified; extension advertisements match configured implementations; and downstream worker/checkpoint rollout, rollback, and interrupted-request semantics are explicit.
+The replacement is complete when every claimed current-protocol path passes independent validation; all local generated consumers and docs use the new contract; no old version/lifecycle/session/text-coercion/compatibility path remains; domain outcomes in the preservation matrix are proven; complete generation/composition and configured host-input paths pass; every capability in the revised release scope is implemented and its complete path independently verified (generated stdio server production is deferred); extension advertisements match configured implementations; and downstream worker/checkpoint rollout, rollback, and interrupted-request semantics are explicit.
 
 A changed version literal, green legacy tests, or a successful tools/list request is insufficient evidence. The final implementation must have the same ownership and public surface it would have had if the old MCP implementation had never existed.

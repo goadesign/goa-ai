@@ -9,7 +9,6 @@ import (
 	json "encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
 	"mime"
 	"net/http"
 	"net/url"
@@ -74,7 +73,7 @@ func (d *authorizationDoer) Do(request *http.Request) (response *http.Response, 
 		return nil, &authorizationStatus{code: response.StatusCode}
 	}
 	media, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
-	if err != nil || media != "application/json" {
+	if err != nil || (media != "application/json" && (d.operation != "client_metadata" || !strings.HasPrefix(media, "application/") || !strings.HasSuffix(media, "+json"))) {
 		return nil, errors.Join(errors.New("authorization endpoint did not return application/json"), response.Body.Close())
 	}
 	return response, nil
@@ -122,10 +121,7 @@ func secretFormEncoder(request *http.Request) goahttp.Encoder {
 		if body.Scope != nil {
 			form.Set("scope", *body.Scope)
 		}
-		encoded := form.Encode()
-		request.Body = io.NopCloser(strings.NewReader(encoded))
-		request.ContentLength = int64(len(encoded))
-		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		writeGrantForm(request, form)
 		return nil
 	})
 }

@@ -43,4 +43,14 @@ type ReadResult struct {
 	GrantTypesSupported []string
 	// Client authentication methods accepted at the token endpoint
 	TokenEndpointAuthMethodsSupported []string
+	// HTTPS endpoint for user sign-in and consent
+	AuthorizationEndpoint *string
+	// Advertised PKCE methods used to protect authorization codes
+	CodeChallengeMethodsSupported []string
+	// Whether every authorization response must identify its issuer
+	AuthorizationResponseIssParameterSupported *bool
+	// Whether this issuer accepts HTTPS client metadata documents
+	ClientIDMetadataDocumentSupported *bool
+	// Permissions that the issuer accepts, including optional offline access
+	ScopesSupported []string
 }

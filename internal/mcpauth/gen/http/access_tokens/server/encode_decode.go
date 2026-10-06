@@ -22,7 +22,7 @@ import (
 // access_tokens secret endpoint.
 func EncodeSecretResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
 	return func(ctx context.Context, w http.ResponseWriter, v any) error {
-		res, _ := v.(*accesstokens.SecretResult)
+		res, _ := v.(*accesstokens.BearerToken)
 		enc := encoder(ctx, w)
 		body := NewSecretResponseBody(res)
 		w.WriteHeader(http.StatusOK)
@@ -55,6 +55,90 @@ func DecodeSecretRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.
 			return payload, err
 		}
 		payload = NewSecretPayload(&body)
+
+		return payload, nil
+	}
+}
+
+// EncodeCodeResponse returns an encoder for responses returned by the
+// access_tokens code endpoint.
+func EncodeCodeResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*accesstokens.BearerToken)
+		enc := encoder(ctx, w)
+		body := NewCodeResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeCodeRequest returns a decoder for requests sent to the access_tokens
+// code endpoint.
+func DecodeCodeRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*accesstokens.CodePayload, error) {
+	return func(r *http.Request) (*accesstokens.CodePayload, error) {
+		var payload *accesstokens.CodePayload
+		var (
+			body CodeRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateCodeRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewCodePayload(&body)
+
+		return payload, nil
+	}
+}
+
+// EncodeRefreshResponse returns an encoder for responses returned by the
+// access_tokens refresh endpoint.
+func EncodeRefreshResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*accesstokens.BearerToken)
+		enc := encoder(ctx, w)
+		body := NewRefreshResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeRefreshRequest returns a decoder for requests sent to the
+// access_tokens refresh endpoint.
+func DecodeRefreshRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*accesstokens.RefreshPayload, error) {
+	return func(r *http.Request) (*accesstokens.RefreshPayload, error) {
+		var payload *accesstokens.RefreshPayload
+		var (
+			body RefreshRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateRefreshRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewRefreshPayload(&body)
 
 		return payload, nil
 	}

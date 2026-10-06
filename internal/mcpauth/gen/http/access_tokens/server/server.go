@@ -18,8 +18,10 @@ import (
 
 // Server lists the access_tokens service endpoint HTTP handlers.
 type Server struct {
-	Mounts []*MountPoint
-	Secret http.Handler
+	Mounts  []*MountPoint
+	Secret  http.Handler
+	Code    http.Handler
+	Refresh http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -50,8 +52,12 @@ func New(
 	return &Server{
 		Mounts: []*MountPoint{
 			{"Secret", "POST", "/token"},
+			{"Code", "POST", "/code"},
+			{"Refresh", "POST", "/refresh"},
 		},
-		Secret: NewSecretHandler(e.Secret, mux, decoder, encoder, errhandler, formatter),
+		Secret:  NewSecretHandler(e.Secret, mux, decoder, encoder, errhandler, formatter),
+		Code:    NewCodeHandler(e.Code, mux, decoder, encoder, errhandler, formatter),
+		Refresh: NewRefreshHandler(e.Refresh, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -61,6 +67,8 @@ func (s *Server) Service() string { return "access_tokens" }
 // Use wraps the server handlers with the given middleware.
 func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.Secret = m(s.Secret)
+	s.Code = m(s.Code)
+	s.Refresh = m(s.Refresh)
 }
 
 // MethodNames returns the methods served.
@@ -69,6 +77,8 @@ func (s *Server) MethodNames() []string { return accesstokens.MethodNames[:] }
 // Mount configures the mux to serve the access_tokens endpoints.
 func Mount(mux goahttp.Muxer, h *Server) {
 	MountSecretHandler(mux, h.Secret)
+	MountCodeHandler(mux, h.Code)
+	MountRefreshHandler(mux, h.Refresh)
 }
 
 // Mount configures the mux to serve the access_tokens endpoints.
@@ -106,6 +116,112 @@ func NewSecretHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "secret")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountCodeHandler configures the mux to serve the "access_tokens" service
+// "code" endpoint.
+func MountCodeHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/code", f)
+}
+
+// NewCodeHandler creates a HTTP handler which loads the HTTP request and calls
+// the "access_tokens" service "code" endpoint.
+func NewCodeHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeCodeRequest(mux, decoder)
+		encodeResponse = EncodeCodeResponse(encoder)
+		encodeError    = goahttp.ErrorEncoder(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "code")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountRefreshHandler configures the mux to serve the "access_tokens" service
+// "refresh" endpoint.
+func MountRefreshHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/refresh", f)
+}
+
+// NewRefreshHandler creates a HTTP handler which loads the HTTP request and
+// calls the "access_tokens" service "refresh" endpoint.
+func NewRefreshHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeRefreshRequest(mux, decoder)
+		encodeResponse = EncodeRefreshResponse(encoder)
+		encodeError    = goahttp.ErrorEncoder(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "refresh")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
 		payload, err := decodeRequest(r)
 		if err != nil {

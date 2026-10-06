@@ -39,6 +39,8 @@ type (
 		tokenBody     string
 		tokenStatus   int
 		mcpStatus     int
+		challenges    []string
+		probeCalls    atomic.Int32
 		missingPaths  []string
 		tokenRedirect string
 		tokenMedia    string
@@ -135,9 +137,6 @@ func TestClientCredentialsRejectsBeforeMCPDispatch(t *testing.T) {
 		}, 1},
 		{"expired token", func(p *oauthPeer) {
 			p.tokenBody = `{"access_token":"private-token","token_type":"Bearer","expires_in":0}`
-		}, 1},
-		{"insufficient scope", func(p *oauthPeer) {
-			p.tokenBody = `{"access_token":"private-token","token_type":"Bearer","scope":"other:read"}`
 		}, 1},
 		{"invalid scope spacing", func(p *oauthPeer) {
 			p.tokenBody = `{"access_token":"private-token","token_type":"Bearer","scope":" records:read"}`
@@ -279,7 +278,7 @@ func newOAuthPeer(t *testing.T) *oauthPeer {
 		}
 		var body string
 		switch request.URL.EscapedPath() {
-		case "/.well-known/oauth-protected-resource/mcp/a%2Fb", "/.well-known/oauth-protected-resource":
+		case "/.well-known/oauth-protected-resource/mcp/a%2Fb", "/.well-known/oauth-protected-resource", "/challenge-metadata/a%2Fb":
 			assert.Empty(t, request.Header.Get("Authorization"))
 			body = peer.metadata
 		case "/.well-known/oauth-authorization-server/tenant/a%2Fb", "/.well-known/openid-configuration/tenant/a%2Fb", "/tenant/a%2Fb/.well-known/openid-configuration":
@@ -319,6 +318,20 @@ func newOAuthPeer(t *testing.T) *oauthPeer {
 			body = peer.tokenBody
 		case "/mcp/a%2Fb":
 			peer.mcpCalls.Add(1)
+			if request.Header.Get("Authorization") == "" {
+				peer.probeCalls.Add(1)
+				encoded, err := io.ReadAll(request.Body)
+				assert.NoError(t, err)
+				var probe jsonrpc.RawRequest
+				assert.NoError(t, probe.UnmarshalJSON(encoded))
+				assert.Equal(t, "server/discover", probe.Method)
+				assert.Nil(t, ValidateHTTPRequest(request, encoded, nil))
+				for _, challenge := range peer.challenges {
+					writer.Header().Add("WWW-Authenticate", challenge)
+				}
+				writer.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			assert.Equal(t, "Bearer private-token", request.Header.Get("Authorization"))
 			assert.Equal(t, "tenant=blue", request.URL.RawQuery)
 			if peer.mcpStatus != 0 {
@@ -459,7 +472,7 @@ func TestClientCredentialsConstructionRejectsUnsafeConfiguration(t *testing.T) {
 }
 
 func TestClientCredentialsAcceptsReturnedPermissions(t *testing.T) {
-	for _, granted := range []string{"records:read", "records:read other", "!#[]^~ records:read"} {
+	for _, granted := range []string{"records:read", "records:read other", "!#[]^~ records:read", "records:all", "other:read"} {
 		t.Run(granted, func(t *testing.T) {
 			peer := newOAuthPeer(t)
 			peer.tokenBody = fmt.Sprintf(`{"access_token":"private-token","token_type":"Bearer","scope":%q}`, granted)

@@ -60,5 +60,8 @@ func ValidateReadResponseBody(body *ReadResponseBody) (err error) {
 	for _, e := range body.AuthorizationServers {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.authorization_servers[*]", e, goa.FormatURI))
 	}
+	for _, e := range body.ScopesSupported {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.scopes_supported[*]", e, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+$"))
+	}
 	return
 }

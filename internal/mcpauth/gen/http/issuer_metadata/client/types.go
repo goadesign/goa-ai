@@ -23,14 +23,27 @@ type ReadResponseBody struct {
 	GrantTypesSupported []string `form:"grant_types_supported,omitempty" json:"grant_types_supported,omitempty" xml:"grant_types_supported,omitempty"`
 	// Client authentication methods accepted at the token endpoint
 	TokenEndpointAuthMethodsSupported []string `form:"token_endpoint_auth_methods_supported,omitempty" json:"token_endpoint_auth_methods_supported,omitempty" xml:"token_endpoint_auth_methods_supported,omitempty"`
+	// HTTPS endpoint for user sign-in and consent
+	AuthorizationEndpoint *string `form:"authorization_endpoint,omitempty" json:"authorization_endpoint,omitempty" xml:"authorization_endpoint,omitempty"`
+	// Advertised PKCE methods used to protect authorization codes
+	CodeChallengeMethodsSupported []string `form:"code_challenge_methods_supported,omitempty" json:"code_challenge_methods_supported,omitempty" xml:"code_challenge_methods_supported,omitempty"`
+	// Whether every authorization response must identify its issuer
+	AuthorizationResponseIssParameterSupported *bool `form:"authorization_response_iss_parameter_supported,omitempty" json:"authorization_response_iss_parameter_supported,omitempty" xml:"authorization_response_iss_parameter_supported,omitempty"`
+	// Whether this issuer accepts HTTPS client metadata documents
+	ClientIDMetadataDocumentSupported *bool `form:"client_id_metadata_document_supported,omitempty" json:"client_id_metadata_document_supported,omitempty" xml:"client_id_metadata_document_supported,omitempty"`
+	// Permissions that the issuer accepts, including optional offline access
+	ScopesSupported []string `form:"scopes_supported,omitempty" json:"scopes_supported,omitempty" xml:"scopes_supported,omitempty"`
 }
 
 // NewReadResultOK builds a "issuer_metadata" service "read" endpoint result
 // from a HTTP "OK" response.
 func NewReadResultOK(body *ReadResponseBody) *issuermetadata.ReadResult {
 	v := &issuermetadata.ReadResult{
-		Issuer:        *body.Issuer,
-		TokenEndpoint: *body.TokenEndpoint,
+		Issuer:                *body.Issuer,
+		TokenEndpoint:         *body.TokenEndpoint,
+		AuthorizationEndpoint: body.AuthorizationEndpoint,
+		AuthorizationResponseIssParameterSupported: body.AuthorizationResponseIssParameterSupported,
+		ClientIDMetadataDocumentSupported:          body.ClientIDMetadataDocumentSupported,
 	}
 	if body.GrantTypesSupported != nil {
 		v.GrantTypesSupported = make([]string, len(body.GrantTypesSupported))
@@ -38,10 +51,25 @@ func NewReadResultOK(body *ReadResponseBody) *issuermetadata.ReadResult {
 			v.GrantTypesSupported[i] = val
 		}
 	}
+	if body.GrantTypesSupported == nil {
+		v.GrantTypesSupported = []string{"authorization_code", "implicit"}
+	}
 	if body.TokenEndpointAuthMethodsSupported != nil {
 		v.TokenEndpointAuthMethodsSupported = make([]string, len(body.TokenEndpointAuthMethodsSupported))
 		for i, val := range body.TokenEndpointAuthMethodsSupported {
 			v.TokenEndpointAuthMethodsSupported[i] = val
+		}
+	}
+	if body.CodeChallengeMethodsSupported != nil {
+		v.CodeChallengeMethodsSupported = make([]string, len(body.CodeChallengeMethodsSupported))
+		for i, val := range body.CodeChallengeMethodsSupported {
+			v.CodeChallengeMethodsSupported[i] = val
+		}
+	}
+	if body.ScopesSupported != nil {
+		v.ScopesSupported = make([]string, len(body.ScopesSupported))
+		for i, val := range body.ScopesSupported {
+			v.ScopesSupported[i] = val
 		}
 	}
 
@@ -61,6 +89,12 @@ func ValidateReadResponseBody(body *ReadResponseBody) (err error) {
 	}
 	if body.TokenEndpoint != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.token_endpoint", *body.TokenEndpoint, goa.FormatURI))
+	}
+	if body.AuthorizationEndpoint != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.authorization_endpoint", *body.AuthorizationEndpoint, goa.FormatURI))
+	}
+	for _, e := range body.ScopesSupported {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.scopes_supported[*]", e, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+$"))
 	}
 	return
 }

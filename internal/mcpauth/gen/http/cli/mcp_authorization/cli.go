@@ -14,6 +14,8 @@ import (
 	"os"
 
 	accesstokensc "goa.design/goa-ai/internal/mcpauth/gen/http/access_tokens/client"
+	authorizationresponsesc "goa.design/goa-ai/internal/mcpauth/gen/http/authorization_responses/client"
+	clientmetadatac "goa.design/goa-ai/internal/mcpauth/gen/http/client_metadata/client"
 	issuermetadatac "goa.design/goa-ai/internal/mcpauth/gen/http/issuer_metadata/client"
 	resourcemetadatac "goa.design/goa-ai/internal/mcpauth/gen/http/resource_metadata/client"
 	goahttp "goa.design/goa/v3/http"
@@ -27,7 +29,9 @@ func UsageCommands() []string {
 	return []string{
 		"resource-metadata read",
 		"issuer-metadata read",
-		"access-tokens secret",
+		"client-metadata read",
+		"access-tokens (secret|code|refresh)",
+		"authorization-responses receive",
 	}
 }
 
@@ -35,7 +39,9 @@ func UsageCommands() []string {
 func UsageExamples() string {
 	return os.Args[0] + " " + "resource-metadata read" + "\n" +
 		os.Args[0] + " " + "issuer-metadata read" + "\n" +
+		os.Args[0] + " " + "client-metadata read" + "\n" +
 		os.Args[0] + " " + "access-tokens secret --body '{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'" + "\n" +
+		os.Args[0] + " " + "authorization-responses receive --code \"x\" --error \";\\u0026\" --state \"1f\" --issuer \"http://rice.name/wilfrid.vandervort\"" + "\n" +
 		""
 }
 
@@ -76,12 +82,36 @@ func ParseEndpoint(
 
 		issuerMetadataReadFlags = flag.NewFlagSet("read", flag.ExitOnError)
 
+		clientMetadataFlags = flag.NewFlagSet("client-metadata", flag.ContinueOnError)
+
+		clientMetadataReadFlags = flag.NewFlagSet("read", flag.ExitOnError)
+
 		accessTokensFlags = flag.NewFlagSet("access-tokens", flag.ContinueOnError)
 
 		accessTokensSecretFlags    = flag.NewFlagSet("secret", flag.ExitOnError)
 		accessTokensSecretBodyFlag = new(cliStringFlag)
+
+		accessTokensCodeFlags    = flag.NewFlagSet("code", flag.ExitOnError)
+		accessTokensCodeBodyFlag = new(cliStringFlag)
+
+		accessTokensRefreshFlags    = flag.NewFlagSet("refresh", flag.ExitOnError)
+		accessTokensRefreshBodyFlag = new(cliStringFlag)
+
+		authorizationResponsesFlags = flag.NewFlagSet("authorization-responses", flag.ContinueOnError)
+
+		authorizationResponsesReceiveFlags      = flag.NewFlagSet("receive", flag.ExitOnError)
+		authorizationResponsesReceiveCodeFlag   = new(cliStringFlag)
+		authorizationResponsesReceiveErrorFlag  = new(cliStringFlag)
+		authorizationResponsesReceiveStateFlag  = new(cliStringFlag)
+		authorizationResponsesReceiveIssuerFlag = new(cliStringFlag)
 	)
 	accessTokensSecretFlags.Var(accessTokensSecretBodyFlag, "body", "")
+	accessTokensCodeFlags.Var(accessTokensCodeBodyFlag, "body", "")
+	accessTokensRefreshFlags.Var(accessTokensRefreshBodyFlag, "body", "")
+	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveCodeFlag, "code", "")
+	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveErrorFlag, "error", "")
+	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveStateFlag, "state", "")
+	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveIssuerFlag, "issuer", "")
 
 	resourceMetadataFlags.Usage = resourceMetadataUsage
 	resourceMetadataReadFlags.Usage = resourceMetadataReadUsage
@@ -89,8 +119,16 @@ func ParseEndpoint(
 	issuerMetadataFlags.Usage = issuerMetadataUsage
 	issuerMetadataReadFlags.Usage = issuerMetadataReadUsage
 
+	clientMetadataFlags.Usage = clientMetadataUsage
+	clientMetadataReadFlags.Usage = clientMetadataReadUsage
+
 	accessTokensFlags.Usage = accessTokensUsage
 	accessTokensSecretFlags.Usage = accessTokensSecretUsage
+	accessTokensCodeFlags.Usage = accessTokensCodeUsage
+	accessTokensRefreshFlags.Usage = accessTokensRefreshUsage
+
+	authorizationResponsesFlags.Usage = authorizationResponsesUsage
+	authorizationResponsesReceiveFlags.Usage = authorizationResponsesReceiveUsage
 
 	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 		return nil, nil, err
@@ -111,8 +149,12 @@ func ParseEndpoint(
 			svcf = resourceMetadataFlags
 		case "issuer-metadata":
 			svcf = issuerMetadataFlags
+		case "client-metadata":
+			svcf = clientMetadataFlags
 		case "access-tokens":
 			svcf = accessTokensFlags
+		case "authorization-responses":
+			svcf = authorizationResponsesFlags
 		default:
 			return nil, nil, fmt.Errorf("unknown service %q", svcn)
 		}
@@ -142,10 +184,30 @@ func ParseEndpoint(
 
 			}
 
+		case "client-metadata":
+			switch epn {
+			case "read":
+				epf = clientMetadataReadFlags
+
+			}
+
 		case "access-tokens":
 			switch epn {
 			case "secret":
 				epf = accessTokensSecretFlags
+
+			case "code":
+				epf = accessTokensCodeFlags
+
+			case "refresh":
+				epf = accessTokensRefreshFlags
+
+			}
+
+		case "authorization-responses":
+			switch epn {
+			case "receive":
+				epf = authorizationResponsesReceiveFlags
 
 			}
 
@@ -181,12 +243,31 @@ func ParseEndpoint(
 			case "read":
 				endpoint = c.Read()
 			}
+		case "client-metadata":
+			c := clientmetadatac.NewClient(scheme, host, doer, enc, dec, restore)
+			switch epn {
+			case "read":
+				endpoint = c.Read()
+			}
 		case "access-tokens":
 			c := accesstokensc.NewClient(scheme, host, doer, enc, dec, restore)
 			switch epn {
 			case "secret":
 				endpoint = c.Secret()
 				data, err = accesstokensc.BuildSecretPayload(accessTokensSecretBodyFlag.value)
+			case "code":
+				endpoint = c.Code()
+				data, err = accesstokensc.BuildCodePayload(accessTokensCodeBodyFlag.value)
+			case "refresh":
+				endpoint = c.Refresh()
+				data, err = accesstokensc.BuildRefreshPayload(accessTokensRefreshBodyFlag.value)
+			}
+		case "authorization-responses":
+			c := authorizationresponsesc.NewClient(scheme, host, doer, enc, dec, restore)
+			switch epn {
+			case "receive":
+				endpoint = c.Receive()
+				data, err = authorizationresponsesc.BuildReceivePayload(authorizationResponsesReceiveCodeFlag.value, authorizationResponsesReceiveErrorFlag.value, authorizationResponsesReceiveStateFlag.value, authorizationResponsesReceiveIssuerFlag.value)
 			}
 		}
 	}
@@ -251,6 +332,33 @@ func issuerMetadataReadUsage() {
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "issuer-metadata read")
 }
 
+// clientMetadataUsage displays the usage of the client-metadata command and
+// its subcommands.
+func clientMetadataUsage() {
+	fmt.Fprintln(os.Stderr, `Read a public client's self-hosted registration before using its HTTPS document URL as the client identifier.`)
+	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] client-metadata COMMAND [flags]\n\n", os.Args[0])
+	fmt.Fprintln(os.Stderr, "COMMAND:")
+	fmt.Fprintln(os.Stderr, `    read: Check the client's document identity, public authentication and registered redirects before beginning browser consent.`)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Additional help:")
+	fmt.Fprintf(os.Stderr, "    %s client-metadata COMMAND --help\n", os.Args[0])
+}
+func clientMetadataReadUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] client-metadata read", os.Args[0])
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Check the client's document identity, public authentication and registered redirects before beginning browser consent.`)
+
+	// Flags list
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "client-metadata read")
+}
+
 // accessTokensUsage displays the usage of the access-tokens command and its
 // subcommands.
 func accessTokensUsage() {
@@ -258,6 +366,8 @@ func accessTokensUsage() {
 	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] access-tokens COMMAND [flags]\n\n", os.Args[0])
 	fmt.Fprintln(os.Stderr, "COMMAND:")
 	fmt.Fprintln(os.Stderr, `    secret: Exchange a preregistered client identifier and secret using request-body authentication for one resource and its configured permissions.`)
+	fmt.Fprintln(os.Stderr, `    code: Exchange one validated browser authorization code using the private PKCE verifier and the original resource and redirect.`)
+	fmt.Fprintln(os.Stderr, `    refresh: Replace an expired public-client access token using the refresh credential bound to the same issuer and resource.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s access-tokens COMMAND --help\n", os.Args[0])
@@ -278,4 +388,75 @@ func accessTokensSecretUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens secret --body '{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'")
+}
+
+func accessTokensCodeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens code", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Exchange one validated browser authorization code using the private PKCE verifier and the original resource and redirect.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens code --body '{\n      \"client_id\": \"e\",\n      \"code\": \"a2r\",\n      \"code_verifier\": \"2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx\",\n      \"redirect_uri\": \"http://sporer.biz/nick\",\n      \"resource\": \"http://bauch.com/alvena\"\n   }'")
+}
+
+func accessTokensRefreshUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens refresh", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace an expired public-client access token using the refresh credential bound to the same issuer and resource.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens refresh --body '{\n      \"client_id\": \"r\",\n      \"refresh_token\": \"9gn\",\n      \"resource\": \"http://anderson.name/josefa\"\n   }'")
+}
+
+// authorizationResponsesUsage displays the usage of the
+// authorization-responses command and its subcommands.
+func authorizationResponsesUsage() {
+	fmt.Fprintln(os.Stderr, `Validate browser redirect query fields before the client checks their state, issuer and code-or-error relationship.`)
+	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] authorization-responses COMMAND [flags]\n\n", os.Args[0])
+	fmt.Fprintln(os.Stderr, "COMMAND:")
+	fmt.Fprintln(os.Stderr, `    receive: Decode one host-delivered redirect using the same Goa query validation as a mounted HTTP callback.`)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Additional help:")
+	fmt.Fprintf(os.Stderr, "    %s authorization-responses COMMAND --help\n", os.Args[0])
+}
+func authorizationResponsesReceiveUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] authorization-responses receive", os.Args[0])
+	fmt.Fprint(os.Stderr, " -code STRING")
+	fmt.Fprint(os.Stderr, " -error STRING")
+	fmt.Fprint(os.Stderr, " -state STRING")
+	fmt.Fprint(os.Stderr, " -issuer STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Decode one host-delivered redirect using the same Goa query validation as a mounted HTTP callback.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -code STRING: `)
+	fmt.Fprintln(os.Stderr, `    -error STRING: `)
+	fmt.Fprintln(os.Stderr, `    -state STRING: `)
+	fmt.Fprintln(os.Stderr, `    -issuer STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "authorization-responses receive --code \"x\" --error \";\\u0026\" --state \"1f\" --issuer \"http://rice.name/wilfrid.vandervort\"")
 }

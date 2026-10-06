@@ -11,3 +11,13 @@ package client
 func SecretAccessTokensPath() string {
 	return "/token"
 }
+
+// CodeAccessTokensPath returns the URL path to the access_tokens service code HTTP endpoint.
+func CodeAccessTokensPath() string {
+	return "/code"
+}
+
+// RefreshAccessTokensPath returns the URL path to the access_tokens service refresh HTTP endpoint.
+func RefreshAccessTokensPath() string {
+	return "/refresh"
+}

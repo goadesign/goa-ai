@@ -20,6 +20,13 @@ type Client struct {
 	// Secret Doer is the HTTP client used to make requests to the secret endpoint.
 	SecretDoer goahttp.Doer
 
+	// Code Doer is the HTTP client used to make requests to the code endpoint.
+	CodeDoer goahttp.Doer
+
+	// Refresh Doer is the HTTP client used to make requests to the refresh
+	// endpoint.
+	RefreshDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -42,6 +49,8 @@ func NewClient(
 ) *Client {
 	return &Client{
 		SecretDoer:          doer,
+		CodeDoer:            doer,
+		RefreshDoer:         doer,
 		RestoreResponseBody: restoreBody,
 		scheme:              scheme,
 		host:                host,
@@ -69,6 +78,54 @@ func (c *Client) Secret() goa.Endpoint {
 		resp, err := c.SecretDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("access_tokens", "secret", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// Code returns an endpoint that makes HTTP requests to the access_tokens
+// service code server.
+func (c *Client) Code() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeCodeRequest(c.encoder)
+		decodeResponse = DecodeCodeResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildCodeRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.CodeDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "code", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// Refresh returns an endpoint that makes HTTP requests to the access_tokens
+// service refresh server.
+func (c *Client) Refresh() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeRefreshRequest(c.encoder)
+		decodeResponse = DecodeRefreshResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildRefreshRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.RefreshDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "refresh", err)
 		}
 		return decodeResponse(resp)
 	}

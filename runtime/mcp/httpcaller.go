@@ -67,7 +67,7 @@ func NewHTTPCaller(opts HTTPOptions) (*HTTPCaller, error) {
 		return nil, err
 	}
 	endpoint, err := url.Parse(opts.Endpoint)
-	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != "https") {
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != httpsScheme) {
 		return nil, fmt.Errorf("mcp: invalid HTTP endpoint %q", opts.Endpoint)
 	}
 	client := opts.Client

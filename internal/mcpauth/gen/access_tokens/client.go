@@ -15,22 +15,46 @@ import (
 
 // Client is the "access_tokens" service client.
 type Client struct {
-	SecretEndpoint goa.Endpoint
+	SecretEndpoint  goa.Endpoint
+	CodeEndpoint    goa.Endpoint
+	RefreshEndpoint goa.Endpoint
 }
 
 // NewClient initializes a "access_tokens" service client given the endpoints.
-func NewClient(secret goa.Endpoint) *Client {
+func NewClient(secret, code, refresh goa.Endpoint) *Client {
 	return &Client{
-		SecretEndpoint: secret,
+		SecretEndpoint:  secret,
+		CodeEndpoint:    code,
+		RefreshEndpoint: refresh,
 	}
 }
 
 // Secret calls the "secret" endpoint of the "access_tokens" service.
-func (c *Client) Secret(ctx context.Context, p *SecretPayload) (res *SecretResult, err error) {
+func (c *Client) Secret(ctx context.Context, p *SecretPayload) (res *BearerToken, err error) {
 	var ires any
 	ires, err = c.SecretEndpoint(ctx, p)
 	if err != nil {
 		return
 	}
-	return ires.(*SecretResult), nil
+	return ires.(*BearerToken), nil
+}
+
+// Code calls the "code" endpoint of the "access_tokens" service.
+func (c *Client) Code(ctx context.Context, p *CodePayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.CodeEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// Refresh calls the "refresh" endpoint of the "access_tokens" service.
+func (c *Client) Refresh(ctx context.Context, p *RefreshPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.RefreshEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
 }

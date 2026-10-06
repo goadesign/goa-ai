@@ -52,3 +52,75 @@ func BuildSecretPayload(accessTokensSecretBody *string) (*accesstokens.SecretPay
 
 	return v, nil
 }
+
+// BuildCodePayload builds the payload for the access_tokens code endpoint from
+// CLI flags.
+func BuildCodePayload(accessTokensCodeBody *string) (*accesstokens.CodePayload, error) {
+	var err error
+	var body CodeRequestBody
+	{
+		if accessTokensCodeBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensCodeBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"e\",\n      \"code\": \"a2r\",\n      \"code_verifier\": \"2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx\",\n      \"redirect_uri\": \"http://sporer.biz/nick\",\n      \"resource\": \"http://bauch.com/alvena\"\n   }'")
+		}
+		if utf8.RuneCountInString(body.ClientID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", body.ClientID, utf8.RuneCountInString(body.ClientID), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code", body.Code, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(body.Code) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.code", body.Code, utf8.RuneCountInString(body.Code), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code_verifier", body.CodeVerifier, "^[A-Za-z0-9._~-]{43,128}$"))
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uri", body.RedirectURI, goa.FormatURI))
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.CodePayload{
+		ClientID:     body.ClientID,
+		Code:         body.Code,
+		CodeVerifier: body.CodeVerifier,
+		RedirectURI:  body.RedirectURI,
+		Resource:     body.Resource,
+	}
+
+	return v, nil
+}
+
+// BuildRefreshPayload builds the payload for the access_tokens refresh
+// endpoint from CLI flags.
+func BuildRefreshPayload(accessTokensRefreshBody *string) (*accesstokens.RefreshPayload, error) {
+	var err error
+	var body RefreshRequestBody
+	{
+		if accessTokensRefreshBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensRefreshBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"r\",\n      \"refresh_token\": \"9gn\",\n      \"resource\": \"http://anderson.name/josefa\"\n   }'")
+		}
+		if utf8.RuneCountInString(body.ClientID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", body.ClientID, utf8.RuneCountInString(body.ClientID), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.refresh_token", body.RefreshToken, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(body.RefreshToken) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.refresh_token", body.RefreshToken, utf8.RuneCountInString(body.RefreshToken), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.RefreshPayload{
+		ClientID:     body.ClientID,
+		RefreshToken: body.RefreshToken,
+		Resource:     body.Resource,
+	}
+
+	return v, nil
+}

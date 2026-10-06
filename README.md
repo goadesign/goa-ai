@@ -376,8 +376,10 @@ explicit remote rejections retain their original meaning.
 
 HTTP failures expose the received status and exact authorization challenges
 through `mcp.HTTPResponseError`, while preserving valid protocol errors for
-`errors.As`. Authorization rejections do not wait for an event stream or repeat
-a tool with unchanged credentials. Complete OAuth remains a release gate.
+`errors.As`. Authorization rejections do not wait for an event stream. Browser
+recovery requires a successful fresh grant before one bounded repeat. A later
+rejection cannot erase an earlier lost tool response. Complete OAuth remains a
+release gate.
 
 `mcp.NewClientCredentialsHTTPTransport` obtains preregistered client-secret
 grants for one exact HTTPS resource and issuer before sending MCP requests.
@@ -385,10 +387,18 @@ Generated clients and `HTTPOptions.Client` accept this same transport. Typed
 Goa clients validate metadata and token responses; secrets stay in the token
 request body and bearer tokens stay in the MCP authorization header. The issuer
 must explicitly advertise `client_credentials`, `client_secret_post` and
-`client_secret_basic`. This first profile rejects redirects, does not repeat
-401/403 responses, and does not handle challenges, consent, PKCE or scope changes.
+`client_secret_basic`. The machine profile rejects redirects and returns
+401/403 responses without automatic reauthorization. Shared discovery can use a
+validated challenge metadata URL when well-known discovery is absent.
 See [client-secret authorization](docs/runtime.md#client-secret-authorization)
 for construction and the remaining release gates.
+
+Browser clients use `mcp.NewAuthorizationCodeHTTPTransport` with a registered
+public client, or `mcp.NewClientMetadataHTTPTransport` with the client's self-hosted
+HTTPS registration document. One shared owner handles PKCE, issuer and redirect
+checks, refresh rotation, and operation-specific scope upgrades. The host owns
+sign-in and consent; tokens remain private to its constructed transport.
+See [browser authorization](docs/runtime.md#browser-authorization).
 
 Application code owns planners, service behavior, authorization, side-effect
 idempotency, storage, and deployment. Deploy generated packages, callers, and

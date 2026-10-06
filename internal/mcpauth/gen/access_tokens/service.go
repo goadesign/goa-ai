@@ -14,7 +14,13 @@ import "context"
 type Service interface {
 	// Exchange a preregistered client identifier and secret using request-body
 	// authentication for one resource and its configured permissions.
-	Secret(context.Context, *SecretPayload) (res *SecretResult, err error)
+	Secret(context.Context, *SecretPayload) (res *BearerToken, err error)
+	// Exchange one validated browser authorization code using the private PKCE
+	// verifier and the original resource and redirect.
+	Code(context.Context, *CodePayload) (res *BearerToken, err error)
+	// Replace an expired public-client access token using the refresh credential
+	// bound to the same issuer and resource.
+	Refresh(context.Context, *RefreshPayload) (res *BearerToken, err error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -31,7 +37,46 @@ const ServiceName = "access_tokens"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [1]string{"secret"}
+var MethodNames = [3]string{"secret", "code", "refresh"}
+
+// BearerToken is the result type of the access_tokens service secret method.
+type BearerToken struct {
+	// Opaque bearer token returned by the issuer
+	AccessToken string
+	// Bearer token type, compared without case sensitivity
+	TokenType string
+	// Access token lifetime in seconds from the token response
+	ExpiresIn *int64
+	// Space-separated permissions granted by the issuer
+	Scope *string
+	// Private refresh credential; never sent to a resource server
+	RefreshToken *string
+}
+
+// CodePayload is the payload type of the access_tokens service code method.
+type CodePayload struct {
+	// Public client identifier registered with the selected issuer
+	ClientID string
+	// Authorization code from the validated redirect
+	Code string
+	// Private PKCE verifier for this authorization exchange
+	CodeVerifier string
+	// Exact redirect used in the authorization request
+	RedirectURI string
+	// Exact resource for which the token is requested
+	Resource string
+}
+
+// RefreshPayload is the payload type of the access_tokens service refresh
+// method.
+type RefreshPayload struct {
+	// Public client identifier of the original grant
+	ClientID string
+	// Private refresh credential from the original grant
+	RefreshToken string
+	// Exact resource of the original grant
+	Resource string
+}
 
 // SecretPayload is the payload type of the access_tokens service secret method.
 type SecretPayload struct {
@@ -42,17 +87,5 @@ type SecretPayload struct {
 	// Exact resource for which the token is requested
 	Resource string
 	// Space-separated permissions requested by the configured client
-	Scope *string
-}
-
-// SecretResult is the result type of the access_tokens service secret method.
-type SecretResult struct {
-	// Opaque bearer token returned by the issuer
-	AccessToken string
-	// Bearer token type, compared without case sensitivity
-	TokenType string
-	// Token lifetime in seconds from the token response
-	ExpiresIn *int64
-	// Space-separated permissions granted by the issuer
 	Scope *string
 }

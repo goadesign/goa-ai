@@ -2656,9 +2656,32 @@ The profile requires explicit `client_credentials`, `client_secret_post` and
 on secret placement. It never probes another placement, follows redirects,
 repeats an unchanged credential after 401/403, or infers a JWT from token syntax.
 Only HTTP 404 advances well-known discovery; malformed documents, owner mismatch
-and other failures stop before dispatch. Challenge URLs, consent, PKCE, JWT
-client assertions and operation-specific scope changes are still required; this
-profile does not advertise the authorization extension as complete.
+and other failures stop before dispatch. The machine profile returns resource
+rejections without changing its configured permissions. It does not advertise
+the authorization extension as complete.
+
+Browser authorization uses the same private grant owner and native generated
+OAuth contracts. Public constructors select preregistration or a client-hosted
+HTTPS metadata document. Client-metadata identity, redirect membership and the
+absence of shared-secret members are checked before consent. Native Goa query
+decoding uses `issuer:iss` mapping for callback transport names. The host owns
+browser interaction; state, PKCE verification, issuer binding and refresh-token
+rotation belong to the transport and never enter model or workflow input.
+Standard grant defaults are declared in the Goa design, rather than reconstructed
+by runtime code. The resource server owns scope hierarchies; clients record
+requested and returned scope tokens without interpreting those hierarchies.
+
+A browser operation may recover once from an explicit resource rejection after a
+successful fresh grant. An insufficient-scope challenge adds its scopes to prior
+requested and granted scopes before new consent. Challenge metadata is checked
+against the constructed resource and issuer; unrelated realms remain separate.
+The limit spans one HTTP request round, including stream retries. Concurrent
+rejections reuse a credential already changed by another call instead of rotating
+the same refresh token again. Definite authorization rejections remain distinct
+from lost tool results. A rejection after an earlier lost response retains the
+unknown outcome and the later HTTP status. JWT client assertions, enterprise
+exchange, and the built-in server verifier and generated resource policy remain
+release gates.
 
 Fixed MCP result views have one selected field contract shared by catalog
 schemas and agent specs. Server codecs consume the projected values already

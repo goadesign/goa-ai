@@ -8,8 +8,10 @@ import "fmt"
 type (
 	// HTTPRetryPolicy controls retries of one MCP HTTP request round.
 	HTTPRetryPolicy struct {
-		// MaxAttempts counts all POST attempts, including the first. Zero means one
-		// attempt. Negative values are invalid. Each host-input round has its own limit.
+		// MaxAttempts counts attempts governed by stream-loss retry, including the
+		// first. Zero means one; negative values are invalid. A rejected credential
+		// can add one separately bounded resend after a fresh grant. Each host-input
+		// round receives its own allowances.
 		MaxAttempts int
 		// TrustToolAnnotations allows this endpoint's readOnlyHint or idempotentHint
 		// to authorize retries. False leaves all tool calls at one attempt. The host
