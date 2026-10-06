@@ -67,6 +67,13 @@ For each service annotated with agents or MCP, the plugin:
 
 We compose on top of Goa—no forks, minimal templates, and predictable output.
 
+The framework requires Go 1.27 or newer. OAuth metadata decoding can use Goa's
+existing response-decoder argument with the standard `encoding/json/v2` package.
+This preserves generated response validation while matching JSON names exactly
+and accepting metadata extensions. Closed tool codecs retain their stricter
+unknown-field rules. The [upgrade plan](docs/mcp_protocol_upgrade_plan.md#verified-metadata-decoding-and-toolchain-choice)
+records the compiled evidence and the remaining authorization work.
+
 ## Layout
 
 - Agent packages: `gen/<svc>/agents/<agent>/`

@@ -1469,6 +1469,45 @@ Tasks are no longer a core experiment. Pin the [dated extension contract](https:
 
 Roots, sampling, logging, the old HTTP+SSE transport, and Dynamic Client Registration are deprecated. Avoid them in a new implementation even where the specification retains them during its deprecation window. [Deprecated-feature registry](https://modelcontextprotocol.io/specification/2026-07-28/deprecated).
 
+### Verified metadata decoding and toolchain choice
+
+The native generated HTTP response path accepts unknown metadata extensions and
+validates required fields. Its default JSON decoder also treats `RESOURCE` as
+`resource`; that case-insensitive match is unsuitable for OAuth metadata identity.
+The standalone tool codecs deliberately reject unknown fields and must retain
+that closed contract. Neither result requires another metadata DTO, a schema
+walker in service code, or a second transport generator.
+
+Use Goa's existing response-decoder argument with Go 1.27's standard
+`encoding/json/v2.UnmarshalRead`. It matches declared JSON names exactly, ignores
+unknown extensions, and rejects duplicate members, invalid UTF-8 and trailing
+values. The generated response type and validator still own field types,
+requiredness and the nonempty issuer list. A compiled fixture now proves all
+thirteen accepted and rejected response cases through an actual generated HTTP
+client. It also proves that a distinct uppercase extension cannot replace the
+lowercase resource value.
+
+The root and all three nested modules now require Go 1.27.0; CI already selects
+Go 1.27.1. This is part of the authorized breaking dependency upgrade. Install
+Go 1.27 before rebuilding or regenerating consumers. No third-party JSON module
+or experimental build flag is required. The standard setup script selects the
+module's compiler before installing versioned developer tools; `go install
+package@version` otherwise ignores the module and can build a linter unable to
+check its Go version. The existing protocol and tool codecs
+are unchanged by this choice. OAuth discovery, profile selection and token
+verification still need their complete implementation and acceptance checks;
+the decoding fixture does not establish them.
+
+Acceptance passes configured lint, root build, the complete uncached root race
+suite, quickstart, the assistant race suite and the generated evaluation consumer
+on Go 1.27.1. The metadata fixture also passes under the race detector on the
+minimum Go 1.27.0. Starting the normal setup from a Go 1.26.3 host builds the
+pinned linter with the selected module compiler, and that linter reports no
+issues. All four module tidies preserve their dependency versions and sums.
+[Metadata names](https://www.rfc-editor.org/rfc/rfc9728.html#section-2.1),
+[metadata extensions](https://www.rfc-editor.org/rfc/rfc9728.html#section-3.2),
+[Go 1.27 JSON support](https://go.dev/doc/go1.27#encodingjsonv2).
+
 ### Required authorization implementation
 
 Existing applications can supply authorized HTTP clients and mount authentication middleware. This investigation found no built-in MCP OAuth implementation and no live target credentials/configuration to validate. Treat a future built-in profile as greenfield; do not infer deployed authorization behavior from framework defaults.

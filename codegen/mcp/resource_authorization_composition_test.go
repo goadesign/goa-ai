@@ -91,6 +91,7 @@ package metadata_test
 
 import (
 	"context"
+	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -148,6 +149,60 @@ func ownedMetadataRequest(next http.Handler) http.HandlerFunc {
 		}
 		ctx := context.WithValue(request.Context(), metadataResourceKey{}, resource)
 		next.ServeHTTP(writer, request.WithContext(ctx))
+	}
+}
+
+// exactMetadataDecoder reads one metadata response with exact JSON field names.
+// Goa's generated response validator checks required fields after decoding.
+func exactMetadataDecoder(response *http.Response) goahttp.Decoder {
+	return goahttp.EncodingFunc(func(value any) error {
+		return json.UnmarshalRead(response.Body, value)
+	})
+}
+
+func TestMetadataUsesExactGeneratedResponseBoundary(t *testing.T) {
+	cases := []struct {
+		name, document, wantError string
+	}{
+		{"declared", ` + "`" + `{"resource":"https://resource.example/mcp","authorization_servers":["https://issuer.example"]}` + "`" + `, ""},
+		{"extensions", ` + "`" + `{"resource":"https://resource.example/mcp","authorization_servers":["https://issuer.example"],"resource_name#en":"Synthetic resource","extension":{"enabled":true}}` + "`" + `, ""},
+		{"case-distinct extension", ` + "`" + `{"resource":"https://resource.example/mcp","RESOURCE":"https://other.example","authorization_servers":["https://issuer.example"]}` + "`" + `, ""},
+		{"uppercase resource", ` + "`" + `{"RESOURCE":"https://resource.example/mcp","authorization_servers":["https://issuer.example"]}` + "`" + `, "resource"},
+		{"missing resource", ` + "`" + `{"authorization_servers":["https://issuer.example"]}` + "`" + `, "resource"},
+		{"null resource", ` + "`" + `{"resource":null,"authorization_servers":["https://issuer.example"]}` + "`" + `, "resource"},
+		{"wrong resource type", ` + "`" + `{"resource":12,"authorization_servers":["https://issuer.example"]}` + "`" + `, "resource"},
+		{"missing issuers", ` + "`" + `{"resource":"https://resource.example/mcp"}` + "`" + `, "authorization_servers"},
+		{"empty issuers", ` + "`" + `{"resource":"https://resource.example/mcp","authorization_servers":[]}` + "`" + `, "authorization_servers"},
+		{"duplicate resource", ` + "`" + `{"resource":"https://other.example","resource":"https://resource.example/mcp","authorization_servers":["https://issuer.example"]}` + "`" + `, "duplicate"},
+		{"duplicate extension", ` + "`" + `{"resource":"https://resource.example/mcp","authorization_servers":["https://issuer.example"],"extension":1,"extension":2}` + "`" + `, "duplicate"},
+		{"trailing document", ` + "`" + `{"resource":"https://resource.example/mcp","authorization_servers":["https://issuer.example"]} {}` + "`" + `, "after top-level value"},
+		{"invalid text", "{\"resource\":\"https://resource.example/" + string([]byte{0xff}) + "\",\"authorization_servers\":[\"https://issuer.example\"]}", "UTF-8"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			peer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				writer.Header().Set("Content-Type", "application/json")
+				_, err := writer.Write([]byte(tc.document))
+				if err != nil {
+					t.Error(err)
+				}
+			}))
+			t.Cleanup(peer.Close)
+			address, err := url.Parse(peer.URL)
+			require.NoError(t, err)
+			client := genclient.NewClient(address.Scheme, address.Host, peer.Client(), goahttp.RequestEncoder, exactMetadataDecoder, false)
+			result, err := client.Read()(t.Context(), nil)
+			if tc.wantError != "" {
+				assert.ErrorContains(t, err, tc.wantError)
+				assert.Nil(t, result)
+				return
+			}
+			require.NoError(t, err)
+			metadata, ok := result.(*genmetadata.ReadResult)
+			require.True(t, ok)
+			assert.Equal(t, "https://resource.example/mcp", metadata.Resource)
+			assert.Equal(t, []string{"https://issuer.example"}, metadata.AuthorizationServers)
+		})
 	}
 }
 

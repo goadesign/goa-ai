@@ -1,6 +1,6 @@
 module example.com/evalconsumer
 
-go 1.26.0
+go 1.27.0
 
 require (
 	goa.design/goa-ai v0.0.0

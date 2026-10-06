@@ -77,7 +77,7 @@ the caller's selected model and choice; see the
 
 ## Quick start
 
-With **Go 1.26.0 or newer**, run the checked-in example:
+With **Go 1.27.0 or newer**, run the checked-in example:
 
 ```bash
 git clone https://github.com/goadesign/goa-ai.git
