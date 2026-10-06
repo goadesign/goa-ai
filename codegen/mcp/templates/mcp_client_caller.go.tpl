@@ -15,23 +15,8 @@ func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.In
     if err := info.Validate(); err != nil {
         return nil, err
     }
-    transport := mcpruntime.NewHTTPTransport(client.Doer, info, map[string]mcpruntime.ToolBinding{
-        {{- range .Tools }}
-        {{- if or .Headers .ReadOnly .Idempotent }}
-        {{ printf "%q" .Name }}: {
-            {{- if .ReadOnly }}ReadOnly: true,{{ end }}
-            {{- if .Idempotent }}Idempotent: true,{{ end }}
-            {{- if .Headers }}
-            Headers: []mcpruntime.HeaderBinding{
-            {{- range .Headers }}
-            {Name: {{ printf "%q" .Name }}, Type: {{ printf "%q" .Type }}, Path: []string{ {{ range .Path }}{{ printf "%q" . }}, {{ end }} }},
-            {{- end }}
-            },
-            {{- end }}
-        },
-        {{- end }}
-        {{- end }}
-    }, support, retry)
+    transport := mcpruntime.NewHTTPTransport(client.Doer, info, mcpHTTPBindings(), support, retry)
+
     return &Caller{client: client, transport: transport{{ range .Paths }}, {{ .Name }}: {{ .Name }}{{ end }}}, nil
 }
 

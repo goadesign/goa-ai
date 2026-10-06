@@ -14,7 +14,8 @@ func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.In
 	if err := info.Validate(); err != nil {
 		return nil, err
 	}
-	transport := mcpruntime.NewHTTPTransport(client.Doer, info, map[string]mcpruntime.ToolBinding{}, support, retry)
+	transport := mcpruntime.NewHTTPTransport(client.Doer, info, mcpHTTPBindings(), support, retry)
+
 	return &Caller{client: client, transport: transport}, nil
 }
 

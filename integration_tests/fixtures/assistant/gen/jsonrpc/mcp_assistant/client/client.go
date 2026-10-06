@@ -46,7 +46,8 @@ func NewClient(
 	dec func(*http.Response) goahttp.Decoder,
 	restoreBody bool,
 ) *Client {
-	doer = mcpruntime.NewHTTPTransport(doer, mcpruntime.ClientInfo{}, map[string]mcpruntime.ToolBinding{}, mcpruntime.InputSupport{}, mcpruntime.HTTPRetryPolicy{})
+	doer = mcpruntime.NewHTTPTransport(doer, mcpruntime.ClientInfo{}, mcpHTTPBindings(), mcpruntime.InputSupport{}, mcpruntime.HTTPRetryPolicy{})
+
 	return &Client{
 		Doer:                doer,
 		RestoreResponseBody: restoreBody,

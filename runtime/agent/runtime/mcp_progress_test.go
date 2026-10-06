@@ -90,7 +90,7 @@ func TestMCPProgressActivityHostVisibility(t *testing.T) {
 				})
 			}))
 			defer peer.Close()
-			transport := mcp.NewHTTPTransport(peer.Client(), mcp.ClientInfo{}, nil, mcp.InputSupport{}, mcp.HTTPRetryPolicy{})
+			transport := mcp.NewHTTPTransport(peer.Client(), mcp.ClientInfo{}, mcp.HTTPBindings{}, mcp.InputSupport{}, mcp.HTTPRetryPolicy{})
 			rt.toolsets["remote"] = ToolsetRegistration{Execute: func(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 				reply, err := transport.CallTool(ctx, peer.URL, mcp.CallRequest{Tool: "work", Payload: json.RawMessage(call.Payload)})
 				if err != nil {

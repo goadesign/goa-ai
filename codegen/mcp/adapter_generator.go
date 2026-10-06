@@ -52,6 +52,8 @@ type (
 		EndpointMethods []*endpointMethodAdapter
 		// Tools contains the Goa methods exposed as MCP tools.
 		Tools []*ToolAdapter
+		// CredentialQueries lists native authentication query names by protocol method.
+		CredentialQueries map[string][]string
 		// Resources contains the Goa methods exposed as MCP resources.
 		Resources []*ResourceAdapter
 		// ResourceTemplates contains the advertised parameterized addresses.

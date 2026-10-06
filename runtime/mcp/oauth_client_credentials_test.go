@@ -33,6 +33,7 @@ type (
 	oauthPeer struct {
 		server        *httptest.Server
 		resource      string
+		resourceQuery string
 		issuer        string
 		metadata      string
 		issuerBody    string
@@ -70,7 +71,7 @@ func TestClientCredentialsTransportAndDiscoveryCaller(t *testing.T) {
 			} else {
 				// Generated callers wrap an existing transport with their known tool
 				// bindings. The grant must survive that same constructor path.
-				wrapped := NewHTTPTransport(transport, ClientInfo{Name: "generated", Version: "1"}, nil, InputSupport{}, HTTPRetryPolicy{})
+				wrapped := NewHTTPTransport(transport, ClientInfo{Name: "generated", Version: "1"}, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 				require.NoError(t, callOAuthPeer(t.Context(), wrapped, peer.resource))
 				require.NoError(t, callOAuthPeer(t.Context(), wrapped, peer.resource))
 				assert.EqualValues(t, 2, peer.mcpCalls.Load())
@@ -265,7 +266,7 @@ func TestOAuthDiscoveryAddresses(t *testing.T) {
 // in this test. Each response is synthetic and contains no external identity.
 func newOAuthPeer(t *testing.T) *oauthPeer {
 	t.Helper()
-	peer := &oauthPeer{tokenBody: `{"access_token":"private-token","token_type":"bEaReR","expires_in":3600,"extension":{"valid":true}}`}
+	peer := &oauthPeer{resourceQuery: "tenant=blue", tokenBody: `{"access_token":"private-token","token_type":"bEaReR","expires_in":3600,"extension":{"valid":true}}`}
 	peer.server = httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		peer.mutex.Lock()
 		peer.addresses = append(peer.addresses, request.URL.RequestURI())
@@ -341,7 +342,7 @@ func newOAuthPeer(t *testing.T) *oauthPeer {
 				return
 			}
 			assert.Equal(t, "Bearer private-token", request.Header.Get("Authorization"))
-			assert.Equal(t, "tenant=blue", request.URL.RawQuery)
+			assert.Equal(t, peer.resourceQuery, request.URL.RawQuery)
 			if peer.mcpStatus != 0 {
 				writer.Header().Set("WWW-Authenticate", `Bearer realm="synthetic"`)
 				writer.WriteHeader(peer.mcpStatus)

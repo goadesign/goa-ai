@@ -95,7 +95,7 @@ func TestMCPExecutorRestrictsHostInputPerCall(t *testing.T) {
         }
     }))
     defer server.Close()
-    transport := mcpruntime.NewHTTPTransport(server.Client(), mcpruntime.ClientInfo{Name:"generated-test",Version:"1"}, nil, mcpruntime.InputSupport{Form:true,URL:true}, mcpruntime.HTTPRetryPolicy{})
+    transport := mcpruntime.NewHTTPTransport(server.Client(), mcpruntime.ClientInfo{Name:"generated-test",Version:"1"}, mcpruntime.HTTPBindings{}, mcpruntime.InputSupport{Form:true,URL:true}, mcpruntime.HTTPRetryPolicy{})
     caller := mcpruntime.CallerFunc(func(ctx context.Context, request mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
         return transport.CallTool(ctx, server.URL, request)
     })

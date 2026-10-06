@@ -99,7 +99,7 @@ func newAuthorizationHTTPTransport(opts HTTPOptions, issuerID string, scopes []s
 // prepare validates metadata for this operation and supplies a resource-bound
 // token. Waiting for another grant respects cancellation; expired public-client
 // tokens may use their private refresh credential before invoking host consent.
-func (g *authorizationClient) prepare(request *http.Request) (credential *genaccesstokens.BearerToken, err error) {
+func (g *authorizationClient) prepare(request *http.Request, credentialQueries, resourceCredentials []string) (credential *genaccesstokens.BearerToken, err error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(request.Context(), "mcp.oauth.prepare")
 	defer span.End()
 	defer func() {
@@ -108,13 +108,13 @@ func (g *authorizationClient) prepare(request *http.Request) (credential *genacc
 			span.SetStatus(codes.Error, err.Error())
 		}
 	}()
-	span.SetAttributes(attribute.String("oauth.issuer", g.issuer.String()), attribute.String("oauth.resource", g.resource.String()))
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if request.URL.String() != g.resource.String() {
+	if !matchesResourceAddress(g.resource, request.URL, credentialQueries, resourceCredentials) {
 		return nil, errors.New("mcp: authorized transport cannot send to another resource")
 	}
+	span.SetAttributes(attribute.String("oauth.issuer", g.issuer.String()), attribute.String("oauth.resource", g.resource.String()))
 	if request.Header.Get("Authorization") != "" {
 		return nil, errors.New("mcp: built-in authorization cannot replace an existing authorization credential")
 	}

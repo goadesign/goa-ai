@@ -65,6 +65,7 @@ type (
 const (
 	credentialAuthorizationHeader = "Authorization"
 	credentialHeaderLocation      = "header"
+	credentialQueryLocation       = "query"
 )
 
 // prepareHTTPInputs adds URL values to every protocol method and credentials
@@ -206,7 +207,7 @@ func nativeCredentialInputs(root *expr.RootExpr, service *expr.ServiceExpr, meth
 					return nil, fmt.Errorf("MCP method %q OAuth credential %q must use Authorization: Bearer; native %s binding %q cannot carry an MCP access token", method.Name, name, input.location, input.transportName)
 				}
 				switch input.location {
-				case credentialHeaderLocation, "query", "cookie":
+				case credentialHeaderLocation, credentialQueryLocation, "cookie":
 				default:
 					return nil, fmt.Errorf("MCP method %q credential %q requires a header, query or cookie binding; native %q binding cannot enter MCP arguments", method.Name, name, input.location)
 				}
@@ -289,7 +290,7 @@ func bindProtocolHTTPInputs(endpoint *expr.HTTPEndpointExpr, inputs *protocolHTT
 		switch field.location {
 		case credentialHeaderLocation:
 			mapped = endpoint.Headers
-		case "path", "query":
+		case "path", credentialQueryLocation:
 			mapped = endpoint.Params
 		case "cookie":
 			mapped = endpoint.Cookies

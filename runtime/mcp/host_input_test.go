@@ -38,7 +38,7 @@ func TestHTTPHostInputRestrictionIsPerOperation(t *testing.T) {
 		assert.NoError(t, err)
 	}))
 	t.Cleanup(server.Close)
-	transport := NewHTTPTransport(server.Client(), ClientInfo{Name: "host-tests", Version: "1"}, nil, InputSupport{Form: true, URL: true}, HTTPRetryPolicy{})
+	transport := NewHTTPTransport(server.Client(), ClientInfo{Name: "host-tests", Version: "1"}, HTTPBindings{}, InputSupport{Form: true, URL: true}, HTTPRetryPolicy{})
 	imported, err := NewHTTPCaller(HTTPOptions{Endpoint: server.URL, Client: server.Client(), ClientInfo: ClientInfo{Name: "host-tests", Version: "1"}, InputSupport: InputSupport{Form: true, URL: true}})
 	require.NoError(t, err)
 	for name, caller := range map[string]Caller{

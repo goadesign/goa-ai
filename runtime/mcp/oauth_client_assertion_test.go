@@ -66,7 +66,7 @@ func TestClientAssertionAuthenticatesBeforeDispatch(t *testing.T) {
 				require.NoError(t, err)
 				assert.JSONEq(t, `{"value":"ok"}`, string(response.StructuredContent))
 			} else {
-				wrapped := NewHTTPTransport(transport, ClientInfo{Name: "generated", Version: "1"}, nil, InputSupport{}, HTTPRetryPolicy{})
+				wrapped := NewHTTPTransport(transport, ClientInfo{Name: "generated", Version: "1"}, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 				require.NoError(t, callOAuthPeer(t.Context(), wrapped, peer.resource))
 				require.NoError(t, callOAuthPeer(t.Context(), wrapped, peer.resource))
 			}

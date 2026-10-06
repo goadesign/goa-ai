@@ -57,7 +57,7 @@ func TestHTTPToolFailureRetainsDispatchEvidence(t *testing.T) {
 					Header:     http.Header{"Content-Type": {"application/json"}},
 					Body:       io.NopCloser(strings.NewReader(tc.reply)),
 				}, nil
-			}), ClientInfo{}, nil, InputSupport{}, HTTPRetryPolicy{})
+			}), ClientInfo{}, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 			body := `{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"write","arguments":{},"_meta":{` + tc.meta + `}}}`
 			request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://resource.example/mcp", strings.NewReader(body))
 			require.NoError(t, err)

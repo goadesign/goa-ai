@@ -62,7 +62,7 @@ func TestAuthorizationCodeTransportAndDiscoveryCaller(t *testing.T) {
 				require.NoError(t, err)
 				assert.JSONEq(t, `{"value":"ok"}`, string(response.StructuredContent))
 			} else {
-				wrapped := NewHTTPTransport(transport, ClientInfo{Name: "generated", Version: "1"}, nil, InputSupport{}, HTTPRetryPolicy{})
+				wrapped := NewHTTPTransport(transport, ClientInfo{Name: "generated", Version: "1"}, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 				require.NoError(t, callOAuthPeer(t.Context(), wrapped, peer.resource))
 				require.NoError(t, callOAuthPeer(t.Context(), wrapped, peer.resource))
 			}
@@ -593,7 +593,7 @@ func TestAuthorizationCodeRecoveryRemainsBoundedAcrossStreams(t *testing.T) {
 		}
 		return true
 	}
-	transport := NewHTTPTransport(peer.transport(t, peer.authorize(t)), ClientInfo{Name: "host", Version: "1"}, map[string]ToolBinding{"read": {ReadOnly: true}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 2, TrustToolAnnotations: true})
+	transport := NewHTTPTransport(peer.transport(t, peer.authorize(t)), ClientInfo{Name: "host", Version: "1"}, HTTPBindings{Tools: map[string]ToolBinding{"read": {ReadOnly: true}}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 2, TrustToolAnnotations: true})
 	err := callOAuthPeer(t.Context(), transport, peer.resource)
 	var unknown *OutcomeUnknownError
 	require.ErrorAs(t, err, &unknown)

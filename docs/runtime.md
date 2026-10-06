@@ -6536,8 +6536,25 @@ Deploy regenerated servers and consumers together when changing the result shape
 
 Generated JSON-RPC clients use the same transport implementation. Their tool
 caller is constructed with `NewCaller(client, clientInfo, inputSupport, retryPolicy)`.
-The generated client supplies precomputed tool bindings from the same design
-that defines the server catalog.
+The generated client supplies one private HTTP binding factory derived from the
+same design that defines the server catalog. Both `NewClient` and `NewCaller`
+use its tool behavior and native credential query names; neither reconstructs
+these facts from schemas during a request.
+
+For a domain API key mapped with `Param("credential:api_key")`, supply its value
+through the generated protocol payload's HTTP credential field. Goa encodes that
+value in the query and the original service authentication receives it. OAuth
+still identifies the configured resource without that credential, and sends only
+the access token in `Authorization: Bearer`. Metadata discovery and token grants
+never receive the domain key. Every other URL component, including escaped paths
+and ordinary query values, must match the configured resource exactly. A resource
+address containing any credential query field declared by the service is rejected
+before discovery, including when the current operation is a catalog request.
+
+The third argument of `mcp.NewHTTPTransport` is now `mcp.HTTPBindings`. Replace a
+previous tool map with `mcp.HTTPBindings{Tools: toolBindings}`; imported callers
+have no native credential query names. Regenerate native clients to obtain the
+new factory. There is no compatibility constructor.
 
 `CallResponse.Content` is `content.Blocks` from `runtime/content`. It contains
 ordered, typed text, image, audio, resource-link, or embedded-resource blocks.
@@ -6995,7 +7012,7 @@ introduce MCP host input into a text-only run. These rejections do not dispatch 
 continuation, publish an input prompt or retry an accepted tool operation.
 
 Generated MCP executors return this unfinished outcome to the agent runtime.
-The runtime saves the original tool arguments and opaque state in a version-10
+The runtime saves the original tool arguments and opaque state in a version-11
 run suspension, then publishes `await_mcp_input` to the trusted host. The host
 resumes the exact saved suspension with `PendingInputResponse.MCP`, containing
 the tool call ID and a response for each requested input ID. The runtime validates

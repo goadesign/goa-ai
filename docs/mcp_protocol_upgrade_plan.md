@@ -2292,3 +2292,46 @@ Keep the isolated clone until the work is complete and published without losing 
 The replacement is complete when every claimed current-protocol path passes independent validation; all local generated consumers and docs use the new contract; no old version/lifecycle/session/text-coercion/compatibility path remains; domain outcomes in the preservation matrix are proven; complete generation/composition and configured host-input paths pass; every capability in the revised release scope is implemented and its complete path independently verified (generated stdio server production is deferred); extension advertisements match configured implementations; and downstream worker/checkpoint rollout, rollback, and interrupted-request semantics are explicit.
 
 A changed version literal, green legacy tests, or a successful tools/list request is insufficient evidence. The final implementation must have the same ownership and public surface it would have had if the old MCP implementation had never existed.
+
+
+### Native query credential and OAuth resource composition
+
+A compiled native client probe proved that Goa correctly encoded
+`Param("credential:api_key")`, but the shared OAuth owner rejected the resulting
+request as a different resource before dispatch. The correction belongs to the
+MCP client composition: original evaluated Goa mappings already identify the
+query credential and its protocol methods. Both client constructors now use one
+private generated binding factory. `HTTPBindings` replaces the previous
+tools-only transport constructor argument and includes native credential query
+names by protocol method. All in-tree callers change together without an old
+signature or compatibility overload.
+
+For each request, only that protocol method's declared credential query segments
+are excluded from the exact resource-address comparison. Other query bytes,
+ordering, escaped paths, hosts and schemes retain their meaning. The configured
+resource itself may contain none of the service's credential query fields,
+including fields used only by later methods. This check precedes discovery and
+trace resource attributes. It prevents an earlier catalog call from forwarding
+a domain credential to metadata or token endpoints. Native Goa still owns
+encoding, decoding, requiredness and original endpoint authentication.
+
+Acceptance requires real generated clients and servers for tools, fixed and
+parameterized resources, prompts, both completion references and resource
+subscriptions; the original domain authentication must receive its key while
+metadata and token grants do not. Positive header and cookie controls remain.
+Boundary checks cover unknown and method-inapplicable query fields, malformed
+credentials, exact ordinary query/path identity, constructor-owned copies and
+configured credential leakage before catalog discovery. The server token
+verifier, generated resource policy and all other unfinished release gates
+remain required; this correction supplies none of those capabilities.
+
+The completed query-composition increment passes configured lint, the full
+uncached root race suite and quickstart, the root build and the regenerated
+assistant race suite. The compiled original-client/server fixture sends fourteen
+requests across all operation paths, runs fourteen original domain authentication
+callbacks and service operations, and obtains one resource access token. Metadata
+and token requests contain no domain key. The HTTP integration suite and generated
+evaluation consumer also pass. A second owning assistant regeneration preserves
+all 29 generated artifact hashes. The original failing probe and fixture
+corrections remain recorded separately; no server-verifier completion or live
+issuer behavior is inferred from these synthetic checks.

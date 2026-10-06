@@ -38,11 +38,13 @@ type (
 		next interface {
 			Do(*http.Request) (*http.Response, error)
 		}
-		clientInfo    ClientInfo
-		inputSupport  InputSupport
-		tools         map[string]ToolBinding
-		retry         HTTPRetryPolicy
-		authorization *authorizationClient
+		clientInfo          ClientInfo
+		inputSupport        InputSupport
+		tools               map[string]ToolBinding
+		credentialQueries   map[string][]string
+		resourceCredentials []string
+		retry               HTTPRetryPolicy
+		authorization       *authorizationClient
 	}
 )
 
@@ -51,7 +53,7 @@ type (
 // A negative retry attempt count panics; caller constructors return validation errors.
 func NewHTTPTransport(next interface {
 	Do(*http.Request) (*http.Response, error)
-}, info ClientInfo, tools map[string]ToolBinding, support InputSupport, retry HTTPRetryPolicy) *HTTPTransport {
+}, info ClientInfo, bindings HTTPBindings, support InputSupport, retry HTTPRetryPolicy) *HTTPTransport {
 	if err := retry.Validate(); err != nil {
 		panic(err)
 	}
@@ -60,7 +62,23 @@ func NewHTTPTransport(next interface {
 		next = existing.next
 		authorization = existing.authorization
 	}
-	return &HTTPTransport{next: next, clientInfo: info, tools: tools, inputSupport: support, retry: retry, authorization: authorization}
+	bindings = copyBindings(bindings)
+	var resourceCredentials []string
+	for _, names := range bindings.CredentialQueries {
+		resourceCredentials = append(resourceCredentials, names...)
+	}
+	slices.Sort(resourceCredentials)
+	resourceCredentials = slices.Compact(resourceCredentials)
+	return &HTTPTransport{
+		next:                next,
+		clientInfo:          info,
+		tools:               bindings.Tools,
+		credentialQueries:   bindings.CredentialQueries,
+		resourceCredentials: resourceCredentials,
+		inputSupport:        support,
+		retry:               retry,
+		authorization:       authorization,
+	}
 }
 
 // Do sends one request with its own metadata and validates the response before
@@ -187,7 +205,7 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		// Each attempt checks token expiry with this operation's context.
 		var sentGrant *genaccesstokens.BearerToken
 		if t.authorization != nil {
-			sentGrant, err = t.authorization.prepare(attemptRequest)
+			sentGrant, err = t.authorization.prepare(attemptRequest, t.credentialQueries[request.Method], t.resourceCredentials)
 			if err != nil {
 				return nil, err
 			}

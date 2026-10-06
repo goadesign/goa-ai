@@ -398,6 +398,14 @@ validated challenge metadata URL when well-known discovery is absent.
 See [client-secret authorization](docs/runtime.md#client-secret-authorization)
 for construction and the remaining release gates.
 
+Generated clients compose native domain query credentials with OAuth. A key
+mapped by `Param("credential:api_key")` reaches the original service's
+authentication callback while metadata and token grants use the configured
+resource address without the key. Other URL differences fail before discovery.
+Both client constructors consume one generated HTTP binding factory. Direct
+transport users now supply `mcp.HTTPBindings` as the third constructor argument;
+regenerate clients when upgrading.
+
 Machine clients can authenticate with a signed JSON Web Token (JWT) using
 `mcp.NewClientAssertionHTTPTransport`. The host supplies its registered signer,
 client identity, assertion issuer, audience and validity period. Goa generates

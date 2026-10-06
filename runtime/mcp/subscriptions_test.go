@@ -213,7 +213,7 @@ func TestHTTPSubscriptionCallbackFailureClosesRequest(t *testing.T) {
 }
 
 func TestSubscriptionConstructionRejectsInvalidInput(t *testing.T) {
-	transport := NewHTTPTransport(http.DefaultClient, ClientInfo{Name: "tests", Version: "1"}, nil, InputSupport{}, HTTPRetryPolicy{})
+	transport := NewHTTPTransport(http.DefaultClient, ClientInfo{Name: "tests", Version: "1"}, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 	assert.Error(t, transport.Listen(t.Context(), "http://unused", SubscriptionFilter{}, nil))
 }
 
@@ -572,7 +572,7 @@ func TestHTTPSubscriptionNotificationCannotArriveOnToolResponse(t *testing.T) {
 		}
 	}))
 	t.Cleanup(server.Close)
-	transport := NewHTTPTransport(server.Client(), ClientInfo{Name: "tests", Version: "1"}, map[string]ToolBinding{"lookup": {ReadOnly: true}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 3, TrustToolAnnotations: true})
+	transport := NewHTTPTransport(server.Client(), ClientInfo{Name: "tests", Version: "1"}, HTTPBindings{Tools: map[string]ToolBinding{"lookup": {ReadOnly: true}}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 3, TrustToolAnnotations: true})
 	_, err := transport.CallTool(t.Context(), server.URL, CallRequest{Tool: "lookup", Payload: json.RawMessage(`{}`)})
 	var malformed *MalformedResponseError
 	require.ErrorAs(t, err, &malformed)

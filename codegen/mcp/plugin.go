@@ -97,6 +97,7 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err != nil {
 			return err
 		}
+		adapter.CredentialQueries = credentialQueryBindings(prepared.credentials)
 		if err := planMCPPackagePaths(servicePlan, prepared, adapter); err != nil {
 			return err
 		}
@@ -201,6 +202,7 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 		if caller := clientCallerFile(planned.adapterData); caller != nil {
 			files = append(files, caller)
 		}
+		files = append(files, clientBindingsFile(planned.adapterData))
 		files = append(files, generateMCPTransport(
 			services.GenPkg(),
 			planned.prepared.userService,
@@ -862,6 +864,9 @@ func declareMCPClientNames(generation *goacodegen.Generation, data *AdapterData)
 		"jsonrpc/"+data.mcpPathName+"/client",
 	))
 	if err != nil {
+		return err
+	}
+	if err := clientPackage.DeclareName(goacodegen.NewExactName(goacodegen.NameFunction, "mcpHTTPBindings")); err != nil {
 		return err
 	}
 	if data.ClientCaller != nil {

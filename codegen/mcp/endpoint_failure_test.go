@@ -75,7 +75,7 @@ func TestEndpointFailureClassification(t *testing.T){
     endpoints.Ping=fail
     endpoints.Notify=fail
     server:=startFailureServer(t,endpoints,mapper.mapError)
-    caller:=mcp.NewHTTPTransport(server.Client(),mcp.ClientInfo{Name:"failure-test",Version:"1"},map[string]mcp.ToolBinding{"ping":{Idempotent:true},"notify":{Idempotent:true}},mcp.InputSupport{},mcp.HTTPRetryPolicy{MaxAttempts:3,TrustToolAnnotations:true})
+    caller:=mcp.NewHTTPTransport(server.Client(),mcp.ClientInfo{Name:"failure-test",Version:"1"},mcp.HTTPBindings{Tools: map[string]mcp.ToolBinding{"ping":{Idempotent:true},"notify":{Idempotent:true}}},mcp.InputSupport{},mcp.HTTPRetryPolicy{MaxAttempts:3,TrustToolAnnotations:true})
     for _,method:=range []struct{name,args string;fault bool}{
      {"ping","{}",test.pingFault},
      {"notify","{\"key\":\"record\"}",test.notifyFault},

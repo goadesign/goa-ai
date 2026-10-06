@@ -55,7 +55,7 @@ func TestHTTPSubscriptionProducerConcurrentListeners(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	caller := NewHTTPTransport(server.Client(), ClientInfo{Name: "subscription-producer-tests", Version: "1"}, nil, InputSupport{}, HTTPRetryPolicy{})
+	caller := NewHTTPTransport(server.Client(), ClientInfo{Name: "subscription-producer-tests", Version: "1"}, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 	filters := []SubscriptionFilter{
 		{ToolsListChanged: true, PromptsListChanged: true, ResourcesListChanged: true},
 		{ResourceSubscriptions: []string{"file:///requested"}},
@@ -244,7 +244,7 @@ func TestHTTPSubscriptionProducerQuietCancellation(t *testing.T) {
 		})
 	}))
 	defer server.Close()
-	caller := NewHTTPTransport(server.Client(), ClientInfo{Name: "quiet-test", Version: "1"}, nil, InputSupport{}, HTTPRetryPolicy{})
+	caller := NewHTTPTransport(server.Client(), ClientInfo{Name: "quiet-test", Version: "1"}, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	finished := make(chan error, 1)

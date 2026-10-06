@@ -86,7 +86,7 @@ func TestMCPHTTPFailureUsesDispatchEvidence(t *testing.T) {
 			if tc.cancel {
 				cancel()
 			}
-			transport := mcp.NewHTTPTransport(peer.Client(), mcp.ClientInfo{}, nil, mcp.InputSupport{}, mcp.HTTPRetryPolicy{})
+			transport := mcp.NewHTTPTransport(peer.Client(), mcp.ClientInfo{}, mcp.HTTPBindings{}, mcp.InputSupport{}, mcp.HTTPRetryPolicy{})
 			body := `{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"write","arguments":{},"_meta":{` + tc.meta + `}}}`
 			request, err := http.NewRequestWithContext(ctx, http.MethodPost, peer.URL, strings.NewReader(body))
 			require.NoError(t, err)

@@ -61,7 +61,7 @@ func TestHTTPAuthorizationRejectionDoesNotReadOrRetry(t *testing.T) {
 					assert.Equal(t, "Bearer test-access", req.Header.Get("Authorization"))
 					require.NoError(t, req.Body.Close())
 					return &http.Response{StatusCode: test.status, Header: headers, Body: body}, nil
-				}), ClientInfo{}, map[string]ToolBinding{"lookup": {ReadOnly: true}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 3, TrustToolAnnotations: true})
+				}), ClientInfo{}, HTTPBindings{Tools: map[string]ToolBinding{"lookup": {ReadOnly: true}}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 3, TrustToolAnnotations: true})
 				identifier := `"id":"call-1",`
 				if strings.HasPrefix(method, "notifications/") {
 					identifier = ""
@@ -106,7 +106,7 @@ func TestHTTPProtocolFailureRetainsStatusAndExactData(t *testing.T) {
 			calls++
 			require.NoError(t, req.Body.Close())
 			return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"jsonrpc":"2.0","id":"call-1","error":{"code":-32602,"message":"rejected","data":{"sequence":9007199254740993}}}`))}, nil
-		}), ClientInfo{}, map[string]ToolBinding{"lookup": {Idempotent: true}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 3, TrustToolAnnotations: true})
+		}), ClientInfo{}, HTTPBindings{Tools: map[string]ToolBinding{"lookup": {Idempotent: true}}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 3, TrustToolAnnotations: true})
 		request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "https://example.test/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":"call-1","method":"tools/call","params":{"name":"lookup","arguments":{}}}`))
 		require.NoError(t, err)
 		result, err := transport.Do(request)
@@ -134,7 +134,7 @@ func TestHTTPServerStreamFailureKeepsUnknownToolOutcome(t *testing.T) {
 		calls++
 		require.NoError(t, req.Body.Close())
 		return &http.Response{StatusCode: http.StatusInternalServerError, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(": lost\n\n"))}, nil
-	}), ClientInfo{}, map[string]ToolBinding{"lookup": {ReadOnly: true}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 3, TrustToolAnnotations: true})
+	}), ClientInfo{}, HTTPBindings{Tools: map[string]ToolBinding{"lookup": {ReadOnly: true}}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 3, TrustToolAnnotations: true})
 	_, err := transport.CallTool(t.Context(), "https://example.test/mcp", CallRequest{Tool: "lookup", Payload: json.RawMessage(`{}`)})
 	var unknown *OutcomeUnknownError
 	require.ErrorAs(t, err, &unknown)

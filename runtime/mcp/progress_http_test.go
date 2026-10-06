@@ -66,7 +66,7 @@ func TestHTTPProgressBeforeFinalResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	transport := NewHTTPTransport(server.Client(), ClientInfo{Name: "progress-tests", Version: "1"}, nil, InputSupport{}, HTTPRetryPolicy{})
+	transport := NewHTTPTransport(server.Client(), ClientInfo{Name: "progress-tests", Version: "1"}, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 	deadline, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	ctx := WithProgress(deadline, func(_ context.Context, update Progress) error { observed <- update; return nil })
@@ -191,7 +191,7 @@ func TestHTTPProgressRetryIdentity(t *testing.T) {
 			body += fmt.Sprintf("data: {\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"resultType\":\"complete\",\"content\":[],\"structuredContent\":42}}\n\n", request.ID)
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
-	}), ClientInfo{}, map[string]ToolBinding{"work": {ReadOnly: true}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 2, TrustToolAnnotations: true})
+	}), ClientInfo{}, HTTPBindings{Tools: map[string]ToolBinding{"work": {ReadOnly: true}}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 2, TrustToolAnnotations: true})
 	ctx := WithProgress(t.Context(), func(_ context.Context, p Progress) error { updates = append(updates, p); return nil })
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://example.test/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":"original","method":"tools/call","params":{"name":"work","arguments":{}}}`))
 	require.NoError(t, err)
@@ -232,7 +232,7 @@ func TestHTTPProgressCallbackFailureDoesNotRetry(t *testing.T) {
 		}
 		body := fmt.Sprintf("data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":%s,\"progress\":0}}\n\n", request.Params.Meta["progressToken"])
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
-	}), ClientInfo{}, map[string]ToolBinding{"work": {ReadOnly: true}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 3, TrustToolAnnotations: true})
+	}), ClientInfo{}, HTTPBindings{Tools: map[string]ToolBinding{"work": {ReadOnly: true}}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 3, TrustToolAnnotations: true})
 	ctx := WithProgress(t.Context(), func(context.Context, Progress) error { return failure })
 	_, err := transport.CallTool(ctx, "https://example.test/mcp", CallRequest{Tool: "work", Payload: json.RawMessage(`{}`)})
 	require.ErrorIs(t, err, failure)

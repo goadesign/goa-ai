@@ -30,7 +30,7 @@ func discoverProtectedResource(ctx context.Context, client *http.Client, resourc
 		bound, err := bindProtectedResource(metadata, resource, issuer)
 		return bound, nil, err
 	}
-	transport := NewHTTPTransport(client, info, nil, InputSupport{}, HTTPRetryPolicy{})
+	transport := NewHTTPTransport(client, info, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 	var ignored json.RawMessage
 	err := transport.call(ctx, resource.String(), "server/discover", map[string]any{}, &ignored)
 	if ctx.Err() != nil {

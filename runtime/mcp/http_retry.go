@@ -19,18 +19,6 @@ type (
 		TrustToolAnnotations bool
 	}
 
-	// ToolBinding describes the static or discovered HTTP behavior of one tool.
-	// Generated clients provide these facts directly; imported clients derive them
-	// from the catalog returned under the call's current authorization context.
-	ToolBinding struct {
-		// Headers maps tool argument properties to protocol request headers.
-		Headers []HeaderBinding
-		// ReadOnly states that the tool does not change its environment.
-		ReadOnly bool
-		// Idempotent states that repeating arguments has no additional effects.
-		Idempotent bool
-	}
-
 	// interruptedResponseError identifies a response that ended before a final
 	// message, rather than a malformed message or a completed tool error.
 	interruptedResponseError struct {

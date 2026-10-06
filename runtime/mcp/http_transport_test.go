@@ -50,7 +50,7 @@ func TestHTTPTransportCurrentProtocol(t *testing.T) {
 				assert.JSONEq(t, `"`+expectedTrace+`"`, string(envelope.Params.Meta["traceparent"]))
 				return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"jsonrpc":"2.0","id":` + id + `,"result":{"resultType":"complete","content":[],"structuredContent":null}}`))}, nil
 			})
-			transport := NewHTTPTransport(next, ClientInfo{Name: "test", Version: "1"}, nil, InputSupport{}, HTTPRetryPolicy{})
+			transport := NewHTTPTransport(next, ClientInfo{Name: "test", Version: "1"}, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 			request, err := http.NewRequestWithContext(ctx, "POST", "https://example.test/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":`+id+`,"method":"tools/call","params":{"name":" régulier ","_meta":{"custom/example":42},"arguments":{}}}`))
 			require.NoError(t, err)
 			response, err := transport.Do(request)
@@ -81,7 +81,7 @@ func TestHTTPTransportResponseBoundary(t *testing.T) {
 				count++
 				require.NoError(t, req.Body.Close())
 				return &http.Response{StatusCode: test.status, Header: http.Header{"Content-Type": {test.contentType}}, Body: io.NopCloser(strings.NewReader(test.body))}, nil
-			}), ClientInfo{}, nil, InputSupport{}, HTTPRetryPolicy{})
+			}), ClientInfo{}, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 			req, err := http.NewRequestWithContext(context.Background(), "POST", "https://example.test/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":"a","method":"server/discover","params":{"_meta":{"progressToken":"updates"}}}`))
 			require.NoError(t, err)
 			response, err := transport.Do(req)
@@ -221,7 +221,7 @@ func TestLostToolResponseDoesNotRepeatSideEffect(t *testing.T) {
 		require.NoError(t, req.Body.Close())
 		effects++
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(": accepted\n\n"))}, nil
-	}), ClientInfo{}, nil, InputSupport{}, HTTPRetryPolicy{})
+	}), ClientInfo{}, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 	req, err := http.NewRequestWithContext(t.Context(), "POST", "https://example.test/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":"charge-1","method":"tools/call","params":{"name":"charge","arguments":{}}}`))
 	require.NoError(t, err)
 	response, err := transport.Do(req)

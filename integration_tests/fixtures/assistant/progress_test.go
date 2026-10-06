@@ -138,7 +138,7 @@ func TestGeneratedHTTPProgressRetry(t *testing.T) {
 	location, err := url.Parse(peer.URL)
 	require.NoError(t, err)
 	client := genclient.NewClient(location.Scheme, location.Host, peer.Client(), goahttp.RequestEncoder, goahttp.ResponseDecoder, false)
-	client.Doer = mcpruntime.NewHTTPTransport(peer.Client(), mcpruntime.ClientInfo{}, map[string]mcpruntime.ToolBinding{"test_tool_with_progress": {ReadOnly: true}}, mcpruntime.InputSupport{}, mcpruntime.HTTPRetryPolicy{MaxAttempts: 2, TrustToolAnnotations: true})
+	client.Doer = mcpruntime.NewHTTPTransport(peer.Client(), mcpruntime.ClientInfo{}, mcpruntime.HTTPBindings{Tools: map[string]mcpruntime.ToolBinding{"test_tool_with_progress": {ReadOnly: true}}}, mcpruntime.InputSupport{}, mcpruntime.HTTPRetryPolicy{MaxAttempts: 2, TrustToolAnnotations: true})
 	var updates []mcpruntime.Progress
 	ctx := mcpruntime.WithProgress(t.Context(), func(_ context.Context, p mcpruntime.Progress) error { updates = append(updates, p); return nil })
 	result, err := client.ToolsCall()(ctx, &genmcp.ToolsCallPayload{Name: "test_tool_with_progress", Arguments: json.RawMessage(`{}`)})

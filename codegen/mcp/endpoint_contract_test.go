@@ -237,7 +237,7 @@ func TestConfiguredEndpoints(t *testing.T){
  genserver.Mount(mux,server)
  httpServer:=httptest.NewServer(mux);defer httpServer.Close()
  transport:=&credentialDoer{client:httpServer.Client(),token:"authorized"}
- caller:=mcp.NewHTTPTransport(transport,mcp.ClientInfo{Name:"endpoint-contract",Version:"1"},nil,mcp.InputSupport{},mcp.HTTPRetryPolicy{})
+ caller:=mcp.NewHTTPTransport(transport,mcp.ClientInfo{Name:"endpoint-contract",Version:"1"},mcp.HTTPBindings{},mcp.InputSupport{},mcp.HTTPRetryPolicy{})
  for _,test:=range []struct{name,args,want string;failure bool;credential string}{
   {"read","{\"key\":\"record\"}","",true,"rejected"},
   {"read","{\"key\":\"record\"}","\"record\"",false,"authorized"},

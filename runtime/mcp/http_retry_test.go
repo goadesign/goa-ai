@@ -97,7 +97,7 @@ func TestHTTPInterruptedResponseRetry(t *testing.T) {
 					reader = io.MultiReader(reader, iotest.ErrReader(io.ErrUnexpectedEOF))
 				}
 				return &http.Response{StatusCode: status, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(reader)}, nil
-			}), ClientInfo{Name: "test", Version: "1"}, map[string]ToolBinding{"read": test.binding}, InputSupport{}, test.policy)
+			}), ClientInfo{Name: "test", Version: "1"}, HTTPBindings{Tools: map[string]ToolBinding{"read": test.binding}}, InputSupport{}, test.policy)
 			response, err := transport.CallTool(ctx, "https://example.test/mcp", CallRequest{Tool: "read", Payload: json.RawMessage(`{"operation":"stable","value":1}`)})
 			if test.wantError {
 				require.Error(t, err)
@@ -138,7 +138,7 @@ func TestHTTPRetryLimitAppliesToEachInputRound(t *testing.T) {
 			body = fmt.Sprintf("data: {\"jsonrpc\":\"2.0\",\"id\":%q,\"result\":%s}\n\n", message.ID, result)
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(body))}, nil
-	}), ClientInfo{Name: "test", Version: "1"}, map[string]ToolBinding{"read": {ReadOnly: true}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 2, TrustToolAnnotations: true})
+	}), ClientInfo{Name: "test", Version: "1"}, HTTPBindings{Tools: map[string]ToolBinding{"read": {ReadOnly: true}}}, InputSupport{}, HTTPRetryPolicy{MaxAttempts: 2, TrustToolAnnotations: true})
 	request := CallRequest{Tool: "read", Payload: json.RawMessage(`{"value":1}`)}
 	first, err := transport.CallTool(t.Context(), "https://example.test/mcp", request)
 	require.NoError(t, err)

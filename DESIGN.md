@@ -2686,6 +2686,20 @@ unknown outcome and the later HTTP status. Enterprise exchange, durable host
 authorization, and the built-in server verifier and generated resource policy
 remain release gates.
 
+Native query credentials remain distinct from OAuth resource identity. The
+MCP generator consumes the original evaluated Goa credential mappings and emits
+one private HTTP binding factory for both generated client constructors. Tool
+facts and protocol-method credential names enter the shared runtime through
+`HTTPBindings`, replacing the previous tools-only constructor argument. The
+transport copies those facts at construction. It excludes only the current
+method's declared credential query segments when comparing a request address;
+every other URL byte retains its configured meaning. The configured resource
+must contain no credential query name declared by any method, so an earlier
+catalog request cannot leak a domain key into discovery or a token grant.
+Unknown query names and malformed credential query values fail before network
+access. There is no model-controlled exception, URI normalization, schema walk,
+second credential owner or compatibility constructor.
+
 Signed client authentication implements the same private grant interface as
 client-secret and browser authorization. The host supplies a constructed
 `jose.Signer` and explicit registered client, assertion issuer, audience and

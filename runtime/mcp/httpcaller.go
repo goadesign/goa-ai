@@ -74,7 +74,7 @@ func NewHTTPCaller(opts HTTPOptions) (*HTTPCaller, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &HTTPCaller{endpoint: endpoint.String(), transport: NewHTTPTransport(client, opts.ClientInfo, nil, opts.InputSupport, opts.RetryPolicy)}, nil
+	return &HTTPCaller{endpoint: endpoint.String(), transport: NewHTTPTransport(client, opts.ClientInfo, HTTPBindings{}, opts.InputSupport, opts.RetryPolicy)}, nil
 }
 
 // CallTool loads header annotations for this authorization context, sends the
@@ -95,7 +95,7 @@ func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallRespons
 	if err := jsonschema.Validate(contract.input, payload); err != nil {
 		return CallResponse{}, &Error{Code: JSONRPCInvalidParams, Message: fmt.Sprintf("MCP tool arguments: %v", err)}
 	}
-	transport := NewHTTPTransport(c.transport, c.transport.clientInfo, map[string]ToolBinding{req.Tool: contract.binding}, c.transport.inputSupport, c.transport.retry)
+	transport := NewHTTPTransport(c.transport, c.transport.clientInfo, HTTPBindings{Tools: map[string]ToolBinding{req.Tool: contract.binding}}, c.transport.inputSupport, c.transport.retry)
 	var result toolsCallResult
 	if err := transport.call(ctx, c.endpoint, methodToolsCall, params, &result); err != nil {
 		return CallResponse{}, err
