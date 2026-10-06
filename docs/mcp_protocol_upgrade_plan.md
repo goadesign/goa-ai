@@ -1827,7 +1827,10 @@ native clone was clean on merged `v3` with no unpushed commits; its verification
 evidence was preserved with matching hashes before deletion. Goa AI's configured
 lint, full uncached root race suite and quickstart checks pass against this pin.
 A second owning regeneration preserves all 134 generated artifact hashes across
-OAuth, registry, quickstart and assistant. These checks do not complete OAuth; resource-server verification, generated policy, signed client assertions,
+OAuth, registry, quickstart and assistant. After integrating current main, the
+root build, affected agent-runtime race checks, HTTP integration scenarios,
+downstream evaluation consumer and regenerated assistant race suite pass.
+These checks do not complete OAuth; resource-server verification, generated policy, signed client assertions,
 enterprise exchange and durable host authorization remain required.
 
 The independently versioned authorization extension remains pinned to
