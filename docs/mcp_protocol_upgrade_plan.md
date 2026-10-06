@@ -359,6 +359,44 @@ result views, including empty origin policies and middleware installed after
 mounting. A second assistant regeneration produces identical output hashes.
 Resource OAuth remains a separate incomplete milestone after this prerequisite.
 
+The next native composition prerequisite is
+[Goa PR #4028](https://github.com/goadesign/goa/pull/4028). Native constructors
+previously exposed only fixed transport arguments. The existing ordinary HTTP
+mount wrapper receives only `http.Handler` and is unavailable on JSON-RPC; it
+cannot supply a configured resource verifier to a generated server. Replacing
+MCP example startup separately would create another construction mechanism.
+
+The shared plan now declares required typed server dependencies before names
+freeze. One retained `GoTypePlan` supplies the private server field, required
+constructor argument, application factory and native example startup call.
+Dependencies follow native arguments in private-name order. HTTP and JSON-RPC
+own imports for their respective server files; the existing application package
+name planner resolves factory collisions. Example imports follow configured
+services only, and client commands do not construct server dependencies. An
+unimplemented example factory stops startup with a configuration message.
+Servers that declare no dependency keep their constructor contract.
+
+The published head `721209db1f0d4f138e4b2492c8e4c250e262cb72` passes the final
+uncached repository-wide race suite, configured lint, and native JSON-RPC
+integration tests. Ten compiled generated-module cases cover HTTP, JSON-RPC,
+combined startup, two imported dependencies, required nonvariadic signatures,
+exact retained values, files-only services, multipart, WebSocket and SSE,
+colliding names, and declaration before or after example planning. Focused
+checks cover invalid declarations, multipart/file argument collisions, copied
+JSON-RPC snapshots and unconfigured services. The existing HTTP `Plan.Service`
+API continues to return shared template data; copied JSON-RPC data retains its
+independent-read contract.
+
+Wait for CI and applicable reviews before merging this prerequisite. Adopt its
+merge commit, then let the MCP plugin declare its protected resource dependency
+through this shared plan. Preserve native constructor names and example calls;
+MCP's generated HTTP sections must consume the same planned dependency fields
+and required arguments before its final origin collection. Do not add an
+optional verifier, reconstruct domain endpoints, or introduce MCP-only startup
+code. This prerequisite proves constructor composition, not built-in OAuth,
+cryptographic verification, client grants or deployed authorization. Those
+remain required before release.
+
 A compiled design probe also found that the current MCP generator cannot
 represent the authored route `/organizations/{organization_id}/mcp`.
 Generation fails because discovery, list and call payloads lack the named route
