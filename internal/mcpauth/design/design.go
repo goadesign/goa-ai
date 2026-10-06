@@ -1,6 +1,6 @@
 // Package design defines the metadata and token messages read by MCP's OAuth
-// client. Goa generates typed HTTP clients and response validation; the runtime
-// supplies exact discovered URLs and the token endpoint's form encoder. Native
+// client. Goa generates typed form requests and response validation; the runtime
+// supplies exact discovered URLs and strict external-response decoding. Native
 // query decoding also validates browser authorization responses before exchange.
 package design
 
@@ -98,10 +98,18 @@ var _ = Service("access_tokens", func() {
 			Field(2, "client_secret", String, "Secret registered with this issuer", func() { MinLength(1) })
 			Field(3, "resource", String, "Exact resource for which the token is requested", func() { Format(FormatURI) })
 			Field(4, "scope", String, "Space-separated permissions requested by the configured client", oauthScope)
+			Field(5, "grant_type", String, "Client-credentials grant selected by this operation", func() {
+				Default("client_credentials")
+				Enum("client_credentials")
+				Example("client_credentials")
+			})
 			Required("client_id", "client_secret", "resource")
 		})
 		Result(bearerToken)
-		HTTP(func() { POST("/token") })
+		HTTP(func() {
+			POST("/token")
+			FormRequest()
+		})
 	})
 	Method("code", func() {
 		Description("Exchange one validated browser authorization code using the private PKCE verifier and the original resource and redirect.")
@@ -111,10 +119,18 @@ var _ = Service("access_tokens", func() {
 			Field(3, "code_verifier", String, "Private PKCE verifier for this authorization exchange", func() { Pattern(`^[A-Za-z0-9._~-]{43,128}$`) })
 			Field(4, "redirect_uri", String, "Exact redirect used in the authorization request", func() { Format(FormatURI) })
 			Field(5, "resource", String, "Exact resource for which the token is requested", func() { Format(FormatURI) })
+			Field(6, "grant_type", String, "Authorization-code grant selected by this operation", func() {
+				Default("authorization_code")
+				Enum("authorization_code")
+				Example("authorization_code")
+			})
 			Required("client_id", "code", "code_verifier", "redirect_uri", "resource")
 		})
 		Result(bearerToken)
-		HTTP(func() { POST("/code") })
+		HTTP(func() {
+			POST("/code")
+			FormRequest()
+		})
 	})
 	Method("refresh", func() {
 		Description("Replace an expired public-client access token using the refresh credential bound to the same issuer and resource.")
@@ -122,10 +138,18 @@ var _ = Service("access_tokens", func() {
 			Field(1, "client_id", String, "Public client identifier of the original grant", func() { MinLength(1) })
 			Field(2, "refresh_token", String, "Private refresh credential from the original grant", oauthVisibleValue)
 			Field(3, "resource", String, "Exact resource of the original grant", func() { Format(FormatURI) })
+			Field(4, "grant_type", String, "Refresh grant selected by this operation", func() {
+				Default("refresh_token")
+				Enum("refresh_token")
+				Example("refresh_token")
+			})
 			Required("client_id", "refresh_token", "resource")
 		})
 		Result(bearerToken)
-		HTTP(func() { POST("/refresh") })
+		HTTP(func() {
+			POST("/refresh")
+			FormRequest()
+		})
 	})
 })
 

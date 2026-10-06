@@ -1,5 +1,5 @@
-// Package mcp adapts generated OAuth HTTP clients to discovered endpoint URLs
-// and form requests. Goa owns field decoding and validation; these adapters own
+// Package mcp adapts generated OAuth HTTP clients to discovered endpoint URLs.
+// Goa owns form encoding, field decoding and validation; these adapters own
 // exact URL delivery, strict JSON names and credential-free transport errors.
 package mcp
 
@@ -19,7 +19,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	gentokenclient "goa.design/goa-ai/internal/mcpauth/gen/http/access_tokens/client"
 	goahttp "goa.design/goa/v3/http"
 )
 
@@ -101,29 +100,6 @@ func rejectAuthorizationNull(decoder *jsontext.Decoder, _ any) error {
 		return errors.New("declared authorization values cannot be null")
 	}
 	return errors.ErrUnsupported
-}
-
-// secretFormEncoder writes the generated token body using the OAuth endpoint's
-// form contract. The secret is never copied to a URL or authorization header.
-func secretFormEncoder(request *http.Request) goahttp.Encoder {
-	return goahttp.EncodingFunc(func(value any) error {
-		bodyPointer, ok := value.(**gentokenclient.SecretRequestBody)
-		if !ok {
-			return errors.New("mcp: client-secret form requires its generated request body")
-		}
-		body := *bodyPointer
-		form := url.Values{
-			"grant_type":    {"client_credentials"},
-			"client_id":     {body.ClientID},
-			"client_secret": {body.ClientSecret},
-			"resource":      {body.Resource},
-		}
-		if body.Scope != nil {
-			form.Set("scope", *body.Scope)
-		}
-		writeGrantForm(request, form)
-		return nil
-	})
 }
 
 // metadataMissing permits only an absent endpoint to advance to the next

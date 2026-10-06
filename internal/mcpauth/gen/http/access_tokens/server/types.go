@@ -25,6 +25,8 @@ type SecretRequestBody struct {
 	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
 	// Space-separated permissions requested by the configured client
 	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Client-credentials grant selected by this operation
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
 }
 
 // CodeRequestBody is the type of the "access_tokens" service "code" endpoint
@@ -40,6 +42,8 @@ type CodeRequestBody struct {
 	RedirectURI *string `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty" xml:"redirect_uri,omitempty"`
 	// Exact resource for which the token is requested
 	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Authorization-code grant selected by this operation
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
 }
 
 // RefreshRequestBody is the type of the "access_tokens" service "refresh"
@@ -51,6 +55,8 @@ type RefreshRequestBody struct {
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
 	// Exact resource of the original grant
 	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Refresh grant selected by this operation
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
 }
 
 // SecretResponseBody is the type of the "access_tokens" service "secret"
@@ -145,6 +151,12 @@ func NewSecretPayload(body *SecretRequestBody) *accesstokens.SecretPayload {
 		Resource:     *body.Resource,
 		Scope:        body.Scope,
 	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.GrantType == nil {
+		v.GrantType = "client_credentials"
+	}
 
 	return v
 }
@@ -158,6 +170,12 @@ func NewCodePayload(body *CodeRequestBody) *accesstokens.CodePayload {
 		RedirectURI:  *body.RedirectURI,
 		Resource:     *body.Resource,
 	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.GrantType == nil {
+		v.GrantType = "authorization_code"
+	}
 
 	return v
 }
@@ -168,6 +186,12 @@ func NewRefreshPayload(body *RefreshRequestBody) *accesstokens.RefreshPayload {
 		ClientID:     *body.ClientID,
 		RefreshToken: *body.RefreshToken,
 		Resource:     *body.Resource,
+	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.GrantType == nil {
+		v.GrantType = "refresh_token"
 	}
 
 	return v
@@ -199,6 +223,11 @@ func ValidateSecretRequestBody(body *SecretRequestBody) (err error) {
 	}
 	if body.Scope != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "client_credentials") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"client_credentials"}))
+		}
 	}
 	return
 }
@@ -240,6 +269,11 @@ func ValidateCodeRequestBody(body *CodeRequestBody) (err error) {
 	if body.Resource != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
 	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "authorization_code") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"authorization_code"}))
+		}
+	}
 	return
 }
 
@@ -267,6 +301,11 @@ func ValidateRefreshRequestBody(body *RefreshRequestBody) (err error) {
 	}
 	if body.Resource != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "refresh_token") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"refresh_token"}))
+		}
 	}
 	return
 }

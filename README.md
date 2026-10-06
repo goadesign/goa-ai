@@ -384,8 +384,9 @@ release gate.
 `mcp.NewClientCredentialsHTTPTransport` obtains preregistered client-secret
 grants for one exact HTTPS resource and issuer before sending MCP requests.
 Generated clients and `HTTPOptions.Client` accept this same transport. Typed
-Goa clients validate metadata and token responses; secrets stay in the token
-request body and bearer tokens stay in the MCP authorization header. The issuer
+Goa clients generate token form requests and validate metadata and token
+responses; secrets stay in the token request body and bearer tokens stay in the
+MCP authorization header. The issuer
 must explicitly advertise `client_credentials`, `client_secret_post` and
 `client_secret_basic`. The machine profile rejects redirects and returns
 401/403 responses without automatic reauthorization. Shared discovery can use a

@@ -40,7 +40,7 @@ func UsageExamples() string {
 	return os.Args[0] + " " + "resource-metadata read" + "\n" +
 		os.Args[0] + " " + "issuer-metadata read" + "\n" +
 		os.Args[0] + " " + "client-metadata read" + "\n" +
-		os.Args[0] + " " + "access-tokens secret --body '{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'" + "\n" +
+		os.Args[0] + " " + "access-tokens secret --body '{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'" + "\n" +
 		os.Args[0] + " " + "authorization-responses receive --code \"x\" --error \";\\u0026\" --state \"1f\" --issuer \"http://rice.name/wilfrid.vandervort\"" + "\n" +
 		""
 }
@@ -387,7 +387,7 @@ func accessTokensSecretUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens secret --body '{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens secret --body '{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'")
 }
 
 func accessTokensCodeUsage() {
@@ -405,7 +405,7 @@ func accessTokensCodeUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens code --body '{\n      \"client_id\": \"e\",\n      \"code\": \"a2r\",\n      \"code_verifier\": \"2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx\",\n      \"redirect_uri\": \"http://sporer.biz/nick\",\n      \"resource\": \"http://bauch.com/alvena\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens code --body '{\n      \"client_id\": \"e\",\n      \"code\": \"a2r\",\n      \"code_verifier\": \"2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://sporer.biz/nick\",\n      \"resource\": \"http://bauch.com/alvena\"\n   }'")
 }
 
 func accessTokensRefreshUsage() {
@@ -423,7 +423,7 @@ func accessTokensRefreshUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens refresh --body '{\n      \"client_id\": \"r\",\n      \"refresh_token\": \"9gn\",\n      \"resource\": \"http://anderson.name/josefa\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens refresh --body '{\n      \"client_id\": \"r\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"9gn\",\n      \"resource\": \"http://anderson.name/josefa\"\n   }'")
 }
 
 // authorizationResponsesUsage displays the usage of the

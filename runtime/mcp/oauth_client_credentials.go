@@ -16,6 +16,7 @@ import (
 	genaccesstokens "goa.design/goa-ai/internal/mcpauth/gen/access_tokens"
 	gentokenclient "goa.design/goa-ai/internal/mcpauth/gen/http/access_tokens/client"
 	genissuermetadata "goa.design/goa-ai/internal/mcpauth/gen/issuer_metadata"
+	goahttp "goa.design/goa/v3/http"
 )
 
 type (
@@ -103,7 +104,7 @@ func (g *clientSecretGrant) acquire(ctx context.Context, client *http.Client, re
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "token_exchange"}, secretFormEncoder, authorizationDecoder, false)
+	generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "token_exchange"}, goahttp.RequestEncoder, authorizationDecoder, false)
 	payload := &genaccesstokens.SecretPayload{
 		ClientID:     g.credentials.ClientID,
 		ClientSecret: g.credentials.ClientSecret,

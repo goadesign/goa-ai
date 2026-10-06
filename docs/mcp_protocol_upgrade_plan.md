@@ -1,6 +1,6 @@
 # Upgrade goa-ai to MCP 2026-07-28
 
-Research and implementation plan, prepared 2026-10-02 and revised 2026-10-05 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
+Research and implementation plan, prepared 2026-10-02 and revised 2026-10-06 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
 
 ## Outcome and scope
 
@@ -397,7 +397,7 @@ JSON-RPC snapshots and unconfigured services. The existing HTTP `Plan.Service`
 API continues to return shared template data; copied JSON-RPC data retains its
 independent-read contract.
 
-All four Goa AI modules select the merged source as
+At that milestone, all four Goa AI modules selected the merged source as
 `v3.33.1-0.20261006020533-0841789c6202`, without a local Goa replacement.
 Against that pin, registry, quickstart and assistant regeneration pass without
 generated changes. Configured lint, root build, the full uncached root race
@@ -964,7 +964,7 @@ These results do not establish a complete released-requirement-set pass.
 Root and all three nested application modules were updated with `go get -u ./...`
 and tidied. Final audits of the root and all three nested modules found no
 updates for their explicit direct or indirect requirements. The current Goa dependency is
-`v3.33.1-0.20261006020533-0841789c6202`; Pulse remains at
+`v3.33.1-0.20261006190149-aa9815a0452e`; Pulse remains at
 `v1.10.3-0.20261002205507-b34ad25e317d`. Provider SDKs, Temporal, MongoDB,
 OpenTelemetry, schema validation, and test dependencies are updated in the module
 files. The linter is pinned separately to `v2.14.0` in `.go-install` so its private
@@ -1680,8 +1680,9 @@ No credential becomes a tool argument, checkpoint field or model choice.
 
 Goa designs in `internal/mcpauth/design` own metadata and token response shapes,
 required fields, formats and scope/token validations. `make gen-mcp-auth`
-regenerates those contracts. The runtime supplies exact endpoint addresses and
-a private form encoder for the generated token body. Standard Go JSON v2 rejects
+regenerates those contracts. Native `FormRequest()` codecs and fixed grant
+values in that design now own request encoding. The runtime supplies exact
+endpoint addresses and strict response handling. Standard Go JSON v2 rejects
 case-folded names, duplicates, invalid UTF-8, trailing data and null declared
 values; unknown extension values remain allowed. This closes the verified case
 where a null optional scope or lifetime otherwise looked omitted.
@@ -1801,6 +1802,61 @@ deployed OAuth configuration or telemetry establishes a production cutover.
 Resource-server token verification and generated policy, JWT client assertions,
 enterprise exchange, independent conformance and all other nondeferred capability
 gates remain required. OAuth is not complete and no release is authorized.
+
+## OAuth composition work before the next capability
+
+Client-secret, authorization-code and refresh exchanges now use native
+`FormRequest()` declarations. Goa selects generated codecs from finalized body
+mappings, types, defaults and validators. The private runtime form field encoders
+have been deleted; exact discovered URLs and strict external-response decoding
+retain their existing ownership.
+
+[Goa #4030](https://github.com/goadesign/goa/pull/4030) is merged as
+`aa9815a0452eff552ea6499e472dbc688947eec2`. All four Goa AI modules select
+`v3.33.1-0.20261006190149-aa9815a0452e` without a local replacement. This source
+also includes the shared HTTP transport-name correction in
+[Goa #4029](https://github.com/goadesign/goa/pull/4029). Registry, quickstart and
+assistant regeneration produce no unrelated tracked changes. OAuth regeneration
+produces native form codecs, fixed grant defaults and form OpenAPI descriptions.
+
+Native Goa verification passes configured lint, the full repository suite,
+native HTTP integration tests and focused uncached race checks that compile and
+exercise generated forms, ordinary JSON, JSON-RPC, examples and OpenAPI together.
+All Linux/Windows CI, CodeQL and dependency-review checks pass. The completed
+native clone was clean on merged `v3` with no unpushed commits; its verification
+evidence was preserved with matching hashes before deletion. Goa AI's configured
+lint, full uncached root race suite and quickstart checks pass against this pin.
+A second owning regeneration preserves all 134 generated artifact hashes across
+OAuth, registry, quickstart and assistant. These checks do not complete OAuth; resource-server verification, generated policy, signed client assertions,
+enterprise exchange and durable host authorization remain required.
+
+The independently versioned authorization extension remains pinned to
+[`fb374c7`](https://github.com/modelcontextprotocol/ext-auth/tree/fb374c7db2b34f18ca9183882e0beecdf661892b),
+verified against its current main revision on October 6. Signed client
+authentication and enterprise identity grants have separate purposes and
+credential owners. The client-credentials assertion authenticates a registered
+client at its issuer; its subject identifies that client and its audience is
+the authorization-server identity agreed during registration. RFC 7523 permits
+a token endpoint as that identity but does not require it, so do not guess it
+from discovery. Assertion lifetime is registration policy for one assertion,
+not a fixed framework maximum or the access token's lifetime.
+[RFC 7523](https://www.rfc-editor.org/rfc/rfc7523.html),
+[client-credentials profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/draft/oauth-client-credentials.mdx).
+
+Enterprise authorization first sends a host-owned identity credential to the
+identity provider for a signed identity authorization grant. Its audience is
+the exact resource authorization-server issuer. The client then sends that
+grant to the resource issuer for an MCP access token. The MCP resource accepts
+only the final audience-bound access token; it neither trusts the original
+identity token nor consumes the intermediate grant. Model arguments and stored
+agent continuations must not carry any of these credentials. Generate separate
+typed exchanges and compose them with the shared access-token owner; do not add
+a generic callback that can return any token. Private-key client metadata in
+the enterprise profile follows its referenced metadata-document revision,
+independently of the core public-client profile. Verify those contracts before
+choosing new public configuration.
+[enterprise profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/stable/enterprise-managed-authorization.mdx),
+[client metadata authentication](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-01.html#section-6.2).
 
 ## Removal and preservation matrix
 

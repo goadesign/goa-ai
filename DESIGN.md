@@ -2641,8 +2641,9 @@ The built-in client-secret profile runs in the shared HTTP transport after local
 request preparation and before MCP dispatch. A grant is constructed for one
 exact HTTPS resource, issuer and registered client. It uses native Goa HTTP
 clients generated from `internal/mcpauth/design` for resource metadata, issuer
-metadata and token responses. Private request encoders write the generated token
-body as a form; private response decoders use standard Go JSON v2 with exact
+metadata and token responses. `FormRequest()` and fixed grant defaults in that
+design generate the token form codecs; there are no runtime field encoders.
+Private response decoders use standard Go JSON v2 with exact
 names and non-null declared values while allowing unknown extensions. No second
 DTO or schema walker owns these contracts. Metadata is checked for each attempt;
 token reuse ends at that token's returned lifetime in seconds, measured from

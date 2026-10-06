@@ -156,7 +156,7 @@ func (g *authorizationCodeGrant) acquire(ctx context.Context, client *http.Clien
 		return nil, time.Time{}, err
 	}
 	if canRefresh && previous != nil && previous.RefreshToken != nil && slices.Contains(issuer.GrantTypesSupported, "refresh_token") {
-		generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "token_refresh"}, refreshFormEncoder, authorizationDecoder, false)
+		generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "token_refresh"}, goahttp.RequestEncoder, authorizationDecoder, false)
 		obtained := time.Now()
 		value, err := generated.Refresh()(ctx, &genaccesstokens.RefreshPayload{
 			ClientID: g.client.ClientID, RefreshToken: *previous.RefreshToken, Resource: resource,
@@ -195,7 +195,7 @@ func (g *authorizationCodeGrant) acquire(ctx context.Context, client *http.Clien
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "token_exchange"}, codeFormEncoder, authorizationDecoder, false)
+	generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "token_exchange"}, goahttp.RequestEncoder, authorizationDecoder, false)
 	obtained := time.Now()
 	value, err := generated.Code()(ctx, &genaccesstokens.CodePayload{
 		ClientID: g.client.ClientID, Code: code, CodeVerifier: verifier,

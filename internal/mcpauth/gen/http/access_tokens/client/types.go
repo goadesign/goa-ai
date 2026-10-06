@@ -25,6 +25,8 @@ type SecretRequestBody struct {
 	Resource string `form:"resource" json:"resource" xml:"resource"`
 	// Space-separated permissions requested by the configured client
 	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Client-credentials grant selected by this operation
+	GrantType string `form:"grant_type" json:"grant_type" xml:"grant_type"`
 }
 
 // CodeRequestBody is the type of the "access_tokens" service "code" endpoint
@@ -40,6 +42,8 @@ type CodeRequestBody struct {
 	RedirectURI string `form:"redirect_uri" json:"redirect_uri" xml:"redirect_uri"`
 	// Exact resource for which the token is requested
 	Resource string `form:"resource" json:"resource" xml:"resource"`
+	// Authorization-code grant selected by this operation
+	GrantType string `form:"grant_type" json:"grant_type" xml:"grant_type"`
 }
 
 // RefreshRequestBody is the type of the "access_tokens" service "refresh"
@@ -51,6 +55,8 @@ type RefreshRequestBody struct {
 	RefreshToken string `form:"refresh_token" json:"refresh_token" xml:"refresh_token"`
 	// Exact resource of the original grant
 	Resource string `form:"resource" json:"resource" xml:"resource"`
+	// Refresh grant selected by this operation
+	GrantType string `form:"grant_type" json:"grant_type" xml:"grant_type"`
 }
 
 // SecretResponseBody is the type of the "access_tokens" service "secret"
@@ -106,6 +112,13 @@ func NewSecretRequestBody(p *accesstokens.SecretPayload) *SecretRequestBody {
 		ClientSecret: p.ClientSecret,
 		Resource:     p.Resource,
 		Scope:        p.Scope,
+		GrantType:    p.GrantType,
+	}
+	{
+		var zero string
+		if body.GrantType == zero {
+			body.GrantType = "client_credentials"
+		}
 	}
 	return body
 }
@@ -119,6 +132,13 @@ func NewCodeRequestBody(p *accesstokens.CodePayload) *CodeRequestBody {
 		CodeVerifier: p.CodeVerifier,
 		RedirectURI:  p.RedirectURI,
 		Resource:     p.Resource,
+		GrantType:    p.GrantType,
+	}
+	{
+		var zero string
+		if body.GrantType == zero {
+			body.GrantType = "authorization_code"
+		}
 	}
 	return body
 }
@@ -130,6 +150,13 @@ func NewRefreshRequestBody(p *accesstokens.RefreshPayload) *RefreshRequestBody {
 		ClientID:     p.ClientID,
 		RefreshToken: p.RefreshToken,
 		Resource:     p.Resource,
+		GrantType:    p.GrantType,
+	}
+	{
+		var zero string
+		if body.GrantType == zero {
+			body.GrantType = "refresh_token"
+		}
 	}
 	return body
 }

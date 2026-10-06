@@ -27,7 +27,7 @@ func BuildSecretPayload(accessTokensSecretBody *string) (*accesstokens.SecretPay
 		}
 		err = json.Unmarshal([]byte(*accessTokensSecretBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'")
 		}
 		if utf8.RuneCountInString(body.ClientID) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", body.ClientID, utf8.RuneCountInString(body.ClientID), 1, true))
@@ -39,6 +39,9 @@ func BuildSecretPayload(accessTokensSecretBody *string) (*accesstokens.SecretPay
 		if body.Scope != nil {
 			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
 		}
+		if !(body.GrantType == "client_credentials") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"client_credentials"}))
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -48,6 +51,13 @@ func BuildSecretPayload(accessTokensSecretBody *string) (*accesstokens.SecretPay
 		ClientSecret: body.ClientSecret,
 		Resource:     body.Resource,
 		Scope:        body.Scope,
+		GrantType:    body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "client_credentials"
+		}
 	}
 
 	return v, nil
@@ -64,7 +74,7 @@ func BuildCodePayload(accessTokensCodeBody *string) (*accesstokens.CodePayload, 
 		}
 		err = json.Unmarshal([]byte(*accessTokensCodeBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"e\",\n      \"code\": \"a2r\",\n      \"code_verifier\": \"2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx\",\n      \"redirect_uri\": \"http://sporer.biz/nick\",\n      \"resource\": \"http://bauch.com/alvena\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"e\",\n      \"code\": \"a2r\",\n      \"code_verifier\": \"2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://sporer.biz/nick\",\n      \"resource\": \"http://bauch.com/alvena\"\n   }'")
 		}
 		if utf8.RuneCountInString(body.ClientID) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", body.ClientID, utf8.RuneCountInString(body.ClientID), 1, true))
@@ -76,6 +86,9 @@ func BuildCodePayload(accessTokensCodeBody *string) (*accesstokens.CodePayload, 
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.code_verifier", body.CodeVerifier, "^[A-Za-z0-9._~-]{43,128}$"))
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uri", body.RedirectURI, goa.FormatURI))
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if !(body.GrantType == "authorization_code") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"authorization_code"}))
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -86,6 +99,13 @@ func BuildCodePayload(accessTokensCodeBody *string) (*accesstokens.CodePayload, 
 		CodeVerifier: body.CodeVerifier,
 		RedirectURI:  body.RedirectURI,
 		Resource:     body.Resource,
+		GrantType:    body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "authorization_code"
+		}
 	}
 
 	return v, nil
@@ -102,7 +122,7 @@ func BuildRefreshPayload(accessTokensRefreshBody *string) (*accesstokens.Refresh
 		}
 		err = json.Unmarshal([]byte(*accessTokensRefreshBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"r\",\n      \"refresh_token\": \"9gn\",\n      \"resource\": \"http://anderson.name/josefa\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"r\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"9gn\",\n      \"resource\": \"http://anderson.name/josefa\"\n   }'")
 		}
 		if utf8.RuneCountInString(body.ClientID) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", body.ClientID, utf8.RuneCountInString(body.ClientID), 1, true))
@@ -112,6 +132,9 @@ func BuildRefreshPayload(accessTokensRefreshBody *string) (*accesstokens.Refresh
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.refresh_token", body.RefreshToken, utf8.RuneCountInString(body.RefreshToken), 1, true))
 		}
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if !(body.GrantType == "refresh_token") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"refresh_token"}))
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -120,6 +143,13 @@ func BuildRefreshPayload(accessTokensRefreshBody *string) (*accesstokens.Refresh
 		ClientID:     body.ClientID,
 		RefreshToken: body.RefreshToken,
 		Resource:     body.Resource,
+		GrantType:    body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "refresh_token"
+		}
 	}
 
 	return v, nil

@@ -4216,7 +4216,7 @@ For runtime storage and workflow adapters:
 Install the Goa revision required by this module before regenerating:
 
 ```bash
-go install goa.design/goa/v3/cmd/goa@v3.32.1-0.20261004165214-99a12cec25bc
+go install goa.design/goa/v3/cmd/goa@v3.33.1-0.20261006190149-aa9815a0452e
 ```
 
 For a release that changes generated or persisted runtime shapes:
@@ -6657,8 +6657,10 @@ caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
 
 The same transport can be supplied to the generated HTTP client's `NewClient`
 constructor with its normal encoder, decoder and response-restoration arguments.
-Generated `NewCaller` retains the grant. The original design and configured
-caller still own tool arguments, URL fields and protocol metadata.
+Generated `NewCaller` retains the grant. Goa generates token form requests
+from the private OAuth design, including each operation's fixed grant type;
+applications supply no form encoder. The original design and configured caller
+still own tool arguments, URL fields and protocol metadata.
 
 Before each MCP attempt, typed Goa clients read protected-resource and issuer
 metadata, require exact resource and issuer identities, and check explicit

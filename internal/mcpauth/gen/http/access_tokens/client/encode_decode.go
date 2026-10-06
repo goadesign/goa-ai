@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 
 	accesstokens "goa.design/goa-ai/internal/mcpauth/gen/access_tokens"
 	goahttp "goa.design/goa/v3/http"
@@ -43,8 +44,35 @@ func EncodeSecretRequest(encoder func(*http.Request) goahttp.Encoder) func(*http
 			return goahttp.ErrInvalidType("access_tokens", "secret", "*accesstokens.SecretPayload", v)
 		}
 		body := NewSecretRequestBody(p)
-		if err := encoder(req).Encode(&body); err != nil {
-			return goahttp.ErrEncodingError("access_tokens", "secret", err)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 5)
+		{
+			value := body.ClientID
+			form.Set("client_id", value)
+		}
+		{
+			value := body.ClientSecret
+			form.Set("client_secret", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		if body.Scope != nil {
+			value := *body.Scope
+			form.Set("scope", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
 		}
 		return nil
 	}
@@ -123,8 +151,39 @@ func EncodeCodeRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.R
 			return goahttp.ErrInvalidType("access_tokens", "code", "*accesstokens.CodePayload", v)
 		}
 		body := NewCodeRequestBody(p)
-		if err := encoder(req).Encode(&body); err != nil {
-			return goahttp.ErrEncodingError("access_tokens", "code", err)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 6)
+		{
+			value := body.ClientID
+			form.Set("client_id", value)
+		}
+		{
+			value := body.Code
+			form.Set("code", value)
+		}
+		{
+			value := body.CodeVerifier
+			form.Set("code_verifier", value)
+		}
+		{
+			value := body.RedirectURI
+			form.Set("redirect_uri", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
 		}
 		return nil
 	}
@@ -203,8 +262,31 @@ func EncodeRefreshRequest(encoder func(*http.Request) goahttp.Encoder) func(*htt
 			return goahttp.ErrInvalidType("access_tokens", "refresh", "*accesstokens.RefreshPayload", v)
 		}
 		body := NewRefreshRequestBody(p)
-		if err := encoder(req).Encode(&body); err != nil {
-			return goahttp.ErrEncodingError("access_tokens", "refresh", err)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 4)
+		{
+			value := body.ClientID
+			form.Set("client_id", value)
+		}
+		{
+			value := body.RefreshToken
+			form.Set("refresh_token", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
 		}
 		return nil
 	}

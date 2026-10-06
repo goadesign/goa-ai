@@ -101,13 +101,14 @@ paths:
                 description: Request body for code.
                 required: true
                 content:
-                    application/json:
+                    application/x-www-form-urlencoded:
                         schema:
                             $ref: '#/components/schemas/CodeRequestBody'
                         example:
                             client_id: e
                             code: a2r
                             code_verifier: 2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx
+                            grant_type: authorization_code
                             redirect_uri: http://sporer.biz/nick
                             resource: http://bauch.com/alvena
             responses:
@@ -170,11 +171,12 @@ paths:
                 description: Request body for refresh.
                 required: true
                 content:
-                    application/json:
+                    application/x-www-form-urlencoded:
                         schema:
                             $ref: '#/components/schemas/RefreshRequestBody'
                         example:
                             client_id: r
+                            grant_type: refresh_token
                             refresh_token: 9gn
                             resource: http://anderson.name/josefa
             responses:
@@ -224,12 +226,13 @@ paths:
                 description: Request body for secret.
                 required: true
                 content:
-                    application/json:
+                    application/x-www-form-urlencoded:
                         schema:
                             $ref: '#/components/schemas/SecretRequestBody'
                         example:
                             client_id: "6"
                             client_secret: ehj
+                            grant_type: client_credentials
                             resource: http://senger.name/antwan_rath
                             scope: lk D G
             responses:
@@ -307,6 +310,13 @@ components:
                     description: Private PKCE verifier for this authorization exchange
                     example: 2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx
                     pattern: ^[A-Za-z0-9._~-]{43,128}$
+                grant_type:
+                    type: string
+                    description: Authorization-code grant selected by this operation
+                    default: authorization_code
+                    example: authorization_code
+                    enum:
+                        - authorization_code
                 redirect_uri:
                     type: string
                     description: Exact redirect used in the authorization request
@@ -322,6 +332,7 @@ components:
                 client_id: e
                 code: a2r
                 code_verifier: 2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx
+                grant_type: authorization_code
                 redirect_uri: http://sporer.biz/nick
                 resource: http://bauch.com/alvena
             required:
@@ -556,6 +567,13 @@ components:
                     description: Public client identifier of the original grant
                     example: r
                     minLength: 1
+                grant_type:
+                    type: string
+                    description: Refresh grant selected by this operation
+                    default: refresh_token
+                    example: refresh_token
+                    enum:
+                        - refresh_token
                 refresh_token:
                     type: string
                     description: Private refresh credential from the original grant
@@ -570,6 +588,7 @@ components:
             description: Request body for refresh.
             example:
                 client_id: r
+                grant_type: refresh_token
                 refresh_token: 9gn
                 resource: http://anderson.name/josefa
             required:
@@ -589,6 +608,13 @@ components:
                     description: Secret registered with this issuer
                     example: ehj
                     minLength: 1
+                grant_type:
+                    type: string
+                    description: Client-credentials grant selected by this operation
+                    default: client_credentials
+                    example: client_credentials
+                    enum:
+                        - client_credentials
                 resource:
                     type: string
                     description: Exact resource for which the token is requested
@@ -603,6 +629,7 @@ components:
             example:
                 client_id: "6"
                 client_secret: ehj
+                grant_type: client_credentials
                 resource: http://senger.name/antwan_rath
                 scope: lk D G
             required:

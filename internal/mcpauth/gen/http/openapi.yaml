@@ -77,18 +77,48 @@ paths:
             summary: code access_tokens
             description: Exchange one validated browser authorization code using the private PKCE verifier and the original resource and redirect.
             operationId: access_tokens#code
+            consumes:
+                - application/x-www-form-urlencoded
             parameters:
-                - name: CodeRequestBody
-                  in: body
+                - name: client_id
+                  in: formData
+                  description: Public client identifier registered with the selected issuer
                   required: true
-                  schema:
-                    $ref: '#/definitions/AccessTokensCodeRequestBody'
-                    required:
-                        - client_id
-                        - code
-                        - code_verifier
-                        - redirect_uri
-                        - resource
+                  type: string
+                  minLength: 1
+                - name: code
+                  in: formData
+                  description: Authorization code from the validated redirect
+                  required: true
+                  type: string
+                  minLength: 1
+                  pattern: ^[\x20-\x7e]+$
+                - name: code_verifier
+                  in: formData
+                  description: Private PKCE verifier for this authorization exchange
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9._~-]{43,128}$
+                - name: redirect_uri
+                  in: formData
+                  description: Exact redirect used in the authorization request
+                  required: true
+                  type: string
+                  format: uri
+                - name: resource
+                  in: formData
+                  description: Exact resource for which the token is requested
+                  required: true
+                  type: string
+                  format: uri
+                - name: grant_type
+                  in: formData
+                  description: Authorization-code grant selected by this operation
+                  required: false
+                  type: string
+                  default: authorization_code
+                  enum:
+                    - authorization_code
             responses:
                 "200":
                     description: OK response.
@@ -123,16 +153,36 @@ paths:
             summary: refresh access_tokens
             description: Replace an expired public-client access token using the refresh credential bound to the same issuer and resource.
             operationId: access_tokens#refresh
+            consumes:
+                - application/x-www-form-urlencoded
             parameters:
-                - name: RefreshRequestBody
-                  in: body
+                - name: client_id
+                  in: formData
+                  description: Public client identifier of the original grant
                   required: true
-                  schema:
-                    $ref: '#/definitions/AccessTokensRefreshRequestBody'
-                    required:
-                        - client_id
-                        - refresh_token
-                        - resource
+                  type: string
+                  minLength: 1
+                - name: refresh_token
+                  in: formData
+                  description: Private refresh credential from the original grant
+                  required: true
+                  type: string
+                  minLength: 1
+                  pattern: ^[\x20-\x7e]+$
+                - name: resource
+                  in: formData
+                  description: Exact resource of the original grant
+                  required: true
+                  type: string
+                  format: uri
+                - name: grant_type
+                  in: formData
+                  description: Refresh grant selected by this operation
+                  required: false
+                  type: string
+                  default: refresh_token
+                  enum:
+                    - refresh_token
             responses:
                 "200":
                     description: OK response.
@@ -167,16 +217,41 @@ paths:
             summary: secret access_tokens
             description: Exchange a preregistered client identifier and secret using request-body authentication for one resource and its configured permissions.
             operationId: access_tokens#secret
+            consumes:
+                - application/x-www-form-urlencoded
             parameters:
-                - name: SecretRequestBody
-                  in: body
+                - name: client_id
+                  in: formData
+                  description: Client identifier registered with this issuer
                   required: true
-                  schema:
-                    $ref: '#/definitions/AccessTokensSecretRequestBody'
-                    required:
-                        - client_id
-                        - client_secret
-                        - resource
+                  type: string
+                  minLength: 1
+                - name: client_secret
+                  in: formData
+                  description: Secret registered with this issuer
+                  required: true
+                  type: string
+                  minLength: 1
+                - name: resource
+                  in: formData
+                  description: Exact resource for which the token is requested
+                  required: true
+                  type: string
+                  format: uri
+                - name: scope
+                  in: formData
+                  description: Space-separated permissions requested by the configured client
+                  required: false
+                  type: string
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: grant_type
+                  in: formData
+                  description: Client-credentials grant selected by this operation
+                  required: false
+                  type: string
+                  default: client_credentials
+                  enum:
+                    - client_credentials
             responses:
                 "200":
                     description: OK response.
@@ -188,109 +263,6 @@ paths:
             schemes:
                 - http
 definitions:
-    AccessTokensCodeRequestBody:
-        title: AccessTokensCodeRequestBody
-        type: object
-        properties:
-            client_id:
-                type: string
-                description: Public client identifier registered with the selected issuer
-                example: e
-                minLength: 1
-            code:
-                type: string
-                description: Authorization code from the validated redirect
-                example: a2r
-                pattern: ^[\x20-\x7e]+$
-                minLength: 1
-            code_verifier:
-                type: string
-                description: Private PKCE verifier for this authorization exchange
-                example: 2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx
-                pattern: ^[A-Za-z0-9._~-]{43,128}$
-            redirect_uri:
-                type: string
-                description: Exact redirect used in the authorization request
-                example: http://sporer.biz/nick
-                format: uri
-            resource:
-                type: string
-                description: Exact resource for which the token is requested
-                example: http://bauch.com/alvena
-                format: uri
-        example:
-            client_id: e
-            code: a2r
-            code_verifier: 2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx
-            redirect_uri: http://sporer.biz/nick
-            resource: http://bauch.com/alvena
-        required:
-            - client_id
-            - code
-            - code_verifier
-            - redirect_uri
-            - resource
-    AccessTokensRefreshRequestBody:
-        title: AccessTokensRefreshRequestBody
-        type: object
-        properties:
-            client_id:
-                type: string
-                description: Public client identifier of the original grant
-                example: r
-                minLength: 1
-            refresh_token:
-                type: string
-                description: Private refresh credential from the original grant
-                example: 9gn
-                pattern: ^[\x20-\x7e]+$
-                minLength: 1
-            resource:
-                type: string
-                description: Exact resource of the original grant
-                example: http://anderson.name/josefa
-                format: uri
-        example:
-            client_id: r
-            refresh_token: 9gn
-            resource: http://anderson.name/josefa
-        required:
-            - client_id
-            - refresh_token
-            - resource
-    AccessTokensSecretRequestBody:
-        title: AccessTokensSecretRequestBody
-        type: object
-        properties:
-            client_id:
-                type: string
-                description: Client identifier registered with this issuer
-                example: "6"
-                minLength: 1
-            client_secret:
-                type: string
-                description: Secret registered with this issuer
-                example: ehj
-                minLength: 1
-            resource:
-                type: string
-                description: Exact resource for which the token is requested
-                example: http://senger.name/antwan_rath
-                format: uri
-            scope:
-                type: string
-                description: Space-separated permissions requested by the configured client
-                example: lk D G
-                pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
-        example:
-            client_id: "6"
-            client_secret: ehj
-            resource: http://senger.name/antwan_rath
-            scope: lk D G
-        required:
-            - client_id
-            - client_secret
-            - resource
     BearerToken:
         title: BearerToken
         type: object

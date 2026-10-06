@@ -11,7 +11,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
+	"net/url"
+	"unicode/utf8"
 
 	accesstokens "goa.design/goa-ai/internal/mcpauth/gen/access_tokens"
 	goahttp "goa.design/goa/v3/http"
@@ -39,7 +42,78 @@ func DecodeSecretRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.
 			body SecretRequestBody
 			err  error
 		)
-		err = decoder(r).Decode(&body)
+		// Read only the body so query parameters cannot supply missing form fields.
+		formBytes, readErr := io.ReadAll(r.Body)
+		err = readErr
+		if err == nil {
+			if len(formBytes) == 0 {
+				err = io.EOF
+			} else {
+				mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+				if mediaErr != nil || mediaType != "application/x-www-form-urlencoded" {
+					return payload, goa.DecodePayloadError("expected application/x-www-form-urlencoded request body")
+				}
+				form, parseErr := url.ParseQuery(string(formBytes))
+				if parseErr != nil {
+					return payload, goa.DecodePayloadError("invalid URL-encoded request body")
+				}
+				if values, present := form["client_id"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field client_id must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field client_id must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.ClientID = &formValue
+				}
+				if values, present := form["client_secret"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field client_secret must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field client_secret must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.ClientSecret = &formValue
+				}
+				if values, present := form["resource"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field resource must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field resource must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.Resource = &formValue
+				}
+				if values, present := form["scope"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field scope must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field scope must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.Scope = &formValue
+				}
+				if values, present := form["grant_type"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field grant_type must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field grant_type must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.GrantType = &formValue
+				}
+			}
+		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return payload, goa.MissingPayloadError()
@@ -81,7 +155,89 @@ func DecodeCodeRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.De
 			body CodeRequestBody
 			err  error
 		)
-		err = decoder(r).Decode(&body)
+		// Read only the body so query parameters cannot supply missing form fields.
+		formBytes, readErr := io.ReadAll(r.Body)
+		err = readErr
+		if err == nil {
+			if len(formBytes) == 0 {
+				err = io.EOF
+			} else {
+				mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+				if mediaErr != nil || mediaType != "application/x-www-form-urlencoded" {
+					return payload, goa.DecodePayloadError("expected application/x-www-form-urlencoded request body")
+				}
+				form, parseErr := url.ParseQuery(string(formBytes))
+				if parseErr != nil {
+					return payload, goa.DecodePayloadError("invalid URL-encoded request body")
+				}
+				if values, present := form["client_id"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field client_id must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field client_id must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.ClientID = &formValue
+				}
+				if values, present := form["code"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field code must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field code must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.Code = &formValue
+				}
+				if values, present := form["code_verifier"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field code_verifier must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field code_verifier must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.CodeVerifier = &formValue
+				}
+				if values, present := form["redirect_uri"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field redirect_uri must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field redirect_uri must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.RedirectURI = &formValue
+				}
+				if values, present := form["resource"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field resource must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field resource must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.Resource = &formValue
+				}
+				if values, present := form["grant_type"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field grant_type must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field grant_type must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.GrantType = &formValue
+				}
+			}
+		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return payload, goa.MissingPayloadError()
@@ -123,7 +279,67 @@ func DecodeRefreshRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp
 			body RefreshRequestBody
 			err  error
 		)
-		err = decoder(r).Decode(&body)
+		// Read only the body so query parameters cannot supply missing form fields.
+		formBytes, readErr := io.ReadAll(r.Body)
+		err = readErr
+		if err == nil {
+			if len(formBytes) == 0 {
+				err = io.EOF
+			} else {
+				mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+				if mediaErr != nil || mediaType != "application/x-www-form-urlencoded" {
+					return payload, goa.DecodePayloadError("expected application/x-www-form-urlencoded request body")
+				}
+				form, parseErr := url.ParseQuery(string(formBytes))
+				if parseErr != nil {
+					return payload, goa.DecodePayloadError("invalid URL-encoded request body")
+				}
+				if values, present := form["client_id"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field client_id must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field client_id must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.ClientID = &formValue
+				}
+				if values, present := form["refresh_token"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field refresh_token must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field refresh_token must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.RefreshToken = &formValue
+				}
+				if values, present := form["resource"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field resource must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field resource must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.Resource = &formValue
+				}
+				if values, present := form["grant_type"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field grant_type must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field grant_type must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.GrantType = &formValue
+				}
+			}
+		}
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return payload, goa.MissingPayloadError()

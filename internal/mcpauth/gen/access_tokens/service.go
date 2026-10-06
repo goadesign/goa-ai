@@ -65,6 +65,8 @@ type CodePayload struct {
 	RedirectURI string
 	// Exact resource for which the token is requested
 	Resource string
+	// Authorization-code grant selected by this operation
+	GrantType string
 }
 
 // RefreshPayload is the payload type of the access_tokens service refresh
@@ -76,6 +78,8 @@ type RefreshPayload struct {
 	RefreshToken string
 	// Exact resource of the original grant
 	Resource string
+	// Refresh grant selected by this operation
+	GrantType string
 }
 
 // SecretPayload is the payload type of the access_tokens service secret method.
@@ -88,4 +92,6 @@ type SecretPayload struct {
 	Resource string
 	// Space-separated permissions requested by the configured client
 	Scope *string
+	// Client-credentials grant selected by this operation
+	GrantType string
 }
