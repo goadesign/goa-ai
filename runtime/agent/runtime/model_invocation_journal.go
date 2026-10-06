@@ -700,7 +700,7 @@ func (j *modelInvocationJournal) liveModelOutputEventsLocked(chunk model.Chunk) 
 		var events []stream.Event
 		for _, part := range actual.Message.Parts {
 			value, ok := part.(model.ThinkingPart)
-			if !ok || value.Text == "" {
+			if !ok || value.Final || value.Text == "" {
 				continue
 			}
 			payload := stream.PlannerThoughtPayload{
