@@ -2113,7 +2113,9 @@ This helper drains the stream and returns a `StreamSummary` with accumulated
 text and complete tool calls. While it drains the designated
 `PlannerModelClient` call, the runtime sends each validated text fragment to the
 configured sink. It sends thinking fragments only when the sink uses
-a profile with `Thoughts` enabled. The trusted host decides how to translate
+a profile with `Thoughts` enabled. Only incremental `ThinkingPart` text becomes
+a live append event. A part with `Final=true` contains a complete block for the
+accepted provider transcript; it does not append that text again. The trusted host decides how to translate
 allowed events into its public progress contract.
 
 `ConsumeStream` accepts the `*model.ValidatedStream` returned by every public

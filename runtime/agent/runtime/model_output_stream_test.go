@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent/internal/modelcall"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -34,7 +35,7 @@ func TestModelOutputStreamsTextAndThoughtsImmediately(t *testing.T) {
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{model.ThinkingPart{
 				Text:  "checking readings",
-				Final: true,
+				Final: false,
 			}},
 		},
 	}))
@@ -81,7 +82,7 @@ func TestRuntimeUsesConfiguredStreamProfile(t *testing.T) {
 			Role: model.ConversationRoleAssistant,
 			Parts: []model.Part{model.ThinkingPart{
 				Text:  "private provider reasoning",
-				Final: true,
+				Final: false,
 			}},
 		},
 	}))
@@ -128,6 +129,49 @@ func TestWithStreamRejectsInvalidConfiguration(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestModelOutputThoughtsExcludeCompleteBlocks(t *testing.T) {
+	sink := &recordingStreamSink{}
+	journal := &modelInvocationJournal{
+		runtime: runtimeWithModelOutputSink(t, sink),
+		runID:   "run-1", sessionID: "session-1", responseID: "response-1",
+	}
+	invocation := mustBeginModelInvocation(t, journal)
+	require.NoError(t, journal.designateModelInvocation(invocation))
+	parts := []model.ThinkingPart{
+		{Text: "Checking ", Index: 0},
+		{Text: "readings.", Index: 0},
+		{Text: "Checking readings.", Signature: "signed-first", Index: 0, Final: true},
+		{Text: "Again. ", Index: 1},
+		{Text: "Again. ", Index: 1},
+		{Text: "Again. Again. ", Signature: "signed-second", Index: 1, Final: true},
+		{Redacted: []byte("opaque"), Index: 2, Final: true},
+	}
+	for _, part := range parts {
+		require.NoError(t, journal.recordModelChunk(t.Context(), invocation, model.ThinkingChunk{
+			Message: model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{part}},
+		}))
+	}
+	events := sink.snapshot()
+	require.Len(t, events, 4)
+	var text string
+	for _, event := range events {
+		thought, ok := event.(stream.PlannerThought)
+		require.True(t, ok)
+		assert.Equal(t, "response-1", thought.Data.ResponseID)
+		text += thought.Data.Note
+	}
+	assert.Equal(t, "Checking readings.Again. Again. ", text)
+	assert.True(t, journal.outputObserved)
+
+	response := &model.Response{Content: []model.Message{{
+		Role:  model.ConversationRoleAssistant,
+		Parts: []model.Part{parts[2], parts[5], parts[6], model.TextPart{Text: "Readings checked."}},
+	}}}
+	require.NoError(t, journal.recordValidatedModelResponse(invocation, response))
+	assert.Equal(t, response, journal.invocations[invocation].response)
+	assert.Len(t, sink.snapshot(), 4)
 }
 
 func TestThousandsOfModelFragmentsStreamWithoutLifecycleEvents(t *testing.T) {
