@@ -1465,6 +1465,8 @@ HTTP methods and origins before running configured middleware. Origin settings
 belong to construction; `MountWithOrigins` and the public inner `Handler` field
 are removed in this breaking upgrade. Use `ServeHTTP` for direct serving.
 Regenerate the server and update its constructor callers together.
+For routes with URL parameters, register `ServeHTTP` with the same mux passed
+to `New`, or use `Mount(mux)`. The mux supplies path values to generated decoders.
 
 The original endpoint owns authentication, method scopes, the authenticated
 context, interceptors and middleware. Static catalogs and prompts do not call

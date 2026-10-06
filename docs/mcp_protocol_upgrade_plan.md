@@ -285,7 +285,8 @@ resource policy and constructor design before adding another policy DSL or a
 public parsed-request record.
 
 A native OAuth transport proof against merged Goa `562176f1e1b5` passes
-21 synthetic cases under the race detector. Existing
+35 synthetic cases under the race detector. The reproducible compiled fixture
+is `TestMCPResourceAuthorizationUsesNativeContracts`. Existing
 `middleware.PopulateRequestContext` carries the exact request URI to
 `security.AuthOAuth2Func`; parsing that URI preserves escaped paths, raw query
 order and an explicitly empty query. A configured origin owns the resource
@@ -296,6 +297,19 @@ before configured HTTP middleware; an error after service work produces no
 OAuth challenge. Generated client decoding verifies returned values. This
 proves native composition and ordering, not cryptographic token verification,
 production OAuth support or the resource policy constructor.
+
+The MCP cases separately supply a resource bearer token, a domain API key and
+an ordinary argument named `token`. Both manual `ServeHTTP` registration and
+`Mount(mux)` retain the order: resource authorization, HTTP middleware, original
+endpoint middleware, domain authorization, service work. A resource token cannot
+satisfy the domain key. Domain rejection and an `invalid_token` error after work
+remain MCP tool errors without an OAuth challenge.
+
+Scoped routes must enter the same mux passed to the generated constructor. Goa's
+mux extracts URL parameters before the generated decoder reads them. Calling
+`ServeHTTP` directly without that routing context does not supply path values;
+registering it with the mux and `Mount(mux)` both do. Keep this native mechanism
+rather than add another URL parser or fabricate routing context.
 
 The constructor trace exposed a prerequisite in the MCP plugin itself. Before
 this change, mounted requests entered `withMCPTransport` before `Server.Use`

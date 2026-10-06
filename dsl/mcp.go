@@ -16,6 +16,8 @@ import (
 // MCP must appear in a Service expression. The service-level JSONRPC POST
 // route supplies the MCP path. The same service may also expose ordinary HTTP,
 // file, and gRPC endpoints.
+// Register the generated server with the same mux passed to its constructor,
+// or call Mount(mux), so Goa supplies route parameters to generated decoders.
 //
 // MCP takes two required arguments:
 //   - name: the server name returned in response metadata
