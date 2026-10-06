@@ -16,7 +16,7 @@ PROTOC_GEN_GO_GRPC_TARGET := $(shell grep '^google.golang.org/grpc/cmd/protoc-ge
 PROTOC_GEN_GO_VERSION := $(word 2,$(subst @, ,$(PROTOC_GEN_GO_TARGET)))
 PROTOC_GEN_GO_GRPC_VERSION := $(word 2,$(subst @, ,$(PROTOC_GEN_GO_GRPC_TARGET)))
 
-.PHONY: all setup build lint test itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example gen-example
+.PHONY: all setup build lint test itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example gen-example gen-mcp-auth
 
 all: build lint test
 
@@ -94,3 +94,7 @@ gen-example:
 
 gen-registry:
 	$(GO) run goa.design/goa/v3/cmd/goa gen goa.design/goa-ai/registry/design -o registry
+
+# Generate the typed metadata and token contracts used by the MCP OAuth client.
+gen-mcp-auth:
+	$(GO) run goa.design/goa/v3/cmd/goa gen goa.design/goa-ai/internal/mcpauth/design -o internal/mcpauth

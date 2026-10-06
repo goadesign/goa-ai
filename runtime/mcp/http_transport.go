@@ -37,10 +37,11 @@ type (
 		next interface {
 			Do(*http.Request) (*http.Response, error)
 		}
-		clientInfo   ClientInfo
-		inputSupport InputSupport
-		tools        map[string]ToolBinding
-		retry        HTTPRetryPolicy
+		clientInfo    ClientInfo
+		inputSupport  InputSupport
+		tools         map[string]ToolBinding
+		retry         HTTPRetryPolicy
+		authorization *clientSecretGrant
 	}
 )
 
@@ -53,10 +54,12 @@ func NewHTTPTransport(next interface {
 	if err := retry.Validate(); err != nil {
 		panic(err)
 	}
+	var authorization *clientSecretGrant
 	if existing, ok := next.(*HTTPTransport); ok {
 		next = existing.next
+		authorization = existing.authorization
 	}
-	return &HTTPTransport{next: next, clientInfo: info, tools: tools, inputSupport: support, retry: retry}
+	return &HTTPTransport{next: next, clientInfo: info, tools: tools, inputSupport: support, retry: retry, authorization: authorization}
 }
 
 // Do sends one request with its own metadata and validates the response before
@@ -172,6 +175,13 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		attemptRequest := outgoing.Clone(outgoing.Context())
 		attemptRequest.Body = io.NopCloser(bytes.NewReader(body))
 		attemptRequest.ContentLength = int64(len(body))
+		// Local request preparation must finish before a credential exchange.
+		// Each attempt checks token expiry with this operation's context.
+		if t.authorization != nil {
+			if err := t.authorization.prepare(attemptRequest); err != nil {
+				return nil, err
+			}
+		}
 		// Once an attempt reaches the HTTP dependency, a later local failure
 		// cannot prove that the tool never ran. Keep that fact across retries.
 		dispatched = true

@@ -2634,8 +2634,31 @@ contracts. HTTP authorization rejections close their bodies without waiting for
 protocol messages. Explicit request rejections do not authorize interrupted-tool
 retries; the authorization client owns fresh credentials, challenge validation
 and consent. Challenge headers and HTTP bodies are excluded from error text.
-Built-in OAuth clients and server resource authorization remain separate release
+Complete OAuth clients and server resource authorization remain separate release
 gates. No HTTP authentication state enters workflow checkpoints or model inputs.
+
+The built-in client-secret profile runs in the shared HTTP transport after local
+request preparation and before MCP dispatch. A grant is constructed for one
+exact HTTPS resource, issuer and registered client. It uses native Goa HTTP
+clients generated from `internal/mcpauth/design` for resource metadata, issuer
+metadata and token responses. Private request encoders write the generated token
+body as a form; private response decoders use standard Go JSON v2 with exact
+names and non-null declared values while allowing unknown extensions. No second
+DTO or schema walker owns these contracts. Metadata is checked for each attempt;
+token reuse ends at that token's returned lifetime in seconds, measured from
+before exchange. Missing lifetime means no reuse, not an invented expiry.
+Cancellation uses the active request context, including while waiting for another
+exchange. Each grant owns its token and does not share credentials with another
+resource, issuer or client. Native caller wrapping retains that grant.
+
+The profile requires explicit `client_credentials`, `client_secret_post` and
+`client_secret_basic` advertisements because the pinned extension draft conflicts
+on secret placement. It never probes another placement, follows redirects,
+repeats an unchanged credential after 401/403, or infers a JWT from token syntax.
+Only HTTP 404 advances well-known discovery; malformed documents, owner mismatch
+and other failures stop before dispatch. Challenge URLs, consent, PKCE, JWT
+client assertions and operation-specific scope changes are still required; this
+profile does not advertise the authorization extension as complete.
 
 Fixed MCP result views have one selected field contract shared by catalog
 schemas and agent specs. Server codecs consume the projected values already

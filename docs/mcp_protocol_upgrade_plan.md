@@ -1663,6 +1663,71 @@ are design requirements, not implemented OAuth behavior.
 
 Authentication/consent remain host-owned. Self-reported client/server names, tool annotations, icon URLs, mirrored headers, and opaque continuation values do not grant authority. Preserve exact Origin validation. Do not fetch icon/schema URLs or follow arbitrary redirects while interpreting a tool result.
 
+## Built-in client-secret grant milestone
+
+The shared MCP HTTP transport now has a built-in preregistered client-secret
+profile. `NewClientCredentialsHTTPTransport(HTTPOptions, ClientCredentials)`
+returns the existing transport; native generated clients and the discovery
+caller both retain its grant when constructing their own caller. The only new
+public configuration describes the issuer, registered client and requested
+permissions. The existing endpoint identifies the resource. `HTTPOptions.Client`
+uses Goa's existing HTTP dependency interface so it can accept this transport.
+No credential becomes a tool argument, checkpoint field or model choice.
+
+Goa designs in `internal/mcpauth/design` own metadata and token response shapes,
+required fields, formats and scope/token validations. `make gen-mcp-auth`
+regenerates those contracts. The runtime supplies exact endpoint addresses and
+a private form encoder for the generated token body. Standard Go JSON v2 rejects
+case-folded names, duplicates, invalid UTF-8, trailing data and null declared
+values; unknown extension values remain allowed. This closes the verified case
+where a null optional scope or lifetime otherwise looked omitted.
+
+Each attempt completes local request preparation, verifies the exact resource
+and configured issuer, checks advertised grant/authentication methods, and obtains
+or reuses its own token before dispatch. Resource queries and escaped paths
+remain intact in discovery; issuer metadata uses the current OAuth/OpenID order.
+Only an explicit HTTP 404 advances to the next well-known location. An invalid
+document, wrong owner, redirect or other status stops the operation. The profile
+requires both Basic and POST-secret advertisements and sends secrets only in the
+POST form, addressing the pinned draft inconsistency without placement probes.
+An ordinary 401 or 403 causes no token exchange or MCP retry after rejection.
+
+A token's reported lifetime protects reuse of that one token, in seconds, with
+expiration exclusive: reuse requires elapsed time to be strictly below the
+reported lifetime. Time is measured from before its exchange. Missing lifetime
+means acquire again for the next operation; zero lifetime is immediately expired.
+There is no fixed grace period, arbitrary maximum lifetime or run-wide limit.
+Independent grants do not share tokens; concurrent calls within one grant wait
+with their own cancellation context. Issuer bodies and token values are excluded
+from returned errors and trace failure descriptions.
+
+Synthetic HTTPS tests cover both caller paths, exact URLs, form credentials,
+opaque mixed-case bearer tokens, ordered discovery, known null and other malformed
+values, unknown extensions, redirects, expiry, ordinary rejections, cancellation
+and concurrent client isolation. A separately generated and compiled MCP client
+proves the same path using native constructor arguments and two calls with one
+token exchange. These tests exercise actual built-in token acquisition; the
+server's token acceptance remains synthetic, with no live issuer configuration.
+
+Verification passed the complete uncached root race suite, then the final
+complete MCP generator/runtime race suites and agent failure checks after the
+scope-validation correction. Configured lint, root build, quickstart, the
+assistant race suite and the generated evaluation consumer pass. The profile
+also passes with the race detector on minimum Go 1.27.0. A second owning
+regeneration preserves all 44 generated file hashes. Module tidies add only
+already-pinned Goa HTTP dependencies to downstream manifests; versions and sums
+are unchanged. The five translated website pages build with 166 checked pages
+and no broken links. Their unchanged JavaScript suite retains its pre-existing
+heading-removal property failure (69 passes, one failure); no formatter change
+was made to hide it.
+
+This milestone does not complete OAuth or extension conformance. Challenge URL
+selection/parsing, PKCE and host consent, token-refresh grants, current-operation
+scope changes, client assertions, enterprise exchange, resource-server verification
+and authoritative challenges remain required. The authorization extension is not
+advertised from this partial profile. No release or caller cutover is authorized
+until these and the other listed capability gates pass.
+
 ## Removal and preservation matrix
 
 Remove obsolete source and generated output in the same breaking change. Keep no deprecated forwarding alias, alternate decoder, negotiated older version, or runtime feature flag.

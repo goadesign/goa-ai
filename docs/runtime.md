@@ -6489,9 +6489,12 @@ execution outcomes and never trigger interrupted-stream retries. Other response
 loss still follows the existing tool trust and retry contract.
 
 The authorization client owns challenge parsing, credential renewal and consent.
-Error text omits the challenge headers and HTTP body. Built-in OAuth and generated
-server OAuth challenges remain release gates; this response contract does not
-implement those flows. No checkpoint or model argument carries a credential.
+Error text omits the challenge headers and HTTP body. Complete built-in OAuth and
+generated server OAuth challenges remain release gates; retaining an HTTP response
+does not implement those flows. No checkpoint or model argument carries a credential.
+
+The built-in client-secret profile is described below. It uses the shared
+transport before MCP dispatch; it does not change the error or retry contracts.
 
 For a subprocess, use `NewStdioCaller(ctx, StdioOptions{...})`. Each message
 carries the same request metadata. Canceling a call sends its actual request ID;
@@ -6623,6 +6626,62 @@ emits `EncodeContentItem`/`DecodeContentItem`, `EncodePromptMessage`/`DecodeProm
 or `EncodeResourceContent`/`DecodeResourceContent`. Use the generated MCP endpoint
 clients and servers to encode and decode protocol envelopes; their content
 validators enforce MCP's selected variant. No text-only codec alias remains.
+
+### Client-secret authorization
+
+A preregistered client can obtain tokens before MCP requests using
+`NewClientCredentialsHTTPTransport`. Construct one transport for each resource,
+issuer and registered client. Supply an `*http.Client` for the issuer's trusted
+network configuration; the constructor copies it and rejects redirects.
+
+```go
+transport, err := mcp.NewClientCredentialsHTTPTransport(mcp.HTTPOptions{
+    Endpoint: "https://records.example/mcp",
+    Client: httpClient,
+    ClientInfo: mcp.ClientInfo{Name: "records-agent", Version: "1"},
+}, mcp.ClientCredentials{
+    Issuer: "https://identity.example/tenant",
+    ClientID: registeredClientID,
+    ClientSecret: registeredClientSecret,
+    Scopes: []string{"records:read"},
+})
+if err != nil {
+    return err
+}
+caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
+    Endpoint: "https://records.example/mcp",
+    Client: transport,
+    ClientInfo: mcp.ClientInfo{Name: "records-agent", Version: "1"},
+})
+```
+
+The same transport can be supplied to the generated HTTP client's `NewClient`
+constructor with its normal encoder, decoder and response-restoration arguments.
+Generated `NewCaller` retains the grant. The original design and configured
+caller still own tool arguments, URL fields and protocol metadata.
+
+Before each MCP attempt, typed Goa clients read protected-resource and issuer
+metadata, require exact resource and issuer identities, and check explicit
+`client_credentials`, `client_secret_post` and `client_secret_basic` support.
+The pinned client-credentials draft conflicts on secret placement; this profile
+requires both advertised methods and sends the secret only in the token POST
+form. It never probes credential placement. The MCP request receives only the
+opaque bearer token in its authorization header.
+
+A token is reused only within its configured grant and reported lifetime, in
+seconds, measured from before token exchange. Missing lifetime means obtain
+again for the next operation; zero lifetime is expired. Cancellation controls
+metadata reads, token exchange and waiting behind another call. Metadata,
+token or redirect failures stop before MCP dispatch. Returned errors exclude
+secrets, token values and issuer response diagnostics. HTTP 401/403 responses
+cause no automatic repeat with unchanged credentials.
+
+This first profile does not handle challenge-selected metadata URLs, PKCE,
+consent, refresh-token grants, JWT client assertions, enterprise exchange or
+scope changes for an operation. It does not advertise the authorization
+extension as complete. Full OAuth and resource-server verification remain
+required before the breaking release. See the
+[upgrade plan](mcp_protocol_upgrade_plan.md#built-in-client-secret-grant-milestone).
 
 ### Request-scoped MCP progress
 

@@ -16,6 +16,7 @@ import (
 
 	"goa.design/goa-ai/internal/jsonschema"
 	"goa.design/goa-ai/internal/mcpprotocol"
+	goahttp "goa.design/goa/v3/http"
 )
 
 type (
@@ -23,8 +24,9 @@ type (
 	HTTPOptions struct {
 		// Endpoint is the URL that accepts MCP JSON-RPC POST requests.
 		Endpoint string
-		// Client sends HTTP requests. When omitted, http.DefaultClient is used.
-		Client *http.Client
+		// Client sends HTTP requests, including through an already-built MCP
+		// transport. When omitted, http.DefaultClient is used.
+		Client goahttp.Doer
 		// ClientInfo identifies the application on each request.
 		ClientInfo ClientInfo
 		// InputSupport names the interactions the host can fulfill.
@@ -93,7 +95,7 @@ func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallRespons
 	if err := jsonschema.Validate(contract.input, payload); err != nil {
 		return CallResponse{}, &Error{Code: JSONRPCInvalidParams, Message: fmt.Sprintf("MCP tool arguments: %v", err)}
 	}
-	transport := NewHTTPTransport(c.transport.next, c.transport.clientInfo, map[string]ToolBinding{req.Tool: contract.binding}, c.transport.inputSupport, c.transport.retry)
+	transport := NewHTTPTransport(c.transport, c.transport.clientInfo, map[string]ToolBinding{req.Tool: contract.binding}, c.transport.inputSupport, c.transport.retry)
 	var result toolsCallResult
 	if err := transport.call(ctx, c.endpoint, methodToolsCall, params, &result); err != nil {
 		return CallResponse{}, err

@@ -377,7 +377,18 @@ explicit remote rejections retain their original meaning.
 HTTP failures expose the received status and exact authorization challenges
 through `mcp.HTTPResponseError`, while preserving valid protocol errors for
 `errors.As`. Authorization rejections do not wait for an event stream or repeat
-a tool with unchanged credentials. Built-in OAuth remains a release gate.
+a tool with unchanged credentials. Complete OAuth remains a release gate.
+
+`mcp.NewClientCredentialsHTTPTransport` obtains preregistered client-secret
+grants for one exact HTTPS resource and issuer before sending MCP requests.
+Generated clients and `HTTPOptions.Client` accept this same transport. Typed
+Goa clients validate metadata and token responses; secrets stay in the token
+request body and bearer tokens stay in the MCP authorization header. The issuer
+must explicitly advertise `client_credentials`, `client_secret_post` and
+`client_secret_basic`. This first profile rejects redirects, does not repeat
+401/403 responses, and does not handle challenges, consent, PKCE or scope changes.
+See [client-secret authorization](docs/runtime.md#client-secret-authorization)
+for construction and the remaining release gates.
 
 Application code owns planners, service behavior, authorization, side-effect
 idempotency, storage, and deployment. Deploy generated packages, callers, and
