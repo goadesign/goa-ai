@@ -48,45 +48,53 @@ func (w *noOutputResponseWriter) WriteHeader(int) {
 func (w *noOutputResponseWriter) Flush() {
 }
 
-// Server handles JSON-RPC requests for the mcp_assistant service.
+// Server handles guarded MCP requests through the configured Goa handlers.
 type Server struct {
-	http.Handler
-	// Methods is the list of methods served by this server.
+	handler http.Handler
+	// Methods is the list of protocol methods served by this server.
 	Methods []string
-
-	// ServerDiscover is the handler for the server/discover method.
-	ServerDiscover func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// ToolsList is the handler for the tools/list method.
-	ToolsList func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// ToolsCall is the handler for the tools/call method.
-	ToolsCall func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// ResourcesList is the handler for the resources/list method.
-	ResourcesList func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// ResourcesRead is the handler for the resources/read method.
-	ResourcesRead func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// ResourcesTemplatesList is the handler for the resources/templates/list
+	// ServerDiscover is the native Goa handler for the server/discover protocol
 	// method.
+	ServerDiscover func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
+	// ToolsList is the native Goa handler for the tools/list protocol method.
+	ToolsList func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
+	// ToolsCall is the native Goa handler for the tools/call protocol method.
+	ToolsCall func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
+	// ResourcesList is the native Goa handler for the resources/list protocol
+	// method.
+	ResourcesList func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
+	// ResourcesRead is the native Goa handler for the resources/read protocol
+	// method.
+	ResourcesRead func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
+	// ResourcesTemplatesList is the native Goa handler for the
+	// resources/templates/list protocol method.
 	ResourcesTemplatesList func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// PromptsList is the handler for the prompts/list method.
+	// PromptsList is the native Goa handler for the prompts/list protocol method.
 	PromptsList func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// PromptsGet is the handler for the prompts/get method.
+	// PromptsGet is the native Goa handler for the prompts/get protocol method.
 	PromptsGet func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
-	// CompletionComplete is the handler for the completion/complete method.
+	// CompletionComplete is the native Goa handler for the completion/complete
+	// protocol method.
 	CompletionComplete func(context.Context, *http.Request, *jsonrpc.RawRequest, http.ResponseWriter) error
 
 	decoder    func(*http.Request) goahttp.Decoder
 	encoder    func(context.Context, http.ResponseWriter) goahttp.Encoder
 	errhandler func(context.Context, http.ResponseWriter, error)
+	// processRequest owns protocol checks before the mutable middleware handler.
+	processRequest http.HandlerFunc
 }
 
-// New creates a JSON-RPC server which loads HTTP requests and calls the
-// "mcp_assistant" service methods.
+// New constructs the MCP server with native Goa endpoint handlers and an
+// origin policy.
+// An empty origins list rejects every request that supplies an Origin header.
+// Both direct serving and mounting enforce this policy before configured middleware.
 func New(
 	endpoints *mcpassistant.Endpoints,
 	mux goahttp.Muxer,
 	decoder func(*http.Request) goahttp.Decoder,
 	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
 	errhandler func(context.Context, http.ResponseWriter, error),
+	origins ...string,
 ) *Server {
 	s := &Server{
 		Methods: []string{
@@ -113,9 +121,10 @@ func New(
 		encoder:                encoder,
 		errhandler:             errhandler,
 	}
-	// Install the request handler required by this service's methods.
-	// handleHTTP handles ordinary JSON-RPC request bodies.
-	s.Handler = http.HandlerFunc(s.handleHTTP)
+	// The MCP protocol uses one ordinary request decoder. Subscriptions and
+	// progress select their response stream inside the outer request guard.
+	s.handler = http.HandlerFunc(s.handleHTTP)
+	s.processRequest = withMCPTransport(s, origins, s.serveHTTP)
 	return s
 }
 
@@ -129,22 +138,29 @@ func (s *Server) reportRejectedNotification(ctx context.Context, req *jsonrpc.Ra
 	s.errhandler(ctx, outputWriter, fmt.Errorf("JSON-RPC notification cannot call request method %q", req.Method))
 }
 
-// Use wraps the server handlers with the given middleware.
+// Use wraps the accepted-request handler with application HTTP middleware.
+// Install middleware before requests begin; mounted routes use the same handler.
 func (s *Server) Use(m func(http.Handler) http.Handler) {
-	s.Handler = m(s.Handler)
+	s.handler = m(s.handler)
 }
 
-// ServeHTTP sends each HTTP request through the installed middleware before
-// the generated handler writes its JSON-RPC response or stream.
+// ServeHTTP checks the request's MCP headers, metadata, method and origin before
+// calling configured middleware. Direct and mounted requests follow this path.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.Handler.ServeHTTP(w, r)
+	s.processRequest(w, r)
+}
+
+// serveHTTP passes an accepted request through the current middleware handler.
+// Reading the handler here retains middleware installed after mounting.
+func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	s.handler.ServeHTTP(w, r)
 }
 
 // MethodNames returns the methods served.
 func (s *Server) MethodNames() []string { return mcpassistant.MethodNames[:] }
 
 // handleHTTP decodes one MCP request and dispatches its generated protocol method.
-// The mount validates the current metadata and headers before this function runs.
+// ServeHTTP validates metadata and headers before configured middleware calls it.
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	var request jsonrpc.RawRequest
 	if err := s.decoder(r).Decode(&request); err != nil {
@@ -193,34 +209,16 @@ func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Mount configures the mux to serve the JSON-RPC mcp_assistant service methods.
+// Mount registers the guarded MCP server at its authored HTTP paths.
 func Mount(mux goahttp.Muxer, h *Server) {
-	MountWithOrigins(mux, h, nil)
+	mux.Handle("POST", "/rpc", h.ServeHTTP)
+	mux.Handle("GET", "/rpc", h.ServeHTTP)
+	mux.Handle("DELETE", "/rpc", h.ServeHTTP)
 }
 
-// MountWithOrigins configures the mux to serve the JSON-RPC service. Requests
-// that send an Origin header must exactly match one of the allowed origins.
-func MountWithOrigins(mux goahttp.Muxer, h *Server, origins []string) {
-	allowedOrigins := make(map[string]struct{}, len(origins))
-	for _, origin := range origins {
-		allowedOrigins[origin] = struct{}{}
-	}
-	// Mounted requests pass through the configured HTTP middleware before the
-	// server sends a JSON-RPC response or a stream of events.
-	mux.Handle("POST", "/rpc", withMCPTransport(h, allowedOrigins, h.ServeHTTP))
-	mux.Handle("GET", "/rpc", mcpMethodNotAllowed(allowedOrigins))
-	mux.Handle("DELETE", "/rpc", mcpMethodNotAllowed(allowedOrigins))
-}
-
-// Mount configures the mux to serve the JSON-RPC mcp_assistant service methods.
+// Mount registers this guarded MCP server at its authored HTTP paths.
 func (s *Server) Mount(mux goahttp.Muxer) {
 	Mount(mux, s)
-}
-
-// MountWithOrigins configures the mux to serve this JSON-RPC service.
-// Requests that send an Origin header must exactly match an allowed origin.
-func (s *Server) MountWithOrigins(mux goahttp.Muxer, origins []string) {
-	MountWithOrigins(mux, s, origins)
 }
 
 // mcpResponseWriter records whether the JSON-RPC handler wrote a response.
@@ -230,11 +228,20 @@ type mcpResponseWriter struct {
 }
 
 // withMCPTransport enforces the HTTP rules that MCP adds to JSON-RPC.
-func withMCPTransport(h *Server, allowedOrigins map[string]struct{}, next http.HandlerFunc) http.HandlerFunc {
+func withMCPTransport(h *Server, origins []string, next http.HandlerFunc) http.HandlerFunc {
+	allowedOrigins := make(map[string]struct{}, len(origins))
+	for _, origin := range origins {
+		allowedOrigins[origin] = struct{}{}
+	}
 	bindings := map[string][]mcpruntime.HeaderBinding{}
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !mcpOriginAllowed(r, allowedOrigins) {
 			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 
@@ -289,19 +296,8 @@ func withMCPTransport(h *Server, allowedOrigins map[string]struct{}, next http.H
 	}
 }
 
-// mcpMethodNotAllowed rejects HTTP methods absent from the current MCP binding.
-func mcpMethodNotAllowed(allowedOrigins map[string]struct{}) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !mcpOriginAllowed(r, allowedOrigins) {
-			http.Error(w, "Forbidden", http.StatusForbidden)
-			return
-		}
-		w.WriteHeader(http.StatusMethodNotAllowed)
-	}
-}
-
 // mcpOriginAllowed reports whether the request omits Origin or names an origin
-// the application allowed when it mounted the server.
+// the application allowed when it constructed the server.
 func mcpOriginAllowed(r *http.Request, allowedOrigins map[string]struct{}) bool {
 	origins := r.Header.Values("Origin")
 	if len(origins) == 0 {

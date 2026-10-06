@@ -55,8 +55,8 @@ func TestGeneratedStatelessProtocol(t *testing.T) {
  service:=&echoService{}
  adapter:=genmcpfmt.NewMCPAdapter(genfmt.NewEndpoints(service),nil)
  mux:=goahttp.NewMuxer()
- server:=genmcpfmtsrv.New(genmcpfmt.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil)
- genmcpfmtsrv.MountWithOrigins(mux,server,[]string{"https://allowed.test"})
+ server:=genmcpfmtsrv.New(genmcpfmt.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil,"https://allowed.test")
+ genmcpfmtsrv.Mount(mux,server)
  ordinary:=genfmthttpsrv.New(genfmt.NewEndpoints(service),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil,nil)
  genfmthttpsrv.Mount(mux,ordinary)
  endpoint:=httptest.NewServer(mux);defer endpoint.Close()
@@ -125,6 +125,63 @@ func TestGeneratedStatelessProtocol(t *testing.T) {
   if test.code!=0{var failure struct{Error struct{Code int}};if err:=json.Unmarshal(encoded,&failure);err!=nil{t.Fatal(err)};if failure.Error.Code!=test.code{t.Fatalf("failure=%s",encoded)}}
  }
 }
+
+func TestGeneratedMCPServingUsesOneGuard(t *testing.T) {
+ cases:=[]struct{name,httpMethod,rpcMethod,headerMethod,headerName,version string;headers bool;origin []string;notification,emptyPolicy,missingMetadata bool;status,middleware,work int}{
+  {name:"accepted",headers:true,status:200,middleware:2,work:1},
+  {name:"missing headers",status:400},
+  {name:"missing metadata",headers:true,missingMetadata:true,status:400},
+  {name:"empty policy without origin",headers:true,emptyPolicy:true,status:200,middleware:2,work:1},
+  {name:"empty policy with origin",headers:true,emptyPolicy:true,origin:[]string{"https://allowed.test"},status:403},
+  {name:"unsupported version",headers:true,version:"2025-06-18",status:400},
+  {name:"method mismatch",headers:true,headerMethod:"tools/list",status:400},
+  {name:"name mismatch",headers:true,headerName:"another",status:400},
+  {name:"allowed origin",headers:true,origin:[]string{"https://allowed.test"},status:200,middleware:2,work:1},
+  {name:"forbidden origin",headers:true,origin:[]string{"https://untrusted.test"},status:403},
+  {name:"empty origin",headers:true,origin:[]string{""},status:403},
+  {name:"duplicate origin",headers:true,origin:[]string{"https://allowed.test","https://allowed.test"},status:403},
+  {name:"notification",headers:true,notification:true,status:202},
+  {name:"unknown method",headers:true,rpcMethod:"missing/method",status:404},
+  {name:"GET",httpMethod:"GET",status:405},
+  {name:"DELETE",httpMethod:"DELETE",status:405},
+ }
+ for _,mode:=range []string{"direct","mounted"}{t.Run(mode,func(t *testing.T){
+  for _,tc:=range cases{t.Run(tc.name,func(t *testing.T){
+   service:=&echoService{}
+   adapter:=genmcpfmt.NewMCPAdapter(genfmt.NewEndpoints(service),nil)
+   mux:=goahttp.NewMuxer()
+   origins:=[]string{"https://allowed.test"};if tc.emptyPolicy{origins=nil}
+   server:=genmcpfmtsrv.New(genmcpfmt.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil,origins...)
+   if !tc.emptyPolicy{origins[0]="https://changed-after-construction.test"}
+   var order []string
+   server.Use(func(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){order=append(order,"inner");next.ServeHTTP(w,r)})})
+   genmcpfmtsrv.Mount(mux,server)
+   server.Use(func(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){order=append(order,"outer");next.ServeHTTP(w,r)})})
+   rpcMethod:=tc.rpcMethod;if rpcMethod==""{rpcMethod="tools/call"}
+   version:=tc.version;if version==""{version=mcpruntime.ProtocolVersion}
+   id:="\"id\":\"guard\",";if tc.notification{id=""}
+   body:="{\"jsonrpc\":\"2.0\","+id+"\"method\":\""+rpcMethod+"\",\"params\":{\"name\":\"echo\",\"arguments\":{},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\""+version+"\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+   if tc.missingMetadata{body="{\"jsonrpc\":\"2.0\",\"id\":\"guard\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{}}}"}
+   method:=tc.httpMethod;if method==""{method=http.MethodPost}
+   request:=httptest.NewRequest(method,"/fmt",strings.NewReader(body))
+   request.Header.Set("Content-Type","application/json")
+   if tc.headers{
+    request.Header.Set("MCP-Protocol-Version",version)
+    headerMethod:=tc.headerMethod;if headerMethod==""{headerMethod=rpcMethod}
+    request.Header.Set("Mcp-Method",headerMethod)
+    if rpcMethod=="tools/call"{headerName:=tc.headerName;if headerName==""{headerName="echo"};request.Header.Set("Mcp-Name",headerName)}
+   }
+   if tc.origin!=nil{request.Header["Origin"]=tc.origin}
+   writer:=httptest.NewRecorder()
+   if mode=="mounted"{mux.ServeHTTP(writer,request)}else{server.ServeHTTP(writer,request)}
+   if writer.Code!=tc.status||len(order)!=tc.middleware||service.calls!=tc.work{t.Fatalf("status=%d middleware=%v work=%d body=%s",writer.Code,order,service.calls,writer.Body.String())}
+   if tc.middleware>0&&(order[0]!="outer"||order[1]!="inner"){t.Fatalf("middleware order=%v",order)}
+   if tc.work>0&&!strings.Contains(writer.Body.String(),"\"structuredContent\":\"hello\""){t.Fatalf("accepted result changed: %s",writer.Body.String())}
+   if writer.Header().Get("WWW-Authenticate")!=""{t.Fatal("protocol or domain response became an OAuth challenge")}
+  })}
+ })}
+}
+
 `
 
 const registerStringGeneratedTestSource = `// This file checks that generated remote-tool registration preserves every JSON string character.
@@ -503,9 +560,9 @@ replace goa.design/goa/v3 => %s
 	server, err := generatedRoot.ReadFile("jsonrpc/mcp_calc/server/server.go")
 	require.NoError(t, err)
 	require.Contains(t, string(server), "\n\t\"bytes\"\n")
-	require.Contains(t, string(server), "withMCPTransport(h, allowedOrigins, h.ServeHTTP)")
-	require.Contains(t, string(server), "func MountWithOrigins(")
-	require.Contains(t, string(server), `mux.Handle("GET", "/calc", mcpMethodNotAllowed(allowedOrigins))`)
+	require.Contains(t, string(server), "s.processRequest = withMCPTransport(s, origins, s.serveHTTP)")
+	require.NotContains(t, string(server), "MountWithOrigins")
+	require.Contains(t, string(server), `mux.Handle("GET", "/calc", h.ServeHTTP)`)
 	require.Contains(t, string(server), "mcpruntime.ValidateHTTPRequest(r, body,")
 	require.Contains(t, string(server), "mcpruntime.WriteProtocolError")
 	formatterCodec, err := generatedRoot.ReadFile("mcp_formatter/internal/codec/codec.go")

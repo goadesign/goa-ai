@@ -327,10 +327,15 @@ Generated MCP adapters accept the application's configured Goa endpoints.
 Authentication, method scopes, interceptors and endpoint middleware therefore run
 through the original service contract. Regenerate and replace bare-service
 adapter constructor calls; see [MCP server composition](docs/dsl.md#mcp-server-definition).
-Mounted MCP requests also run HTTP middleware installed with the generated
+Direct and mounted MCP requests run HTTP middleware installed with the generated
 server's `Use` method, including middleware installed after mounting and before
 requests begin. Protocol checks run before that middleware; its context reaches
-the service and request-scoped progress.
+the service and request-scoped progress. Pass allowed browser origins as the
+final variadic arguments to the generated server's `New` constructor, then use
+`Mount(mux)`.
+An empty origin list rejects requests carrying an Origin header. The old
+`MountWithOrigins` API and public inner `Handler` field are removed. Use
+`ServeHTTP` for direct serving.
 Authored URL mappings use Goa's `Param("payload_field:url_name")` notation.
 Generated clients retain the complete API and service path; adapters decode and
 validate each method's own typed URL values before endpoint execution. These

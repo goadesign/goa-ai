@@ -1456,13 +1456,24 @@ adapter := genmcp.NewMCPAdapter(endpoints, nil)
 Omit the interceptor argument when the design declares none. The adapter calls
 these endpoints for tools, resource reads, method-backed prompts, completion and
 authored resource subscription streams.
+
+The generated MCP HTTP server accepts allowed origins as the final variadic
+string arguments to `New`. Pass the exact browser origins you allow, or omit them
+to reject every request that sends an Origin header. Configure HTTP middleware
+with `Server.Use`, then use `Mount(mux)` or serve the server directly. Both paths check MCP headers, metadata,
+HTTP methods and origins before running configured middleware. Origin settings
+belong to construction; `MountWithOrigins` and the public inner `Handler` field
+are removed in this breaking upgrade. Use `ServeHTTP` for direct serving.
+Regenerate the server and update its constructor callers together.
+
 The original endpoint owns authentication, method scopes, the authenticated
 context, interceptors and middleware. Static catalogs and prompts do not call
 an application endpoint. This replaces the constructor that accepted a bare
 service; regenerate and update application wiring together.
 
-The generated HTTP server's `Use` method applies HTTP middleware to mounted MCP
-requests. It may be called before or after mounting, but before requests begin.
+The generated HTTP server's `Use` method applies HTTP middleware to direct and
+mounted MCP requests. It may be called before or after mounting, but before
+requests begin.
 Protocol checks run first; the middleware then receives the valid request and
 may change its context or return its own response before service dispatch.
 Regenerate the server with the pinned Goa dependency to enable this behavior.

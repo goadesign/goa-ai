@@ -207,7 +207,7 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 			planned.adapterData,
 		)...)
 	}
-	if err := applyMCPHTTPRulesToJSONRPCMount(files, p.planned); err != nil {
+	if err := applyMCPHTTPRules(files, p.planned); err != nil {
 		return nil, err
 	}
 	if err := applyMCPContentValidation(files, p.planned); err != nil {
@@ -327,7 +327,7 @@ func planMCPJSONRPCClientImports(generation *goacodegen.Generation, data *Adapte
 }
 
 // planMCPJSONRPCServerImports records the extra packages named by the MCP
-// request checks that replace Goa's ordinary JSON-RPC mount. Goa already owns
+// request checks that surround Goa's configured HTTP handler. Goa already owns
 // the JSON-RPC package used by the original mount.
 func planMCPJSONRPCServerImports(generation *goacodegen.Generation, data *AdapterData) error {
 	data.jsonrpcServerImports = goacodegen.NewGeneratedImportPlan(generation.Package(path.Join(
@@ -844,9 +844,8 @@ func declareMCPNames(generation *goacodegen.Generation, data *AdapterData) error
 	}
 	for _, declaration := range []*goacodegen.NameDeclaration{
 		goacodegen.NewExactName(goacodegen.NameType, "mcpResponseWriter"),
-		goacodegen.NewExactName(goacodegen.NameFunction, "MountWithOrigins"),
 		goacodegen.NewExactName(goacodegen.NameFunction, "withMCPTransport"),
-		goacodegen.NewExactName(goacodegen.NameFunction, "mcpMethodNotAllowed"),
+		goacodegen.NewExactName(goacodegen.NameFunction, "serveHTTP"),
 		goacodegen.NewExactName(goacodegen.NameFunction, "mcpOriginAllowed"),
 	} {
 		if err := serverPackage.DeclareName(declaration); err != nil {

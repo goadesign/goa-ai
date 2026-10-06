@@ -22,9 +22,9 @@ type (
 const headerSection = "source-header"
 const exampleMCPStubSection = "example-mcp-stub"
 
-// applyMCPHTTPRulesToJSONRPCMount replaces each MCP server mount with the
-// request checks required by the MCP Streamable HTTP transport.
-func applyMCPHTTPRulesToJSONRPCMount(files []*codegen.File, services []*plannedMCPService) error {
+// applyMCPHTTPRules installs the current MCP request checks in the generated
+// server and client sections. Both server entry points use one checked handler.
+func applyMCPHTTPRules(files []*codegen.File, services []*plannedMCPService) error {
 	paths := make(map[string]*plannedMCPService, len(services))
 	for _, service := range services {
 		paths[filepath.ToSlash(filepath.Join(
@@ -81,6 +81,12 @@ func applyMCPHTTPRulesToJSONRPCMount(files []*codegen.File, services []*plannedM
 					ResourceSubscription: service.adapterData.ResourceSubscription,
 				}
 				found = true
+			case "jsonrpc-server-init":
+				s.Source = mcpTemplates.Read("jsonrpc_server_init")
+			case "jsonrpc-server-struct":
+				s.Source = mcpTemplates.Read("jsonrpc_server_struct")
+			case "jsonrpc-server-use":
+				s.Source = mcpTemplates.Read("jsonrpc_server_use")
 			case "jsonrpc-server-handler":
 				s.Source = mcpTemplates.Read("jsonrpc_server_handler")
 			case "jsonrpc-server-encode-error":

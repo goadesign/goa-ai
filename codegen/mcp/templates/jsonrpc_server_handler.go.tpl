@@ -1,5 +1,5 @@
 // handleHTTP decodes one MCP request and dispatches its generated protocol method.
-// The mount validates the current metadata and headers before this function runs.
+// ServeHTTP validates metadata and headers before configured middleware calls it.
 func (s *{{ .ServerStructDeclaration.Name }}) handleHTTP(w http.ResponseWriter, r *http.Request) {
     var request jsonrpc.RawRequest
     if err := s.decoder(r).Decode(&request); err != nil {

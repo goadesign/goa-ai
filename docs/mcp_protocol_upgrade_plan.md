@@ -284,6 +284,67 @@ expressions to reuse `Security` and scope declarations; verify the complete
 resource policy and constructor design before adding another policy DSL or a
 public parsed-request record.
 
+A native OAuth transport proof against merged Goa `562176f1e1b5` passes
+21 synthetic cases under the race detector. Existing
+`middleware.PopulateRequestContext` carries the exact request URI to
+`security.AuthOAuth2Func`; parsing that URI preserves escaped paths, raw query
+order and an explicitly empty query. A configured origin owns the resource
+host even when request headers or an absolute-form request name another host.
+The callback preserves cancellation and returns principal context through the
+original generated endpoint. Explicit synthetic token and scope rejections stop
+before configured HTTP middleware; an error after service work produces no
+OAuth challenge. Generated client decoding verifies returned values. This
+proves native composition and ordering, not cryptographic token verification,
+production OAuth support or the resource policy constructor.
+
+The constructor trace exposed a prerequisite in the MCP plugin itself. Before
+this change, mounted requests entered `withMCPTransport` before `Server.Use`
+middleware, but
+direct `Server.ServeHTTP` requests entered that middleware without MCP's origin,
+method or header/body checks. Protecting only the mount would repeat this gap
+for resource authorization. The complete normal path must instead be
+`Server.ServeHTTP` → MCP request checks → configured HTTP middleware → generated
+protocol handler → adapter → configured original endpoint. Both direct serving
+and `Mount` must call that one public entry point.
+
+The owning change is in MCP transport generation, because these checks are MCP
+requirements rather than general JSON-RPC behavior. Origin configuration moves
+to the generated server constructor as an `origins ...string` collection;
+empty means that no browser origin is allowed. The constructor copies that
+configuration into its private guard. `Mount(mux)` only registers routes, and
+`Server.Use` still installs application middleware before requests begin.
+Delete both `MountWithOrigins` forms and the separate unsupported-method
+handler; neither becomes a compatibility alias. This follows the requested
+breaking, from-scratch upgrade. It strengthens the public serving contract:
+rejected requests reach neither configured middleware nor domain work through
+any serving entry point. The inner `handler` is private, so serving the
+public server cannot bypass its checks through an embedded `Handler` field.
+The local caller inventory uses only `ServeHTTP`, `Mount` and `Use`; ordinary
+Goa HTTP and JSON-RPC servers retain their existing public contracts.
+
+A caller-supplied outer guard was rejected because forgetting it leaves direct
+serving unprotected; retaining independent mount and direct guards was rejected
+because their policies could diverge. No new public configuration record is
+needed for one origin list. An initially required slice was reassessed against
+the full example producer: it forced explicit nil arguments without strengthening
+the valid empty-origin policy. A variadic string collection represents the same
+policy with no presence-dependent guard or old constructor implementation. Goa's
+native example bootstrap therefore constructs the strict empty-origin policy
+without another adapter or a second construction path. Update configured-origin
+callers, owning fixtures, goldens, README and DESIGN together. Applications
+regenerate and move
+their origin list from mounting to construction. Old/new generated server code
+must not be mixed, and rollback requires its matching generated callers.
+Before publication, prove the direct bypass in a compiled fixture, then test
+both serving paths with valid requests, invalid headers/metadata/origins,
+notifications, method rejection and middleware installed after mounting.
+The completed change passes the full uncached MCP generator, input, expression
+and DSL race suites, configured root lint/build and regenerated assistant race
+suite. Compiled fixtures verify both serving paths under fixed and service-selected
+result views, including empty origin policies and middleware installed after
+mounting. A second assistant regeneration produces identical output hashes.
+Resource OAuth remains a separate incomplete milestone after this prerequisite.
+
 A compiled design probe also found that the current MCP generator cannot
 represent the authored route `/organizations/{organization_id}/mcp`.
 Generation fails because discovery, list and call payloads lack the named route

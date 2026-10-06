@@ -40,8 +40,8 @@ func run(ctx context.Context, port string) error {
 	address := net.JoinHostPort("localhost", port)
 	mux := goahttp.NewMuxer()
 	endpoints := genmcp.NewEndpoints(assistantapi.NewMcpAssistant())
-	handler := genmcpsrv.New(endpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, handleError)
-	genmcpsrv.MountWithOrigins(mux, handler, []string{"http://" + address})
+	handler := genmcpsrv.New(endpoints, mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, handleError, "http://"+address)
+	genmcpsrv.Mount(mux, handler)
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return fmt.Errorf("listen for protocol referee: %w", err)

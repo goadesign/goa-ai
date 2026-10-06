@@ -2588,13 +2588,16 @@ before dispatch. Protocol signatures and selectors come from the same generated
 layouts as the native HTTP transport; no wildcard rewrite or runtime field map
 implements a second binding system.
 
-The MCP mount checks the HTTP protocol envelope before invoking Goa's public
-server entry point. That entry point calls the current configured HTTP handler,
-so middleware installed with `Server.Use` runs even after route registration.
-The constructor chooses private dispatch once; the MCP mount does not repeat
-transport selection or capture a handler before middleware is installed. Install
-middleware before requests begin. Its context reaches original endpoint
-authentication, service execution and request-scoped progress.
+The generated MCP server's `ServeHTTP` checks the HTTP protocol envelope
+before invoking its configured HTTP handler. Direct serving and `Mount` use this
+same entry point; rejected requests reach neither HTTP middleware nor endpoints.
+The constructor takes and copies the allowed browser origins, builds native Goa
+endpoint handlers from the saved transport plan, and installs one private guard.
+The inner HTTP handler is private; callers serve the checked server itself.
+`Server.Use` wraps the accepted-request handler, so middleware added after mounting
+still runs. Protocol request checks also own notification acceptance and response
+stream selection; the inner handler only decodes and dispatches a protocol method.
+There is no separate mount policy or a second direct-serving implementation.
 
 OAuth credentials require `Authorization: Bearer`. Basic and Bearer schemes can
 be alternatives when their inactive payload fields allow absence; they cannot be
