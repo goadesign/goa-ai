@@ -6683,11 +6683,69 @@ cause no automatic repeat with unchanged credentials.
 When well-known resource metadata is absent, discovery asks `server/discover`
 for a Bearer challenge and reads its advertised HTTPS metadata document. It does
 not execute a domain tool to discover authorization. This machine profile does
-not initiate browser consent or scope upgrades. JWT client assertions, enterprise
-exchange and resource-server verification remain unfinished. It does not
+not initiate browser consent or scope upgrades. Enterprise exchange and resource-server verification remain unfinished. It does not
 advertise the authorization extension as complete. Full OAuth and resource-server verification remain
 required before the breaking release. See the
 [upgrade plan](mcp_protocol_upgrade_plan.md#built-in-client-secret-grant-milestone).
+
+### Signed client-assertion authorization
+
+A signed JSON Web Token (JWT) can authenticate a preregistered machine client
+at its authorization server. `mcp.NewClientAssertionHTTPTransport` creates the
+claims and sends the generated form request; the host supplies its constructed
+signer and the facts agreed during registration:
+
+```go
+transport, err := mcp.NewClientAssertionHTTPTransport(mcp.HTTPOptions{
+    Endpoint: "https://records.example/mcp",
+    Client: trustedHTTPClient,
+    ClientInfo: mcp.ClientInfo{Name: "records-agent", Version: "1"},
+}, mcp.ClientAssertion{
+    Issuer: "https://identity.example",
+    ClientID: registeredClientID,
+    AssertionIssuer: registeredAssertionIssuer,
+    Audience: registeredAssertionAudience,
+    Lifetime: registeredAssertionLifetime,
+    Signer: registeredSigner,
+    Scopes: []string{"records:read"},
+})
+```
+
+`registeredSigner` is a `jose.Signer` from `github.com/go-jose/go-jose/v4`,
+constructed with the host's registered private key or its opaque key signer.
+The signer owns any key-operation timeout. Its options must not override the
+algorithm header. The issuer must advertise `client_credentials`,
+`private_key_jwt` and the actual asymmetric signing algorithm. RSA, RSA-PSS,
+ECDSA and Ed25519 signing are supported through the library. Signatures made
+with a shared secret and unsupported algorithms are rejected before token exchange; there is no switch
+to client-secret authentication after failure.
+
+`Issuer` selects the trusted authorization server. `ClientID` becomes the JWT
+subject, while `AssertionIssuer` identifies the registered signing entity.
+`Audience` is the authorization-server identity agreed during registration;
+RFC 7523 permits a token endpoint as that identity but does not require it.
+Discovery never guesses either assertion identity. The native form carries the
+assertion type, client-credentials grant type, exact MCP resource and optional
+scope. The client identifier appears in the signed subject and is omitted from
+the form, following the pinned MCP client-credentials extension.
+
+`Lifetime` is the registered validity of one assertion, expressed as positive
+whole seconds. Expiration is exclusive. Goa AI imposes no arbitrary maximum;
+this value neither limits an MCP operation nor expires a separately issued access
+token. Each acquisition signs a new assertion with fresh issued-at, expiration
+and random identifier claims. Cancellation or expiration during signing stops
+before exchange. The shared credential owner caches the resource access token
+according to that token's own lifetime. Signed assertions, private keys
+and signer diagnostics stay outside MCP arguments, checkpoints, errors and traces.
+
+Supply this transport to `HTTPOptions.Client` or a generated HTTP client's
+`NewClient`, then construct its normal `NewCaller`. Discovery, exact resource
+binding, token isolation and redirect rejection use the same implementation as
+other OAuth profiles. A machine client's HTTP 401 or 403 remains terminal.
+Resource-server verification, enterprise exchange, durable host authorization
+and independent conformance remain release gates.
+[RFC 7523](https://www.rfc-editor.org/rfc/rfc7523.html),
+[MCP client-credentials profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/draft/oauth-client-credentials.mdx).
 
 ### Browser authorization
 
@@ -6756,8 +6814,8 @@ request round. A later host-input round receives its own allowance. If an
 earlier stream lost its tool result, a later rejected attempt
 returns `OutcomeUnknownError`; its HTTP rejection remains available through
 `errors.As`. That rejection cannot establish that the earlier tool never ran.
-These clients do not yet complete server resource authorization,
-JWT client assertions or enterprise exchange, which remain release requirements.
+These clients do not yet complete server resource authorization, durable host
+authorization or enterprise exchange, which remain release requirements.
 
 ### Request-scoped MCP progress
 

@@ -53,4 +53,7 @@ type ReadResult struct {
 	ClientIDMetadataDocumentSupported *bool
 	// Permissions that the issuer accepts, including optional offline access
 	ScopesSupported []string
+	// Signature algorithms accepted for signed client authentication; required
+	// only by a signed client profile
+	TokenEndpointAuthSigningAlgValuesSupported []string
 }

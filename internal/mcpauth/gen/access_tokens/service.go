@@ -12,6 +12,9 @@ import "context"
 // Obtain opaque resource-bound bearer tokens using explicitly advertised
 // client authentication, without sending those credentials to the MCP server.
 type Service interface {
+	// Authenticate a preregistered client using one signed JWT assertion and
+	// request a bearer token for the exact MCP resource.
+	Assertion(context.Context, *AssertionPayload) (res *BearerToken, err error)
 	// Exchange a preregistered client identifier and secret using request-body
 	// authentication for one resource and its configured permissions.
 	Secret(context.Context, *SecretPayload) (res *BearerToken, err error)
@@ -37,9 +40,24 @@ const ServiceName = "access_tokens"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [3]string{"secret", "code", "refresh"}
+var MethodNames = [4]string{"assertion", "secret", "code", "refresh"}
 
-// BearerToken is the result type of the access_tokens service secret method.
+// AssertionPayload is the payload type of the access_tokens service assertion
+// method.
+type AssertionPayload struct {
+	// Exact resource for which the token is requested
+	Resource string
+	// Signed compact JWT identifying the registered client
+	ClientAssertion string
+	// Space-separated permissions requested by the configured client
+	Scope *string
+	// Client-credentials grant selected by this operation
+	GrantType string
+	// JWT client authentication selected by this operation
+	ClientAssertionType string
+}
+
+// BearerToken is the result type of the access_tokens service assertion method.
 type BearerToken struct {
 	// Opaque bearer token returned by the issuer
 	AccessToken string

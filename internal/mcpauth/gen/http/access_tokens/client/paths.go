@@ -7,6 +7,11 @@
 
 package client
 
+// AssertionAccessTokensPath returns the URL path to the access_tokens service assertion HTTP endpoint.
+func AssertionAccessTokensPath() string {
+	return "/assertion"
+}
+
 // SecretAccessTokensPath returns the URL path to the access_tokens service secret HTTP endpoint.
 func SecretAccessTokensPath() string {
 	return "/token"

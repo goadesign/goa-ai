@@ -51,6 +51,7 @@ type (
 		forms         []url.Values
 		tokenEntered  chan struct{}
 		tokenContinue chan struct{}
+		verifyGrant   func(url.Values) error
 	}
 )
 
@@ -300,7 +301,14 @@ func newOAuthPeer(t *testing.T) *oauthPeer {
 			assert.NoError(t, request.ParseForm())
 			peer.mutex.Lock()
 			peer.forms = append(peer.forms, request.PostForm)
+			verifyGrant := peer.verifyGrant
 			peer.mutex.Unlock()
+			if verifyGrant != nil {
+				if err := verifyGrant(request.PostForm); err != nil {
+					http.Error(writer, "Invalid client authentication", http.StatusUnauthorized)
+					return
+				}
+			}
 			if peer.tokenEntered != nil {
 				select {
 				case peer.tokenEntered <- struct{}{}:

@@ -16,6 +16,57 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
+// BuildAssertionPayload builds the payload for the access_tokens assertion
+// endpoint from CLI flags.
+func BuildAssertionPayload(accessTokensAssertionBody *string) (*accesstokens.AssertionPayload, error) {
+	var err error
+	var body AssertionRequestBody
+	{
+		if accessTokensAssertionBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensAssertionBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_assertion\": \"S.U.n\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://hudson.info/ignatius\",\n      \"scope\": \"z# r+ Y-\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+		if body.Scope != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+		}
+		if !(body.GrantType == "client_credentials") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"client_credentials"}))
+		}
+		if !(body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.AssertionPayload{
+		Resource:            body.Resource,
+		ClientAssertion:     body.ClientAssertion,
+		Scope:               body.Scope,
+		GrantType:           body.GrantType,
+		ClientAssertionType: body.ClientAssertionType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "client_credentials"
+		}
+	}
+	{
+		var zero string
+		if v.ClientAssertionType == zero {
+			v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+		}
+	}
+
+	return v, nil
+}
+
 // BuildSecretPayload builds the payload for the access_tokens secret endpoint
 // from CLI flags.
 func BuildSecretPayload(accessTokensSecretBody *string) (*accesstokens.SecretPayload, error) {

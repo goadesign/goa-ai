@@ -14,6 +14,21 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
+// AssertionRequestBody is the type of the "access_tokens" service "assertion"
+// endpoint HTTP request body.
+type AssertionRequestBody struct {
+	// Exact resource for which the token is requested
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Signed compact JWT identifying the registered client
+	ClientAssertion *string `form:"client_assertion,omitempty" json:"client_assertion,omitempty" xml:"client_assertion,omitempty"`
+	// Space-separated permissions requested by the configured client
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Client-credentials grant selected by this operation
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
+	// JWT client authentication selected by this operation
+	ClientAssertionType *string `form:"client_assertion_type,omitempty" json:"client_assertion_type,omitempty" xml:"client_assertion_type,omitempty"`
+}
+
 // SecretRequestBody is the type of the "access_tokens" service "secret"
 // endpoint HTTP request body.
 type SecretRequestBody struct {
@@ -57,6 +72,21 @@ type RefreshRequestBody struct {
 	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
 	// Refresh grant selected by this operation
 	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
+}
+
+// AssertionResponseBody is the type of the "access_tokens" service "assertion"
+// endpoint HTTP response body.
+type AssertionResponseBody struct {
+	// Opaque bearer token returned by the issuer
+	AccessToken string `form:"access_token" json:"access_token" xml:"access_token"`
+	// Bearer token type, compared without case sensitivity
+	TokenType string `form:"token_type" json:"token_type" xml:"token_type"`
+	// Access token lifetime in seconds from the token response
+	ExpiresIn *int64 `form:"expires_in,omitempty" json:"expires_in,omitempty" xml:"expires_in,omitempty"`
+	// Space-separated permissions granted by the issuer
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Private refresh credential; never sent to a resource server
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
 }
 
 // SecretResponseBody is the type of the "access_tokens" service "secret"
@@ -104,6 +134,19 @@ type RefreshResponseBody struct {
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
 }
 
+// NewAssertionResponseBody builds the HTTP response body from the result of
+// the "assertion" endpoint of the "access_tokens" service.
+func NewAssertionResponseBody(res *accesstokens.BearerToken) *AssertionResponseBody {
+	body := &AssertionResponseBody{
+		AccessToken:  res.AccessToken,
+		TokenType:    res.TokenType,
+		ExpiresIn:    res.ExpiresIn,
+		Scope:        res.Scope,
+		RefreshToken: res.RefreshToken,
+	}
+	return body
+}
+
 // NewSecretResponseBody builds the HTTP response body from the result of the
 // "secret" endpoint of the "access_tokens" service.
 func NewSecretResponseBody(res *accesstokens.BearerToken) *SecretResponseBody {
@@ -141,6 +184,30 @@ func NewRefreshResponseBody(res *accesstokens.BearerToken) *RefreshResponseBody 
 		RefreshToken: res.RefreshToken,
 	}
 	return body
+}
+
+// NewAssertionPayload builds a access_tokens service assertion endpoint
+// payload.
+func NewAssertionPayload(body *AssertionRequestBody) *accesstokens.AssertionPayload {
+	v := &accesstokens.AssertionPayload{
+		Resource:        *body.Resource,
+		ClientAssertion: *body.ClientAssertion,
+		Scope:           body.Scope,
+	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.ClientAssertionType != nil {
+		v.ClientAssertionType = *body.ClientAssertionType
+	}
+	if body.GrantType == nil {
+		v.GrantType = "client_credentials"
+	}
+	if body.ClientAssertionType == nil {
+		v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+	}
+
+	return v
 }
 
 // NewSecretPayload builds a access_tokens service secret endpoint payload.
@@ -195,6 +262,37 @@ func NewRefreshPayload(body *RefreshRequestBody) *accesstokens.RefreshPayload {
 	}
 
 	return v
+}
+
+// ValidateAssertionRequestBody runs the validations defined on
+// AssertionRequestBody
+func ValidateAssertionRequestBody(body *AssertionRequestBody) (err error) {
+	if body.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if body.ClientAssertion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_assertion", "body"))
+	}
+	if body.Resource != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
+	}
+	if body.ClientAssertion != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", *body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+	}
+	if body.Scope != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "client_credentials") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"client_credentials"}))
+		}
+	}
+	if body.ClientAssertionType != nil {
+		if !(*body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", *body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
+		}
+	}
+	return
 }
 
 // ValidateSecretRequestBody runs the validations defined on SecretRequestBody

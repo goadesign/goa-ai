@@ -398,6 +398,13 @@ validated challenge metadata URL when well-known discovery is absent.
 See [client-secret authorization](docs/runtime.md#client-secret-authorization)
 for construction and the remaining release gates.
 
+Machine clients can authenticate with a signed JSON Web Token (JWT) using
+`mcp.NewClientAssertionHTTPTransport`. The host supplies its registered signer,
+client identity, assertion issuer, audience and validity period. Goa generates
+the form exchange; the shared credential owner obtains and caches the MCP
+access token. The issuer must advertise `private_key_jwt` and the actual signing
+algorithm. See [signed client assertions](docs/runtime.md#signed-client-assertion-authorization).
+
 Browser clients use `mcp.NewAuthorizationCodeHTTPTransport` with a registered
 public client, or `mcp.NewClientMetadataHTTPTransport` with the client's self-hosted
 HTTPS registration document. One shared owner handles PKCE, issuer and redirect

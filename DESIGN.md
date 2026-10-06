@@ -2682,9 +2682,27 @@ The limit spans one HTTP request round, including stream retries. Concurrent
 rejections reuse a credential already changed by another call instead of rotating
 the same refresh token again. Definite authorization rejections remain distinct
 from lost tool results. A rejection after an earlier lost response retains the
-unknown outcome and the later HTTP status. JWT client assertions, enterprise
-exchange, and the built-in server verifier and generated resource policy remain
-release gates.
+unknown outcome and the later HTTP status. Enterprise exchange, durable host
+authorization, and the built-in server verifier and generated resource policy
+remain release gates.
+
+Signed client authentication implements the same private grant interface as
+client-secret and browser authorization. The host supplies a constructed
+`jose.Signer` and explicit registered client, assertion issuer, audience and
+validity. Goa generates the `private_key_jwt` metadata field and token form,
+including fixed grant and assertion types; no handwritten form mapping or
+second token cache exists. The go-jose library owns JWT claims encoding and
+signatures. Signing algorithms must be asymmetric and advertised by the issuer;
+unknown algorithms and signatures made with a shared secret stop before token exchange.
+
+Each token acquisition creates fresh issued-at, expiration and random assertion
+identifier claims. The registered assertion lifetime uses positive whole seconds
+for one assertion, with exclusive expiration. It has no framework maximum and
+does not constrain the returned access token's independent lifetime. Cancellation
+and expiration during signing prevent exchange. Signer diagnostics and assertion
+bytes never enter errors or traces. A supplied signer owns its key-operation
+timeout; the transport checks request cancellation before and after signing.
+Machine grants do not request consent or repeat after resource rejection.
 
 Fixed MCP result views have one selected field contract shared by catalog
 schemas and agent specs. Server codecs consume the projected values already

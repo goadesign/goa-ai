@@ -30,6 +30,9 @@ type ReadResponseBody struct {
 	ClientIDMetadataDocumentSupported *bool `form:"client_id_metadata_document_supported,omitempty" json:"client_id_metadata_document_supported,omitempty" xml:"client_id_metadata_document_supported,omitempty"`
 	// Permissions that the issuer accepts, including optional offline access
 	ScopesSupported []string `form:"scopes_supported,omitempty" json:"scopes_supported,omitempty" xml:"scopes_supported,omitempty"`
+	// Signature algorithms accepted for signed client authentication; required
+	// only by a signed client profile
+	TokenEndpointAuthSigningAlgValuesSupported []string `form:"token_endpoint_auth_signing_alg_values_supported,omitempty" json:"token_endpoint_auth_signing_alg_values_supported,omitempty" xml:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
 }
 
 // NewReadResponseBody builds the HTTP response body from the result of the
@@ -67,6 +70,12 @@ func NewReadResponseBody(res *issuermetadata.ReadResult) *ReadResponseBody {
 		body.ScopesSupported = make([]string, len(res.ScopesSupported))
 		for i, val := range res.ScopesSupported {
 			body.ScopesSupported[i] = val
+		}
+	}
+	if res.TokenEndpointAuthSigningAlgValuesSupported != nil {
+		body.TokenEndpointAuthSigningAlgValuesSupported = make([]string, len(res.TokenEndpointAuthSigningAlgValuesSupported))
+		for i, val := range res.TokenEndpointAuthSigningAlgValuesSupported {
+			body.TokenEndpointAuthSigningAlgValuesSupported[i] = val
 		}
 	}
 	return body

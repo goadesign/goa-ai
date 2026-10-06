@@ -21,6 +21,119 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
+// EncodeAssertionResponse returns an encoder for responses returned by the
+// access_tokens assertion endpoint.
+func EncodeAssertionResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*accesstokens.BearerToken)
+		enc := encoder(ctx, w)
+		body := NewAssertionResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}
+
+// DecodeAssertionRequest returns a decoder for requests sent to the
+// access_tokens assertion endpoint.
+func DecodeAssertionRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request) (*accesstokens.AssertionPayload, error) {
+	return func(r *http.Request) (*accesstokens.AssertionPayload, error) {
+		var payload *accesstokens.AssertionPayload
+		var (
+			body AssertionRequestBody
+			err  error
+		)
+		// Read only the body so query parameters cannot supply missing form fields.
+		formBytes, readErr := io.ReadAll(r.Body)
+		err = readErr
+		if err == nil {
+			if len(formBytes) == 0 {
+				err = io.EOF
+			} else {
+				mediaType, _, mediaErr := mime.ParseMediaType(r.Header.Get("Content-Type"))
+				if mediaErr != nil || mediaType != "application/x-www-form-urlencoded" {
+					return payload, goa.DecodePayloadError("expected application/x-www-form-urlencoded request body")
+				}
+				form, parseErr := url.ParseQuery(string(formBytes))
+				if parseErr != nil {
+					return payload, goa.DecodePayloadError("invalid URL-encoded request body")
+				}
+				if values, present := form["resource"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field resource must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field resource must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.Resource = &formValue
+				}
+				if values, present := form["client_assertion"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field client_assertion must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field client_assertion must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.ClientAssertion = &formValue
+				}
+				if values, present := form["scope"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field scope must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field scope must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.Scope = &formValue
+				}
+				if values, present := form["grant_type"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field grant_type must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field grant_type must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.GrantType = &formValue
+				}
+				if values, present := form["client_assertion_type"]; present {
+					if len(values) != 1 {
+						return payload, goa.DecodePayloadError("form field client_assertion_type must occur once")
+					}
+					formValueRaw := values[0]
+					if !utf8.ValidString(formValueRaw) {
+						return payload, goa.DecodePayloadError("form field client_assertion_type must contain UTF-8 text")
+					}
+					formValue := formValueRaw
+					body.ClientAssertionType = &formValue
+				}
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateAssertionRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewAssertionPayload(&body)
+
+		return payload, nil
+	}
+}
+
 // EncodeSecretResponse returns an encoder for responses returned by the
 // access_tokens secret endpoint.
 func EncodeSecretResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {

@@ -8,6 +8,8 @@
 package client
 
 import (
+	"unicode/utf8"
+
 	issuermetadata "goa.design/goa-ai/internal/mcpauth/gen/issuer_metadata"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -33,6 +35,9 @@ type ReadResponseBody struct {
 	ClientIDMetadataDocumentSupported *bool `form:"client_id_metadata_document_supported,omitempty" json:"client_id_metadata_document_supported,omitempty" xml:"client_id_metadata_document_supported,omitempty"`
 	// Permissions that the issuer accepts, including optional offline access
 	ScopesSupported []string `form:"scopes_supported,omitempty" json:"scopes_supported,omitempty" xml:"scopes_supported,omitempty"`
+	// Signature algorithms accepted for signed client authentication; required
+	// only by a signed client profile
+	TokenEndpointAuthSigningAlgValuesSupported []string `form:"token_endpoint_auth_signing_alg_values_supported,omitempty" json:"token_endpoint_auth_signing_alg_values_supported,omitempty" xml:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
 }
 
 // NewReadResultOK builds a "issuer_metadata" service "read" endpoint result
@@ -72,6 +77,12 @@ func NewReadResultOK(body *ReadResponseBody) *issuermetadata.ReadResult {
 			v.ScopesSupported[i] = val
 		}
 	}
+	if body.TokenEndpointAuthSigningAlgValuesSupported != nil {
+		v.TokenEndpointAuthSigningAlgValuesSupported = make([]string, len(body.TokenEndpointAuthSigningAlgValuesSupported))
+		for i, val := range body.TokenEndpointAuthSigningAlgValuesSupported {
+			v.TokenEndpointAuthSigningAlgValuesSupported[i] = val
+		}
+	}
 
 	return v
 }
@@ -95,6 +106,11 @@ func ValidateReadResponseBody(body *ReadResponseBody) (err error) {
 	}
 	for _, e := range body.ScopesSupported {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.scopes_supported[*]", e, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+$"))
+	}
+	for _, e := range body.TokenEndpointAuthSigningAlgValuesSupported {
+		if utf8.RuneCountInString(e) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.token_endpoint_auth_signing_alg_values_supported[*]", e, utf8.RuneCountInString(e), 1, true))
+		}
 	}
 	return
 }

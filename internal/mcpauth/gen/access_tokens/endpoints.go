@@ -15,26 +15,38 @@ import (
 
 // Endpoints wraps the "access_tokens" service endpoints.
 type Endpoints struct {
-	Secret  goa.Endpoint
-	Code    goa.Endpoint
-	Refresh goa.Endpoint
+	Assertion goa.Endpoint
+	Secret    goa.Endpoint
+	Code      goa.Endpoint
+	Refresh   goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "access_tokens" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		Secret:  NewSecretEndpoint(s),
-		Code:    NewCodeEndpoint(s),
-		Refresh: NewRefreshEndpoint(s),
+		Assertion: NewAssertionEndpoint(s),
+		Secret:    NewSecretEndpoint(s),
+		Code:      NewCodeEndpoint(s),
+		Refresh:   NewRefreshEndpoint(s),
 	}
 }
 
 // Use applies the given middleware to all the "access_tokens" service
 // endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
+	e.Assertion = m(e.Assertion)
 	e.Secret = m(e.Secret)
 	e.Code = m(e.Code)
 	e.Refresh = m(e.Refresh)
+}
+
+// NewAssertionEndpoint returns an endpoint function that calls the method
+// "assertion" of service "access_tokens".
+func NewAssertionEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*AssertionPayload)
+		return s.Assertion(ctx, p)
+	}
 }
 
 // NewSecretEndpoint returns an endpoint function that calls the method

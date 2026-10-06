@@ -15,18 +15,30 @@ import (
 
 // Client is the "access_tokens" service client.
 type Client struct {
-	SecretEndpoint  goa.Endpoint
-	CodeEndpoint    goa.Endpoint
-	RefreshEndpoint goa.Endpoint
+	AssertionEndpoint goa.Endpoint
+	SecretEndpoint    goa.Endpoint
+	CodeEndpoint      goa.Endpoint
+	RefreshEndpoint   goa.Endpoint
 }
 
 // NewClient initializes a "access_tokens" service client given the endpoints.
-func NewClient(secret, code, refresh goa.Endpoint) *Client {
+func NewClient(assertion, secret, code, refresh goa.Endpoint) *Client {
 	return &Client{
-		SecretEndpoint:  secret,
-		CodeEndpoint:    code,
-		RefreshEndpoint: refresh,
+		AssertionEndpoint: assertion,
+		SecretEndpoint:    secret,
+		CodeEndpoint:      code,
+		RefreshEndpoint:   refresh,
 	}
+}
+
+// Assertion calls the "assertion" endpoint of the "access_tokens" service.
+func (c *Client) Assertion(ctx context.Context, p *AssertionPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.AssertionEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
 }
 
 // Secret calls the "secret" endpoint of the "access_tokens" service.

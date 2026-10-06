@@ -17,6 +17,10 @@ import (
 
 // Client lists the access_tokens service endpoint HTTP clients.
 type Client struct {
+	// Assertion Doer is the HTTP client used to make requests to the assertion
+	// endpoint.
+	AssertionDoer goahttp.Doer
+
 	// Secret Doer is the HTTP client used to make requests to the secret endpoint.
 	SecretDoer goahttp.Doer
 
@@ -48,6 +52,7 @@ func NewClient(
 	restoreBody bool,
 ) *Client {
 	return &Client{
+		AssertionDoer:       doer,
 		SecretDoer:          doer,
 		CodeDoer:            doer,
 		RefreshDoer:         doer,
@@ -56,6 +61,30 @@ func NewClient(
 		host:                host,
 		decoder:             dec,
 		encoder:             enc,
+	}
+}
+
+// Assertion returns an endpoint that makes HTTP requests to the access_tokens
+// service assertion server.
+func (c *Client) Assertion() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeAssertionRequest(c.encoder)
+		decodeResponse = DecodeAssertionResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildAssertionRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.AssertionDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "assertion", err)
+		}
+		return decodeResponse(resp)
 	}
 }
 

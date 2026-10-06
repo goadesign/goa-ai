@@ -1861,6 +1861,71 @@ choosing new public configuration.
 [enterprise profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/stable/enterprise-managed-authorization.mdx),
 [client metadata authentication](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-01.html#section-6.2).
 
+## Signed client-assertion milestone
+
+Registered machine clients now use `NewClientAssertionHTTPTransport`. The host
+supplies its constructed JOSE signer and registered client, assertion issuer,
+audience and validity. The shared credential owner handles discovery, exact
+resource binding, token reuse and cancellation. Each acquisition creates fresh
+issued-at, expiration and random identifier claims. The go-jose library owns
+signatures and compact JWT encoding; Goa owns the typed form with fixed grant
+and assertion types. The client identifier travels in the signed subject and
+is omitted from that form, as required by the pinned extension. No additional
+token cache, transport DTO or handwritten form encoder exists.
+
+The issuer must advertise `client_credentials`, `private_key_jwt` and the
+actual asymmetric algorithm. Signing-algorithm metadata remains optional for
+browser and client-secret issuers; only the signed profile requires a nonempty
+list. RSA, RSA-PSS, ECDSA and Ed25519 use the library's implementations. A
+shared-secret signature, unsupported algorithm, invalid metadata, failed signing,
+cancellation or expired assertion stops before exchange. Signer diagnostics and
+assertion bytes stay out of errors, traces, MCP arguments and continuations.
+Machine resource rejections remain terminal.
+
+Validity is a positive whole-second duration for one assertion, with exclusive
+expiration and no framework maximum. It does not limit an operation or expire a
+separately cached access token. The constructed signer owns any key-operation
+timeout; the transport checks cancellation before and after signing. The SDK's
+signing interface has no cancellation argument, so this does not promise to
+interrupt a blocked external key provider. All four modules select go-jose
+`v4.1.5`, the verified current stable release, instead of the previously
+transitive `v4.1.4`.
+
+Synthetic HTTPS issuers verify signatures and registered claims before issuing
+tokens, including a registered audience distinct from the discovered issuer and
+token endpoint. Positive checks cover all four signer families, exact escaped
+URLs, a separately cached access token after assertion expiration, and a fresh
+assertion identity for each acquisition. Negative checks cover wrong registration,
+metadata, signing, cancellation and machine rejections without MCP dispatch.
+The compiled generated caller verifies native client construction and both calls
+sharing one token. The corrected complete MCP runtime race suite, compiled
+caller race check, configured lint and full uncached root race suite with
+quickstart pass. A second owning OAuth regeneration preserves all 68 artifact
+hashes. The root build, assistant race checks and HTTP integration suite,
+including the generated evaluation consumer, also pass.
+
+This completes signed machine-client authentication, not resource-server OAuth,
+enterprise exchange or durable host authorization. Those capabilities and the
+other nondeferred release gates remain required. PR #409 stays draft.
+[RFC 7523](https://www.rfc-editor.org/rfc/rfc7523.html),
+[client-credentials profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/draft/oauth-client-credentials.mdx),
+[go-jose v4.1.5](https://github.com/go-jose/go-jose/releases/tag/v4.1.5).
+
+### Resource-policy composition probe
+
+A synthetic API-level OAuth declaration with one secured tool fails current
+MCP preparation: the attached `server/discover`, `tools/list` and `tools/call`
+methods inherit authentication without a corresponding access-token payload.
+The original method has that payload and retains its correct native requirement.
+This is a verified generation gap, not evidence about deployed middleware.
+The fix must keep original endpoint authentication while assigning the attached
+protocol service's access policy to the resource guard before middleware.
+Do not add credentials to model arguments or disable the resource requirement
+just to make generation succeed. Native `Security` already accepts plugin
+expressions through `SecurityHolder`; use that mechanism when authoring resource
+policy. Verify API and service inheritance, catalog access, selected-operation
+scopes, alternatives and unaffected ordinary HTTP paths together.
+
 ## Removal and preservation matrix
 
 Remove obsolete source and generated output in the same breaking change. Keep no deprecated forwarding alias, alternate decoder, negotiated older version, or runtime feature flag.

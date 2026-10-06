@@ -30,7 +30,7 @@ func UsageCommands() []string {
 		"resource-metadata read",
 		"issuer-metadata read",
 		"client-metadata read",
-		"access-tokens (secret|code|refresh)",
+		"access-tokens (assertion|secret|code|refresh)",
 		"authorization-responses receive",
 	}
 }
@@ -40,7 +40,7 @@ func UsageExamples() string {
 	return os.Args[0] + " " + "resource-metadata read" + "\n" +
 		os.Args[0] + " " + "issuer-metadata read" + "\n" +
 		os.Args[0] + " " + "client-metadata read" + "\n" +
-		os.Args[0] + " " + "access-tokens secret --body '{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'" + "\n" +
+		os.Args[0] + " " + "access-tokens assertion --body '{\n      \"client_assertion\": \"S.U.n\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://hudson.info/ignatius\",\n      \"scope\": \"z# r+ Y-\"\n   }'" + "\n" +
 		os.Args[0] + " " + "authorization-responses receive --code \"x\" --error \";\\u0026\" --state \"1f\" --issuer \"http://rice.name/wilfrid.vandervort\"" + "\n" +
 		""
 }
@@ -88,6 +88,9 @@ func ParseEndpoint(
 
 		accessTokensFlags = flag.NewFlagSet("access-tokens", flag.ContinueOnError)
 
+		accessTokensAssertionFlags    = flag.NewFlagSet("assertion", flag.ExitOnError)
+		accessTokensAssertionBodyFlag = new(cliStringFlag)
+
 		accessTokensSecretFlags    = flag.NewFlagSet("secret", flag.ExitOnError)
 		accessTokensSecretBodyFlag = new(cliStringFlag)
 
@@ -105,6 +108,7 @@ func ParseEndpoint(
 		authorizationResponsesReceiveStateFlag  = new(cliStringFlag)
 		authorizationResponsesReceiveIssuerFlag = new(cliStringFlag)
 	)
+	accessTokensAssertionFlags.Var(accessTokensAssertionBodyFlag, "body", "")
 	accessTokensSecretFlags.Var(accessTokensSecretBodyFlag, "body", "")
 	accessTokensCodeFlags.Var(accessTokensCodeBodyFlag, "body", "")
 	accessTokensRefreshFlags.Var(accessTokensRefreshBodyFlag, "body", "")
@@ -123,6 +127,7 @@ func ParseEndpoint(
 	clientMetadataReadFlags.Usage = clientMetadataReadUsage
 
 	accessTokensFlags.Usage = accessTokensUsage
+	accessTokensAssertionFlags.Usage = accessTokensAssertionUsage
 	accessTokensSecretFlags.Usage = accessTokensSecretUsage
 	accessTokensCodeFlags.Usage = accessTokensCodeUsage
 	accessTokensRefreshFlags.Usage = accessTokensRefreshUsage
@@ -193,6 +198,9 @@ func ParseEndpoint(
 
 		case "access-tokens":
 			switch epn {
+			case "assertion":
+				epf = accessTokensAssertionFlags
+
 			case "secret":
 				epf = accessTokensSecretFlags
 
@@ -252,6 +260,9 @@ func ParseEndpoint(
 		case "access-tokens":
 			c := accesstokensc.NewClient(scheme, host, doer, enc, dec, restore)
 			switch epn {
+			case "assertion":
+				endpoint = c.Assertion()
+				data, err = accesstokensc.BuildAssertionPayload(accessTokensAssertionBodyFlag.value)
 			case "secret":
 				endpoint = c.Secret()
 				data, err = accesstokensc.BuildSecretPayload(accessTokensSecretBodyFlag.value)
@@ -365,6 +376,7 @@ func accessTokensUsage() {
 	fmt.Fprintln(os.Stderr, `Obtain opaque resource-bound bearer tokens using explicitly advertised client authentication, without sending those credentials to the MCP server.`)
 	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] access-tokens COMMAND [flags]\n\n", os.Args[0])
 	fmt.Fprintln(os.Stderr, "COMMAND:")
+	fmt.Fprintln(os.Stderr, `    assertion: Authenticate a preregistered client using one signed JWT assertion and request a bearer token for the exact MCP resource.`)
 	fmt.Fprintln(os.Stderr, `    secret: Exchange a preregistered client identifier and secret using request-body authentication for one resource and its configured permissions.`)
 	fmt.Fprintln(os.Stderr, `    code: Exchange one validated browser authorization code using the private PKCE verifier and the original resource and redirect.`)
 	fmt.Fprintln(os.Stderr, `    refresh: Replace an expired public-client access token using the refresh credential bound to the same issuer and resource.`)
@@ -372,6 +384,24 @@ func accessTokensUsage() {
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s access-tokens COMMAND --help\n", os.Args[0])
 }
+func accessTokensAssertionUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens assertion", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Authenticate a preregistered client using one signed JWT assertion and request a bearer token for the exact MCP resource.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens assertion --body '{\n      \"client_assertion\": \"S.U.n\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://hudson.info/ignatius\",\n      \"scope\": \"z# r+ Y-\"\n   }'")
+}
+
 func accessTokensSecretUsage() {
 	// Header with flags
 	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens secret", os.Args[0])

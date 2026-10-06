@@ -32,6 +32,8 @@ const oauthClientTest = `// This fixture exercises generated caller construction
 package oauth_test
 import (
  "context"
+ "crypto/rand"
+ "crypto/rsa"
  "encoding/json"
  "fmt"
  "io"
@@ -41,6 +43,10 @@ import (
  "strings"
  "sync/atomic"
  "testing"
+ "time"
+
+ "github.com/go-jose/go-jose/v4"
+ "github.com/go-jose/go-jose/v4/jwt"
 
  genclient "credential-paths.local/gen/jsonrpc/mcp_records/client"
  mcpruntime "goa.design/goa-ai/runtime/mcp"
@@ -48,8 +54,15 @@ import (
  "golang.org/x/oauth2"
 )
 func TestGeneratedOAuthCaller(t *testing.T){
- for _,profile:=range []string{"machine","browser"} {t.Run(profile,func(t *testing.T){
- var origin, challenge string
+ for _,profile:=range []string{"machine","browser","assertion"} {t.Run(profile,func(t *testing.T){
+ var origin, challenge, signedAssertion string
+ var signingKey *rsa.PrivateKey
+ var signer jose.Signer
+ if profile=="assertion" {
+  var err error
+  signingKey,err=rsa.GenerateKey(rand.Reader,2048);if err!=nil {t.Fatal(err)}
+  signer,err=jose.NewSigner(jose.SigningKey{Algorithm:jose.RS256,Key:signingKey},nil);if err!=nil {t.Fatal(err)}
+ }
  var tokens, calls atomic.Int32
  server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   w.Header().Set("Content-Type","application/json")
@@ -58,20 +71,32 @@ func TestGeneratedOAuthCaller(t *testing.T){
   case "/.well-known/oauth-protected-resource/mcp":
    body=fmt.Sprintf("{\"resource\":%q,\"authorization_servers\":[%q]}",origin+"/mcp",origin+"/issuer")
   case "/.well-known/oauth-authorization-server/issuer":
-   body=fmt.Sprintf("{\"issuer\":%q,\"token_endpoint\":%q,\"grant_types_supported\":[\"client_credentials\",\"authorization_code\"],\"token_endpoint_auth_methods_supported\":[\"client_secret_basic\",\"client_secret_post\",\"none\"],\"code_challenge_methods_supported\":[\"S256\"],\"authorization_endpoint\":%q,\"authorization_response_iss_parameter_supported\":true}",origin+"/issuer",origin+"/token",origin+"/authorize")
+   body=fmt.Sprintf("{\"issuer\":%q,\"token_endpoint\":%q,\"grant_types_supported\":[\"client_credentials\",\"authorization_code\"],\"token_endpoint_auth_methods_supported\":[\"client_secret_basic\",\"client_secret_post\",\"none\",\"private_key_jwt\"],\"token_endpoint_auth_signing_alg_values_supported\":[\"RS256\"],\"code_challenge_methods_supported\":[\"S256\"],\"authorization_endpoint\":%q,\"authorization_response_iss_parameter_supported\":true}",origin+"/issuer",origin+"/token",origin+"/authorize")
   case "/token":
    tokens.Add(1)
    if err:=r.ParseForm();err!=nil {t.Error(err);return}
    if r.PostForm.Get("resource")!=origin+"/mcp" || r.Header.Get("Authorization")!="" {t.Error("wrong credential delivery")}
    if profile=="machine" {
     if r.PostForm.Get("client_secret")!="registered-secret" {t.Error("missing client secret")}
-   } else if r.PostForm.Get("client_secret")!="" || r.PostForm.Get("code")!="browser-code" || oauth2.S256ChallengeFromVerifier(r.PostForm.Get("code_verifier"))!=challenge {t.Error("wrong PKCE code exchange")}
+   } else if profile=="browser" {
+    if r.PostForm.Get("client_secret")!="" || r.PostForm.Get("code")!="browser-code" || oauth2.S256ChallengeFromVerifier(r.PostForm.Get("code_verifier"))!=challenge {t.Error("wrong PKCE code exchange")}
+   } else {
+    signedAssertion=r.PostForm.Get("client_assertion")
+    token,err:=jwt.ParseSigned(signedAssertion,[]jose.SignatureAlgorithm{jose.RS256})
+    if err!=nil {t.Error(err);w.WriteHeader(http.StatusUnauthorized);return}
+    var claims jwt.Claims
+    if err:=token.Claims(&signingKey.PublicKey,&claims);err!=nil {t.Error(err);w.WriteHeader(http.StatusUnauthorized);return}
+    if claims.Subject!="registered" || claims.Issuer!="registered-signer" || len(claims.Audience)!=1 || claims.Audience[0]!="registered-audience" || claims.Expiry==nil || !time.Now().Before(claims.Expiry.Time()) || claims.ID=="" || r.PostForm.Get("client_id")!="" || r.PostForm.Get("client_secret")!="" || r.PostForm.Get("grant_type")!="client_credentials" || r.PostForm.Get("client_assertion_type")!="urn:ietf:params:oauth:client-assertion-type:jwt-bearer" {
+     t.Error("wrong registered assertion grant");w.WriteHeader(http.StatusUnauthorized);return
+    }
+   }
    body="{\"access_token\":\"opaque-token\",\"token_type\":\"Bearer\",\"expires_in\":3600}"
   case "/mcp":
    calls.Add(1)
    if r.Header.Get("Authorization")!="Bearer opaque-token" {t.Error("bearer credential missing")}
    encoded,err:=io.ReadAll(r.Body);if err!=nil {t.Error(err);return}
    if strings.Contains(string(encoded),"registered-secret") || strings.Contains(string(encoded),"opaque-token") {t.Error("credentials entered MCP body")}
+   if signedAssertion!="" && strings.Contains(string(encoded),signedAssertion) {t.Error("assertion entered MCP body")}
    // The shared transport restores the caller's request ID before decoding.
    var envelope struct { ID string }
    decoder:=json.NewDecoder(strings.NewReader(string(encoded)))
@@ -89,7 +114,7 @@ func TestGeneratedOAuthCaller(t *testing.T){
  var err error
  if profile=="machine" {
  transport,err=mcpruntime.NewClientCredentialsHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.ClientCredentials{Issuer:origin+"/issuer",ClientID:"registered",ClientSecret:"registered-secret"})
- } else {
+ } else if profile=="browser" {
  transport,err=mcpruntime.NewAuthorizationCodeHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.AuthorizationCode{
   Issuer:origin+"/issuer",ClientID:"registered",RedirectURI:"https://host.example/callback",
   Authorize:func(_ context.Context, address string)(string,error){
@@ -99,6 +124,10 @@ func TestGeneratedOAuthCaller(t *testing.T){
    response:=url.Values{"code":{"browser-code"},"state":{values.Get("state")},"iss":{origin+"/issuer"}}
    return "https://host.example/callback?"+response.Encode(),nil
   },
+ })
+ } else {
+ transport,err=mcpruntime.NewClientAssertionHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.ClientAssertion{
+  Issuer:origin+"/issuer",ClientID:"registered",AssertionIssuer:"registered-signer",Audience:"registered-audience",Lifetime:time.Minute,Signer:signer,
  })
  }
  if err!=nil {t.Fatal(err)}

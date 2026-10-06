@@ -14,6 +14,21 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
+// AssertionRequestBody is the type of the "access_tokens" service "assertion"
+// endpoint HTTP request body.
+type AssertionRequestBody struct {
+	// Exact resource for which the token is requested
+	Resource string `form:"resource" json:"resource" xml:"resource"`
+	// Signed compact JWT identifying the registered client
+	ClientAssertion string `form:"client_assertion" json:"client_assertion" xml:"client_assertion"`
+	// Space-separated permissions requested by the configured client
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Client-credentials grant selected by this operation
+	GrantType string `form:"grant_type" json:"grant_type" xml:"grant_type"`
+	// JWT client authentication selected by this operation
+	ClientAssertionType string `form:"client_assertion_type" json:"client_assertion_type" xml:"client_assertion_type"`
+}
+
 // SecretRequestBody is the type of the "access_tokens" service "secret"
 // endpoint HTTP request body.
 type SecretRequestBody struct {
@@ -59,6 +74,21 @@ type RefreshRequestBody struct {
 	GrantType string `form:"grant_type" json:"grant_type" xml:"grant_type"`
 }
 
+// AssertionResponseBody is the type of the "access_tokens" service "assertion"
+// endpoint HTTP response body.
+type AssertionResponseBody struct {
+	// Opaque bearer token returned by the issuer
+	AccessToken *string `form:"access_token,omitempty" json:"access_token,omitempty" xml:"access_token,omitempty"`
+	// Bearer token type, compared without case sensitivity
+	TokenType *string `form:"token_type,omitempty" json:"token_type,omitempty" xml:"token_type,omitempty"`
+	// Access token lifetime in seconds from the token response
+	ExpiresIn *int64 `form:"expires_in,omitempty" json:"expires_in,omitempty" xml:"expires_in,omitempty"`
+	// Space-separated permissions granted by the issuer
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Private refresh credential; never sent to a resource server
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+}
+
 // SecretResponseBody is the type of the "access_tokens" service "secret"
 // endpoint HTTP response body.
 type SecretResponseBody struct {
@@ -102,6 +132,31 @@ type RefreshResponseBody struct {
 	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
 	// Private refresh credential; never sent to a resource server
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+}
+
+// NewAssertionRequestBody builds the HTTP request body from the payload of the
+// "assertion" endpoint of the "access_tokens" service.
+func NewAssertionRequestBody(p *accesstokens.AssertionPayload) *AssertionRequestBody {
+	body := &AssertionRequestBody{
+		Resource:            p.Resource,
+		ClientAssertion:     p.ClientAssertion,
+		Scope:               p.Scope,
+		GrantType:           p.GrantType,
+		ClientAssertionType: p.ClientAssertionType,
+	}
+	{
+		var zero string
+		if body.GrantType == zero {
+			body.GrantType = "client_credentials"
+		}
+	}
+	{
+		var zero string
+		if body.ClientAssertionType == zero {
+			body.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+		}
+	}
+	return body
 }
 
 // NewSecretRequestBody builds the HTTP request body from the payload of the
@@ -161,6 +216,20 @@ func NewRefreshRequestBody(p *accesstokens.RefreshPayload) *RefreshRequestBody {
 	return body
 }
 
+// NewAssertionBearerTokenOK builds a "access_tokens" service "assertion"
+// endpoint result from a HTTP "OK" response.
+func NewAssertionBearerTokenOK(body *AssertionResponseBody) *accesstokens.BearerToken {
+	v := &accesstokens.BearerToken{
+		AccessToken:  *body.AccessToken,
+		TokenType:    *body.TokenType,
+		ExpiresIn:    body.ExpiresIn,
+		Scope:        body.Scope,
+		RefreshToken: body.RefreshToken,
+	}
+
+	return v
+}
+
 // NewSecretBearerTokenOK builds a "access_tokens" service "secret" endpoint
 // result from a HTTP "OK" response.
 func NewSecretBearerTokenOK(body *SecretResponseBody) *accesstokens.BearerToken {
@@ -201,6 +270,41 @@ func NewRefreshBearerTokenOK(body *RefreshResponseBody) *accesstokens.BearerToke
 	}
 
 	return v
+}
+
+// ValidateAssertionResponseBody runs the validations defined on
+// AssertionResponseBody
+func ValidateAssertionResponseBody(body *AssertionResponseBody) (err error) {
+	if body.AccessToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("access_token", "body"))
+	}
+	if body.TokenType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("token_type", "body"))
+	}
+	if body.AccessToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.access_token", *body.AccessToken, "^[A-Za-z0-9._~+/-]+=*$"))
+		if utf8.RuneCountInString(*body.AccessToken) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.access_token", *body.AccessToken, utf8.RuneCountInString(*body.AccessToken), 1, true))
+		}
+	}
+	if body.TokenType != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.token_type", *body.TokenType, "^[Bb][Ee][Aa][Rr][Ee][Rr]$"))
+	}
+	if body.ExpiresIn != nil {
+		if *body.ExpiresIn < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.expires_in", *body.ExpiresIn, 0, true))
+		}
+	}
+	if body.Scope != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+	}
+	if body.RefreshToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.refresh_token", *body.RefreshToken, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(*body.RefreshToken) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.refresh_token", *body.RefreshToken, utf8.RuneCountInString(*body.RefreshToken), 1, true))
+		}
+	}
+	return
 }
 
 // ValidateSecretResponseBody runs the validations defined on SecretResponseBody

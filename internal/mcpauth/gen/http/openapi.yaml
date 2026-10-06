@@ -13,6 +13,60 @@ produces:
     - application/xml
     - application/gob
 paths:
+    /assertion:
+        post:
+            tags:
+                - access_tokens
+            summary: assertion access_tokens
+            description: Authenticate a preregistered client using one signed JWT assertion and request a bearer token for the exact MCP resource.
+            operationId: access_tokens#assertion
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: resource
+                  in: formData
+                  description: Exact resource for which the token is requested
+                  required: true
+                  type: string
+                  format: uri
+                - name: client_assertion
+                  in: formData
+                  description: Signed compact JWT identifying the registered client
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+                - name: scope
+                  in: formData
+                  description: Space-separated permissions requested by the configured client
+                  required: false
+                  type: string
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: grant_type
+                  in: formData
+                  description: Client-credentials grant selected by this operation
+                  required: false
+                  type: string
+                  default: client_credentials
+                  enum:
+                    - client_credentials
+                - name: client_assertion_type
+                  in: formData
+                  description: JWT client authentication selected by this operation
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                  enum:
+                    - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/BearerToken'
+                        required:
+                            - access_token
+                            - token_type
+            schemes:
+                - http
     /callback:
         get:
             tags:
@@ -270,25 +324,25 @@ definitions:
             access_token:
                 type: string
                 description: Opaque bearer token returned by the issuer
-                example: lw2
+                example: "5"
                 pattern: ^[A-Za-z0-9._~+/-]+=*$
                 minLength: 1
             expires_in:
                 type: integer
                 description: Access token lifetime in seconds from the token response
-                example: 8271034756713473025
+                example: 8654397654246435502
                 format: int64
                 minimum: 0
             refresh_token:
                 type: string
                 description: Private refresh credential; never sent to a resource server
-                example: p
+                example: 5i2
                 pattern: ^[\x20-\x7e]+$
                 minLength: 1
             scope:
                 type: string
                 description: Space-separated permissions granted by the issuer
-                example: '}O %'
+                example: c$
                 pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
             token_type:
                 type: string
@@ -297,10 +351,10 @@ definitions:
                 pattern: ^[Bb][Ee][Aa][Rr][Ee][Rr]$
         description: An opaque resource access token and the optional refresh credential issued in the same grant.
         example:
-            access_token: lw2
-            expires_in: 8271034756713473025
-            refresh_token: p
-            scope: '}O %'
+            access_token: "5"
+            expires_in: 8654397654246435502
+            refresh_token: 5i2
+            scope: c$
             token_type: BEARER
         required:
             - access_token
@@ -458,6 +512,17 @@ definitions:
                 example:
                     - Maxime est aut eius optio.
                     - Non dicta architecto a voluptas ipsum et.
+            token_endpoint_auth_signing_alg_values_supported:
+                type: array
+                items:
+                    type: string
+                    example: z
+                    minLength: 1
+                description: Signature algorithms accepted for signed client authentication; required only by a signed client profile
+                example:
+                    - z
+                    - c
+                    - "4"
         example:
             authorization_endpoint: http://haley.biz/ayden
             authorization_response_iss_parameter_supported: true
@@ -480,6 +545,10 @@ definitions:
             token_endpoint_auth_methods_supported:
                 - Maxime est aut eius optio.
                 - Non dicta architecto a voluptas ipsum et.
+            token_endpoint_auth_signing_alg_values_supported:
+                - z
+                - c
+                - "4"
         required:
             - issuer
             - token_endpoint

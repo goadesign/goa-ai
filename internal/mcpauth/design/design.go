@@ -57,6 +57,9 @@ var _ = Service("issuer_metadata", func() {
 			Field(7, "authorization_response_iss_parameter_supported", Boolean, "Whether every authorization response must identify its issuer")
 			Field(8, "client_id_metadata_document_supported", Boolean, "Whether this issuer accepts HTTPS client metadata documents")
 			Field(9, "scopes_supported", ArrayOf(String), "Permissions that the issuer accepts, including optional offline access", oauthScopeTokens)
+			Field(10, "token_endpoint_auth_signing_alg_values_supported", ArrayOf(String), "Signature algorithms accepted for signed client authentication; required only by a signed client profile", func() {
+				Elem(func() { MinLength(1) })
+			})
 			Required("issuer", "token_endpoint")
 		})
 		HTTP(func() { GET("/issuer") })
@@ -91,6 +94,32 @@ var _ = Service("client_metadata", func() {
 
 var _ = Service("access_tokens", func() {
 	Description("Obtain opaque resource-bound bearer tokens using explicitly advertised client authentication, without sending those credentials to the MCP server.")
+	Method("assertion", func() {
+		Description("Authenticate a preregistered client using one signed JWT assertion and request a bearer token for the exact MCP resource.")
+		Payload(func() {
+			Field(1, "resource", String, "Exact resource for which the token is requested", func() { Format(FormatURI) })
+			Field(2, "client_assertion", String, "Signed compact JWT identifying the registered client", func() {
+				Pattern(`^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$`)
+			})
+			Field(3, "scope", String, "Space-separated permissions requested by the configured client", oauthScope)
+			Field(4, "grant_type", String, "Client-credentials grant selected by this operation", func() {
+				Default("client_credentials")
+				Enum("client_credentials")
+				Example("client_credentials")
+			})
+			Field(5, "client_assertion_type", String, "JWT client authentication selected by this operation", func() {
+				Default("urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+				Enum("urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+				Example("urn:ietf:params:oauth:client-assertion-type:jwt-bearer")
+			})
+			Required("resource", "client_assertion")
+		})
+		Result(bearerToken)
+		HTTP(func() {
+			POST("/assertion")
+			FormRequest()
+		})
+	})
 	Method("secret", func() {
 		Description("Exchange a preregistered client identifier and secret using request-body authentication for one resource and its configured permissions.")
 		Payload(func() {
