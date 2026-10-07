@@ -1327,11 +1327,43 @@ The generated adapter is the sole owner of translating between MCP operations an
 | Design | Benefit | Reason for the recommendation |
 | --- | --- | --- |
 | Small shared transport plus Goa-generated contracts | Keeps existing typed service ownership and lets generation remove static branches | Recommended; requires independently verified wire conformance |
-| Adopt the official Go SDK as the production implementation | Outsources much protocol maintenance | Its current client connection path falls back from discovery to legacy initialization; its public surface also retains sessions and multiple revisions. Adoption needs proof of a strict current-only path and must not replace Goa codecs with reflection-generated contracts. |
+| Adopt the official Go SDK as the production implementation | Outsources much protocol maintenance | Its public operations combine transport, connection negotiation and input-round execution. Replacing the existing owners would require new adapters around Goa codecs, strict version selection and durable host suspension. Compatibility support inside a dependency is not itself a reason to reject it; adoption must remove an existing responsibility rather than repeat it. |
 | Generate a complete transport implementation per service | Simple local wiring | Repeats dynamic parsing, streaming, cancellation, and fixes in every generated package |
 | Wrap the old initialization/session code with a new version mode | Smaller initial diff | Contradicts the requested end state and retains duplicate ownership |
 
-The SDK supports the new revision, but its [compatibility table](https://github.com/modelcontextprotocol/go-sdk#version-compatibility) and [client connection implementation](https://github.com/modelcontextprotocol/go-sdk/blob/main/mcp/client.go) show why simply updating to it would not establish the requested contract. It is useful as an independent test peer, with explicit current-version configuration. No new production dependency is justified by this plan.
+The official [Go SDK v1.8.0](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0)
+is an independent interoperability peer. A generated synthetic service is called
+through the SDK's real HTTP client; the framework HTTP caller also completes a
+form-input round through the SDK's real HTTP server. This reuses its protocol
+implementation without reproducing it in a handwritten test server. Pin it only
+in the temporary integration-test module; applications gain no SDK dependency.
+The checks exercise catalogs, scalar tool results, invalid arguments, domain
+errors, unknown tools, resource reads, static prompts, exact continuation state,
+and the final result after host input. They do not establish support for every
+extension or authorize a release.
+
+Reassess individual SDK packages when implementing each remaining capability.
+A useful production seam must remove duplicate algorithms and keep the owning
+Goa contract and execution flow intact. Current source evidence does not justify
+these replacements:
+
+| SDK surface | Existing owner and consequence |
+| --- | --- |
+| [`mcp` client/server](https://github.com/modelcontextprotocol/go-sdk/blob/v1.8.0/mcp/client.go) | Goa owns service decoding and configured endpoint invocation. The SDK connection path can fall back to earlier initialization; strict revision selection needs separate enforcement. Replacing the complete peer would also replace existing HTTP error, cancellation and retry ownership. |
+| [Automatic input rounds](https://github.com/modelcontextprotocol/go-sdk/blob/v1.8.0/mcp/mrtr.go) | The durable runtime saves the original invocation, obtains host input and owns its continuation. The SDK's in-call input loop would need disabling; it cannot replace saved suspension and restart handling. |
+| [`oauthex` challenge parsing](https://github.com/modelcontextprotocol/go-sdk/blob/v1.8.0/oauthex/resource_meta.go) | The existing boundary rejects duplicate authentication parameters. The SDK parser overwrites them, so a surrounding parser would retain the algorithm we intended to remove. |
+| [OAuth authorization flow](https://github.com/modelcontextprotocol/go-sdk/blob/v1.8.0/auth/authorization_code.go) | Generated grant clients own typed requests and responses; configured authorization policy owns issuer trust, resource identity and credential delivery. The SDK flow combines those decisions and retains earlier discovery assumptions. Wrapping it would keep both implementations. |
+
+Independent peer checks exposed an important distinction between wire contracts
+and runtime outcomes. The [MCP `Result` schema](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/271ecc9accafdd9b83a3c869fa67c22953b2af80/schema/2026-07-28/schema.ts)
+permits extra fields. Decode `resultType` first and validate only that branch's
+fields. For example, the SDK emits `content: null` on an `input_required` result;
+that field is not completed content and must not make the response malformed.
+The runtime still returns exactly one outcome: input requests or final content.
+Null fields belonging to that outcome remain invalid, except intentional JSON
+null in completed `structuredContent`. Required state, host capabilities, exact
+response correlation and completed-result validation remain enforced. Generated
+servers should emit only fields belonging to the selected result.
 
 ### Decision 1: one revision, no protocol lifecycle state
 
@@ -2082,7 +2114,7 @@ Every milestone below is required before this upgrade can release, except genera
 2. Update protocol/tools/resources/prompts scenarios, fixture designs, generated compile tests, and golden files by regeneration. Add independent HTTP and stdio peers using only 2026-07-28.
 3. Assert rejection before service dispatch, cancellation, supported structured root kinds, direct wire null, codec-permitted typed null, raw error data, metadata, and private/no-cache hints. Cover configured host input, no-host rejection, shared registration, generated bootstrap, and stored continuation after restart. Replace old tests that enforce object-only results, session expiry, or compatibility defaults.
 4. Update [README](../README.md), [DESIGN](../DESIGN.md), [DSL docs](dsl.md), [runtime docs](runtime.md), and [overview](overview.md). Keep customer-facing guidance about capabilities, generated code, visible errors, and upgrade action separate from engineering transport internals.
-5. Update `content/{en,fr,ja,it,es}/docs/2-goa-ai/mcp-integration.md` in the isolated `goadesign/goa.design` clone after the final caller contracts are implemented. Verify its documentation tests, links and production Hugo build. Obtain explicit authorization for that repository's PR only after the changes are concrete and reviewable; do not publish unfinished capabilities as available.
+5. Update `content/{en,fr,ja,it,es}/docs/2-goa-ai/mcp-integration.md` in the isolated `goadesign/goa.design` clone after the final caller contracts are implemented. Verify its documentation tests, links and production Hugo build. Publish its review PR under the user's standing repository authorization; do not publish unfinished capabilities as available.
 6. Publish notes explaining removals, regeneration, changed result encoding, client/server cutover, optional feature scope, and rollback. Derive actual notes from the final diff, not this proposed plan.
 
 **Files:** [scenario runner](../integration_tests/framework/runner.go), [runner tests](../integration_tests/framework/runner_test.go), [MCP integration suite](../integration_tests/tests/mcp_integration_test.go), [fixture](../integration_tests/fixtures/assistant/mcp_assistant.go), [protocol](../integration_tests/scenarios/protocol.yaml), [tools](../integration_tests/scenarios/tools.yaml), [resources](../integration_tests/scenarios/resources.yaml), [prompts](../integration_tests/scenarios/prompts.yaml), fixture design files and docs above.

@@ -207,7 +207,7 @@ func TestNormalizeCurrentToolResults(t *testing.T) {
 	require.NotNil(t, response.InputRequired)
 	assert.Equal(t, "opaque", *response.InputRequired.RequestState)
 	assert.Empty(t, response.StructuredContent)
-	for _, encoded := range []string{`{"content":[]}`, `{"resultType":"input_required"}`, `{"resultType":"input_required","requestState":"x","content":[]}`} {
+	for _, encoded := range []string{`{"content":[]}`, `{"resultType":"input_required"}`} {
 		require.NoError(t, json.Unmarshal([]byte(encoded), &result))
 		_, err := normalizeToolResult(result)
 		assert.Error(t, err, fmt.Sprint(encoded))

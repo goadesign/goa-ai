@@ -71,24 +71,58 @@ const (
 	elicitationForm          = "form"
 )
 
-// UnmarshalJSON rejects null control fields before Go can confuse them with
-// absence or false. StructuredContent keeps null as an intentional JSON result.
+// UnmarshalJSON reads resultType before decoding its fields. MCP permits extra
+// result fields, so an input request never becomes completed content, and a
+// completed result never becomes a continuation. Null branch fields are invalid;
+// a completed structuredContent may intentionally contain JSON null.
 func (r *toolsCallResult) UnmarshalJSON(data []byte) error {
-	type wireResult toolsCallResult
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
 		return errors.New("tool result must be an object")
 	}
-	for _, name := range []string{"content", "inputRequests", "requestState", "isError"} {
+	decoded := toolsCallResult{Meta: fields["_meta"]}
+	if raw, ok := fields["resultType"]; ok {
+		if err := json.Unmarshal(raw, &decoded.ResultType); err != nil {
+			return err
+		}
+	}
+	var controls []string
+	switch decoded.ResultType {
+	case resultComplete:
+		controls = []string{"content", "isError"}
+	case resultInputRequired:
+		controls = []string{"inputRequests", "requestState"}
+	}
+	for _, name := range controls {
 		if bytes.Equal(bytes.TrimSpace(fields[name]), []byte("null")) {
 			return fmt.Errorf("tool result %s cannot be null", name)
 		}
 	}
-	var decoded wireResult
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		return err
+	switch decoded.ResultType {
+	case resultComplete:
+		var complete struct {
+			Content           *toolcontent.Blocks `json:"content"`
+			StructuredContent json.RawMessage     `json:"structuredContent"` //nolint:tagliatelle // MCP wire name.
+			IsError           bool                `json:"isError"`           //nolint:tagliatelle // MCP wire name.
+		}
+		if err := json.Unmarshal(data, &complete); err != nil {
+			return err
+		}
+		decoded.Content = complete.Content
+		decoded.StructuredContent = complete.StructuredContent
+		decoded.IsError = complete.IsError
+	case resultInputRequired:
+		var pending struct {
+			InputRequests map[string]InputRequest `json:"inputRequests"` //nolint:tagliatelle // MCP wire name.
+			RequestState  *string                 `json:"requestState"`  //nolint:tagliatelle // MCP wire name.
+		}
+		if err := json.Unmarshal(data, &pending); err != nil {
+			return err
+		}
+		decoded.InputRequests = pending.InputRequests
+		decoded.RequestState = pending.RequestState
 	}
-	*r = toolsCallResult(decoded)
+	*r = decoded
 	return nil
 }
 
@@ -202,9 +236,6 @@ func normalizeToolResult(result toolsCallResult) (CallResponse, error) {
 		if result.InputRequests == nil && result.RequestState == nil {
 			return CallResponse{}, NewMalformedResponseError(errors.New("input_required needs inputRequests or requestState"))
 		}
-		if result.Content != nil || len(result.StructuredContent) > 0 || result.IsError {
-			return CallResponse{}, NewMalformedResponseError(errors.New("unfinished tool result contains final content"))
-		}
 		for id, request := range result.InputRequests {
 			if id == "" || request.Method == "" || len(request.Params) == 0 {
 				return CallResponse{}, NewMalformedResponseError(errors.New("invalid input request"))
@@ -212,9 +243,6 @@ func normalizeToolResult(result toolsCallResult) (CallResponse, error) {
 		}
 		return CallResponse{InputRequired: &InputRequired{Requests: result.InputRequests, RequestState: result.RequestState}}, nil
 	case resultComplete:
-		if result.InputRequests != nil || result.RequestState != nil {
-			return CallResponse{}, NewMalformedResponseError(errors.New("complete result contains unfinished state"))
-		}
 	default:
 		return CallResponse{}, NewMalformedResponseError(fmt.Errorf("unsupported resultType %q", result.ResultType))
 	}

@@ -2030,6 +2030,13 @@ registers one generated MCP executor for each runtime binding. Agent registratio
 owns agent definitions. It does not construct callers or register duplicate
 executables. The same binding can serve multiple agents and aliases.
 
+The result decoder selects `resultType` before validating branch fields. MCP
+permits extra result fields, so completed-content fields on an input request
+cannot become a final result, and continuation fields on a completed reply
+cannot reopen the invocation. Each selected branch retains its required fields
+and null checks. Independent HTTP peers from the official Go SDK test these
+contracts without adding an application dependency.
+
 An unfinished remote call returns `input_required`. The runtime stores its
 original arguments and opaque state in a version-11 checkpoint, publishes typed
 host input requests, and validates the exact answers before the next activity.

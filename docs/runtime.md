@@ -7234,6 +7234,12 @@ can present those interactions and return trusted answers. A form uses the
 protocol's flat primitive schema. URL consent, decline, and cancel carry no form
 content.
 
+The caller uses `resultType` to select the result contract. MCP permits extra
+result fields; completed-content fields on an `input_required` response never
+become a final result, and continuation fields on a `complete` response never
+start another round. Null input requests or request state are invalid. Completed
+responses require non-null content; their structured content may be JSON null.
+
 `WithoutHostInput(ctx)` restricts one operation and its child contexts. Shared
 HTTP and stdio callers then omit form and URL capabilities, reject continuation
 data before any network request, and reject unfinished results, including

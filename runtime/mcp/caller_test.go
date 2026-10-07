@@ -296,14 +296,51 @@ func contextWithTrace() (context.Context, string) {
 	return ctx, expected
 }
 
-// A null structured result is valid, but null control values must not become
-// successful defaults when the external response enters the caller.
+// Null fields belonging to the selected result cannot become successful defaults.
 func TestToolResultRejectsNullControls(t *testing.T) {
-	for _, field := range []string{"content", "inputRequests", "requestState", "isError"} {
-		t.Run(field, func(t *testing.T) {
+	for _, test := range []struct{ branch, field string }{
+		{"complete", "content"},
+		{"complete", "isError"},
+		{"input_required", "inputRequests"},
+		{"input_required", "requestState"},
+	} {
+		t.Run(test.branch+"/"+test.field, func(t *testing.T) {
 			var result toolsCallResult
-			err := json.Unmarshal([]byte(`{"resultType":"complete","`+field+`":null}`), &result)
+			err := json.Unmarshal([]byte(`{"resultType":"`+test.branch+`","`+test.field+`":null}`), &result)
 			assert.ErrorContains(t, err, "cannot be null")
+		})
+	}
+}
+
+// Result extensions cannot change whether the caller receives input requests or
+// completed content. Each branch validates only the fields defined for it.
+func TestToolResultDecodesSelectedBranch(t *testing.T) {
+	for _, test := range []struct {
+		name, encoded string
+		pending       bool
+	}{
+		{"input with null content", `{"resultType":"input_required","requestState":"","content":null}`, true},
+		{"input with completed fields", `{"resultType":"input_required","requestState":"state","content":[{"type":"text","text":"not a final answer"}],"structuredContent":42,"isError":true}`, true},
+		{"input with unrelated field types", `{"resultType":"input_required","requestState":"state","content":17,"isError":"extension"}`, true},
+		{"complete with input extensions", `{"resultType":"complete","content":[],"structuredContent":null,"inputRequests":null,"requestState":false}`, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var result toolsCallResult
+			require.NoError(t, json.Unmarshal([]byte(test.encoded), &result))
+			response, err := normalizeToolResult(result)
+			require.NoError(t, err)
+			if test.pending {
+				require.NotNil(t, response.InputRequired)
+				assert.Empty(t, response.Content)
+				assert.Empty(t, response.StructuredContent)
+				assert.Nil(t, result.Content)
+				assert.False(t, result.IsError)
+			} else {
+				assert.Nil(t, response.InputRequired)
+				assert.JSONEq(t, "null", string(response.StructuredContent))
+				assert.Nil(t, result.InputRequests)
+				assert.Nil(t, result.RequestState)
+			}
 		})
 	}
 }
