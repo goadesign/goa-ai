@@ -122,10 +122,10 @@ func TestGeneratedOAuthCaller(t *testing.T){
  var err error
  if profile=="machine" {
  registration,registrationErr:=mcpruntime.NewSecretClientRegistration(origin+"/issuer","registered","registered-secret");if registrationErr!=nil {t.Fatal(registrationErr)}
- transport,err=mcpruntime.NewClientCredentialsHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.ClientCredentials{Registration:registration})
+ transport,err=mcpruntime.NewClientCredentialsHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.ClientCredentials{Store: mcpruntime.NewMemoryAuthorizationStore(), Registration:registration})
  } else if profile=="browser" {
  registration,registrationErr:=mcpruntime.NewPublicClientRegistration(origin+"/issuer","registered");if registrationErr!=nil {t.Fatal(registrationErr)}
- transport,err=mcpruntime.NewAuthorizationCodeHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.AuthorizationCode{
+ transport,err=mcpruntime.NewAuthorizationCodeHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.AuthorizationCode{Store: mcpruntime.NewMemoryAuthorizationStore(),
   Registration:registration,RedirectURI:"https://host.example/callback",
   Authorize:func(_ context.Context, address string)(string,error){
    parsed,err:=url.Parse(address);if err!=nil {return "",err}
@@ -137,14 +137,14 @@ func TestGeneratedOAuthCaller(t *testing.T){
  })
  } else if profile=="enterprise" {
  identityRegistration,registrationErr:=mcpruntime.NewPublicClientRegistration(origin+"/identity","identity-application");if registrationErr!=nil{t.Fatal(registrationErr)}
- identity,identityErr:=mcpruntime.NewIDTokenEnterpriseIdentity(identityRegistration,server.Client(),func(context.Context)(string,error){return "host-identity",nil});if identityErr!=nil{t.Fatal(identityErr)}
+ identity,identityErr:=mcpruntime.NewIDTokenEnterpriseIdentity(identityRegistration,server.Client(),mcpruntime.NewMemoryAuthorizationStore(),func(context.Context)(string,error){return "host-identity",nil});if identityErr!=nil{t.Fatal(identityErr)}
  registration,registrationErr:=mcpruntime.NewSecretClientRegistration(origin+"/issuer","registered","registered-secret");if registrationErr!=nil{t.Fatal(registrationErr)}
  transport,err=mcpruntime.NewEnterpriseHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.EnterpriseAuthorization{Identity:identity,Registration:registration})
  } else {
  registration,registrationErr:=mcpruntime.NewSignedClientRegistration(mcpruntime.ClientAssertion{
   Issuer:origin+"/issuer",ClientID:"registered",AssertionIssuer:"registered-signer",Audience:"registered-audience",Lifetime:time.Minute,Signer:signer,
  });if registrationErr!=nil {t.Fatal(registrationErr)}
- transport,err=mcpruntime.NewClientCredentialsHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.ClientCredentials{Registration:registration})
+ transport,err=mcpruntime.NewClientCredentialsHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.ClientCredentials{Store: mcpruntime.NewMemoryAuthorizationStore(), Registration:registration})
  }
  if err!=nil {t.Fatal(err)}
  address,err:=url.Parse(origin);if err!=nil {t.Fatal(err)}

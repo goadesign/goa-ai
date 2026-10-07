@@ -6,6 +6,7 @@ package mcp
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
@@ -17,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	genaccesstokens "goa.design/goa-ai/internal/mcpauth/gen/access_tokens"
 	genissuerclient "goa.design/goa-ai/internal/mcpauth/gen/http/issuer_metadata/client"
@@ -29,10 +31,11 @@ type (
 	// registered client. The shared owner checks these rules before reusing a token.
 	tokenGrant interface {
 		validateIssuer(*genissuermetadata.ReadResult) error
+		credentialBindings(string) [][]string
 		recoversChallenges() bool
-		acquire(context.Context, *http.Client, string, *genissuermetadata.ReadResult, []string, *genaccesstokens.BearerToken) (*genaccesstokens.BearerToken, time.Time, error)
+		acquire(context.Context, *http.Client, string, *genissuermetadata.ReadResult, []string, *genaccesstokens.BearerToken, []AuthorizationCredential) (*genaccesstokens.BearerToken, time.Time, error)
 	}
-	// authorizationClient retains credentials for one host user or application,
+	// authorizationClient loads credentials for one host user or application,
 	// issuer and resource. No token or registration enters tool input.
 	authorizationClient struct {
 		client     *http.Client
@@ -41,10 +44,10 @@ type (
 		clientInfo ClientInfo
 		scopes     []string
 		grant      tokenGrant
-		lock       chan struct{}
-		token      *genaccesstokens.BearerToken
-		granted    []string
-		requested  []string
+		store      AuthorizationStore
+		bindings   [][]string
+		keys       []string
+		state      *genaccesstokens.ResourceCredentialState
 		obtained   time.Time
 	}
 )
@@ -57,14 +60,14 @@ const (
 // newAuthorizationHTTPTransport checks the configured resource, issuer and
 // scopes. It creates one private credential owner that generated and discovered
 // callers use to send authorized requests.
-func newAuthorizationHTTPTransport(opts HTTPOptions, issuerID string, scopes []string, grant tokenGrant) (*HTTPTransport, error) {
+func newAuthorizationHTTPTransport(opts HTTPOptions, registration *ClientRegistration, scopes []string, store AuthorizationStore, grant tokenGrant) (*HTTPTransport, error) {
 	resource, err := authorizationURL(opts.Endpoint, false)
 	if err != nil {
 		return nil, fmt.Errorf("mcp: protected resource: %w", err)
 	}
-	issuer, err := authorizationURL(issuerID, true)
-	if err != nil {
-		return nil, fmt.Errorf("mcp: authorization issuer: %w", err)
+	issuer := registration.issuer
+	if store == nil {
+		return nil, errors.New("mcp: an authorization store for this host user or application is required")
 	}
 	seen := make(map[string]bool, len(scopes))
 	for _, scope := range scopes {
@@ -88,18 +91,23 @@ func newAuthorizationHTTPTransport(opts HTTPOptions, issuerID string, scopes []s
 	configured := *client
 	configured.CheckRedirect = rejectAuthorizationRedirect
 	caller.transport.next = &configured
-	caller.transport.authorization = &authorizationClient{
+	owner := &authorizationClient{
 		client: &configured, resource: resource, issuer: issuer,
 		clientInfo: opts.ClientInfo, scopes: slices.Clone(scopes),
-		grant: grant, lock: make(chan struct{}, 1),
+		grant: grant, store: store, bindings: grant.credentialBindings(resource.String()),
 	}
+	owner.keys = make([]string, len(owner.bindings))
+	for n, binding := range owner.bindings {
+		owner.keys[n] = authorizationCredentialKey(binding)
+	}
+	caller.transport.authorization = owner
 	return caller.transport, nil
 }
 
 // prepare validates metadata for this operation and supplies a resource-bound
 // token. Waiting for another grant respects cancellation; expired public-client
 // tokens may use their private refresh credential before invoking host consent.
-func (g *authorizationClient) prepare(request *http.Request, credentialQueries, resourceCredentials []string) (credential *genaccesstokens.BearerToken, err error) {
+func (g *authorizationClient) prepare(request *http.Request, credentialQueries, resourceCredentials []string) (issuance string, err error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(request.Context(), "mcp.oauth.prepare")
 	defer span.End()
 	defer func() {
@@ -109,52 +117,63 @@ func (g *authorizationClient) prepare(request *http.Request, credentialQueries, 
 		}
 	}()
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return "", err
 	}
 	if !matchesResourceAddress(g.resource, request.URL, credentialQueries, resourceCredentials) {
-		return nil, errors.New("mcp: authorized transport cannot send to another resource")
+		return "", errors.New("mcp: authorized transport cannot send to another resource")
 	}
 	span.SetAttributes(attribute.String("oauth.issuer", g.issuer.String()), attribute.String("oauth.resource", g.resource.String()))
 	if request.Header.Get("Authorization") != "" {
-		return nil, errors.New("mcp: built-in authorization cannot replace an existing authorization credential")
+		return "", errors.New("mcp: built-in authorization cannot replace an existing authorization credential")
 	}
-	select {
-	case g.lock <- struct{}{}:
-		defer func() { <-g.lock }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	}
+	err = withAuthorizationCredentials(ctx, g.store, g.keys, func(ctx context.Context, records []AuthorizationCredential) error {
+		if err := g.loadCredential(ctx, records[0]); err != nil {
+			return err
+		}
+		issuance, err = g.prepareCredential(ctx, request, records)
+		return err
+	})
+	return issuance, err
+}
+
+// prepareCredential uses only the record currently held by the store. It saves
+// any new credential before adding a bearer header and returning its issuance.
+func (g *authorizationClient) prepareCredential(ctx context.Context, request *http.Request, records []AuthorizationCredential) (string, error) {
 	resource, challenged, err := discoverProtectedResource(ctx, g.client, g.resource, g.issuer, g.clientInfo)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	issuer, err := discoverAuthorizationIssuer(ctx, g.client, g.issuer)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
 	if err := g.grant.validateIssuer(issuer); err != nil {
-		return nil, err
+		return "", err
 	}
 	scopes := g.requestScopes(resource)
 	if g.grant.recoversChallenges() {
 		if len(challenged) > 0 {
 			scopes = challenged
 		}
-		scopes = unionScopes(g.requested, g.granted, scopes)
+		scopes = unionScopes(g.state.Requested, g.state.Granted, scopes)
 	}
-	known := unionScopes(g.requested, g.granted)
+	known := unionScopes(g.state.Requested, g.state.Granted)
 	if !g.reusableGrant() || !includesScopes(known, scopes) {
-		previous := g.token
+		ready, available := g.state.State.AsReady()
+		var previous *genaccesstokens.BearerToken
+		if available {
+			previous = ready.Token
+		}
 		if !includesScopes(known, scopes) {
 			previous = nil
 		}
-		if err := g.obtain(ctx, issuer, scopes, previous); err != nil {
-			return nil, err
+		if err := g.obtain(ctx, issuer, scopes, previous, records); err != nil {
+			return "", err
 		}
-		span.AddEvent("access token obtained")
 	}
-	request.Header.Set("Authorization", "Bearer "+g.token.AccessToken)
-	return g.token, nil
+	ready, _ := g.state.State.AsReady()
+	request.Header.Set("Authorization", "Bearer "+ready.Token.AccessToken)
+	return ready.Issuance, nil
 }
 
 // discoverAuthorizationIssuer reads OAuth and OpenID metadata in the specified order. The
@@ -208,7 +227,7 @@ func includesScopes(granted, required []string) bool {
 // Browser clients may refresh or request additional consent; machine clients
 // return the rejection. Concurrent operations reuse a credential already changed
 // by another operation instead of rotating the same refresh token twice.
-func (g *authorizationClient) recover(request *http.Request, response *HTTPResponseError, sent *genaccesstokens.BearerToken) (recovered bool, err error) {
+func (g *authorizationClient) recover(request *http.Request, response *HTTPResponseError, sent string) (recovered bool, err error) {
 	if !g.grant.recoversChallenges() || (response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden) {
 		return false, nil
 	}
@@ -228,12 +247,22 @@ func (g *authorizationClient) recover(request *http.Request, response *HTTPRespo
 	if len(challenges) == 0 {
 		return false, nil
 	}
-	select {
-	case g.lock <- struct{}{}:
-		defer func() { <-g.lock }()
-	case <-ctx.Done():
-		return false, ctx.Err()
+	err = withAuthorizationCredentials(ctx, g.store, g.keys, func(ctx context.Context, records []AuthorizationCredential) error {
+		if err := g.loadCredential(ctx, records[0]); err != nil {
+			return err
+		}
+		recovered, err = g.recoverCredential(ctx, request, response, challenges, sent, records)
+		return err
+	})
+	if recovered {
+		span.AddEvent("resource grant renewed")
 	}
+	return recovered, err
+}
+
+// recoverCredential compares stable issuance identifiers, so a record loaded
+// in another process can satisfy a stale rejection without refreshing twice.
+func (g *authorizationClient) recoverCredential(ctx context.Context, request *http.Request, response *HTTPResponseError, challenges []oauthChallenge, sent string, records []AuthorizationCredential) (bool, error) {
 	_, challenge, err := challengedProtectedResource(ctx, g.client, g.resource, g.issuer, challenges)
 	if err != nil {
 		return false, err
@@ -244,12 +273,13 @@ func (g *authorizationClient) recover(request *http.Request, response *HTTPRespo
 	if response.StatusCode == http.StatusUnauthorized && challenge.error != "" && challenge.error != "invalid_token" && challenge.error != oauthInsufficientScope {
 		return false, nil
 	}
-	scopes := unionScopes(g.requested, g.granted, challenge.scopes)
-	if g.reusableGrant() && g.token != sent && includesScopes(unionScopes(g.requested, g.granted), scopes) {
-		request.Header.Set("Authorization", "Bearer "+g.token.AccessToken)
+	ready, available := g.state.State.AsReady()
+	scopes := unionScopes(g.state.Requested, g.state.Granted, challenge.scopes)
+	if g.reusableGrant() && available && ready.Issuance != sent && includesScopes(unionScopes(g.state.Requested, g.state.Granted), scopes) {
+		request.Header.Set("Authorization", "Bearer "+ready.Token.AccessToken)
 		return true, nil
 	}
-	if challenge.error == oauthInsufficientScope && includesScopes(g.requested, challenge.scopes) {
+	if challenge.error == oauthInsufficientScope && includesScopes(g.state.Requested, challenge.scopes) {
 		return false, nil
 	}
 	issuer, err := discoverAuthorizationIssuer(ctx, g.client, g.issuer)
@@ -259,24 +289,31 @@ func (g *authorizationClient) recover(request *http.Request, response *HTTPRespo
 	if err := g.grant.validateIssuer(issuer); err != nil {
 		return false, err
 	}
-	previous := g.token
-	if !includesScopes(unionScopes(g.requested, g.granted), scopes) {
+	var previous *genaccesstokens.BearerToken
+	if available {
+		previous = ready.Token
+	}
+	if !includesScopes(unionScopes(g.state.Requested, g.state.Granted), scopes) {
 		previous = nil
 	}
-	if err := g.obtain(ctx, issuer, scopes, previous); err != nil {
+	if err := g.obtain(ctx, issuer, scopes, previous, records); err != nil {
 		return false, err
 	}
-	request.Header.Set("Authorization", "Bearer "+g.token.AccessToken)
-	span.AddEvent("resource grant renewed")
+	ready, _ = g.state.State.AsReady()
+	request.Header.Set("Authorization", "Bearer "+ready.Token.AccessToken)
 	return true, nil
 }
 
 // obtain completes one grant and validates its lifetime before retaining it.
 // Returned permissions remain issuer facts; the resource decides whether they
 // permit an operation. Failed exchanges leave no access credential for the next call.
-func (g *authorizationClient) obtain(ctx context.Context, issuer *genissuermetadata.ReadResult, scopes []string, previous *genaccesstokens.BearerToken) error {
-	g.token = nil
-	token, obtained, err := g.grant.acquire(ctx, g.client, g.resource.String(), issuer, scopes, previous)
+func (g *authorizationClient) obtain(ctx context.Context, issuer *genissuermetadata.ReadResult, scopes []string, previous *genaccesstokens.BearerToken, records []AuthorizationCredential) error {
+	g.state.State = genaccesstokens.NewStatePending("exchange")
+	g.state.Requested = slices.Clone(scopes)
+	if err := g.saveCredential(ctx, records[0]); err != nil {
+		return err
+	}
+	token, obtained, err := g.grant.acquire(ctx, g.client, g.resource.String(), issuer, scopes, previous, records)
 	if err != nil {
 		return err
 	}
@@ -287,7 +324,12 @@ func (g *authorizationClient) obtain(ctx context.Context, issuer *genissuermetad
 	if token.ExpiresIn != nil && int64(time.Since(obtained)/time.Second) >= *token.ExpiresIn {
 		return errors.New("mcp: authorization server returned an expired access token")
 	}
-	g.token, g.obtained, g.granted, g.requested = token, obtained, granted, slices.Clone(scopes)
+	g.obtained, g.state.Granted = obtained, granted
+	g.state.State = genaccesstokens.NewStateReady(&genaccesstokens.ResourceCredentialReady{Token: token, Obtained: obtained.Format(time.RFC3339Nano), Issuance: rand.Text()})
+	if err := g.saveCredential(ctx, records[0]); err != nil {
+		return err
+	}
+	trace.SpanFromContext(ctx).AddEvent("resource access credential obtained and saved")
 	return nil
 }
 
@@ -308,5 +350,49 @@ func unionScopes(sets ...[]string) []string {
 // reusableGrant accepts only a retained access token with a known remaining
 // lifetime. A stale concurrent rejection cannot reuse an already-expired grant.
 func (g *authorizationClient) reusableGrant() bool {
-	return g.token != nil && g.token.ExpiresIn != nil && int64(time.Since(g.obtained)/time.Second) < *g.token.ExpiresIn
+	ready, available := g.state.State.AsReady()
+	return available && ready.Token.ExpiresIn != nil && int64(time.Since(g.obtained)/time.Second) < *ready.Token.ExpiresIn
+}
+
+// loadCredential validates the complete saved value and its exact owner before
+// allowing reuse. An absent or pending record requires a fresh grant.
+func (g *authorizationClient) loadCredential(ctx context.Context, record AuthorizationCredential) error {
+	data, exists, err := record.Load()
+	if err != nil {
+		return authorizationFailure(ctx, "credential load", err)
+	}
+	if !exists {
+		g.state = &genaccesstokens.ResourceCredentialState{Binding: slices.Clone(g.bindings[0]), State: genaccesstokens.NewStatePending("exchange")}
+		g.obtained = time.Time{}
+		return nil
+	}
+	state, err := genaccesstokens.DecodeResourceCredentialState(data)
+	if err != nil {
+		return authorizationFailure(ctx, "stored resource credential validation", err)
+	}
+	if !slices.Equal(state.Binding, g.bindings[0]) {
+		return errors.New("mcp: stored resource credential belongs to another authorization owner")
+	}
+	obtained := time.Time{}
+	if ready, available := state.State.AsReady(); available {
+		obtained, err = time.Parse(time.RFC3339Nano, ready.Obtained)
+		if err != nil {
+			return authorizationFailure(ctx, "stored credential time", err)
+		}
+	}
+	g.state, g.obtained = state, obtained
+	return nil
+}
+
+// saveCredential encodes the private generated record and commits it before a
+// consumed refresh credential or a new MCP bearer can escape this operation.
+func (g *authorizationClient) saveCredential(ctx context.Context, record AuthorizationCredential) error {
+	data, err := genaccesstokens.EncodeResourceCredentialState(g.state)
+	if err != nil {
+		return authorizationFailure(ctx, "resource credential encoding", err)
+	}
+	if err := record.Save(data); err != nil {
+		return authorizationFailure(ctx, "credential save", err)
+	}
+	return nil
 }

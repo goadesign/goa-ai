@@ -87,15 +87,15 @@ func TestAuthorizationCodeRefreshRotation(t *testing.T) {
 	peer.tokenBody = `{"access_token":"opaque-token","token_type":"Bearer","expires_in":3600,"refresh_token":"private-refresh-one","scope":"records:read"}`
 	transport := peer.transport(t, peer.authorize(t))
 	require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
-	transport.authorization.obtained = time.Now().Add(-2 * time.Hour)
+	setOAuthCredentialTime(t, transport, time.Now().Add(-2*time.Hour))
 	peer.tokenBody = `{"access_token":"opaque-token","token_type":"Bearer","expires_in":3600,"refresh_token":"private-refresh-two"}`
 	require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
-	transport.authorization.obtained = time.Now().Add(-2 * time.Hour)
+	setOAuthCredentialTime(t, transport, time.Now().Add(-2*time.Hour))
 	peer.tokenBody = `{"access_token":"opaque-token","token_type":"Bearer","expires_in":3600}`
 	require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 	assert.EqualValues(t, 1, peer.hostCalls.Load())
 	assert.EqualValues(t, 3, peer.tokenCalls.Load())
-	assert.Equal(t, "private-refresh-two", *transport.authorization.token.RefreshToken)
+	assert.Equal(t, "private-refresh-two", *storedOAuthCredential(t, transport).Token.RefreshToken)
 	peer.mutex.Lock()
 	defer peer.mutex.Unlock()
 	require.Len(t, peer.forms, 3)
@@ -262,7 +262,7 @@ func TestAuthorizationCodeCancellationAndReplay(t *testing.T) {
 			return first, err
 		})
 		require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
-		transport.authorization.obtained = time.Now().Add(-2 * time.Hour)
+		setOAuthCredentialTime(t, transport, time.Now().Add(-2*time.Hour))
 		require.Error(t, callOAuthPeer(t.Context(), transport, peer.resource))
 		assert.EqualValues(t, 1, peer.tokenCalls.Load())
 		assert.EqualValues(t, 1, peer.mcpCalls.Load())
@@ -411,7 +411,7 @@ func TestAuthorizationCodeClientMetadata(t *testing.T) {
 			peer.issuerBody = strings.TrimSuffix(peer.issuerBody, "}") + `,"client_id_metadata_document_supported":true}`
 			redirect := "https://host.example/callback/a%2Fb?route=selected"
 			peer.clientMetadata = strings.NewReplacer("CLIENT", peer.clientID, "REDIRECT", redirect).Replace(tc.document)
-			transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{
+			transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{Store: NewMemoryAuthorizationStore(),
 				Registration: publicTestRegistration(t, peer.issuer, peer.clientID, true), RedirectURI: redirect, Authorize: peer.authorize(t),
 			})
 			require.NoError(t, err)
@@ -486,14 +486,14 @@ func TestAuthorizationCodeMetadataDefaultsAndHostIsolation(t *testing.T) {
 	require.NoError(t, callOAuthPeer(t.Context(), second, peer.resource))
 	assert.EqualValues(t, 2, peer.hostCalls.Load())
 	assert.EqualValues(t, 2, peer.tokenCalls.Load())
-	assert.NotSame(t, first.authorization.token, second.authorization.token)
+	assert.NotSame(t, first.authorization.store, second.authorization.store)
 }
 
 func TestAuthorizationCodeMetadataRegistrationRequiresIssuerSupport(t *testing.T) {
 	peer := newBrowserOAuthPeer(t)
 	transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{
 		Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"},
-	}, AuthorizationCode{Registration: publicTestRegistration(t, peer.issuer, peer.server.URL+"/client/document.json", true),
+	}, AuthorizationCode{Store: NewMemoryAuthorizationStore(), Registration: publicTestRegistration(t, peer.issuer, peer.server.URL+"/client/document.json", true),
 		RedirectURI: "https://host.example/callback", Authorize: peer.authorize(t)})
 	require.NoError(t, err)
 	err = callOAuthPeer(t.Context(), transport, peer.resource)
@@ -509,7 +509,7 @@ func TestAuthorizationCodeClientMetadataValidIdentifiers(t *testing.T) {
 		t.Run(identifier, func(t *testing.T) {
 			_, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{
 				Endpoint: "https://resource.example/mcp", ClientInfo: ClientInfo{Name: "host", Version: "1"},
-			}, AuthorizationCode{Registration: publicTestRegistration(t, "https://issuer.example", identifier, true),
+			}, AuthorizationCode{Store: NewMemoryAuthorizationStore(), Registration: publicTestRegistration(t, "https://issuer.example", identifier, true),
 				RedirectURI: "https://host.example/callback", Authorize: func(context.Context, string) (string, error) { return "", nil }})
 			assert.NoError(t, err)
 		})
@@ -555,10 +555,10 @@ func TestAuthorizationCodeClientMetadataRefresh(t *testing.T) {
 			peer.clientMetadata = fmt.Sprintf(`{"client_id":%q,"client_name":"Example","redirect_uris":["https://host.example/callback/a%%2Fb?route=selected"],"token_endpoint_auth_method":"none","grant_types":%s}`, peer.clientID, grants)
 			peer.issuerBody = strings.TrimSuffix(peer.issuerBody, "}") + `,"client_id_metadata_document_supported":true}`
 			peer.tokenBody = `{"access_token":"opaque-token","token_type":"Bearer","expires_in":3600,"refresh_token":"private-refresh"}`
-			transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{Registration: publicTestRegistration(t, peer.issuer, peer.clientID, true), RedirectURI: "https://host.example/callback/a%2Fb?route=selected", Authorize: peer.authorize(t)})
+			transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{Store: NewMemoryAuthorizationStore(), Registration: publicTestRegistration(t, peer.issuer, peer.clientID, true), RedirectURI: "https://host.example/callback/a%2Fb?route=selected", Authorize: peer.authorize(t)})
 			require.NoError(t, err)
 			require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
-			transport.authorization.obtained = time.Now().Add(-2 * time.Hour)
+			setOAuthCredentialTime(t, transport, time.Now().Add(-2*time.Hour))
 			require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 			peer.mutex.Lock()
 			defer peer.mutex.Unlock()
@@ -751,9 +751,15 @@ func newBrowserOAuthPeer(t *testing.T) *browserOAuthPeer {
 // transport constructs a public client with a host callback scoped to this peer.
 func (p *browserOAuthPeer) transport(t *testing.T, authorize func(context.Context, string) (string, error)) *HTTPTransport {
 	t.Helper()
+	return p.transportWithStore(t, authorize, NewMemoryAuthorizationStore())
+}
+
+// transportWithStore constructs a new host transport using the supplied account store.
+func (p *browserOAuthPeer) transportWithStore(t *testing.T, authorize func(context.Context, string) (string, error), store AuthorizationStore) *HTTPTransport {
+	t.Helper()
 	transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{
 		Endpoint: p.resource, Client: p.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"},
-	}, AuthorizationCode{
+	}, AuthorizationCode{Store: store,
 		Registration: publicTestRegistration(t, p.issuer, "registered-public", false), RedirectURI: "https://host.example/callback/a%2Fb?route=selected",
 		Authorize: authorize,
 	})

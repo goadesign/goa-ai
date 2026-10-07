@@ -32,10 +32,8 @@ type (
 		client       *http.Client
 		source       func(context.Context) (string, error)
 		kind         enterpriseCredentialKind
-		lock         chan struct{}
-		refresh      *genidentitygrants.IdentityRefresh
-		obtained     time.Time
-		bootstrapErr error
+		store        AuthorizationStore
+		binding      []string
 	}
 	// EnterpriseAuthorization requests resource permissions through a user's
 	// constructed identity and an independent resource-issuer registration.
@@ -74,24 +72,24 @@ const (
 // NewIDTokenEnterpriseIdentity constructs a user identity from the host's
 // validated OpenID Connect ID token. Signed and encrypted tokens are accepted;
 // the identity provider validates them before issuing an authorization grant.
-func NewIDTokenEnterpriseIdentity(registration *ClientRegistration, client *http.Client, source func(context.Context) (string, error)) (*EnterpriseIdentity, error) {
-	return newEnterpriseIdentity(registration, client, source, enterpriseIDToken)
+func NewIDTokenEnterpriseIdentity(registration *ClientRegistration, client *http.Client, store AuthorizationStore, source func(context.Context) (string, error)) (*EnterpriseIdentity, error) {
+	return newEnterpriseIdentity(registration, client, store, source, enterpriseIDToken)
 }
 
 // NewSAMLEnterpriseIdentity constructs a user identity from the host's validated
 // SAML assertion. Goa AI encodes the assertion and exchanges it once for an
 // identity-provider refresh credential shared by this user's MCP resources.
-// A failed bootstrap is terminal for this identity; a fresh host credential
-// requires constructing a new identity rather than resending the assertion.
-func NewSAMLEnterpriseIdentity(registration *ClientRegistration, client *http.Client, source func(context.Context) (string, error)) (*EnterpriseIdentity, error) {
-	return newEnterpriseIdentity(registration, client, source, enterpriseSAML)
+// The callback must obtain a fresh assertion whenever called, including after
+// an uncertain bootstrap. It must never return a previously submitted assertion.
+func NewSAMLEnterpriseIdentity(registration *ClientRegistration, client *http.Client, store AuthorizationStore, source func(context.Context) (string, error)) (*EnterpriseIdentity, error) {
+	return newEnterpriseIdentity(registration, client, store, source, enterpriseSAML)
 }
 
 // NewRefreshTokenEnterpriseIdentity constructs a user identity from a refresh
 // credential already owned by the host's SSO flow. Each resource renewal asks
 // the host for its current credential and obtains a fresh identity grant.
-func NewRefreshTokenEnterpriseIdentity(registration *ClientRegistration, client *http.Client, source func(context.Context) (string, error)) (*EnterpriseIdentity, error) {
-	return newEnterpriseIdentity(registration, client, source, enterpriseRefresh)
+func NewRefreshTokenEnterpriseIdentity(registration *ClientRegistration, client *http.Client, store AuthorizationStore, source func(context.Context) (string, error)) (*EnterpriseIdentity, error) {
+	return newEnterpriseIdentity(registration, client, store, source, enterpriseRefresh)
 }
 
 // NewEnterpriseHTTPTransport constructs a resource-bound authorized transport.
@@ -105,27 +103,34 @@ func NewEnterpriseHTTPTransport(opts HTTPOptions, config EnterpriseAuthorization
 		return nil, err
 	}
 	grant := &enterpriseGrant{identity: config.Identity, registration: config.Registration}
-	return newAuthorizationHTTPTransport(opts, config.Registration.issuer.String(), config.Scopes, grant)
+	return newAuthorizationHTTPTransport(opts, config.Registration, config.Scopes, config.Identity.store, grant)
 }
 
 // newEnterpriseIdentity binds an already-built trusted client and credential
 // source to one user registration. Credential-bearing requests cannot redirect.
-func newEnterpriseIdentity(registration *ClientRegistration, client *http.Client, source func(context.Context) (string, error), kind enterpriseCredentialKind) (*EnterpriseIdentity, error) {
+func newEnterpriseIdentity(registration *ClientRegistration, client *http.Client, store AuthorizationStore, source func(context.Context) (string, error), kind enterpriseCredentialKind) (*EnterpriseIdentity, error) {
 	if err := validateClientRegistration(registration); err != nil {
 		return nil, err
 	}
-	if client == nil || source == nil {
-		return nil, errors.New("mcp: enterprise identity requires a trusted HTTP client and host credential source")
+	if client == nil || store == nil || source == nil {
+		return nil, errors.New("mcp: enterprise identity requires a trusted HTTP client, authorization store and host credential source")
 	}
 	configured := *client
 	configured.CheckRedirect = rejectAuthorizationRedirect
-	return &EnterpriseIdentity{registration: registration, client: &configured, source: source, kind: kind, lock: make(chan struct{}, 1)}, nil
+	purpose := oauthIdentityIDTokenType
+	if kind == enterpriseRefresh {
+		purpose = oauthIdentityRefreshType
+	}
+	if kind == enterpriseSAML {
+		purpose = "saml_bootstrap"
+	}
+	return &EnterpriseIdentity{registration: registration, client: &configured, store: store, source: source, kind: kind, binding: []string{"identity", purpose, registration.issuer.String(), registration.clientID, registration.authentication}}, nil
 }
 
 // identityGrant serializes this user's identity exchanges. It validates the IdP
 // registration, obtains or reuses SAML bootstrap, and returns one non-bearer grant
 // for the exact resource issuer and MCP resource without retaining that grant.
-func (i *EnterpriseIdentity) identityGrant(ctx context.Context, audience, resource string, scopes []string) (grant *genidentitygrants.IdentityGrant, obtained time.Time, err error) {
+func (i *EnterpriseIdentity) identityGrant(ctx context.Context, audience, resource string, scopes []string, record AuthorizationCredential) (grant *genidentitygrants.IdentityGrant, obtained time.Time, err error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.oauth.identity_grant")
 	defer span.End()
 	defer func() {
@@ -135,12 +140,16 @@ func (i *EnterpriseIdentity) identityGrant(ctx context.Context, audience, resour
 		}
 	}()
 	span.SetAttributes(attribute.String("oauth.issuer", i.registration.issuer.String()), attribute.String("oauth.resource", resource))
-	select {
-	case i.lock <- struct{}{}:
-		defer func() { <-i.lock }()
-	case <-ctx.Done():
-		return nil, time.Time{}, ctx.Err()
+	grant, obtained, err = i.identityGrantCredential(ctx, audience, resource, scopes, record)
+	if err == nil {
+		span.AddEvent("identity authorization grant obtained")
 	}
+	return grant, obtained, err
+}
+
+// identityGrantCredential holds this user's identity record while obtaining one
+// grant. Resource token storage is a separate record owned by the resource client.
+func (i *EnterpriseIdentity) identityGrantCredential(ctx context.Context, audience, resource string, scopes []string, record AuthorizationCredential) (*genidentitygrants.IdentityGrant, time.Time, error) {
 	issuer, err := discoverAuthorizationIssuer(ctx, i.client, i.registration.issuer)
 	if err != nil {
 		return nil, time.Time{}, err
@@ -154,45 +163,23 @@ func (i *EnterpriseIdentity) identityGrant(ctx context.Context, audience, resour
 	if err := i.registration.validateEnterpriseMetadata(ctx, i.client, oauthIdentityExchange); err != nil {
 		return nil, time.Time{}, err
 	}
-	credential, kind, err := i.subject(ctx, issuer)
+	credential, kind, err := i.subject(ctx, issuer, record)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	grant, obtained, err = i.registration.exchangeIdentity(ctx, i.client, issuer, kind, credential, audience, resource, scopes)
+	grant, obtained, err := i.registration.exchangeIdentity(ctx, i.client, issuer, kind, credential, audience, resource, scopes)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	span.AddEvent("identity authorization grant obtained")
 	return grant, obtained, nil
 }
 
-// subject obtains a host credential or reuses this user's SAML bootstrap result.
-// Bootstrap failure or expiration stops the flow; no consumed assertion is retried.
-func (i *EnterpriseIdentity) subject(ctx context.Context, issuer *genissuermetadata.ReadResult) (string, string, error) {
+// subject obtains a current host credential or loads SAML bootstrap from this
+// user's store. An expired or pending bootstrap asks for a fresh host assertion.
+func (i *EnterpriseIdentity) subject(ctx context.Context, issuer *genissuermetadata.ReadResult, record AuthorizationCredential) (string, string, error) {
 	if i.kind == enterpriseSAML {
-		if i.bootstrapErr != nil {
-			return "", "", i.bootstrapErr
-		}
-		if i.refresh == nil {
-			credential, err := i.source(ctx)
-			if err == nil && credential == "" {
-				err = errors.New("empty host identity credential")
-			}
-			if err != nil {
-				i.bootstrapErr = authorizationFailure(ctx, "host identity credential", err)
-				return "", "", i.bootstrapErr
-			}
-			encoded := base64.RawURLEncoding.EncodeToString([]byte(credential))
-			i.refresh, i.obtained, err = i.registration.bootstrapIdentity(ctx, i.client, issuer, encoded)
-			if err != nil {
-				i.bootstrapErr = err
-				return "", "", err
-			}
-		}
-		if i.refresh.ExpiresIn != nil && int64(time.Since(i.obtained)/time.Second) >= *i.refresh.ExpiresIn {
-			return "", "", errors.New("mcp: identity-provider refresh credential has expired")
-		}
-		return i.refresh.AccessToken, oauthIdentityRefreshType, nil
+		credential, err := i.samlSubject(ctx, issuer, record)
+		return credential, oauthIdentityRefreshType, err
 	}
 	credential, err := i.source(ctx)
 	if err != nil {
@@ -208,6 +195,72 @@ func (i *EnterpriseIdentity) subject(ctx context.Context, issuer *genissuermetad
 	return credential, subjectType, nil
 }
 
+// samlSubject loads a generated identity record before reusing its credential.
+// A new bootstrap records its pending state before requesting a fresh assertion,
+// then saves the validated refresh credential before any resource grant can use it.
+func (i *EnterpriseIdentity) samlSubject(ctx context.Context, issuer *genissuermetadata.ReadResult, record AuthorizationCredential) (string, error) {
+	data, exists, err := record.Load()
+	if err != nil {
+		return "", authorizationFailure(ctx, "identity credential load", err)
+	}
+	state := &genidentitygrants.IdentityCredentialState{Binding: slices.Clone(i.binding), State: genidentitygrants.NewStatePending("exchange")}
+	if exists {
+		state, err = genidentitygrants.DecodeIdentityCredentialState(data)
+		if err != nil {
+			return "", authorizationFailure(ctx, "stored identity credential validation", err)
+		}
+		if !slices.Equal(state.Binding, i.binding) {
+			return "", errors.New("mcp: stored identity credential belongs to another authorization owner")
+		}
+		if ready, available := state.State.AsReady(); available {
+			obtained, err := time.Parse(time.RFC3339Nano, ready.Obtained)
+			if err != nil {
+				return "", authorizationFailure(ctx, "stored identity credential time", err)
+			}
+			if ready.Credential.ExpiresIn == nil || int64(time.Since(obtained)/time.Second) < *ready.Credential.ExpiresIn {
+				return ready.Credential.AccessToken, nil
+			}
+		}
+	}
+	state.State = genidentitygrants.NewStatePending("exchange")
+	if err := saveIdentityCredential(ctx, record, state); err != nil {
+		return "", err
+	}
+	credential, err := i.source(ctx)
+	if err != nil {
+		return "", authorizationFailure(ctx, "fresh host SAML credential", err)
+	}
+	if credential == "" {
+		return "", errors.New("mcp: fresh host SAML credential is empty")
+	}
+	encoded := base64.RawURLEncoding.EncodeToString([]byte(credential))
+	refresh, obtained, err := i.registration.bootstrapIdentity(ctx, i.client, issuer, encoded)
+	if err != nil {
+		return "", err
+	}
+	if refresh.ExpiresIn != nil && int64(time.Since(obtained)/time.Second) >= *refresh.ExpiresIn {
+		return "", errors.New("mcp: identity provider returned an expired refresh credential")
+	}
+	state.State = genidentitygrants.NewStateReady(&genidentitygrants.IdentityCredentialReady{Credential: refresh, Obtained: obtained.Format(time.RFC3339Nano)})
+	if err := saveIdentityCredential(ctx, record, state); err != nil {
+		return "", err
+	}
+	return refresh.AccessToken, nil
+}
+
+// saveIdentityCredential commits only a generated, validated private record.
+// Storage or encoding failures stop before its identity credential can be used.
+func saveIdentityCredential(ctx context.Context, record AuthorizationCredential, state *genidentitygrants.IdentityCredentialState) error {
+	data, err := genidentitygrants.EncodeIdentityCredentialState(state)
+	if err != nil {
+		return authorizationFailure(ctx, "identity credential encoding", err)
+	}
+	if err := record.Save(data); err != nil {
+		return authorizationFailure(ctx, "identity credential save", err)
+	}
+	return nil
+}
+
 // validateIssuer checks registered resource authentication and mandatory metadata
 // relationships when the optional identity-grant profile is advertised.
 func (g *enterpriseGrant) validateIssuer(issuer *genissuermetadata.ReadResult) error {
@@ -219,11 +272,11 @@ func (g *enterpriseGrant) validateIssuer(issuer *genissuermetadata.ReadResult) e
 
 // acquire obtains a fresh IdP grant and redeems it at the resource issuer. Scope
 // narrowing survives an omitted final scope; browser refresh is never substituted.
-func (g *enterpriseGrant) acquire(ctx context.Context, client *http.Client, resource string, issuer *genissuermetadata.ReadResult, scopes []string, _ *genaccesstokens.BearerToken) (*genaccesstokens.BearerToken, time.Time, error) {
+func (g *enterpriseGrant) acquire(ctx context.Context, client *http.Client, resource string, issuer *genissuermetadata.ReadResult, scopes []string, _ *genaccesstokens.BearerToken, records []AuthorizationCredential) (*genaccesstokens.BearerToken, time.Time, error) {
 	if err := g.registration.validateEnterpriseMetadata(ctx, client, oauthIdentityRedemption); err != nil {
 		return nil, time.Time{}, err
 	}
-	grant, obtained, err := g.identity.identityGrant(ctx, g.registration.issuer.String(), resource, scopes)
+	grant, obtained, err := g.identity.identityGrant(ctx, g.registration.issuer.String(), resource, scopes, records[1])
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -262,4 +315,13 @@ func (r *ClientRegistration) validateEnterpriseMetadata(ctx context.Context, cli
 		return errors.New("mcp: client metadata does not register the enterprise grant")
 	}
 	return nil
+}
+
+// credentialBindings separates resource issuers and the host identity registration
+// while retaining one user's storage namespace across process restarts.
+func (g *enterpriseGrant) credentialBindings(resource string) [][]string {
+	return [][]string{
+		slices.Concat([]string{"resource", "enterprise", g.registration.issuer.String(), g.registration.clientID, g.registration.authentication}, g.identity.binding, []string{resource}),
+		slices.Clone(g.identity.binding),
+	}
 }

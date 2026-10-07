@@ -4,7 +4,10 @@
 // Native decoders also validate browser responses and verified access-token claims.
 package design
 
-import . "goa.design/goa/v3/dsl"
+import (
+	_ "goa.design/goa-ai/dsl"
+	. "goa.design/goa/v3/dsl"
+)
 
 var _ = Service("access_token_claims", func() {
 	Description("Decode verified JWT access-token claims before the resource server checks their issuer, audience and validity times.")

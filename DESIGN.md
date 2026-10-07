@@ -2716,8 +2716,8 @@ The limit spans one HTTP request round, including stream retries. Concurrent
 rejections reuse a credential already changed by another call instead of rotating
 the same refresh token again. Definite authorization rejections remain distinct
 from lost tool results. A rejection after an earlier lost response retains the
-unknown outcome and the later HTTP status. Durable host authorization and
-independent conformance remain release gates.
+unknown outcome and the later HTTP status. Independent authorization conformance
+and complete caller cutover remain release gates.
 
 Enterprise authorization adds a user identity owner above the existing resource
 grant owner. Application registration remains immutable and user-independent.
@@ -2727,8 +2727,8 @@ forms for each constructed authentication profile. Identity grants require their
 exact issued purpose and token_type=N_A; only resource redemption returns the
 existing bearer result. Separate IdP and resource clients retain separate trust.
 A user identity serializes SAML bootstrap and retains its IdP refresh credential
-across resources; resource access tokens remain isolated. Failed bootstrap is
-terminal for that identity rather than permission to resend a consumed assertion.
+across resources; resource access tokens remain isolated. Pending or expired
+bootstrap requests a fresh host assertion rather than resending a consumed one.
 Renewal requests a fresh IdP grant rather than substituting browser refresh.
 An IdP scope restriction remains effective when the resource response omits scope.
 Optional profile advertisements do not replace explicit configuration; positive
@@ -2832,6 +2832,36 @@ receive error responses.
 - Add MCP concepts in `expr/mcp.go` and update the MCP expression builder
 - Add registry concepts in `expr/agent/registry.go`
 - Keep new templates small and transport-agnostic; compose on Goa JSON-RPC outputs
+
+### Private OAuth credential storage
+
+The host owns one `AuthorizationStore` namespace per user or application. The
+store acquires the complete set of records for an operation through
+`WithCredentials`, so enterprise resource acquisition and identity bootstrap do
+not nest locks. Record saves commit independently before returning; callback
+failure cannot undo a completed pending marker. The framework's explicit memory
+store acquires overlapping keys in a fixed order and uses the same runtime path
+as durable host storage.
+
+The private OAuth design defines resource and identity records. Existing
+complete-value codecs validate their exact typed shape and binding. Registration,
+issuer, grant purpose, redirect and resource facts determine record keys once at
+construction; no user identity is inferred from a registration. The host selects
+its authenticated user's storage namespace and keeps records encrypted.
+
+Resource renewal records its pending state before using a refresh credential,
+then saves the issued token before MCP dispatch. A private issuance identifier
+survives reloads so stale concurrent rejections can reuse another operation's
+replacement. Requested and granted permissions survive uncertain exchanges.
+SAML bootstrap keeps a separate identity record shared by the same user's
+resources. A pending or expired bootstrap asks the host for a fresh assertion;
+assertions and intermediate identity grants are never saved.
+
+An uncertain store result is resolved only by the next load. A committed ready
+record can be reused; a pending record requires new host authorization. Invalid
+saved data and mismatched owners fail at the generated-code boundary. Records do
+not enter agent state and no other logical service accesses this host's private
+persistence. The current branch has no deployed durable format to migrate.
 
 ## Summary
 

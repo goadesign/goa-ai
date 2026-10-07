@@ -78,7 +78,7 @@ func TestSignedAuthorizationCodeAndRefresh(t *testing.T) {
 					`{"access_token":"opaque-token","token_type":"Bearer","expires_in":3600,"refresh_token":"private-refresh-two"}`,
 					`{"access_token":"opaque-token","token_type":"Bearer","expires_in":3600}`,
 				} {
-					transport.authorization.obtained = time.Now().Add(-2 * time.Hour)
+					setOAuthCredentialTime(t, transport, time.Now().Add(-2 * time.Hour))
 					peer.tokenBody = reply
 					require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 				}
@@ -94,7 +94,7 @@ func TestSignedAuthorizationCodeAndRefresh(t *testing.T) {
 				assert.Equal(t, "refresh_token", peer.forms[1].Get("grant_type"))
 				assert.Equal(t, "private-refresh-one", peer.forms[1].Get("refresh_token"))
 				assert.Equal(t, "private-refresh-two", peer.forms[2].Get("refresh_token"))
-				assert.Equal(t, "private-refresh-two", *transport.authorization.token.RefreshToken)
+				assert.Equal(t, "private-refresh-two", *storedOAuthCredential(t, transport).Token.RefreshToken)
 				for _, form := range peer.forms[1:] {
 					assert.NotContains(t, form, "code")
 					assert.NotContains(t, form, "code_verifier")
@@ -182,7 +182,7 @@ func TestSignedMetadataMachineWithoutBrowserRedirects(t *testing.T) {
 	}
 	registration, err := NewSignedClientMetadataRegistration(config.ClientAssertion)
 	require.NoError(t, err)
-	transport, err := NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, ClientCredentials{Registration: registration})
+	transport, err := NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, ClientCredentials{Store: NewMemoryAuthorizationStore(), Registration: registration})
 	require.NoError(t, err)
 	require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 	assert.Zero(t, peer.hostCalls.Load())
@@ -229,7 +229,7 @@ func signedBrowserTransport(t *testing.T, peer *browserOAuthPeer, registration s
 	}
 	client, err := constructor(registration.ClientAssertion)
 	require.NoError(t, err)
-	transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{Registration: client, RedirectURI: registration.RedirectURI, Authorize: registration.Authorize})
+	transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{Store: NewMemoryAuthorizationStore(), Registration: client, RedirectURI: registration.RedirectURI, Authorize: registration.Authorize})
 	require.NoError(t, err)
 	return transport
 }

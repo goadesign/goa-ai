@@ -30,14 +30,14 @@ func TestClientRegistrationRejectsInvalidHostConfiguration(t *testing.T) {
 		})
 	}
 	for _, registration := range []*ClientRegistration{nil, {}} {
-		_, err := NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: "https://resource.example/mcp"}, ClientCredentials{Registration: registration})
+		_, err := NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: "https://resource.example/mcp"}, ClientCredentials{Store: NewMemoryAuthorizationStore(), Registration: registration})
 		require.Error(t, err)
-		_, err = NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: "https://resource.example/mcp"}, AuthorizationCode{Registration: registration})
+		_, err = NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: "https://resource.example/mcp"}, AuthorizationCode{Store: NewMemoryAuthorizationStore(), Registration: registration})
 		require.Error(t, err)
 	}
 	public, err := NewPublicClientRegistration("https://issuer.example", "registered")
 	require.NoError(t, err)
-	_, err = NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: "https://resource.example/mcp"}, ClientCredentials{Registration: public})
+	_, err = NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: "https://resource.example/mcp"}, ClientCredentials{Store: NewMemoryAuthorizationStore(), Registration: public})
 	assert.ErrorContains(t, err, "confidential")
 }
 
@@ -72,7 +72,7 @@ func TestClientRegistrationMachineSecretProfilesAndTokenIsolation(t *testing.T) 
 				return nil
 			}
 			for range 2 {
-				transport, err := NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, ClientCredentials{Registration: registration})
+				transport, err := NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, ClientCredentials{Store: NewMemoryAuthorizationStore(), Registration: registration})
 				require.NoError(t, err)
 				for range 2 {
 					require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
@@ -111,10 +111,10 @@ func TestClientRegistrationBrowserSecretProfilesAndRefresh(t *testing.T) {
 				return nil
 			}
 			peer.tokenBody = `{"access_token":"opaque-token","token_type":"Bearer","expires_in":3600,"refresh_token":"private-refresh"}`
-			transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{Registration: registration, RedirectURI: "https://host.example/callback/a%2Fb?route=selected", Authorize: peer.authorize(t)})
+			transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{Store: NewMemoryAuthorizationStore(), Registration: registration, RedirectURI: "https://host.example/callback/a%2Fb?route=selected", Authorize: peer.authorize(t)})
 			require.NoError(t, err)
 			require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
-			transport.authorization.obtained = time.Now().Add(-2 * time.Hour)
+			setOAuthCredentialTime(t, transport, time.Now().Add(-2 * time.Hour))
 			require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 			assert.EqualValues(t, 1, peer.hostCalls.Load())
 			assert.EqualValues(t, 2, peer.tokenCalls.Load())

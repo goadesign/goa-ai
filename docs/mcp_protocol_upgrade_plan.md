@@ -2722,3 +2722,67 @@ Configured lint reports zero issues. A second owning generation preserves all 10
 OAuth artifact hashes. No full repository suite was repeated for this increment.
 The earlier full root race and quickstart acceptance covers shared registration;
 it does not close the remaining durable-store, conformance or cutover gates.
+
+
+## Durable host credentials and complete record ownership
+
+The public integration is an explicit `AuthorizationStore` for one authenticated
+host user or application. Registrations remain reusable across users; the host
+owns their separate private storage namespaces. Machine/browser configuration
+requires the store, and enterprise identity supplies it to resource transports.
+An explicit memory store has the same acquisition path as durable implementations.
+No new public token DTO, serializer, parsed identity grant or lease timeout is added.
+
+A storage callback owns all records required by one operation. An enterprise
+operation acquires resource and identity records together rather than nesting
+store calls. This design replaced the first singular callback after the complete
+SAML path exposed its nested-lock requirement. Memory storage acquires keys in a
+fixed order. The host implementation serializes record sets across its instances,
+commits every Save independently and respects cancellation. It never rolls back
+a saved pending state merely because a later token exchange fails.
+
+Private Goa types declare ready/pending unions, existing native token types,
+exact authorization binding, issue time, issuance identity and permission history.
+The existing complete-value codec plugin emits strict encoders/decoders in their
+owning packages; no hand JSON or separate persistence codec is introduced. A native
+probe verified union round trips and rejection of null, unknown fields and invalid
+branch values. Its boolean-enum candidate exposed a generated `boolean` Go type;
+the final private design uses a singleton string branch instead.
+
+Before browser refresh or SAML bootstrap, record the pending state. Save the new
+credential before MCP dispatch. Pending resource state retains prior permissions
+without the possibly consumed refresh credential. After an uncertain exchange or
+save, load storage truth: ready means the result committed; pending means a fresh
+host authorization is required. SAML sources now explicitly obtain a fresh
+assertion on each callback. Token exchange does not ordinarily invalidate its
+input under RFC 8693 section 2.1; do not invent consumption for reusable identity
+refresh inputs or globally invalidate them for an unrelated resource failure.
+
+The current breaking branch has no shipped durable format, deployment or stored
+caller to migrate. Update all constructors and generated caller fixtures together.
+Independent conformance, complete external caller cutover and the remaining MCP
+capabilities still gate release. No release or Goa-AI merge is authorized here.
+
+Goa #4033 is merged at `0feb72e53c785064290f5e831a3959749eebaaa3`; all four module
+pins now use that commit. It fixes the shared explicit HTTP body and mapped
+validation paths, including ordinary JSON, form, command-line and JSON-RPC callers.
+The FormRequest website documentation is in goa.design #269. The completed clean
+Goa clone was removed after verifying its merged target and absence of unpushed work.
+
+Acceptance uses Go 1.27.1 and the final merged Goa pin. The final storage race
+checks pass in 1.8 seconds, including restart reuse, one rotation for concurrent
+stale rejections, independent users, uncertain committed/uncommitted saves,
+corrupt owner records, enterprise recovery and cancellation. Existing affected
+OAuth paths pass in 8.4 seconds. The two compiled generated MCP caller fixtures
+pass in 44.1 seconds. Configured lint reports zero issues. Repeating the owning
+`make gen-mcp-auth` preserves all 106 generated file hashes. The complete root
+suite was not repeated for this increment; earlier root acceptance does not
+substitute for the remaining independent protocol and caller-cutover evidence.
+
+Next, trace the independent authorization referee's actual client entrypoint and
+issuer expectations before selecting its applicable scenarios. Preserve missing
+fixture coverage and revision conflicts rather than add old initialization or
+session behavior. Server-produced additional input, Tasks in both directions,
+dynamic catalogs, Apps and Skills remain unfinished; generated stdio servers
+remain deferred. Reassess sender-constrained tokens and workload identity against
+the current owning protocol contracts before adding a public mechanism.

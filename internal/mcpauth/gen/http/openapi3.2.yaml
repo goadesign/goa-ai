@@ -1345,25 +1345,25 @@ components:
                 access_token:
                     type: string
                     description: Opaque bearer token returned by the issuer
-                    example: e
+                    example: v
                     pattern: ^[A-Za-z0-9._~+/-]+=*$
                     minLength: 1
                 expires_in:
                     type: integer
                     description: Access token lifetime in seconds from the token response
-                    example: 3735090031140556063
+                    example: 4006809786133450000
                     format: int64
                     minimum: 0
                 refresh_token:
                     type: string
                     description: Private refresh credential; never sent to a resource server
-                    example: d
+                    example: h
                     pattern: ^[\x20-\x7e]+$
                     minLength: 1
                 scope:
                     type: string
                     description: Space-separated permissions granted by the issuer
-                    example: ^a {
+                    example: '] *@ z'
                     pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
                 token_type:
                     type: string
@@ -1372,10 +1372,10 @@ components:
                     pattern: ^[Bb][Ee][Aa][Rr][Ee][Rr]$
             description: An opaque resource access token and the optional refresh credential issued in the same grant.
             example:
-                access_token: e
-                expires_in: 3735090031140556063
-                refresh_token: d
-                scope: ^a {
+                access_token: v
+                expires_in: 4006809786133450000
+                refresh_token: h
+                scope: '] *@ z'
                 token_type: BEARER
             required:
                 - access_token
@@ -1561,6 +1561,93 @@ components:
                 - subject_token_type
                 - audience
                 - resource
+        IdentityCredentialReady:
+            type: object
+            properties:
+                credential:
+                    $ref: '#/components/schemas/IdentityRefresh'
+                obtained:
+                    type: string
+                    description: Identity response time used with its reported exclusive lifetime
+                    example: "2004-08-29T05:07:12Z"
+                    format: date-time
+            description: An identity-provider refresh credential obtained from one host SAML authorization.
+            example:
+                credential:
+                    access_token: km
+                    expires_in: 3844732048866780070
+                    issued_token_type: urn:ietf:params:oauth:token-type:refresh_token
+                    scope: I8 y Z
+                    token_type: N_A
+                obtained: "2004-08-29T05:07:12Z"
+            required:
+                - credential
+                - obtained
+        IdentityCredentialState:
+            type: object
+            properties:
+                binding:
+                    type: array
+                    items:
+                        type: string
+                        example: hy
+                        minLength: 1
+                    description: Exact identity provider, registered client and credential purpose
+                    example:
+                        - hy
+                    minItems: 1
+                state:
+                    type: object
+                    example:
+                        type: ready
+                        value:
+                            credential:
+                                access_token: km
+                                expires_in: 3844732048866780070
+                                issued_token_type: urn:ietf:params:oauth:token-type:refresh_token
+                                scope: I8 y Z
+                                token_type: N_A
+                            obtained: "2004-08-29T05:07:12Z"
+                    anyOf:
+                        - type: object
+                          properties:
+                            type:
+                                type: string
+                                enum:
+                                    - ready
+                            value:
+                                $ref: '#/components/schemas/IdentityCredentialReady'
+                          required:
+                            - type
+                            - value
+                        - type: object
+                          properties:
+                            type:
+                                type: string
+                                enum:
+                                    - pending
+                            value:
+                                $ref: '#/components/schemas/StatePending'
+                          required:
+                            - type
+                            - value
+            description: A saved SAML bootstrap credential or an exchange requiring a fresh host assertion.
+            example:
+                binding:
+                    - hy
+                state:
+                    type: ready
+                    value:
+                        credential:
+                            access_token: km
+                            expires_in: 3844732048866780070
+                            issued_token_type: urn:ietf:params:oauth:token-type:refresh_token
+                            scope: I8 y Z
+                            token_type: N_A
+                        obtained: "2004-08-29T05:07:12Z"
+            required:
+                - binding
+                - state
         IdentityGrant:
             type: object
             properties:
@@ -1616,13 +1703,13 @@ components:
                 access_token:
                     type: string
                     description: Opaque identity refresh credential carried in the token-exchange response field
-                    example: 8s
+                    example: km
                     pattern: ^[\x20-\x7e]+$
                     minLength: 1
                 expires_in:
                     type: integer
                     description: Exclusive identity refresh lifetime in seconds when the issuer reports it
-                    example: 7108143979867369890
+                    example: 3844732048866780070
                     format: int64
                     minimum: 0
                 issued_token_type:
@@ -1634,7 +1721,7 @@ components:
                 scope:
                     type: string
                     description: SSO permissions issued for identity refresh, separate from MCP permissions
-                    example: d m
+                    example: I8 y Z
                     pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
                 token_type:
                     type: string
@@ -1644,10 +1731,10 @@ components:
                         - N_A
             description: An identity-provider refresh credential obtained from a SAML assertion; the user identity owner retains it across MCP resources.
             example:
-                access_token: 8s
-                expires_in: 7108143979867369890
+                access_token: km
+                expires_in: 3844732048866780070
                 issued_token_type: urn:ietf:params:oauth:token-type:refresh_token
-                scope: d m
+                scope: I8 y Z
                 token_type: N_A
             required:
                 - issued_token_type
@@ -2082,6 +2169,132 @@ components:
                 - client_id
                 - refresh_token
                 - resource
+        ResourceCredentialReady:
+            type: object
+            properties:
+                issuance:
+                    type: string
+                    description: Private identifier for this issuance, retained across record loads
+                    example: 59g
+                    minLength: 1
+                obtained:
+                    type: string
+                    description: Token response time used with its exclusive expires_in lifetime
+                    example: "2010-03-07T15:27:32Z"
+                    format: date-time
+                token:
+                    $ref: '#/components/schemas/BearerToken'
+            description: One issued resource credential and the permissions retained by its owning client.
+            example:
+                issuance: 59g
+                obtained: "2010-03-07T15:27:32Z"
+                token:
+                    access_token: v
+                    expires_in: 4006809786133450000
+                    refresh_token: h
+                    scope: '] *@ z'
+                    token_type: BEARER
+            required:
+                - token
+                - obtained
+                - issuance
+        ResourceCredentialState:
+            type: object
+            properties:
+                binding:
+                    type: array
+                    items:
+                        type: string
+                        example: k2
+                        minLength: 1
+                    description: Exact grant, issuer, client and resource identity
+                    example:
+                        - k2
+                        - a0
+                    minItems: 1
+                granted:
+                    type: array
+                    items:
+                        type: string
+                        example: ft
+                        pattern: ^[\x21\x23-\x5b\x5d-\x7e]+$
+                    description: Previously granted permissions, retained for fresh authorization
+                    example:
+                        - ft
+                        - "~"
+                requested:
+                    type: array
+                    items:
+                        type: string
+                        example: lO
+                        pattern: ^[\x21\x23-\x5b\x5d-\x7e]+$
+                    description: Permissions requested for this grant, retained across uncertain exchanges
+                    example:
+                        - lO
+                        - s
+                        - B
+                state:
+                    type: object
+                    example:
+                        type: ready
+                        value:
+                            issuance: 59g
+                            obtained: "2010-03-07T15:27:32Z"
+                            token:
+                                access_token: v
+                                expires_in: 4006809786133450000
+                                refresh_token: h
+                                scope: '] *@ z'
+                                token_type: BEARER
+                    anyOf:
+                        - type: object
+                          properties:
+                            type:
+                                type: string
+                                enum:
+                                    - ready
+                            value:
+                                $ref: '#/components/schemas/ResourceCredentialReady'
+                          required:
+                            - type
+                            - value
+                        - type: object
+                          properties:
+                            type:
+                                type: string
+                                enum:
+                                    - pending
+                            value:
+                                $ref: '#/components/schemas/StatePending'
+                          required:
+                            - type
+                            - value
+            description: A saved resource token or an exchange whose previous refresh credential cannot safely be reused.
+            example:
+                binding:
+                    - k2
+                    - a0
+                granted:
+                    - ft
+                    - "~"
+                requested:
+                    - lO
+                    - s
+                    - B
+                state:
+                    type: ready
+                    value:
+                        issuance: 59g
+                        obtained: "2010-03-07T15:27:32Z"
+                        token:
+                            access_token: v
+                            expires_in: 4006809786133450000
+                            refresh_token: h
+                            scope: '] *@ z'
+                            token_type: BEARER
+            required:
+                - binding
+                - state
         SamlRequestBody:
             type: object
             properties:
@@ -2850,6 +3063,12 @@ components:
             required:
                 - client_assertion
                 - subject_token
+        StatePending:
+            type: string
+            description: An exchange may have consumed the preceding credential
+            example: exchange
+            enum:
+                - exchange
     securitySchemes:
         introspection_credentials_header_Authorization:
             type: http

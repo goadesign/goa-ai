@@ -59,7 +59,7 @@ func TestEnterpriseAuthenticationProfilesAndRenewal(t *testing.T) {
 					transport := peer.transport(t, identity)
 					for round := range 2 {
 						if round > 0 {
-							transport.authorization.obtained = time.Now().Add(-2 * time.Hour)
+							setOAuthCredentialTime(t, transport, time.Now().Add(-2*time.Hour))
 						}
 						require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource.resource))
 					}
@@ -95,8 +95,8 @@ func TestEnterpriseDiscoveryCallerAndScopeNarrowing(t *testing.T) {
 	response, err := caller.CallTool(t.Context(), CallRequest{Tool: "read", Payload: []byte(`{}`)})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"value":"ok"}`, string(response.StructuredContent))
-	assert.Equal(t, []string{"records:read"}, transport.authorization.granted)
-	assert.Equal(t, []string{"records:read", "records:write"}, transport.authorization.requested)
+	assert.Equal(t, []string{"records:read"}, transport.authorization.state.Granted)
+	assert.Equal(t, []string{"records:read", "records:write"}, transport.authorization.state.Requested)
 	peer.mutex.Lock()
 	defer peer.mutex.Unlock()
 	require.Len(t, peer.forms, 1)
@@ -130,7 +130,7 @@ func TestEnterpriseInvalidResponsesStopBeforeResourceExchange(t *testing.T) {
 	}
 }
 
-func TestEnterpriseSAMLBootstrapIsNotRetried(t *testing.T) {
+func TestEnterpriseSAMLBootstrapRequiresFreshAssertion(t *testing.T) {
 	peer := newEnterpriseOAuthPeer(t, oauthPublicClient, oauthPublicClient)
 	peer.refreshBody = `{"issued_token_type":"urn:ietf:params:oauth:token-type:refresh_token","access_token":"private-canary","token_type":"Bearer"}`
 	transport := peer.transport(t, peer.identity(t, "SAML"))
@@ -139,20 +139,21 @@ func TestEnterpriseSAMLBootstrapIsNotRetried(t *testing.T) {
 		require.Error(t, err)
 		assert.NotContains(t, err.Error(), "private-canary")
 	}
-	assert.EqualValues(t, 1, peer.sourceCalls.Load())
-	assert.Len(t, peer.forms, 1)
+	assert.EqualValues(t, 2, peer.sourceCalls.Load())
+	require.Len(t, peer.forms, 2)
+	assert.NotEqual(t, peer.forms[0].Get("subject_token"), peer.forms[1].Get("subject_token"))
 	assert.Zero(t, peer.resource.tokenCalls.Load())
 }
 
 func TestEnterpriseRejectsInvalidHostConfiguration(t *testing.T) {
 	registration, err := NewPublicClientRegistration("https://identity.example", "registered")
 	require.NoError(t, err)
-	for _, constructor := range []func(*ClientRegistration, *http.Client, func(context.Context) (string, error)) (*EnterpriseIdentity, error){NewIDTokenEnterpriseIdentity, NewSAMLEnterpriseIdentity, NewRefreshTokenEnterpriseIdentity} {
-		_, err := constructor(registration, nil, func(context.Context) (string, error) { return "identity", nil })
+	for _, constructor := range []func(*ClientRegistration, *http.Client, AuthorizationStore, func(context.Context) (string, error)) (*EnterpriseIdentity, error){NewIDTokenEnterpriseIdentity, NewSAMLEnterpriseIdentity, NewRefreshTokenEnterpriseIdentity} {
+		_, err := constructor(registration, nil, NewMemoryAuthorizationStore(), func(context.Context) (string, error) { return "identity", nil })
 		require.Error(t, err)
-		_, err = constructor(registration, http.DefaultClient, nil)
+		_, err = constructor(registration, http.DefaultClient, NewMemoryAuthorizationStore(), nil)
 		require.Error(t, err)
-		_, err = constructor(&ClientRegistration{}, http.DefaultClient, func(context.Context) (string, error) { return "identity", nil })
+		_, err = constructor(&ClientRegistration{}, http.DefaultClient, NewMemoryAuthorizationStore(), func(context.Context) (string, error) { return "identity", nil })
 		require.Error(t, err)
 	}
 	_, err = NewEnterpriseHTTPTransport(HTTPOptions{Endpoint: "https://resource.example/mcp"}, EnterpriseAuthorization{Identity: &EnterpriseIdentity{}, Registration: registration})
@@ -204,7 +205,9 @@ func newEnterpriseOAuthPeer(t *testing.T, identityAuthentication, resourceAuthen
 		peer.mutex.Unlock()
 		var body string
 		if r.PostForm.Get("subject_token_type") == "urn:ietf:params:oauth:token-type:saml2" {
-			assert.Equal(t, base64.RawURLEncoding.EncodeToString([]byte("<Assertion>host user & identity</Assertion>")), r.PostForm.Get("subject_token"))
+			decoded, err := base64.RawURLEncoding.DecodeString(r.PostForm.Get("subject_token"))
+			assert.NoError(t, err)
+			assert.Regexp(t, `^<Assertion id="[0-9]+">host user & identity</Assertion>$`, string(decoded))
 			assert.Equal(t, "urn:ietf:params:oauth:token-type:refresh_token", r.PostForm.Get("requested_token_type"))
 			body = peer.refreshBody
 		} else {
@@ -269,6 +272,12 @@ func (p *enterpriseOAuthPeer) grantResponseFor(t *testing.T, target *browserOAut
 // identity constructs the host's known source credential kind for this user.
 func (p *enterpriseOAuthPeer) identity(t *testing.T, source string) *EnterpriseIdentity {
 	t.Helper()
+	return p.identityWithStore(t, source, NewMemoryAuthorizationStore())
+}
+
+// identityWithStore reconstructs this host user's known source and account storage.
+func (p *enterpriseOAuthPeer) identityWithStore(t *testing.T, source string, store AuthorizationStore) *EnterpriseIdentity {
+	t.Helper()
 	constructor := NewIDTokenEnterpriseIdentity
 	credential := "encrypted.header.key.ciphertext.tag"
 	switch source {
@@ -277,8 +286,11 @@ func (p *enterpriseOAuthPeer) identity(t *testing.T, source string) *EnterpriseI
 	case "SAML":
 		constructor, credential = NewSAMLEnterpriseIdentity, "<Assertion>host user & identity</Assertion>"
 	}
-	identity, err := constructor(p.identityRegistration, p.idp.Client(), func(context.Context) (string, error) {
-		p.sourceCalls.Add(1)
+	identity, err := constructor(p.identityRegistration, p.idp.Client(), store, func(context.Context) (string, error) {
+		call := p.sourceCalls.Add(1)
+		if source == "SAML" {
+			return fmt.Sprintf("<Assertion id=%q>host user & identity</Assertion>", fmt.Sprint(call)), nil
+		}
 		return credential, nil
 	})
 	require.NoError(t, err)
@@ -409,7 +421,7 @@ func TestEnterpriseSAMLIdentitySharedAcrossResources(t *testing.T) {
 	assert.Len(t, peer.forms, 3)
 	assert.EqualValues(t, 1, peer.resource.tokenCalls.Load())
 	assert.EqualValues(t, 1, second.tokenCalls.Load())
-	assert.NotSame(t, first.authorization.token, another.authorization.token)
+	assert.NotEqual(t, storedOAuthCredential(t, first).Issuance, storedOAuthCredential(t, another).Issuance)
 	// A separately constructed identity cannot reuse the first owner's bootstrap.
 	separate := peer.identity(t, "SAML")
 	require.NoError(t, callOAuthPeer(t.Context(), peer.transport(t, separate), peer.resource.resource))
@@ -473,7 +485,7 @@ func TestEnterpriseCancellationAndSafeSourceErrors(t *testing.T) {
 			peer := newEnterpriseOAuthPeer(t, oauthPublicClient, oauthPublicClient)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			identity, err := NewIDTokenEnterpriseIdentity(peer.identityRegistration, peer.idp.Client(), func(context.Context) (string, error) {
+			identity, err := NewIDTokenEnterpriseIdentity(peer.identityRegistration, peer.idp.Client(), NewMemoryAuthorizationStore(), func(context.Context) (string, error) {
 				if cancelSource {
 					cancel()
 					return "encrypted.header.key.ciphertext.tag", nil
@@ -500,8 +512,9 @@ func TestEnterpriseIdentityRefreshLifetime(t *testing.T) {
 	for range 2 {
 		require.Error(t, callOAuthPeer(t.Context(), transport, peer.resource.resource))
 	}
-	assert.EqualValues(t, 1, peer.sourceCalls.Load())
-	assert.Len(t, peer.forms, 1)
+	assert.EqualValues(t, 2, peer.sourceCalls.Load())
+	require.Len(t, peer.forms, 2)
+	assert.NotEqual(t, peer.forms[0].Get("subject_token"), peer.forms[1].Get("subject_token"))
 	assert.Zero(t, peer.resource.tokenCalls.Load())
 }
 

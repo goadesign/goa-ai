@@ -6620,8 +6620,8 @@ issuer again. Direct Goa calls verify before returning authenticated context.
 Regenerate protected servers and update their composition roots together. There
 is no optional verifier or compatibility constructor. Independent API keys keep
 their native bindings; a different credential owner cannot share the bearer
-header. Enterprise authorization and durable host
-credentials remain required before the full MCP upgrade is released.
+header. Independent OAuth conformance and the remaining protocol capabilities
+remain required before the full MCP upgrade is released.
 
 For a fixed Goa result view, server encoding, the advertised result schema and
 the generated agent decoder use only the selected fields. Required fields in
@@ -6748,6 +6748,49 @@ or `EncodeResourceContent`/`DecodeResourceContent`. Use the generated MCP endpoi
 clients and servers to encode and decode protocol envelopes; their content
 validators enforce MCP's selected variant. No text-only codec alias remains.
 
+### Private authorization storage
+
+Every built-in OAuth client requires an `AuthorizationStore` scoped to one host
+user or application. Set `ClientCredentials.Store` or `AuthorizationCode.Store`;
+enterprise identity constructors receive the same dependency, and their resource
+transports use it automatically. Share a store across that user's resource
+transports and reconstruct it against the same private storage namespace after a
+restart. Different users must have separate namespaces even when they share a
+client registration. For process-only sessions, choose
+`mcp.NewMemoryAuthorizationStore()` explicitly.
+
+The host implements `WithCredentials(ctx, keys, use)`. It gives the callback
+exclusive access to the complete requested record set, in the supplied key order,
+and releases access when the callback returns. Access must be serialized across
+all host instances using the same account storage. There is no nested locking
+requirement. Each record provides `Load() (data, exists, err)` and `Save(data)`.
+`Save` commits before returning and a later callback failure must not roll back an
+earlier save. Waiting and storage operations respect the supplied context.
+
+Keys and record bytes are private framework values. Goa-AI derives keys from the
+exact issuer, registered client, grant purpose and resource; the generated record
+codec checks the same identity before reuse. The host stores the bytes unchanged
+in encrypted storage and does not inspect their fields. Corrupt or incorrectly
+bound records stop authorization rather than silently triggering new consent.
+Neither keys nor records belong in logs, model arguments, agent checkpoints or
+shared storage owned by another service. The initiating host service owns its
+credential backend; other services use its authenticated APIs.
+
+Before a browser refresh or SAML bootstrap, the runtime commits a pending record.
+It saves the completed credential before sending any MCP request. If an exchange
+or save has an uncertain outcome, a subsequent load determines whether the new
+credential was committed. A pending browser record starts fresh host consent;
+a pending SAML record requests a fresh host assertion. The possibly consumed
+credential is not reused. Storage errors stop before MCP dispatch and do not
+expose token bytes. Scope requests survive pending exchanges, and omitted issuer
+lifetimes create no local retention or expiry policy.
+
+This changes the unreleased client construction API: supply the explicit store
+and regenerate callers together. There is no previous durable record format to
+migrate and no compatibility reader. Reverting to process-only storage discards
+retained authorization and requires fresh host consent. Independent protocol
+conformance and all remaining MCP capabilities still gate release.
+
 ### Client registration
 
 An OAuth application registration identifies one client at one exact HTTPS issuer
@@ -6791,6 +6834,7 @@ transport, err := mcp.NewClientCredentialsHTTPTransport(mcp.HTTPOptions{
     Client: httpClient,
     ClientInfo: mcp.ClientInfo{Name: "records-agent", Version: "1"},
 }, mcp.ClientCredentials{
+    Store: accountAuthorizationStore,
     Registration: registration,
     Scopes: []string{"records:read"},
 })
@@ -6879,6 +6923,7 @@ transport, err := mcp.NewAuthorizationCodeHTTPTransport(mcp.HTTPOptions{
     Client: httpClient,
     ClientInfo: mcp.ClientInfo{Name: "records-host", Version: "1"},
 }, mcp.AuthorizationCode{
+    Store: accountAuthorizationStore,
     Registration: registration,
     RedirectURI: "https://host.example/oauth/callback",
     Authorize: authorizeInBrowser,
@@ -6960,14 +7005,15 @@ Construct one `EnterpriseIdentity` per host user and identity-provider registrat
   credential from the host's existing SSO owner.
 
 Each constructor takes a constructed `ClientRegistration`, an already-built trusted
-`*http.Client`, and `func(context.Context) (string, error)`. The callback returns a
+`*http.Client`, an `AuthorizationStore` for that host user, and
+`func(context.Context) (string, error)`. The callback returns a
 credential already validated for this registration and user; the host owns sign-in,
 identity validation and any new user interaction. Share registrations across users,
 but never share their identities. Prefer confidential registration for enterprise
 authorization; explicitly configured public registration is also supported.
 
 ```go
-identity, err := mcp.NewIDTokenEnterpriseIdentity(idpRegistration, idpClient, hostIDToken)
+identity, err := mcp.NewIDTokenEnterpriseIdentity(idpRegistration, idpClient, accountAuthorizationStore, hostIDToken)
 if err != nil {
     return err
 }
@@ -6996,9 +7042,10 @@ The ordinary HTTP transport retains final resource tokens, serializes replacemen
 and bounds recovery after an explicit authorization rejection. Token renewal asks
 for a fresh identity grant; it does not use a resource refresh credential as a
 substitute browser flow. Resource transports keep separate access tokens even
-when they share one user's SAML bootstrap. A bootstrap failure or reported refresh
-expiration stops that identity; new host credentials require a newly constructed
-identity, and a consumed assertion is never automatically resent.
+when they share one user's SAML bootstrap. A pending bootstrap or reported refresh
+expiration calls the host for a fresh assertion. The SAML callback must obtain a
+newly issued assertion each time it runs; a previously submitted assertion is
+never retained or automatically resent.
 
 Optional enterprise metadata advertisements may be absent when the host explicitly
 configures this flow. An advertised profile must satisfy its mandatory grant
@@ -7008,9 +7055,8 @@ have an empty redirect list. Intermediate grants with the wrong purpose, bearer
 usage, malformed shape or reported expiration fail before resource redemption.
 Host credential errors are returned without secret details; cancellation is preserved.
 
-Identity bootstrap and resource tokens currently remain process-local. Durable
-host credentials, independent conformance and coordinated caller regeneration
-remain release gates. See the [stable enterprise profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/stable/enterprise-managed-authorization.mdx)
+Identity bootstrap and resource tokens use the same explicit host store.
+Independent conformance and coordinated caller regeneration remain release gates. See the [stable enterprise profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/stable/enterprise-managed-authorization.mdx)
 and its [identity authorization grant contract](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-assertion-authz-grant-04.html).
 
 

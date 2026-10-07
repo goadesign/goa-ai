@@ -380,7 +380,10 @@ receive 503 rather than an invalid-token challenge.
 Enterprise clients can [exchange existing host identity credentials](docs/runtime.md#enterprise-authorization)
 through separate identity-provider and resource registrations. Native forms keep
 identity grants distinct from MCP bearer tokens; the existing transport owns
-resource-token renewal. Complete OAuth and the remaining protocol capabilities are still release gates
+resource-token renewal. Supply one explicit host `AuthorizationStore` per user or
+application to retain credentials across restarts and serialize rotation across
+instances; `NewMemoryAuthorizationStore()` supports process-only sessions. See
+[private authorization storage](docs/runtime.md#private-authorization-storage). Complete OAuth and the remaining protocol capabilities are still release gates
 in the [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
 
 The shared MCP HTTP transport keeps local preparation failures distinct from
@@ -399,8 +402,8 @@ release gate.
 Construct an OAuth `mcp.ClientRegistration` for one issuer with explicit public,
 Basic-header secret, request-body secret or signed authentication. Registrations
 contain no user, resource scope or token. `mcp.NewClientCredentialsHTTPTransport`
-obtains confidential machine grants before MCP dispatch; each transport owns its
-resource token independently. Generated clients and `HTTPOptions.Client` accept
+obtains confidential machine grants before MCP dispatch; resource records remain
+separate in the configured application store. Generated clients and `HTTPOptions.Client` accept
 this same transport. Native Goa forms and security headers encode credentials;
 only the resource bearer token reaches MCP. Metadata must advertise the exact
 selected method. Redirects and machine reauthorization after 401/403 are rejected.

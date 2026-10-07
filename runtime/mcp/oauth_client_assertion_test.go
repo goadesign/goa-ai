@@ -455,5 +455,5 @@ func newSignedMachineTestTransport(opts HTTPOptions, config ClientAssertion) (*H
 	if err != nil {
 		return nil, err
 	}
-	return NewClientCredentialsHTTPTransport(opts, ClientCredentials{Registration: registration, Scopes: []string{"records:read"}})
+	return NewClientCredentialsHTTPTransport(opts, ClientCredentials{Store: NewMemoryAuthorizationStore(), Registration: registration, Scopes: []string{"records:read"}})
 }

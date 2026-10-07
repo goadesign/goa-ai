@@ -221,7 +221,7 @@ func TestClientCredentialsExpiryAndMetadataChange(t *testing.T) {
 	require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 	// Advancing this grant's acquisition time models an expired token without
 	// making the test sleep. The next operation must exchange before dispatch.
-	transport.authorization.obtained = time.Now().Add(-time.Hour)
+	setOAuthCredentialTime(t, transport, time.Now().Add(-time.Hour))
 	require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 	assert.EqualValues(t, 2, peer.tokenCalls.Load())
 	peer.metadata = strings.ReplaceAll(peer.metadata, peer.issuer, "https://other.example/issuer")
@@ -381,7 +381,7 @@ func newOAuthPeer(t *testing.T) *oauthPeer {
 // transport constructs one isolated grant using the peer's trusted TLS client.
 func (p *oauthPeer) transport(t *testing.T, clientID, secret string, scopes []string) *HTTPTransport {
 	t.Helper()
-	transport, err := NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: p.resource, Client: p.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, ClientCredentials{Registration: secretTestRegistration(t, p.issuer, clientID, secret), Scopes: scopes})
+	transport, err := NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: p.resource, Client: p.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, ClientCredentials{Store: NewMemoryAuthorizationStore(), Registration: secretTestRegistration(t, p.issuer, clientID, secret), Scopes: scopes})
 	require.NoError(t, err)
 	return transport
 }
@@ -471,7 +471,7 @@ func TestClientCredentialsConstructionRejectsUnsafeConfiguration(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := HTTPOptions{Endpoint: "https://resource.example/mcp", ClientInfo: ClientInfo{Name: "host", Version: "1"}}
-			credentials := ClientCredentials{Registration: secretTestRegistration(t, "https://issuer.example", "registered", "secret")}
+			credentials := ClientCredentials{Store: NewMemoryAuthorizationStore(), Registration: secretTestRegistration(t, "https://issuer.example", "registered", "secret")}
 			tc.change(&opts, &credentials)
 			_, err := NewClientCredentialsHTTPTransport(opts, credentials)
 			require.Error(t, err)

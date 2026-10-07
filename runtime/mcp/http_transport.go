@@ -23,7 +23,6 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	genaccesstokens "goa.design/goa-ai/internal/mcpauth/gen/access_tokens"
 	"goa.design/goa-ai/internal/mcpprotocol"
 	"goa.design/goa/v3/jsonrpc"
 )
@@ -203,7 +202,7 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		attemptRequest.ContentLength = int64(len(body))
 		// Local request preparation must finish before a credential exchange.
 		// Each attempt checks token expiry with this operation's context.
-		var sentGrant *genaccesstokens.BearerToken
+		var sentGrant string
 		if t.authorization != nil {
 			sentGrant, err = t.authorization.prepare(attemptRequest, t.credentialQueries[request.Method], t.resourceCredentials)
 			if err != nil {

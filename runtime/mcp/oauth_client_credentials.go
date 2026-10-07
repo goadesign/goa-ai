@@ -18,12 +18,14 @@ import (
 
 type (
 	// ClientCredentials requests machine permissions using a constructed confidential
-	// registration. Each transport owns its resource access token independently.
+	// registration. Resource records remain separate for each host account and resource.
 	ClientCredentials struct {
 		// Registration selects the exact issuer and registered authentication.
 		Registration *ClientRegistration
 		// Scopes are the permissions requested for this transport's resource.
 		Scopes []string
+		// Store owns this application's private credentials and serialized rotation.
+		Store AuthorizationStore
 	}
 	// clientCredentialsGrant uses one registration without owning its authentication.
 	clientCredentialsGrant struct {
@@ -41,7 +43,7 @@ func NewClientCredentialsHTTPTransport(opts HTTPOptions, config ClientCredential
 	if config.Registration.authentication == oauthPublicClient {
 		return nil, errors.New("mcp: machine grants require confidential client authentication")
 	}
-	return newAuthorizationHTTPTransport(opts, config.Registration.issuer.String(), config.Scopes, &clientCredentialsGrant{registration: config.Registration})
+	return newAuthorizationHTTPTransport(opts, config.Registration, config.Scopes, config.Store, &clientCredentialsGrant{registration: config.Registration})
 }
 
 // authorizationURL rejects addresses that cannot identify the configured HTTPS
@@ -88,7 +90,7 @@ func (g *clientCredentialsGrant) validateIssuer(issuer *genissuermetadata.ReadRe
 
 // acquire sends a native machine request using this registration's authentication.
 // Only the returned resource token reaches MCP; registration credentials stay here.
-func (g *clientCredentialsGrant) acquire(ctx context.Context, client *http.Client, resource string, issuer *genissuermetadata.ReadResult, scopes []string, _ *genaccesstokens.BearerToken) (*genaccesstokens.BearerToken, time.Time, error) {
+func (g *clientCredentialsGrant) acquire(ctx context.Context, client *http.Client, resource string, issuer *genissuermetadata.ReadResult, scopes []string, _ *genaccesstokens.BearerToken, _ []AuthorizationCredential) (*genaccesstokens.BearerToken, time.Time, error) {
 	if g.registration.metadata != nil {
 		metadata, err := g.registration.readMetadata(ctx, client)
 		if err != nil {
@@ -104,4 +106,9 @@ func (g *clientCredentialsGrant) acquire(ctx context.Context, client *http.Clien
 // recoversChallenges keeps machine authorization rejections terminal.
 func (g *clientCredentialsGrant) recoversChallenges() bool {
 	return false
+}
+
+// credentialBindings separates machine grants from other uses of a registration.
+func (g *clientCredentialsGrant) credentialBindings(resource string) [][]string {
+	return [][]string{{"resource", "client_credentials", g.registration.issuer.String(), g.registration.clientID, g.registration.authentication, resource}}
 }

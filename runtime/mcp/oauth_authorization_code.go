@@ -37,6 +37,8 @@ type (
 		// advertised basic scopes supply the initial request. An initial challenge
 		// takes priority when it supplies scopes for the current operation.
 		Scopes []string
+		// Store owns this user's private credentials and serialized rotation.
+		Store AuthorizationStore
 		// Authorize handles sign-in and consent for this transport's user or application.
 		// It receives the complete authorization URL and returns the complete
 		// redirect URL. It must respect cancellation and must not log either URL.
@@ -65,7 +67,7 @@ func NewAuthorizationCodeHTTPTransport(opts HTTPOptions, client AuthorizationCod
 		return nil, err
 	}
 	client.Scopes = slices.Clone(client.Scopes)
-	return newAuthorizationHTTPTransport(opts, client.Registration.issuer.String(), client.Scopes, &authorizationCodeGrant{client: client, redirect: redirect})
+	return newAuthorizationHTTPTransport(opts, client.Registration, client.Scopes, client.Store, &authorizationCodeGrant{client: client, redirect: redirect})
 }
 
 // authorizationRedirect validates the host's registered callback and excludes
@@ -145,7 +147,7 @@ func (g *authorizationCodeGrant) validateIssuer(issuer *genissuermetadata.ReadRe
 // acquire refreshes an existing grant only when the issuer advertises refresh
 // support. Otherwise it performs a new host-consented PKCE exchange. A rejected
 // refresh returns its failure; it does not silently open another consent flow.
-func (g *authorizationCodeGrant) acquire(ctx context.Context, client *http.Client, resource string, issuer *genissuermetadata.ReadResult, scopes []string, previous *genaccesstokens.BearerToken) (*genaccesstokens.BearerToken, time.Time, error) {
+func (g *authorizationCodeGrant) acquire(ctx context.Context, client *http.Client, resource string, issuer *genissuermetadata.ReadResult, scopes []string, previous *genaccesstokens.BearerToken, _ []AuthorizationCredential) (*genaccesstokens.BearerToken, time.Time, error) {
 	canRefresh := true
 	if g.client.Registration.metadata != nil {
 		registeredRefresh, err := g.validateMetadata(ctx, client)
@@ -249,4 +251,10 @@ func (g *authorizationCodeGrant) authorizationResponse(ctx context.Context, call
 // resource rejection. Browser consent supports recovery; machine grants abort.
 func (g *authorizationCodeGrant) recoversChallenges() bool {
 	return true
+}
+
+// credentialBindings binds browser grants to the registered redirect and exact
+// issuer/client identity, without storing its secret or active PKCE values.
+func (g *authorizationCodeGrant) credentialBindings(resource string) [][]string {
+	return [][]string{{"resource", "authorization_code", g.client.Registration.issuer.String(), g.client.Registration.clientID, g.client.Registration.authentication, g.client.RedirectURI, resource}}
 }
