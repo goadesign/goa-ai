@@ -25,12 +25,6 @@ import (
 )
 
 type (
-	taskTestClient interface {
-		Caller
-		GetTask(context.Context, string) (Task, error)
-		UpdateTask(context.Context, string, map[string]json.RawMessage) error
-		CancelTask(context.Context, string) error
-	}
 	taskPeer struct {
 		mu                              sync.Mutex
 		starts, reads, updates, cancels int
@@ -224,32 +218,36 @@ func TestTaskCreationRequiresAdvertisedSupport(t *testing.T) {
 
 // verifyTaskLifecycle observes one created task, answers a subset of its input,
 // tolerates an unchanged observation, then checks the cancellation/completion race.
-func verifyTaskLifecycle(t *testing.T, caller taskTestClient) {
+func verifyTaskLifecycle(t *testing.T, caller Caller) {
 	t.Helper()
 	response, err := caller.CallTool(WithTaskSupport(t.Context()), CallRequest{Tool: "read", Payload: json.RawMessage(`{}`)})
 	require.NoError(t, err)
 	require.NotNil(t, response.Task)
 	assert.Equal(t, taskPeerID, response.Task.TaskID)
-	task, err := caller.GetTask(t.Context(), taskPeerID)
+	taskContext := WithProgress(t.Context(), func(context.Context, Progress) error {
+		t.Error("Task operations must not deliver request progress")
+		return nil
+	})
+	task, err := caller.GetTask(taskContext, taskPeerID)
 	require.NoError(t, err)
 	assert.Equal(t, TaskWorking, task.Info().Status)
-	task, err = caller.GetTask(t.Context(), taskPeerID)
+	task, err = caller.GetTask(taskContext, taskPeerID)
 	require.NoError(t, err)
 	input, ok := task.AsInputRequired()
 	require.True(t, ok)
 	require.Len(t, input.Requests, 2)
-	require.NoError(t, caller.UpdateTask(t.Context(), taskPeerID, map[string]json.RawMessage{"profile:1": json.RawMessage(`{"action":"accept","content":{"name":"example"}}`)}))
-	task, err = caller.GetTask(t.Context(), taskPeerID)
+	require.NoError(t, caller.UpdateTask(taskContext, taskPeerID, map[string]json.RawMessage{"profile:1": json.RawMessage(`{"action":"accept","content":{"name":"example"}}`)}))
+	task, err = caller.GetTask(taskContext, taskPeerID)
 	require.NoError(t, err)
 	assert.Equal(t, TaskInputRequired, task.Info().Status, "an acknowledgement does not prove the state already changed")
-	require.NoError(t, caller.CancelTask(t.Context(), taskPeerID))
-	task, err = caller.GetTask(t.Context(), taskPeerID)
+	require.NoError(t, caller.CancelTask(taskContext, taskPeerID))
+	task, err = caller.GetTask(taskContext, taskPeerID)
 	require.NoError(t, err)
 	complete, ok := task.AsCompleted()
 	require.True(t, ok)
 	assert.Equal(t, `"finished"`, string(complete.StructuredContent))
-	require.NoError(t, caller.UpdateTask(t.Context(), taskPeerID, map[string]json.RawMessage{}))
-	assert.Error(t, caller.UpdateTask(t.Context(), taskPeerID, nil))
+	require.NoError(t, caller.UpdateTask(taskContext, taskPeerID, map[string]json.RawMessage{}))
+	assert.Error(t, caller.UpdateTask(taskContext, taskPeerID, nil))
 }
 
 // response implements the released flat Task creation and current-state shapes.
@@ -287,6 +285,9 @@ func (p *taskPeer) response(raw []byte) ([]byte, error) {
 		}
 		result = `{"resultType":"task",` + taskPeerMetadata + "}"
 	case methodTasksGet, methodTasksUpdate, methodTasksCancel:
+		if _, present := meta["progressToken"]; present {
+			return nil, errors.New("Task operation requested unsupported progress")
+		}
 		if capabilities.Extensions[tasksExtension] == nil {
 			return nil, errors.New("task operation capability was absent")
 		}

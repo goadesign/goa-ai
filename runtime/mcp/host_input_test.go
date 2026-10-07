@@ -21,6 +21,29 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// transportTestCaller binds a raw transport to one test endpoint. Every method
+// delegates directly, so checks can distinguish it from catalog-reading callers.
+type transportTestCaller struct {
+	transport *HTTPTransport
+	endpoint  string
+}
+
+func (c transportTestCaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
+	return c.transport.CallTool(ctx, c.endpoint, req)
+}
+
+func (c transportTestCaller) GetTask(ctx context.Context, taskID string) (Task, error) {
+	return c.transport.GetTask(ctx, c.endpoint, taskID)
+}
+
+func (c transportTestCaller) UpdateTask(ctx context.Context, taskID string, responses map[string]json.RawMessage) error {
+	return c.transport.UpdateTask(ctx, c.endpoint, taskID, responses)
+}
+
+func (c transportTestCaller) CancelTask(ctx context.Context, taskID string) error {
+	return c.transport.CancelTask(ctx, c.endpoint, taskID)
+}
+
 func TestHTTPHostInputRestrictionIsPerOperation(t *testing.T) {
 	var requests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -42,10 +65,8 @@ func TestHTTPHostInputRestrictionIsPerOperation(t *testing.T) {
 	imported, err := NewHTTPCaller(HTTPOptions{Endpoint: server.URL, Client: server.Client(), ClientInfo: ClientInfo{Name: "host-tests", Version: "1"}, InputSupport: InputSupport{Form: true, URL: true}})
 	require.NoError(t, err)
 	for name, caller := range map[string]Caller{
-		"transport": CallerFunc(func(ctx context.Context, req CallRequest) (CallResponse, error) {
-			return transport.CallTool(ctx, server.URL, req)
-		}),
-		"imported": imported,
+		"transport": transportTestCaller{endpoint: server.URL, transport: transport},
+		"imported":  imported,
 	} {
 		t.Run(name, func(t *testing.T) {
 			verifyHostInputRestriction(t, caller)

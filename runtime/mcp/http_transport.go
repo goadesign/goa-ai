@@ -180,7 +180,7 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		if request.Method == methodSubscriptionsListen {
 			subscription, receiverErr = newSubscriptionReceiver(ctx, envelope["id"], params["notifications"], t.inputSupport)
 		} else {
-			receiver, receiverErr = newProgressReceiver(ctx, envelope["id"], meta)
+			receiver, receiverErr = newProgressReceiver(ctx, request.Method, envelope["id"], meta)
 		}
 		if receiverErr != nil {
 			return nil, NewInternalError(receiverErr)

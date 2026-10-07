@@ -54,9 +54,10 @@ type (
 	}
 )
 
-// WithProgress requests updates for each MCP operation using the returned
+// WithProgress requests updates for eligible MCP operations using the returned
 // context. The handler runs in that operation's goroutine before its final
 // result. Handler errors stop the request; tool outcomes can then be unknown.
+// Task get, update and cancel operations do not request progress.
 // A nil handler is a construction error and panics.
 func WithProgress(ctx context.Context, handler func(context.Context, Progress) error) context.Context {
 	if handler == nil {
@@ -82,8 +83,15 @@ func ReportProgress(ctx context.Context, value float64, total *float64, message 
 }
 
 // newProgressReceiver gives one request its own token and increasing-value
-// checks. Manually supplied tokens are checked even without a host handler.
-func newProgressReceiver(ctx context.Context, id json.RawMessage, meta map[string]json.RawMessage) (*progressReceiver, error) {
+// checks. Task operations ignore an inherited callback and reject explicit tokens;
+// other methods check manually supplied tokens even without a host handler.
+func newProgressReceiver(ctx context.Context, method string, id json.RawMessage, meta map[string]json.RawMessage) (*progressReceiver, error) {
+	if isTaskOperation(method) {
+		if _, present := meta["progressToken"]; present {
+			return nil, fmt.Errorf("%s does not support progress", method)
+		}
+		return nil, nil
+	}
 	handler, _ := ctx.Value(progressHandlerKey{}).(progressHandler)
 	if handler != nil {
 		encoded, err := json.Marshal(uuid.NewString())

@@ -20,10 +20,18 @@ type (
 		Version string `json:"version"`
 	}
 
-	// Caller invokes MCP tools on behalf of the runtime-generated adapters. It is
-	// implemented by transport-specific clients.
+	// Caller invokes tools and operates on the Tasks those tools return. HTTP,
+	// stdio and generated clients use the same contract, so a retained Task never
+	// requires an optional interface assertion or another transport client.
 	Caller interface {
+		// CallTool starts or continues one tool invocation.
 		CallTool(ctx context.Context, req CallRequest) (CallResponse, error)
+		// GetTask observes an existing Task without repeating its tool invocation.
+		GetTask(ctx context.Context, taskID string) (Task, error)
+		// UpdateTask submits answers to an existing Task's host input requests.
+		UpdateTask(ctx context.Context, taskID string, responses map[string]json.RawMessage) error
+		// CancelTask asks the server to cancel an existing Task.
+		CancelTask(ctx context.Context, taskID string) error
 	}
 
 	// Error represents a JSON-RPC error returned by the MCP server.

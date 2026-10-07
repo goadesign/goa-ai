@@ -3294,7 +3294,12 @@ job API can use an optional duration for unlimited retention.
 
 Direct HTTP and stdio clients now decode flat Task creation handles and all five
 current task states. They expose separate GetTask, UpdateTask and CancelTask
-operations through their existing transports. Generated callers retain authored
+operations through their existing transports. The shared Caller interface now
+requires all four operations, and the function-only CallerFunc adapter is removed.
+Existing HTTP, stdio and generated clients satisfy that contract directly. Task
+get, update and cancel omit request progress even when a runtime context carries
+a callback; server progress wrapping also leaves Task operations unwrapped.
+Generated callers retain authored
 URL values and use their existing request builder. Task creation is accepted only
 for tools/call with explicit per-request Tasks support. Generated agent executors
 do not yet advertise it. Input updates accept partial and empty answer objects;
@@ -3329,7 +3334,12 @@ malformed acknowledgement, existing tool-result and host-input checks passed in
 Task methods use the authored MCP route and preserve method-not-found errors
 against a server without Task endpoints; it does not prove generated Task
 production. Final scoped MCP/runtime/rawjson/codec lint reports zero issues. The root suite
-was not repeated.
+was not repeated. A later complete-caller/progress checkpoint passed runtime
+checks in 0.436 s, generated executor cases in 3.203 s and the attached-service
+integration check in 30.088 s. Scoped lint reports zero issues. The exact empty
+input key also survives two workflow successor runs in a focused 0.856 s check;
+ordinary input exchanges may reuse a key on later rounds, unlike Task-lifetime
+request keys.
 
 Next is workflow-owned Task consumption: retain the remote ID with the original
 invocation, use durable timers for tasks/get, persist answered request keys,

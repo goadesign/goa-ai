@@ -201,7 +201,7 @@ func (c *StdioCaller) call(ctx context.Context, method string, params map[string
 		}
 		subscription, err = newSubscriptionReceiver(ctx, encodedID, filter, c.inputSupport)
 	} else {
-		receiver, err = newProgressReceiver(ctx, encodedID, meta)
+		receiver, err = newProgressReceiver(ctx, method, encodedID, meta)
 	}
 	if err != nil {
 		return NewInternalError(err)

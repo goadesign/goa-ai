@@ -42,10 +42,30 @@ import (
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
+// toolResultCaller supplies controlled tool replies. A Task operation here
+// fails the test because these cases exercise only completed tool results.
+type toolResultCaller func(context.Context, mcpruntime.CallRequest) (mcpruntime.CallResponse, error)
+
+func (f toolResultCaller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
+    return f(ctx, req)
+}
+
+func (toolResultCaller) GetTask(context.Context, string) (mcpruntime.Task, error) {
+    panic("unexpected Task query in a completed-result test")
+}
+
+func (toolResultCaller) UpdateTask(context.Context, string, map[string]json.RawMessage) error {
+    panic("unexpected Task answer in a completed-result test")
+}
+
+func (toolResultCaller) CancelTask(context.Context, string) error {
+    panic("unexpected Task cancellation in a completed-result test")
+}
+
 func TestStringResultControlCharacters(t *testing.T) {
 	want := "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f" +
 		"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f"
-	caller := mcpruntime.CallerFunc(func(context.Context, mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
+	caller := toolResultCaller(func(context.Context, mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
 		encoded, err := json.Marshal(want)
         return mcpruntime.CallResponse{StructuredContent: encoded}, err
 	})
@@ -96,7 +116,7 @@ func TestMCPExecutorRestrictsHostInputPerCall(t *testing.T) {
     }))
     defer server.Close()
     transport := mcpruntime.NewHTTPTransport(server.Client(), mcpruntime.ClientInfo{Name:"generated-test",Version:"1"}, mcpruntime.HTTPBindings{}, mcpruntime.InputSupport{Form:true,URL:true}, mcpruntime.HTTPRetryPolicy{})
-    caller := mcpruntime.CallerFunc(func(ctx context.Context, request mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
+    caller := toolResultCaller(func(ctx context.Context, request mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
         return transport.CallTool(ctx, server.URL, request)
     })
     executor := NewMCPExecutor(caller)
@@ -139,7 +159,7 @@ func TestMCPExecutorRetainsOrderedContent(t *testing.T) {
         {name:"no result rejects structured",tool:gencalccore.Reset,structured:json.RawMessage(` + "`" + `{}` + "`" + `),malformed:true},
     } {
         t.Run(test.name,func(t *testing.T) {
-            caller := mcpruntime.CallerFunc(func(context.Context,mcpruntime.CallRequest)(mcpruntime.CallResponse,error){
+            caller := toolResultCaller(func(context.Context,mcpruntime.CallRequest)(mcpruntime.CallResponse,error){
                 response:=mcpruntime.CallResponse{Content:blocks,StructuredContent:test.structured}
                 if test.invalidContent { response.Content=content.Blocks{&content.ImageContent{Data:"%%%",MIMEType:"image/png"}} }
                 if test.failed { return mcpruntime.CallResponse{},&mcpruntime.ToolExecutionError{Response:response} }

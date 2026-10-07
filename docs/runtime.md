@@ -6527,7 +6527,10 @@ this middleware.
 The [Tasks extension](https://github.com/modelcontextprotocol/ext-tasks/blob/0d0a6bd4c258b35caa3c810a1dd506cf105b1501/specification/2026-07-28/tasks.md)
 lets a server durably accept a tool call and return an asynchronous Task instead
 of its final result. Direct HTTP and stdio clients implement its three operations;
-generated callers use the same HTTP transport and authored URL values.
+generated callers use the same HTTP transport and authored URL values. The shared
+`mcp.Caller` interface includes `CallTool`, `GetTask`, `UpdateTask`, and `CancelTask`.
+Custom callers must implement all four methods; the function-only `CallerFunc`
+adapter is removed. No optional interface lookup selects Task support.
 
 Pass `mcp.WithTaskSupport(ctx)` to a direct `CallTool` only when the host can retain
 the returned `CallResponse.Task` and observe that task afterward. The server may
@@ -7125,6 +7128,12 @@ optional total and optional message. A permitted HTTP retry gets a new token and
 request ID, so its work values start a separate sequence. The transport verifies
 the final reply against the network attempt's ID before restoring the original
 ID solely for Goa's generated decoder.
+
+Task get, update and cancel operations do not support progress. They send no
+progress token even when their context inherits a `WithProgress` callback.
+An explicit progress token on a direct Task request is rejected before dispatch.
+The server progress wrapper leaves Task replies as ordinary responses; service
+work reports its changing state through Task observations.
 
 Handlers run synchronously in the operation's goroutine before its final reply.
 Keep them short, honor their context, and check delivery errors. Stdio retains

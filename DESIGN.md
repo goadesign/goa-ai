@@ -2660,6 +2660,12 @@ layouts as the native HTTP transport; no wildcard rewrite or runtime field map
 implements a second binding system.
 
 MCP Task clients use the same HTTP and stdio request machinery as tool calls.
+The shared Caller contract includes tool invocation and Task get, update and
+cancel operations. Generated execution can therefore use the original caller
+without an optional interface assertion or a second transport. Function-only
+CallerFunc is removed; custom callers implement all four methods. Task operations
+never request or emit progress; their work observations are Task state. Ordinary
+tool requests retain their request-scoped progress contract.
 A request advertises the Tasks extension only when its host declares support;
 only `tools/call` may return a Task creation handle. Get, update and cancel are
 separate operations on the exact server-owned ID. State decoding selects the

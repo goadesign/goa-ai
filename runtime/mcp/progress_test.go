@@ -44,7 +44,7 @@ func TestProgressNotificationValidation(t *testing.T) {
 	updates := []Progress{}
 	ctx := WithProgress(t.Context(), func(_ context.Context, update Progress) error { updates = append(updates, update); return nil })
 	meta := map[string]json.RawMessage{}
-	receiver, err := newProgressReceiver(ctx, json.RawMessage(`"request"`), meta)
+	receiver, err := newProgressReceiver(ctx, methodToolsCall, json.RawMessage(`"request"`), meta)
 	require.NoError(t, err)
 	for _, value := range []float64{-10.5, 0, 200.25} {
 		raw, err := json.Marshal(progressWire{Token: meta["progressToken"], Value: &value, Total: new(float64(100)), Message: new("")})
@@ -75,4 +75,25 @@ func TestProgressValuesAndHandlerFailure(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	require.ErrorIs(t, ReportProgress(ctx, 0, nil, nil), context.Canceled)
+}
+
+// TestTaskProgressSetup checks inherited callbacks and explicit tokens before
+// either transport sends a request for an existing Task.
+func TestTaskProgressSetup(t *testing.T) {
+	for _, method := range []string{methodTasksGet, methodTasksUpdate, methodTasksCancel} {
+		t.Run(method, func(t *testing.T) {
+			ctx := WithProgress(t.Context(), func(context.Context, Progress) error {
+				t.Error("Task operation delivered progress")
+				return nil
+			})
+			meta := make(map[string]json.RawMessage)
+			receiver, err := newProgressReceiver(ctx, method, json.RawMessage(`"task-operation"`), meta)
+			require.NoError(t, err)
+			assert.Nil(t, receiver)
+			assert.Empty(t, meta)
+			meta["progressToken"] = json.RawMessage(`"unsupported"`)
+			_, err = newProgressReceiver(ctx, method, json.RawMessage(`"task-operation"`), meta)
+			assert.ErrorContains(t, err, "does not support progress")
+		})
+	}
 }

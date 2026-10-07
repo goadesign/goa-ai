@@ -42,8 +42,13 @@ type (
 // params must already have passed ValidateHTTPRequest. Without a token or an
 // accepted event-stream response, next writes its normal JSON response. With
 // updates, this function frames the generated final response as the last event.
+// Task operations always use the normal response, even if a client sends a token.
 // It returns transport errors instead of dropping notifications or final data.
 func ServeProgress(w http.ResponseWriter, r *http.Request, params json.RawMessage, next http.HandlerFunc) (err error) {
+	if isTaskOperation(r.Header.Get("Mcp-Method")) {
+		next(w, r)
+		return nil
+	}
 	var fields struct {
 		Meta map[string]json.RawMessage `json:"_meta"` //nolint:tagliatelle // MCP wire name.
 	}

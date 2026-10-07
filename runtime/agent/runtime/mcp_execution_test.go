@@ -25,9 +25,13 @@ import (
 )
 
 func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
-	for _, mode := range []string{"form", "state", "identical_state", "clarification"} {
+	for _, mode := range []string{"form", "state", "identical_state", "clarification", "empty_id"} {
 		t.Run(mode, func(t *testing.T) {
 			stateOnly := mode == "state" || mode == "identical_state"
+			requestID := "same-request-id"
+			if mode == "empty_id" {
+				requestID = ""
+			}
 			spec := newAnyJSONSpec("remote.tools.lookup")
 			definition := testAgentDefinition("test.agent", "test.workflow", "test.queue", []tools.ToolSpec{spec}, nil)
 			registration := AgentRegistration{Definition: definition, ExecuteToolActivity: "execute", ResumeActivityName: "resume"}
@@ -49,7 +53,7 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 						}
 						assert.Equal(t, expectedState, *call.MCPContinuation.RequestState)
 						if !stateOnly {
-							assert.JSONEq(t, `{"action":"accept","content":{"choice":"yes"}}`, string(call.MCPContinuation.InputResponses["same-request-id"]))
+							assert.JSONEq(t, `{"action":"accept","content":{"choice":"yes"}}`, string(call.MCPContinuation.InputResponses[requestID]))
 						}
 					}
 					if round == 3 {
@@ -67,7 +71,7 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 					}
 					input := &mcp.InputRequired{RequestState: &state}
 					if !stateOnly {
-						input.Requests = map[string]mcp.InputRequest{"same-request-id": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{"choice":{"type":"string"}},"required":["choice"]}}`)}}
+						input.Requests = map[string]mcp.InputRequest{requestID: {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{"choice":{"type":"string"}},"required":["choice"]}}`)}}
 					}
 					return AwaitMCPInput(input), nil
 				}
@@ -92,7 +96,7 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 				require.NoError(t, err)
 				answers := map[string]json.RawMessage(nil)
 				if !stateOnly {
-					answers = map[string]json.RawMessage{"same-request-id": json.RawMessage(`{"action":"accept","content":{"choice":"yes"}}`)}
+					answers = map[string]json.RawMessage{requestID: json.RawMessage(`{"action":"accept","content":{"choice":"yes"}}`)}
 				}
 				input := &RunInput{AgentID: "test.agent", RunID: fmt.Sprintf("run-%d", successor), SessionID: "session-1", TurnID: fmt.Sprintf("turn-%d", successor), Continuation: &api.RunContinuationInput{Suspension: suspension, Response: &api.PendingInputResponse{MCP: &api.MCPInputResponse{ToolCallID: suspension.Pending[0].MCP.ToolCallID, Responses: answers}}}}
 				require.NoError(t, restoreContinuationRunInput(input, checkpoint))

@@ -184,6 +184,17 @@ func (c *StdioCaller) CancelTask(ctx context.Context, taskID string) error {
 	return result.validate()
 }
 
+// isTaskOperation identifies requests for an existing Task. These requests do
+// not support progress notifications; the server reports work through Task state.
+func isTaskOperation(method string) bool {
+	switch method {
+	case methodTasksGet, methodTasksUpdate, methodTasksCancel:
+		return true
+	default:
+		return false
+	}
+}
+
 // taskUpdateParams checks the external answer object before it enters either
 // transport. An empty object is valid; a missing object or non-object answer fails.
 func taskUpdateParams(taskID string, responses map[string]json.RawMessage) (map[string]any, error) {

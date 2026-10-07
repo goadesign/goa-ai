@@ -342,7 +342,9 @@ providers now share typed input-exchange generation with MCP endpoints. The
 release gates.
 
 Direct HTTP and stdio clients can [observe and answer Tasks](docs/runtime.md#mcp-task-clients)
-through `GetTask`, `UpdateTask`, and `CancelTask`. Task creation requires an
+through `GetTask`, `UpdateTask`, and `CancelTask`. The `mcp.Caller` contract includes
+all three operations; custom callers must implement the complete tool lifecycle.
+The function-only `CallerFunc` adapter is removed. Task creation requires an
 explicit host capability on that request. `Listen` can select task IDs and
 receive their acknowledged full state through the same subscription callback.
 Generated server bindings and durable agent Task consumption remain required before this upgrade is released.

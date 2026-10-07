@@ -102,6 +102,29 @@ func TestHTTPProgressBeforeFinalResponse(t *testing.T) {
 	require.NoError(t, <-serverErrors)
 }
 
+// TestTaskServerOmitsProgress verifies that an explicit client token cannot
+// make a Task operation emit progress or change its ordinary response framing.
+func TestTaskServerOmitsProgress(t *testing.T) {
+	for _, method := range []string{methodTasksGet, methodTasksUpdate, methodTasksCancel} {
+		t.Run(method, func(t *testing.T) {
+			writer := httptest.NewRecorder()
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil)
+			request.Header.Set("Accept", "application/json, text/event-stream")
+			request.Header.Set("Mcp-Method", method)
+			require.NoError(t, ServeProgress(writer, request, json.RawMessage(`{"_meta":{"progressToken":"unsupported"}}`), func(w http.ResponseWriter, r *http.Request) {
+				assert.NoError(t, ReportProgress(r.Context(), 1, nil, nil))
+				assert.NoError(t, ReportProgress(r.Context(), 1, nil, nil))
+				w.Header().Set("Content-Type", "application/json")
+				_, err := io.WriteString(w, `{"jsonrpc":"2.0","id":"task-operation","result":{"resultType":"complete"}}`)
+				assert.NoError(t, err)
+			}))
+			assert.Equal(t, "application/json", writer.Header().Get("Content-Type"))
+			assert.NotContains(t, writer.Body.String(), "notifications/progress")
+			assert.Contains(t, writer.Body.String(), `"id":"task-operation"`)
+		})
+	}
+}
+
 func TestHTTPProgressResponseModesAndClosedContext(t *testing.T) {
 	for _, test := range []struct {
 		name, accept, params, media string

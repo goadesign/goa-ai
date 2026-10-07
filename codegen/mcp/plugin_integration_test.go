@@ -44,6 +44,8 @@ import (
  mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
+var _ mcpruntime.Caller = (*Caller)(nil)
+
 type retryDoer func(*http.Request) (*http.Response,error)
 func (f retryDoer) Do(r *http.Request) (*http.Response,error) { return f(r) }
 
@@ -206,6 +208,26 @@ import (
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
 )
 
+// toolResultCaller supplies controlled tool replies. A Task operation here
+// fails the test because these cases exercise only completed tool results.
+type toolResultCaller func(context.Context, mcpruntime.CallRequest) (mcpruntime.CallResponse, error)
+
+func (f toolResultCaller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
+    return f(ctx, req)
+}
+
+func (toolResultCaller) GetTask(context.Context, string) (mcpruntime.Task, error) {
+    panic("unexpected Task query in a completed-result test")
+}
+
+func (toolResultCaller) UpdateTask(context.Context, string, map[string]json.RawMessage) error {
+    panic("unexpected Task answer in a completed-result test")
+}
+
+func (toolResultCaller) CancelTask(context.Context, string) error {
+    panic("unexpected Task cancellation in a completed-result test")
+}
+
 func TestGeneratedMCPModelAndExecutionCodecsMatch(t *testing.T) {
     payloads := map[string][]byte{
         "fmt.echo": []byte("{}"),
@@ -256,7 +278,7 @@ func TestGeneratedMCPModelAndExecutionCodecsMatch(t *testing.T) {
 func TestRegisteredStringToolDecodesEveryControlCharacter(t *testing.T) {
 	want := "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f" +
 		"\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f"
-	caller := mcpruntime.CallerFunc(func(context.Context, mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
+	caller := toolResultCaller(func(context.Context, mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
 		encoded,err:=json.Marshal(want)
         return mcpruntime.CallResponse{StructuredContent: encoded}, err
 	})
