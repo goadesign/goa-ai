@@ -69,9 +69,15 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 	if msg.Meta == nil {
 		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "meta is required"), nil
 	}
+	if err := toolregistry.ValidateInputRound(msg.Meta.InputRound, msg.Meta.InputContinuation, msg.Meta.TextOnly); err != nil {
+		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", err.Error()), nil
+	}
 
 	switch msg.Tool {
 	case Read:
+		if msg.Meta.InputContinuation != nil || msg.Meta.InputRound != 0 {
+			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "tool does not accept input continuation"), nil
+		}
 		if msg.Meta.TextOnly {
 			spec, ok := Spec(Read)
 			if !ok {

@@ -130,6 +130,15 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
             {{- end }}
             {{- $hasBoundsProjection := and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
         case tools.Ident({{ printf "%q" .QualifiedName }}):
+            {{- if .FillInputContinuation }}
+            if err := toolregistry.ValidateInputRound(call.InputRound, call.MCPContinuation, call.TextOnly); err != nil {
+                return runtime.Executed({{ $.Names.InvalidToolCall }}(call, err)), nil
+            }
+            {{- else }}
+            if call.MCPContinuation != nil || call.InputRound != 0 {
+                return runtime.Executed({{ $.Names.InvalidToolCall }}(call, errors.New("tool does not accept input continuation"))), nil
+            }
+            {{- end }}
             var toolArgs any
             {{- if .MethodPayloadTypeRef }}
             {
@@ -163,11 +172,7 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
                 }
             } else {
                 {{- if .MethodPayloadTypeRef }}
-                    {{- if .PayloadAliasesMethod }}
-                methodIn = toolArgs
-                    {{- else }}
                 methodIn = {{ $.Toolset.SpecsPackageName }}.{{ .MethodPayloadTransform }}(toolArgs.({{ if .PayloadPointer }}*{{ end }}{{ $.Toolset.SpecsPackageName }}.{{ .PayloadTypeName }}))
-                    {{- end }}
                 {{- end }}
             }
             for _, inj := range cfg.injectors {
@@ -178,6 +183,15 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
                     )), nil
                 }
             }
+            {{- if .FillInputContinuation }}
+            nativePayload, ok := methodIn.({{ .MethodPayloadTypeRef }})
+            if !ok {
+                return runtime.Executed({{ $.Names.FailedCallResult }}(call, fmt.Errorf("unexpected method payload type: %T", methodIn))), nil
+            }
+            if err := {{ $.Toolset.SpecsPackageName }}.{{ .FillInputContinuation }}(nativePayload, call.MCPContinuation); err != nil {
+                return runtime.Executed({{ $.Names.InvalidToolCall }}(call, err)), nil
+            }
+            {{- end }}
             methodOut, err := cfg.{{ .CallerField }}(ctx, methodIn)
             if err != nil {
                 return runtime.Executed({{ $.Names.FailedCallResult }}(
@@ -185,6 +199,23 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
                     err,
                 )), nil
             }
+            {{- if .ReadInputOutcome }}
+            nativeResult, ok := methodOut.({{ .NativeResultTypeRef }})
+            if !ok {
+                return runtime.Executed({{ $.Names.FailedCallResult }}(call, fmt.Errorf("unexpected method result type: %T", methodOut))), nil
+            }
+            completed, pending, err := {{ $.Toolset.SpecsPackageName }}.{{ .ReadInputOutcome }}(nativeResult)
+            if err != nil {
+                return runtime.Executed({{ $.Names.FailedCallResult }}(call, err)), nil
+            }
+            if pending != nil {
+                if call.TextOnly {
+                    return runtime.Executed({{ $.Names.FailedCallResult }}(call, errors.New("text-only tool returned required host input"))), nil
+                }
+                return runtime.AwaitMCPInput(pending), nil
+            }
+            methodOut = completed
+            {{- end }}
             var result any
             if cfg.mapResult != nil {
                 var e error
@@ -197,11 +228,7 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
                 }
             } else {
                 {{- if .HasResult }}
-                    {{- if .ResultAliasesMethod }}
-                result = methodOut
-                    {{- else }}
                 result = {{ $.Toolset.SpecsPackageName }}.{{ .ToolResultTransform }}(methodOut.({{ .MethodResultTypeRef }}))
-                    {{- end }}
                 {{- end }}
             }
             {{- if or $hasBoundsProjection $toolHasSource }}

@@ -56,3 +56,55 @@ func TestInputExchangeKeepsNativeFieldsOutsideModelArguments(t *testing.T) {
 	require.NoError(t, err)
 	assert.Same(t, mapping.Complete, complete)
 }
+
+// TestBoundInputExchangeRejectsModelContinuation keeps host answers out of Args.
+// An explicit domain-only Args remains valid for the same native method.
+func TestBoundInputExchangeRejectsModelContinuation(t *testing.T) {
+	for _, hostField := range []bool{false, true} {
+		name := "domain arguments"
+		if hostField {
+			name = "host continuation in arguments"
+		}
+		t.Run(name, func(t *testing.T) {
+			err := runDSLWithError(t, func() {
+				API("test", func() {})
+				Service("records", func() {
+					Method("read", func() {
+						Payload(func() {
+							Attribute("record", String, "Selected record")
+							Attribute("continuation", func() { Attribute("state", String, "Service-owned state") })
+							Required("record")
+						})
+						Result(func() {
+							OneOf("outcome", func() {
+								Attribute("complete", String, "Completed record")
+								Attribute("input_required", func() { Attribute("state", String, "Returned service state") })
+							})
+							Required("outcome")
+						})
+						InputExchange("continuation", "outcome")
+					})
+					Agent("reader", "Reads records after host input", func() {
+						Use("records", func() {
+							Tool("read", "Read one record", func() {
+								BindTo("read")
+								Args(func() {
+									Attribute("record", String, "Selected record")
+									if hostField {
+										Attribute("continuation", func() { Attribute("state", String, "Host state") })
+									}
+									Required("record")
+								})
+							})
+						})
+					})
+				})
+			})
+			if hostField {
+				assert.ErrorContains(t, err, `bound input continuation "continuation" belongs to host metadata`)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/boundedresult"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
@@ -327,6 +328,14 @@ func (t *ToolExpr) Validate() error {
 	for _, m := range svc.Methods {
 		if codegen.Goify(m.Name, true) == desired {
 			t.Method = m
+			mapping, err := mcpinput.InputExchange(m)
+			if err != nil {
+				verr.AddError(t, err)
+				return verr
+			}
+			if mapping != nil && t.Args.Find(mapping.ContinuationName) != nil {
+				verr.Add(t, "bound input continuation %q belongs to host metadata and must not appear in Args", mapping.ContinuationName)
+			}
 			validateInjectedFields(t, injectTargets(t, m), verr)
 			if err := t.validateShapes(); err != nil {
 				verr.AddError(t, err)
@@ -619,7 +628,12 @@ func validateServerDataShapes(t *ToolExpr, verr *eval.ValidationErrors, check fu
 				verr.Add(t, "ServerData(%q) with FromMethodResultField requires a bound method (BindTo)", sd.Kind)
 				continue
 			}
-			field := t.Method.Result.Find(sd.Source.MethodResultField)
+			result, err := mcpinput.CompleteResult(t.Method)
+			if err != nil {
+				verr.AddError(t, err)
+				continue
+			}
+			field := result.Find(sd.Source.MethodResultField)
 			if field == nil || field.Type == nil || field.Type == goaexpr.Empty {
 				verr.Add(t, "ServerData(%q) FromMethodResultField(%q) does not exist on method result", sd.Kind, sd.Source.MethodResultField)
 			}
@@ -811,12 +825,17 @@ func validateMethodResultBoundsShape(tool *ToolExpr, verr *eval.ValidationErrors
 	if tool == nil || verr == nil || tool.Bounds == nil || tool.Method == nil {
 		return
 	}
-	if tool.Method.Result == nil {
+	result, err := mcpinput.CompleteResult(tool.Method)
+	if err != nil {
+		verr.AddError(tool, err)
+		return
+	}
+	if result == nil {
 		verr.Add(tool, "bounded method result requires a non-empty bound method result")
 		return
 	}
 	validateBoundsField := func(name string, expected goaexpr.DataType, label string, existsRequired bool, mustBeRequired bool, mustBeOptional bool) {
-		field := tool.Method.Result.Find(name)
+		field := result.Find(name)
 		if field == nil || field.Type == nil || field.Type == goaexpr.Empty {
 			if existsRequired {
 				verr.Add(tool, "bounded method result must define %q on the bound method result", name)
@@ -827,7 +846,7 @@ func validateMethodResultBoundsShape(tool *ToolExpr, verr *eval.ValidationErrors
 			verr.Add(tool, "bounded method result field %q must be a %s", name, label)
 			return
 		}
-		isRequired := tool.Method.Result.IsRequired(name)
+		isRequired := result.IsRequired(name)
 		if mustBeRequired && !isRequired {
 			verr.Add(tool, "bounded method result field %q must be required", name)
 			return

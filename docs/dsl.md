@@ -1921,8 +1921,22 @@ mode. See the [current elicitation contract](https://modelcontextprotocol.io/spe
 Regenerate typed JSON-RPC consumers: tool, resource-read and prompt-read results
 now have native `Outcome` unions. Select `AsComplete()` or `AsInputRequired()`
 instead of reading completed fields directly. Framework MCP callers keep their
-existing `CallResponse` contract. Direct agent `BindTo` continuation wiring remains
-an unfinished [upgrade milestone](mcp_protocol_upgrade_plan.md).
+existing `CallResponse` contract.
+
+The same `InputExchange` method can back an agent tool through `BindTo` or a
+generated registry provider. Inherited `Args` exclude the continuation; inherited
+`Return` selects the completed branch. `Inject` keeps filling ordinary runtime
+fields. The runtime owns host answers and the input-round number, suspends the
+unfinished call, and invokes the same method after validating the host response.
+Pending questions never enter completed tool history. `BoundedResult` and
+`FromMethodResultField` read completed fields. Registry output follows the tool's
+`Return`, independently of HTTP result views. Text-only calls reject continuation
+before invocation and reject unfinished output before suspension.
+
+Regenerate local executors and registry providers together with their callers.
+Custom result mappers receive the completed native branch for an `InputExchange`
+method; they never receive its pending outcome. Do not include the continuation
+field in explicit `Args`.
 
 ### MCP prompt argument suggestions
 

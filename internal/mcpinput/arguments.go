@@ -33,6 +33,19 @@ func Arguments(method *expr.MethodExpr) (*expr.AttributeExpr, error) {
 	return selectArguments(payload, names)
 }
 
+// DomainArguments removes only the host continuation from a native method input.
+// Credential, URL and injected fields retain their ordinary BindTo behavior.
+func DomainArguments(method *expr.MethodExpr) (*expr.AttributeExpr, error) {
+	mapping, err := InputExchange(method)
+	if err != nil {
+		return nil, err
+	}
+	if mapping == nil {
+		return method.Payload, nil
+	}
+	return selectArguments(method.Payload, []string{mapping.ContinuationName})
+}
+
 // Credentials returns the annotated top-level credential names in design order.
 // Nested fields remain domain input, just as they do in Goa authentication.
 func Credentials(payload *expr.AttributeExpr) []string {

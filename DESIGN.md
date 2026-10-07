@@ -2060,7 +2060,14 @@ binding; its configured endpoint runs authorization and middleware each round.
 Current request capabilities govern selected questions. The protocol's empty
 elicitation object means form-only support; malformed declarations fail before
 answer conversion. Shared runtime checks and generated answer decoders use exact
-JSON names, so extension fields cannot replace declared values. Direct local `BindTo` continuation remains unfinished.
+JSON names, so extension fields cannot replace declared values. Native `BindTo`
+and registry providers reuse the same answer planning and conversion templates. Shared tool specs own native continuation and outcome
+functions; generated executors and providers call them. Host metadata stays
+outside tool arguments. Native method results select completion before ordinary
+result transforms, bounds and server-only data are applied. Registry output uses
+the authored tool result contract; HTTP view names do not change that contract.
+Local bound calls always use generated transforms instead of guessing Go type
+identity from equal DSL names. No separate input-result API or HTTP loop exists.
 
 MCP additional-input continuation retains presence independently of answer count.
 An explicit empty request object may require a later round without state or

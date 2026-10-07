@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"goa.design/goa-ai/expr/agent"
+	"goa.design/goa-ai/internal/mcpinput"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -60,6 +61,9 @@ func (p *toolSpecsPlan) link(data *GeneratorData) error {
 		if toolsetHasMethodTools(owner) {
 			planned.specs.providerImports = importsForPaths(planned.public, planned.providerImportPaths)
 			planned.specs.serviceTypeRef = planned.public.ImportName(planned.serviceImportPath) + "." + owner.SourceService.ServiceDeclaration.Name()
+		}
+		if err := planned.linkInputExchanges(services); err != nil {
+			return err
 		}
 		if err := planned.linkToolTransforms(owner, services); err != nil {
 			return err
@@ -116,6 +120,15 @@ func (p *toolSpecsPlan) link(data *GeneratorData) error {
 // and server data before generated declarations request names in the same Go
 // package.
 func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agent.ToolExpr) error {
+	var methodResult *goaexpr.AttributeExpr
+	if tool.Method != nil {
+		var err error
+		methodResult, err = mcpinput.CompleteResult(tool.Method)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Planning hides only fields the provider supplies after it receives the
 	// call. Continuation fields remain so generated registry schemas describe
 	// the complete payload sent to the provider.
@@ -124,7 +137,7 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 		Name:                     tool.Name,
 		QualifiedName:            toolset + "." + tool.Name,
 		ScopeName:                toolset,
-		Bounds:                   boundsData(tool.Bounds, tool.Method),
+		Bounds:                   boundsData(tool.Bounds, methodResult),
 		ModelHiddenPayloadFields: slices.Clone(tool.InjectedFields),
 		UIOnlyFields:             slices.Clone(tool.UIOnlyFields),
 	}
@@ -162,7 +175,7 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 	}
 	result := tool.Return
 	if (result == nil || result.Type == nil || result.Type == goaexpr.Empty) && tool.Method != nil {
-		result = tool.Method.Result
+		result = methodResult
 	}
 	if result == nil {
 		result = &goaexpr.AttributeExpr{Type: goaexpr.Empty}
@@ -188,6 +201,15 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 // declareToolTypes records the input, result, and server-data types generated
 // for tool.
 func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.ToolExpr) error {
+	var methodResult *goaexpr.AttributeExpr
+	if tool.Method != nil {
+		var err error
+		methodResult, err = mcpinput.CompleteResult(tool.Method)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Planning hides only fields the provider supplies after it receives the
 	// call. Continuation fields remain so generated registry schemas describe
 	// the complete payload sent to the provider.
@@ -196,7 +218,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 		Name:                     tool.Name,
 		QualifiedName:            toolset + "." + tool.Name,
 		ScopeName:                toolset,
-		Bounds:                   boundsData(tool.Bounds, tool.Method),
+		Bounds:                   boundsData(tool.Bounds, methodResult),
 		ModelHiddenPayloadFields: slices.Clone(tool.InjectedFields),
 		UIOnlyFields:             slices.Clone(tool.UIOnlyFields),
 	}
@@ -257,7 +279,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 	}
 	result := tool.Return
 	if (result == nil || result.Type == nil || result.Type == goaexpr.Empty) && tool.Method != nil {
-		result = tool.Method.Result
+		result = methodResult
 	}
 	if result == nil {
 		result = &goaexpr.AttributeExpr{Type: goaexpr.Empty}
@@ -291,6 +313,10 @@ func (p *toolSpecsPackagePlan) declareToolTransforms(toolset string, tool *agent
 	if tool.Method == nil {
 		return nil
 	}
+	completed, err := mcpinput.CompleteResult(tool.Method)
+	if err != nil {
+		return err
+	}
 	qualified := toolset + "." + tool.Name
 	names := p.tools[tool.Name]
 	owner := &contractTypeOwner{
@@ -310,9 +336,9 @@ func (p *toolSpecsPackagePlan) declareToolTransforms(toolset string, tool *agent
 		}
 	}
 	result := p.types[stableTypeKey(owner, usageResult, "")]
-	if result != nil && tool.Method.Result != nil && tool.Method.Result.Type != goaexpr.Empty {
-		if err := goacodegen.IsCompatible(tool.Method.Result.Type, result.public.Type, "in", "out"); err == nil {
-			planned, err := p.declareAdapterTransform(qualified+":tool-result", tool.Method.Result, result.public)
+	if result != nil && completed != nil && completed.Type != goaexpr.Empty {
+		if err := goacodegen.IsCompatible(completed.Type, result.public.Type, "in", "out"); err == nil {
+			planned, err := p.declareAdapterTransform(qualified+":tool-result", completed, result.public)
 			if err != nil {
 				return err
 			}
@@ -323,7 +349,7 @@ func (p *toolSpecsPackagePlan) declareToolTransforms(toolset string, tool *agent
 		if serverData.Source == nil || serverData.Source.MethodResultField == "" {
 			continue
 		}
-		source := tool.Method.Result.Find(serverData.Source.MethodResultField)
+		source := completed.Find(serverData.Source.MethodResultField)
 		target := p.types[stableTypeKey(owner, usageServerData, serverData.Kind)]
 		if source == nil || target == nil {
 			return fmt.Errorf("server data kind %q has no source or output type", serverData.Kind)

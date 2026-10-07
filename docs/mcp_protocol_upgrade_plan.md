@@ -3222,3 +3222,61 @@ the migrated caller checks passed in 0.478 s. Changed-line fixture lint reported
 zero issues; the complete fixture lint reports 14 pre-existing findings in
 scaffolding, conformance setup and assertions, none on changed lines. Full native BindTo/provider
 generation and the other release gates remain open.
+
+
+### Native input exchange composition — 2026-10-07
+
+Native `BindTo` executors and generated registry providers now use the same
+method mapping, question planning, answer decoding and pending conversion as MCP
+endpoints. The generator specializes their output representation before emitting
+code. Each native method has one conversion and private codec plan within a
+shared tool-spec package, even when several tools bind that method. There is no
+new runtime result interface, service constructor mode or transport loop.
+
+Inherited native arguments exclude only the mapped continuation. Ordinary
+credential and URL fields retain their native binding behavior, and `Inject`
+still supplies runtime-owned fields. Explicit `Args` cannot include the host
+continuation. Local interceptors run before the generated filler inserts host
+answers. The service's full native outcome is checked before pending questions
+are returned through existing workflow suspension or registry wire protocol 11.
+Only the completed branch enters ordinary result transforms, bounds and
+server-data conversion. Custom result mappers receive that completed branch.
+Registry output follows authored `Tool.Return`; an HTTP view name does not change
+its separately advertised tool contract. Native clients retain Goa's full native
+result contract; the configured MCP endpoint path continues to own selected
+transport views.
+
+The same checks retain explicit empty state and empty continuation rounds, typed
+form accept/decline/cancel decisions, URL consent, native Go field names and
+precise errors before invocation. Unknown answer identifiers remain ignored under
+the protocol contract. Text-only calls reject continuation before invocation and
+pending output before suspension. Equal DSL type names no longer bypass generated
+Go conversions: a compiled ordinary named-type fixture proved that bypass could
+return a service Go value incompatible with the advertised tool codec.
+
+Verification and observed failures:
+
+- Compiled local and provider fixtures pass form and URL decisions, empty rounds,
+  rejection before invocation, injected fields, completed bounds, evidence and
+  result codecs. The final generator checkpoint ran the native contract fixture
+  in 3.51 s and local/provider viewed-service fixture in 2.75 s.
+- Mapping tests pass in 0.344 s; DSL, expression and agent-generation packages
+  pass in 0.521 s, 0.305 s and 0.818 s. The same-DSL-name runtime fixture passes.
+- The agent generator package checkpoint took 104.276 s and failed. It exposed
+  raw integer width checks removed when shape rendering was shared with private
+  MCP codecs, plus stale generated metadata and one schema golden. Tool codecs
+  again emit their needed raw checks; private codecs retain typed exact-number
+  decoding. Focused collection, scalar, unknown-field and result-bound cases pass
+  in 1.16–1.56 s each. Their original validation goldens pass. The one stale
+  empty-object schema golden was refreshed through its owning test.
+- Private exact-number codec checks pass in 0.945 s, including whole decimal and
+  exponent spellings and signed/unsigned boundaries. Quickstart regeneration
+  changed only its recorded Goa version; generation, build and runnable example
+  pass in 11.27 s. Scoped configured lint reports zero issues. Neither the root
+  suite nor the complete generator checkpoint was repeated after these repairs.
+- The previously completed MCP HTTP and independent SDK fixture is reused; the
+  current changes do not replace configured endpoint dispatch or host ownership.
+
+Tasks, dynamic catalogs, authorization conformance/profile assessment, Apps,
+Skills, external caller cutover and final website work still gate release. This
+increment does not authorize merging or releasing the unfinished upgrade.

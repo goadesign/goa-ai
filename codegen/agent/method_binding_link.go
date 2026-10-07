@@ -91,6 +91,10 @@ func (p *toolSpecsPlan) linkMethodToolset(planned *toolSpecsPackagePlan, toolset
 			continue
 		}
 		bindMethodTypeRefs(tool, attributor)
+		if input := planned.inputMethods[tool.method]; input != nil {
+			tool.FillInputContinuation = input.fill.Name()
+			tool.ReadInputOutcome = input.outcome.Name()
+		}
 		if err := p.linkMethodResultFields(tool); err != nil {
 			return err
 		}
@@ -104,6 +108,9 @@ func bindMethodTypeRefs(tool *ToolData, attributor goacodegen.Attributor) {
 	if tool.MethodPayloadAttr != nil {
 		tool.MethodPayloadTypeRef = attributor.Ref(tool.MethodPayloadAttr, "")
 	}
+	if tool.method != nil {
+		tool.NativeResultTypeRef = attributor.Ref(tool.method.Result, "")
+	}
 	if tool.MethodResultAttr != nil {
 		tool.MethodResultTypeRef = attributor.Ref(tool.MethodResultAttr, "")
 	}
@@ -115,7 +122,7 @@ func (p *toolSpecsPlan) linkMethodResultFields(tool *ToolData) error {
 	if tool.method == nil || tool.MethodResultAttr == nil {
 		return nil
 	}
-	layout, err := p.service.MethodResultLayout(tool.method)
+	layout, err := p.service.MethodTypeLayout(tool.method, tool.MethodResultAttr)
 	if err != nil {
 		return fmt.Errorf("link method tool %q result layout: %w", tool.QualifiedName, err)
 	}
@@ -148,12 +155,11 @@ func resultFieldSelector(layout *goacodegen.GoTypePlan, result *goaexpr.Attribut
 	if attribute == nil {
 		return "", fmt.Errorf("field is not present in the method result")
 	}
-	for _, field := range layout.Fields() {
-		if field.MatchesOccurrence(attribute) {
-			return field.FieldName(true), nil
-		}
+	matches := layout.PlansForOccurrence(attribute)
+	if len(matches) != 1 {
+		return "", fmt.Errorf("field has %d finalized Goa layouts", len(matches))
 	}
-	return "", fmt.Errorf("field has no finalized Goa layout")
+	return matches[0].FieldName(true), nil
 }
 
 // boundsProjectionFields lists the result fields read by one bounds helper.

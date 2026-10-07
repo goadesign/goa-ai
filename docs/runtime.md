@@ -7249,7 +7249,11 @@ cannot choose it. Custom executor outcomes and restored checkpoints also cannot
 introduce MCP host input into a text-only run. These rejections do not dispatch a
 continuation, publish an input prompt or retry an accepted tool operation.
 
-Generated MCP executors return this unfinished outcome to the agent runtime.
+Generated MCP and native `BindTo` executors return this unfinished outcome to
+the agent runtime. Generated registry providers send the same host requests
+through registry wire protocol 11; the consumer returns the existing unfinished
+execution outcome. Only the completed branch runs tool-result transforms,
+bounds and server-only data conversion.
 The runtime saves the original tool arguments and opaque state in a version-11
 run suspension, then publishes `await_mcp_input` to the trusted host. The host
 resumes the exact saved suspension with `PendingInputResponse.MCP`, containing

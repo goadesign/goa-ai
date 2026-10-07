@@ -9,6 +9,7 @@ import (
 	"slices"
 
 	"goa.design/goa-ai/expr/agent"
+	"goa.design/goa-ai/internal/mcpinput"
 	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 )
@@ -117,6 +118,10 @@ func (p *toolSpecsPackagePlan) setMethodTransformLayouts(servicePlan *service.Pl
 		if tool.Method == nil {
 			continue
 		}
+		completed, err := mcpinput.CompleteResult(tool.Method)
+		if err != nil {
+			return err
+		}
 		names := p.tools[tool.Name]
 		if names.methodPayloadTransformPlan != nil {
 			serviceLayout, err := servicePlan.MethodTypeLayout(tool.Method, tool.Method.Payload)
@@ -128,7 +133,7 @@ func (p *toolSpecsPackagePlan) setMethodTransformLayouts(servicePlan *service.Pl
 		var resultLayout *goacodegen.GoTypePlan
 		if names.toolResultTransformPlan != nil || len(names.serverDataTransformPlans) > 0 {
 			var err error
-			resultLayout, err = servicePlan.MethodTypeLayout(tool.Method, tool.Method.Result)
+			resultLayout, err = servicePlan.MethodTypeLayout(tool.Method, completed)
 			if err != nil {
 				return err
 			}
@@ -141,7 +146,7 @@ func (p *toolSpecsPackagePlan) setMethodTransformLayouts(servicePlan *service.Pl
 			if plan == nil {
 				continue
 			}
-			source := tool.Method.Result.Find(serverData.Source.MethodResultField)
+			source := completed.Find(serverData.Source.MethodResultField)
 			matches := resultLayout.PlansForOccurrence(source)
 			if len(matches) != 1 {
 				return fmt.Errorf(

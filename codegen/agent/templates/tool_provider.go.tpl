@@ -49,6 +49,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 	if msg.Meta == nil {
 		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "meta is required"), nil
 	}
+    if err := toolregistry.ValidateInputRound(msg.Meta.InputRound, msg.Meta.InputContinuation, msg.Meta.TextOnly); err != nil {
+        return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", err.Error()), nil
+    }
 {{- if .NeedsInject }}
 	meta := runtime.ToolCallMeta{
 		TextOnly: msg.Meta.TextOnly,
@@ -63,8 +66,14 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 
 	switch msg.Tool {
 {{- range .Tools }}
+{{- $tool := . }}
 {{- if .IsMethodBacked }}
 	case {{ .ConstName }}:
+{{- if not .FillInputContinuation }}
+        if msg.Meta.InputContinuation != nil || msg.Meta.InputRound != 0 {
+            return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "tool does not accept input continuation"), nil
+        }
+{{- end }}
 {{- if or .RequiresUI .Confirmation }}
         if msg.Meta.TextOnly {
             return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "unsupported_interaction", "tool requires unsupported interaction"), nil
@@ -104,28 +113,52 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- if .HasMethodPayload }}
 		methodIn := {{ .MethodPayloadTransform }}(args)
 {{- end }}
+{{- if .FillInputContinuation }}
+        if err := {{ .FillInputContinuation }}(methodIn, msg.Meta.InputContinuation); err != nil {
+            return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
+        }
+{{- end }}
 {{- if .HasMethodResult }}
-		methodOut, err := p.svc.{{ .MethodGoName }}(ctx{{ if .HasMethodPayload }}, methodIn{{ end }})
+        {{- if .MethodReturnsView }}
+        // Registry output follows this tool's Return, independently of HTTP views.
+        {{- end }}
+		methodOut, {{ if .MethodReturnsView }}_, {{ end }}err := p.svc.{{ .MethodGoName }}(ctx{{ if .HasMethodPayload }}, methodIn{{ end }})
 {{- else }}
 		err = p.svc.{{ .MethodGoName }}(ctx{{ if .HasMethodPayload }}, methodIn{{ end }})
 {{- end }}
 		if err != nil {
 			return toolregistry.NewToolResultServiceErrorMessage(msg.RegistrationToken, msg.ToolUseID, msg.Tool, toolErrorCode(err), err), nil
 		}
+{{- if .ReadInputOutcome }}
+        completed, pending, err := {{ .ReadInputOutcome }}(methodOut)
+        if err != nil {
+            return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_result", err.Error()), nil
+        }
+        if pending != nil {
+            if msg.Meta.TextOnly {
+                return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "unsupported_interaction", "text-only tool returned required host input"), nil
+            }
+            return toolregistry.ToolResultMessage{RegistrationToken:msg.RegistrationToken,ToolUseID:msg.ToolUseID,InputRequired:pending},nil
+        }
+{{- end }}
 {{- if .HasResult }}
+        {{- if .ReadInputOutcome }}
+        result := {{ .ToolResultTransform }}(completed)
+        {{- else }}
 		result := {{ .ToolResultTransform }}(methodOut)
+        {{- end }}
 		resultJSON, err := {{ .ResultCodecName }}().ToJSON(result)
 		if err != nil {
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 		}
 {{- if and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
-		bounds := {{ .BoundsFunc }}(methodOut)
+		bounds := {{ .BoundsFunc }}({{ if .ReadInputOutcome }}completed{{ else }}methodOut{{ end }})
 {{- end }}
 		var server []*toolregistry.ServerDataItem
 {{- range .ServerData }}
 {{- if .MethodResultField }}
 		{
-			data := {{ .Transform }}(methodOut.{{ .MethodResultFieldName }})
+			data := {{ .Transform }}({{ if $tool.ReadInputOutcome }}completed{{ else }}methodOut{{ end }}.{{ .MethodResultFieldName }})
 			dataJSON, err := {{ .CodecName }}().ToJSON(data)
 			if err != nil {
 				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil

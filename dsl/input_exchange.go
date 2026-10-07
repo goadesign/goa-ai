@@ -20,8 +20,9 @@ import (
 // and either typed form content or a URL; its answer selects accept, decline or
 // cancel. Accepted form content supplies the generated form schema.
 //
-// Use inside a Goa Method exposed as an MCP tool, resource reader or prompt.
-// The service owns state integrity, authorization and domain effects. MCP callers
+// Use inside a Goa Method exposed as an MCP tool, resource reader or prompt,
+// or called by a BindTo tool locally or through a registry provider.
+// The service owns state integrity, authorization and domain effects. The runtime and MCP callers
 // keep the original arguments and supply host answers for that exact invocation.
 func InputExchange(continuation, outcome string) {
 	method, ok := eval.Current().(*expr.MethodExpr)

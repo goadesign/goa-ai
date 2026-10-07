@@ -12,7 +12,7 @@ func {{ .Name }}(path string, value any, description string) error {
     if value == nil {
         return {{ $names.InvalidFieldType }}(field, {{ printf "%q" .Expected }}, "null", description)
     }
-    {{- $usesTyped := or (eq .Kind "object") (eq .Kind "array") (eq .Kind "map") (eq .Kind "union") }}
+    {{- $usesTyped := or (eq .Kind "object") (eq .Kind "array") (eq .Kind "map") (eq .Kind "union") (and $names.IntegerRangeInShape (or .SignedInteger .UnsignedInteger)) }}
     {{- if or (eq .Expected "integer") (eq .Expected "number") }}
     {{ if $usesTyped }}typed{{ else }}_{{ end }}, ok := value.({{ $names.JSON }}.Number)
     {{- else if eq .Expected "string" }}
@@ -27,6 +27,11 @@ func {{ .Name }}(path string, value any, description string) error {
     if !ok {
         return {{ $names.InvalidFieldType }}(field, {{ printf "%q" .Expected }}, {{ $names.DecodedType }}(value), description)
     }
+    {{- if and $names.IntegerRangeInShape (or .SignedInteger .UnsignedInteger) }}
+    if _, err := {{ $names.Strconv }}.{{ if .UnsignedInteger }}ParseUint{{ else }}ParseInt{{ end }}(typed.String(), 10, {{ if .IntegerBits }}{{ .IntegerBits }}{{ else }}{{ $names.Strconv }}.IntSize{{ end }}); err != nil {
+        return {{ $names.InvalidFieldType }}(field, "integer", "number", description)
+    }
+    {{- end }}
     {{- if eq .Kind "union" }}
     {{- if not .Flatten }}
     for key := range typed {

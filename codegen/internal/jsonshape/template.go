@@ -8,6 +8,9 @@ import _ "embed"
 type Names struct {
 	// InvalidFieldType, UnknownField, DecodedType and ChildPath name the adapters.
 	InvalidFieldType, UnknownField, DecodedType, ChildPath string
+	// IntegerRangeInShape checks native integer widths before ordinary JSON decoding.
+	// Private codecs leave this false because their typed integer decoder owns it.
+	IntegerRangeInShape bool
 	// JSON, Fmt, Sort and Strconv are the imported package qualifiers.
 	JSON, Fmt, Sort, Strconv string
 }

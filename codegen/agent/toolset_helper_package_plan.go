@@ -265,6 +265,9 @@ func (p *toolsetHelperPackagePlan) planMethodImports(servicePlan *service.Plan, 
 	if hasBoundsTool(tools) {
 		serviceImports = append(serviceImports, goacodegen.NewImport("agent", "goa.design/goa-ai/runtime/agent"))
 	}
+	if hasInputExchangeTool(tools) {
+		serviceImports = append(serviceImports, goacodegen.SimpleImport("goa.design/goa-ai/runtime/toolregistry"))
+	}
 	if hasServerDataTool(tools) {
 		serviceImports = append(serviceImports,
 			goacodegen.SimpleImport("encoding/json"),

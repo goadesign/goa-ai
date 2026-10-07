@@ -156,6 +156,9 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 		}
 		switch call.Name {
 		case tools.Ident("helpers.agent-id"):
+			if call.MCPContinuation != nil || call.InputRound != 0 {
+				return runtime.Executed(invalidServiceToolCall(call, errors.New("tool does not accept input continuation"))), nil
+			}
 			var toolArgs any
 			{
 				val, err := helpersspecs.AgentIDPayloadCodec().FromJSON(call.Payload)
@@ -178,7 +181,7 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 					)), nil
 				}
 			} else {
-				methodIn = toolArgs
+				methodIn = helpersspecs.InitAgentIDMethodPayload(toolArgs.(*helpersspecs.AgentIDPayload))
 			}
 			for _, inj := range cfg.injectors {
 				if err := inj.Inject(ctx, methodIn, meta); err != nil {
@@ -206,13 +209,16 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 					)), nil
 				}
 			} else {
-				result = methodOut
+				result = helpersspecs.InitAgentIDToolResult(methodOut.(*alpha.CollisionOutput))
 			}
 			return runtime.Executed(&planner.ToolResult{
 				Name:   call.Name,
 				Result: result,
 			}), nil
 		case tools.Ident("helpers.agent_id"):
+			if call.MCPContinuation != nil || call.InputRound != 0 {
+				return runtime.Executed(invalidServiceToolCall(call, errors.New("tool does not accept input continuation"))), nil
+			}
 			var toolArgs any
 			{
 				val, err := helpersspecs.AgentIDPayload2Codec().FromJSON(call.Payload)
@@ -235,7 +241,7 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 					)), nil
 				}
 			} else {
-				methodIn = toolArgs
+				methodIn = helpersspecs.InitAgentID2MethodPayload(toolArgs.(*helpersspecs.AgentIDPayload2))
 			}
 			for _, inj := range cfg.injectors {
 				if err := inj.Inject(ctx, methodIn, meta); err != nil {
@@ -263,13 +269,16 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 					)), nil
 				}
 			} else {
-				result = methodOut
+				result = helpersspecs.InitAgentID2ToolResult(methodOut.(*alpha.CollisionOutput))
 			}
 			return runtime.Executed(&planner.ToolResult{
 				Name:   call.Name,
 				Result: result,
 			}), nil
 		case tools.Ident("helpers.client"):
+			if call.MCPContinuation != nil || call.InputRound != 0 {
+				return runtime.Executed(invalidServiceToolCall(call, errors.New("tool does not accept input continuation"))), nil
+			}
 			var toolArgs any
 			{
 				val, err := helpersspecs.ClientPayloadCodec().FromJSON(call.Payload)
@@ -292,7 +301,7 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 					)), nil
 				}
 			} else {
-				methodIn = toolArgs
+				methodIn = helpersspecs.InitClientMethodPayload(toolArgs.(*helpersspecs.ClientPayload))
 			}
 			for _, inj := range cfg.injectors {
 				if err := inj.Inject(ctx, methodIn, meta); err != nil {
@@ -320,13 +329,16 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 					)), nil
 				}
 			} else {
-				result = methodOut
+				result = helpersspecs.InitClientToolResult(methodOut.(*alpha.CollisionOutput))
 			}
 			return runtime.Executed(&planner.ToolResult{
 				Name:   call.Name,
 				Result: result,
 			}), nil
 		case tools.Ident("helpers.exec_opt"):
+			if call.MCPContinuation != nil || call.InputRound != 0 {
+				return runtime.Executed(invalidServiceToolCall(call, errors.New("tool does not accept input continuation"))), nil
+			}
 			var toolArgs any
 			{
 				val, err := helpersspecs.ExecOptPayloadCodec().FromJSON(call.Payload)
@@ -349,7 +361,7 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 					)), nil
 				}
 			} else {
-				methodIn = toolArgs
+				methodIn = helpersspecs.InitExecOptMethodPayload(toolArgs.(*helpersspecs.ExecOptPayload))
 			}
 			for _, inj := range cfg.injectors {
 				if err := inj.Inject(ctx, methodIn, meta); err != nil {
@@ -377,7 +389,7 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 					)), nil
 				}
 			} else {
-				result = methodOut
+				result = helpersspecs.InitExecOptToolResult(methodOut.(*alpha.CollisionOutput))
 			}
 			return runtime.Executed(&planner.ToolResult{
 				Name:   call.Name,

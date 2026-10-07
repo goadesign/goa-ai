@@ -263,13 +263,14 @@ type (
 // template. Their generated names and error semantics remain unchanged.
 func (toolCodecsFileData) JSONNames() jsonshape.Names {
 	return jsonshape.Names{
-		InvalidFieldType: "invalidGeneratedFieldTypeError",
-		UnknownField:     "unknownJSONFieldError",
-		DecodedType:      "decodedJSONType",
-		ChildPath:        "generatedJSONChildPath",
-		JSON:             "json",
-		Fmt:              "fmt",
-		Sort:             "sort",
-		Strconv:          "strconv",
+		IntegerRangeInShape: true,
+		InvalidFieldType:    "invalidGeneratedFieldTypeError",
+		UnknownField:        "unknownJSONFieldError",
+		DecodedType:         "decodedJSONType",
+		ChildPath:           "generatedJSONChildPath",
+		JSON:                "json",
+		Fmt:                 "fmt",
+		Sort:                "sort",
+		Strconv:             "strconv",
 	}
 }

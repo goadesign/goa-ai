@@ -21,6 +21,7 @@ const (
 	registryClientFileT        = "registry_client"
 	registryClientOptionsFileT = "registry_client_options"
 	mcpExecutorFileT           = "mcp_executor"
+	nativeInputExchangeFileT   = "native_input_exchange"
 	serviceExecutorFileT       = "service_executor"
 	toolCodecsFileT            = "tool_codecs"
 	toolInjectFileT            = "tool_inject"

@@ -615,13 +615,8 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 			if _, viewed := method.Result.Type.(*expr.ResultTypeExpr); viewed {
 				writer = services.ViewAttributor(planned.prepared.userService.Name, planned.adapterData.CodecImportPath)
 			}
-			if err := input.validation.BindService(writer); err != nil {
+			if err := input.BindCodecs(attributor, writer); err != nil {
 				return nil, err
-			}
-			for _, question := range input.Questions {
-				if err := question.answer.BindService(attributor); err != nil {
-					return nil, err
-				}
 			}
 			if err := bindInputExchange(planned.adapterData, values.endpoint); err != nil {
 				return nil, err

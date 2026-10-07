@@ -103,3 +103,30 @@ func TestArgumentExamplesPreserveJSON(t *testing.T) {
 		}
 	}
 }
+
+// TestDomainArgumentsKeepsNativeBindings checks that only host answers disappear.
+// Credential and URL fields retain their declarations, constraints and examples.
+func TestDomainArgumentsKeepsNativeBindings(t *testing.T) {
+	method := exchangeMethod()
+	credential := &expr.AttributeExpr{Type: expr.String, Meta: expr.MetaExpr{"security:token": nil}}
+	route := &expr.AttributeExpr{Type: expr.String, Meta: expr.MetaExpr{"struct:field:name": []string{"ResourceKey"}}}
+	*expr.AsObject(method.Payload.Type) = append(*expr.AsObject(method.Payload.Type),
+		&expr.NamedAttributeExpr{Name: "credential", Attribute: credential},
+		&expr.NamedAttributeExpr{Name: "resource_key", Attribute: route})
+	method.Payload.Validation.Required = append(method.Payload.Validation.Required, "credential", "resource_key")
+	method.Meta[pathFieldsKey] = []string{"resource_key"}
+	method.Payload.UserExamples = []*expr.ExampleExpr{{Value: expr.Val{"destination": "here", "credential": "secret", "resource_key": "key", "continuation": expr.Val{"state": "opaque"}}}}
+	native, err := DomainArguments(method)
+	require.NoError(t, err)
+	assert.Nil(t, native.Find("continuation"))
+	assert.Same(t, credential, native.Find("credential"))
+	assert.Same(t, route, native.Find("resource_key"))
+	assert.Equal(t, []string{"destination", "credential", "resource_key"}, native.Validation.Required)
+	assert.Equal(t, map[string]json.RawMessage{"destination": json.RawMessage(`"here"`), "credential": json.RawMessage(`"secret"`), "resource_key": json.RawMessage(`"key"`)}, native.UserExamples[0].Value)
+	assert.NotNil(t, method.Payload.Find("continuation"))
+	transport, err := Arguments(method)
+	require.NoError(t, err)
+	assert.Nil(t, transport.Find("credential"))
+	assert.Nil(t, transport.Find("resource_key"))
+	assert.NotNil(t, transport.Find("destination"))
+}

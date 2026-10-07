@@ -577,12 +577,14 @@ type (
 		// argument. Provider templates use it to emit the exact service call arity.
 		HasMethodPayload bool
 
-		// MethodResultAttr is the Goa attribute for the bound service result
-		// type. It supplies the generated result when the tool has no Return.
+		// MethodResultAttr is the completed branch of an input exchange, or the
+		// ordinary native result. Tool transforms and server data read this value.
 		MethodResultAttr *goaexpr.AttributeExpr
 		// HasMethodResult reports whether the bound Goa method returns a value in
 		// addition to an error.
 		HasMethodResult bool
+		// MethodReturnsView reports a service-selected HTTP view return value. Registry output uses the tool Return instead.
+		MethodReturnsView bool
 
 		// Toolset links back to the parent toolset metadata.
 		Toolset *ToolsetData
@@ -618,6 +620,12 @@ type (
 		MethodPayloadTypeRef string
 		// MethodResultTypeRef is the fully-qualified reference for the bound method result type.
 		MethodResultTypeRef string
+		// NativeResultTypeRef names the full bound result before selecting completed input exchanges.
+		NativeResultTypeRef string
+		// FillInputContinuation names the generated function that inserts host answers.
+		FillInputContinuation string
+		// ReadInputOutcome names the generated function that selects pending or completed output.
+		ReadInputOutcome string
 		// MethodPayloadLoc is the Goa location for the payload user type when specified via
 		// Meta("struct:pkg:path", ...). Nil when the payload is local to the service package
 		// or is not a user type.
@@ -626,17 +634,6 @@ type (
 		// Meta("struct:pkg:path", ...). Nil when the result is local to the service package
 		// or is not a user type.
 		MethodResultLoc *codegen.Location
-
-		// PayloadAliasesMethod is true when the tool payload user type matches
-		// the bound method payload user type or any of its Extend bases. In this
-		// case the generated code bypasses typed payload mapping and forwards the
-		// decoded tool payload directly to the client.
-		PayloadAliasesMethod bool
-		// ResultAliasesMethod is true when the tool result user type matches the
-		// bound method result user type or any of its Extend bases. In this case the
-		// generated code bypasses the result adapter and returns the service result
-		// directly as the tool result.
-		ResultAliasesMethod bool
 
 		// Optional hint templates from DSL
 		CallHintTemplate   string

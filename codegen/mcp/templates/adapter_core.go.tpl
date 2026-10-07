@@ -311,38 +311,7 @@ func fill{{ .CallName }}Inputs(payload {{ .PayloadRef }}{{ range $index, $field 
     }
     {{- end }}
 	{{- with .InputExchange }}
-    if requestState != nil || inputResponses != nil {
-        continuation := &{{ .ContinuationRef }}{}
-        {{- if .StateField }}
-        if requestState != nil {
-            value := {{ .StateRef }}(*requestState)
-            continuation.{{ .StateField }} = &value
-        }
-        {{- else }}
-        if requestState != nil {
-            return goa.PermanentError("invalid_params", "this operation does not accept requestState")
-        }
-        {{- end }}
-        {{- if .Questions }}
-        for name, raw := range inputResponses {
-            switch name {
-            {{- $input := . }}
-            {{- range .Questions }}
-            case {{ quote .Name }}:
-                answer, err := {{ .Decode }}(raw)
-                if err != nil {
-                    return goa.PermanentError("invalid_params", "input response %q: %s", name, err.Error())
-                }
-                if continuation.{{ $input.ResponsesField }} == nil {
-                    continuation.{{ $input.ResponsesField }} = &{{ $input.ResponsesRef }}{}
-                }
-                continuation.{{ $input.ResponsesField }}.{{ .ResponseField }} = &{{ .ResponseRef }}{ {{ .AnswerField }}: {{ if .AnswerDereference }}*{{ end }}answer }
-            {{- end }}
-            }
-        }
-        {{- end }}
-        payload.{{ .ContinuationField }} = continuation
-    }
+    {{ .ContinuationSource }}
     {{- end }}
     if err := {{ .InputValidate }}(payload); err != nil {
         return goa.PermanentError("invalid_params", "{{ if .InputExchange }}Operation inputs{{ else }}HTTP {{ if .Paths }}inputs{{ else }}credentials{{ end }}{{ end }} do not match the service contract")
@@ -365,49 +334,7 @@ func {{ .Name }}(v {{ .ParamTypeRef }}) {{ .ResultTypeRef }} {
 // result and returns its selected questions and exact state. The current
 // request's capabilities must support every selected form or URL interaction.
 func convert{{ $endpoint.CallName }}Pending(pending {{ .PendingRef }}, meta json.RawMessage) (*InputRequiredResult, error) {
-    if err := {{ .PendingValidate }}(pending); err != nil {
-        return nil, goa.PermanentError("internal_error", "%s", err.Error())
-    }
-    result := &InputRequiredResult{Meta: resultMeta()}
-    {{- if .PendingStateField }}
-    if pending.{{ .PendingStateField }} != nil {
-        value := string(*pending.{{ .PendingStateField }})
-        result.RequestState = &value
-    }
-    {{- end }}
-    {{- if .RequestsField }}
-    {{- if .Questions }}
-    required := &RequiredClientCapabilities{Elicitation: &ElicitationCapabilities{}}
-    {{- end }}
-    if pending.{{ .RequestsField }} != nil {
-        result.InputRequests = make(map[string]*InputRequest)
-        {{- $input := . }}
-        {{- range .Questions }}
-        if question := pending.{{ $input.RequestsField }}.{{ .RequestField }}; question != nil {
-            {{- if .Schema }}
-            params := &ElicitationFormParams{Message: string({{ if .MessagePointer }}*{{ end }}question.{{ .MessageField }}), RequestedSchema: json.RawMessage({{ quote .Schema }})}
-            result.InputRequests[{{ quote .Name }}] = &InputRequest{Method: "elicitation/create", Params: NewElicitationParamsForm(params)}
-            required.Elicitation.Form = &struct{}{}
-            {{- else }}
-            params := &ElicitationURLParams{Message: string({{ if .MessagePointer }}*{{ end }}question.{{ .MessageField }}), URL: string({{ if .URLPointer }}*{{ end }}question.{{ .URLField }})}
-            result.InputRequests[{{ quote .Name }}] = &InputRequest{Method: "elicitation/create", Params: NewElicitationParamsURL(params)}
-            required.Elicitation.URL = &struct{}{}
-            {{- end }}
-        }
-        {{- end }}
-    }
-    {{- if .Questions }}
-    if len(result.InputRequests) > 0 {
-        if err := validateInputCapabilities(meta, required); err != nil {
-            return nil, err
-        }
-    }
-    {{- end }}
-    {{- end }}
-    if {{ if .RequestsField }}pending.{{ .RequestsField }} == nil && {{ end }}result.RequestState == nil {
-        return nil, goa.PermanentError("internal_error", "unfinished operation requires requests or requestState")
-    }
-    return result, nil
+    {{ .PendingSource }}
 }
 {{- end }}
 {{- end }}

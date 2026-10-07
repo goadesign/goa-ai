@@ -10,6 +10,7 @@ import (
 	"path"
 	"slices"
 
+	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
 	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	"goa.design/goa-ai/codegen/ir"
 	"goa.design/goa-ai/expr/agent"
@@ -65,6 +66,10 @@ type (
 		serviceImportPath      string
 		registrationRoutes     []string
 		render                 *ToolsetData
+		inputCodecs            *jsoncodec.Plan
+		inputCodecPackage      *goacodegen.GeneratedPackage
+		inputMethods           map[*goaexpr.MethodExpr]*nativeInputPlan
+		inputImportPaths       []string
 	}
 
 	// toolSpecsFileImports keeps the imports used by each generated file. Goa
