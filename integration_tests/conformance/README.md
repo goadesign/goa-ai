@@ -61,8 +61,9 @@ mandatory failures. Stop the local server with an interrupt when done.
 The pinned referee binds its authorization fixtures to HTTP. The current MCP
 contract requires HTTPS issuer and authorization endpoints; its loopback HTTP
 exception applies only to browser redirects. `https_fixture.mjs` changes the
-referee's listening socket and resulting base URL to HTTPS. The original command,
-OAuth handlers, scenario and checks remain unchanged. This is an HTTPS-adapted
+referee's listening socket and resulting base URL to HTTPS. The original command, OAuth handlers and checks remain unchanged. For the two
+machine scenarios, setup also supplies the omitted registration issuer from the
+fixture's own authorization-server configuration, before client startup. This is an HTTPS-adapted
 scenario, not a stock referee pass or a complete authorization-conformance claim.
 
 From the repository root, create a local test certificate and build the driver:
@@ -87,7 +88,13 @@ certificate verification stays enabled. The driver obtains its exact issuer and
 registered credentials from the referee's typed scenario context. It supplies
 host consent through the fixture's browser redirect and uses an explicit
 process-lifetime credential store. Production OAuth code owns discovery, PKCE,
-callback validation, token exchange and authorized MCP dispatch.
+callback validation, token exchange and authorized MCP dispatch. Repeat the command
+with `--scenario auth/client-credentials-basic --force` and
+`--scenario auth/client-credentials-jwt --force` to select the two machine
+extensions explicitly. Without `--force`, this referee skips extension scenarios
+and exits successfully without running their checks. The wire revision stays
+`2026-07-28`. Signed registration uses the fixture's ES256 key and exact issuer
+audience; its one-minute test assertion validity applies only to that assertion.
 
 The certificate's one-day validity is local test setup, not an OAuth token or
 product retention rule. Keep the private key and raw reports out of commits:
@@ -101,6 +108,7 @@ Verified on 2026-10-03 with the pinned referee:
 | Role / scenario | Result | Limit of the evidence |
 | --- | --- | --- |
 | Client / `auth/pre-registration`, HTTPS-adapted, verified 2026-10-07 | 13 passed, no failures or warnings | Protected-resource and issuer discovery, S256 PKCE, preregistered Basic authentication, token exchange and authorized list/call through production OAuth. Other authorization profiles and negative cases remain open. |
+| Client / `auth/client-credentials-basic` and `auth/client-credentials-jwt`, HTTPS-adapted, verified 2026-10-07 | 8 passed each, no failures or warnings | Explicitly selected machine extensions. Basic credentials and independently verified ES256 authentication, issuer discovery, token exchange and authorized MCP calls. Fixture setup supplies the exact registration issuer; no issuer is inferred from peer discovery. |
 | Client / `tools_call` | 2 checks passed | Simple tool call and its wire schema |
 | Client / `request-metadata` | 4 passed, 3 skipped, 1 warning; overall failure | Roots, sampling, and elicitation are unclaimed by this driver. The peer rejects `2026-07-28` while advertising that same revision as supported; it warns because the client stops instead of repeating the request. This is not an old-version fallback test. |
 | Client / `http-standard-headers` | 3 passed, 8 skipped | Tool list/call method headers and tool name header. The driver does not exercise resource/prompt methods or removed initialization methods. |

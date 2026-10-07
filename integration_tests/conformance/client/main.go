@@ -33,7 +33,8 @@ func exercise() error {
 	if os.Getenv("MCP_CONFORMANCE_PROTOCOL_VERSION") != mcp.ProtocolVersion {
 		return errors.New("conformance client requires the current protocol revision")
 	}
-	if os.Getenv("MCP_CONFORMANCE_SCENARIO") == "auth/pre-registration" {
+	switch os.Getenv("MCP_CONFORMANCE_SCENARIO") {
+	case preregisteredScenario, basicMachineScenario, signedMachineScenario:
 		return exerciseAuthorization(os.Args[1])
 	}
 	caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{

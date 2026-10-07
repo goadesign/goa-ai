@@ -2849,11 +2849,20 @@ The [driver instructions](../integration_tests/conformance/README.md#https-autho
 record the reproducible command and trust setup. Raw reports remain local because
 OAuth captures contain synthetic secrets and credentials.
 
-This evidence closes only the selected browser/preregistration path. The pinned
-machine and enterprise scenario contexts omit the resource registration's exact
-issuer. A host must bind credentials to that issuer before discovery; inferring
-it from a resource URL or sending credentials to any discovered issuer would
-weaken the production trust contract. Extend local fixture configuration
-explicitly before claiming those paths. Independent negative cases, other
+The HTTPS-adapted Basic and signed machine scenarios also pass eight checks
+each with no failures or warnings. They require explicit `--force` selection
+because the referee excludes extensions from the dated core timeline. The first
+commands were skipped, not passed; the scored runs select the extensions and
+retain the current wire revision. Signed authentication is independently verified
+with ES256, the registered client as issuer/subject and the exact authorization
+issuer as audience. Driver lint reports zero issues.
+
+The pinned machine and enterprise scenario contexts omit the resource
+registration's exact issuer. A host must bind credentials to that issuer before
+discovery; inferring it from a resource URL or sending credentials to any
+discovered issuer would weaken the production trust contract. Machine fixture
+setup now supplies that issuer from its owned authorization-server configuration
+before spawning the client, without changing its OAuth handlers or assertions.
+Enterprise fixture coverage remains open. Independent negative cases, other
 registration/grant profiles, interrupted SSE acceptance and external caller
 cutover remain release gates. No release or deployment is performed.
