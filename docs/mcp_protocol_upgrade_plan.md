@@ -2786,3 +2786,32 @@ session behavior. Server-produced additional input, Tasks in both directions,
 dynamic catalogs, Apps and Skills remain unfinished; generated stdio servers
 remain deferred. Reassess sender-constrained tokens and workload identity against
 the current owning protocol contracts before adding a public mechanism.
+
+## Published Goa dependency and additional-input foundation
+
+All four modules now select published Goa `v3.34.0` rather than its earlier
+pseudo-version. Module tidying removes the obsolete Goa checksums. Native
+authorization regeneration changes only generated Goa version metadata; its
+typed contracts remain unchanged. Focused authorization race checks pass in
+1.7 seconds on Go 1.27.1. The complete suite is not repeated for this dependency
+publication change.
+
+Server-produced additional input needs a closed result union whose branch
+fields sit beside `resultType`. Native Goa's existing union metadata renames
+the discriminator and value properties but cannot remove the nested value
+property. A compiled service, HTTP, JSON-RPC, CLI and protobuf fixture verifies
+the shared compiler change: `Meta("oneof:json:flatten")` selects object branches
+without changing ordinary tagged unions. This change belongs in Goa, including
+its expression copies, retained plans, defaults, views, wire identities and
+OpenAPI. Goa-AI must consume that mapping in its existing strict schema and codec
+owners before implementing the typed additional-input contract. No MCP-specific
+serializer or parallel transport path is needed. The change remains under review
+and is not yet part of the selected Goa release.
+
+The authorization extension's main revision is still `fb374c7`; its DPoP and
+workload-identity proposals remain open and unmerged. They are not claimed as
+released capabilities. Independent authorization conformance remains open: the
+current referee's localhost HTTP issuer fixtures conflict with the protocol's
+mandatory HTTPS authorization-server endpoints. A loopback HTTP redirect exception
+does not authorize an HTTP issuer. Do not relax transport security or claim a
+stock referee pass to bypass this mismatch.
