@@ -75,14 +75,9 @@ func decodeTaskInfo(data []byte) (TaskInfo, error) {
 	return info, nil
 }
 
-// UnmarshalJSON selects one task status before decoding its associated data.
-// Only completed owns a tool result, failed owns a JSON-RPC error, and
-// input_required owns outstanding host requests.
+// UnmarshalJSON checks the tasks/get result discriminator before decoding its
+// detailed state. Subscription notifications reuse the same state decoder.
 func (r *taskGetResult) UnmarshalJSON(data []byte) error {
-	info, err := decodeTaskInfo(data)
-	if err != nil {
-		return err
-	}
 	var fields map[string]json.RawMessage
 	if err := jsonv2.Unmarshal(data, &fields); err != nil {
 		return err
@@ -91,6 +86,25 @@ func (r *taskGetResult) UnmarshalJSON(data []byte) error {
 	if err != nil || *resultType != resultComplete {
 		return errors.New("tasks/get requires resultType complete")
 	}
+	task, err := decodeDetailedTask(data)
+	if err != nil {
+		return err
+	}
+	r.task = task
+	return nil
+}
+
+// decodeDetailedTask selects the reported status before decoding its data.
+// Queries and notifications therefore enforce the same result and input rules.
+func decodeDetailedTask(data []byte) (Task, error) {
+	info, err := decodeTaskInfo(data)
+	if err != nil {
+		return Task{}, err
+	}
+	var fields map[string]json.RawMessage
+	if err := jsonv2.Unmarshal(data, &fields); err != nil {
+		return Task{}, err
+	}
 	task := Task{info: info}
 	switch info.Status {
 	case TaskWorking, TaskCancelled:
@@ -98,35 +112,34 @@ func (r *taskGetResult) UnmarshalJSON(data []byte) error {
 	case TaskInputRequired:
 		var requests map[string]InputRequest
 		if err := jsonv2.Unmarshal(fields["inputRequests"], &requests); err != nil || requests == nil {
-			return errors.New("input_required task requires an inputRequests object")
+			return Task{}, errors.New("input_required task requires an inputRequests object")
 		}
 		task.input = &InputRequired{Requests: requests}
 	case TaskCompleted:
 		var result toolsCallResult
 		if err := jsonv2.Unmarshal(fields["result"], &result); err != nil {
-			return fmt.Errorf("completed task result: %w", err)
+			return Task{}, fmt.Errorf("completed task result: %w", err)
 		}
 		if result.ResultType != resultComplete {
-			return errors.New("completed task must contain a complete tool result")
+			return Task{}, errors.New("completed task must contain a complete tool result")
 		}
 		response, err := completedTaskResult(result)
 		if err != nil {
-			return err
+			return Task{}, err
 		}
 		task.result = &response
 	case TaskFailed:
 		message := rpcMessage{Error: fields["error"]}
 		if len(message.Error) == 0 {
-			return errors.New("failed task requires a JSON-RPC error")
+			return Task{}, errors.New("failed task requires a JSON-RPC error")
 		}
 		failure, err := message.responseError()
 		if err != nil {
-			return err
+			return Task{}, err
 		}
 		task.failure = failure.callerError()
 	}
-	r.task = task
-	return nil
+	return task, nil
 }
 
 // UnmarshalJSON requires the acknowledgement's exact complete discriminator;

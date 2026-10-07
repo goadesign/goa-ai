@@ -3337,3 +3337,45 @@ submit input with tasks/update and preserve cancellation races. Then complete
 the application-owned typed job bindings and Task notifications before server
 capabilities are advertised. Dynamic catalogs, remaining authorization profiles,
 Apps, Skills, callers and website completion remain release gates.
+
+
+### Task notification composition — 2026-10-07
+
+Direct HTTP and stdio listeners select existing tasks through `TaskIDs` in the
+shared subscription filter. Selecting IDs declares the Tasks extension on that
+request. The server's acknowledgment can narrow the selection, and every later
+Task notification must name an accepted ID and the exact listen request. The
+callback receives the same typed detailed observation returned by `GetTask`;
+queries and notifications share one state decoder. Required nullable retention,
+completed tool errors, exact structured JSON and failed JSON-RPC errors keep the
+same contract. Host form/URL support and per-operation interaction restrictions
+are checked before callback delivery. Request-owned filter copies prevent a host
+callback from changing later notification admission.
+
+The existing HTTP request validator rejects a nonempty task selection without
+the extension using `-32021` with the required capability. Malformed extension
+objects remain invalid parameters. Empty task selections and ordinary resource
+listeners need no Tasks capability. This changes no authorization or execution
+owner and introduces no background receiver, job store, automatic reconnect,
+polling interval or retention rule.
+
+Focused Task/core-subscription transport and shared-state checks passed in
+0.673 s. Updated valid task-lifetime fixtures and positive host-input checks
+passed in 0.415 s. The final Task notification/capability checks passed in
+0.413 s, and scoped MCP runtime lint reported zero issues. HTTP fixtures cover
+all five states, exact values beyond floating-point precision, acknowledgment
+mutation, foreign IDs and invalid state. A real stdio process verifies selected
+IDs and declared capability. Existing subscription interruption, cancellation,
+correlation and callback checks are reused from the focused checkpoint. No full
+suite or generated SDK checkpoint was repeated for these runtime-only changes.
+
+This completes direct notification reception and HTTP capability admission.
+Generated native Task sources, notification production, durable workflow Task
+consumption, registry operation identity and all remaining release gates still
+require implementation. A saved original tool call, suspension queue and durable
+timer already exist in the runtime. Its current input-round identity cannot be
+reused unchanged for Task queries: registry duplicate admission would return the
+previous saved observation. The next contract must preserve one model invocation
+and task ID while assigning each query/update a workflow-owned execution identity.
+Task input answers must use `tasks/update`, and known answered request keys must
+remain saved across worker replacement and successor runs.

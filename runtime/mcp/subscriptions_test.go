@@ -322,11 +322,39 @@ func serveStdioSubscriptionPeer() error {
 		}
 		switch request.Method {
 		case "subscriptions/listen":
-			var filter struct {
-				ResourceSubscriptions []string `json:"resourceSubscriptions"` //nolint:tagliatelle // MCP wire name.
-			}
+			var filter SubscriptionFilter
 			if err := json.Unmarshal(request.Params["notifications"], &filter); err != nil {
 				return err
+			}
+			if len(filter.TaskIDs) > 0 {
+				var meta map[string]json.RawMessage
+				if err := json.Unmarshal(request.Params["_meta"], &meta); err != nil {
+					return err
+				}
+				var capabilities struct {
+					Extensions map[string]json.RawMessage `json:"extensions"`
+				}
+				if err := json.Unmarshal(meta[clientCapabilitiesKey], &capabilities); err != nil {
+					return err
+				}
+				if _, ok := capabilities.Extensions[tasksExtension]; !ok {
+					return errors.New("task subscription did not advertise Tasks")
+				}
+				if err := encoder.Encode(subscriptionPeerNotification(string(SubscriptionAcknowledged), request.ID, map[string]any{"notifications": filter})); err != nil {
+					return err
+				}
+				for _, id := range filter.TaskIDs {
+					for _, status := range []string{"working", "cancelled"} {
+						fields := map[string]any{"taskId": id, "status": status, "createdAt": "2026-10-07T12:00:00Z", "lastUpdatedAt": "2026-10-07T12:00:01Z", "ttlMs": nil}
+						if err := encoder.Encode(subscriptionPeerNotification(string(SubscriptionTaskChanged), request.ID, fields)); err != nil {
+							return err
+						}
+					}
+				}
+				if err := encoder.Encode(subscriptionPeerComplete(request.ID)); err != nil {
+					return err
+				}
+				continue
 			}
 			if len(filter.ResourceSubscriptions) != 1 {
 				return errors.New("peer expects one URI")
@@ -457,7 +485,7 @@ func TestSubscriptionReceiverPreservesLargeAndStringRequestIDs(t *testing.T) {
 		t.Run(id, func(t *testing.T) {
 			var received SubscriptionEvent
 			ctx := context.WithValue(t.Context(), subscriptionHandlerKey{}, subscriptionHandler(func(_ context.Context, event SubscriptionEvent) error { received = event; return nil }))
-			receiver, err := newSubscriptionReceiver(ctx, json.RawMessage(id), json.RawMessage(`{"resourceSubscriptions":["peer-owned-address"]}`))
+			receiver, err := newSubscriptionReceiver(ctx, json.RawMessage(id), json.RawMessage(`{"resourceSubscriptions":["peer-owned-address"]}`), InputSupport{})
 			require.NoError(t, err)
 			data, err := json.Marshal(subscriptionPeerNotification("notifications/subscriptions/acknowledged", json.RawMessage(id), map[string]any{"notifications": map[string]any{"resourceSubscriptions": []string{"peer-owned-address"}}}))
 			require.NoError(t, err)

@@ -178,7 +178,7 @@ func (t *HTTPTransport) Do(original *http.Request) (response *http.Response, err
 		var subscription *subscriptionReceiver
 		var receiverErr error
 		if request.Method == methodSubscriptionsListen {
-			subscription, receiverErr = newSubscriptionReceiver(ctx, envelope["id"], params["notifications"])
+			subscription, receiverErr = newSubscriptionReceiver(ctx, envelope["id"], params["notifications"], t.inputSupport)
 		} else {
 			receiver, receiverErr = newProgressReceiver(ctx, envelope["id"], meta)
 		}

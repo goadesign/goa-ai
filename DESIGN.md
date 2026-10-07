@@ -2662,7 +2662,11 @@ only `tools/call` may return a Task creation handle. Get, update and cancel are
 separate operations on the exact server-owned ID. State decoding selects the
 released Task status before reading its associated input, result or JSON-RPC
 error. Completed tool errors remain completed results with `IsError` retained.
-These operations perform no automatic tool replay or polling.
+These operations perform no automatic tool replay or polling. Task notifications
+reuse the existing subscription receiver and the same detailed-state decoder as
+queries. Requested task IDs are copied, acknowledgments can narrow that list, and
+notifications must name an accepted ID. The callback receives a typed observation;
+form and URL input still require the host capability advertised on that request.
 
 Task retention has a required nullable wire member. A generated native HTTP
 fixture proves that Goa's required scalar rejects null and its optional scalar

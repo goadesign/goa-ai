@@ -31,13 +31,18 @@ func (s *subscriptionState) acknowledge(accepted SubscriptionFilter) error {
 			return fmt.Errorf("acknowledgment includes unrequested resource %q", uri)
 		}
 	}
+	for _, id := range accepted.TaskIDs {
+		if !slices.Contains(s.requested.TaskIDs, id) {
+			return fmt.Errorf("acknowledgment includes unrequested task %q", id)
+		}
+	}
 	s.acknowledged, s.accepted = true, cloneSubscriptionFilter(accepted)
 	return nil
 }
 
-// change checks ordering and the accepted notification kind. An updated address
-// may identify a sub-resource, whose relationship and access the source owns.
-func (s *subscriptionState) change(kind SubscriptionEventKind, uri string) error {
+// change checks ordering and the accepted selection for one notification.
+// Resource addresses may name sub-resources; task IDs must match exactly.
+func (s *subscriptionState) change(kind SubscriptionEventKind, subject string) error {
 	if !s.acknowledged {
 		return errors.New("subscription change arrived before acknowledgment")
 	}
@@ -51,9 +56,11 @@ func (s *subscriptionState) change(kind SubscriptionEventKind, uri string) error
 		allowed = s.accepted.PromptsListChanged
 	case SubscriptionResourcesChanged:
 		allowed = s.accepted.ResourcesListChanged
+	case SubscriptionTaskChanged:
+		allowed = slices.Contains(s.accepted.TaskIDs, subject)
 	case SubscriptionResourceUpdated:
 		allowed = len(s.accepted.ResourceSubscriptions) > 0
-		if err := validateContentURI(uri); err != nil {
+		if err := validateContentURI(subject); err != nil {
 			return err
 		}
 	}

@@ -341,8 +341,9 @@ release gates.
 
 Direct HTTP and stdio clients can [observe and answer Tasks](docs/runtime.md#mcp-task-clients)
 through `GetTask`, `UpdateTask`, and `CancelTask`. Task creation requires an
-explicit host capability on that request. Generated server bindings and durable
-agent Task consumption remain required before this upgrade is released.
+explicit host capability on that request. `Listen` can select task IDs and
+receive their acknowledged full state through the same subscription callback.
+Generated server bindings and durable agent Task consumption remain required before this upgrade is released.
 
 Generated MCP adapters accept the application's configured Goa endpoints.
 Authentication, method scopes, interceptors and endpoint middleware therefore run

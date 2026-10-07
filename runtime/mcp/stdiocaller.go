@@ -199,7 +199,7 @@ func (c *StdioCaller) call(ctx context.Context, method string, params map[string
 		if encodeErr != nil {
 			return NewInternalError(encodeErr)
 		}
-		subscription, err = newSubscriptionReceiver(ctx, encodedID, filter)
+		subscription, err = newSubscriptionReceiver(ctx, encodedID, filter, c.inputSupport)
 	} else {
 		receiver, err = newProgressReceiver(ctx, encodedID, meta)
 	}

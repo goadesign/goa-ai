@@ -82,8 +82,14 @@ func ValidateHTTPRequest(request *http.Request, body []byte, bindings map[string
 	// A listen filter is checked before the source endpoint or its middleware
 	// runs. The same decoder supplies the transport's accepted-filter state.
 	if envelope.Method == methodSubscriptionsListen {
-		if _, err := decodeSubscriptionFilter(params["notifications"]); err != nil {
+		filter, err := decodeSubscriptionFilter(params["notifications"])
+		if err != nil {
 			return &Error{Code: JSONRPCInvalidParams, Message: err.Error()}
+		}
+		if len(filter.TaskIDs) > 0 {
+			if failure := requireTasksExtension(capabilities); failure != nil {
+				return failure
+			}
 		}
 	}
 
@@ -158,4 +164,28 @@ func WriteProtocolError(writer http.ResponseWriter, body []byte, failure *Error)
 		return fmt.Errorf("write MCP protocol error: %w", err)
 	}
 	return nil
+}
+
+// requireTasksExtension checks one request's declared extension before a Task
+// subscription can reach the endpoint. Missing support names the required
+// capability; malformed extension objects are invalid parameters.
+func requireTasksExtension(capabilities map[string]json.RawMessage) *Error {
+	var extensions map[string]json.RawMessage
+	if raw, present := capabilities["extensions"]; present {
+		if err := json.Unmarshal(raw, &extensions); err != nil || extensions == nil {
+			return &Error{Code: JSONRPCInvalidParams, Message: "client capabilities extensions must be an object"}
+		}
+	}
+	if raw, present := extensions[tasksExtension]; present {
+		var settings map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &settings); err != nil || settings == nil {
+			return &Error{Code: JSONRPCInvalidParams, Message: "Tasks extension capability must be an object"}
+		}
+		return nil
+	}
+	return &Error{
+		Code:    MissingRequiredClientCapability,
+		Message: "Task subscriptions require the Tasks extension",
+		Data:    json.RawMessage(`{"requiredCapabilities":{"extensions":{"io.modelcontextprotocol/tasks":{}}}}`),
+	}
 }

@@ -6560,8 +6560,8 @@ its durably accepted work.
 The `ttlMs` member is required on the wire; null means unlimited retention, while
 an absent member is invalid. `TaskInfo.TTLMs` represents that value with `*int64`
 and always emits the JSON member. `pollIntervalMs` is optional. Both durations
-use integer milliseconds and retain equivalent whole-number spellings such as
-`3.0` exactly. The client derives no retention, timeout or polling default from
+use integer milliseconds and decode equivalent whole-number spellings such as
+`3.0` without floating-point conversion. The client derives no retention, timeout or polling default from
 them. Regenerate existing callers for the new methods and shared numeric decoder.
 
 ### MCP resource servers
@@ -7148,8 +7148,8 @@ HTTP and stdio callers expose `Listen(ctx, filter, handler)`. One invocation
 sends `subscriptions/listen` and waits until the server completes it, the host
 cancels it, the handler fails, or the connection ends. The handler first receives
 `SubscriptionAcknowledged` with the subset of requested changes the server
-supports. It then receives the accepted catalog changes or resource updates.
-Check that acknowledgment before relying on a notification kind.
+supports. It then receives accepted catalog changes, resource updates or full
+Task state. Check that acknowledgment before relying on a notification kind.
 
 ```go
 err := caller.Listen(ctx, mcp.SubscriptionFilter{
@@ -7166,6 +7166,19 @@ For a generated Goa JSON-RPC client, bind the same event handler with
 receives validated acknowledgment and update events; the endpoint returns the
 final typed result. Calling that endpoint without an event handler fails before
 network dispatch. The shared callers' `Listen` methods bind the handler for you.
+
+Set `TaskIDs` to select existing server tasks. The shared `Listen` methods then
+advertise the Tasks extension for this request. A `SubscriptionTaskChanged`
+event supplies its full validated observation in `event.Task`, with the same
+status accessors as `GetTask`. The server may acknowledge only some selected
+IDs; notifications for any other task fail before the callback. Task input
+requires the caller's advertised form or URL support. The HTTP request validator
+rejects a nonempty task selection without the Tasks extension using `-32021`
+and names the missing capability. A Task update does not
+ask the host to replay the original tool call.
+
+Generated native job sources and durable agent Task handling remain required
+release gates; these client callbacks implement notification reception.
 
 The application supplies `handleMCPChange`. A catalog-change event tells it to
 reload that catalog; a resource-update event supplies the address to read again.
