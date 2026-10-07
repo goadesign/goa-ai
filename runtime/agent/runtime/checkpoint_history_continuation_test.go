@@ -99,7 +99,7 @@ func TestCheckpointHistoryContinuesWithoutReexecuting(t *testing.T) {
 			)}
 		}
 		wf := &testWorkflowContext{ctx: t.Context(), hookRuntime: current, hasPlanResult: true, planResult: plan}
-		out, err := current.resumeSuspendedWorkflow(wf, reg, next, checkpoint, seedTestContinuationHistory(t, current, next, checkpoint))
+		out, err := current.resumeSuspendedWorkflow(recoveryContinuationWorkflow(t, wf, checkpoint), reg, next, checkpoint, seedTestContinuationHistory(t, current, next, checkpoint))
 		require.NoError(t, err)
 		require.Empty(t, wf.lastToolCall.Name)
 		if i < 2 {

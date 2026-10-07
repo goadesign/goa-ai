@@ -954,12 +954,7 @@ func (l *workflowLoop) resumePlanner(
 	if err != nil {
 		return nil, err
 	}
-	var recoveryElapsed time.Duration
-	if l.base.providerRecovery != nil {
-		recoveryElapsed = l.base.providerRecovery.elapsed
-	}
 	resOutput, err := l.r.runPlanActivity(l.wfCtx, l.reg.ResumeActivityName, l.resumeOpts, resumeReq, l.base, l.deadlines.Budget)
-	preserveProviderRecoveryDeadlines(l.base, recoveryElapsed, &l.deadlines.Budget, &l.deadlines.Hard)
 	if err != nil {
 		if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) &&
 			!l.deadlines.Budget.IsZero() {

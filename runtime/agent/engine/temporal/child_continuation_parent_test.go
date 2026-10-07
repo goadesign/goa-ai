@@ -47,11 +47,13 @@ func TestTemporalChildContinuationBindsExecutionParentAndRetainsCheckpoint(t *te
 	checkpoint := append([]byte(nil), suspension.Checkpoint...)
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
+	eng := &Engine{}
 	env.SetDataConverter(NewAgentDataConverter())
 	// The SDK test environment omits child memo delivery. Capture the real
 	// adapter's outgoing memo, then supply those bytes before the child starts.
 	emittedMemo := make(chan *commonpb.Memo, 1)
 	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{
+		&workflowControlInterceptor{engine: eng},
 		&childMemoCapture{beforeChild: func(ctx workflow.Context) {
 			options := workflow.GetChildWorkflowOptions(ctx)
 			require.Equal(t, "continued-child", options.WorkflowID)
@@ -71,6 +73,8 @@ func TestTemporalChildContinuationBindsExecutionParentAndRetainsCheckpoint(t *te
 	}})
 	env.SetOnChildWorkflowStartedListener(func(info *workflow.Info, _ workflow.Context, _ converter.EncodedValues) {
 		require.Equal(t, "continued-child", info.WorkflowExecution.ID)
+		require.Empty(t, info.FirstRunID, "remove fixture field when the SDK supplies it")
+		info.FirstRunID = info.WorkflowExecution.RunID
 		require.Nil(t, info.Memo, "remove fixture delivery if the SDK starts delivering child memos")
 		select {
 		case memo := <-emittedMemo:
@@ -121,7 +125,10 @@ func TestTemporalChildContinuationBindsExecutionParentAndRetainsCheckpoint(t *te
 		if current.Digest == previous.Digest {
 			return fmt.Errorf("execution parent was omitted from the request digest")
 		}
-		w := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		w, err := NewWorkflowContext(eng, ctx)
+		if err != nil {
+			return err
+		}
 		child, err := w.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
 			ID: input.RunID, Workflow: request.Workflow, TaskQueue: request.TaskQueue, Input: input,
 		})

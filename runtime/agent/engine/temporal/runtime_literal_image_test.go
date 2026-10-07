@@ -170,7 +170,8 @@ func TestRuntimeLiteralImagePreparationAndReplay(t *testing.T) {
 				implementation.client.Close()
 				service = &testWorkflowService{}
 				implementation.client = newWorkflowServiceClient(t, service)
-				implementation.workerFactory = func(client.Client, string, worker.Options) worker.Worker {
+				implementation.workerFactory = func(_ client.Client, _ string, opts worker.Options) worker.Worker {
+					env.SetWorkerOptions(opts)
 					return &boundedCompletionWorker{env: env}
 				}
 				eng = implementation

@@ -42,8 +42,27 @@ diagnostic text; disabled or exhausted consumers return the typed failure.
 The engine owns its private versioned encoding and rejects historical summary
 certificates that cannot supply the original provider facts. Durable workflow
 timers schedule the identical pending planning request as a new single-attempt
-activity. Accepted tools and active-work limits
-remain intact; saved external-input checkpoints retain the remaining allowance.
+activity. A helper reports its certified failure through its actual workflow
+parents to the run that owns the allowance. That owner counts overlapping
+failed-activity and entered-wait intervals once. Helpers using inherited recovery
+do not receive a fresh allowance. Accepted tools remain intact; saved external-input checkpoints retain
+the remaining allowance.
+
+Each runtime measures when its own work is paused. A parent waiting for several
+helpers pauses its active-work clock only when every unfinished branch is known
+to be paused. Healthy work, unresolved failures, and ordinary publication still
+consume active-work time. A descendant's pause is not automatically a pause for
+every ancestor.
+
+The runtime owns certification, spending, and the first terminal decision. The
+engine owns the accepted child relationship, ordered messages, and receiver
+acceptance. Sending a native signal does not complete a recovery obligation.
+The Temporal engine installs a worker interceptor that retains those obligations
+and waits for acceptance before ordinary workflow completion. Native workflows
+on that worker obtain the shared control through `NewWorkflowContext`, which
+returns an error when the required interceptor is missing or belongs to another
+engine. Custom engine adapters must implement the typed control described in
+[engine integration](docs/runtime.md#engine-integration).
 See [provider recovery](docs/runtime.md#streaming-planners) in the runtime reference.
 
 An accepted response stores its complete

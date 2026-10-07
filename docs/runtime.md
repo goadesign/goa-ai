@@ -2168,9 +2168,44 @@ replay. Cancellation stops waiting. Failed provider work and waits consume the
 separate finite recovery budget; successful work still consumes `TimeBudget`.
 External-input checkpoints retain the exact remaining recovery allowance,
 including zero when exhausted. No additional engine run timeout is introduced.
-Zero disables recovery. Disabled or exhausted consumers return the typed
-provider failure without scheduling another attempt. Plan activities that
+An allowance owner's zero setting disables recovery. A disabled owner or an
+exhausted allowance returns the typed provider failure without scheduling another
+attempt. Plan activities that
 made multiple model invocations do not receive retry permission.
+
+Helpers started by an enabled run share that run's remaining allowance. A helper
+retains its exact failed planning request and reports the completed certificate
+through its actual workflow parents. The allowance owner measures the union of
+completed certified failed-activity intervals and actually entered backoff
+intervals: overlapping elapsed time is counted once. The failed-activity interval
+includes queueing, preparation, model invocation, finalization, and publication;
+it does not claim to measure only provider execution. An initial failure can
+exceed the remaining allowance, which then becomes zero. Successful attempts
+consume active-work time rather than recovery allowance.
+
+A helper with inherited recovery and a default or explicit zero local setting
+uses the parent's allowance; zero is not a helper opt-out. A positive local
+setting additionally caps that helper's own failed activities and entered waits,
+without allocating more time at the owner. Failures forwarded from its
+descendants do not consume that local cap. A positive setting without inherited
+recovery creates a standalone allowance owner, preserving independent runs.
+Checkpoints restore the remaining local cap or owned allowance, including an
+exhausted zero, rather than the original maximum.
+
+Before each recovery wait or attempt, the owner issues a finite permission. A
+permission does not itself spend time or pause a clock, and it cannot be entered
+at or after its expiry. A helper waits for the owner's settlement of that phase
+before asking for another phase or returning a successful retry. Lost replies,
+native timeouts, and ambiguous cleanup never authorize another model invocation.
+Cancellation and a winning deadline remain terminal even if older evidence
+arrives later.
+
+Each runtime reports its own measured pause to its immediate parent. A parent
+waiting for several branches pauses only while every unfinished branch is known
+to be paused. A healthy sibling or unresolved branch keeps that parent's clock
+active. Native wrapper workflows retain descendant pause reports without
+claiming the same interval as their own pause. These reports neither refill the
+recovery allowance nor extend an already-issued permission.
 
 Planner activity outputs use the explicit `json/goa-ai-plan-output-v2`
 encoding. Provider facts, cause text, and the rendered diagnostic share the
@@ -2189,7 +2224,9 @@ formats are unchanged. The policy and optional checkpoint state preserve older
 checkpoints whose policy disables recovery. Recovery-enabled checkpoints require their matching
 remaining-budget record. New activity records and enabled checkpoints require
 the updated runtime; do not roll their workers or continuations back to an older
-runtime. Workflow version routing and worker retention remain engine-owned.
+runtime. The consuming application owns verified workflow and activity routing
+and retention of matching worker builds. See
+[worker upgrade requirements](#rejected-call-recovery-and-worker-upgrades).
 
 Allowed text and thinking fragments are sent as soon as they arrive
 because delaying or combining them would remove the real-time behavior. Tool
@@ -6218,11 +6255,58 @@ type WorkflowContext interface {
     NewTimer(ctx context.Context, d time.Duration) (Future[time.Time], error)
     Await(condition func() bool) error
     StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error)
+    ProviderRecovery() ProviderRecoveryPort
     Detached() WorkflowContext
     WithCancel() (WorkflowContext, func())
 }
 
 ```
+
+`WorkflowContext.ProviderRecovery` supplies execution-owned recovery control.
+The runtime registers its pause receiver before starting children, and its
+recovery request receiver when it owns or inherits recovery.
+The engine derives child identity from the accepted child request and handle;
+callers do not supply a parent address or select a latest child execution.
+Cancellation-derived and detached contexts retain the same control.
+
+Custom engines implement `ProviderRecoveryPort` and `ProviderRecovery` from
+`runtime/agent/engine/provider_recovery.go`. They serialize callbacks with
+ordinary workflow code, preserve message ordering, retain exact duplicate
+acceptance, and reject conflicting repeats. An accepted send completes only
+after the receiving workflow applies it and records required onward deliveries.
+The runtime separately decides whether a phase is permitted or settled.
+Callbacks must not block waiting for their own replies. Ordinary completion
+waits for accepted outgoing obligations; cancellation does not wait indefinitely
+for an unreachable parent.
+
+The Temporal engine installs its workflow control interceptor even when tracing
+is disabled. Native workflows running on that engine's worker must now handle
+the constructor's error:
+
+```go
+wfCtx, err := temporal.NewWorkflowContext(e, ctx)
+if err != nil {
+    return nil, err
+}
+```
+
+`NewWorkflowContext` returns `(engine.WorkflowContext, error)` rather than one
+value. A missing interceptor or one installed by another engine is an error
+before runtime work starts. The interceptor also retains wrapper forwarding and
+drains accepted deliveries before ordinary completion; native callers do not
+need a separate forwarding or completion call.
+
+Temporal binds control to the issued child's first execution and its retries
+and continuation executions. It preserves the native run that originated each
+delivery. The runtime uses those identities so
+retries and continuation do not create a new allowance or turn older messages
+into credit for a newer attempt. This binding assumes trusted participants in
+the workflow namespace; it does not
+authenticate against administrators who can read execution history. Child-start
+commands and control messages change recorded workflow history. Keep existing
+open histories on their matching retained workers, and route new work to the
+upgraded workers. Rollback must retain workers capable of reading every
+already-accepted history.
 
 Custom engine adapters must implement `RegisterStorageActivity` and
 `ExecuteStorageActivity`. The runtime registers one typed `runtime.store`

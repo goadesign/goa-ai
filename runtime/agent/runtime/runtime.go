@@ -1711,7 +1711,7 @@ func (r *Runtime) executeAgentChild(
 	if err != nil {
 		return nil, err
 	}
-	out, err := handle.Get(wfCtx.Detached().Context())
+	out, err := awaitAgentChild(wfCtx, handle, wfCtx.Context())
 	if err != nil {
 		return nil, err
 	}

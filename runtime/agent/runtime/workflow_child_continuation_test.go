@@ -260,9 +260,10 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 		err error
 	}, 1)
 	historyEndID := seedTestContinuationHistory(t, runtime, secondInput, checkpoint)
+	continuationContext := recoveryContinuationWorkflow(t, secondContext, checkpoint)
 	go func() {
 		out, err := runtime.resumeSuspendedWorkflow(
-			secondContext,
+			continuationContext,
 			parentRegistration,
 			secondInput,
 			checkpoint, historyEndID,

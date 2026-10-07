@@ -41,6 +41,35 @@
 // exact-number decoding, unknown-field rejection, unsafe-value rejection, and
 // payload limits identical in every worker and client process.
 //
+// NewWorker also installs a required workflow control interceptor, including when
+// tracing is disabled. Native workflows on those workers call
+// NewWorkflowContext(eng, ctx) and return its error before scheduling work. The
+// constructor returns (engine.WorkflowContext, error); a context from a separate
+// worker or another engine is rejected. There is no caller-owned drain step:
+// the worker waits for accepted control deliveries before ordinary completion.
+//
+// Existing callers of NewWorkflowContext must handle its new error result.
+// Workers replaying histories with provider control must install this
+// interceptor and run the matching adapter version. Child starts now record
+// private identifiers and headers. Histories that scheduled children before this
+// change must finish on their previous worker code, or remain routed to that
+// worker version during deployment and rollback. This adapter has no bypass for
+// replaying those earlier child-start commands with the new implementation.
+//
+// Each child binding follows the first accepted native run through Temporal
+// retries and Continue-As-New. The producer reads the current run and original
+// run IDs from Temporal; every request and ordered delivery retains that origin.
+// An earlier run's delayed report cannot move to a later run's request. Workers
+// in the Temporal namespace are trusted: the private binding is not protection
+// against administrators who can inspect and alter namespace history.
+//
+// Acceptance is retained for exact repeated deliveries. Acknowledgments always
+// target the original sender run. If that run is already gone, the receiver
+// retains its acceptance without failing healthy work or redirecting the reply.
+// Application decisions about measured intervals and allowances remain in the
+// runtime. Native wrappers relay requests and retain descendant pause reports;
+// they never claim a descendant's pause as their own.
+//
 // Client-only processes use NewClient and do not register local workflows or
 // activities:
 //

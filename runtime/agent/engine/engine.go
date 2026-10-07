@@ -323,6 +323,11 @@ type (
 		// registration wait for this handler.
 		SetCancellationHandler(CancellationHandler) error
 
+		// ProviderRecovery returns this execution's provider recovery control.
+		// Derived contexts share its parent binding and accepted requests while
+		// retaining their own cancellation scope.
+		ProviderRecovery() ProviderRecoveryPort
+
 		// WorkflowID returns the unique identifier for this workflow execution.
 		WorkflowID() string
 

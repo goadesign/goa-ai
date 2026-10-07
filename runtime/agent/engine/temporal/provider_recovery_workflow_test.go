@@ -14,7 +14,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -117,6 +119,7 @@ func TestProviderRecoveryWorkflowDoesNotRepeatCompletedTool(t *testing.T) {
 		AgentID: agentID, RunID: "run", SessionID: "session", TurnID: "turn", SeedEndID: seed,
 		Policy: &api.PolicyOverrides{TimeBudget: time.Second, ProviderRetryBudget: time.Hour},
 	})
+	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
 	env.ExecuteWorkflow(eng.temporalWorkflowHandler(rt.ExecuteWorkflow), input)
 	require.NoError(t, env.GetWorkflowError())
 	var out api.RunOutput
@@ -179,6 +182,7 @@ func TestProviderCertificateCrossesBothPlannerActivityAdapters(t *testing.T) {
 			env.SetDataConverter(NewAgentDataConverter())
 			env.RegisterActivityWithOptions(produce, activity.RegisterOptions{Name: planName})
 			input := prepareAcceptedTestWorkflow(t, env, workflowName, queue, &api.RunInput{RunID: "certificate-run"})
+			env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
 			env.ExecuteWorkflow(eng.temporalWorkflowHandler(handler), input)
 			require.NoError(t, env.GetWorkflowError())
 		})

@@ -157,7 +157,8 @@ func boundedCompletionRuntime(t *testing.T, backend string, pages int, modelName
 		env = suite.NewTestWorkflowEnvironment()
 		env.SetDataConverter(NewAgentDataConverter())
 		temporalEngine := newTestEngine(t)
-		temporalEngine.workerFactory = func(client.Client, string, worker.Options) worker.Worker {
+		temporalEngine.workerFactory = func(_ client.Client, _ string, opts worker.Options) worker.Worker {
+			env.SetWorkerOptions(opts)
 			return &boundedCompletionWorker{env: env}
 		}
 		eng = temporalEngine
