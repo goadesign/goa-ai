@@ -340,7 +340,7 @@ func syntheticAcceptedProductionHistory(
 		TurnID:    productionReplayTurnID,
 	}
 	accepted := acceptedStartForTest(t, productionReplayWorkflowName, productionReplayTaskQueue, runInput)
-	started := workflowExecutionStartedEvent(1, productionReplayWorkflowName, productionReplayTaskQueue, accepted.Input)
+	started := workflowExecutionStartedEvent(productionReplayWorkflowName, productionReplayTaskQueue, accepted.Input)
 	started.GetWorkflowExecutionStartedEventAttributes().Memo = accepted.Memo
 	return syntheticProductionHistory(t, first, recovery, started)
 }
@@ -623,12 +623,11 @@ func deserializeReplayHistory(t *testing.T, history *historypb.History) *history
 }
 
 func workflowExecutionStartedEvent(
-	id int64,
 	workflowName, taskQueue string,
 	input *commonpb.Payloads,
 ) *historypb.HistoryEvent {
 	return &historypb.HistoryEvent{
-		EventId:   id,
+		EventId:   1,
 		EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
 		Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{
 			WorkflowExecutionStartedEventAttributes: &historypb.WorkflowExecutionStartedEventAttributes{

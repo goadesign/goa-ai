@@ -217,7 +217,7 @@ func retainedChildCompletionHistory() *historypb.History {
 	execution := &commonpb.WorkflowExecution{WorkflowId: retainedChildWorkflowID, RunId: "child-execution"}
 	childType := &commonpb.WorkflowType{Name: "retained.child"}
 	return &historypb.History{Events: []*historypb.HistoryEvent{
-		workflowExecutionStartedEvent(1, "retained.parent", "parent.queue", nil),
+		workflowExecutionStartedEvent("retained.parent", "parent.queue", nil),
 		workflowTaskScheduledEvent(2),
 		workflowTaskStartedEvent(3),
 		workflowTaskCompletedEvent(4, 2, 3),

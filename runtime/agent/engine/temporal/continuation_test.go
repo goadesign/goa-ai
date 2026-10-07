@@ -41,7 +41,7 @@ func TestContinuationActivityRecordedDecisionReplay(t *testing.T) {
 		result, err := NewAgentDataConverter().ToPayloads(available)
 		require.NoError(t, err)
 		history := &historypb.History{Events: []*historypb.HistoryEvent{
-			workflowExecutionStartedEvent(1, "continuation", productionReplayTaskQueue, nil),
+			workflowExecutionStartedEvent("continuation", productionReplayTaskQueue, nil),
 			workflowTaskScheduledEvent(2), workflowTaskStartedEvent(3), workflowTaskCompletedEvent(4, 2, 3),
 			activityTaskScheduledEvent(5, "pages", input), activityTaskStartedEvent(6, 5), activityTaskCompletedEvent(7, 5, 6, result),
 			workflowTaskScheduledEvent(8), workflowTaskStartedEvent(9), workflowTaskCompletedEvent(10, 8, 9),
