@@ -33,6 +33,7 @@ type (
 		credentials     map[string][]*credentialInput
 		paths           *expr.MappedAttributeExpr
 		transport       *expr.HTTPServiceExpr
+		resourcePolicy  *resourcePolicy
 		protocolLayouts map[string]*goacodegen.GoTypePlan
 	}
 
@@ -98,7 +99,11 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 			return err
 		}
 		adapter.CredentialQueries = credentialQueryBindings(prepared.credentials)
+		adapter.ResourcePolicy = prepared.resourcePolicy
 		if err := planMCPPackagePaths(servicePlan, prepared, adapter); err != nil {
+			return err
+		}
+		if err := planResourceAuthorization(plan, prepared); err != nil {
 			return err
 		}
 		if err := planEndpointAdapters(plan.Generation(), servicePlan, prepared, adapter); err != nil {
@@ -843,6 +848,13 @@ func declareMCPNames(generation *goacodegen.Generation, data *AdapterData) error
 	))
 	if err != nil {
 		return err
+	}
+	if data.ResourcePolicy != nil && len(data.ResourcePolicy.Operations) > 0 {
+		declaration := goacodegen.NewPreferredName(goacodegen.NameFunction, "mcpAuthorizationScopes", goacodegen.UnexportedName, resourceFactoryOrder(data.ServiceName))
+		if err := serverPackage.DeclareName(declaration); err != nil {
+			return err
+		}
+		data.ResourcePolicy.SelectScopesDeclaration = declaration
 	}
 	for _, declaration := range []*goacodegen.NameDeclaration{
 		goacodegen.NewExactName(goacodegen.NameType, "mcpResponseWriter"),

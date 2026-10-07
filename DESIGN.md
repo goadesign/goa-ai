@@ -2617,10 +2617,28 @@ OAuth credentials require `Authorization: Bearer`. Basic and Bearer schemes can
 be alternatives when their inactive payload fields allow absence; they cannot be
 combined in one authorization requirement. Unsupported body bindings, conflicting
 field bindings and protocol-owned headers fail generation. This does not add a
-second method authentication callback. HTTP OAuth issuer, audience, expiry and
-scope validation before the complete endpoint pipeline, protected resource
-metadata and server challenges remain unfinished release gates; native credential
-delivery alone does not establish MCP authorization conformance.
+second method authentication callback. An explicit MCP `Security` block, or an
+inherited service/API bearer policy, requires a concrete `ResourceServer` through
+Goa's constructor plan. The generator computes scope alternatives and reuses
+native request decoders to select the actual operation before middleware. The
+guard owns signature, issuer, audience, validity times and HTTP challenges;
+original endpoints retain their native security callbacks and domain decisions.
+Catalog metadata contains basic-access scopes rather than every method's scopes.
+
+The signed-token profile uses the JWT library for cryptography and a private Goa
+claims decoder for exact names, required fields and fractional timestamps. Its
+SDK audience field represents the standard string-or-array wire value; this is
+a documented private custom-type exception because Goa unions are tagged.
+JOSE's private resource RSA verifier extension calls Go's cryptographic
+primitives with the standard PSS salt length. The SDK's default verifier accepts
+other salt lengths; resource construction also enforces the standard RSA key
+minimum for each key. These are algorithm constraints, not framework budgets.
+Successful HTTP requests carry verified issuer, subject and client identity.
+Native OAuth, JWT and Bearer callbacks reuse a grant only for the same verifier,
+exact token hash and still-valid interval, then run Goa's own scope validator.
+Post-dispatch domain failures never become resource challenges. Opaque-token
+introspection, enterprise authorization, durable host credentials and complete
+extension conformance remain release gates.
 
 The shared MCP HTTP transport records whether any attempt reached its
 configured HTTP dependency. Preparation failures retain their local error;

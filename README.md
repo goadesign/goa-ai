@@ -368,9 +368,14 @@ also stay outside model schemas, examples, field metadata and argument codecs.
 Generated HTTP bindings fill the original typed service payload from its declared
 header, query or cookie before calling the configured endpoint. An unannotated
 field named `token` remains an ordinary argument. See
-[secured MCP methods](docs/dsl.md#secured-mcp-methods). HTTP OAuth resource
-validation and server challenges remain release gates in the
-[MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
+[secured MCP methods](docs/dsl.md#secured-mcp-methods). Protected MCP servers now
+derive resource scopes from Goa security expressions and require a signed-token
+verifier before middleware or service work. Catalogs use basic-access scopes;
+tools, resources, prompts, completions and subscriptions keep their own scope
+alternatives. [Resource servers](docs/runtime.md#mcp-resource-servers) verify
+issuer, audience, signature and expiry and preserve original Goa authentication.
+Complete OAuth and the remaining protocol capabilities are still release gates
+in the [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
 
 The shared MCP HTTP transport keeps local preparation failures distinct from
 lost tool responses. Cancellation observed before dispatch sends no request.

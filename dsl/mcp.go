@@ -19,7 +19,10 @@ import (
 // Register the generated server with the same mux passed to its constructor,
 // or call Mount(mux), so Goa supplies route parameters to generated decoders.
 //
-// MCP takes two required arguments:
+// MCP takes two required arguments and an optional design function. Security
+// inside that function declares bearer access and basic-access scopes for every
+// MCP request, including catalogs. The generated server then requires a runtime
+// ResourceServer; original method authentication still runs through Goa.
 //   - name: the server name returned in response metadata
 //   - version: the server version string
 //
@@ -41,13 +44,20 @@ import (
 //	        Tool("add", "Add two numbers")
 //	    })
 //	})
-func MCP(name, version string) {
+func MCP(name, version string, design ...func()) {
 	svc, ok := eval.Current().(*goaexpr.ServiceExpr)
 	if !ok {
 		eval.IncompatibleDSL()
 		return
 	}
 	m := &exprmcp.MCPExpr{Service: svc, Name: name, Version: version, Description: svc.Description}
+	if len(design) > 1 {
+		eval.TooManyArgError()
+		return
+	}
+	if len(design) == 1 && !eval.Execute(design[0], m) {
+		return
+	}
 	if r := exprmcp.Root; r != nil {
 		r.RegisterMCP(svc, m)
 	}

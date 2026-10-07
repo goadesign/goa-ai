@@ -6491,9 +6491,10 @@ execution outcomes and never trigger interrupted-stream retries. Other response
 loss still follows the existing tool trust and retry contract.
 
 The authorization client owns challenge parsing, credential renewal and consent.
-Error text omits the challenge headers and HTTP body. Complete built-in OAuth and
-generated server OAuth challenges remain release gates; retaining an HTTP response
-does not implement those flows. No checkpoint or model argument carries a credential.
+Error text omits the challenge headers and HTTP body. The signed-token resource
+profile implements generated server challenges before dispatch; complete OAuth
+remains a release gate. Retaining an HTTP response alone does not implement those
+flows. No checkpoint or model argument carries a credential.
 
 The built-in client-secret profile is described below. It uses the shared
 transport before MCP dispatch; it does not change the error or retry contracts.
@@ -6510,8 +6511,8 @@ endpoint middleware before constructing the adapter. Tools, resource reads,
 method-backed prompts and completion call the same endpoint instances, keeping
 method scopes and authenticated context under Goa's ownership. Regenerate and
 replace bare-service constructor calls when upgrading. This endpoint composition
-preserves the implemented native HTTP credential delivery but does not complete
-the pending OAuth resource validation and challenge work.
+preserves native HTTP credential delivery. A protected server also requires the
+[resource verifier](#mcp-resource-servers) before its complete endpoint pipeline.
 
 Mounted MCP requests pass protocol checks before running HTTP middleware
 installed with the generated server's `Use` method. The middleware may be
@@ -6520,6 +6521,69 @@ original endpoint authentication, service work and progress delivery. A middlewa
 rejection returns its own HTTP response without calling the next handler.
 Regenerate with the pinned Goa dependency; older generated mounts can bypass
 this middleware.
+
+### MCP resource servers
+
+Author basic resource access with Goa `Security` inside `MCP`, or use an inherited
+service/API bearer policy. The generated server requires a concrete resource
+verifier before the origin arguments in its constructor. Build it in the
+application's composition root:
+
+```go
+owner, err := mcp.NewJWTResourceServer(mcp.JWTResource{
+    Issuer:     "https://issuer.example",
+    Resource:   "https://api.example/mcp",
+    Keys:       trustedPublicKeys,
+    Algorithms: []jose.SignatureAlgorithm{jose.RS256},
+})
+```
+
+Check the returned error and supply `owner` to the regenerated server constructor.
+The host loads trusted keys and constructs a replacement owner and server when
+that trust configuration changes. Keys are copied at construction; token-supplied
+keys and key URLs cannot change trust. Construct a separate owner
+for each independently registered resource. The registered URI is the audience
+identifier; it may differ from the internal route behind a reverse proxy.
+
+The signed-token profile implements RFC 9068: access-token purpose, signature,
+exact issuer, resource audience, required claims and validity times are checked
+before HTTP middleware. Audience strings and arrays are accepted. Fractional
+timestamps retain their meaning: not-before is inclusive and expiration is
+exclusive. No clock allowance is added. Access tokens belong in the bearer
+header; query tokens are rejected.
+
+RSA public keys must contain at least 2048 bits each, as required by the JWT
+algorithm standard. RSA-PSS signatures must use a salt exactly as long as the
+selected hash. JOSE's verifier extension calls Go's cryptographic primitives
+with that required salt length; the SDK's default verification accepts a wider
+range. These constraints apply to individual keys and signatures.
+
+Missing or invalid tokens receive 401. A valid token lacking the selected
+operation's scopes receives 403 with an `insufficient_scope` challenge. Challenges
+identify the configured metadata address and one complete scope alternative.
+The generated mount also serves public protected-resource metadata through Goa's
+native handler. It advertises basic-access scopes, not every tool's permissions.
+Origin rejection and domain failures retain their own meanings; errors returned
+after dispatch never trigger a resource authorization retry.
+
+Successful requests carry verified identity. Service code reads
+`mcp.ResourcePrincipalFromContext(ctx)` to obtain the issuer, subject and client
+identifier; these values do not come from model arguments. Identity alone does
+not establish permission for a domain operation. Keep domain authorization in
+the original configured Goa endpoint.
+
+`owner.OAuth2Auth`, `owner.JWTAuth` and `owner.BearerAuth` implement Goa's native
+authentication signatures. A service may embed the owner or delegate its original
+authentication callback to the matching method. Each callback runs Goa's own
+scope validator. It reuses token verification only for the same owner, exact
+token hash and still-valid signed interval. Direct Goa calls without a matching
+request grant verify the token before returning authenticated context.
+
+Regenerate protected servers and update their composition roots together. There
+is no optional verifier or compatibility constructor. Independent API keys keep
+their native bindings; a different credential owner cannot share the bearer
+header. Opaque-token introspection, enterprise authorization and durable host
+credentials remain required before the full MCP upgrade is released.
 
 For a fixed Goa result view, server encoding, the advertised result schema and
 the generated agent decoder use only the selected fields. Required fields in

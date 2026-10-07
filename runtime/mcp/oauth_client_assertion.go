@@ -57,7 +57,7 @@ type (
 	}
 )
 
-var clientAssertionAlgorithms = []jose.SignatureAlgorithm{
+var oauthAsymmetricAlgorithms = []jose.SignatureAlgorithm{
 	jose.RS256, jose.RS384, jose.RS512,
 	jose.PS256, jose.PS384, jose.PS512,
 	jose.ES256, jose.ES384, jose.ES512,
@@ -167,7 +167,7 @@ func (g *clientAssertionGrant) assertion(ctx context.Context, issuer *genissuerm
 	if err != nil {
 		return "", errors.New("mcp: client assertion signing failed")
 	}
-	token, err := jwt.ParseSigned(assertion, clientAssertionAlgorithms)
+	token, err := jwt.ParseSigned(assertion, oauthAsymmetricAlgorithms)
 	if err != nil || !slices.Contains(issuer.TokenEndpointAuthSigningAlgValuesSupported, token.Headers[0].Algorithm) {
 		return "", errors.New("mcp: client assertion requires an asymmetric algorithm advertised by the issuer")
 	}

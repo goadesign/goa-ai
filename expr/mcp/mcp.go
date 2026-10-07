@@ -29,6 +29,8 @@ type (
 		// Description provides a human-readable explanation of the
 		// server's purpose.
 		Description string
+		// Requirements declares bearer access and basic scopes for the MCP resource.
+		Requirements []*expr.SecurityExpr
 		// Tools is the collection of tool expressions exposed by this
 		// server.
 		Tools []*ToolExpr
@@ -159,6 +161,13 @@ var resourceURIPattern = regexp.MustCompile(ResourceURIPattern)
 // EvalName returns the name used for evaluation.
 func (m *MCPExpr) EvalName() string {
 	return "MCP server for " + m.Service.Name
+}
+
+// AddSecurityRequirement records native Goa Security declarations from the MCP
+// block. Code generation combines these basic scopes with each operation's
+// resource-owned scopes before the original configured endpoint is invoked.
+func (m *MCPExpr) AddSecurityRequirement(requirement *expr.SecurityExpr) {
+	m.Requirements = append(m.Requirements, requirement)
 }
 
 // Validate validates the MCP expression

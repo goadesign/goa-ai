@@ -16,6 +16,19 @@ import (
 )
 
 func TestMCPServerConstructorUsesNativeDependencies(t *testing.T) {
+	runMCPServerConstructorExample(t, constructorDependencyDesign, constructorDependencyRuntime)
+}
+
+func TestMCPResourceServerUsesNativeExampleDependencies(t *testing.T) {
+	design, _ := jwtResourceFixture()
+	runMCPServerConstructorExample(t, design, "")
+}
+
+// runMCPServerConstructorExample generates both the transport and application
+// startup from the same dependency plan, then compiles all generated packages.
+// An optional runtime test exercises the supplied dependencies through requests.
+func runMCPServerConstructorExample(t *testing.T, design, runtime string) {
+	t.Helper()
 	directory := t.TempDir()
 	module := fmt.Sprintf(`module constructor-probe.local
 
@@ -31,11 +44,13 @@ replace goa.design/goa/v3 => %s
 `, filepath.ToSlash(testModuleDirectory(t, "goa.design/goa-ai")), filepath.ToSlash(testModuleDirectory(t, "goa.design/goa/v3")))
 	require.NoError(t, os.Mkdir(filepath.Join(directory, "design"), 0o700))
 	for name, source := range map[string]string{
-		"go.mod":             module,
-		"design/design.go":   constructorDependencyDesign,
-		"dependency_test.go": constructorDependencyRuntime,
+		"go.mod":           module,
+		"design/design.go": design,
 	} {
 		require.NoError(t, os.WriteFile(filepath.Join(directory, name), []byte(source), 0o600))
+	}
+	if runtime != "" {
+		require.NoError(t, os.WriteFile(filepath.Join(directory, "dependency_test.go"), []byte(runtime), 0o600))
 	}
 	// The authored design declares dependencies before names freeze. Both commands
 	// must use that plan so example startup calls the actual required constructor.

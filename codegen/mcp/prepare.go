@@ -52,6 +52,10 @@ func prepareMCPServicesFromRoot(
 				return nil, fmt.Errorf("MCP service %q has no authored JSON-RPC transport in its generation roots", svc.Name)
 			}
 			mcpinput.BindTransport(transport)
+			policy, err := resolveResourcePolicy(r, svc, mcp)
+			if err != nil {
+				return nil, err
+			}
 			if err := validateMCPResources(svc, mcp.Resources); err != nil {
 				return nil, err
 			}
@@ -61,12 +65,21 @@ func prepareMCPServicesFromRoot(
 				builder.Types()[name] = userType
 			}
 			mcpService := builder.BuildServiceExpr()
+			if policy != nil {
+				// The resolved resource policy is enforced by the generated HTTP
+				// guard, with a required verifier, before every protocol operation.
+				// Original service methods retain their native inherited security.
+				mcpService.Requirements = []*expr.SecurityExpr{{Schemes: []*expr.SchemeExpr{{Kind: expr.NoKind}}}}
+			}
 			paths, routePaths := prepareRouteInputs(transport)
 			credentials, inputs, err := prepareHTTPInputs(r, svc, mcp, mcpService, paths)
 			if err != nil {
 				return nil, err
 			}
 			builder.httpInputs = inputs
+			if err := validateResourceCredentials(r, svc, policy, credentials); err != nil {
+				return nil, err
+			}
 			for _, server := range r.API.Servers {
 				if slices.Contains(server.Services, svc.Name) &&
 					!slices.Contains(server.Services, mcpService.Name) {
@@ -91,13 +104,14 @@ func prepareMCPServicesFromRoot(
 			}
 			attachedServices = append(attachedServices, mcpService)
 			prepared = append(prepared, &preparedMCPService{
-				root:        r,
-				userService: svc,
-				mcpService:  mcpService,
-				mcp:         mcp,
-				credentials: credentials,
-				paths:       paths,
-				transport:   transport,
+				root:           r,
+				userService:    svc,
+				mcpService:     mcpService,
+				mcp:            mcp,
+				credentials:    credentials,
+				paths:          paths,
+				transport:      transport,
+				resourcePolicy: policy,
 			})
 		}
 		if len(attachedServices) > 0 {

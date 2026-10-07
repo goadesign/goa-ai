@@ -1911,10 +1911,10 @@ other nondeferred release gates remain required. PR #409 stays draft.
 [client-credentials profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/draft/oauth-client-credentials.mdx),
 [go-jose v4.1.5](https://github.com/go-jose/go-jose/releases/tag/v4.1.5).
 
-### Resource-policy composition probe
+### Former resource-policy composition gap
 
-A synthetic API-level OAuth declaration with one secured tool fails current
-MCP preparation: the attached `server/discover`, `tools/list` and `tools/call`
+A synthetic API-level OAuth declaration with one secured tool failed MCP
+preparation before the resource guard: attached `server/discover`, `tools/list` and `tools/call`
 methods inherit authentication without a corresponding access-token payload.
 The original method has that payload and retains its correct native requirement.
 This is a verified generation gap, not evidence about deployed middleware.
@@ -1924,7 +1924,9 @@ Do not add credentials to model arguments or disable the resource requirement
 just to make generation succeed. Native `Security` already accepts plugin
 expressions through `SecurityHolder`; use that mechanism when authoring resource
 policy. Verify API and service inheritance, catalog access, selected-operation
-scopes, alternatives and unaffected ordinary HTTP paths together.
+scopes, alternatives and unaffected ordinary HTTP paths together. The signed-token
+resource milestone below implements and verifies conditional composition through
+the required guard; this paragraph records the original failing evidence.
 
 ## Removal and preservation matrix
 
@@ -2335,3 +2337,83 @@ evaluation consumer also pass. A second owning assistant regeneration preserves
 all 29 generated artifact hashes. The original failing probe and fixture
 corrections remain recorded separately; no server-verifier completion or live
 issuer behavior is inferred from these synthetic checks.
+
+## Signed-access-token resource-server milestone
+
+Protected MCP servers now derive basic access from native Goa `Security` inside
+an optional `MCP` design function, or from an inherited bearer policy. Generation
+requires one concrete resource owner through Goa's native constructor dependency
+plan. Normal generation and application examples use the same dependency planner;
+the example compiler check caught and corrected an omitted startup argument.
+Unprotected servers emit no verifier dependency or authorization branches.
+
+The generator computes complete scope alternatives from the evaluated security
+expressions. Basic access combines only with scopes owned by the same authored
+resource scheme. It emits typed selection for tools, fixed and parameterized
+resources, prompts, both completion references and subscriptions. The selector
+uses the endpoint's native Goa request decoder before any middleware or original
+endpoint runs. Alternatives retain their meaning; catalog access never requires
+the union of all tool permissions. Independent domain credentials keep their
+native bindings and callbacks. A different owner cannot occupy Authorization.
+
+`NewJWTResourceServer` selects the signed access-token profile explicitly. Trusted
+issuer, audience, public keys and algorithms are constructor inputs. The JOSE
+library verifies the signature and access-token purpose; the private Goa decoder
+checks required claims and exact JSON names. Standard audience strings and arrays
+use the SDK's concrete audience type because Goa's unions have tagged wire
+representations. This is a private custom-type exception, not an exported raw
+claims contract. Fractional timestamps retain their value; not-before is
+inclusive and expiration is exclusive. Token-selected keys and key URLs never
+participate in trust or discovery.
+
+The resource guard rejects missing or invalid credentials with 401 and missing
+operation scopes with 403 before middleware. It rejects query access tokens and
+serves generated public resource metadata with basic-access scopes. The original
+Goa endpoint still owns authentication, scope validation and domain decisions.
+Verified issuer, subject and client identity travel through the request context.
+Native OAuth2, JWT and Bearer callbacks can delegate to the same owner; reuse
+requires that owner, the exact token hash and a still-valid interval. Ordinary
+Goa calls without that verified context validate the token themselves.
+
+Focused race checks cover real asymmetric signatures, exact issuer/audience,
+wrong token purposes, missing or malformed claims, scope alternatives, timestamps,
+constructor-owned key copies and native context identity. Compiled client/server
+fixtures cover all operation paths, API and service inheritance, catalog-only
+access and complete alternative policies. Each full fixture performs fourteen
+original domain and resource authentication calls and fourteen service operations
+while sharing one client token acquisition. Missing or invalid tokens and missing
+operation scopes reach no configured middleware or domain operation. Both normal
+and protected generated application startup compile from native dependencies.
+
+This milestone does not complete OAuth. Authenticated opaque-token introspection,
+enterprise identity exchange, durable host credentials, independent conformance
+and external cutover remain required, alongside the other nondeferred protocol
+capabilities. No live issuer configuration or deployment evidence was supplied.
+PR #409 remains draft and the release remains blocked on those gates.
+[JWT access-token profile](https://www.rfc-editor.org/rfc/rfc9068.html),
+[MCP authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
+
+Completed acceptance passes configured lint with zero issues, the full uncached
+root race suite and quickstart, root build, regenerated assistant race checks
+and HTTP integration with the generated evaluation consumer. A second owning
+OAuth regeneration preserves all 80 artifact hashes. The existing assistant's
+29 generated artifacts remain identical through regeneration and integration.
+These checks use synthetic issuers; they establish no live deployment cutover.
+
+Final cryptographic review proved that go-jose's default RSA verifier accepts a
+1024-bit RSA signature and PS256 with a 16-byte salt. RFC 7518 requires an
+inclusive minimum of 2048 bits per RSA signing key, and a salt equal to the
+selected hash's byte length per PSS signature. Those constraints protect the
+algorithm's security; they set no operation or key-set budget. The resource owner
+enforces the key minimum at construction. Its private JOSE verifier extension
+keeps the SDK's signed-input parsing and invokes Go's RSA primitives with the
+required PSS salt length. It adds no public verifier callback or alternate token
+parser. Tests exercise 1024, 2047, 2048 and 2049-bit keys, multiple accepted keys,
+and salts below, at and above the hash length for all three PSS algorithms.
+[RSA JWT algorithms](https://www.rfc-editor.org/rfc/rfc7518.html#section-3.3),
+[RSA-PSS parameters](https://www.rfc-editor.org/rfc/rfc7518.html#section-3.5).
+
+Acceptance after the RSA parameter correction passes configured lint with zero
+issues, root build, and the complete uncached root race suite plus quickstart.
+The runtime checks verify standard PSS signatures and reject nonstandard salt
+lengths through the same resource owner used by generated transports.

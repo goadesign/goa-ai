@@ -105,6 +105,32 @@ paths:
                     description: No Content response.
             schemes:
                 - http
+    /claims:
+        post:
+            tags:
+                - access_token_claims
+            summary: decode access_token_claims
+            description: Validate the signed claims using exact JSON names and preserve fractional Unix timestamps.
+            operationId: access_token_claims#decode
+            parameters:
+                - name: DecodeRequestBody
+                  in: body
+                  required: true
+                  schema:
+                    $ref: '#/definitions/AccessTokenClaimsDecodeRequestBody'
+                    required:
+                        - iss
+                        - sub
+                        - aud
+                        - exp
+                        - iat
+                        - jti
+                        - client_id
+            responses:
+                "204":
+                    description: No Content response.
+            schemes:
+                - http
     /client:
         get:
             tags:
@@ -317,6 +343,71 @@ paths:
             schemes:
                 - http
 definitions:
+    AccessTokenClaimsDecodeRequestBody:
+        title: AccessTokenClaimsDecodeRequestBody
+        type: object
+        properties:
+            aud:
+                description: Resource identifiers decoded by the JWT library
+                example: Voluptatem aut minima quia.
+            client_id:
+                type: string
+                description: Client to which the access token was issued
+                example: zse
+                minLength: 1
+            exp:
+                type: number
+                description: Exclusive token expiration in Unix seconds
+                example: 0.9384970563171912
+                format: double
+            iat:
+                type: number
+                description: Token issue time in Unix seconds
+                example: 0.635850949987135
+                format: double
+            iss:
+                type: string
+                description: Exact authorization server identifier
+                example: "9"
+                minLength: 1
+            jti:
+                type: string
+                description: Token identifier assigned by the authorization server
+                example: "9"
+                minLength: 1
+            nbf:
+                type: number
+                description: Inclusive first valid instant in Unix seconds
+                example: 0.4731574477305462
+                format: double
+            scope:
+                type: string
+                description: Space-separated permissions granted by the issuer
+                example: yC K
+                pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+            sub:
+                type: string
+                description: Subject identified by the authorization server
+                example: "y"
+                minLength: 1
+        example:
+            aud: Voluptatem aut minima quia.
+            client_id: zse
+            exp: 0.9384970563171912
+            iat: 0.635850949987135
+            iss: "9"
+            jti: "9"
+            nbf: 0.4731574477305462
+            scope: yC K
+            sub: "y"
+        required:
+            - iss
+            - sub
+            - aud
+            - exp
+            - iat
+            - jti
+            - client_id
     BearerToken:
         title: BearerToken
         type: object

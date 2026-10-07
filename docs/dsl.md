@@ -1537,11 +1537,34 @@ optional. They cannot both be required in one request because they share one
 bindings, and credentials bound to MCP's protocol headers instead of silently
 choosing another location. Goa also rejects defaults on security fields.
 
-This credential delivery does not implement MCP's HTTP OAuth resource guard.
-Issuer, audience, expiry and resource scope validation, protected resource
-metadata and HTTP challenges remain required before release. Static catalog
-methods do not call a domain method to authenticate a request. See the
-[remaining authorization work](mcp_protocol_upgrade_plan.md#server-authorization-verified-ownership-and-remaining-design-proof).
+Declare the resource's basic access policy with native Goa `Security` inside an
+MCP block:
+
+```go
+MCP("records", "1", func() {
+    Security(resourceOAuth, func() { Scope("catalog:read") })
+})
+```
+
+Each resource policy alternative uses one OAuth2, JWT or Bearer scheme, and all
+alternatives use the same authored scheme. Without an explicit MCP block policy,
+the generator uses a service-level bearer policy or the API policy. Unsupported
+inherited API policies fail generation instead of producing public catalogs.
+Basic and API-key method authentication retain their original behavior when no
+resource policy is selected.
+
+The generated server requires a `*mcp.ResourceServer` constructed by the host.
+It verifies resource access before HTTP middleware, including for catalogs,
+notifications and unsupported HTTP methods. Operation scopes from the same
+authored resource scheme combine with basic-access scopes; alternatives remain
+alternatives. Independent domain keys keep their separate native bindings.
+An independent credential cannot share the resource's `Authorization` header.
+Static catalogs never invoke a domain method as an authentication probe.
+
+Regenerate protected servers and supply the new required constructor dependency.
+Original endpoint security remains intact. See [runtime construction and
+identity](runtime.md#mcp-resource-servers). Complete OAuth and extension support
+remain required before this breaking upgrade is released.
 
 ### Goa result views
 

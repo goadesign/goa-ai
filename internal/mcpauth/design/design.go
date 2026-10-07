@@ -1,10 +1,34 @@
-// Package design defines the metadata and token messages read by MCP's OAuth
-// client. Goa generates typed form requests and response validation; the runtime
-// supplies exact discovered URLs and strict external-response decoding. Native
-// query decoding also validates browser authorization responses before exchange.
+// Package design defines the metadata and token messages used by MCP OAuth
+// clients and resource servers. Goa generates form requests and typed response
+// validation; the runtime supplies exact discovered URLs and strict decoding.
+// Native decoders also validate browser responses and verified access-token claims.
 package design
 
 import . "goa.design/goa/v3/dsl"
+
+var _ = Service("access_token_claims", func() {
+	Description("Decode verified JWT access-token claims before the resource server checks their issuer, audience and validity times.")
+	Method("decode", func() {
+		Description("Validate the signed claims using exact JSON names and preserve fractional Unix timestamps.")
+		Payload(func() {
+			Field(1, "iss", String, "Exact authorization server identifier", func() { MinLength(1) })
+			Field(2, "sub", String, "Subject identified by the authorization server", func() { MinLength(1) })
+			// JWT audiences use an untagged string-or-array value. Goa's tagged
+			// unions cannot represent it; the private SDK type rejects other shapes.
+			Field(3, "aud", Any, "Resource identifiers decoded by the JWT library", func() {
+				Meta("struct:field:type", "jwt.Audience", "github.com/go-jose/go-jose/v4/jwt", "jwt")
+			})
+			Field(4, "exp", Float64, "Exclusive token expiration in Unix seconds")
+			Field(5, "iat", Float64, "Token issue time in Unix seconds")
+			Field(6, "jti", String, "Token identifier assigned by the authorization server", func() { MinLength(1) })
+			Field(7, "client_id", String, "Client to which the access token was issued", func() { MinLength(1) })
+			Field(8, "nbf", Float64, "Inclusive first valid instant in Unix seconds")
+			Field(9, "scope", String, "Space-separated permissions granted by the issuer", oauthScope)
+			Required("iss", "sub", "aud", "exp", "iat", "jti", "client_id")
+		})
+		HTTP(func() { POST("/claims") })
+	})
+})
 
 var _ = API("mcp_authorization", func() {
 	Description("Read protected-resource and issuer metadata and obtain resource-bound access tokens without exposing credentials to MCP tools.")

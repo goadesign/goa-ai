@@ -16,6 +16,7 @@ type (
 		Transport            any
 		Tools                []*ToolAdapter
 		ResourceSubscription *resourceSubscriptionAdapter
+		ResourcePolicy       *resourcePolicy
 	}
 )
 
@@ -79,10 +80,12 @@ func applyMCPHTTPRules(files []*codegen.File, services []*plannedMCPService) err
 					Transport:            s.Data,
 					Tools:                service.adapterData.Tools,
 					ResourceSubscription: service.adapterData.ResourceSubscription,
+					ResourcePolicy:       service.adapterData.ResourcePolicy,
 				}
 				found = true
 			case "jsonrpc-server-init":
 				s.Source = mcpTemplates.Read("jsonrpc_server_init")
+				s.Data = mcpTransportData{Transport: s.Data, ResourcePolicy: service.adapterData.ResourcePolicy}
 			case "jsonrpc-server-struct":
 				s.Source = mcpTemplates.Read("jsonrpc_server_struct")
 			case "jsonrpc-server-use":

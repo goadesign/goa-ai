@@ -95,6 +95,6 @@ gen-example:
 gen-registry:
 	$(GO) run goa.design/goa/v3/cmd/goa gen goa.design/goa-ai/registry/design -o registry
 
-# Generate the typed metadata and token contracts used by the MCP OAuth client.
+# Generate the typed metadata and token contracts used by MCP OAuth clients and servers.
 gen-mcp-auth:
 	$(GO) run goa.design/goa/v3/cmd/goa gen goa.design/goa-ai/internal/mcpauth/design -o internal/mcpauth

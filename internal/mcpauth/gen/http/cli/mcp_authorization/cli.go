@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 
+	accesstokenclaimsc "goa.design/goa-ai/internal/mcpauth/gen/http/access_token_claims/client"
 	accesstokensc "goa.design/goa-ai/internal/mcpauth/gen/http/access_tokens/client"
 	authorizationresponsesc "goa.design/goa-ai/internal/mcpauth/gen/http/authorization_responses/client"
 	clientmetadatac "goa.design/goa-ai/internal/mcpauth/gen/http/client_metadata/client"
@@ -27,6 +28,7 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
+		"access-token-claims decode",
 		"resource-metadata read",
 		"issuer-metadata read",
 		"client-metadata read",
@@ -37,11 +39,11 @@ func UsageCommands() []string {
 
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
-	return os.Args[0] + " " + "resource-metadata read" + "\n" +
+	return os.Args[0] + " " + "access-token-claims decode --body '{\n      \"aud\": \"Voluptatem aut minima quia.\",\n      \"client_id\": \"zse\",\n      \"exp\": 0.9384970563171912,\n      \"iat\": 0.635850949987135,\n      \"iss\": \"9\",\n      \"jti\": \"9\",\n      \"nbf\": 0.4731574477305462,\n      \"scope\": \"yC K\",\n      \"sub\": \"y\"\n   }'" + "\n" +
+		os.Args[0] + " " + "resource-metadata read" + "\n" +
 		os.Args[0] + " " + "issuer-metadata read" + "\n" +
 		os.Args[0] + " " + "client-metadata read" + "\n" +
 		os.Args[0] + " " + "access-tokens assertion --body '{\n      \"client_assertion\": \"S.U.n\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://hudson.info/ignatius\",\n      \"scope\": \"z# r+ Y-\"\n   }'" + "\n" +
-		os.Args[0] + " " + "authorization-responses receive --code \"x\" --error \";\\u0026\" --state \"1f\" --issuer \"http://rice.name/wilfrid.vandervort\"" + "\n" +
 		""
 }
 
@@ -74,6 +76,11 @@ func ParseEndpoint(
 	restore bool,
 ) (goa.Endpoint, any, error) {
 	var (
+		accessTokenClaimsFlags = flag.NewFlagSet("access-token-claims", flag.ContinueOnError)
+
+		accessTokenClaimsDecodeFlags    = flag.NewFlagSet("decode", flag.ExitOnError)
+		accessTokenClaimsDecodeBodyFlag = new(cliStringFlag)
+
 		resourceMetadataFlags = flag.NewFlagSet("resource-metadata", flag.ContinueOnError)
 
 		resourceMetadataReadFlags = flag.NewFlagSet("read", flag.ExitOnError)
@@ -108,6 +115,7 @@ func ParseEndpoint(
 		authorizationResponsesReceiveStateFlag  = new(cliStringFlag)
 		authorizationResponsesReceiveIssuerFlag = new(cliStringFlag)
 	)
+	accessTokenClaimsDecodeFlags.Var(accessTokenClaimsDecodeBodyFlag, "body", "")
 	accessTokensAssertionFlags.Var(accessTokensAssertionBodyFlag, "body", "")
 	accessTokensSecretFlags.Var(accessTokensSecretBodyFlag, "body", "")
 	accessTokensCodeFlags.Var(accessTokensCodeBodyFlag, "body", "")
@@ -116,6 +124,9 @@ func ParseEndpoint(
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveErrorFlag, "error", "")
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveStateFlag, "state", "")
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveIssuerFlag, "issuer", "")
+
+	accessTokenClaimsFlags.Usage = accessTokenClaimsUsage
+	accessTokenClaimsDecodeFlags.Usage = accessTokenClaimsDecodeUsage
 
 	resourceMetadataFlags.Usage = resourceMetadataUsage
 	resourceMetadataReadFlags.Usage = resourceMetadataReadUsage
@@ -150,6 +161,8 @@ func ParseEndpoint(
 	{
 		svcn = flag.Arg(0)
 		switch svcn {
+		case "access-token-claims":
+			svcf = accessTokenClaimsFlags
 		case "resource-metadata":
 			svcf = resourceMetadataFlags
 		case "issuer-metadata":
@@ -175,6 +188,13 @@ func ParseEndpoint(
 	{
 		epn = svcf.Arg(0)
 		switch svcn {
+		case "access-token-claims":
+			switch epn {
+			case "decode":
+				epf = accessTokenClaimsDecodeFlags
+
+			}
+
 		case "resource-metadata":
 			switch epn {
 			case "read":
@@ -239,6 +259,13 @@ func ParseEndpoint(
 	)
 	{
 		switch svcn {
+		case "access-token-claims":
+			c := accesstokenclaimsc.NewClient(scheme, host, doer, enc, dec, restore)
+			switch epn {
+			case "decode":
+				endpoint = c.Decode()
+				data, err = accesstokenclaimsc.BuildDecodePayload(accessTokenClaimsDecodeBodyFlag.value)
+			}
 		case "resource-metadata":
 			c := resourcemetadatac.NewClient(scheme, host, doer, enc, dec, restore)
 			switch epn {
@@ -287,6 +314,35 @@ func ParseEndpoint(
 	}
 
 	return endpoint, data, nil
+}
+
+// accessTokenClaimsUsage displays the usage of the access-token-claims command
+// and its subcommands.
+func accessTokenClaimsUsage() {
+	fmt.Fprintln(os.Stderr, `Decode verified JWT access-token claims before the resource server checks their issuer, audience and validity times.`)
+	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] access-token-claims COMMAND [flags]\n\n", os.Args[0])
+	fmt.Fprintln(os.Stderr, "COMMAND:")
+	fmt.Fprintln(os.Stderr, `    decode: Validate the signed claims using exact JSON names and preserve fractional Unix timestamps.`)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Additional help:")
+	fmt.Fprintf(os.Stderr, "    %s access-token-claims COMMAND --help\n", os.Args[0])
+}
+func accessTokenClaimsDecodeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-token-claims decode", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Validate the signed claims using exact JSON names and preserve fractional Unix timestamps.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-token-claims decode --body '{\n      \"aud\": \"Voluptatem aut minima quia.\",\n      \"client_id\": \"zse\",\n      \"exp\": 0.9384970563171912,\n      \"iat\": 0.635850949987135,\n      \"iss\": \"9\",\n      \"jti\": \"9\",\n      \"nbf\": 0.4731574477305462,\n      \"scope\": \"yC K\",\n      \"sub\": \"y\"\n   }'")
 }
 
 // resourceMetadataUsage displays the usage of the resource-metadata command

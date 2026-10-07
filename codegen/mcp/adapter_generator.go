@@ -85,6 +85,8 @@ type (
 
 		// ClientCaller contains the values used to generate tool calls.
 		ClientCaller *ClientCallerData
+		// ResourcePolicy supplies the authored resource and operation scopes.
+		ResourcePolicy *resourcePolicy
 
 		mcpPackage              *codegen.GeneratedPackage
 		serviceImportPath       string

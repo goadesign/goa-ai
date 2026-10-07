@@ -19,6 +19,7 @@ type (
 	mcpExamplePlugin struct {
 		mcpRoot     *mcpexpr.RootExpr
 		exampleRoot *expr.RootExpr
+		prepared    []*preparedMCPService
 	}
 
 	// exampleMCPService stores the generated names needed to replace one example stub.
@@ -36,12 +37,13 @@ type (
 	}
 )
 
-// newMCPExamplePlugin returns a plugin whose Prepare and Generate methods share
+// newMCPExamplePlugin returns a plugin whose Prepare, Plan and Generate methods share
 // a new mcpExamplePlugin for one command.
 func newMCPExamplePlugin() goagenerator.Plugin {
 	plugin := new(mcpExamplePlugin)
 	return goagenerator.Plugin{
 		Prepare:  plugin.prepare,
+		Plan:     plugin.plan,
 		Generate: plugin.generate,
 	}
 }
@@ -54,8 +56,19 @@ func (p *mcpExamplePlugin) prepare(_ string, roots []eval.Root) error {
 	}
 	p.mcpRoot = mcpRoot
 	p.exampleRoot, _ = firstRootWithJSONRPC(roots)
-	_, err = prepareMCPServicesFromRoot(roots, mcpRoot)
+	p.prepared, err = prepareMCPServicesFromRoot(roots, mcpRoot)
 	return err
+}
+
+// plan submits the same resource dependency as normal server generation. Goa's
+// native example generator then creates its factory and passes it to the server.
+func (p *mcpExamplePlugin) plan(plan *goagenerator.Plan) error {
+	for _, prepared := range p.prepared {
+		if err := planResourceAuthorization(plan, prepared); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // generate makes the example server return the MCP service backed by the user
