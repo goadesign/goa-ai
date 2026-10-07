@@ -76,11 +76,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, wireInput *PlanActivity
 	}
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !input.SynthesisOnly {
-		historicalOutputs, err := r.loadHistoricalContinuationOutputs(ctx, input, catalog.specs)
-		if err != nil {
-			return nil, err
-		}
-		continuationActions, err = r.availableContinuationActions(input.AgentID, historicalOutputs, input.RunContext.TextOnly)
+		continuationActions, err = r.continuationActionsForHistory(ctx, input, catalog.specs, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -205,7 +201,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, wireInput *PlanActivit
 	}
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !synthesisOnly {
-		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs, input.RunContext.TextOnly)
+		continuationActions, err = r.continuationActionsForHistory(ctx, input, catalog.specs, toolOutputs)
 		if err != nil {
 			return nil, err
 		}

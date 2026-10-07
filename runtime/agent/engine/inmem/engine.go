@@ -36,10 +36,11 @@ type (
 
 		workflows map[string]engine.WorkflowDefinition
 
-		storageActivities    map[string]storageActivityDef
-		plannerActivities    map[string]plannerActivityDef
-		toolActivities       map[string]toolActivityDef
-		agentChildActivities map[string]agentChildActivityDef
+		storageActivities      map[string]storageActivityDef
+		plannerActivities      map[string]plannerActivityDef
+		toolActivities         map[string]toolActivityDef
+		agentChildActivities   map[string]agentChildActivityDef
+		continuationActivities map[string]continuationActivityDef
 
 		// statuses tracks workflow status by run ID (inmem uses workflow ID as run ID).
 		statuses map[string]engine.RunStatus
@@ -123,6 +124,11 @@ type (
 
 	agentChildActivityDef struct {
 		handler func(context.Context, *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error)
+		opts    engine.ActivityOptions
+	}
+
+	continuationActivityDef struct {
+		handler func(context.Context, *api.ContinuationActivityInput) (bool, error)
 		opts    engine.ActivityOptions
 	}
 
@@ -275,6 +281,23 @@ func (e *eng) RegisterAgentChildActivity(_ context.Context, name string, opts en
 		handler: fn,
 		opts:    opts,
 	}
+	return nil
+}
+
+// RegisterContinuationActivity registers a saved-page read outside workflow code.
+func (e *eng) RegisterContinuationActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.ContinuationActivityInput) (bool, error)) error {
+	if name == "" || fn == nil {
+		return errors.New("continuation activity name and handler are required")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.continuationActivities == nil {
+		e.continuationActivities = make(map[string]continuationActivityDef)
+	}
+	if _, exists := e.continuationActivities[name]; exists {
+		return fmt.Errorf("continuation activity %q already registered", name)
+	}
+	e.continuationActivities[name] = continuationActivityDef{handler: fn, opts: opts}
 	return nil
 }
 
@@ -939,6 +962,28 @@ func (w *wfCtx) ExecuteAgentChildActivity(call engine.AgentChildActivityCall) (*
 		def, ok := w.eng.agentChildActivities[call.Name]
 		return def.opts, def.handler, ok
 	})
+}
+
+// ExecuteContinuationActivity copies the request and result through the same
+// activity transport as other recorded reads. A failed read returns its error.
+func (w *wfCtx) ExecuteContinuationActivity(call engine.ContinuationActivityCall) (bool, error) {
+	output, err := executeRegisteredRecordedActivity(w, call.Name, call.Input, call.Options, func() (engine.ActivityOptions, func(context.Context, *api.ContinuationActivityInput) (*bool, error), bool) {
+		def, ok := w.eng.continuationActivities[call.Name]
+		return def.opts, func(ctx context.Context, input *api.ContinuationActivityInput) (*bool, error) {
+			available, err := def.handler(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return &available, nil
+		}, ok
+	})
+	if err != nil {
+		return false, err
+	}
+	if output == nil {
+		return false, errors.New("continuation activity returned no answer")
+	}
+	return *output, nil
 }
 
 // executeRegisteredRecordedActivity resolves one registered activity and runs

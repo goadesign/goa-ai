@@ -647,6 +647,25 @@ permits only a final response or registered terminal bookkeeping. When the same 
 failures in one batch, the correctable failure keeps that tool available. A
 recovery turn may end with an input suspension; its evidence remains available
 when a new workflow continues after the answer.
+
+Saved pagination uses the exact `RunSeed.Source` ancestry and completed
+execution records through each selected end. A continuation checkpoint also
+selects its retained completed output references: a completed sibling's event
+can follow the predecessor's transcript end without being published again by
+the successor. Provider IDs remain transcript identities and can repeat across
+responses; they are never a session-wide correlation key. Start and Resume
+share this private reader with the continuation-availability activity.
+
+Before a finish failure chooses recovery or finalization, the workflow records
+one availability read through the typed engine activity contract. A negative
+answer retains direct `tool_failure` finalization and its hard deadline without
+an initial recovery-turn charge. A positive answer retains ordinary recovery
+charging and its normal deadline. Read errors remain errors. The read uses the
+storage activity's existing attempt allowance, bounded by remaining hard time;
+it does not move deadlines or change recovery capacity. Custom engines must
+implement this activity. Existing Temporal executions must remain on workers
+with their original workflow code; the added activity changes command history.
+
 Active tool failures and model-replacement feedback are separate workflow
 facts. A rejected response preserves active failed-call IDs and their execution
 restrictions. Ordinary correction/replan restrictions end when the accepted

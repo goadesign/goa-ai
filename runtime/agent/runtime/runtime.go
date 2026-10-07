@@ -181,6 +181,9 @@ type (
 		// agentChildActivityRegistered tracks whether child prompt preparation is
 		// available to every registered workflow.
 		agentChildActivityRegistered bool
+		// continuationActivityRegistered makes the saved-page read available
+		// before workflows choose recovery or finalization.
+		continuationActivityRegistered bool
 
 		// storageActivityTimeout overrides the StartToClose timeout used for
 		// `runtime.store`. Zero means use the runtime default.
@@ -1099,6 +1102,9 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 		return err
 	}
 	if err := r.ensureAgentChildActivityRegistered(ctx); err != nil {
+		return err
+	}
+	if err := r.ensureContinuationActivityRegistered(ctx); err != nil {
 		return err
 	}
 

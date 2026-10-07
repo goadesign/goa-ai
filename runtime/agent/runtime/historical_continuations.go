@@ -1,14 +1,14 @@
 package runtime
 
-// historical_continuations.go restores dedicated pagination actions when a new
-// run receives a structured transcript containing prior bounded tool calls.
-// The transcript supplies only stable tool-call identities; canonical payloads,
-// cursors, bounds, and correlation remain owned by the session run log.
+// Literal structured history retains its existing exact execution-ID lookup.
+// Provider IDs are never interpreted as execution IDs for referenced history;
+// that history is read by selected_continuations.go using owned run records.
 
 import (
 	"context"
 	"fmt"
 
+	"goa.design/goa-ai/internal/registrycontract"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -23,22 +23,34 @@ type historicalToolEvents struct {
 	events      canonicalToolEvents
 }
 
-// loadHistoricalContinuationOutputs reconstructs canonical outputs for
-// dedicated continuation chains named in the caller-supplied transcript. It
-// reads the runtime's own session log rather than trusting cursor state copied
-// through model-visible messages.
-func (r *Runtime) loadHistoricalContinuationOutputs(
+// loadLiteralContinuationOutputs preserves the exact execution-ID contract for
+// caller-supplied messages. It never searches by a stored provider ID.
+func (r *Runtime) loadLiteralContinuationOutputs(
 	ctx context.Context,
 	input *resolvedPlanActivityInput,
 	specs map[tools.Ident]tools.ToolSpec,
 ) ([]*planner.ToolOutput, error) {
 	names := historicalContinuationToolNames(specs)
-	toolCallIDs, err := historicalContinuationToolCallIDs(input.Messages, names)
+	if len(names) == 0 {
+		registration, ok := r.agentByID(input.AgentID)
+		if !ok || registration.Definition.registryTools == nil {
+			return nil, nil
+		}
+	}
+	toolCallIDs, err := historicalContinuationToolCallIDs(input.Messages)
 	if err != nil || len(toolCallIDs) == 0 {
 		return nil, err
 	}
 	if input.RunContext.SessionID == "" {
 		return nil, fmt.Errorf("runtime: historical continuation transcript requires a session id")
+	}
+	literalNames := make(map[string][]string, len(toolCallIDs))
+	for _, message := range input.Messages {
+		for _, part := range message.Parts {
+			if call, ok := part.(model.ToolUsePart); ok {
+				literalNames[call.ID] = append(literalNames[call.ID], call.Name)
+			}
+		}
 	}
 	wanted := make(map[string]struct{}, len(toolCallIDs))
 	for _, toolCallID := range toolCallIDs {
@@ -109,6 +121,27 @@ func (r *Runtime) loadHistoricalContinuationOutputs(
 		if entry == nil {
 			continue
 		}
+		if call := entry.events.scheduled; call != nil {
+			callNames := names
+			if call.Registry != nil {
+				resolved, err := registrycontract.Read(call.Registry)
+				if err != nil {
+					return nil, err
+				}
+				callNames = historicalContinuationToolNames(resolved.Specs)
+			}
+			if _, relevant := callNames[call.ToolName.String()]; !relevant {
+				continue
+			}
+			recognized := false
+			for _, name := range literalNames[toolCallID] {
+				_, canonical := callNames[name]
+				recognized = recognized || canonical || IsGeneratedContinuationToolName(tools.Ident(name))
+			}
+			if !recognized {
+				continue
+			}
+		}
 		output, err := toolOutputFromStoredEvents(
 			entry.callRunID,
 			entry.resultRunID,
@@ -119,29 +152,37 @@ func (r *Runtime) loadHistoricalContinuationOutputs(
 		if err != nil {
 			return nil, fmt.Errorf("runtime: hydrate historical continuation output: %w", err)
 		}
-		// Earlier result bodies remain conversation evidence, not inputs to
-		// today's result codec. Failed outcomes and paging metadata still obey
-		// their runtime-owned contracts before they can affect available actions.
-		call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
-		if output.Failure != nil {
-			_, err = validatePersistedToolResult(nil, call, entry.events.result.ResultJSON,
-				output.ServerData, output.Bounds, output.Failure)
-		} else {
-			spec, ok, lookupErr := lookupCallSpec(call, r.toolSpec)
-			if lookupErr != nil {
-				return nil, lookupErr
-			}
-			if !ok {
-				return nil, fmt.Errorf("runtime: historical continuation references unregistered tool %q", output.Name)
-			}
-			err = validateToolBoundsContract(spec, call, false, output.Bounds)
-		}
-		if err != nil {
-			return nil, fmt.Errorf("runtime: invalid historical continuation metadata (tool_call_id=%s): %w", toolCallID, err)
+		if err := r.validateHistoricalContinuationOutput(output, entry.events.result); err != nil {
+			return nil, err
 		}
 		outputs = append(outputs, output)
 	}
 	return outputs, nil
+}
+
+// validateHistoricalContinuationOutput checks paging and failure metadata.
+// Saved successful result bytes remain evidence under their original contract.
+func (r *Runtime) validateHistoricalContinuationOutput(output *planner.ToolOutput, result *hooks.ToolResultReceivedEvent) error {
+	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
+	var err error
+	if output.Failure != nil {
+		_, err = validatePersistedToolResult(nil, call, result.ResultJSON, output.ServerData, output.Bounds, output.Failure)
+	} else {
+		var spec tools.ToolSpec
+		var ok bool
+		spec, ok, err = lookupCallSpec(call, r.toolSpec)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("runtime: historical continuation references unregistered tool %q", output.Name)
+		}
+		err = validateToolBoundsContract(spec, call, false, output.Bounds)
+	}
+	if err != nil {
+		return fmt.Errorf("runtime: invalid historical continuation metadata (tool_call_id=%s): %w", output.ToolCallID, err)
+	}
+	return nil
 }
 
 // historicalContinuationToolNames returns the canonical source and continuation
@@ -158,16 +199,10 @@ func historicalContinuationToolNames(specs map[tools.Ident]tools.ToolSpec) map[s
 	return names
 }
 
-// historicalContinuationToolCallIDs selects stable call identities from
-// structured assistant tool-use parts. Dynamic continuation actions use a
-// provider-safe continue_ name, while source calls retain their canonical name.
-func historicalContinuationToolCallIDs(
-	messages []*model.Message,
-	canonicalNames map[string]struct{},
-) ([]string, error) {
-	if len(canonicalNames) == 0 {
-		return nil, nil
-	}
+// historicalContinuationToolCallIDs reads literal execution identities in
+// message order. The saved schedule determines whether each call supports
+// paging, including calls whose registration is absent from today's catalog.
+func historicalContinuationToolCallIDs(messages []*model.Message) ([]string, error) {
 	var ids []string
 	seen := make(map[string]struct{})
 	for messageIndex, message := range messages {
@@ -177,10 +212,6 @@ func historicalContinuationToolCallIDs(
 		for partIndex, part := range message.Parts {
 			toolUse, ok := part.(model.ToolUsePart)
 			if !ok {
-				continue
-			}
-			if _, canonical := canonicalNames[toolUse.Name]; !canonical &&
-				!IsGeneratedContinuationToolName(tools.Ident(toolUse.Name)) {
 				continue
 			}
 			if toolUse.ID == "" {

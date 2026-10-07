@@ -678,12 +678,14 @@ type testWorkflowContext struct {
 	ctx context.Context
 	now func() time.Time
 
-	lastHookCall       engine.StorageActivityCall
-	lastPlannerCall    engine.PlannerActivityCall
-	lastToolCall       engine.ToolActivityCall
-	lastAgentChildCall engine.AgentChildActivityCall
-	agentChildOutput   *api.AgentChildActivityOutput
-	agentChildCalls    int
+	lastHookCall         engine.StorageActivityCall
+	lastPlannerCall      engine.PlannerActivityCall
+	lastToolCall         engine.ToolActivityCall
+	lastAgentChildCall   engine.AgentChildActivityCall
+	lastContinuationCall engine.ContinuationActivityCall
+	continuationRead     func(*api.ContinuationActivityInput) (bool, error)
+	agentChildOutput     *api.AgentChildActivityOutput
+	agentChildCalls      int
 
 	asyncResult  ToolOutput
 	sequenceMu   sync.Mutex
@@ -1026,6 +1028,21 @@ func (t *testWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityC
 	return fut, nil
 }
 
+func (t *testWorkflowContext) ExecuteContinuationActivity(call engine.ContinuationActivityCall) (bool, error) {
+	t.lastContinuationCall = call
+	if t.continuationRead != nil {
+		return t.continuationRead(call.Input)
+	}
+	rt := t.runtime
+	if rt == nil {
+		rt = t.hookRuntime
+	}
+	if rt == nil {
+		return false, errors.New("continuation activity runtime is required")
+	}
+	return rt.continuationAvailableActivity(t.Context(), call.Input)
+}
+
 func (t *testWorkflowContext) ExecuteAgentChildActivity(call engine.AgentChildActivityCall) (*api.AgentChildActivityOutput, error) {
 	t.lastAgentChildCall = call
 	t.agentChildCalls++
@@ -1224,6 +1241,9 @@ func (s *stubEngine) RegisterAgentChildActivity(_ context.Context, name string, 
 		s.registeredAgentChildOptions = make(map[string]engine.ActivityOptions)
 	}
 	s.registeredAgentChildOptions[name] = opts
+	return nil
+}
+func (s *stubEngine) RegisterContinuationActivity(context.Context, string, engine.ActivityOptions, func(context.Context, *api.ContinuationActivityInput) (bool, error)) error {
 	return nil
 }
 func (s *stubEngine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {

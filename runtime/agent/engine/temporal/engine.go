@@ -428,6 +428,27 @@ func (e *Engine) RegisterAgentChildActivity(_ context.Context, name string, opts
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
 
+// RegisterContinuationActivity installs a saved-page read on the worker's
+// existing activity route. Invalid immutable requests are not retried.
+func (e *Engine) RegisterContinuationActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.ContinuationActivityInput) (bool, error)) error {
+	if err := e.requireWorkerMode("register continuation activities"); err != nil {
+		return err
+	}
+	if name == "" || fn == nil {
+		return errors.New("continuation activity name and handler are required")
+	}
+	opts = e.applyActivityClassDefaults(activityKindPlanner, opts)
+	wrapped := func(ctx context.Context, input *api.ContinuationActivityInput) (bool, error) {
+		available, err := fn(e.injectWorkflowContextIntoActivity(ctx), input)
+		e.recordActivityError(ctx, err)
+		if engine.IsActivityErrorNonRetryable(err) {
+			return false, temporal.NewNonRetryableApplicationError(err.Error(), "goa_ai_continuation_contract", err)
+		}
+		return available, temporalerrors.Wrap(err)
+	}
+	return e.registerActivityWithCtx(name, opts, wrapped)
+}
+
 // StartWorkflow submits the request's workflow name, task queue, and input to
 // Temporal. Client-only processes do not register worker handlers locally, so
 // every value needed for submission must come from the request.

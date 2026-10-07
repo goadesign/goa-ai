@@ -366,6 +366,24 @@ func (w *temporalWorkflowContext) ExecuteAgentChildActivity(call engine.AgentChi
 	return output, nil
 }
 
+// ExecuteContinuationActivity records the read result for replay before the
+// workflow chooses its recovery counters and planner deadline.
+func (w *temporalWorkflowContext) ExecuteContinuationActivity(call engine.ContinuationActivityCall) (bool, error) {
+	if call.Name == "" || call.Input == nil {
+		return false, errors.New("continuation activity name and input are required")
+	}
+	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
+	future := workflow.ExecuteActivity(actx, call.Name, call.Input)
+	var output *bool
+	if err := future.Get(actx, &output); err != nil {
+		return false, err
+	}
+	if output == nil {
+		return false, errors.New("continuation activity returned no answer")
+	}
+	return *output, nil
+}
+
 func (w *temporalWorkflowContext) Logger() telemetry.Logger {
 	return w.logger
 }
@@ -408,18 +426,18 @@ func (w *temporalWorkflowContext) Await(condition func() bool) error {
 func (w *temporalWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 	cctx, cancel := workflow.WithCancel(w.ctx)
 	return &temporalWorkflowContext{
-		engine:     w.engine,
-		ctx:        cctx,
-		workflowID: w.workflowID,
-		runID:      w.runID,
-		sequence:   w.sequence,
-		logger:     w.logger,
-		metrics:    w.metrics,
-		tracer:     w.tracer,
-		baseCtx:    w.baseCtx,
-	}, func() {
-		cancel()
-	}
+			engine:     w.engine,
+			ctx:        cctx,
+			workflowID: w.workflowID,
+			runID:      w.runID,
+			sequence:   w.sequence,
+			logger:     w.logger,
+			metrics:    w.metrics,
+			tracer:     w.tracer,
+			baseCtx:    w.baseCtx,
+		}, func() {
+			cancel()
+		}
 }
 
 func (w *temporalWorkflowContext) activityOptionsFor(name string, override engine.ActivityOptions) workflow.ActivityOptions {
