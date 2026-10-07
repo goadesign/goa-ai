@@ -36,8 +36,13 @@ assistant-turn event uses that same ID.
 Provider recovery is explicitly enabled by a separate finite run allowance.
 The activity certifies one temporary failed model invocation with no observed
 model output and clean completed phases; an activity error is never permission
-to retry. Durable workflow timers schedule the identical pending planning
-request as a new single-attempt activity. Accepted tools and active-work limits
+to retry. Certification is independent of that allowance. The exclusive
+activity result preserves the canonical provider error, including cause-only
+diagnostic text; disabled or exhausted consumers return the typed failure.
+The engine owns its private versioned encoding and rejects historical summary
+certificates that cannot supply the original provider facts. Durable workflow
+timers schedule the identical pending planning request as a new single-attempt
+activity. Accepted tools and active-work limits
 remain intact; saved external-input checkpoints retain the remaining allowance.
 See [provider recovery](docs/runtime.md#streaming-planners) in the runtime reference.
 

@@ -14,10 +14,12 @@ import (
 	"reflect"
 	"unicode/utf8"
 
+	gogoproto "github.com/gogo/protobuf/proto"
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/proto"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -44,12 +46,15 @@ type (
 		pointer uintptr
 	}
 
+	// workflowJSONContainers tracks references on the current traversal path.
+	workflowJSONContainers map[workflowJSONContainer]struct{}
+
 	// workflowJSONPreflight limits the values inspected before JSON encoding and
 	// rejects a planner.ToolResult even when it is nested inside another value.
 	workflowJSONPreflight struct {
 		visits int
 		budget *Budget
-		active map[workflowJSONContainer]struct{}
+		active workflowJSONContainers
 	}
 )
 
@@ -82,6 +87,7 @@ func NewDataConverter() converter.DataConverter {
 		inner: converter.NewCompositeDataConverter(
 			converter.NewNilPayloadConverter(),
 			&runOutputPayloadConverter{},
+			&planOutputPayloadConverter{},
 			converter.NewByteSlicePayloadConverter(),
 			converter.NewProtoPayloadConverter(),
 			converter.NewProtoJSONPayloadConverter(),
@@ -131,6 +137,9 @@ func (c *dataConverter) FromPayload(payload *commonpb.Payload, valuePtr any) err
 	}
 	if string(payload.Metadata[converter.MetadataEncoding]) == converter.MetadataEncodingJSON && isRunOutputType(reflect.TypeOf(valuePtr)) {
 		return decodeLegacyRunOutput(payload, valuePtr)
+	}
+	if string(payload.Metadata[converter.MetadataEncoding]) == converter.MetadataEncodingJSON && isPlanOutputType(reflect.TypeOf(valuePtr)) {
+		return decodeLegacyPlanOutput(payload, valuePtr)
 	}
 	return c.inner.FromPayload(payload, valuePtr)
 }
@@ -191,11 +200,89 @@ func (c *dataConverter) ToStrings(input *commonpb.Payloads) []string {
 	return c.inner.ToStrings(input)
 }
 
-// preflightValues limits strings, byte sequences, and collection sizes before
-// encoding allocates payloads. A second check counts the exact
-// encoded bytes and the metadata added by encoding.
+// preflightValues checks source bytes and collection sizes first. Argument lists
+// containing a planner output also receive a combined encoded-size bound before
+// any encoder renders its diagnostic. The final payload check counts exact bytes.
 func preflightValues(values ...any) error {
-	return new(Budget).AddSource(values...)
+	if err := new(Budget).AddSource(values...); err != nil {
+		return err
+	}
+	hasPlanOutput := false
+	for _, value := range values {
+		_, record := value.(*planOutputRecord)
+		if record || isPlanOutputType(reflect.TypeOf(value)) {
+			hasPlanOutput = true
+			break
+		}
+	}
+	if !hasPlanOutput {
+		return nil
+	}
+	var encoded Budget
+	for _, value := range values {
+		if err := encoded.addEncodedPayload(value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// addEncodedPayload follows the installed converter order without creating
+// payloads. Binary values retain binary sizes; JSON values include escaping.
+// Metadata shares the same byte total as the provider facts and diagnostic.
+func (b *Budget) addEncodedPayload(value any) error {
+	if raw, ok := value.(converter.RawValue); ok {
+		return b.AddPayload(raw.Payload())
+	}
+	source := reflect.ValueOf(value)
+	if value == nil || (source.Kind() == reflect.Pointer && source.IsNil()) {
+		return b.AddText(converter.MetadataEncoding, converter.MetadataEncodingNil)
+	}
+	encoding := converter.MetadataEncodingJSON
+	switch {
+	case isPlanOutputType(source.Type()), source.Type() == reflect.TypeFor[*planOutputRecord]():
+		encoding = planOutputEncoding
+	case isRunOutputType(source.Type()):
+		encoding = runOutputEncoding
+	default:
+		if data, ok := value.([]byte); ok {
+			if err := b.AddText(converter.MetadataEncoding, converter.MetadataEncodingBinary); err != nil {
+				return err
+			}
+			return b.addBytes(len(data))
+		}
+		// The SDK accepts both protobuf pointers and struct values by taking
+		// one pointer. Size methods inspect the message without serializing it.
+		message := value
+		if source.Kind() != reflect.Pointer {
+			pointer := reflect.New(source.Type())
+			pointer.Elem().Set(source)
+			message = pointer.Interface()
+		}
+		var size int
+		var name string
+		switch message := message.(type) {
+		case proto.Message:
+			size = proto.Size(message)
+			name = string(message.ProtoReflect().Descriptor().FullName())
+		case gogoproto.Message:
+			size = gogoproto.Size(message)
+			name = gogoproto.MessageName(message)
+		default:
+			if err := b.AddText(converter.MetadataEncoding, encoding); err != nil {
+				return err
+			}
+			return b.AddEncodedSource(value)
+		}
+		if err := b.AddText(converter.MetadataEncoding, converter.MetadataEncodingProto, converter.MetadataMessageType, name); err != nil {
+			return err
+		}
+		return b.addBytes(size)
+	}
+	if err := b.AddText(converter.MetadataEncoding, encoding); err != nil {
+		return err
+	}
+	return b.AddEncodedSource(value)
 }
 
 // add counts one source value without retaining it.
@@ -211,6 +298,19 @@ func (p *workflowJSONPreflight) add(value any) error {
 	case proto.Message:
 		return p.budget.addBytes(proto.Size(actual))
 	default:
+		if isPlanOutputType(reflect.TypeOf(value)) {
+			source := reflect.ValueOf(value)
+			depth := 0
+			for source.Kind() == reflect.Pointer {
+				if source.IsNil() {
+					return p.walk(reflect.ValueOf(value), 0)
+				}
+				source = source.Elem()
+				depth++
+			}
+			p.visits += depth
+			return p.walk(reflect.ValueOf(*planOutputView(source.Interface().(api.PlanActivityOutput))), depth)
+		}
 		return p.walk(reflect.ValueOf(value), 0)
 	}
 }
@@ -253,6 +353,30 @@ func (p *workflowJSONPreflight) walk(value reflect.Value, depth int) error {
 		return nil
 	}
 	typ := value.Type()
+	if typ == reflect.TypeFor[api.PlanActivityOutput]() {
+		return errors.New("workflow codec: PlanActivityOutput requires its top-level owning encoding")
+	}
+	if typ == reflect.TypeFor[model.ProviderError]() {
+		return errors.New("workflow codec: ProviderError requires the owning PlanActivityOutput encoding")
+	}
+	if typ == reflect.TypeFor[planOutputRecord]() {
+		record := value.Interface().(planOutputRecord)
+		if err := record.validate(); err != nil {
+			return err
+		}
+	}
+	if typ == reflect.TypeFor[providerFailureRecord]() {
+		failure := value.Interface().(providerFailureRecord)
+		// Count the rendered diagnostic even before the encoder allocates it.
+		// Decoded records already contain it and are counted by the normal walk.
+		if failure.Diagnostic == "" {
+			for _, part := range failure.diagnosticParts() {
+				if err := p.budget.addBytes(len(part)); err != nil {
+					return err
+				}
+			}
+		}
+	}
 	if typ == plannerToolResultType ||
 		(typ.Kind() == reflect.Pointer && typ.Elem() == plannerToolResultType) {
 		return fmt.Errorf("workflow codec: planner.ToolResult must not cross workflow boundaries (use api.ToolEvent)")
@@ -289,9 +413,9 @@ func (p *workflowJSONPreflight) walk(value reflect.Value, depth int) error {
 		return p.budget.addBytes(value.Len())
 	}
 
-	container, tracked, err := p.enter(value)
+	container, tracked, err := p.active.enter(value)
 	if err != nil {
-		return err
+		return fmt.Errorf("workflow codec: workflow JSON value %w", err)
 	}
 	if tracked {
 		defer delete(p.active, container)
@@ -413,7 +537,7 @@ func isEmbeddedWorkflowJSONStruct(field reflect.StructField) bool {
 
 // enter tracks reference values on the active recursion path so cyclic values
 // fail with a bounded error.
-func (p *workflowJSONPreflight) enter(
+func (containers *workflowJSONContainers) enter(
 	value reflect.Value,
 ) (workflowJSONContainer, bool, error) {
 	var pointer uintptr
@@ -462,16 +586,16 @@ func (p *workflowJSONPreflight) enter(
 		typ:     value.Type(),
 		pointer: pointer,
 	}
-	if p.active == nil {
-		p.active = make(map[workflowJSONContainer]struct{})
+	if *containers == nil {
+		*containers = make(workflowJSONContainers)
 	}
-	if _, exists := p.active[container]; exists {
+	if _, exists := (*containers)[container]; exists {
 		return workflowJSONContainer{}, false, fmt.Errorf(
-			"workflow codec: workflow JSON value contains a %s reference cycle",
+			"contains a %s reference cycle",
 			value.Kind(),
 		)
 	}
-	p.active[container] = struct{}{}
+	(*containers)[container] = struct{}{}
 	return container, true, nil
 }
 

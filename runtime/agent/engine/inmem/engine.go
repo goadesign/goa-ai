@@ -878,7 +878,7 @@ func (w *wfCtx) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.Pl
 	scheduleCtx, cancel, scheduleDeadline := withOptionalTimeout(w.ctx, timeouts.scheduleToClose)
 	defer cancel()
 	retry := mergedRetryPolicy(def.opts.RetryPolicy, call.Options.RetryPolicy)
-	out, err := executeActivityAttempts(scheduleCtx, timeouts.startToClose, retry, call.Input, def.handler)
+	out, err := executeRecordedActivity(scheduleCtx, timeouts.startToClose, retry, call.Input, def.handler)
 	if scheduleDeadline && errors.Is(scheduleCtx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("%w: %w", engine.ErrPlannerActivityDeadlineExceeded, scheduleCtx.Err())
 	}
