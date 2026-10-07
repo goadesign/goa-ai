@@ -113,10 +113,12 @@ func TestGeneratedOAuthCaller(t *testing.T){
  var transport *mcpruntime.HTTPTransport
  var err error
  if profile=="machine" {
- transport,err=mcpruntime.NewClientCredentialsHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.ClientCredentials{Issuer:origin+"/issuer",ClientID:"registered",ClientSecret:"registered-secret"})
+ registration,registrationErr:=mcpruntime.NewSecretClientRegistration(origin+"/issuer","registered","registered-secret");if registrationErr!=nil {t.Fatal(registrationErr)}
+ transport,err=mcpruntime.NewClientCredentialsHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.ClientCredentials{Registration:registration})
  } else if profile=="browser" {
+ registration,registrationErr:=mcpruntime.NewPublicClientRegistration(origin+"/issuer","registered");if registrationErr!=nil {t.Fatal(registrationErr)}
  transport,err=mcpruntime.NewAuthorizationCodeHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.AuthorizationCode{
-  Issuer:origin+"/issuer",ClientID:"registered",RedirectURI:"https://host.example/callback",
+  Registration:registration,RedirectURI:"https://host.example/callback",
   Authorize:func(_ context.Context, address string)(string,error){
    parsed,err:=url.Parse(address);if err!=nil {return "",err}
    values:=parsed.Query();challenge=values.Get("code_challenge")
@@ -126,9 +128,10 @@ func TestGeneratedOAuthCaller(t *testing.T){
   },
  })
  } else {
- transport,err=mcpruntime.NewClientAssertionHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.ClientAssertion{
+ registration,registrationErr:=mcpruntime.NewSignedClientRegistration(mcpruntime.ClientAssertion{
   Issuer:origin+"/issuer",ClientID:"registered",AssertionIssuer:"registered-signer",Audience:"registered-audience",Lifetime:time.Minute,Signer:signer,
- })
+ });if registrationErr!=nil {t.Fatal(registrationErr)}
+ transport,err=mcpruntime.NewClientCredentialsHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.ClientCredentials{Registration:registration})
  }
  if err!=nil {t.Fatal(err)}
  address,err:=url.Parse(origin);if err!=nil {t.Fatal(err)}

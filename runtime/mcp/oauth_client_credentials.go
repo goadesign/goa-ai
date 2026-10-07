@@ -1,4 +1,4 @@
-// Package mcp obtains client-secret grants before sending MCP requests. Metadata
+// Package mcp obtains machine grants before sending MCP requests. Metadata
 // and token responses use generated Goa clients and validation. One transport
 // owns one resource, issuer and registered client; credentials never enter tool
 // arguments, and failures before MCP dispatch do not imply tool execution.
@@ -10,48 +10,38 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strings"
 	"time"
 
 	genaccesstokens "goa.design/goa-ai/internal/mcpauth/gen/access_tokens"
-	gentokenclient "goa.design/goa-ai/internal/mcpauth/gen/http/access_tokens/client"
 	genissuermetadata "goa.design/goa-ai/internal/mcpauth/gen/issuer_metadata"
-	goahttp "goa.design/goa/v3/http"
 )
 
 type (
-	// ClientCredentials binds a preregistered client-secret grant to one issuer.
-	// The protected resource is HTTPOptions.Endpoint. Each transport owns its
-	// token independently; no registration or grant is shared with another client.
+	// ClientCredentials requests machine permissions using a constructed confidential
+	// registration. Each transport owns its resource access token independently.
 	ClientCredentials struct {
-		// Issuer is the exact HTTPS authorization-server identifier.
-		Issuer string
-		// ClientID is the identifier registered with Issuer.
-		ClientID string
-		// ClientSecret is the secret registered with Issuer.
-		ClientSecret string
+		// Registration selects the exact issuer and registered authentication.
+		Registration *ClientRegistration
 		// Scopes are the permissions requested for this transport's resource.
 		Scopes []string
 	}
-	// clientSecretGrant owns the secret registration selected at construction.
-	clientSecretGrant struct {
-		credentials ClientCredentials
+	// clientCredentialsGrant uses one registration without owning its authentication.
+	clientCredentialsGrant struct {
+		registration *ClientRegistration
 	}
 )
 
-// NewClientCredentialsHTTPTransport constructs a resource-bound transport.
-// Client must be an *http.Client or omitted; redirects are rejected on a copy
-// so neither client secrets nor bearer tokens follow another endpoint. The
-// issuer must explicitly advertise both Basic and request-body secret support.
-// Discovery and token acquisition run with each calling request's context.
-// Challenge-only metadata discovery is supported. Consent, PKCE and scope
-// changes remain outside this client-secret profile; HTTP rejections are not retried.
-func NewClientCredentialsHTTPTransport(opts HTTPOptions, credentials ClientCredentials) (*HTTPTransport, error) {
-	if credentials.ClientID == "" || credentials.ClientSecret == "" {
-		return nil, errors.New("mcp: client identifier and secret are required")
+// NewClientCredentialsHTTPTransport constructs a resource-bound machine transport.
+// The issuer must advertise the selected authentication and client_credentials.
+// Redirects are rejected; resource rejections do not repeat machine grants.
+func NewClientCredentialsHTTPTransport(opts HTTPOptions, config ClientCredentials) (*HTTPTransport, error) {
+	if err := validateClientRegistration(config.Registration); err != nil {
+		return nil, err
 	}
-	credentials.Scopes = slices.Clone(credentials.Scopes)
-	return newAuthorizationHTTPTransport(opts, credentials.Issuer, credentials.Scopes, &clientSecretGrant{credentials: credentials})
+	if config.Registration.authentication == oauthPublicClient {
+		return nil, errors.New("mcp: machine grants require confidential client authentication")
+	}
+	return newAuthorizationHTTPTransport(opts, config.Registration.issuer.String(), config.Scopes, &clientCredentialsGrant{registration: config.Registration})
 }
 
 // authorizationURL rejects addresses that cannot identify the configured HTTPS
@@ -87,48 +77,31 @@ func rejectAuthorizationRedirect(_ *http.Request, _ []*http.Request) error {
 	return errors.New("mcp: authorization redirects are not permitted")
 }
 
-// validateIssuer checks the exact advertised grant and authentication methods
-// before a secret registration or its cached token can be used.
-func (g *clientSecretGrant) validateIssuer(issuer *genissuermetadata.ReadResult) error {
-	if !slices.Contains(issuer.GrantTypesSupported, "client_credentials") || !slices.Contains(issuer.TokenEndpointAuthMethodsSupported, "client_secret_post") || !slices.Contains(issuer.TokenEndpointAuthMethodsSupported, "client_secret_basic") {
-		return errors.New("mcp: issuer must advertise client_credentials, client_secret_post and client_secret_basic")
+// validateIssuer checks the machine grant and the exact registered authentication
+// before the shared credential owner acquires or reuses a resource token.
+func (g *clientCredentialsGrant) validateIssuer(issuer *genissuermetadata.ReadResult) error {
+	if !slices.Contains(issuer.GrantTypesSupported, "client_credentials") {
+		return errors.New("mcp: issuer must advertise client_credentials")
 	}
-	return nil
+	return g.registration.validateIssuer(issuer)
 }
 
-// acquire sends the configured secret only to the validated issuer's token
-// endpoint. A malformed response returns an authorization failure before an MCP
-// request can be sent; the resource server decides whether the token permits it.
-func (g *clientSecretGrant) acquire(ctx context.Context, client *http.Client, resource string, issuer *genissuermetadata.ReadResult, scopes []string, _ *genaccesstokens.BearerToken) (*genaccesstokens.BearerToken, time.Time, error) {
-	address, err := authorizationURL(issuer.TokenEndpoint, false)
-	if err != nil {
-		return nil, time.Time{}, err
+// acquire sends a native machine request using this registration's authentication.
+// Only the returned resource token reaches MCP; registration credentials stay here.
+func (g *clientCredentialsGrant) acquire(ctx context.Context, client *http.Client, resource string, issuer *genissuermetadata.ReadResult, scopes []string, _ *genaccesstokens.BearerToken) (*genaccesstokens.BearerToken, time.Time, error) {
+	if g.registration.metadata != nil {
+		metadata, err := g.registration.readMetadata(ctx, client)
+		if err != nil {
+			return nil, time.Time{}, err
+		}
+		if !slices.Contains(metadata.grants, "client_credentials") {
+			return nil, time.Time{}, errors.New("mcp: client metadata does not register client_credentials")
+		}
 	}
-	generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "token_exchange"}, goahttp.RequestEncoder, authorizationDecoder, false)
-	payload := &genaccesstokens.SecretPayload{
-		ClientID:     g.credentials.ClientID,
-		ClientSecret: g.credentials.ClientSecret,
-		Resource:     resource,
-	}
-	if len(scopes) > 0 {
-		scope := strings.Join(scopes, " ")
-		payload.Scope = &scope
-	}
-	obtained := time.Now()
-	value, err := generated.Secret()(ctx, payload)
-	if err != nil {
-		return nil, time.Time{}, authorizationFailure(ctx, "token exchange", err)
-	}
-	token, ok := value.(*genaccesstokens.BearerToken)
-	if !ok {
-		return nil, time.Time{}, errors.New("mcp: token exchange has an invalid result type")
-	}
-
-	return token, obtained, nil
+	return g.registration.machine(ctx, client, issuer, resource, scopes)
 }
 
-// recoversChallenges selects whether this grant may change credentials after a
-// resource rejection. Browser consent supports recovery; machine grants abort.
-func (g *clientSecretGrant) recoversChallenges() bool {
+// recoversChallenges keeps machine authorization rejections terminal.
+func (g *clientCredentialsGrant) recoversChallenges() bool {
 	return false
 }

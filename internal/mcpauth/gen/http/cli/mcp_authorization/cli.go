@@ -34,8 +34,8 @@ func UsageCommands() []string {
 		"resource-metadata read",
 		"issuer-metadata read",
 		"client-metadata (read|signed-read)",
-		"access-tokens (assertion|secret|code|refresh|signed-code|signed-refresh)",
 		"authorization-responses receive",
+		"access-tokens (code|refresh|basic|basic-code|basic-refresh|secret|secret-code|secret-refresh|assertion|signed-code|signed-refresh)",
 	}
 }
 
@@ -104,26 +104,6 @@ func ParseEndpoint(
 
 		clientMetadataSignedReadFlags = flag.NewFlagSet("signed-read", flag.ExitOnError)
 
-		accessTokensFlags = flag.NewFlagSet("access-tokens", flag.ContinueOnError)
-
-		accessTokensAssertionFlags    = flag.NewFlagSet("assertion", flag.ExitOnError)
-		accessTokensAssertionBodyFlag = new(cliStringFlag)
-
-		accessTokensSecretFlags    = flag.NewFlagSet("secret", flag.ExitOnError)
-		accessTokensSecretBodyFlag = new(cliStringFlag)
-
-		accessTokensCodeFlags    = flag.NewFlagSet("code", flag.ExitOnError)
-		accessTokensCodeBodyFlag = new(cliStringFlag)
-
-		accessTokensRefreshFlags    = flag.NewFlagSet("refresh", flag.ExitOnError)
-		accessTokensRefreshBodyFlag = new(cliStringFlag)
-
-		accessTokensSignedCodeFlags    = flag.NewFlagSet("signed-code", flag.ExitOnError)
-		accessTokensSignedCodeBodyFlag = new(cliStringFlag)
-
-		accessTokensSignedRefreshFlags    = flag.NewFlagSet("signed-refresh", flag.ExitOnError)
-		accessTokensSignedRefreshBodyFlag = new(cliStringFlag)
-
 		authorizationResponsesFlags = flag.NewFlagSet("authorization-responses", flag.ContinueOnError)
 
 		authorizationResponsesReceiveFlags      = flag.NewFlagSet("receive", flag.ExitOnError)
@@ -131,21 +111,73 @@ func ParseEndpoint(
 		authorizationResponsesReceiveErrorFlag  = new(cliStringFlag)
 		authorizationResponsesReceiveStateFlag  = new(cliStringFlag)
 		authorizationResponsesReceiveIssuerFlag = new(cliStringFlag)
+
+		accessTokensFlags = flag.NewFlagSet("access-tokens", flag.ContinueOnError)
+
+		accessTokensCodeFlags    = flag.NewFlagSet("code", flag.ExitOnError)
+		accessTokensCodeBodyFlag = new(cliStringFlag)
+
+		accessTokensRefreshFlags    = flag.NewFlagSet("refresh", flag.ExitOnError)
+		accessTokensRefreshBodyFlag = new(cliStringFlag)
+
+		accessTokensBasicFlags            = flag.NewFlagSet("basic", flag.ExitOnError)
+		accessTokensBasicBodyFlag         = new(cliStringFlag)
+		accessTokensBasicClientIDFlag     = new(cliStringFlag)
+		accessTokensBasicClientSecretFlag = new(cliStringFlag)
+
+		accessTokensBasicCodeFlags            = flag.NewFlagSet("basic-code", flag.ExitOnError)
+		accessTokensBasicCodeBodyFlag         = new(cliStringFlag)
+		accessTokensBasicCodeClientIDFlag     = new(cliStringFlag)
+		accessTokensBasicCodeClientSecretFlag = new(cliStringFlag)
+
+		accessTokensBasicRefreshFlags            = flag.NewFlagSet("basic-refresh", flag.ExitOnError)
+		accessTokensBasicRefreshBodyFlag         = new(cliStringFlag)
+		accessTokensBasicRefreshClientIDFlag     = new(cliStringFlag)
+		accessTokensBasicRefreshClientSecretFlag = new(cliStringFlag)
+
+		accessTokensSecretFlags    = flag.NewFlagSet("secret", flag.ExitOnError)
+		accessTokensSecretBodyFlag = new(cliStringFlag)
+
+		accessTokensSecretCodeFlags    = flag.NewFlagSet("secret-code", flag.ExitOnError)
+		accessTokensSecretCodeBodyFlag = new(cliStringFlag)
+
+		accessTokensSecretRefreshFlags    = flag.NewFlagSet("secret-refresh", flag.ExitOnError)
+		accessTokensSecretRefreshBodyFlag = new(cliStringFlag)
+
+		accessTokensAssertionFlags    = flag.NewFlagSet("assertion", flag.ExitOnError)
+		accessTokensAssertionBodyFlag = new(cliStringFlag)
+
+		accessTokensSignedCodeFlags    = flag.NewFlagSet("signed-code", flag.ExitOnError)
+		accessTokensSignedCodeBodyFlag = new(cliStringFlag)
+
+		accessTokensSignedRefreshFlags    = flag.NewFlagSet("signed-refresh", flag.ExitOnError)
+		accessTokensSignedRefreshBodyFlag = new(cliStringFlag)
 	)
 	accessTokenClaimsDecodeFlags.Var(accessTokenClaimsDecodeBodyFlag, "body", "")
 	tokenIntrospectionReadFlags.Var(tokenIntrospectionReadBodyFlag, "body", "")
 	tokenIntrospectionReadFlags.Var(tokenIntrospectionReadUsernameFlag, "username", "Form-encoded client identifier registered for resource introspection")
 	tokenIntrospectionReadFlags.Var(tokenIntrospectionReadPasswordFlag, "password", "Form-encoded client secret registered for resource introspection")
-	accessTokensAssertionFlags.Var(accessTokensAssertionBodyFlag, "body", "")
-	accessTokensSecretFlags.Var(accessTokensSecretBodyFlag, "body", "")
-	accessTokensCodeFlags.Var(accessTokensCodeBodyFlag, "body", "")
-	accessTokensRefreshFlags.Var(accessTokensRefreshBodyFlag, "body", "")
-	accessTokensSignedCodeFlags.Var(accessTokensSignedCodeBodyFlag, "body", "")
-	accessTokensSignedRefreshFlags.Var(accessTokensSignedRefreshBodyFlag, "body", "")
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveCodeFlag, "code", "")
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveErrorFlag, "error", "")
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveStateFlag, "state", "")
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveIssuerFlag, "issuer", "")
+	accessTokensCodeFlags.Var(accessTokensCodeBodyFlag, "body", "")
+	accessTokensRefreshFlags.Var(accessTokensRefreshBodyFlag, "body", "")
+	accessTokensBasicFlags.Var(accessTokensBasicBodyFlag, "body", "")
+	accessTokensBasicFlags.Var(accessTokensBasicClientIDFlag, "client-id", "Individually form-encoded client identifier for the Basic header")
+	accessTokensBasicFlags.Var(accessTokensBasicClientSecretFlag, "client-secret", "Individually form-encoded secret for the Basic header")
+	accessTokensBasicCodeFlags.Var(accessTokensBasicCodeBodyFlag, "body", "")
+	accessTokensBasicCodeFlags.Var(accessTokensBasicCodeClientIDFlag, "client-id", "Individually form-encoded client identifier for the Basic header")
+	accessTokensBasicCodeFlags.Var(accessTokensBasicCodeClientSecretFlag, "client-secret", "Individually form-encoded secret for the Basic header")
+	accessTokensBasicRefreshFlags.Var(accessTokensBasicRefreshBodyFlag, "body", "")
+	accessTokensBasicRefreshFlags.Var(accessTokensBasicRefreshClientIDFlag, "client-id", "Individually form-encoded client identifier for the Basic header")
+	accessTokensBasicRefreshFlags.Var(accessTokensBasicRefreshClientSecretFlag, "client-secret", "Individually form-encoded secret for the Basic header")
+	accessTokensSecretFlags.Var(accessTokensSecretBodyFlag, "body", "")
+	accessTokensSecretCodeFlags.Var(accessTokensSecretCodeBodyFlag, "body", "")
+	accessTokensSecretRefreshFlags.Var(accessTokensSecretRefreshBodyFlag, "body", "")
+	accessTokensAssertionFlags.Var(accessTokensAssertionBodyFlag, "body", "")
+	accessTokensSignedCodeFlags.Var(accessTokensSignedCodeBodyFlag, "body", "")
+	accessTokensSignedRefreshFlags.Var(accessTokensSignedRefreshBodyFlag, "body", "")
 
 	accessTokenClaimsFlags.Usage = accessTokenClaimsUsage
 	accessTokenClaimsDecodeFlags.Usage = accessTokenClaimsDecodeUsage
@@ -163,16 +195,21 @@ func ParseEndpoint(
 	clientMetadataReadFlags.Usage = clientMetadataReadUsage
 	clientMetadataSignedReadFlags.Usage = clientMetadataSignedReadUsage
 
-	accessTokensFlags.Usage = accessTokensUsage
-	accessTokensAssertionFlags.Usage = accessTokensAssertionUsage
-	accessTokensSecretFlags.Usage = accessTokensSecretUsage
-	accessTokensCodeFlags.Usage = accessTokensCodeUsage
-	accessTokensRefreshFlags.Usage = accessTokensRefreshUsage
-	accessTokensSignedCodeFlags.Usage = accessTokensSignedCodeUsage
-	accessTokensSignedRefreshFlags.Usage = accessTokensSignedRefreshUsage
-
 	authorizationResponsesFlags.Usage = authorizationResponsesUsage
 	authorizationResponsesReceiveFlags.Usage = authorizationResponsesReceiveUsage
+
+	accessTokensFlags.Usage = accessTokensUsage
+	accessTokensCodeFlags.Usage = accessTokensCodeUsage
+	accessTokensRefreshFlags.Usage = accessTokensRefreshUsage
+	accessTokensBasicFlags.Usage = accessTokensBasicUsage
+	accessTokensBasicCodeFlags.Usage = accessTokensBasicCodeUsage
+	accessTokensBasicRefreshFlags.Usage = accessTokensBasicRefreshUsage
+	accessTokensSecretFlags.Usage = accessTokensSecretUsage
+	accessTokensSecretCodeFlags.Usage = accessTokensSecretCodeUsage
+	accessTokensSecretRefreshFlags.Usage = accessTokensSecretRefreshUsage
+	accessTokensAssertionFlags.Usage = accessTokensAssertionUsage
+	accessTokensSignedCodeFlags.Usage = accessTokensSignedCodeUsage
+	accessTokensSignedRefreshFlags.Usage = accessTokensSignedRefreshUsage
 
 	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 		return nil, nil, err
@@ -199,10 +236,10 @@ func ParseEndpoint(
 			svcf = issuerMetadataFlags
 		case "client-metadata":
 			svcf = clientMetadataFlags
-		case "access-tokens":
-			svcf = accessTokensFlags
 		case "authorization-responses":
 			svcf = authorizationResponsesFlags
+		case "access-tokens":
+			svcf = accessTokensFlags
 		default:
 			return nil, nil, fmt.Errorf("unknown service %q", svcn)
 		}
@@ -256,32 +293,47 @@ func ParseEndpoint(
 
 			}
 
+		case "authorization-responses":
+			switch epn {
+			case "receive":
+				epf = authorizationResponsesReceiveFlags
+
+			}
+
 		case "access-tokens":
 			switch epn {
-			case "assertion":
-				epf = accessTokensAssertionFlags
-
-			case "secret":
-				epf = accessTokensSecretFlags
-
 			case "code":
 				epf = accessTokensCodeFlags
 
 			case "refresh":
 				epf = accessTokensRefreshFlags
 
+			case "basic":
+				epf = accessTokensBasicFlags
+
+			case "basic-code":
+				epf = accessTokensBasicCodeFlags
+
+			case "basic-refresh":
+				epf = accessTokensBasicRefreshFlags
+
+			case "secret":
+				epf = accessTokensSecretFlags
+
+			case "secret-code":
+				epf = accessTokensSecretCodeFlags
+
+			case "secret-refresh":
+				epf = accessTokensSecretRefreshFlags
+
+			case "assertion":
+				epf = accessTokensAssertionFlags
+
 			case "signed-code":
 				epf = accessTokensSignedCodeFlags
 
 			case "signed-refresh":
 				epf = accessTokensSignedRefreshFlags
-
-			}
-
-		case "authorization-responses":
-			switch epn {
-			case "receive":
-				epf = authorizationResponsesReceiveFlags
 
 			}
 
@@ -339,34 +391,49 @@ func ParseEndpoint(
 			case "signed-read":
 				endpoint = c.SignedRead()
 			}
-		case "access-tokens":
-			c := accesstokensc.NewClient(scheme, host, doer, enc, dec, restore)
-			switch epn {
-			case "assertion":
-				endpoint = c.Assertion()
-				data, err = accesstokensc.BuildAssertionPayload(accessTokensAssertionBodyFlag.value)
-			case "secret":
-				endpoint = c.Secret()
-				data, err = accesstokensc.BuildSecretPayload(accessTokensSecretBodyFlag.value)
-			case "code":
-				endpoint = c.Code()
-				data, err = accesstokensc.BuildCodePayload(accessTokensCodeBodyFlag.value)
-			case "refresh":
-				endpoint = c.Refresh()
-				data, err = accesstokensc.BuildRefreshPayload(accessTokensRefreshBodyFlag.value)
-			case "signed-code":
-				endpoint = c.SignedCode()
-				data, err = accesstokensc.BuildSignedCodePayload(accessTokensSignedCodeBodyFlag.value)
-			case "signed-refresh":
-				endpoint = c.SignedRefresh()
-				data, err = accesstokensc.BuildSignedRefreshPayload(accessTokensSignedRefreshBodyFlag.value)
-			}
 		case "authorization-responses":
 			c := authorizationresponsesc.NewClient(scheme, host, doer, enc, dec, restore)
 			switch epn {
 			case "receive":
 				endpoint = c.Receive()
 				data, err = authorizationresponsesc.BuildReceivePayload(authorizationResponsesReceiveCodeFlag.value, authorizationResponsesReceiveErrorFlag.value, authorizationResponsesReceiveStateFlag.value, authorizationResponsesReceiveIssuerFlag.value)
+			}
+		case "access-tokens":
+			c := accesstokensc.NewClient(scheme, host, doer, enc, dec, restore)
+			switch epn {
+			case "code":
+				endpoint = c.Code()
+				data, err = accesstokensc.BuildCodePayload(accessTokensCodeBodyFlag.value)
+			case "refresh":
+				endpoint = c.Refresh()
+				data, err = accesstokensc.BuildRefreshPayload(accessTokensRefreshBodyFlag.value)
+			case "basic":
+				endpoint = c.Basic()
+				data, err = accesstokensc.BuildBasicPayload(accessTokensBasicBodyFlag.value, accessTokensBasicClientIDFlag.value, accessTokensBasicClientSecretFlag.value)
+			case "basic-code":
+				endpoint = c.BasicCode()
+				data, err = accesstokensc.BuildBasicCodePayload(accessTokensBasicCodeBodyFlag.value, accessTokensBasicCodeClientIDFlag.value, accessTokensBasicCodeClientSecretFlag.value)
+			case "basic-refresh":
+				endpoint = c.BasicRefresh()
+				data, err = accesstokensc.BuildBasicRefreshPayload(accessTokensBasicRefreshBodyFlag.value, accessTokensBasicRefreshClientIDFlag.value, accessTokensBasicRefreshClientSecretFlag.value)
+			case "secret":
+				endpoint = c.Secret()
+				data, err = accesstokensc.BuildSecretPayload(accessTokensSecretBodyFlag.value)
+			case "secret-code":
+				endpoint = c.SecretCode()
+				data, err = accesstokensc.BuildSecretCodePayload(accessTokensSecretCodeBodyFlag.value)
+			case "secret-refresh":
+				endpoint = c.SecretRefresh()
+				data, err = accesstokensc.BuildSecretRefreshPayload(accessTokensSecretRefreshBodyFlag.value)
+			case "assertion":
+				endpoint = c.Assertion()
+				data, err = accesstokensc.BuildAssertionPayload(accessTokensAssertionBodyFlag.value)
+			case "signed-code":
+				endpoint = c.SignedCode()
+				data, err = accesstokensc.BuildSignedCodePayload(accessTokensSignedCodeBodyFlag.value)
+			case "signed-refresh":
+				endpoint = c.SignedRefresh()
+				data, err = accesstokensc.BuildSignedRefreshPayload(accessTokensSignedRefreshBodyFlag.value)
 			}
 		}
 	}
@@ -537,130 +604,6 @@ func clientMetadataSignedReadUsage() {
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "client-metadata signed-read")
 }
 
-// accessTokensUsage displays the usage of the access-tokens command and its
-// subcommands.
-func accessTokensUsage() {
-	fmt.Fprintln(os.Stderr, `Obtain opaque resource-bound bearer tokens using explicitly advertised client authentication, without sending those credentials to the MCP server.`)
-	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] access-tokens COMMAND [flags]\n\n", os.Args[0])
-	fmt.Fprintln(os.Stderr, "COMMAND:")
-	fmt.Fprintln(os.Stderr, `    assertion: Authenticate a preregistered client using one signed JWT assertion and request a bearer token for the exact MCP resource.`)
-	fmt.Fprintln(os.Stderr, `    secret: Exchange a preregistered client identifier and secret using request-body authentication for one resource and its configured permissions.`)
-	fmt.Fprintln(os.Stderr, `    code: Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.`)
-	fmt.Fprintln(os.Stderr, `    refresh: Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.`)
-	fmt.Fprintln(os.Stderr, `    signed-code: Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.`)
-	fmt.Fprintln(os.Stderr, `    signed-refresh: Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.`)
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Additional help:")
-	fmt.Fprintf(os.Stderr, "    %s access-tokens COMMAND --help\n", os.Args[0])
-}
-func accessTokensAssertionUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens assertion", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Authenticate a preregistered client using one signed JWT assertion and request a bearer token for the exact MCP resource.`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens assertion --body '{\n      \"client_assertion\": \"S.U.n\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://hudson.info/ignatius\",\n      \"scope\": \"z# r+ Y-\"\n   }'")
-}
-
-func accessTokensSecretUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens secret", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Exchange a preregistered client identifier and secret using request-body authentication for one resource and its configured permissions.`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens secret --body '{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'")
-}
-
-func accessTokensCodeUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens code", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens code --body '{\n      \"client_id\": \"e\",\n      \"code\": \"a2r\",\n      \"code_verifier\": \"2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://sporer.biz/nick\",\n      \"resource\": \"http://bauch.com/alvena\"\n   }'")
-}
-
-func accessTokensRefreshUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens refresh", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens refresh --body '{\n      \"client_id\": \"r\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"9gn\",\n      \"resource\": \"http://anderson.name/josefa\"\n   }'")
-}
-
-func accessTokensSignedCodeUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens signed-code", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens signed-code --body '{\n      \"client_assertion\": \"N.N.i\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"code\": \"p41\",\n      \"code_verifier\": \"-6n.K~rysus5goayLiEbbzZ8KLERSMHoXUgFB2I17ie_lY1\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://kihn.com/esperanza.muller\",\n      \"resource\": \"http://torphy.biz/idell\"\n   }'")
-}
-
-func accessTokensSignedRefreshUsage() {
-	// Header with flags
-	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens signed-refresh", os.Args[0])
-	fmt.Fprint(os.Stderr, " -body JSON")
-	fmt.Fprintln(os.Stderr)
-
-	// Description
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.`)
-
-	// Flags list
-	fmt.Fprintln(os.Stderr, `    -body JSON: `)
-
-	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens signed-refresh --body '{\n      \"client_assertion\": \"6.Yo.V8\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"uh4\",\n      \"resource\": \"http://weissnat.info/elody\"\n   }'")
-}
-
 // authorizationResponsesUsage displays the usage of the
 // authorization-responses command and its subcommands.
 func authorizationResponsesUsage() {
@@ -694,4 +637,235 @@ func authorizationResponsesReceiveUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "authorization-responses receive --code \"x\" --error \";\\u0026\" --state \"1f\" --issuer \"http://rice.name/wilfrid.vandervort\"")
+}
+
+// accessTokensUsage displays the usage of the access-tokens command and its
+// subcommands.
+func accessTokensUsage() {
+	fmt.Fprintln(os.Stderr, `Obtain resource-bound bearer tokens through separately generated registration authentication and grant contracts; credentials never enter MCP requests.`)
+	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] access-tokens COMMAND [flags]\n\n", os.Args[0])
+	fmt.Fprintln(os.Stderr, "COMMAND:")
+	fmt.Fprintln(os.Stderr, `    code: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr, `    refresh: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr, `    basic: Request a machine access token for the exact resource using this registration's required authentication.`)
+	fmt.Fprintln(os.Stderr, `    basic-code: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr, `    basic-refresh: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr, `    secret: Request a machine access token for the exact resource using this registration's required authentication.`)
+	fmt.Fprintln(os.Stderr, `    secret-code: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr, `    secret-refresh: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr, `    assertion: Request a machine access token for the exact resource using this registration's required authentication.`)
+	fmt.Fprintln(os.Stderr, `    signed-code: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr, `    signed-refresh: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Additional help:")
+	fmt.Fprintf(os.Stderr, "    %s access-tokens COMMAND --help\n", os.Args[0])
+}
+func accessTokensCodeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens code", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens code --body '{\n      \"client_id\": \"e\",\n      \"code\": \"a2r\",\n      \"code_verifier\": \"2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://sporer.biz/nick\",\n      \"resource\": \"http://bauch.com/alvena\"\n   }'")
+}
+
+func accessTokensRefreshUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens refresh", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens refresh --body '{\n      \"client_id\": \"r\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"9gn\",\n      \"resource\": \"http://anderson.name/josefa\"\n   }'")
+}
+
+func accessTokensBasicUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens basic", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -client-id STRING")
+	fmt.Fprint(os.Stderr, " -client-secret STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Request a machine access token for the exact resource using this registration's required authentication.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -client-id STRING: Individually form-encoded client identifier for the Basic header`)
+	fmt.Fprintln(os.Stderr, `    -client-secret STRING: Individually form-encoded secret for the Basic header`)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens basic --body '{\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://anderson.net/nola\",\n      \"scope\": \"6 \\u003e/\"\n   }' --client-id \"6\" --client-secret \"lsh\"")
+}
+
+func accessTokensBasicCodeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens basic-code", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -client-id STRING")
+	fmt.Fprint(os.Stderr, " -client-secret STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -client-id STRING: Individually form-encoded client identifier for the Basic header`)
+	fmt.Fprintln(os.Stderr, `    -client-secret STRING: Individually form-encoded secret for the Basic header`)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens basic-code --body '{\n      \"code\": \"nv\",\n      \"code_verifier\": \"1ayym6aO-vec8I-buL7kvqBgos~tai0~SNYNrRhbQ0P\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://jaskolski.net/dax_dietrich\",\n      \"resource\": \"http://brekke.com/sigmund\"\n   }' --client-id \"61\" --client-secret \"q5y\"")
+}
+
+func accessTokensBasicRefreshUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens basic-refresh", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -client-id STRING")
+	fmt.Fprint(os.Stderr, " -client-secret STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -client-id STRING: Individually form-encoded client identifier for the Basic header`)
+	fmt.Fprintln(os.Stderr, `    -client-secret STRING: Individually form-encoded secret for the Basic header`)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens basic-refresh --body '{\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"8\",\n      \"resource\": \"http://corkeryohara.com/kyra.langosh\"\n   }' --client-id \"h3j\" --client-secret \"4ui\"")
+}
+
+func accessTokensSecretUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens secret", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Request a machine access token for the exact resource using this registration's required authentication.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens secret --body '{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'")
+}
+
+func accessTokensSecretCodeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens secret-code", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens secret-code --body '{\n      \"client_id\": \"0\",\n      \"client_secret\": \"p\",\n      \"code\": \"og\",\n      \"code_verifier\": \"~OxABi5ZLLPnHR3JtjOW-8wx.bLzLKao9EOCZ0a7gKJ\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://hammes.net/jeremie_douglas\",\n      \"resource\": \"http://haucktrantow.biz/hank\"\n   }'")
+}
+
+func accessTokensSecretRefreshUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens secret-refresh", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens secret-refresh --body '{\n      \"client_id\": \"smq\",\n      \"client_secret\": \"n\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"m\",\n      \"resource\": \"http://erdmanbernhard.biz/edd.powlowski\"\n   }'")
+}
+
+func accessTokensAssertionUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens assertion", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Request a machine access token for the exact resource using this registration's required authentication.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens assertion --body '{\n      \"client_assertion\": \"S.U.n\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://hudson.info/ignatius\",\n      \"scope\": \"z# r+ Y-\"\n   }'")
+}
+
+func accessTokensSignedCodeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens signed-code", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens signed-code --body '{\n      \"client_assertion\": \"N.N.i\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"code\": \"p41\",\n      \"code_verifier\": \"-6n.K~rysus5goayLiEbbzZ8KLERSMHoXUgFB2I17ie_lY1\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://kihn.com/esperanza.muller\",\n      \"resource\": \"http://torphy.biz/idell\"\n   }'")
+}
+
+func accessTokensSignedRefreshUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens signed-refresh", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens signed-refresh --body '{\n      \"client_assertion\": \"6.Yo.V8\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"uh4\",\n      \"resource\": \"http://weissnat.info/elody\"\n   }'")
 }

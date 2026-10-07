@@ -47,7 +47,7 @@ type (
 		forms           []url.Values
 		requests        []url.Values
 		proofs          map[string]string
-		verifyClient    func(url.Values) error
+		verifyClient    func(*http.Request) error
 	}
 )
 
@@ -269,9 +269,8 @@ func TestAuthorizationCodeCancellationAndReplay(t *testing.T) {
 	})
 }
 
-// newBrowserOAuthPeer serves independently checked metadata, form and MCP
-// responses. It verifies that PKCE protects the code and that no private value
-// enters the MCP request body or the issuer's request URL.
+// TestAuthorizationCodeChallengeRecovery verifies that an authorization rejection
+// can obtain new credentials without repeating a tool whose result was lost.
 func TestAuthorizationCodeChallengeRecovery(t *testing.T) {
 	for _, upgrade := range []bool{false, true} {
 		t.Run(fmt.Sprintf("scope upgrade=%t", upgrade), func(t *testing.T) {
@@ -412,8 +411,8 @@ func TestAuthorizationCodeClientMetadata(t *testing.T) {
 			peer.issuerBody = strings.TrimSuffix(peer.issuerBody, "}") + `,"client_id_metadata_document_supported":true}`
 			redirect := "https://host.example/callback/a%2Fb?route=selected"
 			peer.clientMetadata = strings.NewReplacer("CLIENT", peer.clientID, "REDIRECT", redirect).Replace(tc.document)
-			transport, err := NewClientMetadataHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{
-				Issuer: peer.issuer, ClientID: peer.clientID, RedirectURI: redirect, Authorize: peer.authorize(t),
+			transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{
+				Registration: publicTestRegistration(t, peer.issuer, peer.clientID, true), RedirectURI: redirect, Authorize: peer.authorize(t),
 			})
 			require.NoError(t, err)
 			err = callOAuthPeer(t.Context(), transport, peer.resource)
@@ -441,10 +440,7 @@ func TestAuthorizationCodeClientMetadataIdentifier(t *testing.T) {
 		"https://client.example/client#fragment", "https://user:secret@client.example/client",
 	} {
 		t.Run(identifier, func(t *testing.T) {
-			_, err := NewClientMetadataHTTPTransport(HTTPOptions{Endpoint: "https://resource.example/mcp"}, AuthorizationCode{
-				Issuer: "https://issuer.example", ClientID: identifier,
-				RedirectURI: "https://host.example/callback", Authorize: func(context.Context, string) (string, error) { return "", nil },
-			})
+			_, err := NewPublicClientMetadataRegistration("https://issuer.example", identifier)
 			assert.Error(t, err)
 		})
 	}
@@ -495,9 +491,9 @@ func TestAuthorizationCodeMetadataDefaultsAndHostIsolation(t *testing.T) {
 
 func TestAuthorizationCodeMetadataRegistrationRequiresIssuerSupport(t *testing.T) {
 	peer := newBrowserOAuthPeer(t)
-	transport, err := NewClientMetadataHTTPTransport(HTTPOptions{
+	transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{
 		Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"},
-	}, AuthorizationCode{Issuer: peer.issuer, ClientID: peer.server.URL + "/client/document.json",
+	}, AuthorizationCode{Registration: publicTestRegistration(t, peer.issuer, peer.server.URL+"/client/document.json", true),
 		RedirectURI: "https://host.example/callback", Authorize: peer.authorize(t)})
 	require.NoError(t, err)
 	err = callOAuthPeer(t.Context(), transport, peer.resource)
@@ -511,9 +507,9 @@ func TestAuthorizationCodeMetadataRegistrationRequiresIssuerSupport(t *testing.T
 func TestAuthorizationCodeClientMetadataValidIdentifiers(t *testing.T) {
 	for _, identifier := range []string{"https://client.example/", "https://client.example/client.json", "https://client.example/client.json?edition=one"} {
 		t.Run(identifier, func(t *testing.T) {
-			_, err := NewClientMetadataHTTPTransport(HTTPOptions{
+			_, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{
 				Endpoint: "https://resource.example/mcp", ClientInfo: ClientInfo{Name: "host", Version: "1"},
-			}, AuthorizationCode{Issuer: "https://issuer.example", ClientID: identifier,
+			}, AuthorizationCode{Registration: publicTestRegistration(t, "https://issuer.example", identifier, true),
 				RedirectURI: "https://host.example/callback", Authorize: func(context.Context, string) (string, error) { return "", nil }})
 			assert.NoError(t, err)
 		})
@@ -559,7 +555,7 @@ func TestAuthorizationCodeClientMetadataRefresh(t *testing.T) {
 			peer.clientMetadata = fmt.Sprintf(`{"client_id":%q,"client_name":"Example","redirect_uris":["https://host.example/callback/a%%2Fb?route=selected"],"token_endpoint_auth_method":"none","grant_types":%s}`, peer.clientID, grants)
 			peer.issuerBody = strings.TrimSuffix(peer.issuerBody, "}") + `,"client_id_metadata_document_supported":true}`
 			peer.tokenBody = `{"access_token":"opaque-token","token_type":"Bearer","expires_in":3600,"refresh_token":"private-refresh"}`
-			transport, err := NewClientMetadataHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{Issuer: peer.issuer, ClientID: peer.clientID, RedirectURI: "https://host.example/callback/a%2Fb?route=selected", Authorize: peer.authorize(t)})
+			transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{Registration: publicTestRegistration(t, peer.issuer, peer.clientID, true), RedirectURI: "https://host.example/callback/a%2Fb?route=selected", Authorize: peer.authorize(t)})
 			require.NoError(t, err)
 			require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 			transport.authorization.obtained = time.Now().Add(-2 * time.Hour)
@@ -686,13 +682,13 @@ func newBrowserOAuthPeer(t *testing.T) *browserOAuthPeer {
 			body = peer.clientMetadata
 		case "/token/a%2Fb":
 			count := peer.tokenCalls.Add(1)
-			assert.Empty(t, r.Header.Get("Authorization"))
 			assert.Equal(t, "routing=selected", r.URL.RawQuery)
 			assert.Equal(t, "application/x-www-form-urlencoded", r.Header.Get("Content-Type"))
 			assert.NoError(t, r.ParseForm())
 			if peer.verifyClient == nil {
+				assert.Empty(t, r.Header.Get("Authorization"))
 				assert.Equal(t, peer.clientID, r.PostForm.Get("client_id"))
-			} else if err := peer.verifyClient(r.PostForm); err != nil {
+			} else if err := peer.verifyClient(r); err != nil {
 				t.Error(err)
 				w.WriteHeader(http.StatusUnauthorized)
 				return
@@ -758,7 +754,7 @@ func (p *browserOAuthPeer) transport(t *testing.T, authorize func(context.Contex
 	transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{
 		Endpoint: p.resource, Client: p.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"},
 	}, AuthorizationCode{
-		Issuer: p.issuer, ClientID: "registered-public", RedirectURI: "https://host.example/callback/a%2Fb?route=selected",
+		Registration: publicTestRegistration(t, p.issuer, "registered-public", false), RedirectURI: "https://host.example/callback/a%2Fb?route=selected",
 		Authorize: authorize,
 	})
 	require.NoError(t, err)
@@ -800,6 +796,15 @@ func (p *browserOAuthPeer) authorize(t *testing.T) func(context.Context, string)
 	}
 }
 
-// TestAuthorizationCodeChallengeRecovery proves that rejected HTTP operations
-// may obtain new credentials without granting permission to repeat a tool whose
-// result was lost. Accepted requests reach the simulated tool only once.
+// publicTestRegistration selects preregistration or a document before constructing
+// a browser grant. The peer then verifies the same consent and PKCE behavior.
+func publicTestRegistration(t *testing.T, issuer, clientID string, metadata bool) *ClientRegistration {
+	t.Helper()
+	constructor := NewPublicClientRegistration
+	if metadata {
+		constructor = NewPublicClientMetadataRegistration
+	}
+	registration, err := constructor(issuer, clientID)
+	require.NoError(t, err)
+	return registration
+}

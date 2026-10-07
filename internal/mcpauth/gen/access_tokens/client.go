@@ -15,44 +15,34 @@ import (
 
 // Client is the "access_tokens" service client.
 type Client struct {
-	AssertionEndpoint     goa.Endpoint
-	SecretEndpoint        goa.Endpoint
 	CodeEndpoint          goa.Endpoint
 	RefreshEndpoint       goa.Endpoint
+	BasicEndpoint         goa.Endpoint
+	BasicCodeEndpoint     goa.Endpoint
+	BasicRefreshEndpoint  goa.Endpoint
+	SecretEndpoint        goa.Endpoint
+	SecretCodeEndpoint    goa.Endpoint
+	SecretRefreshEndpoint goa.Endpoint
+	AssertionEndpoint     goa.Endpoint
 	SignedCodeEndpoint    goa.Endpoint
 	SignedRefreshEndpoint goa.Endpoint
 }
 
 // NewClient initializes a "access_tokens" service client given the endpoints.
-func NewClient(assertion, secret, code, refresh, signedCode, signedRefresh goa.Endpoint) *Client {
+func NewClient(code, refresh, basic, basicCode, basicRefresh, secret, secretCode, secretRefresh, assertion, signedCode, signedRefresh goa.Endpoint) *Client {
 	return &Client{
-		AssertionEndpoint:     assertion,
-		SecretEndpoint:        secret,
 		CodeEndpoint:          code,
 		RefreshEndpoint:       refresh,
+		BasicEndpoint:         basic,
+		BasicCodeEndpoint:     basicCode,
+		BasicRefreshEndpoint:  basicRefresh,
+		SecretEndpoint:        secret,
+		SecretCodeEndpoint:    secretCode,
+		SecretRefreshEndpoint: secretRefresh,
+		AssertionEndpoint:     assertion,
 		SignedCodeEndpoint:    signedCode,
 		SignedRefreshEndpoint: signedRefresh,
 	}
-}
-
-// Assertion calls the "assertion" endpoint of the "access_tokens" service.
-func (c *Client) Assertion(ctx context.Context, p *AssertionPayload) (res *BearerToken, err error) {
-	var ires any
-	ires, err = c.AssertionEndpoint(ctx, p)
-	if err != nil {
-		return
-	}
-	return ires.(*BearerToken), nil
-}
-
-// Secret calls the "secret" endpoint of the "access_tokens" service.
-func (c *Client) Secret(ctx context.Context, p *SecretPayload) (res *BearerToken, err error) {
-	var ires any
-	ires, err = c.SecretEndpoint(ctx, p)
-	if err != nil {
-		return
-	}
-	return ires.(*BearerToken), nil
 }
 
 // Code calls the "code" endpoint of the "access_tokens" service.
@@ -69,6 +59,78 @@ func (c *Client) Code(ctx context.Context, p *CodePayload) (res *BearerToken, er
 func (c *Client) Refresh(ctx context.Context, p *RefreshPayload) (res *BearerToken, err error) {
 	var ires any
 	ires, err = c.RefreshEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// Basic calls the "basic" endpoint of the "access_tokens" service.
+func (c *Client) Basic(ctx context.Context, p *BasicPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.BasicEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// BasicCode calls the "basic_code" endpoint of the "access_tokens" service.
+func (c *Client) BasicCode(ctx context.Context, p *BasicCodePayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.BasicCodeEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// BasicRefresh calls the "basic_refresh" endpoint of the "access_tokens"
+// service.
+func (c *Client) BasicRefresh(ctx context.Context, p *BasicRefreshPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.BasicRefreshEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// Secret calls the "secret" endpoint of the "access_tokens" service.
+func (c *Client) Secret(ctx context.Context, p *SecretPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.SecretEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// SecretCode calls the "secret_code" endpoint of the "access_tokens" service.
+func (c *Client) SecretCode(ctx context.Context, p *SecretCodePayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.SecretCodeEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// SecretRefresh calls the "secret_refresh" endpoint of the "access_tokens"
+// service.
+func (c *Client) SecretRefresh(ctx context.Context, p *SecretRefreshPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.SecretRefreshEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// Assertion calls the "assertion" endpoint of the "access_tokens" service.
+func (c *Client) Assertion(ctx context.Context, p *AssertionPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.AssertionEndpoint(ctx, p)
 	if err != nil {
 		return
 	}

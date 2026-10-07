@@ -9,9 +9,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
-	"net/http"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/go-jose/go-jose/v4"
@@ -20,15 +18,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 
-	genaccesstokens "goa.design/goa-ai/internal/mcpauth/gen/access_tokens"
-	gentokenclient "goa.design/goa-ai/internal/mcpauth/gen/http/access_tokens/client"
 	genissuermetadata "goa.design/goa-ai/internal/mcpauth/gen/issuer_metadata"
-	goahttp "goa.design/goa/v3/http"
 )
 
 type (
 	// ClientAssertion configures signed authentication for one registered client.
-	// Construct a separate transport for each issuer, resource and application.
+	// Grants supply their own permissions and resource; this configuration only
+	// describes authentication registered with one issuer.
 	ClientAssertion struct {
 		// Issuer is the exact HTTPS authorization-server identifier.
 		Issuer string
@@ -47,13 +43,6 @@ type (
 		// Its key implementation owns any signing timeout. Its options must not
 		// override the algorithm header; the issuer must advertise the actual algorithm.
 		Signer jose.Signer
-		// Scopes are the permissions requested for HTTPOptions.Endpoint.
-		Scopes []string
-	}
-	// clientAssertionGrant signs fresh authentication for each token acquisition.
-	// The existing credential owner serializes calls and retains the access token.
-	clientAssertionGrant struct {
-		clientAssertionAuthentication
 	}
 	// clientAssertionAuthentication signs the host's registration independently
 	// of the grant. Browser and machine exchanges receive the same checked JWT.
@@ -67,19 +56,6 @@ var oauthAsymmetricAlgorithms = []jose.SignatureAlgorithm{
 	jose.PS256, jose.PS384, jose.PS512,
 	jose.ES256, jose.ES384, jose.ES512,
 	jose.EdDSA,
-}
-
-// NewClientAssertionHTTPTransport constructs a resource-bound machine transport.
-// Goa AI creates assertion claims; the host supplies registered identities,
-// validity and its already-built signer. Metadata must advertise private_key_jwt
-// and the actual asymmetric signing algorithm. Redirects and authentication
-// fallback are rejected; an MCP 401 or 403 is returned without a new grant.
-func NewClientAssertionHTTPTransport(opts HTTPOptions, credentials ClientAssertion) (*HTTPTransport, error) {
-	if err := validateClientAssertion(credentials); err != nil {
-		return nil, err
-	}
-	credentials.Scopes = slices.Clone(credentials.Scopes)
-	return newAuthorizationHTTPTransport(opts, credentials.Issuer, credentials.Scopes, &clientAssertionGrant{clientAssertionAuthentication{credentials: credentials}})
 }
 
 // validateClientAssertion checks a host's signing registration before either a
@@ -103,58 +79,10 @@ func validateClientAssertion(credentials ClientAssertion) error {
 // validateAssertionAuthentication checks signed authentication independently of
 // the grant, so browser and machine flows use the same advertised requirements.
 func validateAssertionAuthentication(issuer *genissuermetadata.ReadResult) error {
-	if !slices.Contains(issuer.TokenEndpointAuthMethodsSupported, "private_key_jwt") || len(issuer.TokenEndpointAuthSigningAlgValuesSupported) == 0 {
+	if !slices.Contains(issuer.TokenEndpointAuthMethodsSupported, oauthSignedClient) || len(issuer.TokenEndpointAuthSigningAlgValuesSupported) == 0 {
 		return errors.New("mcp: issuer must advertise private_key_jwt and signing algorithms")
 	}
 	return nil
-}
-
-// validateIssuer checks machine grants and signed authentication before the
-// credential owner can acquire or reuse this registration's access token.
-func (g *clientAssertionGrant) validateIssuer(issuer *genissuermetadata.ReadResult) error {
-	if !slices.Contains(issuer.GrantTypesSupported, "client_credentials") {
-		return errors.New("mcp: issuer must advertise client_credentials")
-	}
-	return validateAssertionAuthentication(issuer)
-}
-
-// acquire signs one new assertion and sends it only to the validated issuer's
-// token endpoint. Client identity travels inside the JWT, not in a second form
-// field. The caller receives a validated resource access token or a safe error.
-func (g *clientAssertionGrant) acquire(ctx context.Context, client *http.Client, resource string, issuer *genissuermetadata.ReadResult, scopes []string, _ *genaccesstokens.BearerToken) (*genaccesstokens.BearerToken, time.Time, error) {
-	address, err := authorizationURL(issuer.TokenEndpoint, false)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	assertion, err := g.assertion(ctx, issuer)
-	if err != nil {
-		return nil, time.Time{}, err
-	}
-	generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "token_exchange"}, goahttp.RequestEncoder, authorizationDecoder, false)
-	payload := &genaccesstokens.AssertionPayload{
-		ClientAssertion: assertion,
-		Resource:        resource,
-	}
-	if len(scopes) > 0 {
-		scope := strings.Join(scopes, " ")
-		payload.Scope = &scope
-	}
-	obtained := time.Now()
-	value, err := generated.Assertion()(ctx, payload)
-	if err != nil {
-		return nil, time.Time{}, authorizationFailure(ctx, "token exchange", err)
-	}
-	token, ok := value.(*genaccesstokens.BearerToken)
-	if !ok {
-		return nil, time.Time{}, errors.New("mcp: token exchange has an invalid result type")
-	}
-	return token, obtained, nil
-}
-
-// recoversChallenges keeps machine authorization rejections terminal rather
-// than requesting user consent or repeating an unchanged registration.
-func (g *clientAssertionGrant) recoversChallenges() bool {
-	return false
 }
 
 // assertion creates registered client-authentication claims and a fresh random

@@ -11,25 +11,38 @@ import (
 	"context"
 
 	goa "goa.design/goa/v3/pkg"
+	"goa.design/goa/v3/security"
 )
 
 // Endpoints wraps the "access_tokens" service endpoints.
 type Endpoints struct {
-	Assertion     goa.Endpoint
-	Secret        goa.Endpoint
 	Code          goa.Endpoint
 	Refresh       goa.Endpoint
+	Basic         goa.Endpoint
+	BasicCode     goa.Endpoint
+	BasicRefresh  goa.Endpoint
+	Secret        goa.Endpoint
+	SecretCode    goa.Endpoint
+	SecretRefresh goa.Endpoint
+	Assertion     goa.Endpoint
 	SignedCode    goa.Endpoint
 	SignedRefresh goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "access_tokens" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
+	// Casting service to Auther interface
+	a := s.(Auther)
 	return &Endpoints{
-		Assertion:     NewAssertionEndpoint(s),
-		Secret:        NewSecretEndpoint(s),
 		Code:          NewCodeEndpoint(s),
 		Refresh:       NewRefreshEndpoint(s),
+		Basic:         NewBasicEndpoint(s, a.BasicAuth),
+		BasicCode:     NewBasicCodeEndpoint(s, a.BasicAuth),
+		BasicRefresh:  NewBasicRefreshEndpoint(s, a.BasicAuth),
+		Secret:        NewSecretEndpoint(s),
+		SecretCode:    NewSecretCodeEndpoint(s),
+		SecretRefresh: NewSecretRefreshEndpoint(s),
+		Assertion:     NewAssertionEndpoint(s),
 		SignedCode:    NewSignedCodeEndpoint(s),
 		SignedRefresh: NewSignedRefreshEndpoint(s),
 	}
@@ -38,30 +51,17 @@ func NewEndpoints(s Service) *Endpoints {
 // Use applies the given middleware to all the "access_tokens" service
 // endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
-	e.Assertion = m(e.Assertion)
-	e.Secret = m(e.Secret)
 	e.Code = m(e.Code)
 	e.Refresh = m(e.Refresh)
+	e.Basic = m(e.Basic)
+	e.BasicCode = m(e.BasicCode)
+	e.BasicRefresh = m(e.BasicRefresh)
+	e.Secret = m(e.Secret)
+	e.SecretCode = m(e.SecretCode)
+	e.SecretRefresh = m(e.SecretRefresh)
+	e.Assertion = m(e.Assertion)
 	e.SignedCode = m(e.SignedCode)
 	e.SignedRefresh = m(e.SignedRefresh)
-}
-
-// NewAssertionEndpoint returns an endpoint function that calls the method
-// "assertion" of service "access_tokens".
-func NewAssertionEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*AssertionPayload)
-		return s.Assertion(ctx, p)
-	}
-}
-
-// NewSecretEndpoint returns an endpoint function that calls the method
-// "secret" of service "access_tokens".
-func NewSecretEndpoint(s Service) goa.Endpoint {
-	return func(ctx context.Context, req any) (any, error) {
-		p := req.(*SecretPayload)
-		return s.Secret(ctx, p)
-	}
 }
 
 // NewCodeEndpoint returns an endpoint function that calls the method "code" of
@@ -79,6 +79,99 @@ func NewRefreshEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*RefreshPayload)
 		return s.Refresh(ctx, p)
+	}
+}
+
+// NewBasicEndpoint returns an endpoint function that calls the method "basic"
+// of service "access_tokens".
+func NewBasicEndpoint(s Service, authBasicFn security.AuthBasicFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*BasicPayload)
+		var err error
+		sc := security.BasicScheme{
+			Name:           "registration_credentials",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		ctx, err = authBasicFn(ctx, string(p.ClientID), string(p.ClientSecret), &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.Basic(ctx, p)
+	}
+}
+
+// NewBasicCodeEndpoint returns an endpoint function that calls the method
+// "basic_code" of service "access_tokens".
+func NewBasicCodeEndpoint(s Service, authBasicFn security.AuthBasicFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*BasicCodePayload)
+		var err error
+		sc := security.BasicScheme{
+			Name:           "registration_credentials",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		ctx, err = authBasicFn(ctx, string(p.ClientID), string(p.ClientSecret), &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.BasicCode(ctx, p)
+	}
+}
+
+// NewBasicRefreshEndpoint returns an endpoint function that calls the method
+// "basic_refresh" of service "access_tokens".
+func NewBasicRefreshEndpoint(s Service, authBasicFn security.AuthBasicFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*BasicRefreshPayload)
+		var err error
+		sc := security.BasicScheme{
+			Name:           "registration_credentials",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		ctx, err = authBasicFn(ctx, string(p.ClientID), string(p.ClientSecret), &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.BasicRefresh(ctx, p)
+	}
+}
+
+// NewSecretEndpoint returns an endpoint function that calls the method
+// "secret" of service "access_tokens".
+func NewSecretEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SecretPayload)
+		return s.Secret(ctx, p)
+	}
+}
+
+// NewSecretCodeEndpoint returns an endpoint function that calls the method
+// "secret_code" of service "access_tokens".
+func NewSecretCodeEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SecretCodePayload)
+		return s.SecretCode(ctx, p)
+	}
+}
+
+// NewSecretRefreshEndpoint returns an endpoint function that calls the method
+// "secret_refresh" of service "access_tokens".
+func NewSecretRefreshEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SecretRefreshPayload)
+		return s.SecretRefresh(ctx, p)
+	}
+}
+
+// NewAssertionEndpoint returns an endpoint function that calls the method
+// "assertion" of service "access_tokens".
+func NewAssertionEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*AssertionPayload)
+		return s.Assertion(ctx, p)
 	}
 }
 

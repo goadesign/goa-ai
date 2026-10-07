@@ -14,63 +14,134 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// AssertionRequestBody is the type of the "access_tokens" service "assertion"
-// endpoint HTTP request body.
-type AssertionRequestBody struct {
-	// Exact resource for which the token is requested
-	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
-	// Signed compact JWT identifying the registered client
-	ClientAssertion *string `form:"client_assertion,omitempty" json:"client_assertion,omitempty" xml:"client_assertion,omitempty"`
-	// JWT client authentication selected by this operation
-	ClientAssertionType *string `form:"client_assertion_type,omitempty" json:"client_assertion_type,omitempty" xml:"client_assertion_type,omitempty"`
-	// Space-separated permissions requested by the configured client
-	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
-	// Client-credentials grant selected by this operation
-	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
-}
-
-// SecretRequestBody is the type of the "access_tokens" service "secret"
-// endpoint HTTP request body.
-type SecretRequestBody struct {
-	// Client identifier registered with this issuer
-	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
-	// Secret registered with this issuer
-	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty" xml:"client_secret,omitempty"`
-	// Exact resource for which the token is requested
-	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
-	// Space-separated permissions requested by the configured client
-	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
-	// Client-credentials grant selected by this operation
-	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
-}
-
 // CodeRequestBody is the type of the "access_tokens" service "code" endpoint
 // HTTP request body.
 type CodeRequestBody struct {
-	// Public client identifier registered with the selected issuer
+	// Registered public client identifier
 	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
-	// Authorization code from the validated redirect
+	// Authorization code from the validated callback
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
-	// Private PKCE verifier for this authorization exchange
+	// Private verifier protecting this code exchange
 	CodeVerifier *string `form:"code_verifier,omitempty" json:"code_verifier,omitempty" xml:"code_verifier,omitempty"`
-	// Exact redirect used in the authorization request
+	// Exact registered callback used during authorization
 	RedirectURI *string `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty" xml:"redirect_uri,omitempty"`
-	// Exact resource for which the token is requested
+	// Exact protected resource identifier
 	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
-	// Authorization-code grant selected by this operation
+	// Fixed authorization-code grant
 	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
 }
 
 // RefreshRequestBody is the type of the "access_tokens" service "refresh"
 // endpoint HTTP request body.
 type RefreshRequestBody struct {
-	// Public client identifier of the original grant
+	// Registered public client identifier
 	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
 	// Private refresh credential from the original grant
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
-	// Exact resource of the original grant
+	// Exact protected resource identifier
 	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
-	// Refresh grant selected by this operation
+	// Fixed refresh grant
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
+}
+
+// BasicRequestBody is the type of the "access_tokens" service "basic" endpoint
+// HTTP request body.
+type BasicRequestBody struct {
+	// Exact protected resource identifier
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Space-separated permissions requested for the resource
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Fixed client-credentials grant
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
+}
+
+// BasicCodeRequestBody is the type of the "access_tokens" service "basic_code"
+// endpoint HTTP request body.
+type BasicCodeRequestBody struct {
+	// Authorization code from the validated callback
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Private verifier protecting this code exchange
+	CodeVerifier *string `form:"code_verifier,omitempty" json:"code_verifier,omitempty" xml:"code_verifier,omitempty"`
+	// Exact registered callback used during authorization
+	RedirectURI *string `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty" xml:"redirect_uri,omitempty"`
+	// Exact protected resource identifier
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Fixed authorization-code grant
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
+}
+
+// BasicRefreshRequestBody is the type of the "access_tokens" service
+// "basic_refresh" endpoint HTTP request body.
+type BasicRefreshRequestBody struct {
+	// Private refresh credential from the original grant
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+	// Exact protected resource identifier
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Fixed refresh grant
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
+}
+
+// SecretRequestBody is the type of the "access_tokens" service "secret"
+// endpoint HTTP request body.
+type SecretRequestBody struct {
+	// Registered client identifier
+	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
+	// Secret registered with this authorization server
+	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty" xml:"client_secret,omitempty"`
+	// Exact protected resource identifier
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Space-separated permissions requested for the resource
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Fixed client-credentials grant
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
+}
+
+// SecretCodeRequestBody is the type of the "access_tokens" service
+// "secret_code" endpoint HTTP request body.
+type SecretCodeRequestBody struct {
+	// Registered client identifier
+	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
+	// Secret registered with this authorization server
+	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty" xml:"client_secret,omitempty"`
+	// Authorization code from the validated callback
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Private verifier protecting this code exchange
+	CodeVerifier *string `form:"code_verifier,omitempty" json:"code_verifier,omitempty" xml:"code_verifier,omitempty"`
+	// Exact registered callback used during authorization
+	RedirectURI *string `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty" xml:"redirect_uri,omitempty"`
+	// Exact protected resource identifier
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Fixed authorization-code grant
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
+}
+
+// SecretRefreshRequestBody is the type of the "access_tokens" service
+// "secret_refresh" endpoint HTTP request body.
+type SecretRefreshRequestBody struct {
+	// Registered client identifier
+	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
+	// Secret registered with this authorization server
+	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty" xml:"client_secret,omitempty"`
+	// Private refresh credential from the original grant
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+	// Exact protected resource identifier
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Fixed refresh grant
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
+}
+
+// AssertionRequestBody is the type of the "access_tokens" service "assertion"
+// endpoint HTTP request body.
+type AssertionRequestBody struct {
+	// Signed compact JWT identifying the registered client
+	ClientAssertion *string `form:"client_assertion,omitempty" json:"client_assertion,omitempty" xml:"client_assertion,omitempty"`
+	// JWT client authentication selected by this operation
+	ClientAssertionType *string `form:"client_assertion_type,omitempty" json:"client_assertion_type,omitempty" xml:"client_assertion_type,omitempty"`
+	// Exact protected resource identifier
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Space-separated permissions requested for the resource
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Fixed client-credentials grant
 	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
 }
 
@@ -81,15 +152,15 @@ type SignedCodeRequestBody struct {
 	ClientAssertion *string `form:"client_assertion,omitempty" json:"client_assertion,omitempty" xml:"client_assertion,omitempty"`
 	// JWT client authentication selected by this operation
 	ClientAssertionType *string `form:"client_assertion_type,omitempty" json:"client_assertion_type,omitempty" xml:"client_assertion_type,omitempty"`
-	// Authorization code from the validated redirect
+	// Authorization code from the validated callback
 	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
-	// Private PKCE verifier for this authorization exchange
+	// Private verifier protecting this code exchange
 	CodeVerifier *string `form:"code_verifier,omitempty" json:"code_verifier,omitempty" xml:"code_verifier,omitempty"`
-	// Exact redirect used in the authorization request
+	// Exact registered callback used during authorization
 	RedirectURI *string `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty" xml:"redirect_uri,omitempty"`
-	// Exact resource for which the token is requested
+	// Exact protected resource identifier
 	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
-	// Authorization-code grant selected by this operation
+	// Fixed authorization-code grant
 	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
 }
 
@@ -102,15 +173,75 @@ type SignedRefreshRequestBody struct {
 	ClientAssertionType *string `form:"client_assertion_type,omitempty" json:"client_assertion_type,omitempty" xml:"client_assertion_type,omitempty"`
 	// Private refresh credential from the original grant
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
-	// Exact resource of the original grant
+	// Exact protected resource identifier
 	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
-	// Refresh grant selected by this operation
+	// Fixed refresh grant
 	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
 }
 
-// AssertionResponseBody is the type of the "access_tokens" service "assertion"
+// CodeResponseBody is the type of the "access_tokens" service "code" endpoint
+// HTTP response body.
+type CodeResponseBody struct {
+	// Opaque bearer token returned by the issuer
+	AccessToken string `form:"access_token" json:"access_token" xml:"access_token"`
+	// Bearer token type, compared without case sensitivity
+	TokenType string `form:"token_type" json:"token_type" xml:"token_type"`
+	// Access token lifetime in seconds from the token response
+	ExpiresIn *int64 `form:"expires_in,omitempty" json:"expires_in,omitempty" xml:"expires_in,omitempty"`
+	// Space-separated permissions granted by the issuer
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Private refresh credential; never sent to a resource server
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+}
+
+// RefreshResponseBody is the type of the "access_tokens" service "refresh"
 // endpoint HTTP response body.
-type AssertionResponseBody struct {
+type RefreshResponseBody struct {
+	// Opaque bearer token returned by the issuer
+	AccessToken string `form:"access_token" json:"access_token" xml:"access_token"`
+	// Bearer token type, compared without case sensitivity
+	TokenType string `form:"token_type" json:"token_type" xml:"token_type"`
+	// Access token lifetime in seconds from the token response
+	ExpiresIn *int64 `form:"expires_in,omitempty" json:"expires_in,omitempty" xml:"expires_in,omitempty"`
+	// Space-separated permissions granted by the issuer
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Private refresh credential; never sent to a resource server
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+}
+
+// BasicResponseBody is the type of the "access_tokens" service "basic"
+// endpoint HTTP response body.
+type BasicResponseBody struct {
+	// Opaque bearer token returned by the issuer
+	AccessToken string `form:"access_token" json:"access_token" xml:"access_token"`
+	// Bearer token type, compared without case sensitivity
+	TokenType string `form:"token_type" json:"token_type" xml:"token_type"`
+	// Access token lifetime in seconds from the token response
+	ExpiresIn *int64 `form:"expires_in,omitempty" json:"expires_in,omitempty" xml:"expires_in,omitempty"`
+	// Space-separated permissions granted by the issuer
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Private refresh credential; never sent to a resource server
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+}
+
+// BasicCodeResponseBody is the type of the "access_tokens" service
+// "basic_code" endpoint HTTP response body.
+type BasicCodeResponseBody struct {
+	// Opaque bearer token returned by the issuer
+	AccessToken string `form:"access_token" json:"access_token" xml:"access_token"`
+	// Bearer token type, compared without case sensitivity
+	TokenType string `form:"token_type" json:"token_type" xml:"token_type"`
+	// Access token lifetime in seconds from the token response
+	ExpiresIn *int64 `form:"expires_in,omitempty" json:"expires_in,omitempty" xml:"expires_in,omitempty"`
+	// Space-separated permissions granted by the issuer
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Private refresh credential; never sent to a resource server
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+}
+
+// BasicRefreshResponseBody is the type of the "access_tokens" service
+// "basic_refresh" endpoint HTTP response body.
+type BasicRefreshResponseBody struct {
 	// Opaque bearer token returned by the issuer
 	AccessToken string `form:"access_token" json:"access_token" xml:"access_token"`
 	// Bearer token type, compared without case sensitivity
@@ -138,9 +269,9 @@ type SecretResponseBody struct {
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
 }
 
-// CodeResponseBody is the type of the "access_tokens" service "code" endpoint
-// HTTP response body.
-type CodeResponseBody struct {
+// SecretCodeResponseBody is the type of the "access_tokens" service
+// "secret_code" endpoint HTTP response body.
+type SecretCodeResponseBody struct {
 	// Opaque bearer token returned by the issuer
 	AccessToken string `form:"access_token" json:"access_token" xml:"access_token"`
 	// Bearer token type, compared without case sensitivity
@@ -153,9 +284,24 @@ type CodeResponseBody struct {
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
 }
 
-// RefreshResponseBody is the type of the "access_tokens" service "refresh"
+// SecretRefreshResponseBody is the type of the "access_tokens" service
+// "secret_refresh" endpoint HTTP response body.
+type SecretRefreshResponseBody struct {
+	// Opaque bearer token returned by the issuer
+	AccessToken string `form:"access_token" json:"access_token" xml:"access_token"`
+	// Bearer token type, compared without case sensitivity
+	TokenType string `form:"token_type" json:"token_type" xml:"token_type"`
+	// Access token lifetime in seconds from the token response
+	ExpiresIn *int64 `form:"expires_in,omitempty" json:"expires_in,omitempty" xml:"expires_in,omitempty"`
+	// Space-separated permissions granted by the issuer
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Private refresh credential; never sent to a resource server
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+}
+
+// AssertionResponseBody is the type of the "access_tokens" service "assertion"
 // endpoint HTTP response body.
-type RefreshResponseBody struct {
+type AssertionResponseBody struct {
 	// Opaque bearer token returned by the issuer
 	AccessToken string `form:"access_token" json:"access_token" xml:"access_token"`
 	// Bearer token type, compared without case sensitivity
@@ -198,10 +344,62 @@ type SignedRefreshResponseBody struct {
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
 }
 
-// NewAssertionResponseBody builds the HTTP response body from the result of
-// the "assertion" endpoint of the "access_tokens" service.
-func NewAssertionResponseBody(res *accesstokens.BearerToken) *AssertionResponseBody {
-	body := &AssertionResponseBody{
+// NewCodeResponseBody builds the HTTP response body from the result of the
+// "code" endpoint of the "access_tokens" service.
+func NewCodeResponseBody(res *accesstokens.BearerToken) *CodeResponseBody {
+	body := &CodeResponseBody{
+		AccessToken:  res.AccessToken,
+		TokenType:    res.TokenType,
+		ExpiresIn:    res.ExpiresIn,
+		Scope:        res.Scope,
+		RefreshToken: res.RefreshToken,
+	}
+	return body
+}
+
+// NewRefreshResponseBody builds the HTTP response body from the result of the
+// "refresh" endpoint of the "access_tokens" service.
+func NewRefreshResponseBody(res *accesstokens.BearerToken) *RefreshResponseBody {
+	body := &RefreshResponseBody{
+		AccessToken:  res.AccessToken,
+		TokenType:    res.TokenType,
+		ExpiresIn:    res.ExpiresIn,
+		Scope:        res.Scope,
+		RefreshToken: res.RefreshToken,
+	}
+	return body
+}
+
+// NewBasicResponseBody builds the HTTP response body from the result of the
+// "basic" endpoint of the "access_tokens" service.
+func NewBasicResponseBody(res *accesstokens.BearerToken) *BasicResponseBody {
+	body := &BasicResponseBody{
+		AccessToken:  res.AccessToken,
+		TokenType:    res.TokenType,
+		ExpiresIn:    res.ExpiresIn,
+		Scope:        res.Scope,
+		RefreshToken: res.RefreshToken,
+	}
+	return body
+}
+
+// NewBasicCodeResponseBody builds the HTTP response body from the result of
+// the "basic_code" endpoint of the "access_tokens" service.
+func NewBasicCodeResponseBody(res *accesstokens.BearerToken) *BasicCodeResponseBody {
+	body := &BasicCodeResponseBody{
+		AccessToken:  res.AccessToken,
+		TokenType:    res.TokenType,
+		ExpiresIn:    res.ExpiresIn,
+		Scope:        res.Scope,
+		RefreshToken: res.RefreshToken,
+	}
+	return body
+}
+
+// NewBasicRefreshResponseBody builds the HTTP response body from the result of
+// the "basic_refresh" endpoint of the "access_tokens" service.
+func NewBasicRefreshResponseBody(res *accesstokens.BearerToken) *BasicRefreshResponseBody {
+	body := &BasicRefreshResponseBody{
 		AccessToken:  res.AccessToken,
 		TokenType:    res.TokenType,
 		ExpiresIn:    res.ExpiresIn,
@@ -224,10 +422,10 @@ func NewSecretResponseBody(res *accesstokens.BearerToken) *SecretResponseBody {
 	return body
 }
 
-// NewCodeResponseBody builds the HTTP response body from the result of the
-// "code" endpoint of the "access_tokens" service.
-func NewCodeResponseBody(res *accesstokens.BearerToken) *CodeResponseBody {
-	body := &CodeResponseBody{
+// NewSecretCodeResponseBody builds the HTTP response body from the result of
+// the "secret_code" endpoint of the "access_tokens" service.
+func NewSecretCodeResponseBody(res *accesstokens.BearerToken) *SecretCodeResponseBody {
+	body := &SecretCodeResponseBody{
 		AccessToken:  res.AccessToken,
 		TokenType:    res.TokenType,
 		ExpiresIn:    res.ExpiresIn,
@@ -237,10 +435,23 @@ func NewCodeResponseBody(res *accesstokens.BearerToken) *CodeResponseBody {
 	return body
 }
 
-// NewRefreshResponseBody builds the HTTP response body from the result of the
-// "refresh" endpoint of the "access_tokens" service.
-func NewRefreshResponseBody(res *accesstokens.BearerToken) *RefreshResponseBody {
-	body := &RefreshResponseBody{
+// NewSecretRefreshResponseBody builds the HTTP response body from the result
+// of the "secret_refresh" endpoint of the "access_tokens" service.
+func NewSecretRefreshResponseBody(res *accesstokens.BearerToken) *SecretRefreshResponseBody {
+	body := &SecretRefreshResponseBody{
+		AccessToken:  res.AccessToken,
+		TokenType:    res.TokenType,
+		ExpiresIn:    res.ExpiresIn,
+		Scope:        res.Scope,
+		RefreshToken: res.RefreshToken,
+	}
+	return body
+}
+
+// NewAssertionResponseBody builds the HTTP response body from the result of
+// the "assertion" endpoint of the "access_tokens" service.
+func NewAssertionResponseBody(res *accesstokens.BearerToken) *AssertionResponseBody {
+	body := &AssertionResponseBody{
 		AccessToken:  res.AccessToken,
 		TokenType:    res.TokenType,
 		ExpiresIn:    res.ExpiresIn,
@@ -276,48 +487,6 @@ func NewSignedRefreshResponseBody(res *accesstokens.BearerToken) *SignedRefreshR
 	return body
 }
 
-// NewAssertionPayload builds a access_tokens service assertion endpoint
-// payload.
-func NewAssertionPayload(body *AssertionRequestBody) *accesstokens.AssertionPayload {
-	v := &accesstokens.AssertionPayload{
-		Resource:        *body.Resource,
-		ClientAssertion: *body.ClientAssertion,
-		Scope:           body.Scope,
-	}
-	if body.ClientAssertionType != nil {
-		v.ClientAssertionType = *body.ClientAssertionType
-	}
-	if body.GrantType != nil {
-		v.GrantType = *body.GrantType
-	}
-	if body.ClientAssertionType == nil {
-		v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-	}
-	if body.GrantType == nil {
-		v.GrantType = "client_credentials"
-	}
-
-	return v
-}
-
-// NewSecretPayload builds a access_tokens service secret endpoint payload.
-func NewSecretPayload(body *SecretRequestBody) *accesstokens.SecretPayload {
-	v := &accesstokens.SecretPayload{
-		ClientID:     *body.ClientID,
-		ClientSecret: *body.ClientSecret,
-		Resource:     *body.Resource,
-		Scope:        body.Scope,
-	}
-	if body.GrantType != nil {
-		v.GrantType = *body.GrantType
-	}
-	if body.GrantType == nil {
-		v.GrantType = "client_credentials"
-	}
-
-	return v
-}
-
 // NewCodePayload builds a access_tokens service code endpoint payload.
 func NewCodePayload(body *CodeRequestBody) *accesstokens.CodePayload {
 	v := &accesstokens.CodePayload{
@@ -349,6 +518,146 @@ func NewRefreshPayload(body *RefreshRequestBody) *accesstokens.RefreshPayload {
 	}
 	if body.GrantType == nil {
 		v.GrantType = "refresh_token"
+	}
+
+	return v
+}
+
+// NewBasicPayload builds a access_tokens service basic endpoint payload.
+func NewBasicPayload(body *BasicRequestBody, client_id string, client_secret string) *accesstokens.BasicPayload {
+	v := &accesstokens.BasicPayload{
+		Resource: *body.Resource,
+		Scope:    body.Scope,
+	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.GrantType == nil {
+		v.GrantType = "client_credentials"
+	}
+	v.ClientID = client_id
+	v.ClientSecret = client_secret
+
+	return v
+}
+
+// NewBasicCodePayload builds a access_tokens service basic_code endpoint
+// payload.
+func NewBasicCodePayload(body *BasicCodeRequestBody, client_id string, client_secret string) *accesstokens.BasicCodePayload {
+	v := &accesstokens.BasicCodePayload{
+		Code:         *body.Code,
+		CodeVerifier: *body.CodeVerifier,
+		RedirectURI:  *body.RedirectURI,
+		Resource:     *body.Resource,
+	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.GrantType == nil {
+		v.GrantType = "authorization_code"
+	}
+	v.ClientID = client_id
+	v.ClientSecret = client_secret
+
+	return v
+}
+
+// NewBasicRefreshPayload builds a access_tokens service basic_refresh endpoint
+// payload.
+func NewBasicRefreshPayload(body *BasicRefreshRequestBody, client_id string, client_secret string) *accesstokens.BasicRefreshPayload {
+	v := &accesstokens.BasicRefreshPayload{
+		RefreshToken: *body.RefreshToken,
+		Resource:     *body.Resource,
+	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.GrantType == nil {
+		v.GrantType = "refresh_token"
+	}
+	v.ClientID = client_id
+	v.ClientSecret = client_secret
+
+	return v
+}
+
+// NewSecretPayload builds a access_tokens service secret endpoint payload.
+func NewSecretPayload(body *SecretRequestBody) *accesstokens.SecretPayload {
+	v := &accesstokens.SecretPayload{
+		ClientID:     *body.ClientID,
+		ClientSecret: *body.ClientSecret,
+		Resource:     *body.Resource,
+		Scope:        body.Scope,
+	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.GrantType == nil {
+		v.GrantType = "client_credentials"
+	}
+
+	return v
+}
+
+// NewSecretCodePayload builds a access_tokens service secret_code endpoint
+// payload.
+func NewSecretCodePayload(body *SecretCodeRequestBody) *accesstokens.SecretCodePayload {
+	v := &accesstokens.SecretCodePayload{
+		ClientID:     *body.ClientID,
+		ClientSecret: *body.ClientSecret,
+		Code:         *body.Code,
+		CodeVerifier: *body.CodeVerifier,
+		RedirectURI:  *body.RedirectURI,
+		Resource:     *body.Resource,
+	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.GrantType == nil {
+		v.GrantType = "authorization_code"
+	}
+
+	return v
+}
+
+// NewSecretRefreshPayload builds a access_tokens service secret_refresh
+// endpoint payload.
+func NewSecretRefreshPayload(body *SecretRefreshRequestBody) *accesstokens.SecretRefreshPayload {
+	v := &accesstokens.SecretRefreshPayload{
+		ClientID:     *body.ClientID,
+		ClientSecret: *body.ClientSecret,
+		RefreshToken: *body.RefreshToken,
+		Resource:     *body.Resource,
+	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.GrantType == nil {
+		v.GrantType = "refresh_token"
+	}
+
+	return v
+}
+
+// NewAssertionPayload builds a access_tokens service assertion endpoint
+// payload.
+func NewAssertionPayload(body *AssertionRequestBody) *accesstokens.AssertionPayload {
+	v := &accesstokens.AssertionPayload{
+		ClientAssertion: *body.ClientAssertion,
+		Resource:        *body.Resource,
+		Scope:           body.Scope,
+	}
+	if body.ClientAssertionType != nil {
+		v.ClientAssertionType = *body.ClientAssertionType
+	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.ClientAssertionType == nil {
+		v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+	}
+	if body.GrantType == nil {
+		v.GrantType = "client_credentials"
 	}
 
 	return v
@@ -402,72 +711,6 @@ func NewSignedRefreshPayload(body *SignedRefreshRequestBody) *accesstokens.Signe
 	}
 
 	return v
-}
-
-// ValidateAssertionRequestBody runs the validations defined on
-// AssertionRequestBody
-func ValidateAssertionRequestBody(body *AssertionRequestBody) (err error) {
-	if body.ClientAssertion == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("client_assertion", "body"))
-	}
-	if body.Resource == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
-	}
-	if body.Resource != nil {
-		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
-	}
-	if body.ClientAssertion != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", *body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
-	}
-	if body.ClientAssertionType != nil {
-		if !(*body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", *body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
-		}
-	}
-	if body.Scope != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
-	}
-	if body.GrantType != nil {
-		if !(*body.GrantType == "client_credentials") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"client_credentials"}))
-		}
-	}
-	return
-}
-
-// ValidateSecretRequestBody runs the validations defined on SecretRequestBody
-func ValidateSecretRequestBody(body *SecretRequestBody) (err error) {
-	if body.ClientID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("client_id", "body"))
-	}
-	if body.ClientSecret == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("client_secret", "body"))
-	}
-	if body.Resource == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
-	}
-	if body.ClientID != nil {
-		if utf8.RuneCountInString(*body.ClientID) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", *body.ClientID, utf8.RuneCountInString(*body.ClientID), 1, true))
-		}
-	}
-	if body.ClientSecret != nil {
-		if utf8.RuneCountInString(*body.ClientSecret) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_secret", *body.ClientSecret, utf8.RuneCountInString(*body.ClientSecret), 1, true))
-		}
-	}
-	if body.Resource != nil {
-		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
-	}
-	if body.Scope != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
-	}
-	if body.GrantType != nil {
-		if !(*body.GrantType == "client_credentials") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"client_credentials"}))
-		}
-	}
-	return
 }
 
 // ValidateCodeRequestBody runs the validations defined on CodeRequestBody
@@ -543,6 +786,251 @@ func ValidateRefreshRequestBody(body *RefreshRequestBody) (err error) {
 	if body.GrantType != nil {
 		if !(*body.GrantType == "refresh_token") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"refresh_token"}))
+		}
+	}
+	return
+}
+
+// ValidateBasicRequestBody runs the validations defined on BasicRequestBody
+func ValidateBasicRequestBody(body *BasicRequestBody) (err error) {
+	if body.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if body.Resource != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
+	}
+	if body.Scope != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "client_credentials") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"client_credentials"}))
+		}
+	}
+	return
+}
+
+// ValidateBasicCodeRequestBody runs the validations defined on
+// BasicCodeRequestBody
+func ValidateBasicCodeRequestBody(body *BasicCodeRequestBody) (err error) {
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.CodeVerifier == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code_verifier", "body"))
+	}
+	if body.RedirectURI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("redirect_uri", "body"))
+	}
+	if body.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if body.Code != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code", *body.Code, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(*body.Code) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.code", *body.Code, utf8.RuneCountInString(*body.Code), 1, true))
+		}
+	}
+	if body.CodeVerifier != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code_verifier", *body.CodeVerifier, "^[A-Za-z0-9._~-]{43,128}$"))
+	}
+	if body.RedirectURI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uri", *body.RedirectURI, goa.FormatURI))
+	}
+	if body.Resource != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "authorization_code") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"authorization_code"}))
+		}
+	}
+	return
+}
+
+// ValidateBasicRefreshRequestBody runs the validations defined on
+// BasicRefreshRequestBody
+func ValidateBasicRefreshRequestBody(body *BasicRefreshRequestBody) (err error) {
+	if body.RefreshToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("refresh_token", "body"))
+	}
+	if body.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if body.RefreshToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.refresh_token", *body.RefreshToken, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(*body.RefreshToken) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.refresh_token", *body.RefreshToken, utf8.RuneCountInString(*body.RefreshToken), 1, true))
+		}
+	}
+	if body.Resource != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "refresh_token") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"refresh_token"}))
+		}
+	}
+	return
+}
+
+// ValidateSecretRequestBody runs the validations defined on SecretRequestBody
+func ValidateSecretRequestBody(body *SecretRequestBody) (err error) {
+	if body.ClientID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_id", "body"))
+	}
+	if body.ClientSecret == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_secret", "body"))
+	}
+	if body.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if body.ClientID != nil {
+		if utf8.RuneCountInString(*body.ClientID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", *body.ClientID, utf8.RuneCountInString(*body.ClientID), 1, true))
+		}
+	}
+	if body.ClientSecret != nil {
+		if utf8.RuneCountInString(*body.ClientSecret) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_secret", *body.ClientSecret, utf8.RuneCountInString(*body.ClientSecret), 1, true))
+		}
+	}
+	if body.Resource != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
+	}
+	if body.Scope != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "client_credentials") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"client_credentials"}))
+		}
+	}
+	return
+}
+
+// ValidateSecretCodeRequestBody runs the validations defined on
+// SecretCodeRequestBody
+func ValidateSecretCodeRequestBody(body *SecretCodeRequestBody) (err error) {
+	if body.ClientID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_id", "body"))
+	}
+	if body.ClientSecret == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_secret", "body"))
+	}
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.CodeVerifier == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code_verifier", "body"))
+	}
+	if body.RedirectURI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("redirect_uri", "body"))
+	}
+	if body.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if body.ClientID != nil {
+		if utf8.RuneCountInString(*body.ClientID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", *body.ClientID, utf8.RuneCountInString(*body.ClientID), 1, true))
+		}
+	}
+	if body.ClientSecret != nil {
+		if utf8.RuneCountInString(*body.ClientSecret) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_secret", *body.ClientSecret, utf8.RuneCountInString(*body.ClientSecret), 1, true))
+		}
+	}
+	if body.Code != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code", *body.Code, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(*body.Code) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.code", *body.Code, utf8.RuneCountInString(*body.Code), 1, true))
+		}
+	}
+	if body.CodeVerifier != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code_verifier", *body.CodeVerifier, "^[A-Za-z0-9._~-]{43,128}$"))
+	}
+	if body.RedirectURI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uri", *body.RedirectURI, goa.FormatURI))
+	}
+	if body.Resource != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "authorization_code") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"authorization_code"}))
+		}
+	}
+	return
+}
+
+// ValidateSecretRefreshRequestBody runs the validations defined on
+// SecretRefreshRequestBody
+func ValidateSecretRefreshRequestBody(body *SecretRefreshRequestBody) (err error) {
+	if body.ClientID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_id", "body"))
+	}
+	if body.ClientSecret == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_secret", "body"))
+	}
+	if body.RefreshToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("refresh_token", "body"))
+	}
+	if body.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if body.ClientID != nil {
+		if utf8.RuneCountInString(*body.ClientID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", *body.ClientID, utf8.RuneCountInString(*body.ClientID), 1, true))
+		}
+	}
+	if body.ClientSecret != nil {
+		if utf8.RuneCountInString(*body.ClientSecret) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_secret", *body.ClientSecret, utf8.RuneCountInString(*body.ClientSecret), 1, true))
+		}
+	}
+	if body.RefreshToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.refresh_token", *body.RefreshToken, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(*body.RefreshToken) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.refresh_token", *body.RefreshToken, utf8.RuneCountInString(*body.RefreshToken), 1, true))
+		}
+	}
+	if body.Resource != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "refresh_token") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"refresh_token"}))
+		}
+	}
+	return
+}
+
+// ValidateAssertionRequestBody runs the validations defined on
+// AssertionRequestBody
+func ValidateAssertionRequestBody(body *AssertionRequestBody) (err error) {
+	if body.ClientAssertion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_assertion", "body"))
+	}
+	if body.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if body.ClientAssertion != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", *body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+	}
+	if body.ClientAssertionType != nil {
+		if !(*body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", *body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
+		}
+	}
+	if body.Resource != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
+	}
+	if body.Scope != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "client_credentials") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"client_credentials"}))
 		}
 	}
 	return

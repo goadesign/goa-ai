@@ -7,29 +7,55 @@
 
 package accesstokens
 
-import "context"
+import (
+	"context"
 
-// Obtain opaque resource-bound bearer tokens using explicitly advertised
-// client authentication, without sending those credentials to the MCP server.
+	"goa.design/goa/v3/security"
+)
+
+// Obtain resource-bound bearer tokens through separately generated
+// registration authentication and grant contracts; credentials never enter MCP
+// requests.
 type Service interface {
-	// Authenticate a preregistered client using one signed JWT assertion and
-	// request a bearer token for the exact MCP resource.
-	Assertion(context.Context, *AssertionPayload) (res *BearerToken, err error)
-	// Exchange a preregistered client identifier and secret using request-body
-	// authentication for one resource and its configured permissions.
-	Secret(context.Context, *SecretPayload) (res *BearerToken, err error)
-	// Exchange one validated browser code with the private PKCE verifier, original
-	// resource and redirect, and this profile's client authentication.
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
 	Code(context.Context, *CodePayload) (res *BearerToken, err error)
-	// Replace an expired access token using the original grant's private refresh
-	// credential and this profile's client authentication.
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
 	Refresh(context.Context, *RefreshPayload) (res *BearerToken, err error)
-	// Exchange one validated browser code with the private PKCE verifier, original
-	// resource and redirect, and this profile's client authentication.
+	// Request a machine access token for the exact resource using this
+	// registration's required authentication.
+	Basic(context.Context, *BasicPayload) (res *BearerToken, err error)
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
+	BasicCode(context.Context, *BasicCodePayload) (res *BearerToken, err error)
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
+	BasicRefresh(context.Context, *BasicRefreshPayload) (res *BearerToken, err error)
+	// Request a machine access token for the exact resource using this
+	// registration's required authentication.
+	Secret(context.Context, *SecretPayload) (res *BearerToken, err error)
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
+	SecretCode(context.Context, *SecretCodePayload) (res *BearerToken, err error)
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
+	SecretRefresh(context.Context, *SecretRefreshPayload) (res *BearerToken, err error)
+	// Request a machine access token for the exact resource using this
+	// registration's required authentication.
+	Assertion(context.Context, *AssertionPayload) (res *BearerToken, err error)
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
 	SignedCode(context.Context, *SignedCodePayload) (res *BearerToken, err error)
-	// Replace an expired access token using the original grant's private refresh
-	// credential and this profile's client authentication.
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
 	SignedRefresh(context.Context, *SignedRefreshPayload) (res *BearerToken, err error)
+}
+
+// Auther defines the authorization functions to be implemented by the service.
+type Auther interface {
+	// BasicAuth implements the authorization logic for the Basic security scheme.
+	BasicAuth(ctx context.Context, user, pass string, schema *security.BasicScheme) (context.Context, error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -46,24 +72,72 @@ const ServiceName = "access_tokens"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [6]string{"assertion", "secret", "code", "refresh", "signed_code", "signed_refresh"}
+var MethodNames = [11]string{"code", "refresh", "basic", "basic_code", "basic_refresh", "secret", "secret_code", "secret_refresh", "assertion", "signed_code", "signed_refresh"}
 
 // AssertionPayload is the payload type of the access_tokens service assertion
 // method.
 type AssertionPayload struct {
-	// Exact resource for which the token is requested
-	Resource string
 	// Signed compact JWT identifying the registered client
 	ClientAssertion string
 	// JWT client authentication selected by this operation
 	ClientAssertionType string
-	// Space-separated permissions requested by the configured client
+	// Exact protected resource identifier
+	Resource string
+	// Space-separated permissions requested for the resource
 	Scope *string
-	// Client-credentials grant selected by this operation
+	// Fixed client-credentials grant
 	GrantType string
 }
 
-// BearerToken is the result type of the access_tokens service assertion method.
+// BasicCodePayload is the payload type of the access_tokens service basic_code
+// method.
+type BasicCodePayload struct {
+	// Individually form-encoded client identifier for the Basic header
+	ClientID string
+	// Individually form-encoded secret for the Basic header
+	ClientSecret string
+	// Authorization code from the validated callback
+	Code string
+	// Private verifier protecting this code exchange
+	CodeVerifier string
+	// Exact registered callback used during authorization
+	RedirectURI string
+	// Exact protected resource identifier
+	Resource string
+	// Fixed authorization-code grant
+	GrantType string
+}
+
+// BasicPayload is the payload type of the access_tokens service basic method.
+type BasicPayload struct {
+	// Individually form-encoded client identifier for the Basic header
+	ClientID string
+	// Individually form-encoded secret for the Basic header
+	ClientSecret string
+	// Exact protected resource identifier
+	Resource string
+	// Space-separated permissions requested for the resource
+	Scope *string
+	// Fixed client-credentials grant
+	GrantType string
+}
+
+// BasicRefreshPayload is the payload type of the access_tokens service
+// basic_refresh method.
+type BasicRefreshPayload struct {
+	// Individually form-encoded client identifier for the Basic header
+	ClientID string
+	// Individually form-encoded secret for the Basic header
+	ClientSecret string
+	// Private refresh credential from the original grant
+	RefreshToken string
+	// Exact protected resource identifier
+	Resource string
+	// Fixed refresh grant
+	GrantType string
+}
+
+// BearerToken is the result type of the access_tokens service code method.
 type BearerToken struct {
 	// Opaque bearer token returned by the issuer
 	AccessToken string
@@ -79,44 +153,78 @@ type BearerToken struct {
 
 // CodePayload is the payload type of the access_tokens service code method.
 type CodePayload struct {
-	// Public client identifier registered with the selected issuer
+	// Registered public client identifier
 	ClientID string
-	// Authorization code from the validated redirect
+	// Authorization code from the validated callback
 	Code string
-	// Private PKCE verifier for this authorization exchange
+	// Private verifier protecting this code exchange
 	CodeVerifier string
-	// Exact redirect used in the authorization request
+	// Exact registered callback used during authorization
 	RedirectURI string
-	// Exact resource for which the token is requested
+	// Exact protected resource identifier
 	Resource string
-	// Authorization-code grant selected by this operation
+	// Fixed authorization-code grant
 	GrantType string
 }
 
 // RefreshPayload is the payload type of the access_tokens service refresh
 // method.
 type RefreshPayload struct {
-	// Public client identifier of the original grant
+	// Registered public client identifier
 	ClientID string
 	// Private refresh credential from the original grant
 	RefreshToken string
-	// Exact resource of the original grant
+	// Exact protected resource identifier
 	Resource string
-	// Refresh grant selected by this operation
+	// Fixed refresh grant
+	GrantType string
+}
+
+// SecretCodePayload is the payload type of the access_tokens service
+// secret_code method.
+type SecretCodePayload struct {
+	// Registered client identifier
+	ClientID string
+	// Secret registered with this authorization server
+	ClientSecret string
+	// Authorization code from the validated callback
+	Code string
+	// Private verifier protecting this code exchange
+	CodeVerifier string
+	// Exact registered callback used during authorization
+	RedirectURI string
+	// Exact protected resource identifier
+	Resource string
+	// Fixed authorization-code grant
 	GrantType string
 }
 
 // SecretPayload is the payload type of the access_tokens service secret method.
 type SecretPayload struct {
-	// Client identifier registered with this issuer
+	// Registered client identifier
 	ClientID string
-	// Secret registered with this issuer
+	// Secret registered with this authorization server
 	ClientSecret string
-	// Exact resource for which the token is requested
+	// Exact protected resource identifier
 	Resource string
-	// Space-separated permissions requested by the configured client
+	// Space-separated permissions requested for the resource
 	Scope *string
-	// Client-credentials grant selected by this operation
+	// Fixed client-credentials grant
+	GrantType string
+}
+
+// SecretRefreshPayload is the payload type of the access_tokens service
+// secret_refresh method.
+type SecretRefreshPayload struct {
+	// Registered client identifier
+	ClientID string
+	// Secret registered with this authorization server
+	ClientSecret string
+	// Private refresh credential from the original grant
+	RefreshToken string
+	// Exact protected resource identifier
+	Resource string
+	// Fixed refresh grant
 	GrantType string
 }
 
@@ -127,15 +235,15 @@ type SignedCodePayload struct {
 	ClientAssertion string
 	// JWT client authentication selected by this operation
 	ClientAssertionType string
-	// Authorization code from the validated redirect
+	// Authorization code from the validated callback
 	Code string
-	// Private PKCE verifier for this authorization exchange
+	// Private verifier protecting this code exchange
 	CodeVerifier string
-	// Exact redirect used in the authorization request
+	// Exact registered callback used during authorization
 	RedirectURI string
-	// Exact resource for which the token is requested
+	// Exact protected resource identifier
 	Resource string
-	// Authorization-code grant selected by this operation
+	// Fixed authorization-code grant
 	GrantType string
 }
 
@@ -148,8 +256,8 @@ type SignedRefreshPayload struct {
 	ClientAssertionType string
 	// Private refresh credential from the original grant
 	RefreshToken string
-	// Exact resource of the original grant
+	// Exact protected resource identifier
 	Resource string
-	// Refresh grant selected by this operation
+	// Fixed refresh grant
 	GrantType string
 }

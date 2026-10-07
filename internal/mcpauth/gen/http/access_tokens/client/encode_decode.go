@@ -20,220 +20,6 @@ import (
 	goahttp "goa.design/goa/v3/http"
 )
 
-// BuildAssertionRequest instantiates a HTTP request object with method and
-// path set to call the "access_tokens" service "assertion" endpoint
-func (c *Client) BuildAssertionRequest(ctx context.Context, v any) (*http.Request, error) {
-	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: AssertionAccessTokensPath()}
-	req, err := http.NewRequest("POST", u.String(), nil)
-	if err != nil {
-		return nil, goahttp.ErrInvalidURL("access_tokens", "assertion", u.String(), err)
-	}
-	if ctx != nil {
-		req = req.WithContext(ctx)
-	}
-
-	return req, nil
-}
-
-// EncodeAssertionRequest returns an encoder for requests sent to the
-// access_tokens assertion server.
-func EncodeAssertionRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
-	return func(req *http.Request, v any) error {
-		p, ok := v.(*accesstokens.AssertionPayload)
-		if !ok {
-			return goahttp.ErrInvalidType("access_tokens", "assertion", "*accesstokens.AssertionPayload", v)
-		}
-		body := NewAssertionRequestBody(p)
-		// Convert the typed body fields into the form keys selected by the design.
-		form := make(url.Values, 5)
-		{
-			value := body.Resource
-			form.Set("resource", value)
-		}
-		{
-			value := body.ClientAssertion
-			form.Set("client_assertion", value)
-		}
-		{
-			value := body.ClientAssertionType
-			form.Set("client_assertion_type", value)
-		}
-		if body.Scope != nil {
-			value := *body.Scope
-			form.Set("scope", value)
-		}
-		{
-			value := body.GrantType
-			form.Set("grant_type", value)
-		}
-		// Retain the exact encoded body so the HTTP client can replay these bytes.
-		encoded := form.Encode()
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.Body = io.NopCloser(strings.NewReader(encoded))
-		req.ContentLength = int64(len(encoded))
-		req.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(strings.NewReader(encoded)), nil
-		}
-		return nil
-	}
-}
-
-// DecodeAssertionResponse returns a decoder for responses returned by the
-// access_tokens assertion endpoint. restoreBody controls whether the response
-// body should be restored after having been read.
-func DecodeAssertionResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (result any, decodeErr error) {
-		responseBody := resp.Body
-		if restoreBody {
-			b, readErr := io.ReadAll(responseBody)
-			closeErr := responseBody.Close()
-			if err := errors.Join(readErr, closeErr); err != nil {
-				return nil, goahttp.ErrDecodingError("access_tokens", "assertion", err)
-			}
-			resp.Body = io.NopCloser(bytes.NewBuffer(b))
-			defer func() {
-				resp.Body = io.NopCloser(bytes.NewBuffer(b))
-			}()
-		} else {
-			defer func() {
-				if err := responseBody.Close(); err != nil {
-					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "assertion", err))
-				}
-			}()
-		}
-		switch resp.StatusCode {
-		case http.StatusOK:
-			var (
-				body AssertionResponseBody
-				err  error
-			)
-			err = decoder(resp).Decode(&body)
-			if err != nil {
-				return nil, goahttp.ErrDecodingError("access_tokens", "assertion", err)
-			}
-			err = ValidateAssertionResponseBody(&body)
-			if err != nil {
-				return nil, goahttp.ErrValidationError("access_tokens", "assertion", err)
-			}
-			res := NewAssertionBearerTokenOK(&body)
-			return res, nil
-		default:
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, goahttp.ErrDecodingError("access_tokens", "assertion", err)
-			}
-			return nil, goahttp.ErrInvalidResponse("access_tokens", "assertion", resp.StatusCode, string(body))
-		}
-	}
-}
-
-// BuildSecretRequest instantiates a HTTP request object with method and path
-// set to call the "access_tokens" service "secret" endpoint
-func (c *Client) BuildSecretRequest(ctx context.Context, v any) (*http.Request, error) {
-	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: SecretAccessTokensPath()}
-	req, err := http.NewRequest("POST", u.String(), nil)
-	if err != nil {
-		return nil, goahttp.ErrInvalidURL("access_tokens", "secret", u.String(), err)
-	}
-	if ctx != nil {
-		req = req.WithContext(ctx)
-	}
-
-	return req, nil
-}
-
-// EncodeSecretRequest returns an encoder for requests sent to the
-// access_tokens secret server.
-func EncodeSecretRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
-	return func(req *http.Request, v any) error {
-		p, ok := v.(*accesstokens.SecretPayload)
-		if !ok {
-			return goahttp.ErrInvalidType("access_tokens", "secret", "*accesstokens.SecretPayload", v)
-		}
-		body := NewSecretRequestBody(p)
-		// Convert the typed body fields into the form keys selected by the design.
-		form := make(url.Values, 5)
-		{
-			value := body.ClientID
-			form.Set("client_id", value)
-		}
-		{
-			value := body.ClientSecret
-			form.Set("client_secret", value)
-		}
-		{
-			value := body.Resource
-			form.Set("resource", value)
-		}
-		if body.Scope != nil {
-			value := *body.Scope
-			form.Set("scope", value)
-		}
-		{
-			value := body.GrantType
-			form.Set("grant_type", value)
-		}
-		// Retain the exact encoded body so the HTTP client can replay these bytes.
-		encoded := form.Encode()
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		req.Body = io.NopCloser(strings.NewReader(encoded))
-		req.ContentLength = int64(len(encoded))
-		req.GetBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(strings.NewReader(encoded)), nil
-		}
-		return nil
-	}
-}
-
-// DecodeSecretResponse returns a decoder for responses returned by the
-// access_tokens secret endpoint. restoreBody controls whether the response
-// body should be restored after having been read.
-func DecodeSecretResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
-	return func(resp *http.Response) (result any, decodeErr error) {
-		responseBody := resp.Body
-		if restoreBody {
-			b, readErr := io.ReadAll(responseBody)
-			closeErr := responseBody.Close()
-			if err := errors.Join(readErr, closeErr); err != nil {
-				return nil, goahttp.ErrDecodingError("access_tokens", "secret", err)
-			}
-			resp.Body = io.NopCloser(bytes.NewBuffer(b))
-			defer func() {
-				resp.Body = io.NopCloser(bytes.NewBuffer(b))
-			}()
-		} else {
-			defer func() {
-				if err := responseBody.Close(); err != nil {
-					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "secret", err))
-				}
-			}()
-		}
-		switch resp.StatusCode {
-		case http.StatusOK:
-			var (
-				body SecretResponseBody
-				err  error
-			)
-			err = decoder(resp).Decode(&body)
-			if err != nil {
-				return nil, goahttp.ErrDecodingError("access_tokens", "secret", err)
-			}
-			err = ValidateSecretResponseBody(&body)
-			if err != nil {
-				return nil, goahttp.ErrValidationError("access_tokens", "secret", err)
-			}
-			res := NewSecretBearerTokenOK(&body)
-			return res, nil
-		default:
-			body, err := io.ReadAll(resp.Body)
-			if err != nil {
-				return nil, goahttp.ErrDecodingError("access_tokens", "secret", err)
-			}
-			return nil, goahttp.ErrInvalidResponse("access_tokens", "secret", resp.StatusCode, string(body))
-		}
-	}
-}
-
 // BuildCodeRequest instantiates a HTTP request object with method and path set
 // to call the "access_tokens" service "code" endpoint
 func (c *Client) BuildCodeRequest(ctx context.Context, v any) (*http.Request, error) {
@@ -444,6 +230,750 @@ func DecodeRefreshResponse(decoder func(*http.Response) goahttp.Decoder, restore
 				return nil, goahttp.ErrDecodingError("access_tokens", "refresh", err)
 			}
 			return nil, goahttp.ErrInvalidResponse("access_tokens", "refresh", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildBasicRequest instantiates a HTTP request object with method and path
+// set to call the "access_tokens" service "basic" endpoint
+func (c *Client) BuildBasicRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: BasicAccessTokensPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("access_tokens", "basic", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeBasicRequest returns an encoder for requests sent to the access_tokens
+// basic server.
+func EncodeBasicRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*accesstokens.BasicPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("access_tokens", "basic", "*accesstokens.BasicPayload", v)
+		}
+		body := NewBasicRequestBody(p)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 3)
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		if body.Scope != nil {
+			value := *body.Scope
+			form.Set("scope", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
+		}
+		req.SetBasicAuth(string(p.ClientID), string(p.ClientSecret))
+		return nil
+	}
+}
+
+// DecodeBasicResponse returns a decoder for responses returned by the
+// access_tokens basic endpoint. restoreBody controls whether the response body
+// should be restored after having been read.
+func DecodeBasicResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "basic", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body BasicResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic", err)
+			}
+			err = ValidateBasicResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("access_tokens", "basic", err)
+			}
+			res := NewBasicBearerTokenOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("access_tokens", "basic", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildBasicCodeRequest instantiates a HTTP request object with method and
+// path set to call the "access_tokens" service "basic_code" endpoint
+func (c *Client) BuildBasicCodeRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: BasicCodeAccessTokensPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("access_tokens", "basic_code", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeBasicCodeRequest returns an encoder for requests sent to the
+// access_tokens basic_code server.
+func EncodeBasicCodeRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*accesstokens.BasicCodePayload)
+		if !ok {
+			return goahttp.ErrInvalidType("access_tokens", "basic_code", "*accesstokens.BasicCodePayload", v)
+		}
+		body := NewBasicCodeRequestBody(p)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 5)
+		{
+			value := body.Code
+			form.Set("code", value)
+		}
+		{
+			value := body.CodeVerifier
+			form.Set("code_verifier", value)
+		}
+		{
+			value := body.RedirectURI
+			form.Set("redirect_uri", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
+		}
+		req.SetBasicAuth(string(p.ClientID), string(p.ClientSecret))
+		return nil
+	}
+}
+
+// DecodeBasicCodeResponse returns a decoder for responses returned by the
+// access_tokens basic_code endpoint. restoreBody controls whether the response
+// body should be restored after having been read.
+func DecodeBasicCodeResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic_code", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "basic_code", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body BasicCodeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic_code", err)
+			}
+			err = ValidateBasicCodeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("access_tokens", "basic_code", err)
+			}
+			res := NewBasicCodeBearerTokenOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic_code", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("access_tokens", "basic_code", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildBasicRefreshRequest instantiates a HTTP request object with method and
+// path set to call the "access_tokens" service "basic_refresh" endpoint
+func (c *Client) BuildBasicRefreshRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: BasicRefreshAccessTokensPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("access_tokens", "basic_refresh", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeBasicRefreshRequest returns an encoder for requests sent to the
+// access_tokens basic_refresh server.
+func EncodeBasicRefreshRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*accesstokens.BasicRefreshPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("access_tokens", "basic_refresh", "*accesstokens.BasicRefreshPayload", v)
+		}
+		body := NewBasicRefreshRequestBody(p)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 3)
+		{
+			value := body.RefreshToken
+			form.Set("refresh_token", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
+		}
+		req.SetBasicAuth(string(p.ClientID), string(p.ClientSecret))
+		return nil
+	}
+}
+
+// DecodeBasicRefreshResponse returns a decoder for responses returned by the
+// access_tokens basic_refresh endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+func DecodeBasicRefreshResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic_refresh", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "basic_refresh", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body BasicRefreshResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic_refresh", err)
+			}
+			err = ValidateBasicRefreshResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("access_tokens", "basic_refresh", err)
+			}
+			res := NewBasicRefreshBearerTokenOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic_refresh", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("access_tokens", "basic_refresh", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildSecretRequest instantiates a HTTP request object with method and path
+// set to call the "access_tokens" service "secret" endpoint
+func (c *Client) BuildSecretRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: SecretAccessTokensPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("access_tokens", "secret", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeSecretRequest returns an encoder for requests sent to the
+// access_tokens secret server.
+func EncodeSecretRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*accesstokens.SecretPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("access_tokens", "secret", "*accesstokens.SecretPayload", v)
+		}
+		body := NewSecretRequestBody(p)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 5)
+		{
+			value := body.ClientID
+			form.Set("client_id", value)
+		}
+		{
+			value := body.ClientSecret
+			form.Set("client_secret", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		if body.Scope != nil {
+			value := *body.Scope
+			form.Set("scope", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
+		}
+		return nil
+	}
+}
+
+// DecodeSecretResponse returns a decoder for responses returned by the
+// access_tokens secret endpoint. restoreBody controls whether the response
+// body should be restored after having been read.
+func DecodeSecretResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "secret", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body SecretResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret", err)
+			}
+			err = ValidateSecretResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("access_tokens", "secret", err)
+			}
+			res := NewSecretBearerTokenOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("access_tokens", "secret", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildSecretCodeRequest instantiates a HTTP request object with method and
+// path set to call the "access_tokens" service "secret_code" endpoint
+func (c *Client) BuildSecretCodeRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: SecretCodeAccessTokensPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("access_tokens", "secret_code", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeSecretCodeRequest returns an encoder for requests sent to the
+// access_tokens secret_code server.
+func EncodeSecretCodeRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*accesstokens.SecretCodePayload)
+		if !ok {
+			return goahttp.ErrInvalidType("access_tokens", "secret_code", "*accesstokens.SecretCodePayload", v)
+		}
+		body := NewSecretCodeRequestBody(p)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 7)
+		{
+			value := body.ClientID
+			form.Set("client_id", value)
+		}
+		{
+			value := body.ClientSecret
+			form.Set("client_secret", value)
+		}
+		{
+			value := body.Code
+			form.Set("code", value)
+		}
+		{
+			value := body.CodeVerifier
+			form.Set("code_verifier", value)
+		}
+		{
+			value := body.RedirectURI
+			form.Set("redirect_uri", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
+		}
+		return nil
+	}
+}
+
+// DecodeSecretCodeResponse returns a decoder for responses returned by the
+// access_tokens secret_code endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+func DecodeSecretCodeResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret_code", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "secret_code", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body SecretCodeResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret_code", err)
+			}
+			err = ValidateSecretCodeResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("access_tokens", "secret_code", err)
+			}
+			res := NewSecretCodeBearerTokenOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret_code", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("access_tokens", "secret_code", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildSecretRefreshRequest instantiates a HTTP request object with method and
+// path set to call the "access_tokens" service "secret_refresh" endpoint
+func (c *Client) BuildSecretRefreshRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: SecretRefreshAccessTokensPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("access_tokens", "secret_refresh", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeSecretRefreshRequest returns an encoder for requests sent to the
+// access_tokens secret_refresh server.
+func EncodeSecretRefreshRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*accesstokens.SecretRefreshPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("access_tokens", "secret_refresh", "*accesstokens.SecretRefreshPayload", v)
+		}
+		body := NewSecretRefreshRequestBody(p)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 5)
+		{
+			value := body.ClientID
+			form.Set("client_id", value)
+		}
+		{
+			value := body.ClientSecret
+			form.Set("client_secret", value)
+		}
+		{
+			value := body.RefreshToken
+			form.Set("refresh_token", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
+		}
+		return nil
+	}
+}
+
+// DecodeSecretRefreshResponse returns a decoder for responses returned by the
+// access_tokens secret_refresh endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+func DecodeSecretRefreshResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret_refresh", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "secret_refresh", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body SecretRefreshResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret_refresh", err)
+			}
+			err = ValidateSecretRefreshResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("access_tokens", "secret_refresh", err)
+			}
+			res := NewSecretRefreshBearerTokenOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret_refresh", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("access_tokens", "secret_refresh", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildAssertionRequest instantiates a HTTP request object with method and
+// path set to call the "access_tokens" service "assertion" endpoint
+func (c *Client) BuildAssertionRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: AssertionAccessTokensPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("access_tokens", "assertion", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeAssertionRequest returns an encoder for requests sent to the
+// access_tokens assertion server.
+func EncodeAssertionRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*accesstokens.AssertionPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("access_tokens", "assertion", "*accesstokens.AssertionPayload", v)
+		}
+		body := NewAssertionRequestBody(p)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 5)
+		{
+			value := body.ClientAssertion
+			form.Set("client_assertion", value)
+		}
+		{
+			value := body.ClientAssertionType
+			form.Set("client_assertion_type", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		if body.Scope != nil {
+			value := *body.Scope
+			form.Set("scope", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
+		}
+		return nil
+	}
+}
+
+// DecodeAssertionResponse returns a decoder for responses returned by the
+// access_tokens assertion endpoint. restoreBody controls whether the response
+// body should be restored after having been read.
+func DecodeAssertionResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "assertion", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "assertion", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body AssertionResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "assertion", err)
+			}
+			err = ValidateAssertionResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("access_tokens", "assertion", err)
+			}
+			res := NewAssertionBearerTokenOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "assertion", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("access_tokens", "assertion", resp.StatusCode, string(body))
 		}
 	}
 }

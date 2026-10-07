@@ -181,7 +181,8 @@ func TestGeneratedOAuthQueryCredentials(t *testing.T){
  }));defer peer.Close()
  origin=peer.URL
  info:=mcp.ClientInfo{Name:"generated-host",Version:"1"}
- transport,err:=mcp.NewClientCredentialsHTTPTransport(mcp.HTTPOptions{Endpoint:origin+"/mcp",Client:peer.Client(),ClientInfo:info},mcp.ClientCredentials{Issuer:origin+"/issuer",ClientID:"registered",ClientSecret:"registered-secret"})
+ registration,err:=mcp.NewSecretClientRegistration(origin+"/issuer","registered","registered-secret");require.NoError(t,err)
+ transport,err:=mcp.NewClientCredentialsHTTPTransport(mcp.HTTPOptions{Endpoint:origin+"/mcp",Client:peer.Client(),ClientInfo:info},mcp.ClientCredentials{Registration:registration})
  require.NoError(t,err)
  address,err:=url.Parse(origin);require.NoError(t,err)
  client:=genclient.NewClient(address.Scheme,address.Host,transport,goahttp.RequestEncoder,goahttp.ResponseDecoder,false)

@@ -36,6 +36,8 @@ var _ = API("mcp_authorization", func() {
 
 var introspectionCredentials = BasicAuthSecurity("introspection_credentials")
 
+var registrationCredentials = BasicAuthSecurity("registration_credentials")
+
 var _ = Service("token_introspection", func() {
 	Description("Ask a trusted authorization server whether an opaque access token is currently usable at this MCP resource, using a separate resource-server registration.")
 	Method("read", func() {
@@ -134,8 +136,9 @@ var clientMetadata = Type("ClientMetadata", func() {
 	Description("Shared registration identity and browser grant fields; each metadata operation declares its own required authentication method.")
 	Field(1, "client_id", String, "Exact HTTPS URL hosting this client document", func() { Format(FormatURI) })
 	Field(2, "client_name", String, "Client name shown by the issuer during consent", func() { MinLength(1) })
+	// The external metadata contract requires this property even when a client
+	// uses only grants without callbacks. Browser flow checks exact membership.
 	Field(3, "redirect_uris", ArrayOf(String), "Registered callbacks owned by the client host", func() {
-		MinLength(1)
 		Elem(func() { Format(FormatURI) })
 	})
 	Field(5, "grant_types", ArrayOf(String), "Registered grants including authorization code and optional refresh", func() {
@@ -174,104 +177,6 @@ var _ = Service("client_metadata", func() {
 				}
 			})
 			HTTP(func() { GET("/" + profile.name) })
-		})
-	}
-})
-
-var _ = Service("access_tokens", func() {
-	Description("Obtain opaque resource-bound bearer tokens using explicitly advertised client authentication, without sending those credentials to the MCP server.")
-	Method("assertion", func() {
-		Description("Authenticate a preregistered client using one signed JWT assertion and request a bearer token for the exact MCP resource.")
-		Payload(func() {
-			Field(1, "resource", String, "Exact resource for which the token is requested", func() { Format(FormatURI) })
-			oauthClientAssertion(2, 5)
-			Field(3, "scope", String, "Space-separated permissions requested by the configured client", oauthScope)
-			Field(4, "grant_type", String, "Client-credentials grant selected by this operation", func() {
-				Default("client_credentials")
-				Enum("client_credentials")
-				Example("client_credentials")
-			})
-			Required("resource")
-		})
-		Result(bearerToken)
-		HTTP(func() {
-			POST("/assertion")
-			FormRequest()
-		})
-	})
-	Method("secret", func() {
-		Description("Exchange a preregistered client identifier and secret using request-body authentication for one resource and its configured permissions.")
-		Payload(func() {
-			Field(1, "client_id", String, "Client identifier registered with this issuer", func() { MinLength(1) })
-			Field(2, "client_secret", String, "Secret registered with this issuer", func() { MinLength(1) })
-			Field(3, "resource", String, "Exact resource for which the token is requested", func() { Format(FormatURI) })
-			Field(4, "scope", String, "Space-separated permissions requested by the configured client", oauthScope)
-			Field(5, "grant_type", String, "Client-credentials grant selected by this operation", func() {
-				Default("client_credentials")
-				Enum("client_credentials")
-				Example("client_credentials")
-			})
-			Required("client_id", "client_secret", "resource")
-		})
-		Result(bearerToken)
-		HTTP(func() {
-			POST("/token")
-			FormRequest()
-		})
-	})
-	for _, profile := range []struct {
-		prefix string
-		signed bool
-	}{{"", false}, {"signed_", true}} {
-		Method(profile.prefix+"code", func() {
-			Description("Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.")
-			Payload(func() {
-				if profile.signed {
-					oauthClientAssertion(1, 7)
-				} else {
-					Field(1, "client_id", String, "Public client identifier registered with the selected issuer", func() { MinLength(1) })
-					Required("client_id")
-				}
-				Field(2, "code", String, "Authorization code from the validated redirect", oauthVisibleValue)
-				Field(3, "code_verifier", String, "Private PKCE verifier for this authorization exchange", func() { Pattern(`^[A-Za-z0-9._~-]{43,128}$`) })
-				Field(4, "redirect_uri", String, "Exact redirect used in the authorization request", func() { Format(FormatURI) })
-				Field(5, "resource", String, "Exact resource for which the token is requested", func() { Format(FormatURI) })
-				Field(6, "grant_type", String, "Authorization-code grant selected by this operation", func() {
-					Default("authorization_code")
-					Enum("authorization_code")
-					Example("authorization_code")
-				})
-				Required("code", "code_verifier", "redirect_uri", "resource")
-			})
-			Result(bearerToken)
-			HTTP(func() {
-				POST("/" + profile.prefix + "code")
-				FormRequest()
-			})
-		})
-		Method(profile.prefix+"refresh", func() {
-			Description("Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.")
-			Payload(func() {
-				if profile.signed {
-					oauthClientAssertion(1, 5)
-				} else {
-					Field(1, "client_id", String, "Public client identifier of the original grant", func() { MinLength(1) })
-					Required("client_id")
-				}
-				Field(2, "refresh_token", String, "Private refresh credential from the original grant", oauthVisibleValue)
-				Field(3, "resource", String, "Exact resource of the original grant", func() { Format(FormatURI) })
-				Field(4, "grant_type", String, "Refresh grant selected by this operation", func() {
-					Default("refresh_token")
-					Enum("refresh_token")
-					Example("refresh_token")
-				})
-				Required("refresh_token", "resource")
-			})
-			Result(bearerToken)
-			HTTP(func() {
-				POST("/" + profile.prefix + "refresh")
-				FormRequest()
-			})
 		})
 	}
 })

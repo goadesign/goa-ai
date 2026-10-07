@@ -31,28 +31,29 @@ import (
 type (
 	// oauthPeer records the HTTP requests made to a synthetic issuer and resource.
 	oauthPeer struct {
-		server        *httptest.Server
-		resource      string
-		resourceQuery string
-		issuer        string
-		metadata      string
-		issuerBody    string
-		tokenBody     string
-		tokenStatus   int
-		mcpStatus     int
-		challenges    []string
-		probeCalls    atomic.Int32
-		missingPaths  []string
-		tokenRedirect string
-		tokenMedia    string
-		tokenCalls    atomic.Int32
-		mcpCalls      atomic.Int32
-		mutex         sync.Mutex
-		addresses     []string
-		forms         []url.Values
-		tokenEntered  chan struct{}
-		tokenContinue chan struct{}
-		verifyGrant   func(url.Values) error
+		server               *httptest.Server
+		resource             string
+		resourceQuery        string
+		issuer               string
+		metadata             string
+		issuerBody           string
+		tokenBody            string
+		tokenStatus          int
+		mcpStatus            int
+		challenges           []string
+		probeCalls           atomic.Int32
+		missingPaths         []string
+		tokenRedirect        string
+		tokenMedia           string
+		tokenCalls           atomic.Int32
+		mcpCalls             atomic.Int32
+		mutex                sync.Mutex
+		addresses            []string
+		forms                []url.Values
+		tokenEntered         chan struct{}
+		tokenContinue        chan struct{}
+		verifyGrant          func(url.Values) error
+		verifyAuthentication func(*http.Request) error
 	}
 )
 
@@ -108,9 +109,6 @@ func TestClientCredentialsRejectsBeforeMCPDispatch(t *testing.T) {
 		}, 0},
 		{"Basic only", func(p *oauthPeer) {
 			p.issuerBody = strings.ReplaceAll(p.issuerBody, `"client_secret_basic","client_secret_post"`, `"client_secret_basic"`)
-		}, 0},
-		{"POST only", func(p *oauthPeer) {
-			p.issuerBody = strings.ReplaceAll(p.issuerBody, `"client_secret_basic","client_secret_post"`, `"client_secret_post"`)
 		}, 0},
 		{"unsupported grant", func(p *oauthPeer) {
 			p.issuerBody = strings.ReplaceAll(p.issuerBody, "client_credentials", "authorization_code")
@@ -296,7 +294,13 @@ func newOAuthPeer(t *testing.T) *oauthPeer {
 			if peer.tokenMedia != "" {
 				writer.Header().Set("Content-Type", peer.tokenMedia)
 			}
-			assert.Empty(t, request.Header.Get("Authorization"))
+			if peer.verifyAuthentication == nil {
+				assert.Empty(t, request.Header.Get("Authorization"))
+			} else if err := peer.verifyAuthentication(request); err != nil {
+				t.Error(err)
+				writer.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			assert.Equal(t, "route=selected", request.URL.RawQuery)
 			assert.Equal(t, "application/x-www-form-urlencoded", request.Header.Get("Content-Type"))
 			assert.NoError(t, request.ParseForm())
@@ -377,7 +381,7 @@ func newOAuthPeer(t *testing.T) *oauthPeer {
 // transport constructs one isolated grant using the peer's trusted TLS client.
 func (p *oauthPeer) transport(t *testing.T, clientID, secret string, scopes []string) *HTTPTransport {
 	t.Helper()
-	transport, err := NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: p.resource, Client: p.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, ClientCredentials{Issuer: p.issuer, ClientID: clientID, ClientSecret: secret, Scopes: scopes})
+	transport, err := NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: p.resource, Client: p.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, ClientCredentials{Registration: secretTestRegistration(t, p.issuer, clientID, secret), Scopes: scopes})
 	require.NoError(t, err)
 	return transport
 }
@@ -455,12 +459,7 @@ func TestClientCredentialsConstructionRejectsUnsafeConfiguration(t *testing.T) {
 		{"unescaped resource path", func(o *HTTPOptions, _ *ClientCredentials) { o.Endpoint = "https://resource.example/my records" }},
 		{"resource fragment", func(o *HTTPOptions, _ *ClientCredentials) { o.Endpoint += "#" }},
 		{"resource user information", func(o *HTTPOptions, _ *ClientCredentials) { o.Endpoint = "https://user:secret@resource.example/mcp" }},
-		{"insecure issuer", func(_ *HTTPOptions, c *ClientCredentials) { c.Issuer = "http://issuer.example" }},
-		{"issuer query", func(_ *HTTPOptions, c *ClientCredentials) { c.Issuer += "?" }},
-		{"issuer fragment", func(_ *HTTPOptions, c *ClientCredentials) { c.Issuer += "#" }},
 		{"nil HTTP client", func(o *HTTPOptions, _ *ClientCredentials) { o.Client = (*http.Client)(nil) }},
-		{"missing client identifier", func(_ *HTTPOptions, c *ClientCredentials) { c.ClientID = "" }},
-		{"missing secret", func(_ *HTTPOptions, c *ClientCredentials) { c.ClientSecret = "" }},
 		{"empty scope", func(_ *HTTPOptions, c *ClientCredentials) { c.Scopes = []string{""} }},
 		{"scope contains space", func(_ *HTTPOptions, c *ClientCredentials) { c.Scopes = []string{"records:read other"} }},
 		{"non-ASCII scope", func(_ *HTTPOptions, c *ClientCredentials) { c.Scopes = []string{"récirds"} }},
@@ -472,7 +471,7 @@ func TestClientCredentialsConstructionRejectsUnsafeConfiguration(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			opts := HTTPOptions{Endpoint: "https://resource.example/mcp", ClientInfo: ClientInfo{Name: "host", Version: "1"}}
-			credentials := ClientCredentials{Issuer: "https://issuer.example", ClientID: "registered", ClientSecret: "secret"}
+			credentials := ClientCredentials{Registration: secretTestRegistration(t, "https://issuer.example", "registered", "secret")}
 			tc.change(&opts, &credentials)
 			_, err := NewClientCredentialsHTTPTransport(opts, credentials)
 			require.Error(t, err)
@@ -535,4 +534,13 @@ func TestClientCredentialsTracesExcludeCredentialContent(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 4, httpSpans)
+}
+
+// secretTestRegistration constructs the explicit body-secret registration used
+// by peers that advertise that method; it never infers a method from metadata.
+func secretTestRegistration(t *testing.T, issuer, clientID, secret string) *ClientRegistration {
+	t.Helper()
+	registration, err := NewSecretClientRegistration(issuer, clientID, secret)
+	require.NoError(t, err)
+	return registration
 }

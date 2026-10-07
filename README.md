@@ -393,18 +393,16 @@ recovery requires a successful fresh grant before one bounded repeat. A later
 rejection cannot erase an earlier lost tool response. Complete OAuth remains a
 release gate.
 
-`mcp.NewClientCredentialsHTTPTransport` obtains preregistered client-secret
-grants for one exact HTTPS resource and issuer before sending MCP requests.
-Generated clients and `HTTPOptions.Client` accept this same transport. Typed
-Goa clients generate token form requests and validate metadata and token
-responses; secrets stay in the token request body and bearer tokens stay in the
-MCP authorization header. The issuer
-must explicitly advertise `client_credentials`, `client_secret_post` and
-`client_secret_basic`. The machine profile rejects redirects and returns
-401/403 responses without automatic reauthorization. Shared discovery can use a
-validated challenge metadata URL when well-known discovery is absent.
-See [client-secret authorization](docs/runtime.md#client-secret-authorization)
-for construction and the remaining release gates.
+Construct an OAuth `mcp.ClientRegistration` for one issuer with explicit public,
+Basic-header secret, request-body secret or signed authentication. Registrations
+contain no user, resource scope or token. `mcp.NewClientCredentialsHTTPTransport`
+obtains confidential machine grants before MCP dispatch; each transport owns its
+resource token independently. Generated clients and `HTTPOptions.Client` accept
+this same transport. Native Goa forms and security headers encode credentials;
+only the resource bearer token reaches MCP. Metadata must advertise the exact
+selected method. Redirects and machine reauthorization after 401/403 are rejected.
+See [client registration](docs/runtime.md#client-registration) and
+[client-secret authorization](docs/runtime.md#client-secret-authorization).
 
 Generated clients compose native domain query credentials with OAuth. A key
 mapped by `Param("credential:api_key")` reaches the original service's
@@ -414,22 +412,17 @@ Both client constructors consume one generated HTTP binding factory. Direct
 transport users now supply `mcp.HTTPBindings` as the third constructor argument;
 regenerate clients when upgrading.
 
-Machine clients can authenticate with a signed JSON Web Token (JWT) using
-`mcp.NewClientAssertionHTTPTransport`. The host supplies its registered signer,
-client identity, assertion issuer, audience and validity period. Goa generates
-the form exchange; the shared credential owner obtains and caches the MCP
-access token. The issuer must advertise `private_key_jwt` and the actual signing
-algorithm. See [signed client assertions](docs/runtime.md#signed-client-assertion-authorization).
+`mcp.NewSignedClientRegistration` accepts a registered signer, client identity,
+assertion issuer, audience and validity period. Every code, refresh or machine
+exchange signs fresh authentication. See
+[signed client assertions](docs/runtime.md#signed-client-assertion-authorization).
 
-Browser clients use `mcp.NewAuthorizationCodeHTTPTransport` with a registered
-public client, or `mcp.NewClientMetadataHTTPTransport` with the client's self-hosted
-HTTPS registration document. Signed clients use `mcp.SignedAuthorizationCode`
-with `NewSignedAuthorizationCodeHTTPTransport` or `NewSignedClientMetadataHTTPTransport`.
-Both authentication profiles share PKCE, issuer and redirect checks, refresh
-rotation, and operation-specific scope upgrades. A signed client authenticates
-every code and refresh exchange with a fresh assertion. The host owns sign-in
-and consent; tokens remain private to its constructed transport.
-See [browser authorization](docs/runtime.md#browser-authorization).
+Browser clients supply any constructed registration to
+`mcp.NewAuthorizationCodeHTTPTransport`. Public and signed HTTPS metadata documents
+use registration constructors rather than separate browser transports. All profiles
+share PKCE, issuer and redirect checks, refresh rotation and operation-specific
+scope upgrades. The host owns sign-in and consent; tokens stay private to its user
+and resource transport. See [browser authorization](docs/runtime.md#browser-authorization).
 
 Application code owns planners, service behavior, authorization, side-effect
 idempotency, storage, and deployment. Deploy generated packages, callers, and

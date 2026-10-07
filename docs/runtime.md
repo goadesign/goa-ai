@@ -6748,22 +6748,50 @@ or `EncodeResourceContent`/`DecodeResourceContent`. Use the generated MCP endpoi
 clients and servers to encode and decode protocol envelopes; their content
 validators enforce MCP's selected variant. No text-only codec alias remains.
 
+### Client registration
+
+An OAuth application registration identifies one client at one exact HTTPS issuer
+and chooses its authentication. Construct it separately from the grant:
+
+| Registered authentication | Constructor |
+| --- | --- |
+| Public client with no secret | `NewPublicClientRegistration(issuer, clientID)` |
+| Secret in the Basic header | `NewBasicClientRegistration(issuer, clientID, secret)` |
+| Secret in the token request body | `NewSecretClientRegistration(issuer, clientID, secret)` |
+| Signed client assertion | `NewSignedClientRegistration(ClientAssertion)` |
+| Public HTTPS metadata document | `NewPublicClientMetadataRegistration(issuer, documentURL)` |
+| Signed HTTPS metadata document | `NewSignedClientMetadataRegistration(ClientAssertion)` |
+
+Each constructor returns `(*ClientRegistration, error)`. Registration contains no
+user, resource permission or access token. Applications may share it across grants;
+each constructed transport owns its user and resource credentials independently.
+The issuer must advertise the exact selected authentication method. The runtime
+never tries another method, relocates a secret or performs dynamic registration.
+
+Goa generates separate required authentication fields for each grant. Basic
+credentials are individually form-encoded before native header encoding; they
+are absent from the request body. POST credentials appear only in the generated
+token form. Signed authentication uses a fresh assertion for every exchange.
+No application supplies a form encoder or a callback editing authentication fields.
+
 ### Client-secret authorization
 
-A preregistered client can obtain tokens before MCP requests using
-`NewClientCredentialsHTTPTransport`. Construct one transport for each resource,
-issuer and registered client. Supply an `*http.Client` for the issuer's trusted
-network configuration; the constructor copies it and rejects redirects.
+Construct a confidential registration, then request machine permissions with
+`NewClientCredentialsHTTPTransport`:
 
 ```go
+registration, err := mcp.NewSecretClientRegistration(
+    "https://identity.example/tenant", registeredClientID, registeredClientSecret,
+)
+if err != nil {
+    return err
+}
 transport, err := mcp.NewClientCredentialsHTTPTransport(mcp.HTTPOptions{
     Endpoint: "https://records.example/mcp",
     Client: httpClient,
     ClientInfo: mcp.ClientInfo{Name: "records-agent", Version: "1"},
 }, mcp.ClientCredentials{
-    Issuer: "https://identity.example/tenant",
-    ClientID: registeredClientID,
-    ClientSecret: registeredClientSecret,
+    Registration: registration,
     Scopes: []string{"records:read"},
 })
 if err != nil {
@@ -6776,177 +6804,114 @@ caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
 })
 ```
 
-The same transport can be supplied to the generated HTTP client's `NewClient`
-constructor with its normal encoder, decoder and response-restoration arguments.
-Generated `NewCaller` retains the grant. Goa generates token form requests
-from the private OAuth design, including each operation's fixed grant type;
-applications supply no form encoder. The original design and configured caller
-still own tool arguments, URL fields and protocol metadata.
+Use `NewBasicClientRegistration` when the application is registered for Basic
+authentication. Machine grants require confidential authentication and advertised
+`client_credentials` support. Public registrations are rejected at construction.
+The pinned MCP machine extension conflicts on secret placement; these explicit
+OAuth methods do not claim to resolve that draft's conformance ambiguity.
 
-Before each MCP attempt, typed Goa clients read protected-resource and issuer
-metadata, require exact resource and issuer identities, and check explicit
-`client_credentials`, `client_secret_post` and `client_secret_basic` support.
-The pinned client-credentials draft conflicts on secret placement; this profile
-requires both advertised methods and sends the secret only in the token POST
-form. It never probes credential placement. The MCP request receives only the
-opaque bearer token in its authorization header.
+Supply the same transport to a generated HTTP client's `NewClient` with its normal
+encoder and decoder; generated `NewCaller` retains its grant. Native domain
+arguments and URL credentials still follow the original generated contract.
+Before each MCP attempt, generated clients read protected-resource and issuer
+metadata and verify their exact identities. Missing well-known resource metadata
+can use a validated discovery challenge without executing a domain tool.
 
-A token is reused only within its configured grant and reported lifetime, in
-seconds, measured from before token exchange. Missing lifetime means obtain
-again for the next operation; zero lifetime is expired. Cancellation controls
-metadata reads, token exchange and waiting behind another call. Metadata,
-token or redirect failures stop before MCP dispatch. Returned errors exclude
-secrets, token values and issuer response diagnostics. HTTP 401/403 responses
-cause no automatic repeat with unchanged credentials.
-
-When well-known resource metadata is absent, discovery asks `server/discover`
-for a Bearer challenge and reads its advertised HTTPS metadata document. It does
-not execute a domain tool to discover authorization. This machine profile does
-not initiate browser consent or scope upgrades. Enterprise exchange and resource-server verification remain unfinished. It does not
-advertise the authorization extension as complete. Full OAuth and resource-server verification remain
-required before the breaking release. See the
-[upgrade plan](mcp_protocol_upgrade_plan.md#built-in-client-secret-grant-milestone).
+Token reuse ends at the returned lifetime in seconds, measured from before
+exchange. Missing lifetime means obtain again for the next operation; zero means
+expired. Cancellation covers discovery, exchange and waiting behind another call.
+The constructor copies the supplied `*http.Client` and rejects redirects.
+Failures before MCP dispatch disclose no credentials or issuer diagnostics.
+Machine HTTP 401/403 responses remain terminal; unchanged credentials are not retried.
 
 ### Signed client-assertion authorization
 
-A signed JSON Web Token (JWT) can authenticate a preregistered machine client
-at its authorization server. `mcp.NewClientAssertionHTTPTransport` creates the
-claims and sends the generated form request; the host supplies its constructed
-signer and the facts agreed during registration:
+A signed JSON Web Token (JWT) authenticates the application independently of its
+grant. The host supplies facts agreed during registration:
 
 ```go
-transport, err := mcp.NewClientAssertionHTTPTransport(mcp.HTTPOptions{
-    Endpoint: "https://records.example/mcp",
-    Client: trustedHTTPClient,
-    ClientInfo: mcp.ClientInfo{Name: "records-agent", Version: "1"},
-}, mcp.ClientAssertion{
+registration, err := mcp.NewSignedClientRegistration(mcp.ClientAssertion{
     Issuer: "https://identity.example",
     ClientID: registeredClientID,
     AssertionIssuer: registeredAssertionIssuer,
     Audience: registeredAssertionAudience,
     Lifetime: registeredAssertionLifetime,
     Signer: registeredSigner,
-    Scopes: []string{"records:read"},
 })
 ```
 
-`registeredSigner` is a `jose.Signer` from `github.com/go-jose/go-jose/v4`,
-constructed with the host's registered private key or its opaque key signer.
-The signer owns any key-operation timeout. Its options must not override the
-algorithm header. The issuer must advertise `client_credentials`,
+Check the constructor error, then supply `registration` to `ClientCredentials` or
+`AuthorizationCode`. Their permission sets belong to each grant, not this signing
+configuration. `registeredSigner` is a constructed `jose.Signer` from
+`github.com/go-jose/go-jose/v4`. Its key implementation owns signing timeouts;
+options must not override the algorithm header. Issuer metadata must advertise
 `private_key_jwt` and the actual asymmetric signing algorithm. RSA, RSA-PSS,
-ECDSA and Ed25519 signing are supported through the library. Signatures made
-with a shared secret and unsupported algorithms are rejected before token exchange; there is no switch
-to client-secret authentication after failure.
+ECDSA and Ed25519 are supported. Shared-secret signatures are rejected.
 
-`Issuer` selects the trusted authorization server. `ClientID` becomes the JWT
-subject, while `AssertionIssuer` identifies the registered signing entity.
-`Audience` is the authorization-server identity agreed during registration;
-RFC 7523 permits a token endpoint as that identity but does not require it.
-Discovery never guesses either assertion identity. The native form carries the
-assertion type, client-credentials grant type, exact MCP resource and optional
-scope. The client identifier appears in the signed subject and is omitted from
-the form, following the pinned MCP client-credentials extension.
+`ClientID` becomes the signed subject. `AssertionIssuer` identifies the registered
+signing entity; `Audience` is the registered authorization-server identity.
+Discovery never guesses those values. `Lifetime` is the validity of one assertion
+in positive whole seconds, with exclusive expiration; it imposes no access-token
+or operation lifetime. Each exchange signs fresh issued-at, expiry and random
+identifier claims. Signing cancellation, expiration or failure stops before exchange.
+The form contains no duplicate client identifier or secret. Only the returned
+resource access token reaches MCP; assertions and signer diagnostics never enter
+arguments, checkpoints, errors or traces.
 
-`Lifetime` is the registered validity of one assertion, expressed as positive
-whole seconds. Expiration is exclusive. Goa AI imposes no arbitrary maximum;
-this value neither limits an MCP operation nor expires a separately issued access
-token. Each acquisition signs a new assertion with fresh issued-at, expiration
-and random identifier claims. Cancellation or expiration during signing stops
-before exchange. The shared credential owner caches the resource access token
-according to that token's own lifetime. Signed assertions, private keys
-and signer diagnostics stay outside MCP arguments, checkpoints, errors and traces.
-
-Supply this transport to `HTTPOptions.Client` or a generated HTTP client's
-`NewClient`, then construct its normal `NewCaller`. Discovery, exact resource
-binding, token isolation and redirect rejection use the same implementation as
-other OAuth profiles. A machine client's HTTP 401 or 403 remains terminal.
-Enterprise exchange, durable host authorization and independent conformance
-remain release gates.
-[RFC 7523](https://www.rfc-editor.org/rfc/rfc7523.html),
-[MCP client-credentials profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/draft/oauth-client-credentials.mdx).
+[RFC 7523](https://www.rfc-editor.org/rfc/rfc7523.html) defines signed authentication.
+The [pinned MCP machine profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/draft/oauth-client-credentials.mdx)
+remains subject to independent conformance verification before release.
 
 ### Browser authorization
 
-A host can supply a browser consent callback to `NewAuthorizationCodeHTTPTransport`
-for a preregistered public client. Construct a separate transport for each host
-user or application, issuer and protected resource. Supply the transport to `HTTPOptions.Client`
-or a generated HTTP client, just as with the client-secret profile.
+Browser grants use the same constructed registration for public, Basic, POST or
+signed authentication. A host supplies sign-in and consent for one user:
 
 ```go
+registration, err := mcp.NewPublicClientRegistration(
+    "https://identity.example/tenant", registeredPublicClientID,
+)
+if err != nil {
+    return err
+}
 transport, err := mcp.NewAuthorizationCodeHTTPTransport(mcp.HTTPOptions{
     Endpoint: "https://records.example/mcp",
     Client: httpClient,
     ClientInfo: mcp.ClientInfo{Name: "records-host", Version: "1"},
 }, mcp.AuthorizationCode{
-    Issuer: "https://identity.example/tenant",
-    ClientID: registeredPublicClientID,
+    Registration: registration,
     RedirectURI: "https://host.example/oauth/callback",
     Authorize: authorizeInBrowser,
 })
 ```
 
-`Authorize(ctx, authorizationURL)` must open sign-in and consent for that host's
-user or application, return the complete redirect URL, and respect cancellation. It must
-not log either URL. The runtime generates a fresh state and private PKCE verifier
-for every exchange. It verifies advertised S256 support and public token
-authentication, checks the exact redirect and returned issuer, and exchanges the
-code through the generated typed client. Issuers must advertise `none` token
-authentication; authorization-code support uses the standard metadata default
-when the grant list is omitted. A present response `iss` must always match the
-selected issuer, including error responses. When the issuer advertises response
-issuer support, omission is rejected.
+Check the transport error. Construct a separate transport for each host user and
+resource, even when their application registration is shared. `Authorize(ctx, URL)`
+returns the complete redirect URL and respects cancellation; neither URL may be logged.
+The runtime creates fresh state and a private Proof Key for Code Exchange (PKCE)
+verifier, verifies advertised S256 support, and checks the exact redirect and issuer
+before exchanging the code through a native generated client. A present callback
+`iss` always matches the selected issuer, including error responses. Omission is
+rejected when issuer metadata requires it. Authorization-code support uses its
+standard metadata default when the grant list is omitted.
 
-`NewClientMetadataHTTPTransport` accepts the same configuration with `ClientID`
-set to the HTTPS URL of the host's published registration document. The issuer
-must advertise client-metadata support. The document must identify that exact
-URL, provide a client name, include the configured redirect and use `none`
-authentication. Its grant and response lists use their standard authorization-code
-and code defaults when omitted. Shared-secret properties are forbidden. URLs
-with dot path segments or no path component are rejected. The host owns publishing
-and making this document reachable; the transport checks it before consent and
-uses the same browser flow. It does not use deprecated dynamic registration.
+For self-hosted registration, select `NewPublicClientMetadataRegistration` or
+`NewSignedClientMetadataRegistration` before constructing this same browser grant.
+The client identifier is the exact HTTPS document URL with a path and no dot
+segments. The issuer must advertise document support. The document must identify
+that URL, provide a name, register the callback and declare the selected public or
+signed authentication. Grant and response lists use their standard code defaults
+when omitted. Shared-secret properties are forbidden. The host publishes the
+document; the client validates it before consent.
 
-Signed browser clients use `SignedAuthorizationCode`, which embeds the existing
-`ClientAssertion` signing registration and adds `RedirectURI` and `Authorize`:
-
-```go
-transport, err := mcp.NewSignedAuthorizationCodeHTTPTransport(mcp.HTTPOptions{
-    Endpoint: "https://records.example/mcp",
-    Client: httpClient,
-    ClientInfo: mcp.ClientInfo{Name: "records-host", Version: "1"},
-}, mcp.SignedAuthorizationCode{
-    ClientAssertion: mcp.ClientAssertion{
-        Issuer: "https://identity.example/tenant",
-        ClientID: registeredClientID,
-        AssertionIssuer: registeredAssertionIssuer,
-        Audience: registeredAssertionAudience,
-        Lifetime: registeredAssertionLifetime,
-        Signer: registeredSigner,
-    },
-    RedirectURI: "https://host.example/oauth/callback",
-    Authorize: authorizeInBrowser,
-})
-```
-
-Check the constructor error and supply the transport to the same generated or
-discovered client. The issuer must advertise `private_key_jwt`, signing
-algorithms, authorization-code grants and S256. Every code and refresh request
-contains a fresh signed assertion; public-client and shared-secret
-authentication are never substituted. Consent, callback checks, refresh
-rotation, token reuse and challenge recovery use the same browser lifecycle.
-
-For signed self-hosted registration, use `NewSignedClientMetadataHTTPTransport`
-with the same configuration and an HTTPS metadata URL as `ClientID`. The issuer
-must advertise document support. The document must bind that exact identifier
-and redirect, declare `private_key_jwt`, and contain exactly one `jwks_uri` or
-inline `jwks`. Key URLs must use HTTPS; inline sets must contain only valid public
-keys. The authorization server resolves the key URL and verifies the signing
-registration. The client checks the document before consent but does not fetch
-another key catalog. Documents declaring public authentication, shared secrets,
-both key sources or neither are rejected before consent. These rules follow
-[MCP client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration)
-and [client metadata authentication](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-01.html#section-6.2).
+Signed documents declare `private_key_jwt` and exactly one HTTPS `jwks_uri` or
+inline `jwks` containing valid public keys only. The authorization server resolves
+key URLs and verifies assertions; the client does not fetch another key catalog.
+Documents with another identity, authentication, callback, private keys or both/neither
+key sources are rejected. `redirect_uris` must be present but may be empty for
+grants that have no browser callback; browser membership remains required.
+See [MCP client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration)
+and its referenced [metadata authentication draft](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-00.html#section-6.2).
 
 An expired token can use its private refresh credential when the issuer supports
 refresh. A client-metadata registration must also include `refresh_token` in its

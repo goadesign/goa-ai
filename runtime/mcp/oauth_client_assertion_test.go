@@ -57,7 +57,7 @@ func TestClientAssertionAuthenticatesBeforeDispatch(t *testing.T) {
 				return nil
 			}
 			peer.mutex.Unlock()
-			transport, err := NewClientAssertionHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, registration)
+			transport, err := newSignedMachineTestTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, registration)
 			require.NoError(t, err)
 			if discovered {
 				caller, err := NewHTTPCaller(HTTPOptions{Endpoint: peer.resource, Client: transport, ClientInfo: ClientInfo{Name: "host", Version: "1"}})
@@ -122,7 +122,7 @@ func TestClientAssertionChecksMetadataAndAlgorithms(t *testing.T) {
 			peer := newOAuthPeer(t)
 			advertiseAssertion(peer, "RS256")
 			tc.change(peer)
-			transport, err := NewClientAssertionHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, assertionRegistration(peer, signer))
+			transport, err := newSignedMachineTestTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, assertionRegistration(peer, signer))
 			require.NoError(t, err)
 			err = callOAuthPeer(t.Context(), transport, peer.resource)
 			require.Error(t, err)
@@ -156,7 +156,7 @@ func TestClientAssertionSigningFailuresStopBeforeExchange(t *testing.T) {
 			}
 			registration := assertionRegistration(peer, controlled)
 			registration.Lifetime = time.Second
-			transport, err := NewClientAssertionHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, registration)
+			transport, err := newSignedMachineTestTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, registration)
 			require.NoError(t, err)
 			err = callOAuthPeer(ctx, transport, peer.resource)
 			require.Error(t, err)
@@ -192,7 +192,7 @@ func TestClientAssertionLifetimeDoesNotLimitAccessTokenReuse(t *testing.T) {
 		return nil
 	}
 	peer.mutex.Unlock()
-	transport, err := NewClientAssertionHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, registration)
+	transport, err := newSignedMachineTestTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, registration)
 	require.NoError(t, err)
 	require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 	claims := <-received
@@ -224,7 +224,7 @@ func TestClientAssertionUsesFreshIdentityForEachGrant(t *testing.T) {
 		return nil
 	}
 	peer.mutex.Unlock()
-	transport, err := NewClientAssertionHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, registration)
+	transport, err := newSignedMachineTestTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, registration)
 	require.NoError(t, err)
 	require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 	require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
@@ -263,7 +263,7 @@ func TestClientAssertionSupportsAsymmetricSignerFamilies(t *testing.T) {
 				return err
 			}
 			peer.mutex.Unlock()
-			transport, err := NewClientAssertionHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, registration)
+			transport, err := newSignedMachineTestTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, registration)
 			require.NoError(t, err)
 			require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 			assert.EqualValues(t, 1, peer.tokenCalls.Load())
@@ -276,7 +276,7 @@ func TestClientAssertionRejectsSymmetricAuthentication(t *testing.T) {
 	advertiseAssertion(peer, "HS256")
 	signer, err := jose.NewSigner(jose.SigningKey{Algorithm: jose.HS256, Key: make([]byte, 32)}, nil)
 	require.NoError(t, err)
-	transport, err := NewClientAssertionHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, assertionRegistration(peer, signer))
+	transport, err := newSignedMachineTestTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, assertionRegistration(peer, signer))
 	require.NoError(t, err)
 	require.Error(t, callOAuthPeer(t.Context(), transport, peer.resource))
 	assert.Zero(t, peer.tokenCalls.Load())
@@ -293,7 +293,7 @@ func TestClientAssertionKeepsMachineRejectionsTerminal(t *testing.T) {
 			peer := newOAuthPeer(t)
 			advertiseAssertion(peer, "RS256")
 			peer.mcpStatus = status
-			transport, err := NewClientAssertionHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, assertionRegistration(peer, signer))
+			transport, err := newSignedMachineTestTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, assertionRegistration(peer, signer))
 			require.NoError(t, err)
 			err = callOAuthPeer(t.Context(), transport, peer.resource)
 			var response *HTTPResponseError
@@ -336,7 +336,7 @@ func TestClientAssertionIssuerRejectsWrongRegistration(t *testing.T) {
 				return err
 			}
 			peer.mutex.Unlock()
-			transport, err := NewClientAssertionHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, credentials)
+			transport, err := newSignedMachineTestTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, credentials)
 			require.NoError(t, err)
 			err = callOAuthPeer(t.Context(), transport, peer.resource)
 			require.Error(t, err)
@@ -387,13 +387,13 @@ func TestClientAssertionRequiresExplicitRegistration(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			credentials := ClientAssertion{Issuer: "https://issuer.example", ClientID: "registered", AssertionIssuer: "registered-signer", Audience: "registered-audience", Lifetime: time.Minute, Signer: signer}
 			tc.change(&credentials)
-			_, err := NewClientAssertionHTTPTransport(HTTPOptions{Endpoint: "https://resource.example/mcp", ClientInfo: ClientInfo{Name: "host", Version: "1"}}, credentials)
+			_, err := newSignedMachineTestTransport(HTTPOptions{Endpoint: "https://resource.example/mcp", ClientInfo: ClientInfo{Name: "host", Version: "1"}}, credentials)
 			require.Error(t, err)
 		})
 	}
 	// Registration may permit a longer assertion; there is no framework maximum
 	// that turns a per-assertion period into an operation or run lifetime rule.
-	_, err = NewClientAssertionHTTPTransport(HTTPOptions{Endpoint: "https://resource.example/mcp", ClientInfo: ClientInfo{Name: "host", Version: "1"}}, ClientAssertion{Issuer: "https://issuer.example", ClientID: "registered", AssertionIssuer: "registered-signer", Audience: "registered-audience", Lifetime: 24 * time.Hour, Signer: signer})
+	_, err = newSignedMachineTestTransport(HTTPOptions{Endpoint: "https://resource.example/mcp", ClientInfo: ClientInfo{Name: "host", Version: "1"}}, ClientAssertion{Issuer: "https://issuer.example", ClientID: "registered", AssertionIssuer: "registered-signer", Audience: "registered-audience", Lifetime: 24 * time.Hour, Signer: signer})
 	require.NoError(t, err)
 }
 
@@ -425,7 +425,7 @@ func advertiseAssertion(peer *oauthPeer, algorithms ...string) {
 // assertionRegistration supplies intentionally distinct registration identities
 // so tests reject deriving the assertion issuer or audience from discovery.
 func assertionRegistration(peer *oauthPeer, signer jose.Signer) ClientAssertion {
-	return ClientAssertion{Issuer: peer.issuer, ClientID: "registered-client", AssertionIssuer: "registered-signing-entity", Audience: "https://authorization.example/identity", Lifetime: time.Minute, Signer: signer, Scopes: []string{"records:read"}}
+	return ClientAssertion{Issuer: peer.issuer, ClientID: "registered-client", AssertionIssuer: "registered-signing-entity", Audience: "https://authorization.example/identity", Lifetime: time.Minute, Signer: signer}
 }
 
 // verifyAssertionForm checks the native form and cryptographically verifies
@@ -446,4 +446,14 @@ func verifyAssertionForm(form url.Values, resource string, registration ClientAs
 		return claims, errors.New("wrong registered assertion claims")
 	}
 	return claims, nil
+}
+
+// newSignedMachineTestTransport constructs registration separately from its grant,
+// keeping the real factory errors visible to configuration boundary tests.
+func newSignedMachineTestTransport(opts HTTPOptions, config ClientAssertion) (*HTTPTransport, error) {
+	registration, err := NewSignedClientRegistration(config)
+	if err != nil {
+		return nil, err
+	}
+	return NewClientCredentialsHTTPTransport(opts, ClientCredentials{Registration: registration, Scopes: []string{"records:read"}})
 }

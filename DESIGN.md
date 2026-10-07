@@ -2684,18 +2684,22 @@ Cancellation uses the active request context, including while waiting for anothe
 exchange. Each grant owns its token and does not share credentials with another
 resource, issuer or client. Native caller wrapping retains that grant.
 
-The profile requires explicit `client_credentials`, `client_secret_post` and
-`client_secret_basic` advertisements because the pinned extension draft conflicts
-on secret placement. It never probes another placement, follows redirects,
-repeats an unchanged credential after 401/403, or infers a JWT from token syntax.
-Only HTTP 404 advances well-known discovery; malformed documents, owner mismatch
-and other failures stop before dispatch. The machine profile returns resource
-rejections without changing its configured permissions. It does not advertise
-the authorization extension as complete.
+An immutable `ClientRegistration` chooses the exact issuer, client identity and
+public, Basic, POST-secret or signed authentication. It contains no user, scope
+or token. Native Goa expressions specialize each grant's required authentication
+fields; runtime selection follows the constructed registration. Machine grants
+require confidential authentication and explicit `client_credentials` support.
+The issuer must advertise the selected method; no method is inferred from another
+advertisement. The pinned machine extension still conflicts on secret placement,
+so explicit OAuth support is not an extension conformance claim. No redirects,
+unchanged machine-credential retries or token-syntax guesses are made. Only HTTP
+404 advances well-known discovery; malformed documents and owner mismatches stop
+before dispatch. Each transport retains separate user and resource token state
+when an application registration is shared.
 
 Browser authorization uses the same private grant owner and native generated
-OAuth contracts. Public and signed constructors select preregistration or a
-client-hosted HTTPS metadata document. Client-metadata identity, redirect membership and the
+OAuth contracts. Registration constructors select preregistration or a client-hosted HTTPS
+metadata document; one browser grant composes all authentication methods. Client-metadata identity, redirect membership and the
 absence of shared-secret members are checked before consent. Native Goa query
 decoding uses `issuer:iss` mapping for callback transport names. The host owns
 browser interaction; state, PKCE verification, issuer binding and refresh-token

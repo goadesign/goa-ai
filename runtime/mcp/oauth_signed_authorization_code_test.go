@@ -4,11 +4,12 @@
 package mcp
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
-	"net/url"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +18,16 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+type (
+	// signedBrowserConfig keeps the test's authentication expectations alongside
+	// its callback so the peer can independently verify the emitted signed claims.
+	signedBrowserConfig struct {
+		ClientAssertion
+		RedirectURI string
+		Authorize   func(context.Context, string) (string, error)
+	}
 )
 
 func TestSignedAuthorizationCodeAndRefresh(t *testing.T) {
@@ -30,7 +41,9 @@ func TestSignedAuthorizationCodeAndRefresh(t *testing.T) {
 					peer.clientMetadata = signedBrowserMetadata(t, registration, publicKey, profile == "metadata inline")
 				}
 				var identifiers []string
-				peer.verifyClient = func(form url.Values) error {
+				peer.verifyClient = func(request *http.Request) error {
+					form := request.PostForm
+					assert.Empty(t, request.Header.Get("Authorization"))
 					assert.NotContains(t, form, "client_id")
 					assert.NotContains(t, form, "client_secret")
 					assert.Equal(t, "urn:ietf:params:oauth:client-assertion-type:jwt-bearer", form.Get("client_assertion_type"))
@@ -145,9 +158,40 @@ func TestSignedBrowserIssuerRequiresSignedAuthentication(t *testing.T) {
 	}
 }
 
+func TestSignedMetadataMachineWithoutBrowserRedirects(t *testing.T) {
+	peer, config, publicKey := signedBrowserOAuthPeer(t)
+	config.ClientID = peer.server.URL + "/client/document.json"
+	peer.clientID = config.ClientID
+	peer.clientMetadata = fmt.Sprintf(`{"client_id":%q,"client_name":"Machine client","redirect_uris":[],"token_endpoint_auth_method":"private_key_jwt","grant_types":["client_credentials"],"jwks_uri":"https://client.example/keys"}`, config.ClientID)
+	peer.issuerBody = strings.Replace(peer.issuerBody, `"authorization_code","refresh_token"`, `"client_credentials"`, 1)
+	peer.verifyClient = func(request *http.Request) error {
+		assert.Empty(t, request.Header.Get("Authorization"))
+		assert.NotContains(t, request.PostForm, "client_id")
+		assert.NotContains(t, request.PostForm, "client_secret")
+		assert.Equal(t, "client_credentials", request.PostForm.Get("grant_type"))
+		token, err := jwt.ParseSigned(request.PostForm.Get("client_assertion"), []jose.SignatureAlgorithm{jose.EdDSA})
+		if err != nil {
+			return err
+		}
+		var claims jwt.Claims
+		if err := token.Claims(publicKey, &claims); err != nil {
+			return err
+		}
+		assert.Equal(t, config.ClientID, claims.Subject)
+		return nil
+	}
+	registration, err := NewSignedClientMetadataRegistration(config.ClientAssertion)
+	require.NoError(t, err)
+	transport, err := NewClientCredentialsHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, ClientCredentials{Registration: registration})
+	require.NoError(t, err)
+	require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
+	assert.Zero(t, peer.hostCalls.Load())
+	assert.EqualValues(t, 1, peer.tokenCalls.Load())
+}
+
 // signedBrowserOAuthPeer adds a real signing registration to the ordinary
 // browser peer, while retaining its existing PKCE and callback checks.
-func signedBrowserOAuthPeer(t *testing.T) (*browserOAuthPeer, SignedAuthorizationCode, ed25519.PublicKey) {
+func signedBrowserOAuthPeer(t *testing.T) (*browserOAuthPeer, signedBrowserConfig, ed25519.PublicKey) {
 	t.Helper()
 	peer := newBrowserOAuthPeer(t)
 	publicKey, privateKey, err := ed25519.GenerateKey(rand.Reader)
@@ -156,7 +200,7 @@ func signedBrowserOAuthPeer(t *testing.T) (*browserOAuthPeer, SignedAuthorizatio
 	require.NoError(t, err)
 	peer.issuerBody = strings.Replace(peer.issuerBody, `"none"`, `"private_key_jwt"`, 1)
 	peer.issuerBody = strings.TrimSuffix(peer.issuerBody, "}") + `,"token_endpoint_auth_signing_alg_values_supported":["EdDSA"],"client_id_metadata_document_supported":true}`
-	return peer, SignedAuthorizationCode{
+	return peer, signedBrowserConfig{
 		ClientAssertion: ClientAssertion{Issuer: peer.issuer, ClientID: peer.clientID, AssertionIssuer: "registered-signer", Audience: "registered-audience", Lifetime: time.Minute, Signer: signer},
 		RedirectURI:     "https://host.example/callback/a%2Fb?route=selected", Authorize: peer.authorize(t),
 	}, publicKey
@@ -164,7 +208,7 @@ func signedBrowserOAuthPeer(t *testing.T) (*browserOAuthPeer, SignedAuthorizatio
 
 // signedBrowserMetadata publishes either inline public keys or their registered
 // HTTPS address. Neither variant includes the private signing key.
-func signedBrowserMetadata(t *testing.T, registration SignedAuthorizationCode, key ed25519.PublicKey, inline bool) string {
+func signedBrowserMetadata(t *testing.T, registration signedBrowserConfig, key ed25519.PublicKey, inline bool) string {
 	t.Helper()
 	keys := `,"jwks_uri":"https://client.example/keys"`
 	if inline {
@@ -177,13 +221,15 @@ func signedBrowserMetadata(t *testing.T, registration SignedAuthorizationCode, k
 
 // signedBrowserTransport constructs only the selected registration profile;
 // every returned transport uses the existing shared credential owner.
-func signedBrowserTransport(t *testing.T, peer *browserOAuthPeer, registration SignedAuthorizationCode, metadata bool) *HTTPTransport {
+func signedBrowserTransport(t *testing.T, peer *browserOAuthPeer, registration signedBrowserConfig, metadata bool) *HTTPTransport {
 	t.Helper()
-	constructor := NewSignedAuthorizationCodeHTTPTransport
+	constructor := NewSignedClientRegistration
 	if metadata {
-		constructor = NewSignedClientMetadataHTTPTransport
+		constructor = NewSignedClientMetadataRegistration
 	}
-	transport, err := constructor(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, registration)
+	client, err := constructor(registration.ClientAssertion)
+	require.NoError(t, err)
+	transport, err := NewAuthorizationCodeHTTPTransport(HTTPOptions{Endpoint: peer.resource, Client: peer.server.Client(), ClientInfo: ClientInfo{Name: "host", Version: "1"}}, AuthorizationCode{Registration: client, RedirectURI: registration.RedirectURI, Authorize: registration.Authorize})
 	require.NoError(t, err)
 	return transport
 }

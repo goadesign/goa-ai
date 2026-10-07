@@ -13,7 +13,7 @@ paths:
             tags:
                 - access_tokens
             summary: assertion access_tokens
-            description: Authenticate a preregistered client using one signed JWT assertion and request a bearer token for the exact MCP resource.
+            description: Request a machine access token for the exact resource using this registration's required authentication.
             operationId: access_tokens#assertion
             requestBody:
                 description: Request body for assertion.
@@ -41,6 +41,107 @@ paths:
                                 refresh_token: 5i2
                                 scope: c$
                                 token_type: BEARER
+    /basic:
+        post:
+            tags:
+                - access_tokens
+            summary: basic access_tokens
+            description: Request a machine access token for the exact resource using this registration's required authentication.
+            operationId: access_tokens#basic
+            requestBody:
+                description: Request body for basic.
+                required: true
+                content:
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicRequestBody'
+                        example:
+                            grant_type: client_credentials
+                            resource: http://anderson.net/nola
+                            scope: 6 >/
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BearerToken'
+                            example:
+                                access_token: a
+                                expires_in: 810695852298338120
+                                refresh_token: g
+                                scope: U O/
+                                token_type: BEARER
+            security:
+                - registration_credentials_header_Authorization: []
+    /basic_code:
+        post:
+            tags:
+                - access_tokens
+            summary: basic_code access_tokens
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
+            operationId: access_tokens#basic_code
+            requestBody:
+                description: Request body for basic_code.
+                required: true
+                content:
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicCodeRequestBody'
+                        example:
+                            code: nv
+                            code_verifier: 1ayym6aO-vec8I-buL7kvqBgos~tai0~SNYNrRhbQ0P
+                            grant_type: authorization_code
+                            redirect_uri: http://jaskolski.net/dax_dietrich
+                            resource: http://brekke.com/sigmund
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BearerToken'
+                            example:
+                                access_token: b
+                                expires_in: 4598226400651100102
+                                refresh_token: "6"
+                                scope: G 8m H
+                                token_type: BEARER
+            security:
+                - registration_credentials_header_Authorization: []
+    /basic_refresh:
+        post:
+            tags:
+                - access_tokens
+            summary: basic_refresh access_tokens
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
+            operationId: access_tokens#basic_refresh
+            requestBody:
+                description: Request body for basic_refresh.
+                required: true
+                content:
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/BasicRefreshRequestBody'
+                        example:
+                            grant_type: refresh_token
+                            refresh_token: "8"
+                            resource: http://corkeryohara.com/kyra.langosh
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BearerToken'
+                            example:
+                                access_token: "6"
+                                expires_in: 6439202858314348098
+                                refresh_token: h
+                                scope: er
+                                token_type: BEARER
+            security:
+                - registration_credentials_header_Authorization: []
     /callback:
         get:
             tags:
@@ -126,7 +227,7 @@ paths:
             tags:
                 - access_tokens
             summary: code access_tokens
-            description: Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
             operationId: access_tokens#code
             requestBody:
                 description: Request body for code.
@@ -256,6 +357,7 @@ paths:
                                     - Odit dolorem omnis eveniet.
                                 redirect_uris:
                                     - http://baileyhintz.biz/major
+                                    - http://little.name/colin.doyle
                                 response_types:
                                     - Est ut rerum qui.
                                     - Id quas ex debitis rem rerum.
@@ -265,7 +367,7 @@ paths:
             tags:
                 - access_tokens
             summary: refresh access_tokens
-            description: Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
             operationId: access_tokens#refresh
             requestBody:
                 description: Request body for refresh.
@@ -315,12 +417,113 @@ paths:
                                 scopes_supported:
                                     - '{'
                                     - '{d'
+    /secret:
+        post:
+            tags:
+                - access_tokens
+            summary: secret access_tokens
+            description: Request a machine access token for the exact resource using this registration's required authentication.
+            operationId: access_tokens#secret
+            requestBody:
+                description: Request body for secret.
+                required: true
+                content:
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/SecretRequestBody'
+                        example:
+                            client_id: "6"
+                            client_secret: ehj
+                            grant_type: client_credentials
+                            resource: http://senger.name/antwan_rath
+                            scope: lk D G
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BearerToken'
+                            example:
+                                access_token: lw2
+                                expires_in: 8271034756713473025
+                                refresh_token: p
+                                scope: '}O %'
+                                token_type: BEARER
+    /secret_code:
+        post:
+            tags:
+                - access_tokens
+            summary: secret_code access_tokens
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
+            operationId: access_tokens#secret_code
+            requestBody:
+                description: Request body for secret_code.
+                required: true
+                content:
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/SecretCodeRequestBody'
+                        example:
+                            client_id: "0"
+                            client_secret: p
+                            code: og
+                            code_verifier: ~OxABi5ZLLPnHR3JtjOW-8wx.bLzLKao9EOCZ0a7gKJ
+                            grant_type: authorization_code
+                            redirect_uri: http://hammes.net/jeremie_douglas
+                            resource: http://haucktrantow.biz/hank
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BearerToken'
+                            example:
+                                access_token: "6"
+                                expires_in: 7333019392166954381
+                                refresh_token: w
+                                scope: 1( /
+                                token_type: BEARER
+    /secret_refresh:
+        post:
+            tags:
+                - access_tokens
+            summary: secret_refresh access_tokens
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
+            operationId: access_tokens#secret_refresh
+            requestBody:
+                description: Request body for secret_refresh.
+                required: true
+                content:
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/SecretRefreshRequestBody'
+                        example:
+                            client_id: smq
+                            client_secret: "n"
+                            grant_type: refresh_token
+                            refresh_token: m
+                            resource: http://erdmanbernhard.biz/edd.powlowski
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/BearerToken'
+                            example:
+                                access_token: 3n6
+                                expires_in: 946865118970296053
+                                refresh_token: ay0
+                                scope: j
+                                token_type: BEARER
     /signed_code:
         post:
             tags:
                 - access_tokens
             summary: signed_code access_tokens
-            description: Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
             operationId: access_tokens#signed_code
             requestBody:
                 description: Request body for signed_code.
@@ -380,6 +583,7 @@ paths:
                                     - http://tillman.com/shaun
                                     - http://schowalter.biz/myriam
                                     - http://blickschoen.name/noelia_feil
+                                    - http://brekkecorwin.biz/alexane_beatty
                                 response_types:
                                     - Eaque repellat ea iure suscipit.
                                     - Id laborum facere est et.
@@ -391,7 +595,7 @@ paths:
             tags:
                 - access_tokens
             summary: signed_refresh access_tokens
-            description: Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
             operationId: access_tokens#signed_refresh
             requestBody:
                 description: Request body for signed_refresh.
@@ -419,39 +623,6 @@ paths:
                                 refresh_token: 2m1
                                 scope: H$ 7 w
                                 token_type: BEARER
-    /token:
-        post:
-            tags:
-                - access_tokens
-            summary: secret access_tokens
-            description: Exchange a preregistered client identifier and secret using request-body authentication for one resource and its configured permissions.
-            operationId: access_tokens#secret
-            requestBody:
-                description: Request body for secret.
-                required: true
-                content:
-                    application/x-www-form-urlencoded:
-                        schema:
-                            $ref: '#/components/schemas/SecretRequestBody'
-                        example:
-                            client_id: "6"
-                            client_secret: ehj
-                            grant_type: client_credentials
-                            resource: http://senger.name/antwan_rath
-                            scope: lk D G
-            responses:
-                "200":
-                    description: OK response.
-                    content:
-                        application/json:
-                            schema:
-                                $ref: '#/components/schemas/BearerToken'
-                            example:
-                                access_token: lw2
-                                expires_in: 8271034756713473025
-                                refresh_token: p
-                                scope: '}O %'
-                                token_type: BEARER
 components:
     schemas:
         AssertionRequestBody:
@@ -471,19 +642,19 @@ components:
                         - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
                 grant_type:
                     type: string
-                    description: Client-credentials grant selected by this operation
+                    description: Fixed client-credentials grant
                     default: client_credentials
                     example: client_credentials
                     enum:
                         - client_credentials
                 resource:
                     type: string
-                    description: Exact resource for which the token is requested
+                    description: Exact protected resource identifier
                     example: http://hudson.info/ignatius
                     format: uri
                 scope:
                     type: string
-                    description: Space-separated permissions requested by the configured client
+                    description: Space-separated permissions requested for the resource
                     example: z# r+ Y-
                     pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
             description: Request body for assertion.
@@ -496,31 +667,130 @@ components:
             required:
                 - client_assertion
                 - resource
+        BasicCodeRequestBody:
+            type: object
+            properties:
+                code:
+                    type: string
+                    description: Authorization code from the validated callback
+                    example: nv
+                    pattern: ^[\x20-\x7e]+$
+                    minLength: 1
+                code_verifier:
+                    type: string
+                    description: Private verifier protecting this code exchange
+                    example: 1ayym6aO-vec8I-buL7kvqBgos~tai0~SNYNrRhbQ0P
+                    pattern: ^[A-Za-z0-9._~-]{43,128}$
+                grant_type:
+                    type: string
+                    description: Fixed authorization-code grant
+                    default: authorization_code
+                    example: authorization_code
+                    enum:
+                        - authorization_code
+                redirect_uri:
+                    type: string
+                    description: Exact registered callback used during authorization
+                    example: http://jaskolski.net/dax_dietrich
+                    format: uri
+                resource:
+                    type: string
+                    description: Exact protected resource identifier
+                    example: http://brekke.com/sigmund
+                    format: uri
+            description: Request body for basic_code.
+            example:
+                code: nv
+                code_verifier: 1ayym6aO-vec8I-buL7kvqBgos~tai0~SNYNrRhbQ0P
+                grant_type: authorization_code
+                redirect_uri: http://jaskolski.net/dax_dietrich
+                resource: http://brekke.com/sigmund
+            required:
+                - code
+                - code_verifier
+                - redirect_uri
+                - resource
+        BasicRefreshRequestBody:
+            type: object
+            properties:
+                grant_type:
+                    type: string
+                    description: Fixed refresh grant
+                    default: refresh_token
+                    example: refresh_token
+                    enum:
+                        - refresh_token
+                refresh_token:
+                    type: string
+                    description: Private refresh credential from the original grant
+                    example: "8"
+                    pattern: ^[\x20-\x7e]+$
+                    minLength: 1
+                resource:
+                    type: string
+                    description: Exact protected resource identifier
+                    example: http://corkeryohara.com/kyra.langosh
+                    format: uri
+            description: Request body for basic_refresh.
+            example:
+                grant_type: refresh_token
+                refresh_token: "8"
+                resource: http://corkeryohara.com/kyra.langosh
+            required:
+                - refresh_token
+                - resource
+        BasicRequestBody:
+            type: object
+            properties:
+                grant_type:
+                    type: string
+                    description: Fixed client-credentials grant
+                    default: client_credentials
+                    example: client_credentials
+                    enum:
+                        - client_credentials
+                resource:
+                    type: string
+                    description: Exact protected resource identifier
+                    example: http://anderson.net/nola
+                    format: uri
+                scope:
+                    type: string
+                    description: Space-separated permissions requested for the resource
+                    example: 6 >/
+                    pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+            description: Request body for basic.
+            example:
+                grant_type: client_credentials
+                resource: http://anderson.net/nola
+                scope: 6 >/
+            required:
+                - resource
         BearerToken:
             type: object
             properties:
                 access_token:
                     type: string
                     description: Opaque bearer token returned by the issuer
-                    example: "5"
+                    example: e
                     pattern: ^[A-Za-z0-9._~+/-]+=*$
                     minLength: 1
                 expires_in:
                     type: integer
                     description: Access token lifetime in seconds from the token response
-                    example: 8654397654246435502
+                    example: 3735090031140556063
                     format: int64
                     minimum: 0
                 refresh_token:
                     type: string
                     description: Private refresh credential; never sent to a resource server
-                    example: 5i2
+                    example: d
                     pattern: ^[\x20-\x7e]+$
                     minLength: 1
                 scope:
                     type: string
                     description: Space-separated permissions granted by the issuer
-                    example: c$
+                    example: ^a {
                     pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
                 token_type:
                     type: string
@@ -529,10 +799,10 @@ components:
                     pattern: ^[Bb][Ee][Aa][Rr][Ee][Rr]$
             description: An opaque resource access token and the optional refresh credential issued in the same grant.
             example:
-                access_token: "5"
-                expires_in: 8654397654246435502
-                refresh_token: 5i2
-                scope: c$
+                access_token: e
+                expires_in: 3735090031140556063
+                refresh_token: d
+                scope: ^a {
                 token_type: BEARER
             required:
                 - access_token
@@ -542,35 +812,35 @@ components:
             properties:
                 client_id:
                     type: string
-                    description: Public client identifier registered with the selected issuer
+                    description: Registered public client identifier
                     example: e
                     minLength: 1
                 code:
                     type: string
-                    description: Authorization code from the validated redirect
+                    description: Authorization code from the validated callback
                     example: a2r
                     pattern: ^[\x20-\x7e]+$
                     minLength: 1
                 code_verifier:
                     type: string
-                    description: Private PKCE verifier for this authorization exchange
+                    description: Private verifier protecting this code exchange
                     example: 2Wi.9M6Y1.F6w8_oYgHXkKaHFHSCK-9T6-B3ZXAGEAJEx
                     pattern: ^[A-Za-z0-9._~-]{43,128}$
                 grant_type:
                     type: string
-                    description: Authorization-code grant selected by this operation
+                    description: Fixed authorization-code grant
                     default: authorization_code
                     example: authorization_code
                     enum:
                         - authorization_code
                 redirect_uri:
                     type: string
-                    description: Exact redirect used in the authorization request
+                    description: Exact registered callback used during authorization
                     example: http://sporer.biz/nick
                     format: uri
                 resource:
                     type: string
-                    description: Exact resource for which the token is requested
+                    description: Exact protected resource identifier
                     example: http://bauch.com/alvena
                     format: uri
             description: Request body for code.
@@ -926,7 +1196,7 @@ components:
                     description: Registered callbacks owned by the client host
                     example:
                         - http://baileyhintz.biz/major
-                    minItems: 1
+                        - http://little.name/colin.doyle
                 response_types:
                     type: array
                     items:
@@ -955,6 +1225,7 @@ components:
                     - Odit dolorem omnis eveniet.
                 redirect_uris:
                     - http://baileyhintz.biz/major
+                    - http://little.name/colin.doyle
                 response_types:
                     - Est ut rerum qui.
                     - Id quas ex debitis rem rerum.
@@ -969,12 +1240,12 @@ components:
             properties:
                 client_id:
                     type: string
-                    description: Public client identifier of the original grant
+                    description: Registered public client identifier
                     example: r
                     minLength: 1
                 grant_type:
                     type: string
-                    description: Refresh grant selected by this operation
+                    description: Fixed refresh grant
                     default: refresh_token
                     example: refresh_token
                     enum:
@@ -987,7 +1258,7 @@ components:
                     minLength: 1
                 resource:
                     type: string
-                    description: Exact resource of the original grant
+                    description: Exact protected resource identifier
                     example: http://anderson.name/josefa
                     format: uri
             description: Request body for refresh.
@@ -1000,34 +1271,134 @@ components:
                 - client_id
                 - refresh_token
                 - resource
+        SecretCodeRequestBody:
+            type: object
+            properties:
+                client_id:
+                    type: string
+                    description: Registered client identifier
+                    example: "0"
+                    minLength: 1
+                client_secret:
+                    type: string
+                    description: Secret registered with this authorization server
+                    example: p
+                    minLength: 1
+                code:
+                    type: string
+                    description: Authorization code from the validated callback
+                    example: og
+                    pattern: ^[\x20-\x7e]+$
+                    minLength: 1
+                code_verifier:
+                    type: string
+                    description: Private verifier protecting this code exchange
+                    example: ~OxABi5ZLLPnHR3JtjOW-8wx.bLzLKao9EOCZ0a7gKJ
+                    pattern: ^[A-Za-z0-9._~-]{43,128}$
+                grant_type:
+                    type: string
+                    description: Fixed authorization-code grant
+                    default: authorization_code
+                    example: authorization_code
+                    enum:
+                        - authorization_code
+                redirect_uri:
+                    type: string
+                    description: Exact registered callback used during authorization
+                    example: http://hammes.net/jeremie_douglas
+                    format: uri
+                resource:
+                    type: string
+                    description: Exact protected resource identifier
+                    example: http://haucktrantow.biz/hank
+                    format: uri
+            description: Request body for secret_code.
+            example:
+                client_id: "0"
+                client_secret: p
+                code: og
+                code_verifier: ~OxABi5ZLLPnHR3JtjOW-8wx.bLzLKao9EOCZ0a7gKJ
+                grant_type: authorization_code
+                redirect_uri: http://hammes.net/jeremie_douglas
+                resource: http://haucktrantow.biz/hank
+            required:
+                - client_id
+                - client_secret
+                - code
+                - code_verifier
+                - redirect_uri
+                - resource
+        SecretRefreshRequestBody:
+            type: object
+            properties:
+                client_id:
+                    type: string
+                    description: Registered client identifier
+                    example: smq
+                    minLength: 1
+                client_secret:
+                    type: string
+                    description: Secret registered with this authorization server
+                    example: "n"
+                    minLength: 1
+                grant_type:
+                    type: string
+                    description: Fixed refresh grant
+                    default: refresh_token
+                    example: refresh_token
+                    enum:
+                        - refresh_token
+                refresh_token:
+                    type: string
+                    description: Private refresh credential from the original grant
+                    example: m
+                    pattern: ^[\x20-\x7e]+$
+                    minLength: 1
+                resource:
+                    type: string
+                    description: Exact protected resource identifier
+                    example: http://erdmanbernhard.biz/edd.powlowski
+                    format: uri
+            description: Request body for secret_refresh.
+            example:
+                client_id: smq
+                client_secret: "n"
+                grant_type: refresh_token
+                refresh_token: m
+                resource: http://erdmanbernhard.biz/edd.powlowski
+            required:
+                - client_id
+                - client_secret
+                - refresh_token
+                - resource
         SecretRequestBody:
             type: object
             properties:
                 client_id:
                     type: string
-                    description: Client identifier registered with this issuer
+                    description: Registered client identifier
                     example: "6"
                     minLength: 1
                 client_secret:
                     type: string
-                    description: Secret registered with this issuer
+                    description: Secret registered with this authorization server
                     example: ehj
                     minLength: 1
                 grant_type:
                     type: string
-                    description: Client-credentials grant selected by this operation
+                    description: Fixed client-credentials grant
                     default: client_credentials
                     example: client_credentials
                     enum:
                         - client_credentials
                 resource:
                     type: string
-                    description: Exact resource for which the token is requested
+                    description: Exact protected resource identifier
                     example: http://senger.name/antwan_rath
                     format: uri
                 scope:
                     type: string
-                    description: Space-separated permissions requested by the configured client
+                    description: Space-separated permissions requested for the resource
                     example: lk D G
                     pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
             description: Request body for secret.
@@ -1058,30 +1429,30 @@ components:
                         - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
                 code:
                     type: string
-                    description: Authorization code from the validated redirect
+                    description: Authorization code from the validated callback
                     example: p41
                     pattern: ^[\x20-\x7e]+$
                     minLength: 1
                 code_verifier:
                     type: string
-                    description: Private PKCE verifier for this authorization exchange
+                    description: Private verifier protecting this code exchange
                     example: -6n.K~rysus5goayLiEbbzZ8KLERSMHoXUgFB2I17ie_lY1
                     pattern: ^[A-Za-z0-9._~-]{43,128}$
                 grant_type:
                     type: string
-                    description: Authorization-code grant selected by this operation
+                    description: Fixed authorization-code grant
                     default: authorization_code
                     example: authorization_code
                     enum:
                         - authorization_code
                 redirect_uri:
                     type: string
-                    description: Exact redirect used in the authorization request
+                    description: Exact registered callback used during authorization
                     example: http://kihn.com/esperanza.muller
                     format: uri
                 resource:
                     type: string
-                    description: Exact resource for which the token is requested
+                    description: Exact protected resource identifier
                     example: http://torphy.biz/idell
                     format: uri
             description: Request body for signed_code.
@@ -1153,7 +1524,7 @@ components:
                         - http://tillman.com/shaun
                         - http://schowalter.biz/myriam
                         - http://blickschoen.name/noelia_feil
-                    minItems: 1
+                        - http://brekkecorwin.biz/alexane_beatty
                 response_types:
                     type: array
                     items:
@@ -1189,6 +1560,7 @@ components:
                     - http://tillman.com/shaun
                     - http://schowalter.biz/myriam
                     - http://blickschoen.name/noelia_feil
+                    - http://brekkecorwin.biz/alexane_beatty
                 response_types:
                     - Eaque repellat ea iure suscipit.
                     - Id laborum facere est et.
@@ -1217,7 +1589,7 @@ components:
                         - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
                 grant_type:
                     type: string
-                    description: Refresh grant selected by this operation
+                    description: Fixed refresh grant
                     default: refresh_token
                     example: refresh_token
                     enum:
@@ -1230,7 +1602,7 @@ components:
                     minLength: 1
                 resource:
                     type: string
-                    description: Exact resource of the original grant
+                    description: Exact protected resource identifier
                     example: http://weissnat.info/elody
                     format: uri
             description: Request body for signed_refresh.
@@ -1248,6 +1620,9 @@ components:
         introspection_credentials_header_Authorization:
             type: http
             scheme: basic
+        registration_credentials_header_Authorization:
+            type: http
+            scheme: basic
 tags:
     - name: access_token_claims
       description: Decode verified JWT access-token claims before the resource server checks their issuer, audience and validity times.
@@ -1259,7 +1634,7 @@ tags:
       description: Identify an authorization server's token endpoint and the grants and client authentication methods it supports.
     - name: client_metadata
       description: Read a client's self-hosted registration before using its HTTPS document URL as the client identifier; each operation requires the configured authentication profile.
-    - name: access_tokens
-      description: Obtain opaque resource-bound bearer tokens using explicitly advertised client authentication, without sending those credentials to the MCP server.
     - name: authorization_responses
       description: Validate browser redirect query fields before the client checks their state, issuer and code-or-error relationship.
+    - name: access_tokens
+      description: Obtain resource-bound bearer tokens through separately generated registration authentication and grant contracts; credentials never enter MCP requests.

@@ -162,9 +162,6 @@ func ValidateReadResponseBody(body *ReadResponseBody) (err error) {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_name", *body.ClientName, utf8.RuneCountInString(*body.ClientName), 1, true))
 		}
 	}
-	if len(body.RedirectUris) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.redirect_uris", body.RedirectUris, len(body.RedirectUris), 1, true))
-	}
 	for _, e := range body.RedirectUris {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uris[*]", e, goa.FormatURI))
 	}
@@ -201,9 +198,6 @@ func ValidateSignedReadResponseBody(body *SignedReadResponseBody) (err error) {
 		if utf8.RuneCountInString(*body.ClientName) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_name", *body.ClientName, utf8.RuneCountInString(*body.ClientName), 1, true))
 		}
-	}
-	if len(body.RedirectUris) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.redirect_uris", body.RedirectUris, len(body.RedirectUris), 1, true))
 	}
 	for _, e := range body.RedirectUris {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uris[*]", e, goa.FormatURI))

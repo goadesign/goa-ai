@@ -16,104 +16,6 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// BuildAssertionPayload builds the payload for the access_tokens assertion
-// endpoint from CLI flags.
-func BuildAssertionPayload(accessTokensAssertionBody *string) (*accesstokens.AssertionPayload, error) {
-	var err error
-	var body AssertionRequestBody
-	{
-		if accessTokensAssertionBody == nil {
-			return nil, fmt.Errorf("missing required flag --body")
-		}
-		err = json.Unmarshal([]byte(*accessTokensAssertionBody), &body)
-		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_assertion\": \"S.U.n\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://hudson.info/ignatius\",\n      \"scope\": \"z# r+ Y-\"\n   }'")
-		}
-		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
-		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
-		if !(body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
-		}
-		if body.Scope != nil {
-			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
-		}
-		if !(body.GrantType == "client_credentials") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"client_credentials"}))
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-	v := &accesstokens.AssertionPayload{
-		Resource:            body.Resource,
-		ClientAssertion:     body.ClientAssertion,
-		ClientAssertionType: body.ClientAssertionType,
-		Scope:               body.Scope,
-		GrantType:           body.GrantType,
-	}
-	{
-		var zero string
-		if v.ClientAssertionType == zero {
-			v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-		}
-	}
-	{
-		var zero string
-		if v.GrantType == zero {
-			v.GrantType = "client_credentials"
-		}
-	}
-
-	return v, nil
-}
-
-// BuildSecretPayload builds the payload for the access_tokens secret endpoint
-// from CLI flags.
-func BuildSecretPayload(accessTokensSecretBody *string) (*accesstokens.SecretPayload, error) {
-	var err error
-	var body SecretRequestBody
-	{
-		if accessTokensSecretBody == nil {
-			return nil, fmt.Errorf("missing required flag --body")
-		}
-		err = json.Unmarshal([]byte(*accessTokensSecretBody), &body)
-		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'")
-		}
-		if utf8.RuneCountInString(body.ClientID) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", body.ClientID, utf8.RuneCountInString(body.ClientID), 1, true))
-		}
-		if utf8.RuneCountInString(body.ClientSecret) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_secret", body.ClientSecret, utf8.RuneCountInString(body.ClientSecret), 1, true))
-		}
-		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
-		if body.Scope != nil {
-			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
-		}
-		if !(body.GrantType == "client_credentials") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"client_credentials"}))
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-	v := &accesstokens.SecretPayload{
-		ClientID:     body.ClientID,
-		ClientSecret: body.ClientSecret,
-		Resource:     body.Resource,
-		Scope:        body.Scope,
-		GrantType:    body.GrantType,
-	}
-	{
-		var zero string
-		if v.GrantType == zero {
-			v.GrantType = "client_credentials"
-		}
-	}
-
-	return v, nil
-}
-
 // BuildCodePayload builds the payload for the access_tokens code endpoint from
 // CLI flags.
 func BuildCodePayload(accessTokensCodeBody *string) (*accesstokens.CodePayload, error) {
@@ -200,6 +102,411 @@ func BuildRefreshPayload(accessTokensRefreshBody *string) (*accesstokens.Refresh
 		var zero string
 		if v.GrantType == zero {
 			v.GrantType = "refresh_token"
+		}
+	}
+
+	return v, nil
+}
+
+// BuildBasicPayload builds the payload for the access_tokens basic endpoint
+// from CLI flags.
+func BuildBasicPayload(accessTokensBasicBody *string, accessTokensBasicClientID *string, accessTokensBasicClientSecret *string) (*accesstokens.BasicPayload, error) {
+	var err error
+	var body BasicRequestBody
+	{
+		if accessTokensBasicBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensBasicBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://anderson.net/nola\",\n      \"scope\": \"6 \\u003e/\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if body.Scope != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+		}
+		if !(body.GrantType == "client_credentials") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"client_credentials"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var client_id string
+	{
+		if accessTokensBasicClientID == nil {
+			return nil, fmt.Errorf("missing required flag --client-id")
+		}
+		client_id = *accessTokensBasicClientID
+		if utf8.RuneCountInString(client_id) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("client_id", client_id, utf8.RuneCountInString(client_id), 1, true))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var client_secret string
+	{
+		if accessTokensBasicClientSecret == nil {
+			return nil, fmt.Errorf("missing required flag --client-secret")
+		}
+		client_secret = *accessTokensBasicClientSecret
+		if utf8.RuneCountInString(client_secret) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("client_secret", client_secret, utf8.RuneCountInString(client_secret), 1, true))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.BasicPayload{
+		Resource:  body.Resource,
+		Scope:     body.Scope,
+		GrantType: body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "client_credentials"
+		}
+	}
+	v.ClientID = client_id
+	v.ClientSecret = client_secret
+
+	return v, nil
+}
+
+// BuildBasicCodePayload builds the payload for the access_tokens basic_code
+// endpoint from CLI flags.
+func BuildBasicCodePayload(accessTokensBasicCodeBody *string, accessTokensBasicCodeClientID *string, accessTokensBasicCodeClientSecret *string) (*accesstokens.BasicCodePayload, error) {
+	var err error
+	var body BasicCodeRequestBody
+	{
+		if accessTokensBasicCodeBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensBasicCodeBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"code\": \"nv\",\n      \"code_verifier\": \"1ayym6aO-vec8I-buL7kvqBgos~tai0~SNYNrRhbQ0P\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://jaskolski.net/dax_dietrich\",\n      \"resource\": \"http://brekke.com/sigmund\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code", body.Code, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(body.Code) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.code", body.Code, utf8.RuneCountInString(body.Code), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code_verifier", body.CodeVerifier, "^[A-Za-z0-9._~-]{43,128}$"))
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uri", body.RedirectURI, goa.FormatURI))
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if !(body.GrantType == "authorization_code") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"authorization_code"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var client_id string
+	{
+		if accessTokensBasicCodeClientID == nil {
+			return nil, fmt.Errorf("missing required flag --client-id")
+		}
+		client_id = *accessTokensBasicCodeClientID
+		if utf8.RuneCountInString(client_id) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("client_id", client_id, utf8.RuneCountInString(client_id), 1, true))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var client_secret string
+	{
+		if accessTokensBasicCodeClientSecret == nil {
+			return nil, fmt.Errorf("missing required flag --client-secret")
+		}
+		client_secret = *accessTokensBasicCodeClientSecret
+		if utf8.RuneCountInString(client_secret) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("client_secret", client_secret, utf8.RuneCountInString(client_secret), 1, true))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.BasicCodePayload{
+		Code:         body.Code,
+		CodeVerifier: body.CodeVerifier,
+		RedirectURI:  body.RedirectURI,
+		Resource:     body.Resource,
+		GrantType:    body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "authorization_code"
+		}
+	}
+	v.ClientID = client_id
+	v.ClientSecret = client_secret
+
+	return v, nil
+}
+
+// BuildBasicRefreshPayload builds the payload for the access_tokens
+// basic_refresh endpoint from CLI flags.
+func BuildBasicRefreshPayload(accessTokensBasicRefreshBody *string, accessTokensBasicRefreshClientID *string, accessTokensBasicRefreshClientSecret *string) (*accesstokens.BasicRefreshPayload, error) {
+	var err error
+	var body BasicRefreshRequestBody
+	{
+		if accessTokensBasicRefreshBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensBasicRefreshBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"8\",\n      \"resource\": \"http://corkeryohara.com/kyra.langosh\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.refresh_token", body.RefreshToken, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(body.RefreshToken) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.refresh_token", body.RefreshToken, utf8.RuneCountInString(body.RefreshToken), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if !(body.GrantType == "refresh_token") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"refresh_token"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var client_id string
+	{
+		if accessTokensBasicRefreshClientID == nil {
+			return nil, fmt.Errorf("missing required flag --client-id")
+		}
+		client_id = *accessTokensBasicRefreshClientID
+		if utf8.RuneCountInString(client_id) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("client_id", client_id, utf8.RuneCountInString(client_id), 1, true))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var client_secret string
+	{
+		if accessTokensBasicRefreshClientSecret == nil {
+			return nil, fmt.Errorf("missing required flag --client-secret")
+		}
+		client_secret = *accessTokensBasicRefreshClientSecret
+		if utf8.RuneCountInString(client_secret) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("client_secret", client_secret, utf8.RuneCountInString(client_secret), 1, true))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.BasicRefreshPayload{
+		RefreshToken: body.RefreshToken,
+		Resource:     body.Resource,
+		GrantType:    body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "refresh_token"
+		}
+	}
+	v.ClientID = client_id
+	v.ClientSecret = client_secret
+
+	return v, nil
+}
+
+// BuildSecretPayload builds the payload for the access_tokens secret endpoint
+// from CLI flags.
+func BuildSecretPayload(accessTokensSecretBody *string) (*accesstokens.SecretPayload, error) {
+	var err error
+	var body SecretRequestBody
+	{
+		if accessTokensSecretBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensSecretBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"6\",\n      \"client_secret\": \"ehj\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://senger.name/antwan_rath\",\n      \"scope\": \"lk D G\"\n   }'")
+		}
+		if utf8.RuneCountInString(body.ClientID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", body.ClientID, utf8.RuneCountInString(body.ClientID), 1, true))
+		}
+		if utf8.RuneCountInString(body.ClientSecret) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_secret", body.ClientSecret, utf8.RuneCountInString(body.ClientSecret), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if body.Scope != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+		}
+		if !(body.GrantType == "client_credentials") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"client_credentials"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.SecretPayload{
+		ClientID:     body.ClientID,
+		ClientSecret: body.ClientSecret,
+		Resource:     body.Resource,
+		Scope:        body.Scope,
+		GrantType:    body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "client_credentials"
+		}
+	}
+
+	return v, nil
+}
+
+// BuildSecretCodePayload builds the payload for the access_tokens secret_code
+// endpoint from CLI flags.
+func BuildSecretCodePayload(accessTokensSecretCodeBody *string) (*accesstokens.SecretCodePayload, error) {
+	var err error
+	var body SecretCodeRequestBody
+	{
+		if accessTokensSecretCodeBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensSecretCodeBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"0\",\n      \"client_secret\": \"p\",\n      \"code\": \"og\",\n      \"code_verifier\": \"~OxABi5ZLLPnHR3JtjOW-8wx.bLzLKao9EOCZ0a7gKJ\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://hammes.net/jeremie_douglas\",\n      \"resource\": \"http://haucktrantow.biz/hank\"\n   }'")
+		}
+		if utf8.RuneCountInString(body.ClientID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", body.ClientID, utf8.RuneCountInString(body.ClientID), 1, true))
+		}
+		if utf8.RuneCountInString(body.ClientSecret) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_secret", body.ClientSecret, utf8.RuneCountInString(body.ClientSecret), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code", body.Code, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(body.Code) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.code", body.Code, utf8.RuneCountInString(body.Code), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code_verifier", body.CodeVerifier, "^[A-Za-z0-9._~-]{43,128}$"))
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uri", body.RedirectURI, goa.FormatURI))
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if !(body.GrantType == "authorization_code") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"authorization_code"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.SecretCodePayload{
+		ClientID:     body.ClientID,
+		ClientSecret: body.ClientSecret,
+		Code:         body.Code,
+		CodeVerifier: body.CodeVerifier,
+		RedirectURI:  body.RedirectURI,
+		Resource:     body.Resource,
+		GrantType:    body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "authorization_code"
+		}
+	}
+
+	return v, nil
+}
+
+// BuildSecretRefreshPayload builds the payload for the access_tokens
+// secret_refresh endpoint from CLI flags.
+func BuildSecretRefreshPayload(accessTokensSecretRefreshBody *string) (*accesstokens.SecretRefreshPayload, error) {
+	var err error
+	var body SecretRefreshRequestBody
+	{
+		if accessTokensSecretRefreshBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensSecretRefreshBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_id\": \"smq\",\n      \"client_secret\": \"n\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"m\",\n      \"resource\": \"http://erdmanbernhard.biz/edd.powlowski\"\n   }'")
+		}
+		if utf8.RuneCountInString(body.ClientID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", body.ClientID, utf8.RuneCountInString(body.ClientID), 1, true))
+		}
+		if utf8.RuneCountInString(body.ClientSecret) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_secret", body.ClientSecret, utf8.RuneCountInString(body.ClientSecret), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.refresh_token", body.RefreshToken, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(body.RefreshToken) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.refresh_token", body.RefreshToken, utf8.RuneCountInString(body.RefreshToken), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if !(body.GrantType == "refresh_token") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"refresh_token"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.SecretRefreshPayload{
+		ClientID:     body.ClientID,
+		ClientSecret: body.ClientSecret,
+		RefreshToken: body.RefreshToken,
+		Resource:     body.Resource,
+		GrantType:    body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "refresh_token"
+		}
+	}
+
+	return v, nil
+}
+
+// BuildAssertionPayload builds the payload for the access_tokens assertion
+// endpoint from CLI flags.
+func BuildAssertionPayload(accessTokensAssertionBody *string) (*accesstokens.AssertionPayload, error) {
+	var err error
+	var body AssertionRequestBody
+	{
+		if accessTokensAssertionBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensAssertionBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_assertion\": \"S.U.n\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://hudson.info/ignatius\",\n      \"scope\": \"z# r+ Y-\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+		if !(body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if body.Scope != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+		}
+		if !(body.GrantType == "client_credentials") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"client_credentials"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.AssertionPayload{
+		ClientAssertion:     body.ClientAssertion,
+		ClientAssertionType: body.ClientAssertionType,
+		Resource:            body.Resource,
+		Scope:               body.Scope,
+		GrantType:           body.GrantType,
+	}
+	{
+		var zero string
+		if v.ClientAssertionType == zero {
+			v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+		}
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "client_credentials"
 		}
 	}
 

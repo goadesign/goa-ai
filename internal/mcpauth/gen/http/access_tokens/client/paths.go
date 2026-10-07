@@ -7,16 +7,6 @@
 
 package client
 
-// AssertionAccessTokensPath returns the URL path to the access_tokens service assertion HTTP endpoint.
-func AssertionAccessTokensPath() string {
-	return "/assertion"
-}
-
-// SecretAccessTokensPath returns the URL path to the access_tokens service secret HTTP endpoint.
-func SecretAccessTokensPath() string {
-	return "/token"
-}
-
 // CodeAccessTokensPath returns the URL path to the access_tokens service code HTTP endpoint.
 func CodeAccessTokensPath() string {
 	return "/code"
@@ -25,6 +15,41 @@ func CodeAccessTokensPath() string {
 // RefreshAccessTokensPath returns the URL path to the access_tokens service refresh HTTP endpoint.
 func RefreshAccessTokensPath() string {
 	return "/refresh"
+}
+
+// BasicAccessTokensPath returns the URL path to the access_tokens service basic HTTP endpoint.
+func BasicAccessTokensPath() string {
+	return "/basic"
+}
+
+// BasicCodeAccessTokensPath returns the URL path to the access_tokens service basic_code HTTP endpoint.
+func BasicCodeAccessTokensPath() string {
+	return "/basic_code"
+}
+
+// BasicRefreshAccessTokensPath returns the URL path to the access_tokens service basic_refresh HTTP endpoint.
+func BasicRefreshAccessTokensPath() string {
+	return "/basic_refresh"
+}
+
+// SecretAccessTokensPath returns the URL path to the access_tokens service secret HTTP endpoint.
+func SecretAccessTokensPath() string {
+	return "/secret"
+}
+
+// SecretCodeAccessTokensPath returns the URL path to the access_tokens service secret_code HTTP endpoint.
+func SecretCodeAccessTokensPath() string {
+	return "/secret_code"
+}
+
+// SecretRefreshAccessTokensPath returns the URL path to the access_tokens service secret_refresh HTTP endpoint.
+func SecretRefreshAccessTokensPath() string {
+	return "/secret_refresh"
+}
+
+// AssertionAccessTokensPath returns the URL path to the access_tokens service assertion HTTP endpoint.
+func AssertionAccessTokensPath() string {
+	return "/assertion"
 }
 
 // SignedCodeAccessTokensPath returns the URL path to the access_tokens service signed_code HTTP endpoint.

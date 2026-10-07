@@ -1673,8 +1673,8 @@ The shared MCP HTTP transport now has a built-in preregistered client-secret
 profile. `NewClientCredentialsHTTPTransport(HTTPOptions, ClientCredentials)`
 returns the existing transport; native generated clients and the discovery
 caller both retain its grant when constructing their own caller. The only new
-public configuration describes the issuer, registered client and requested
-permissions. The existing endpoint identifies the resource. `HTTPOptions.Client`
+public grant configuration references a constructed client registration and
+requested permissions. Registration owns the issuer and authentication separately. The existing endpoint identifies the resource. `HTTPOptions.Client`
 uses Goa's existing HTTP dependency interface so it can accept this transport.
 No credential becomes a tool argument, checkpoint field or model choice.
 
@@ -1692,9 +1692,10 @@ and configured issuer, checks advertised grant/authentication methods, and obtai
 or reuses its own token before dispatch. Resource queries and escaped paths
 remain intact in discovery; issuer metadata uses the current OAuth/OpenID order.
 Only an explicit HTTP 404 advances to the next well-known location. An invalid
-document, wrong owner, redirect or other status stops the operation. The profile
-requires both Basic and POST-secret advertisements and sends secrets only in the
-POST form, addressing the pinned draft inconsistency without placement probes.
+document, wrong owner, redirect or other status stops the operation. Registration
+selects Basic or POST-secret placement explicitly and requires that exact advertised
+method. The pinned draft inconsistency remains a conformance question; it does not
+justify guessing another credential placement.
 An ordinary 401 or 403 causes no token exchange or MCP retry after rejection.
 
 A token's reported lifetime protects reuse of that one token, in seconds, with
@@ -1865,7 +1866,8 @@ contracts before choosing new public configuration.
 
 ## Signed client-assertion milestone
 
-Registered machine clients now use `NewClientAssertionHTTPTransport`. The host
+Registered machine clients use a signed `ClientRegistration` with
+`NewClientCredentialsHTTPTransport`. The host
 supplies its constructed JOSE signer and registered client, assertion issuer,
 audience and validity. The shared credential owner handles discovery, exact
 resource binding, token reuse and cancellation. Each acquisition creates fresh
@@ -2491,7 +2493,7 @@ metadata registration was exclusively an enterprise-extension concern.
 ### Signed browser registration and grant composition
 
 Signed browser constructors now select preregistration or a self-hosted metadata
-document. `SignedAuthorizationCode` reuses the existing signing registration and
+document. `AuthorizationCode` references a constructed signed registration and
 adds the host's redirect and consent callback. Machine and browser grants share
 one private assertion signer; browser authentication adds no token cache or
 issuer discovery path. Public browser constructors retain public authentication.
@@ -2533,3 +2535,54 @@ issues, root build and full uncached root race suite plus quickstart pass.
 Owning regeneration preserves all 92 OAuth artifact hashes.
 No live issuer or deployment was changed. Enterprise composition remains
 unfinished; signed browser support does not complete the OAuth release gate.
+
+### Client registration ownership for enterprise composition
+
+The from-scratch contract separates an immutable client registration from a
+user/resource grant. Registration contains the exact issuer and client identity
+and selects public, Basic, body-secret or signed authentication through explicit
+constructors. Public and signed metadata registrations have separate constructors.
+It contains no access token, user identity or requested scope. Those facts vary
+across users and resources even when the application registration is unchanged.
+Each existing resource-token owner retains its own permissions and credentials.
+
+Browser and machine grant configuration now references this constructed
+registration. Grant-specific authentication constructors added on this unreleased
+branch have been removed, with all owned callers and documentation updated in the
+same change; no aliases or legacy configuration will remain. Keeping per-grant
+credential formats would duplicate registration across enterprise's two issuers.
+A generic callback editing token forms would hide the authentication contract.
+Neither is needed: native Goa Basic security and form requests already express
+all four profiles. A compiled HTTPS probe verifies exact fields and defaults,
+including separately form-encoded Basic credentials excluded from the body.
+
+The private design specializes required authentication fields and fixed
+grant types for each operation. Runtime selection follows the constructed
+registration, never credential-field presence or a guessed authentication method.
+Issuer metadata must support that selected method. The pinned machine extension
+still conflicts between body-secret prose/examples and Basic metadata; support
+for an explicit OAuth method is not a claim that this ambiguity is resolved.
+
+Shared client metadata must require the `redirect_uris` property while accepting
+an empty list for grants with no redirect. Browser callback membership remains
+required before consent. This is an external protocol contract exception to the
+repository's default rule for required arrays; the native probe verifies the
+required-property distinction without a custom decoder.
+
+Implementation order is native profile specialization, shared registration and
+owned caller migration, then the enterprise identity-provider exchange and
+resource-issuer redemption. The identity provider and resource issuer use
+different registrations. Host-owned SSO supplies the user's identity credential;
+neither that credential nor the intermediate grant enters MCP requests, agent
+arguments or checkpoints. Durable host credentials and independent conformance
+remain subsequent gates. No live issuer, deployment or external caller migration
+is authorized by this draft; regeneration and external cutover remain required
+before release.
+
+Shared registration acceptance passes focused runtime boundaries, compiled native
+client/resource fixtures, configured lint, root build, the full uncached root race
+suite and quickstart. A second owning generation preserves all 92 OAuth artifact
+hashes. Positive checks cover Basic-only and body-secret-only issuers, exact
+credential encoding, browser refresh, independent resource-token owners sharing
+one registration, and signed machine metadata with an empty redirect list.
+Enterprise authorization and durable host credentials remain unfinished.

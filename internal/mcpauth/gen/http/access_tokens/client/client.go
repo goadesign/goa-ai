@@ -17,19 +17,38 @@ import (
 
 // Client lists the access_tokens service endpoint HTTP clients.
 type Client struct {
-	// Assertion Doer is the HTTP client used to make requests to the assertion
-	// endpoint.
-	AssertionDoer goahttp.Doer
-
-	// Secret Doer is the HTTP client used to make requests to the secret endpoint.
-	SecretDoer goahttp.Doer
-
 	// Code Doer is the HTTP client used to make requests to the code endpoint.
 	CodeDoer goahttp.Doer
 
 	// Refresh Doer is the HTTP client used to make requests to the refresh
 	// endpoint.
 	RefreshDoer goahttp.Doer
+
+	// Basic Doer is the HTTP client used to make requests to the basic endpoint.
+	BasicDoer goahttp.Doer
+
+	// BasicCode Doer is the HTTP client used to make requests to the basic_code
+	// endpoint.
+	BasicCodeDoer goahttp.Doer
+
+	// BasicRefresh Doer is the HTTP client used to make requests to the
+	// basic_refresh endpoint.
+	BasicRefreshDoer goahttp.Doer
+
+	// Secret Doer is the HTTP client used to make requests to the secret endpoint.
+	SecretDoer goahttp.Doer
+
+	// SecretCode Doer is the HTTP client used to make requests to the secret_code
+	// endpoint.
+	SecretCodeDoer goahttp.Doer
+
+	// SecretRefresh Doer is the HTTP client used to make requests to the
+	// secret_refresh endpoint.
+	SecretRefreshDoer goahttp.Doer
+
+	// Assertion Doer is the HTTP client used to make requests to the assertion
+	// endpoint.
+	AssertionDoer goahttp.Doer
 
 	// SignedCode Doer is the HTTP client used to make requests to the signed_code
 	// endpoint.
@@ -60,10 +79,15 @@ func NewClient(
 	restoreBody bool,
 ) *Client {
 	return &Client{
-		AssertionDoer:       doer,
-		SecretDoer:          doer,
 		CodeDoer:            doer,
 		RefreshDoer:         doer,
+		BasicDoer:           doer,
+		BasicCodeDoer:       doer,
+		BasicRefreshDoer:    doer,
+		SecretDoer:          doer,
+		SecretCodeDoer:      doer,
+		SecretRefreshDoer:   doer,
+		AssertionDoer:       doer,
 		SignedCodeDoer:      doer,
 		SignedRefreshDoer:   doer,
 		RestoreResponseBody: restoreBody,
@@ -71,54 +95,6 @@ func NewClient(
 		host:                host,
 		decoder:             dec,
 		encoder:             enc,
-	}
-}
-
-// Assertion returns an endpoint that makes HTTP requests to the access_tokens
-// service assertion server.
-func (c *Client) Assertion() goa.Endpoint {
-	var (
-		encodeRequest  = EncodeAssertionRequest(c.encoder)
-		decodeResponse = DecodeAssertionResponse(c.decoder, c.RestoreResponseBody)
-	)
-	return func(ctx context.Context, v any) (any, error) {
-		req, err := c.BuildAssertionRequest(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		err = encodeRequest(req, v)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := c.AssertionDoer.Do(req)
-		if err != nil {
-			return nil, goahttp.ErrRequestError("access_tokens", "assertion", err)
-		}
-		return decodeResponse(resp)
-	}
-}
-
-// Secret returns an endpoint that makes HTTP requests to the access_tokens
-// service secret server.
-func (c *Client) Secret() goa.Endpoint {
-	var (
-		encodeRequest  = EncodeSecretRequest(c.encoder)
-		decodeResponse = DecodeSecretResponse(c.decoder, c.RestoreResponseBody)
-	)
-	return func(ctx context.Context, v any) (any, error) {
-		req, err := c.BuildSecretRequest(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		err = encodeRequest(req, v)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := c.SecretDoer.Do(req)
-		if err != nil {
-			return nil, goahttp.ErrRequestError("access_tokens", "secret", err)
-		}
-		return decodeResponse(resp)
 	}
 }
 
@@ -165,6 +141,174 @@ func (c *Client) Refresh() goa.Endpoint {
 		resp, err := c.RefreshDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("access_tokens", "refresh", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// Basic returns an endpoint that makes HTTP requests to the access_tokens
+// service basic server.
+func (c *Client) Basic() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeBasicRequest(c.encoder)
+		decodeResponse = DecodeBasicResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildBasicRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.BasicDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "basic", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// BasicCode returns an endpoint that makes HTTP requests to the access_tokens
+// service basic_code server.
+func (c *Client) BasicCode() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeBasicCodeRequest(c.encoder)
+		decodeResponse = DecodeBasicCodeResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildBasicCodeRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.BasicCodeDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "basic_code", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// BasicRefresh returns an endpoint that makes HTTP requests to the
+// access_tokens service basic_refresh server.
+func (c *Client) BasicRefresh() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeBasicRefreshRequest(c.encoder)
+		decodeResponse = DecodeBasicRefreshResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildBasicRefreshRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.BasicRefreshDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "basic_refresh", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// Secret returns an endpoint that makes HTTP requests to the access_tokens
+// service secret server.
+func (c *Client) Secret() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSecretRequest(c.encoder)
+		decodeResponse = DecodeSecretResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSecretRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SecretDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "secret", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// SecretCode returns an endpoint that makes HTTP requests to the access_tokens
+// service secret_code server.
+func (c *Client) SecretCode() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSecretCodeRequest(c.encoder)
+		decodeResponse = DecodeSecretCodeResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSecretCodeRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SecretCodeDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "secret_code", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// SecretRefresh returns an endpoint that makes HTTP requests to the
+// access_tokens service secret_refresh server.
+func (c *Client) SecretRefresh() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSecretRefreshRequest(c.encoder)
+		decodeResponse = DecodeSecretRefreshResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSecretRefreshRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SecretRefreshDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "secret_refresh", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// Assertion returns an endpoint that makes HTTP requests to the access_tokens
+// service assertion server.
+func (c *Client) Assertion() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeAssertionRequest(c.encoder)
+		decodeResponse = DecodeAssertionResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildAssertionRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.AssertionDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "assertion", err)
 		}
 		return decodeResponse(resp)
 	}
