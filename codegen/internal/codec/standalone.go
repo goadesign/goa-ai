@@ -35,6 +35,7 @@ type (
 	shapeData struct {
 		Name, Kind, Expected, TypeKey, ValueKey string
 		SignedInteger, UnsignedInteger          bool
+		Flatten                                 bool
 		IntegerBits                             int
 		Fields, Branches                        []*shapeFieldData
 		Element                                 *shapeCallData
@@ -185,6 +186,7 @@ func (v *Value) shapeData() []*shapeData {
 		}
 		if node.Union != nil {
 			shape.TypeKey, shape.ValueKey = node.Union.GetTypeKey(), node.Union.GetValueKey()
+			shape.Flatten = node.Union.Flatten
 			for _, branch := range node.Branches {
 				shape.Branches = append(shape.Branches, &shapeFieldData{Name: branch.Name,
 					Call: &shapeCallData{Name: v.standalone.names[branch.Node].Name(), Description: branch.Description}})

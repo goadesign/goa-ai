@@ -37,20 +37,31 @@ func {{ .Name }}(path string, value any, description string) error {
     }
     {{- end }}
     {{- if eq .Kind "union" }}
+    {{- if not .Flatten }}
     for key := range typed {
         if key != {{printf "%q" .TypeKey}} && key != {{printf "%q" .ValueKey}} {
             return {{ $names.UnknownField }}(path, key, []string{ {{printf "%q" .TypeKey}}, {{printf "%q" .ValueKey}} })
         }
     }
+    {{- end }}
     discriminator, ok := typed[{{printf "%q" .TypeKey}}].(string)
     if !ok { return {{ $names.Fmt }}.Errorf("%s: missing or invalid union discriminator", field) }
+    {{- if .Flatten }}
+    branch := make(map[string]any, len(typed)-1)
+    for key, item := range typed {
+        if key != {{printf "%q" .TypeKey}} {
+            branch[key] = item
+        }
+    }
+    {{- else }}
     branch, exists := typed[{{printf "%q" .ValueKey}}]
     if !exists || branch == nil { return {{ $names.Fmt }}.Errorf("%s: missing union value", field) }
+    {{- end }}
     switch discriminator {
     {{- $union := . }}
     {{- range .Branches }}
     case {{printf "%q" .Name}}:
-        return {{.Call.Name}}({{ $names.ChildPath }}(path, {{printf "%q" $union.ValueKey}}, false), branch, {{printf "%q" .Call.Description}})
+        return {{.Call.Name}}({{ if $union.Flatten }}path{{ else }}{{ $names.ChildPath }}(path, {{printf "%q" $union.ValueKey}}, false){{ end }}, branch, {{printf "%q" .Call.Description}})
     {{- end }}
     default:
         return {{ $names.Fmt }}.Errorf("%s: unknown union discriminator %q", field, discriminator)

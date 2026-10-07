@@ -82,6 +82,15 @@ forbid it. Collection element nullability follows the declared element contract.
 For a union, the discriminator selects the branch whose fields and constraints
 are checked. Named types retain the constraints of their underlying definitions.
 
+A `OneOf` with `Meta("oneof:json:flatten")` encodes its selected object's fields
+beside the discriminator. For example, a `complete` branch can write
+`{"type":"complete","reference":"123"}`. Use `oneof:type:field` to select another
+discriminator name. The codec and advertised schemas check only that branch,
+including its required fields, and reject unknown fields. Unions without this
+metadata keep the nested `value` property. Regenerate both JSON peers together
+when selecting a different mapping, and migrate any stored documents before
+adopting it. The protobuf representation is unchanged.
+
 The supported values are closed generated Go representations: primitives,
 objects, arrays, maps with string or named-string keys, unions, and their named
 forms. Finite recursive values are supported; cyclic Go values are rejected

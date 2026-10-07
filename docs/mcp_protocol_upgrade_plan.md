@@ -2805,8 +2805,9 @@ without changing ordinary tagged unions. This change belongs in Goa, including
 its expression copies, retained plans, defaults, views, wire identities and
 OpenAPI. Goa-AI must consume that mapping in its existing strict schema and codec
 owners before implementing the typed additional-input contract. No MCP-specific
-serializer or parallel transport path is needed. The change remains under review
-and is not yet part of the selected Goa release.
+serializer or parallel transport path is needed. [Goa #4035](https://github.com/goadesign/goa/pull/4035) is merged at
+`59d49f2fc90496f7f4304f3d720a2ad2cf424df1`. The dependency now selects that
+merged commit after the v3.34.0 release.
 
 The authorization extension's main revision is still `fb374c7`; its DPoP and
 workload-identity proposals remain open and unmerged. They are not claimed as
@@ -2815,3 +2816,14 @@ current referee's localhost HTTP issuer fixtures conflict with the protocol's
 mandatory HTTPS authorization-server endpoints. A loopback HTTP redirect exception
 does not authorize an HTTP issuer. Do not relax transport security or claim a
 stock referee pass to bypass this mismatch.
+
+The existing Goa-AI complete-value codec and schema builders now consume that
+mapping. Strict codecs reject duplicate keys, extra fields, nulls, invalid branch
+values and old envelopes while preserving original caller values. Compiled
+flat-union schema/codec acceptance passes in 1.5 seconds; preservation checks
+covering ordinary strict tagged unions and the new mapping pass in 2.6 seconds.
+Agent field metadata and authored examples retain the selected flat paths; a
+flat example must supply its discriminator rather than request branch guessing.
+Configured lint reports zero issues. No new public runtime type, callback or
+MCP-only serializer is added. These foundations do not by themselves implement
+server-produced additional input.

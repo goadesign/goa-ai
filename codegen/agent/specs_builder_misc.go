@@ -145,8 +145,12 @@ func buildFieldMetadata(att *goaexpr.AttributeExpr) []*fieldMetadataData {
 					Discriminator: cloneFieldPath(discriminator),
 					Value:         nat.Name,
 				}
+				branchPath := appendFixedField(path, valueKey)
+				if dt.Flatten {
+					branchPath = path
+				}
 				walk(
-					appendFixedField(path, valueKey),
+					branchPath,
 					nat.Attribute,
 					append(cloneUnionBranches(branches), branch),
 					"",
@@ -325,6 +329,10 @@ func (contract specJSONContract) restoreSchemaChildExamples(att *goaexpr.Attribu
 				return
 			}
 			branch, _ := branches[i].(map[string]any)
+			if actual.Flatten {
+				contract.restoreSchemaChildExamples(nat.Attribute, branch, defs, seen)
+				continue
+			}
 			properties, _ := branch["properties"].(map[string]any)
 			value, _ := properties[valueKey].(map[string]any)
 			contract.restoreNestedSchemaExamples(nat.Attribute, value, defs, seen, false)
@@ -451,8 +459,8 @@ func (contract specJSONContract) projectExampleFieldNames(att *goaexpr.Attribute
 	}
 }
 
-// projectUnionExampleFieldNames keeps a union's {type,value} object and changes
-// field names inside the selected value to their JSON names.
+// projectUnionExampleFieldNames reads the declared discriminator, renames the
+// selected branch fields and returns the authored flat or tagged JSON shape.
 func (contract specJSONContract) projectUnionExampleFieldNames(u *goaexpr.Union, example any) any {
 	m, ok := example.(map[string]any)
 	if !ok {
@@ -473,6 +481,17 @@ func (contract specJSONContract) projectUnionExampleFieldNames(u *goaexpr.Union,
 	for _, nat := range u.Values {
 		if nat == nil || nat.Name != rawType {
 			continue
+		}
+		if u.Flatten {
+			fields := make(map[string]any, len(m)-1)
+			for name, value := range m {
+				if name != typeKey {
+					fields[name] = value
+				}
+			}
+			projected := contract.projectExampleFieldNames(nat.Attribute, fields).(map[string]any)
+			projected[typeKey] = rawType
+			return projected
 		}
 		if value, exists := m[valueKey]; exists {
 			m[valueKey] = contract.projectExampleFieldNames(nat.Attribute, value)
@@ -571,6 +590,9 @@ func (contract specJSONContract) canonicalizeUnionExampleValue(att *goaexpr.Attr
 		if canonical, ok := contract.canonicalUnionExample(dt, example, typeKey, valueKey); ok {
 			return canonical, true
 		}
+		if dt.Flatten {
+			panic(fmt.Sprintf("agent/specs_builder: flat union example for %q must name its discriminator", dt.TypeName))
+		}
 		chosen = pickUnionVariantForExample(dt, example)
 		if chosen == nil {
 			panic(fmt.Sprintf("agent/specs_builder: union example does not match any variant (type=%q)", dt.TypeName))
@@ -630,6 +652,21 @@ func (contract specJSONContract) canonicalUnionExample(u *goaexpr.Union, example
 	}
 	if chosen == nil {
 		return nil, false
+	}
+	if u.Flatten {
+		fields := make(map[string]any, len(m)-1)
+		for name, value := range m {
+			if name != typeKey {
+				fields[name] = value
+			}
+		}
+		normalized, ok := contract.canonicalizeUnionExampleValue(chosen.Attribute, fields)
+		if !ok {
+			return nil, false
+		}
+		result := normalized.(map[string]any)
+		result[typeKey] = typeName
+		return result, true
 	}
 	value, ok := m[valueKey]
 	if !ok {

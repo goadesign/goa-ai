@@ -188,13 +188,21 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[st
 		typeSchema, _ := properties[typeKey].(map[string]any)
 		valueSchema, ok := properties[valueKey].(map[string]any)
 		variants, _ := typeSchema["enum"].([]any)
-		if len(variants) != 1 || variants[0] != nat.Name || !ok {
+		if len(variants) != 1 || variants[0] != nat.Name || (!union.Flatten && !ok) {
 			return fmt.Errorf("union schema variant %d for %q does not match %q", i, union.TypeName, nat.Name)
 		}
 		if nat.Attribute.Description != "" {
 			branch["description"] = nat.Attribute.Description
 		}
 		branch["additionalProperties"] = false
+		if union.Flatten {
+			if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, branch, defs, seen); err != nil {
+				return err
+			}
+			required, _ := branch["required"].([]string)
+			branch["required"] = append(required, typeKey)
+			continue
+		}
 		if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, valueSchema, defs, seen); err != nil {
 			return err
 		}

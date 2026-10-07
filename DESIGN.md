@@ -2405,6 +2405,13 @@ declarations, and constraints. Named union receivers use the underlying
 declaration that owns their methods. The same planned parameter type supplies
 each validator's signature and checks.
 
+Union mapping is an evaluated Goa fact. Flat object unions retain their
+selected discriminator and object fields through private codec transports,
+strict raw checks, catalog schemas, field metadata and authored examples.
+Generation selects the mapping before rendering; generated code does not walk
+a schema or guess a branch from field presence. Ordinary tagged unions retain
+their nested value. Neither mapping changes protobuf's native oneof.
+
 The original-value, tool, and completion codecs share JSON shape checks while
 retaining their different contracts. Complete-original functions do not change
 model-visible field selection, completion-owned result representations, or

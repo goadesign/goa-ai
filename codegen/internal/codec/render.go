@@ -46,6 +46,7 @@ type (
 		KindName string
 		TypeKey  string
 		ValueKey string
+		Flatten  bool
 		Encode   bool
 		Decode   bool
 		Branches []*unionBranchData
@@ -179,6 +180,7 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 				KindName: planned.kind.Name(),
 				TypeKey:  expression.GetTypeKey(),
 				ValueKey: expression.GetValueKey(),
+				Flatten:  expression.Flatten,
 				Encode:   value.direction.encodes(),
 				Decode:   value.direction.decodes(),
 			}
@@ -443,16 +445,49 @@ func (u {{ .Name }}) MarshalJSON() ([]byte, error) {
 	default:
 		return nil, {{ $.Imports.Fmt }}.Errorf("unexpected {{ .Name }} branch %q", u.kind)
 	}
+	{{- if .Flatten }}
+	data, err := {{ $.Imports.JSON }}.Marshal(value)
+	if err != nil { return nil, err }
+	var fields map[string]{{ $.Imports.JSON }}.RawMessage
+	if err := {{ $.Imports.JSON }}.Unmarshal(data, &fields); err != nil { return nil, err }
+	if fields == nil { return nil, {{ $.Imports.Goa }}.InvalidFieldTypeError({{ printf "%q" .TypeKey }}, nil, "non-null JSON object") }
+	if _, exists := fields[{{ printf "%q" .TypeKey }}]; exists {
+		return nil, {{ $.Imports.Fmt }}.Errorf("{{ .Name }} branch already contains discriminator %q", {{ printf "%q" .TypeKey }})
+	}
+	tag, err := {{ $.Imports.JSON }}.Marshal(string(u.kind))
+	if err != nil { return nil, err }
+	fields[{{ printf "%q" .TypeKey }}] = tag
+	return {{ $.Imports.JSON }}.Marshal(fields)
+	{{- else }}
 	return {{ $.Imports.JSON }}.Marshal(struct {
 		Type string ` + "`json:\"{{ .TypeKey }}\"`" + `
 		Value any ` + "`json:\"{{ .ValueKey }}\"`" + `
 	}{Type: string(u.kind), Value: value})
+	{{- end }}
 }
 {{ end }}
 
 {{ if .Decode }}
 // UnmarshalJSON reads one complete branch name and value.
 func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
+	{{- if .Flatten }}
+	var fields map[string]{{ $.Imports.JSON }}.RawMessage
+	if err := {{ $.Imports.JSON }}.Unmarshal(data, &fields); err != nil { return err }
+	tag, exists := fields[{{ printf "%q" .TypeKey }}]
+	if !exists { return {{ $.Imports.Goa }}.MissingFieldError({{ printf "%q" .TypeKey }}, {{ printf "%q" .Name }}) }
+	if {{ $.Imports.Bytes }}.Equal({{ $.Imports.Bytes }}.TrimSpace(tag), []byte("null")) {
+		return {{ $.Imports.Goa }}.InvalidFieldTypeError({{ printf "%q" .TypeKey }}, nil, "JSON string")
+	}
+	var raw struct {
+		Type string
+		Value {{ $.Imports.JSON }}.RawMessage
+	}
+	if err := {{ $.Imports.JSON }}.Unmarshal(tag, &raw.Type); err != nil { return err }
+	delete(fields, {{ printf "%q" .TypeKey }})
+	value, err := {{ $.Imports.JSON }}.Marshal(fields)
+	if err != nil { return err }
+	raw.Value = value
+	{{- else }}
 	var raw struct {
 		Type string ` + "`json:\"{{ .TypeKey }}\"`" + `
 		Value {{ $.Imports.JSON }}.RawMessage ` + "`json:\"{{ .ValueKey }}\"`" + `
@@ -477,6 +512,7 @@ func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
 	if {{ $.Imports.Bytes }}.Equal({{ $.Imports.Bytes }}.TrimSpace(raw.Value), []byte("null")) {
 		return {{ $.Imports.Goa }}.InvalidFieldTypeError({{ printf "%q" .ValueKey }}, nil, "non-null JSON value")
 	}
+	{{- end }}
 	switch raw.Type {
 	{{- range .Branches }}
 	case string({{ .Kind }}):
