@@ -1,11 +1,11 @@
 // Package registry validates saved definitions together with their current state.
-// Definition-dependent reads decode a fresh snapshot and reuse compiled schemas.
+// Definition-dependent reads check a fresh snapshot and reuse exact-byte validation.
 // Lease and health operations read only compact state.
 package registry
 
 import (
-	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,21 +19,28 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	internaladmission "goa.design/goa-ai/internal/toolregistry/admission"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 type (
-	// catalogToolset owns one validated definition and its compiled execution
-	// schemas for registration or the caller that selected this snapshot.
-	catalogToolset struct {
-		identity         *CatalogIdentity
-		raw              json.RawMessage
+	// catalogDefinition retains only immutable validation results. It never owns
+	// saved JSON, registration times, provider leases, or admission authority.
+	catalogDefinition struct {
+		digest           [sha256.Size]byte
+		nativeAgent      bool
 		info             *genregistry.ToolsetInfo
 		fingerprint      string
 		executionSchemas map[string]*jsonschema.Schema
 		textOnlySchemas  map[string]*jsonschema.Schema
+	}
+
+	// catalogToolset pairs reusable validation with the exact JSON read for this
+	// caller. Each snapshot still supplies its own current admission state.
+	catalogToolset struct {
+		*catalogDefinition
+		identity *CatalogIdentity
+		raw      string
 	}
 )
 
@@ -46,12 +53,12 @@ func newCatalogToolset(toolset *genregistry.Toolset, fingerprint string, validat
 	if err != nil {
 		return nil, fmt.Errorf("marshal toolset %q: %w", toolset.Name, err)
 	}
-	return compileCatalogToolset(&definition, raw, fingerprint, validator)
+	return compileCatalogToolset(&definition, string(raw), fingerprint, validator)
 }
 
 // compileCatalogToolset compiles a validated declaration and copies its summary.
 // The caller supplies the exact definition bytes retained for later reads.
-func compileCatalogToolset(toolset *genregistry.Toolset, raw json.RawMessage, fingerprint string, validator *schemaValidator) (*catalogToolset, error) {
+func compileCatalogToolset(toolset *genregistry.Toolset, raw string, fingerprint string, validator *schemaValidator) (*catalogToolset, error) {
 	schemas := make(map[string]*jsonschema.Schema, len(toolset.Tools))
 	textOnlySchemas := make(map[string]*jsonschema.Schema)
 	for _, tool := range toolset.Tools {
@@ -69,7 +76,13 @@ func compileCatalogToolset(toolset *genregistry.Toolset, raw json.RawMessage, fi
 			textOnlySchemas[tool.Name] = disabledSchema
 		}
 	}
-	return &catalogToolset{raw: raw, info: toolsetToInfo(toolset), fingerprint: fingerprint, executionSchemas: schemas, textOnlySchemas: textOnlySchemas}, nil
+	return &catalogToolset{
+		raw: raw,
+		catalogDefinition: &catalogDefinition{
+			info: toolsetToInfo(toolset), fingerprint: fingerprint,
+			executionSchemas: schemas, textOnlySchemas: textOnlySchemas,
+		},
+	}, nil
 }
 
 // toolsetToInfo retains only the fields needed for discovery and health.
@@ -102,8 +115,8 @@ func copyToolsetInfo(info *genregistry.ToolsetInfo) *genregistry.ToolsetInfo {
 // decodeCatalogToolset gives callers an independent typed copy of a definition
 // already checked when its snapshot loaded. Unknown fields and trailing JSON
 // are still rejected when producing that copy.
-func decodeCatalogToolset(raw []byte, toolset **genregistry.Toolset) error {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
+func decodeCatalogToolset(raw string, toolset **genregistry.Toolset) error {
+	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(toolset); err != nil {
 		return err
@@ -226,6 +239,7 @@ func (c *toolsetCatalog) snapshot(ctx context.Context, name string) (entry catal
 		return catalogEntry{}, err
 	}
 	if !exists {
+		c.forgetDefinition(name)
 		return catalogEntry{}, errToolsetNotFound
 	}
 	span.SetAttributes(
@@ -245,28 +259,14 @@ func (c *toolsetCatalog) decodeSnapshot(name, raw, definitionRaw string, tokenRe
 	if tokenRetired != (!state.NativeAgent && state.State == catalogEntryRetired) {
 		return catalogEntry{}, fmt.Errorf("toolset %q disagrees with permanent retirement history", name)
 	}
-	toolset, fingerprint, err := internaladmission.SavedToolsetFingerprint([]byte(definitionRaw))
-	if err != nil {
-		return catalogEntry{}, fmt.Errorf("decode definition %q: %w", name, err)
-	}
-	if toolset == nil || toolset.Name != name || toolset.RegisteredAt != "" {
-		return catalogEntry{}, fmt.Errorf("toolset %q has invalid static definition", name)
-	}
-	if err := c.validator.ValidateToolSchemas(toolset.Tools); err != nil {
-		return catalogEntry{}, fmt.Errorf("toolset %q invalid persisted schemas: %w", name, err)
-	}
-	if state.NativeAgent {
-		if err := validateAgentTools(toolset.Tools); err != nil {
-			return catalogEntry{}, err
-		}
-	}
-	if fingerprint != state.SchemaFingerprint {
-		return catalogEntry{}, fmt.Errorf("toolset %q schema fingerprint does not match canonical schema", name)
-	}
-	definition, err := compileCatalogToolset(toolset, json.RawMessage(definitionRaw), fingerprint, c.validator)
+	validated, err := c.validatedDefinition(name, definitionRaw, state.NativeAgent)
 	if err != nil {
 		return catalogEntry{}, err
 	}
+	if validated.fingerprint != state.SchemaFingerprint {
+		return catalogEntry{}, fmt.Errorf("toolset %q schema fingerprint does not match canonical schema", name)
+	}
+	definition := &catalogToolset{raw: definitionRaw, catalogDefinition: validated}
 	info := copyToolsetInfo(definition.info)
 	info.RegisteredAt = state.RegisteredAt
 	if !reflect.DeepEqual(info, state.Info) {

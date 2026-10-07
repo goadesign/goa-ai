@@ -1545,13 +1545,26 @@ history. Startup reports invalid data without rewriting or reconstructing it.
 Definition-dependent reads fetch current state, definition and retirement
 membership in one Redis snapshot and validate the complete pair. Declaration
 fingerprints ignore tool and tag ordering, and native replacements can reuse
-their token; no per-name definition cache may substitute earlier saved bytes. Each caller
-receives an independently owned definition with the selected state's time and
-token. The schema validator's digest-keyed cache still reuses compiled execution
-schemas. Full definition transfer, decoding and fingerprinting occur for each
-resolution or call-preparation read, including availability retries. Lease and
-health operations retain compact-only reads. Every consequential call operation
-still checks current authority.
+their token, so neither can select an earlier saved definition. Each read hashes
+all current definition bytes with SHA-256 and reuses validation only when both
+that hash and the service or native-agent validation rules match. Changed bytes
+pass the same strict saved-encoding checks before use.
+
+The private catalog retains one immutable validation result per name: compact
+metadata, the saved fingerprint, and compiled execution-schema maps. It retains
+neither full JSON nor decoded declarations. Replacements overwrite that entry;
+reads or successful listings that observe removed names discard it. Cold
+validation runs one definition at a time to avoid concurrent large parsing
+allocations; warm lookups do not wait for that work. The existing schema
+validator still shares compiled schemas by schema digest.
+
+Each selected lookup owns its current definition string and state. Callers
+requesting full definitions receive independently decoded values with that
+state's time and token. Full definition transfer remains part of resolution and
+call preparation, including availability retries; warm call preparation skips
+full decoding and fingerprint reconstruction. Lease and health operations still
+read compact state only. Every consequential call operation checks current
+authority. This optimization changes no API, saved encoding, or migration.
 
 Saved consumer-contract JSON enters the fingerprint calculation in its original
 encoding, after strict decoding. Reads retain the complete saved definition

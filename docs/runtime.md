@@ -2767,18 +2767,28 @@ stored data. Existing installations require the [offline storage
 upgrade](#registry-storage-upgrade).
 
 Every definition-dependent read fetches state, definition, and retirement
-membership together and validates the complete snapshot. This includes
+membership together and checks the complete snapshot. This includes
 `GetToolset`, `ResolveToolset`, and call preparation or its availability retries.
 Declaration fingerprints ignore tool and tag ordering, and native replacement
-can reuse a token, so neither selects a previously cached definition. Returned
-definitions are independently owned and carry the selected state's token and time.
+can reuse a token, so neither selects a previously cached definition.
 
-The existing schema validator still reuses compiled schemas by digest. Each
-snapshot prepares its tool-name map from those compiled objects; dynamic
-arguments are checked against that map. Full definition transfer, decoding and
-fingerprinting therefore remain part of each definition-dependent read. Lease
-and health operations continue to read only compact state. This does not change
-live authorization or the consumer's per-planning-activity catalog lifetime.
+The catalog hashes every current saved definition byte with SHA-256. Identical
+bytes under the same service or native-agent rules reuse compact metadata,
+validated fingerprints, and compiled execution-schema maps. Changed bytes pass
+the existing strict validation, one cold definition at a time. Warm lookups do
+not wait for another definition's validation. The cache retains one validation
+result per name and discards names observed as removed; it holds no full JSON
+or decoded declarations. Each snapshot owns the current saved JSON, and callers
+requesting full definitions receive independently decoded values carrying the
+selected state's time and token. See [catalog validation](../DESIGN.md#registry-integration) for the
+ownership contract.
+
+Full definition transfer still occurs on every definition-dependent read.
+Warm call preparation avoids full JSON decoding and fingerprint reconstruction;
+full-definition responses still require decoding. Lease and health operations
+continue to read compact state only. Current authority is checked every time.
+There is no API or storage change, migration, or change to the consumer's
+per-planning-activity catalog lifetime.
 
 ##### Saved declaration identity
 
