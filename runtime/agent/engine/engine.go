@@ -209,6 +209,10 @@ type (
 		// child-agent run outside deterministic workflow code.
 		RegisterAgentChildActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error)) error
 
+		// RegisterContinuationActivity registers the read that determines whether
+		// selected saved work still has an eligible page before planner scheduling.
+		RegisterContinuationActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.ContinuationActivityInput) (bool, error)) error
+
 		// StartWorkflow binds req.ID to its immutable request while the backend can
 		// still query that execution. An exact retry returns the original open or
 		// closed execution handle. Reusing a queryable ID with changed semantics
@@ -353,6 +357,10 @@ type (
 		// ExecuteAgentChildActivity prepares one child-agent run outside workflow
 		// code and returns the exact values recorded in workflow history.
 		ExecuteAgentChildActivity(call AgentChildActivityCall) (*api.AgentChildActivityOutput, error)
+
+		// ExecuteContinuationActivity records whether eligible pages remain for
+		// this exact history. Read errors remain errors, never a negative answer.
+		ExecuteContinuationActivity(call ContinuationActivityCall) (bool, error)
 
 		// Now returns the current workflow time in a deterministic manner. Implementations
 		// must return a time source that is replay-safe (e.g., Temporal's workflow.Now).
@@ -501,6 +509,16 @@ type (
 		Input *api.AgentChildActivityInput
 
 		// Options overrides the registered activity defaults for this invocation.
+		Options ActivityOptions
+	}
+
+	// ContinuationActivityCall describes one saved-page availability read.
+	ContinuationActivityCall struct {
+		// Name identifies the registered continuation activity.
+		Name string
+		// Input selects exact history, current outputs and eligibility.
+		Input *api.ContinuationActivityInput
+		// Options bounds this read without extending workflow deadlines.
 		Options ActivityOptions
 	}
 

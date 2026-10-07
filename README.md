@@ -284,6 +284,12 @@ An input-schema change alone therefore does not invalidate inert history.
 See [continuation compatibility](docs/runtime.md#external-input-and-workflow-continuations)
 for the checks that still apply.
 
+`PrepareNextTurn` retains unfinished queries from the selected saved run.
+Continuing one query retires only that query, even when provider call IDs are
+reused. Literal message imports retain their existing execution-ID behavior.
+See [saved pagination](docs/runtime.md#saved-pagination) for history ownership
+and the engine upgrade requirement.
+
 Choose model adapters for OpenAI, Anthropic, Amazon Bedrock, Google Vertex AI,
 or a model gateway. Provider capabilities differ; the [runtime guide](docs/runtime.md)
 covers their supported options. Optional integrations include MongoDB for

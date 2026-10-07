@@ -3696,6 +3696,40 @@ runtime.FinalizerFunc(func(ctx, input FinalizerInput) (ToolResult, error) {
 
 ---
 
+## Saved Pagination
+
+Use `PrepareNextTurn` to continue unfinished queries from a selected completed
+run. The runtime reads that run's exact saved history and restores original
+execution IDs, query arguments, cursors, and registry bindings. Provider call
+IDs stay unchanged in messages and may repeat in later responses. Two identical
+queries remain independent; finishing one does not retire the other.
+
+`PrepareContinuation` also retains completed sibling outputs from its saved
+checkpoint. Their events can follow the predecessor's transcript end; only the
+checkpoint's exact output references select them. The runtime does not widen
+the history end, republish those results, or count them as new work.
+
+Literal messages passed to `Prepare` or `Run` retain their existing exact
+execution-ID lookup behavior. They do not acquire saved-source provenance from
+matching provider IDs. Copying provider-ready messages into a literal run is
+therefore not a substitute for `PrepareNextTurn`.
+
+Start, Resume, and the runtime's continuation-availability activity use the same
+private reader and eligibility checks. A finish failure retains unfinished
+sibling pages. When none remain, direct finalization keeps its hard deadline
+and does not first charge a recovery turn. Availability read errors remain
+errors; they cannot become a negative answer.
+
+Custom engines must implement `RegisterContinuationActivity` and
+`ExecuteContinuationActivity`. The activity receives exact history/output
+references and existing eligibility policy and returns a recorded boolean.
+No Store method or saved-data migration is required. The additional activity
+changes workflow command history: retain the original worker build for existing
+Temporal executions and route new executions to the upgraded build. Do not
+replay an older open execution with changed workflow code on an unversioned
+queue. The runtime uses the existing worker activity route and introduces no
+version-selection flag.
+
 ## External Input and Workflow Continuations
 
 Each accepted user input starts one top-level workflow for that turn. The
@@ -6155,6 +6189,7 @@ type Engine interface {
     RegisterPlannerActivity(ctx, name, opts, fn) error
     RegisterExecuteToolActivity(ctx, name, opts, fn) error
     RegisterAgentChildActivity(ctx, name, opts, fn) error
+    RegisterContinuationActivity(ctx, name, opts, fn) error
     StartWorkflow(ctx, req WorkflowStartRequest) (WorkflowHandle, error)
     QueryRunCompletion(ctx, runID string) (RunCompletion, error)
 }
@@ -6179,6 +6214,7 @@ type WorkflowContext interface {
     ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error)
     ExecuteToolActivityAsync(call engine.ToolActivityCall) (Future[*api.ToolOutput], error)
     ExecuteAgentChildActivity(call engine.AgentChildActivityCall) (*api.AgentChildActivityOutput, error)
+    ExecuteContinuationActivity(call engine.ContinuationActivityCall) (bool, error)
     NewTimer(ctx context.Context, d time.Duration) (Future[time.Time], error)
     Await(condition func() bool) error
     StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error)

@@ -30,8 +30,10 @@ type routeWorkflowContext struct {
 	nextSequence        uint64
 	cancellationHandler engine.CancellationHandler
 
-	hookRuntime  *Runtime
-	childRuntime *Runtime
+	hookRuntime          *Runtime
+	childRuntime         *Runtime
+	continuationRead     func(*api.ContinuationActivityInput) (bool, error)
+	lastContinuationCall engine.ContinuationActivityCall
 
 	parent *routeWorkflowContext
 }
@@ -213,6 +215,17 @@ func (r *routeWorkflowContext) ExecuteAgentChildActivity(call engine.AgentChildA
 		return nil, errors.New("agent child activity runtime is required")
 	}
 	return r.childRuntime.prepareAgentChildActivity(r.Context(), call.Input)
+}
+
+func (r *routeWorkflowContext) ExecuteContinuationActivity(call engine.ContinuationActivityCall) (bool, error) {
+	r.lastContinuationCall = call
+	if r.continuationRead != nil {
+		return r.continuationRead(call.Input)
+	}
+	if r.hookRuntime == nil {
+		return false, errors.New("continuation activity runtime is required")
+	}
+	return r.hookRuntime.continuationAvailableActivity(r.Context(), call.Input)
 }
 
 // StartRequestDigest supplies the fixed accepted request for this workflow fixture.

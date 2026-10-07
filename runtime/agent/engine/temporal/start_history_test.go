@@ -28,7 +28,7 @@ func TestProductionWorkflowRejectsHistoryWithoutAcceptedRequest(t *testing.T) {
 				SessionID: productionReplaySessionID, TurnID: productionReplayTurnID, SeedEndID: test.seed,
 			})
 			require.NoError(t, err)
-			started := workflowExecutionStartedEvent(1, productionReplayWorkflowName, productionReplayTaskQueue, input)
+			started := workflowExecutionStartedEvent(productionReplayWorkflowName, productionReplayTaskQueue, input)
 			history := deserializeReplayHistory(t, syntheticProductionHistory(t, &api.PlanActivityOutput{}, false, started))
 			var returned error
 			replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{DataConverter: NewAgentDataConverter()})
