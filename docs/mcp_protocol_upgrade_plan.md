@@ -2832,6 +2832,30 @@ Configured lint reports zero issues. No new public runtime type, callback or
 MCP-only serializer is added. These foundations do not by themselves implement
 server-produced additional input.
 
+## Native result views for additional-input outcomes
+
+An ordinary generated Goa HTTP receipt response exposed an internal field even
+though its union branch declared `View("public")`. The owning service conversion
+had a separate direct-child path, and shared projection did not follow union
+branches and maps. Nested validation also selected default-view rules rather
+than the branch's view. This was a native Goa contract defect, not an MCP serializer
+requirement.
+
+[Goa #4036](https://github.com/goadesign/goa/pull/4036) fixes projection, conversion
+and validation in their shared owners. View constructors are reused through the
+shared transform plan for direct fields, collections and union branches. Generated
+HTTP and JSON-RPC peers prove public/default sibling views, absent and present
+optional fields, nested arrays/maps/result collections, and selected-field
+validation. All cross-platform CI checks pass on Go 1.26.8 and 1.27.1.
+
+All four Goa-AI modules select merge commit
+`7e04829cef481b172bbfba29146b99036a9d31e9`, published as
+`v3.34.1-0.20261007074038-7e04829cef48`. Regenerate affected services and transports
+and deploy clients and servers together: an older client may require the wrongly
+included fields. There is no stored-data migration. Rolling back a server can
+expose excluded fields again. These foundations do not claim completed
+server-produced additional-input support.
+
 ## Independent preregistered authorization acceptance
 
 On 2026-10-07, the pinned referee's HTTPS-adapted `auth/pre-registration`
