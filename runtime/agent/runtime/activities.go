@@ -45,8 +45,7 @@ type plannerActivityInvocation struct {
 	parentTool           *tools.ToolSpec
 	// originalFailure remains available to the application tracer after a
 	// rejected planner result becomes a successful activity transport value.
-	originalFailure         error
-	providerRecoveryEnabled bool
+	originalFailure error
 }
 
 // PlanStartActivity executes the planner's PlanStart method.
@@ -604,18 +603,17 @@ func (r *Runtime) preparePlannerActivity(
 		rems = r.reminders.Snapshot(input.RunID)
 	}
 	return &plannerActivityInvocation{
-		runtime:                 r,
-		reg:                     reg,
-		agentCtx:                agentCtx,
-		plannerAuthoredTools:    plannerAuthoredTools,
-		events:                  events,
-		invocations:             invocations,
-		reminders:               rems,
-		runContext:              input.RunContext,
-		publicationBatchID:      publicationBatchID,
-		catalog:                 catalog,
-		parentTool:              parentTool,
-		providerRecoveryEnabled: input.Policy != nil && input.Policy.ProviderRetryBudget > 0,
+		runtime:              r,
+		reg:                  reg,
+		agentCtx:             agentCtx,
+		plannerAuthoredTools: plannerAuthoredTools,
+		events:               events,
+		invocations:          invocations,
+		reminders:            rems,
+		runContext:           input.RunContext,
+		publicationBatchID:   publicationBatchID,
+		catalog:              catalog,
+		parentTool:           parentTool,
 	}, nil
 }
 
@@ -734,7 +732,7 @@ func (a *plannerActivityInvocation) failureOutput(ctx context.Context, err error
 	if errors.As(err, &outputErr) {
 		return a.outputContractFailure(ctx, err)
 	}
-	if a.providerRecoveryEnabled && ctx.Err() == nil {
+	if ctx.Err() == nil {
 		if providerErr := a.invocations.retryableProviderFailure(err); providerErr != nil {
 			return a.providerFailureOutput(ctx, providerErr)
 		}

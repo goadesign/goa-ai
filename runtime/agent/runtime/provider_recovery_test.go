@@ -50,12 +50,14 @@ func TestProviderRecoveryActivityProvesSafeFailure(t *testing.T) {
 		closeErr  error
 		extraErr  error
 		disabled  bool
+		noPolicy  bool
 		wantRetry bool
 	}{
 		{name: "rate limit", kind: model.ProviderErrorKindRateLimited, wantRetry: true},
 		{name: "unavailable", kind: model.ProviderErrorKindUnavailable, wantRetry: true},
 		{name: "permanent", kind: model.ProviderErrorKindInvalidRequest},
-		{name: "disabled", kind: model.ProviderErrorKindRateLimited, disabled: true},
+		{name: "disabled", kind: model.ProviderErrorKindRateLimited, disabled: true, wantRetry: true},
+		{name: "absent policy", kind: model.ProviderErrorKindRateLimited, noPolicy: true, wantRetry: true},
 		{name: "cleanup", kind: model.ProviderErrorKindRateLimited, closeErr: errors.New("cleanup failed")},
 		{name: "extra failure", kind: model.ProviderErrorKindRateLimited, extraErr: errors.New("planner failed")},
 		{name: "text", kind: model.ProviderErrorKindRateLimited, chunk: model.TextChunk{Message: model.Message{
@@ -85,6 +87,9 @@ func TestProviderRecoveryActivityProvesSafeFailure(t *testing.T) {
 			if tc.disabled {
 				policy.ProviderRetryBudget = 0
 			}
+			if tc.noPolicy {
+				policy = nil
+			}
 			out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
 				AgentID: "service.agent", RunID: "run", RunContext: run.Context{RunID: "run"}, Policy: policy,
 			}, nil))
@@ -92,7 +97,8 @@ func TestProviderRecoveryActivityProvesSafeFailure(t *testing.T) {
 			case tc.wantRetry:
 				require.NoError(t, err)
 				require.NotNil(t, out.ProviderFailure)
-				assert.Equal(t, string(tc.kind), out.ProviderFailure.Kind)
+				assert.Same(t, failure, out.ProviderFailure)
+				assert.Equal(t, tc.kind, out.ProviderFailure.Kind())
 				assert.Nil(t, out.Result)
 			case out != nil:
 				assert.Nil(t, out.ProviderFailure)
@@ -208,10 +214,47 @@ func TestProviderRecoveryBoundsRetryQueueAndExecution(t *testing.T) {
 	assert.Equal(t, want, w.lastPlannerCall.Options.ScheduleToCloseTimeout)
 }
 
+func TestProviderRecoveryDisabledAndExhaustedPreserveTypedFailure(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		recovery *providerRecoveryBudget
+	}{
+		{name: "disabled"},
+		{name: "already exhausted", recovery: &providerRecoveryBudget{}},
+		{name: "failure exhausts remainder", recovery: &providerRecoveryBudget{Remaining: time.Second}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := newTestRuntimeWithPlanner("service.agent", nil)
+			w := &providerRecoveryWorkflow{clock: time.Unix(100, 0)}
+			output := providerRecoveryFailureOutput()
+			calls := 0
+			w.routeWorkflowContext = &routeWorkflowContext{
+				ctx: t.Context(), hookRuntime: rt,
+				plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+					"plan": func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error) { //nolint:unparam // Planner route requires an error result.
+						calls++
+						w.clock = w.clock.Add(time.Second)
+						return output, nil
+					},
+				},
+			}
+			actual, err := rt.runPlanActivity(w, "plan", engine.ActivityOptions{}, PlanActivityInput{RunID: "run"},
+				&workflowConversation{providerRecovery: tc.recovery}, time.Time{})
+			require.Error(t, err)
+			assert.Same(t, output, actual)
+			failure, ok := model.AsProviderError(err)
+			require.True(t, ok)
+			assert.Same(t, output.ProviderFailure, failure)
+			assert.Equal(t, 1, calls)
+			assert.Empty(t, w.delays)
+		})
+	}
+}
+
 func providerRecoveryFailureOutput() *PlanActivityOutput {
 	return &PlanActivityOutput{
 		PublicationBatchID: uuid.NewString(),
-		ProviderFailure:    &run.Failure{Provider: "synthetic", Operation: "stream", Kind: string(model.ProviderErrorKindRateLimited), Retryable: true},
+		ProviderFailure:    model.NewProviderError("synthetic", "stream", 429, model.ProviderErrorKindRateLimited, "throttled", "", "request-1", true, errors.New("capacity temporarily unavailable")),
 		Usage:              model.TokenUsage{InputTokens: 1, TotalTokens: 1},
 	}
 }
@@ -270,8 +313,12 @@ func TestProviderRecoveryRejectsMixedActivityResults(t *testing.T) {
 	}{
 		{name: "accepted result", mutate: func(out *PlanActivityOutput) { out.Result = &PlanResult{} }},
 		{name: "published text", mutate: func(out *PlanActivityOutput) { out.PublishedAssistantText = "visible" }},
-		{name: "permanent failure", mutate: func(out *PlanActivityOutput) { out.ProviderFailure.Retryable = false }},
-		{name: "unknown kind", mutate: func(out *PlanActivityOutput) { out.ProviderFailure.Kind = "unclassified" }},
+		{name: "permanent failure", mutate: func(out *PlanActivityOutput) {
+			out.ProviderFailure = model.NewProviderError("synthetic", "stream", 429, model.ProviderErrorKindRateLimited, "", "", "", false, nil)
+		}},
+		{name: "unknown kind", mutate: func(out *PlanActivityOutput) {
+			out.ProviderFailure = model.NewProviderError("synthetic", "stream", 0, "unclassified", "", "", "", true, nil)
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out := providerRecoveryFailureOutput()

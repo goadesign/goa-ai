@@ -2151,6 +2151,15 @@ retryable rate-limit or unavailable error, no accepted response or observed
 text/thinking/tool/structured-output chunk, and clean observer, validation,
 usage, context, and shutdown phases. Other failures remain terminal.
 
+Certification does not depend on the configured allowance. The existing
+`ProviderFailure` field contains `*model.ProviderError`: provider, operation,
+HTTP status, kind, code, message, request ID, and retryability remain exact.
+The engine also preserves rendered diagnostic text and whether a cause was
+present, including an empty-text cause. A restored cause carries diagnostic
+text only; provider SDK types and cause identity do not cross this boundary.
+The exclusive successful activity result is the certificate. A provider error
+by itself never authorizes another invocation.
+
 The workflow publishes failed usage, waits on a durable timer, then schedules
 the same planning request as a new single-attempt activity with a new response
 ID. Completed tools and their outputs remain unchanged. Delays grow from about
@@ -2159,11 +2168,25 @@ replay. Cancellation stops waiting. Failed provider work and waits consume the
 separate finite recovery budget; successful work still consumes `TimeBudget`.
 External-input checkpoints retain the exact remaining recovery allowance,
 including zero when exhausted. No additional engine run timeout is introduced.
-Zero disables recovery and preserves existing behavior. Plan activities that
+Zero disables recovery. Disabled or exhausted consumers return the typed
+provider failure without scheduling another attempt. Plan activities that
 made multiple model invocations do not receive retry permission.
 
-The added policy and optional checkpoint state preserve older checkpoints whose
-policy disables recovery. Recovery-enabled checkpoints require their matching
+Planner activity outputs use the explicit `json/goa-ai-plan-output-v2`
+encoding. Provider facts, cause text, and the rendered diagnostic share the
+existing aggregate workflow payload budget with all other output fields and
+arguments; they are checked before JSON encoding, without truncation or a
+separate per-error limit. The declared historical `json/plain` reader still
+accepts old normal outputs. An old non-null `run.Failure` certificate lacks the
+canonical facts and is rejected by new workers instead of being reconstructed
+from its summary. Keep those histories and their activity producers on their
+matching retained worker builds. Verify actual workflow/activity routing before
+rollout; worker configuration alone does not prove that isolation. Rollback
+must retain workers capable of reading each already-written format.
+
+Accepted root start bytes, settings, memo values, digests, and checkpoint
+formats are unchanged. The policy and optional checkpoint state preserve older
+checkpoints whose policy disables recovery. Recovery-enabled checkpoints require their matching
 remaining-budget record. New activity records and enabled checkpoints require
 the updated runtime; do not roll their workers or continuations back to an older
 runtime. Workflow version routing and worker retention remain engine-owned.

@@ -8,13 +8,11 @@ package runtime
 import (
 	"context"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
+	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
@@ -128,12 +126,12 @@ func onlyProviderFailure(err error, expected *model.ProviderError) bool {
 	}
 }
 
-// providerFailureOutput returns failed usage and typed retry permission as a
-// successful activity value. Lost replies and activity timeouts remain ordinary
-// errors and cannot cause the workflow to replay possibly published output.
-func (a *plannerActivityInvocation) providerFailureOutput(ctx context.Context, err error) (*PlanActivityOutput, error) {
-	failure := hooks.RunFailureFromError(err)
-	failure.DebugMessage = errorevidence.DiagnosticMessage(failure.DebugMessage)
+// providerFailureOutput receives a provider failure certified by the finished
+// invocation journal and returns it with failed-attempt usage as a successful
+// activity result. The workflow uses this safe failure evidence to decide
+// whether its recovery allowance permits another attempt. Lost replies and
+// activity timeouts remain ordinary errors.
+func (a *plannerActivityInvocation) providerFailureOutput(ctx context.Context, failure *model.ProviderError) (*PlanActivityOutput, error) {
 	events := newPlannerEvents(a.events.agentID, a.events.runID, a.events.sessionID)
 	a.invocations.publishUsage(ctx, events)
 	output := &PlanActivityOutput{
@@ -160,17 +158,7 @@ func (a *plannerActivityInvocation) providerFailureOutput(ctx context.Context, e
 // engine boundary. A retry marker cannot accompany an accepted planner result,
 // selected history, published text, or another non-success outcome.
 func validateProviderFailureOutput(out *PlanActivityOutput) error {
-	if out.Result != nil || out.OutputContractFailure != nil || out.ModelInvocationRecovery != nil ||
-		out.PlanningFailure != nil || len(out.Transcript) != 0 || out.HistoryContext != nil ||
-		out.PublishedAssistantText != "" || out.RecoveryCatalog != nil {
-		return errors.New("provider failure cannot accompany planner output or another result variant")
-	}
-	failure := out.ProviderFailure
-	if failure.Provider == "" || !failure.Retryable ||
-		(failure.Kind != string(model.ProviderErrorKindRateLimited) && failure.Kind != string(model.ProviderErrorKindUnavailable)) {
-		return errors.New("provider recovery requires a typed temporary provider failure")
-	}
-	return nil
+	return new(workflowcodec.Budget).AddSource(out)
 }
 
 // runPlanActivity recovers only a successful activity value proving a safe
@@ -178,9 +166,6 @@ func validateProviderFailureOutput(out *PlanActivityOutput) error {
 // Timers survive worker replacement and cancellation interrupts every wait.
 func (r *Runtime) runPlanActivity(wfCtx engine.WorkflowContext, activityName string, options engine.ActivityOptions, input PlanActivityInput, base *workflowConversation, deadline time.Time) (*PlanActivityOutput, error) {
 	recovery := base.providerRecovery
-	if recovery == nil {
-		return r.runPlanActivityOnce(wfCtx, activityName, options, input, base, deadline)
-	}
 	var usage model.TokenUsage
 	for attempt := 1; ; attempt++ {
 		if err := wfCtx.Context().Err(); err != nil {
@@ -212,7 +197,10 @@ func (r *Runtime) runPlanActivity(wfCtx engine.WorkflowContext, activityName str
 			out.Usage = usage
 			return out, nil
 		}
-		failure := &planningFailureError{failure: *out.ProviderFailure}
+		failure := out.ProviderFailure
+		if recovery == nil {
+			return out, failure
+		}
 		elapsed := wfCtx.Now().Sub(started)
 		recovery.Remaining = max(0, recovery.Remaining-elapsed)
 		recovery.elapsed += elapsed
