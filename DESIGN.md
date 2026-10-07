@@ -2696,9 +2696,13 @@ public, Basic, POST-secret or signed authentication. It contains no user, scope
 or token. Native Goa expressions specialize each grant's required authentication
 fields; runtime selection follows the constructed registration. Machine grants
 require confidential authentication and explicit `client_credentials` support.
-The issuer must advertise the selected method; no method is inferred from another
-advertisement. The pinned machine extension still conflicts on secret placement,
-so explicit OAuth support is not an extension conformance claim. No redirects,
+The issuer must support the selected method. Native Goa metadata decoding applies
+RFC 8414’s Basic default only when the authentication-method list is omitted;
+explicit lists and null retain their separate meanings. No alternate method is
+tried. The independently scored Basic and signed machine fixtures pass with the
+HTTPS and issuer configuration described in the
+[conformance instructions](integration_tests/conformance/README.md). These selected
+passes do not prove complete extension conformance. No redirects,
 unchanged machine-credential retries or token-syntax guesses are made. Only HTTP
 404 advances well-known discovery; malformed documents and owner mismatches stop
 before dispatch. Each transport retains separate user and resource token state

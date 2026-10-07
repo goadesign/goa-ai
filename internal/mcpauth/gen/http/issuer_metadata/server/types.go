@@ -18,8 +18,9 @@ type ReadResponseBody struct {
 	TokenEndpoint string `form:"token_endpoint" json:"token_endpoint" xml:"token_endpoint"`
 	// Token grants supported by the issuer
 	GrantTypesSupported []string `form:"grant_types_supported" json:"grant_types_supported" xml:"grant_types_supported"`
-	// Client authentication methods accepted at the token endpoint
-	TokenEndpointAuthMethodsSupported []string `form:"token_endpoint_auth_methods_supported,omitempty" json:"token_endpoint_auth_methods_supported,omitempty" xml:"token_endpoint_auth_methods_supported,omitempty"`
+	// Client authentication methods accepted at the token endpoint; omission
+	// selects HTTP Basic under RFC 8414
+	TokenEndpointAuthMethodsSupported []string `form:"token_endpoint_auth_methods_supported" json:"token_endpoint_auth_methods_supported" xml:"token_endpoint_auth_methods_supported"`
 	// HTTPS endpoint for user sign-in and consent
 	AuthorizationEndpoint *string `form:"authorization_endpoint,omitempty" json:"authorization_endpoint,omitempty" xml:"authorization_endpoint,omitempty"`
 	// Advertised PKCE methods used to protect authorization codes
@@ -64,6 +65,9 @@ func NewReadResponseBody(res *issuermetadata.ReadResult) *ReadResponseBody {
 		for i, val := range res.TokenEndpointAuthMethodsSupported {
 			body.TokenEndpointAuthMethodsSupported[i] = val
 		}
+	}
+	if res.TokenEndpointAuthMethodsSupported == nil {
+		body.TokenEndpointAuthMethodsSupported = []string{"client_secret_basic"}
 	}
 	if res.CodeChallengeMethodsSupported != nil {
 		body.CodeChallengeMethodsSupported = make([]string, len(res.CodeChallengeMethodsSupported))

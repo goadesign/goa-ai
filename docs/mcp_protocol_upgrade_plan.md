@@ -2559,9 +2559,11 @@ including separately form-encoded Basic credentials excluded from the body.
 The private design specializes required authentication fields and fixed
 grant types for each operation. Runtime selection follows the constructed
 registration, never credential-field presence or a guessed authentication method.
-Issuer metadata must support that selected method. The pinned machine extension
-still conflicts between body-secret prose/examples and Basic metadata; support
-for an explicit OAuth method is not a claim that this ambiguity is resolved.
+Issuer metadata must support that selected method. An omitted authentication-method
+list has RFC 8414’s Basic default; explicit lists do not select an alternate
+authentication method. The later independent acceptance results below supersede
+the earlier machine-fixture ambiguity: Basic and signed scenarios pass after
+explicit HTTPS trust and fixture-owned issuer configuration.
 
 Shared client metadata must require the `redirect_uris` property while accepting
 an empty list for grants with no redirect. Browser callback membership remains
@@ -2866,3 +2868,21 @@ before spawning the client, without changing its OAuth handlers or assertions.
 Enterprise fixture coverage remains open. Independent negative cases, other
 registration/grant profiles, interrupted SSE acceptance and external caller
 cutover remain release gates. No release or deployment is performed.
+
+## Native issuer authentication default
+
+The independent enterprise trace exposed a shared metadata-decoding gap.
+[RFC 8414 section 2](https://www.rfc-editor.org/rfc/rfc8414.html#section-2) defines
+`client_secret_basic` when `token_endpoint_auth_methods_supported` is omitted.
+The private Goa design now declares that default; regenerated clients apply it
+before the existing registration check. No runtime fallback or alternate secret
+placement is added. An explicit list preserves its values, including an empty
+list; null remains invalid at the metadata boundary.
+
+Focused race checks pass in 2.8 seconds across the new omission/list/null cases,
+machine and browser secret profiles, signed browser metadata, and enterprise
+renewal. Positive cases complete one token exchange and one MCP call. Negative
+cases stop before either operation. The complete suite was not repeated for this
+schema default. The enterprise referee still lacks registration issuer and
+identity-provider authentication configuration; this fix does not turn those
+fixture gaps into production trust decisions or claim enterprise conformance.

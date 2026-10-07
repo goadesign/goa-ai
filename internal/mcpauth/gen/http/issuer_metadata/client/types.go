@@ -23,7 +23,8 @@ type ReadResponseBody struct {
 	TokenEndpoint *string `form:"token_endpoint,omitempty" json:"token_endpoint,omitempty" xml:"token_endpoint,omitempty"`
 	// Token grants supported by the issuer
 	GrantTypesSupported []string `form:"grant_types_supported,omitempty" json:"grant_types_supported,omitempty" xml:"grant_types_supported,omitempty"`
-	// Client authentication methods accepted at the token endpoint
+	// Client authentication methods accepted at the token endpoint; omission
+	// selects HTTP Basic under RFC 8414
 	TokenEndpointAuthMethodsSupported []string `form:"token_endpoint_auth_methods_supported,omitempty" json:"token_endpoint_auth_methods_supported,omitempty" xml:"token_endpoint_auth_methods_supported,omitempty"`
 	// HTTPS endpoint for user sign-in and consent
 	AuthorizationEndpoint *string `form:"authorization_endpoint,omitempty" json:"authorization_endpoint,omitempty" xml:"authorization_endpoint,omitempty"`
@@ -69,6 +70,9 @@ func NewReadResultOK(body *ReadResponseBody) *issuermetadata.ReadResult {
 		for i, val := range body.TokenEndpointAuthMethodsSupported {
 			v.TokenEndpointAuthMethodsSupported[i] = val
 		}
+	}
+	if body.TokenEndpointAuthMethodsSupported == nil {
+		v.TokenEndpointAuthMethodsSupported = []string{"client_secret_basic"}
 	}
 	if body.CodeChallengeMethodsSupported != nil {
 		v.CodeChallengeMethodsSupported = make([]string, len(body.CodeChallengeMethodsSupported))

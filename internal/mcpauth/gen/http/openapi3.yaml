@@ -1951,7 +1951,9 @@ components:
                     items:
                         type: string
                         example: Maxime est aut eius optio.
-                    description: Client authentication methods accepted at the token endpoint
+                    description: Client authentication methods accepted at the token endpoint; omission selects HTTP Basic under RFC 8414
+                    default:
+                        - client_secret_basic
                     example:
                         - Maxime est aut eius optio.
                         - Non dicta architecto a voluptas ipsum et.

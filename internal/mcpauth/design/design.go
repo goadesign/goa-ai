@@ -120,7 +120,7 @@ var _ = Service("issuer_metadata", func() {
 			Field(1, "issuer", String, "Exact identifier of the authorization server", func() { Format(FormatURI) })
 			Field(2, "token_endpoint", String, "HTTPS endpoint that accepts token grants", func() { Format(FormatURI) })
 			Field(3, "grant_types_supported", ArrayOf(String), "Token grants supported by the issuer", func() { Default([]string{"authorization_code", "implicit"}) })
-			Field(4, "token_endpoint_auth_methods_supported", ArrayOf(String), "Client authentication methods accepted at the token endpoint")
+			Field(4, "token_endpoint_auth_methods_supported", ArrayOf(String), "Client authentication methods accepted at the token endpoint; omission selects HTTP Basic under RFC 8414", func() { Default([]string{"client_secret_basic"}) })
 			Field(5, "authorization_endpoint", String, "HTTPS endpoint for user sign-in and consent", func() { Format(FormatURI) })
 			Field(6, "code_challenge_methods_supported", ArrayOf(String), "Advertised PKCE methods used to protect authorization codes")
 			Field(7, "authorization_response_iss_parameter_supported", Boolean, "Whether every authorization response must identify its issuer")

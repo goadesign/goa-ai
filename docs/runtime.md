@@ -6808,8 +6808,12 @@ and chooses its authentication. Construct it separately from the grant:
 Each constructor returns `(*ClientRegistration, error)`. Registration contains no
 user, resource permission or access token. Applications may share it across grants;
 each constructed transport owns its user and resource credentials independently.
-The issuer must advertise the exact selected authentication method. The runtime
-never tries another method, relocates a secret or performs dynamic registration.
+The issuer must support the exact selected authentication method. When
+`token_endpoint_auth_methods_supported` is omitted, the generated metadata decoder
+applies the [RFC 8414 default](https://www.rfc-editor.org/rfc/rfc8414.html#section-2):
+`client_secret_basic`. An explicit empty list or another method does not permit
+Basic, and null is rejected. The runtime never tries another method, relocates a
+secret or performs dynamic registration.
 
 Goa generates separate required authentication fields for each grant. Basic
 credentials are individually form-encoded before native header encoding; they
@@ -6851,8 +6855,10 @@ caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
 Use `NewBasicClientRegistration` when the application is registered for Basic
 authentication. Machine grants require confidential authentication and advertised
 `client_credentials` support. Public registrations are rejected at construction.
-The pinned MCP machine extension conflicts on secret placement; these explicit
-OAuth methods do not claim to resolve that draft's conformance ambiguity.
+The independent Basic and ES256 machine fixtures pass with explicit HTTPS trust
+and registration issuer configuration. See the
+[conformance instructions](../integration_tests/conformance/README.md) for their
+exact scope; other extension profiles remain release gates.
 
 Supply the same transport to a generated HTTP client's `NewClient` with its normal
 encoder and decoder; generated `NewCaller` retains its grant. Native domain

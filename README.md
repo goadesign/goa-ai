@@ -405,8 +405,9 @@ contain no user, resource scope or token. `mcp.NewClientCredentialsHTTPTransport
 obtains confidential machine grants before MCP dispatch; resource records remain
 separate in the configured application store. Generated clients and `HTTPOptions.Client` accept
 this same transport. Native Goa forms and security headers encode credentials;
-only the resource bearer token reaches MCP. Metadata must advertise the exact
-selected method. Redirects and machine reauthorization after 401/403 are rejected.
+only the resource bearer token reaches MCP. Metadata must support the selected
+method. An omitted authentication-method list permits Basic only, as RFC 8414
+requires; an explicit list keeps its declared meaning. Redirects and machine reauthorization after 401/403 are rejected.
 See [client registration](docs/runtime.md#client-registration) and
 [client-secret authorization](docs/runtime.md#client-secret-authorization).
 

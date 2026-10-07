@@ -41,7 +41,8 @@ type ReadResult struct {
 	TokenEndpoint string
 	// Token grants supported by the issuer
 	GrantTypesSupported []string
-	// Client authentication methods accepted at the token endpoint
+	// Client authentication methods accepted at the token endpoint; omission
+	// selects HTTP Basic under RFC 8414
 	TokenEndpointAuthMethodsSupported []string
 	// HTTPS endpoint for user sign-in and consent
 	AuthorizationEndpoint *string
