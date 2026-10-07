@@ -2776,7 +2776,8 @@ The catalog hashes every current saved definition byte with SHA-256. Identical
 bytes under the same service or native-agent rules reuse compact metadata,
 validated fingerprints, and compiled execution-schema maps. Changed bytes pass
 the existing strict validation, one cold definition at a time. Warm lookups do
-not wait for another definition's validation. The cache retains one validation
+not wait for another definition's validation, and canceled queued reads return
+without decoding. The cache retains one validation
 result per name and discards names observed as removed; it holds no full JSON
 or decoded declarations. Each snapshot owns the current saved JSON, and callers
 requesting full definitions receive independently decoded values carrying the

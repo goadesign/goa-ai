@@ -141,7 +141,7 @@ func TestCatalogSavedEncodingRejectsChangedContractBytes(t *testing.T) {
 		strings.Replace(raw, `,"RequiresUI":false,"TextOnly":null`, "", 1),
 	} {
 		require.NotEqual(t, raw, changed)
-		_, err := catalog.decodeSnapshot("tools", state, changed, membership)
+		_, err := catalog.decodeSnapshot(t.Context(), "tools", state, changed, membership)
 		assert.ErrorContains(t, err, "schema fingerprint")
 	}
 }

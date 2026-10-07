@@ -1555,7 +1555,8 @@ metadata, the saved fingerprint, and compiled execution-schema maps. It retains
 neither full JSON nor decoded declarations. Replacements overwrite that entry;
 reads or successful listings that observe removed names discard it. Cold
 validation runs one definition at a time to avoid concurrent large parsing
-allocations; warm lookups do not wait for that work. The existing schema
+allocations; warm lookups do not wait for that work. Canceled reads leave
+the validation queue without retaining their current definition. The existing schema
 validator still shares compiled schemas by schema digest.
 
 Each selected lookup owns its current definition string and state. Callers

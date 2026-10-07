@@ -86,7 +86,7 @@ func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBu
 		s.catalog.forgetDefinition(name)
 		return nil, genregistry.MakeNotFound(errToolsetNotFound)
 	}
-	entry, err := s.catalog.decodeSnapshot(name, snapshot.state, snapshot.definition, snapshot.retired)
+	entry, err := s.catalog.decodeSnapshot(ctx, name, snapshot.state, snapshot.definition, snapshot.retired)
 	if err != nil {
 		return nil, err
 	}

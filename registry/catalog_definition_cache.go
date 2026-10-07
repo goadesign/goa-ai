@@ -4,6 +4,7 @@
 package registry
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 
@@ -33,13 +34,24 @@ func catalogDefinitionDigest(raw string) [sha256.Size]byte {
 // A changed byte or validation mode requires strict decoding and validation.
 // Only one cold definition is decoded at a time, so concurrent requests cannot
 // create many large temporary parsing trees. Warm reads do not wait for it.
-func (c *toolsetCatalog) validatedDefinition(name, raw string, nativeAgent bool) (*catalogDefinition, error) {
+// Canceled waiting reads return immediately.
+func (c *toolsetCatalog) validatedDefinition(ctx context.Context, name, raw string, nativeAgent bool) (*catalogDefinition, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	digest := catalogDefinitionDigest(raw)
 	if definition := c.cachedDefinition(name, digest, nativeAgent); definition != nil {
 		return definition, nil
 	}
-	c.definitionLoadMu.Lock()
-	defer c.definitionLoadMu.Unlock()
+	select {
+	case c.definitionLoads <- struct{}{}:
+		defer func() { <-c.definitionLoads }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if definition := c.cachedDefinition(name, digest, nativeAgent); definition != nil {
 		return definition, nil
 	}

@@ -3,6 +3,7 @@
 package registry
 
 import (
+	"context"
 	"crypto/sha256"
 	"strings"
 	"testing"
@@ -10,6 +11,15 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+type (
+	// validationWaitContext reports when validation begins waiting for capacity,
+	// so the test cancels an already waiting read rather than racing its start.
+	validationWaitContext struct {
+		context.Context
+		waiting chan struct{}
+	}
 )
 
 func TestCatalogDefinitionCacheRequiresExactBytesAndValidationMode(t *testing.T) {
@@ -53,8 +63,8 @@ func TestCatalogWarmReadDoesNotWaitForColdDefinitionValidation(t *testing.T) {
 	catalog, _, _ := testDefinitionCatalog(t)
 	first, err := catalog.ActiveRegistration(t.Context(), "tools")
 	require.NoError(t, err)
-	catalog.definitionLoadMu.Lock()
-	defer catalog.definitionLoadMu.Unlock()
+	catalog.definitionLoads <- struct{}{}
+	defer func() { <-catalog.definitionLoads }()
 	finished := make(chan catalogEntry, 1)
 	failures := make(chan error, 1)
 	go func() {
@@ -80,4 +90,41 @@ func TestCatalogDefinitionDigestIncludesEveryByte(t *testing.T) {
 	for _, raw := range []string{"", "small", strings.Repeat("saved bytes", 10_000)} {
 		assert.Equal(t, sha256.Sum256([]byte(raw)), catalogDefinitionDigest(raw))
 	}
+}
+
+func TestCatalogColdReadCancellationReleasesWaitingDefinition(t *testing.T) {
+	t.Parallel()
+	writer, store, clock := testDefinitionCatalog(t)
+	entry, err := writer.ActiveRegistration(t.Context(), "tools")
+	require.NoError(t, err)
+	catalog := newToolsetCatalog(store, clock)
+	catalog.definitionLoads <- struct{}{}
+	defer func() { <-catalog.definitionLoads }()
+	cancelable, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	ctx := &validationWaitContext{Context: cancelable, waiting: make(chan struct{})}
+	finished := make(chan error, 1)
+	go func() {
+		_, validationErr := catalog.validatedDefinition(ctx, "tools", entry.Toolset.raw, false)
+		finished <- validationErr
+	}()
+	select {
+	case <-ctx.waiting:
+	case <-time.After(time.Second):
+		t.Fatal("cold lookup did not reach the validation queue")
+	}
+	cancel()
+	select {
+	case err := <-finished:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(time.Second):
+		t.Fatal("canceled lookup retained its definition while waiting")
+	}
+	assert.Empty(t, catalog.definitions)
+	assert.Empty(t, catalog.validator.compiled)
+}
+
+func (c *validationWaitContext) Done() <-chan struct{} {
+	close(c.waiting)
+	return c.Context.Done()
 }

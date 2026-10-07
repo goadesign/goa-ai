@@ -63,12 +63,12 @@ type (
 
 	// toolsetCatalog owns atomic provider transitions and validated definitions.
 	toolsetCatalog struct {
-		store            catalogStore
-		clock            registryTimeSource
-		validator        *schemaValidator
-		definitionsMu    sync.RWMutex
-		definitionLoadMu sync.Mutex
-		definitions      map[string]*catalogDefinition
+		store           catalogStore
+		clock           registryTimeSource
+		validator       *schemaValidator
+		definitionsMu   sync.RWMutex
+		definitionLoads chan struct{}
+		definitions     map[string]*catalogDefinition
 	}
 
 	catalogEntryState string
@@ -93,7 +93,8 @@ var (
 func newToolsetCatalog(store catalogStore, clock registryTimeSource) *toolsetCatalog {
 	return &toolsetCatalog{
 		store: store, clock: clock, validator: newSchemaValidator(),
-		definitions: make(map[string]*catalogDefinition),
+		definitions:     make(map[string]*catalogDefinition),
+		definitionLoads: make(chan struct{}, 1),
 	}
 }
 

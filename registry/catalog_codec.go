@@ -246,12 +246,12 @@ func (c *toolsetCatalog) snapshot(ctx context.Context, name string) (entry catal
 		attribute.Int("toolregistry.catalog.state_read_bytes", len(raw)),
 		attribute.Int("toolregistry.catalog.definition_read_bytes", len(definitionRaw)),
 	)
-	return c.decodeSnapshot(name, raw, definitionRaw, tokenRetired)
+	return c.decodeSnapshot(ctx, name, raw, definitionRaw, tokenRetired)
 }
 
 // decodeSnapshot validates the state/definition pair for both ordinary and
 // bounded reads. Neither path changes the persisted definition's encoding.
-func (c *toolsetCatalog) decodeSnapshot(name, raw, definitionRaw string, tokenRetired bool) (catalogEntry, error) {
+func (c *toolsetCatalog) decodeSnapshot(ctx context.Context, name, raw, definitionRaw string, tokenRetired bool) (catalogEntry, error) {
 	state, err := parseCatalogState(name, raw)
 	if err != nil {
 		return catalogEntry{}, err
@@ -259,7 +259,7 @@ func (c *toolsetCatalog) decodeSnapshot(name, raw, definitionRaw string, tokenRe
 	if tokenRetired != (!state.NativeAgent && state.State == catalogEntryRetired) {
 		return catalogEntry{}, fmt.Errorf("toolset %q disagrees with permanent retirement history", name)
 	}
-	validated, err := c.validatedDefinition(name, definitionRaw, state.NativeAgent)
+	validated, err := c.validatedDefinition(ctx, name, definitionRaw, state.NativeAgent)
 	if err != nil {
 		return catalogEntry{}, err
 	}
