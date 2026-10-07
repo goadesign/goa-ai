@@ -3280,3 +3280,60 @@ Verification and observed failures:
 Tasks, dynamic catalogs, authorization conformance/profile assessment, Apps,
 Skills, external caller cutover and final website work still gate release. This
 increment does not authorize merging or releasing the unfinished upgrade.
+
+
+### Task client contract and numeric composition — 2026-10-07
+
+The selected Goa version was checked through a generated native HTTP fixture in
+`.cache/task-nullable-proof`. Required Int64 accepts a number and rejects missing
+or null input. Optional Int64 accepts both missing and null, yielding the same
+native pointer. The six-case generated-handler check passed in 0.320 s. This is
+a specific nullable-member gap, not evidence that native job APIs need untyped
+values. The protocol decoder owns required-member presence; an application-owned
+job API can use an optional duration for unlimited retention.
+
+Direct HTTP and stdio clients now decode flat Task creation handles and all five
+current task states. They expose separate GetTask, UpdateTask and CancelTask
+operations through their existing transports. Generated callers retain authored
+URL values and use their existing request builder. Task creation is accepted only
+for tools/call with explicit per-request Tasks support. Generated agent executors
+do not yet advertise it. Input updates accept partial and empty answer objects;
+acknowledgement means acceptance, not immediate state transition. Cancellation
+acknowledgement does not imply cancelled state. No task operation replays the
+original tool call or starts an in-memory polling loop.
+
+The public Task observation keeps status-specific values private and exposes
+only the corresponding input, completed result or protocol error. Completed
+isError results retain the tool-error flag instead of becoming failed tasks.
+TaskInfo describes one observation; timestamps, status message, nullable retention
+and polling guidance are protocol facts, not workflow configuration. Duration
+values use native int64 milliseconds; range checks concern representability of
+one value, not task lifetime or a framework timeout. No positive retention,
+polling interval or run-wide duration limit was invented. Timestamp strings are
+retained exactly; the decoder does not add a narrower RFC 3339 profile to the
+extension schema's string members or use them to choose a task's expiry.
+
+The previously generated whole-number parser moved into rawjson.DecodeInteger.
+Private integer codecs select their authored Go type at generation time and call
+that shared decoder; Task durations call it as int64. The duplicate generated
+algorithm and its name/import planning were removed. Equivalent decimal and
+exponent spellings remain valid; fractional and out-of-range values fail before
+conversion. Narrow-type boundary tests also prove the same values remain valid
+in a wider native type.
+
+Focused shared numeric tests passed in 0.325 s; the compiled generated integer
+fixture passed in 0.998 s. Task lifecycle, state, identity, unsupported capability,
+malformed acknowledgement, existing tool-result and host-input checks passed in
+0.456 s. The generated caller/InputExchange/independent SDK fixture passed in
+24.389 s: generation 2.358 s and nested race checks 21.466 s. It verifies the
+Task methods use the authored MCP route and preserve method-not-found errors
+against a server without Task endpoints; it does not prove generated Task
+production. Final scoped MCP/runtime/rawjson/codec lint reports zero issues. The root suite
+was not repeated.
+
+Next is workflow-owned Task consumption: retain the remote ID with the original
+invocation, use durable timers for tasks/get, persist answered request keys,
+submit input with tasks/update and preserve cancellation races. Then complete
+the application-owned typed job bindings and Task notifications before server
+capabilities are advertised. Dynamic catalogs, remaining authorization profiles,
+Apps, Skills, callers and website completion remain release gates.

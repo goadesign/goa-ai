@@ -2656,6 +2656,25 @@ before dispatch. Protocol signatures and selectors come from the same generated
 layouts as the native HTTP transport; no wildcard rewrite or runtime field map
 implements a second binding system.
 
+MCP Task clients use the same HTTP and stdio request machinery as tool calls.
+A request advertises the Tasks extension only when its host declares support;
+only `tools/call` may return a Task creation handle. Get, update and cancel are
+separate operations on the exact server-owned ID. State decoding selects the
+released Task status before reading its associated input, result or JSON-RPC
+error. Completed tool errors remain completed results with `IsError` retained.
+These operations perform no automatic tool replay or polling.
+
+Task retention has a required nullable wire member. A generated native HTTP
+fixture proves that Goa's required scalar rejects null and its optional scalar
+collapses null and absence. The external Task decoder therefore checks member
+presence before converting a nullable duration; the application job API can use
+an optional native duration for unlimited retention. The shared `rawjson`
+integer decoder owns exact decimal/exponent handling and native Go range checks
+for both Task durations and generated private codecs. No second numeric parser,
+untyped domain duration, or framework retention policy is introduced. Task
+metadata applies to one observation; retention and polling guidance can change.
+Generated Task production and workflow-owned consumption remain unfinished.
+
 The generated MCP server's `ServeHTTP` checks the HTTP protocol envelope
 before invoking its configured HTTP handler. Direct serving and `Mount` use this
 same entry point; rejected requests reach neither HTTP middleware nor endpoints.

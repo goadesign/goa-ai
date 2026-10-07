@@ -104,7 +104,7 @@ func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallRespons
 	if err != nil {
 		return CallResponse{}, err
 	}
-	if response.InputRequired == nil && contract.output != nil {
+	if response.InputRequired == nil && response.Task == nil && contract.output != nil {
 		if err := jsonschema.Validate(contract.output, response.StructuredContent); err != nil {
 			return CallResponse{}, NewMalformedResponseError(fmt.Errorf("MCP structured result: %w", err))
 		}

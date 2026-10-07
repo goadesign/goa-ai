@@ -54,6 +54,10 @@ type (
 		StructuredContent json.RawMessage
 		// InputRequired describes an unfinished call instead of a successful result.
 		InputRequired *InputRequired
+		// Task is the server-owned asynchronous operation instead of a final result.
+		Task *TaskInfo
+		// IsError retains a completed task's tool-level error or a ToolExecutionError response.
+		IsError bool
 	}
 
 	// InputRequired carries server-owned inputs and state for continuing one MCP operation.

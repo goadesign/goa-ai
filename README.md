@@ -334,10 +334,15 @@ object. Generated clients and shared HTTP/stdio callers use the same behavior.
 Registry users must regenerate and deploy registry replicas, providers and
 consumers together for wire protocol 11. It adds workflow-owned input-round
 identity and continuation metadata; earlier wire versions are rejected. Drain old
-providers and workers before cutover. Generated native `BindTo` input-exchange
-wiring is still being completed on the upgrade branch; see the
-[implementation plan](docs/mcp_protocol_upgrade_plan.md#registry-continuation-composition--2026-10-07)
-for the release gate.
+providers and workers before cutover. Generated native `BindTo` and registry
+providers now share typed input-exchange generation with MCP endpoints. The
+[implementation plan](docs/mcp_protocol_upgrade_plan.md) tracks the remaining
+release gates.
+
+Direct HTTP and stdio clients can [observe and answer Tasks](docs/runtime.md#mcp-task-clients)
+through `GetTask`, `UpdateTask`, and `CancelTask`. Task creation requires an
+explicit host capability on that request. Generated server bindings and durable
+agent Task consumption remain required before this upgrade is released.
 
 Generated MCP adapters accept the application's configured Goa endpoints.
 Authentication, method scopes, interceptors and endpoint middleware therefore run

@@ -33,6 +33,9 @@ func requestMeta(ctx context.Context, info ClientInfo, support InputSupport, exi
 	}
 	meta[protocolVersionKey] = json.RawMessage(`"` + ProtocolVersion + `"`)
 	capabilities := map[string]any{}
+	if ctx.Value(taskSupportKey{}) != nil {
+		capabilities["extensions"] = map[string]any{tasksExtension: struct{}{}}
+	}
 	if support.Form || support.URL {
 		elicitation := map[string]any{}
 		if support.Form {

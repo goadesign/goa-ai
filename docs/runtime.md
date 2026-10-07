@@ -6522,6 +6522,48 @@ rejection returns its own HTTP response without calling the next handler.
 Regenerate with the pinned Goa dependency; older generated mounts can bypass
 this middleware.
 
+### MCP Task clients
+
+The [Tasks extension](https://github.com/modelcontextprotocol/ext-tasks/blob/0d0a6bd4c258b35caa3c810a1dd506cf105b1501/specification/2026-07-28/tasks.md)
+lets a server durably accept a tool call and return an asynchronous Task instead
+of its final result. Direct HTTP and stdio clients implement its three operations;
+generated callers use the same HTTP transport and authored URL values.
+
+Pass `mcp.WithTaskSupport(ctx)` to a direct `CallTool` only when the host can retain
+the returned `CallResponse.Task` and observe that task afterward. The server may
+still return ordinary completed content or request synchronous input. Without the
+capability, a Task reply is a malformed response. Generated agent executors do
+not yet advertise Tasks: durable agent consumption and generated server bindings
+remain release requirements.
+
+`GetTask(ctx, taskID)` returns a validated `Task`. `Info()` contains the current
+status, timestamps, optional status message, retention duration and polling
+guidance. `AsInputRequired()` exposes outstanding host requests;
+`AsCompleted()` exposes the final tool result; `AsFailed()` exposes a JSON-RPC
+execution error. A completed result with `IsError` set is a tool-level error,
+not a failed Task. Working and cancelled observations carry metadata alone.
+A response naming another task is rejected.
+
+`UpdateTask(ctx, taskID, responses)` accepts a possibly partial answer object.
+An empty object is valid; nil and non-object answers fail before dispatch. The
+server owns which keys remain outstanding. An acknowledgement does not prove
+that a subsequent observation already reflects the answers. Fulfill each host
+request under the same consent and form-validation rules as ordinary input;
+answers go to `tasks/update`, never a repeated `tools/call`.
+
+`CancelTask(ctx, taskID)` acknowledges cancellation intent. Work can finish while
+cancellation is being processed; observe the final state rather than interpreting
+the acknowledgement as proof of cancellation. These client methods send one
+request and start no polling loop. The server remains responsible for completing
+its durably accepted work.
+
+The `ttlMs` member is required on the wire; null means unlimited retention, while
+an absent member is invalid. `TaskInfo.TTLMs` represents that value with `*int64`
+and always emits the JSON member. `pollIntervalMs` is optional. Both durations
+use integer milliseconds and retain equivalent whole-number spellings such as
+`3.0` exactly. The client derives no retention, timeout or polling default from
+them. Regenerate existing callers for the new methods and shared numeric decoder.
+
 ### MCP resource servers
 
 Author basic resource access with Goa `Security` inside `MCP`, or use an inherited

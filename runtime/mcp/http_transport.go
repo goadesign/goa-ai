@@ -361,8 +361,11 @@ func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[st
 	var result struct {
 		ResultType string `json:"resultType"` //nolint:tagliatelle // MCP defines this wire field name.
 	}
-	if err := json.Unmarshal(incoming.Result, &result); err != nil || (result.ResultType != resultComplete && result.ResultType != resultInputRequired) {
+	if err := json.Unmarshal(incoming.Result, &result); err != nil || (result.ResultType != resultComplete && result.ResultType != resultInputRequired && result.ResultType != resultTask) {
 		return nil, NewMalformedResponseError(errors.New("unsupported or absent resultType"))
+	}
+	if result.ResultType == resultTask && (outgoing.Header.Get("Mcp-Method") != methodToolsCall || outgoing.Context().Value(taskSupportKey{}) == nil) {
+		return nil, NewMalformedResponseError(errors.New("task is not permitted for this method or host"))
 	}
 	if result.ResultType == resultInputRequired && outgoing.Header.Get("Mcp-Method") != methodToolsCall && outgoing.Header.Get("Mcp-Method") != "resources/read" && outgoing.Header.Get("Mcp-Method") != methodPromptsGet {
 		return nil, NewMalformedResponseError(errors.New("input_required is not permitted for this method"))
@@ -465,7 +468,13 @@ func requestName(method string, params map[string]json.RawMessage) (*string, err
 	default:
 		return nil, nil
 	}
-	raw, ok := params[field]
+	return requiredStringField(params, field)
+}
+
+// requiredStringField reads a present non-null JSON string without changing its
+// contents. Request headers and task metadata receive the same boundary check.
+func requiredStringField(fields map[string]json.RawMessage, field string) (*string, error) {
+	raw, ok := fields[field]
 	var value string
 	if !ok || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) || json.Unmarshal(raw, &value) != nil {
 		return nil, fmt.Errorf("%s must be a string", field)

@@ -23,7 +23,6 @@ type (
 		locatedImportPaths map[string]struct{}
 		originals          *originalTransportGraph
 		jsonHelpers        *jsonHelperPlan
-		integerJSON        *goacodegen.NameDeclaration
 	}
 
 	// Value records one service value and its private JSON representation.

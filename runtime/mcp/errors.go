@@ -103,6 +103,7 @@ func (e *InternalError) Unwrap() error {
 // NewToolExecutionError preserves the validated result returned by a tool that
 // set MCP's isError flag.
 func NewToolExecutionError(response CallResponse) *ToolExecutionError {
+	response.IsError = true
 	response.Content = response.Content.Clone()
 	response.StructuredContent = append([]byte(nil), response.StructuredContent...)
 	return &ToolExecutionError{Response: response}

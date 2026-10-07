@@ -814,6 +814,15 @@ func goaModuleDirectory(t *testing.T) string {
 // fails the calling test when compilation does not finish within two minutes.
 func runGeneratedCodecTests(t *testing.T, moduleDirectory string) {
 	t.Helper()
+	root, err := os.OpenRoot(moduleDirectory)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, root.Close()) }()
+	module, err := root.ReadFile("go.mod")
+	require.NoError(t, err)
+	owner, err := filepath.Abs("../../..")
+	require.NoError(t, err)
+	module = append(module, []byte(fmt.Sprintf("\nrequire goa.design/goa-ai v0.0.0\nreplace goa.design/goa-ai => %s\n", filepath.ToSlash(owner)))...)
+	require.NoError(t, root.WriteFile("go.mod", module, 0o600))
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(ctx, "go", "test", "-mod=mod", "./...")

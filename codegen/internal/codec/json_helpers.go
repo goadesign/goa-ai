@@ -13,9 +13,11 @@ type (
 	}
 
 	codecImportNames struct {
-		Fmt, JSON, Bytes, IO, Goa, Sort, Strconv, UTF8, Reflect, MCP, Strings string
+		Fmt, JSON, Bytes, IO, Goa, Sort, Strconv, UTF8, Reflect, MCP string
 		// JSONV2 names Go's exact-field decoder for protocol answers with extensions.
 		JSONV2 string
+		// RawJSON names the shared decoder for exact integer JSON values.
+		RawJSON string
 	}
 )
 
@@ -66,7 +68,7 @@ func (p *Plan) importNames() codecImportNames {
 		{"fmt", &names.Fmt}, {"encoding/json", &names.JSON}, {"encoding/json/v2", &names.JSONV2},
 		{"bytes", &names.Bytes}, {"io", &names.IO}, {"goa.design/goa/v3/pkg", &names.Goa},
 		{"sort", &names.Sort}, {"strconv", &names.Strconv}, {"unicode/utf8", &names.UTF8},
-		{"strings", &names.Strings}, {"reflect", &names.Reflect}, {"goa.design/goa-ai/runtime/mcp", &names.MCP},
+		{"goa.design/goa-ai/runtime/agent/rawjson", &names.RawJSON}, {"reflect", &names.Reflect}, {"goa.design/goa-ai/runtime/mcp", &names.MCP},
 	} {
 		if _, ok := p.importPaths[request.path]; ok {
 			*request.target = p.pkg.ImportName(request.path)

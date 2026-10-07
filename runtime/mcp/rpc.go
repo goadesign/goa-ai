@@ -51,6 +51,7 @@ type (
 	}
 
 	toolsCallResult struct {
+		Task              *TaskInfo               `json:"-"`
 		ResultType        string                  `json:"resultType"`    //nolint:tagliatelle // MCP defines this wire field name.
 		InputRequests     map[string]InputRequest `json:"inputRequests"` //nolint:tagliatelle // MCP defines this wire field name.
 		RequestState      *string                 `json:"requestState"`  //nolint:tagliatelle // MCP defines this wire field name.
@@ -121,6 +122,12 @@ func (r *toolsCallResult) UnmarshalJSON(data []byte) error {
 		}
 		decoded.InputRequests = pending.InputRequests
 		decoded.RequestState = pending.RequestState
+	case resultTask:
+		task, err := decodeTaskInfo(data)
+		if err != nil {
+			return err
+		}
+		decoded.Task = &task
 	}
 	*r = decoded
 	return nil
@@ -232,6 +239,8 @@ func normalizeToolResult(result toolsCallResult) (CallResponse, error) {
 		return CallResponse{}, NewMalformedResponseError(err)
 	}
 	switch result.ResultType {
+	case resultTask:
+		return CallResponse{Task: result.Task}, nil
 	case resultInputRequired:
 		if result.InputRequests == nil && result.RequestState == nil {
 			return CallResponse{}, NewMalformedResponseError(errors.New("input_required needs inputRequests or requestState"))
@@ -283,6 +292,9 @@ func normalizeCallResult(ctx context.Context, result toolsCallResult, support In
 	response, err := normalizeToolResult(result)
 	if err != nil {
 		return CallResponse{}, err
+	}
+	if response.Task != nil && ctx.Value(taskSupportKey{}) == nil {
+		return CallResponse{}, NewMalformedResponseError(errors.New("task returned without advertised Tasks support"))
 	}
 	if response.InputRequired != nil {
 		if ctx.Value(hostInputDisabledKey{}) != nil {

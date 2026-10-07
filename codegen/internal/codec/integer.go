@@ -4,8 +4,6 @@
 package codec
 
 import (
-	"fmt"
-
 	"goa.design/goa-ai/codegen/internal/jsonshape"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/expr"
@@ -41,7 +39,7 @@ func (w *integerTransportWalker) visit(current *expr.AttributeExpr) {
 			return
 		}
 		w.seen[actual] = true
-		if _, ok := integerPrimitive(actual); !ok {
+		if !isIntegerType(actual) {
 			w.visit(actual.Attribute())
 		}
 	case expr.Primitive:
@@ -49,7 +47,7 @@ func (w *integerTransportWalker) visit(current *expr.AttributeExpr) {
 		if custom, _ := codegen.GetMetaType(current); custom != "" {
 			return
 		}
-		if _, ok := integerPrimitive(actual); !ok {
+		if !isIntegerType(actual) {
 			return
 		}
 		local := w.byKind[actual.Kind()]
@@ -77,9 +75,9 @@ func (w *integerTransportWalker) visit(current *expr.AttributeExpr) {
 	}
 }
 
-// integerPrimitive identifies the primitive behind a named integer definition.
-// The caller uses its signedness and width to emit only its required decoder.
-func integerPrimitive(dataType expr.DataType) (expr.Primitive, bool) {
+// isIntegerType follows named definitions and identifies Go integer values.
+// Their private transport types receive the shared exact JSON decoder.
+func isIntegerType(dataType expr.DataType) bool {
 	for {
 		if named, ok := dataType.(expr.UserType); ok && named != expr.Empty {
 			dataType = named.Attribute().Type
@@ -87,15 +85,15 @@ func integerPrimitive(dataType expr.DataType) (expr.Primitive, bool) {
 		}
 		primitive, ok := dataType.(expr.Primitive)
 		if !ok {
-			return 0, false
+			return false
 		}
 		signed, unsigned, _ := jsonshape.IntegerShape(primitive.Kind())
-		return primitive, signed || unsigned
+		return signed || unsigned
 	}
 }
 
-// planIntegerJSON reserves one exact-number helper when a value needs decoding.
-// Each integer transport type calls it before checking its own Go integer range.
+// planIntegerJSON gives each private integer type the shared exact JSON decoder.
+// Its generated Go type fixes sign and width; custom types keep their own decoder.
 func (v *Value) planIntegerJSON() error {
 	if !v.direction.decodes() {
 		return nil
@@ -104,70 +102,13 @@ func (v *Value) planIntegerJSON() error {
 		if custom, _ := codegen.GetMetaType(planned.userType.Attribute()); custom != "" {
 			continue
 		}
-		if _, ok := integerPrimitive(planned.userType); !ok {
+		if !isIntegerType(planned.userType) {
 			continue
 		}
-		if v.plan.integerJSON == nil {
-			name := codegen.NewPreferredName(codegen.NameFunction, "integerJSONText", codegen.UnexportedName,
-				nameOrder{packagePath: v.plan.pkg.ImportPath(), key: "shared-json:integer"})
-			if err := v.plan.pkg.DeclareName(name); err != nil {
-				return err
-			}
-			v.plan.integerJSON = name
-			for _, name := range []string{"strconv", "strings"} {
-				if err := v.plan.requireImport(codegen.NewImport(name, name)); err != nil {
-					return fmt.Errorf("integer JSON import: %w", err)
-				}
-			}
+		if err := v.plan.requireImport(codegen.NewImport("rawjson", "goa.design/goa-ai/runtime/agent/rawjson")); err != nil {
+			return err
 		}
 		planned.integerDecode = true
 	}
 	return nil
 }
-
-// integerSource converts one valid JSON number to exact integer text. It never
-// expands an exponent beyond the widest native integer representation; each
-// generated field decoder then applies its own signedness and width.
-const integerSource = `
-// {{ .IntegerJSON }} reads a JSON number and returns the same whole number in
-// decimal notation. Fractional values and values beyond native integer ranges fail.
-func {{ .IntegerJSON }}(data []byte) (string, error) {
- text := string({{ .Imports.Bytes }}.TrimSpace(data))
- if len(text) == 0 || (text[0] != '-' && (text[0] < '0' || text[0] > '9')) || !{{ .Imports.JSON }}.Valid([]byte(text)) {
-  return "", {{ .Imports.Fmt }}.Errorf("expected an integer JSON number")
- }
- negative := text[0] == '-'
- if negative { text = text[1:] }
- coefficient, exponentText, hasExponent := {{ .Imports.Strings }}.Cut(text, "e")
- if !hasExponent { coefficient, exponentText, hasExponent = {{ .Imports.Strings }}.Cut(text, "E") }
- whole, fraction, _ := {{ .Imports.Strings }}.Cut(coefficient, ".")
- digits := {{ .Imports.Strings }}.TrimLeft(whole + fraction, "0")
- if digits == "" { return "0", nil }
- exponent := 0
- if hasExponent {
-  parsed, err := {{ .Imports.Strconv }}.Atoi(exponentText)
-  if err != nil { return "", {{ .Imports.Fmt }}.Errorf("JSON number cannot be represented as an integer") }
-  exponent = parsed
- }
- // A negative exponent cannot cancel more digits than the input contains.
- // Comparing before subtraction also prevents overflow for extreme exponents.
- if exponent < -len(digits) || exponent > len(fraction) + len({{ .Imports.Strconv }}.FormatUint(^uint64(0), 10)) {
-  return "", {{ .Imports.Fmt }}.Errorf("JSON number cannot be represented as an integer")
- }
- scale := exponent - len(fraction)
- if scale < 0 {
-  removed := -scale
-  if removed >= len(digits) || {{ .Imports.Strings }}.Trim(digits[len(digits)-removed:], "0") != "" {
-   return "", {{ .Imports.Fmt }}.Errorf("expected a whole JSON number")
-  }
-  digits = digits[:len(digits)-removed]
-  scale = 0
- }
- if len(digits) + scale > len({{ .Imports.Strconv }}.FormatUint(^uint64(0), 10)) {
-  return "", {{ .Imports.Fmt }}.Errorf("JSON number cannot be represented as an integer")
- }
- digits += {{ .Imports.Strings }}.Repeat("0", scale)
- if negative { digits = "-" + digits }
- return digits, nil
-}
-`

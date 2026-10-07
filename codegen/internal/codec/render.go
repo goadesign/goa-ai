@@ -27,8 +27,6 @@ type (
 		ReadStrictJSON     string
 		ReadJSONValue      string
 		ValidateJSONText   string
-		// IntegerJSON names the package helper that reads exact whole JSON numbers.
-		IntegerJSON string
 	}
 
 	// typeData contains one transport type and its validation function.
@@ -42,10 +40,6 @@ type (
 		Validation string
 		// IntegerDecode emits numeric decoding only for a required integer transport type.
 		IntegerDecode bool
-		// UnsignedInteger selects the authored integer sign contract.
-		UnsignedInteger bool
-		// IntegerBits selects the authored width; zero uses the target Go int width.
-		IntegerBits int
 	}
 
 	// unionData contains one Goa OneOf type and its JSON behavior.
@@ -121,9 +115,6 @@ func (p *Plan) Files(packageName string) ([]*goacodegen.File, error) {
 		goacodegen.Header("Private JSON codecs for generated service values.", packageName, imports),
 		{Name: "json-codecs", Source: codecSource, Data: data},
 	}
-	if data.IntegerJSON != "" {
-		sections = append(sections, &goacodegen.SectionTemplate{Name: "integer-json", Source: integerSource, Data: data})
-	}
 	if len(data.JSONValidators) > 0 {
 		sections = append(sections, &goacodegen.SectionTemplate{
 			Name:   "strict-json-values",
@@ -140,9 +131,6 @@ func (p *Plan) Files(packageName string) ([]*goacodegen.File, error) {
 // link formats every retained plan with the final Goa names and import aliases.
 func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 	data := &fileData{Imports: p.importNames()}
-	if p.integerJSON != nil {
-		data.IntegerJSON = p.integerJSON.Name()
-	}
 	if p.jsonHelpers != nil {
 		data.JSONNames = p.jsonNames(data.Imports)
 		data.ReadStrictJSON = p.jsonHelpers.read.Name()
@@ -177,22 +165,15 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 			if err != nil {
 				return nil, nil, err
 			}
-			var unsigned bool
-			var bits int
-			if primitive, ok := integerPrimitive(planned.userType); ok {
-				_, unsigned, bits = jsonshape.IntegerShape(primitive.Kind())
-			}
 			data.Types = append(data.Types, &typeData{
-				IntegerDecode:   planned.integerDecode,
-				UnsignedInteger: unsigned,
-				IntegerBits:     bits,
-				Name:            planned.declaration.Name(),
-				Definition:      linkedType.Def(),
-				Alias:           planned.alias,
-				Validator:       planned.validatorDeclaration.Name(),
-				Reference:       parameter.Ref(),
-				Pointer:         parameter.ReferenceIsPointer(),
-				Validation:      linkedValidation.Render("value", "body"),
+				IntegerDecode: planned.integerDecode,
+				Name:          planned.declaration.Name(),
+				Definition:    linkedType.Def(),
+				Alias:         planned.alias,
+				Validator:     planned.validatorDeclaration.Name(),
+				Reference:     parameter.Ref(),
+				Pointer:       parameter.ReferenceIsPointer(),
+				Validation:    linkedValidation.Render("value", "body"),
 			})
 		}
 		for _, planned := range value.unions {
@@ -384,9 +365,7 @@ type {{ .Name }} {{ if .Alias }}= {{ end }}{{ .Definition }}
 // UnmarshalJSON reads an exact whole JSON number and stores it within this type's
 // declared range. Decimal and exponent spellings do not change its value.
 func (value *{{ .Name }}) UnmarshalJSON(data []byte) error {
- text, err := {{ $.IntegerJSON }}(data)
- if err != nil { return err }
- number, err := {{ $.Imports.Strconv }}.{{ if .UnsignedInteger }}ParseUint{{ else }}ParseInt{{ end }}(text, 10, {{ if .IntegerBits }}{{ .IntegerBits }}{{ else }}{{ $.Imports.Strconv }}.IntSize{{ end }})
+ number, err := {{ $.Imports.RawJSON }}.DecodeInteger[{{ .Definition }}](data)
  if err != nil { return {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} integer: %w", err) }
  *value = {{ .Name }}(number)
  return nil
