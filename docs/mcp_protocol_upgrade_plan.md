@@ -2865,9 +2865,9 @@ discovery; inferring it from a resource URL or sending credentials to any
 discovered issuer would weaken the production trust contract. Machine fixture
 setup now supplies that issuer from its owned authorization-server configuration
 before spawning the client, without changing its OAuth handlers or assertions.
-Enterprise fixture coverage remains open. Independent negative cases, other
-registration/grant profiles, interrupted SSE acceptance and external caller
-cutover remain release gates. No release or deployment is performed.
+Enterprise and selected browser negative cases now pass as recorded below. Other
+registration/grant profiles, interrupted SSE acceptance and external caller cutover
+remain release gates. No release or deployment is performed.
 
 ## Native issuer authentication default
 
@@ -2883,6 +2883,45 @@ Focused race checks pass in 2.8 seconds across the new omission/list/null cases,
 machine and browser secret profiles, signed browser metadata, and enterprise
 renewal. Positive cases complete one token exchange and one MCP call. Negative
 cases stop before either operation. The complete suite was not repeated for this
-schema default. The enterprise referee still lacks registration issuer and
-identity-provider authentication configuration; this fix does not turn those
-fixture gaps into production trust decisions or claim enterprise conformance.
+schema default. The enterprise fixture needs explicit registration issuer and identity-provider
+authentication configuration. The independent acceptance below supplies those
+facts from fixture ownership; production clients do not infer trust.
+
+## Independent enterprise and browser boundary acceptance
+
+On 2026-10-07, the final HTTPS-adapted driver passes nine independent enterprise
+checks. The host validates its synthetic signed ID token against the fixture's
+configured key, issuer, client audience, user and validity. Existing generated
+clients exchange that identity for a resource-issuer-bound grant, redeem the grant
+with Basic authentication and send only the resource bearer token to MCP.
+
+The setup explicitly supplies the missing resource registration issuer and
+identity trust from fixture ownership. It also adds `none` to IdP authentication
+metadata, matching its existing public-client handler. The native RFC 8414 default
+would otherwise correctly reject public authentication. Token handlers and
+assertions are unchanged; this is not stock or complete enterprise conformance.
+SAML and identity-refresh paths retain their separate local acceptance evidence.
+
+Eleven focused browser scenarios pass all 109 scored checks with no failures,
+warnings or skips: 18 each for Basic/POST-secret/public authentication, 13 each
+for matching advertised issuer and unadvertised issuer omission, six each for
+four invalid callback issuer cases, three for mismatched issuer metadata and two
+for mismatched resource metadata. The referee requires retrieval of the relevant
+metadata and, for callback cases, reaching consent before its rejection verdict.
+Explicit host registrations replace no protocol logic; production clients own
+PKCE, exact issuer comparison, resource binding and credential placement.
+Each selected browser command returns in under one second; no root suite is
+repeated for these driver changes. Configured driver lint reports zero issues.
+
+The referee source remains unchanged: enterprise scenario SHA-256 is
+`caec7e9a28f6de14678612682115cb5b6f3125d3e233f6a52250435f6a0383c2`;
+authentication-method scenario is
+`45f8d9b9752c9481de070cdf085d315220acb05cf90e7fdd27799e967426b3f6`;
+issuer scenario is
+`4d103f10f01397096070ae29c10b5e0d0b0dd92bf50d356baf24ec223698fe7b`;
+resource-mismatch scenario is
+`3cc9428c82e3f3c1088b553bf50467e2d6fe35179310f1f6548669bf6a2756c1`.
+Reproduction and adaptation limits live in the
+[conformance instructions](../integration_tests/conformance/README.md).
+Other profiles, external caller cutover and the remaining MCP capabilities still
+gate release. No deployment or release is performed.

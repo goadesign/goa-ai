@@ -61,10 +61,19 @@ mandatory failures. Stop the local server with an interrupt when done.
 The pinned referee binds its authorization fixtures to HTTP. The current MCP
 contract requires HTTPS issuer and authorization endpoints; its loopback HTTP
 exception applies only to browser redirects. `https_fixture.mjs` changes the
-referee's listening socket and resulting base URL to HTTPS. The original command, OAuth handlers and checks remain unchanged. For the two
-machine scenarios, setup also supplies the omitted registration issuer from the
-fixture's own authorization-server configuration, before client startup. This is an HTTPS-adapted
-scenario, not a stock referee pass or a complete authorization-conformance claim.
+referee's listening socket and resulting base URL to HTTPS. The original command,
+token handlers and assertions remain unchanged. Machine and enterprise setup
+supplies the omitted registration issuer from fixture-owned configuration before
+client startup. Enterprise setup also exports its trusted identity signing key and
+seeded user, and adds `token_endpoint_auth_methods_supported: ["none"]` to IdP
+metadata to match that handler's public-client authentication. Omission otherwise
+means Basic under RFC 8414; production clients keep rejecting that inconsistency.
+
+Browser authentication-method and issuer/resource validation scenarios receive
+explicit synthetic registrations and their exact issuer. They test credential
+placement and identity checks rather than dynamic registration, which the current
+protocol removed. These are explicitly adapted scenarios, not stock referee
+passes or a complete authorization-conformance claim.
 
 From the repository root, create a local test certificate and build the driver:
 
@@ -96,6 +105,23 @@ and exits successfully without running their checks. The wire revision stays
 `2026-07-28`. Signed registration uses the fixture's ES256 key and exact issuer
 audience; its one-minute test assertion validity applies only to that assertion.
 
+Select `--scenario auth/enterprise-managed-authorization --force` for identity
+exchange and resource-grant redemption. The driver validates the host ID token's
+signature, issuer, client audience, user, issuance and expiry before the production
+enterprise transport receives it. The identity provider uses public authentication;
+the independent resource issuer uses Basic. Only the resulting resource bearer
+token is sent to MCP. The host key and issuer come from fixture configuration,
+not token contents or MCP discovery.
+
+The same command selects `auth/token-endpoint-auth-basic`,
+`auth/token-endpoint-auth-post`, `auth/token-endpoint-auth-none`,
+`auth/iss-supported`, `auth/iss-not-advertised`, `auth/iss-supported-missing`,
+`auth/iss-wrong-issuer`, `auth/iss-unexpected`, `auth/iss-normalized`,
+`auth/metadata-issuer-mismatch`, and `auth/resource-mismatch`. Explicit `--force`
+retains every selected check at the current wire revision. Rejection scenarios
+allow the client to exit with its actual error; their assertions require the
+relevant metadata or callback to have been reached before declaring rejection.
+
 The certificate's one-day validity is local test setup, not an OAuth token or
 product retention rule. Keep the private key and raw reports out of commits:
 reports contain synthetic secrets, authorization codes and tokens. After the
@@ -109,6 +135,11 @@ Verified on 2026-10-03 with the pinned referee:
 | --- | --- | --- |
 | Client / `auth/pre-registration`, HTTPS-adapted, verified 2026-10-07 | 13 passed, no failures or warnings | Protected-resource and issuer discovery, S256 PKCE, preregistered Basic authentication, token exchange and authorized list/call through production OAuth. Other authorization profiles and negative cases remain open. |
 | Client / `auth/client-credentials-basic` and `auth/client-credentials-jwt`, HTTPS-adapted, verified 2026-10-07 | 8 passed each, no failures or warnings | Explicitly selected machine extensions. Basic credentials and independently verified ES256 authentication, issuer discovery, token exchange and authorized MCP calls. Fixture setup supplies the exact registration issuer; no issuer is inferred from peer discovery. |
+| Client / `auth/enterprise-managed-authorization`, HTTPS/metadata-adapted, verified 2026-10-07 | 9 passed, no failures or warnings | Signed host identity exchange, signed resource-bound grant redemption with Basic authentication, discovery and authorized MCP calls. IdP metadata is corrected to advertise its existing public-client handler. No SAML, identity-refresh or live-issuer claim. |
+| Client / token-endpoint Basic, POST-secret and public authentication, HTTPS-adapted, verified 2026-10-07 | 18 passed each | Native production browser grant, exact credential placement, PKCE, resource parameter equality and authorized MCP calls. Host registration is explicit. |
+| Client / valid advertised issuer and omitted issuer support, HTTPS-adapted, verified 2026-10-07 | 13 passed each | Browser authorization accepts matching issuer and the permitted absence of an unadvertised issuer parameter. |
+| Client / missing advertised issuer, wrong issuer, unexpected mismatched issuer and normalized issuer variant, HTTPS-adapted, verified 2026-10-07 | 6 passed each | Metadata and callback reached, then no token exchange. Exact string comparison rejects a trailing-slash variant. |
+| Client / issuer metadata mismatch and protected-resource mismatch, HTTPS-adapted, verified 2026-10-07 | 3 and 2 passed | Relevant metadata fetched, then authorization stops before using mismatched issuer endpoints or starting consent. |
 | Client / `tools_call` | 2 checks passed | Simple tool call and its wire schema |
 | Client / `request-metadata` | 4 passed, 3 skipped, 1 warning; overall failure | Roots, sampling, and elicitation are unclaimed by this driver. The peer rejects `2026-07-28` while advertising that same revision as supported; it warns because the client stops instead of repeating the request. This is not an old-version fallback test. |
 | Client / `http-standard-headers` | 3 passed, 8 skipped | Tool list/call method headers and tool name header. The driver does not exercise resource/prompt methods or removed initialization methods. |

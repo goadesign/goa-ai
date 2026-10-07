@@ -1,8 +1,8 @@
 // This file supplies the synthetic host integration for the referee's
-// registered browser and machine scenarios. Production OAuth code owns discovery,
-// PKCE,
-// callback validation, token exchange and MCP authorization; this driver only
-// supplies its registered identity, browser callback and trusted test CA.
+// registered browser, machine and enterprise scenarios. Production OAuth code
+// owns discovery, PKCE, callback validation, token exchange and MCP authorization.
+// This driver supplies registered identities, validated host credentials, browser
+// interaction and an explicitly trusted test CA.
 package main
 
 import (
@@ -31,6 +31,12 @@ type (
 		Issuer           string `json:"issuer"`
 		PrivateKeyPEM    string `json:"private_key_pem"`
 		SigningAlgorithm string `json:"signing_algorithm"`
+		IDPClientID      string `json:"idp_client_id"`
+		IDPIssuer        string `json:"idp_issuer"`
+		IDPToken         string `json:"idp_id_token"`
+		IDPPublicKeyPEM  string `json:"idp_public_key_pem"`
+		IDPSubject       string `json:"idp_subject"`
+		Authentication   string `json:"token_endpoint_auth_method"`
 	}
 )
 
@@ -38,6 +44,7 @@ const (
 	preregisteredScenario = "auth/pre-registration"
 	basicMachineScenario  = "auth/client-credentials-basic"
 	signedMachineScenario = "auth/client-credentials-jwt"
+	enterpriseScenario    = "auth/enterprise-managed-authorization"
 )
 
 // exerciseAuthorization calls the referee's tool through production OAuth.
@@ -71,7 +78,11 @@ func exerciseAuthorization(endpoint string) error {
 	info := mcp.ClientInfo{Name: "goa-ai-conformance", Version: "1"}
 	var transport *mcp.HTTPTransport
 	switch configuration.Name {
-	case preregisteredScenario:
+	case preregisteredScenario,
+		"auth/token-endpoint-auth-basic", "auth/token-endpoint-auth-post", "auth/token-endpoint-auth-none",
+		"auth/iss-supported", "auth/iss-not-advertised", "auth/iss-supported-missing",
+		"auth/iss-wrong-issuer", "auth/iss-unexpected", "auth/iss-normalized",
+		"auth/metadata-issuer-mismatch", "auth/resource-mismatch":
 		transport, err = mcp.NewAuthorizationCodeHTTPTransport(mcp.HTTPOptions{Endpoint: endpoint, Client: browser, ClientInfo: info}, mcp.AuthorizationCode{
 			Registration: registration,
 			RedirectURI:  "http://127.0.0.1:3000/callback",
@@ -83,6 +94,8 @@ func exerciseAuthorization(endpoint string) error {
 			Registration: registration,
 			Store:        mcp.NewMemoryAuthorizationStore(),
 		})
+	case enterpriseScenario:
+		transport, err = refereeEnterpriseTransport(endpoint, browser, info, registration, configuration)
 	default:
 		return errors.New("unsupported referee authorization context")
 	}
@@ -132,8 +145,20 @@ func stopAtAuthorizationRedirect(_ *http.Request, _ []*http.Request) error {
 // refereeClientRegistration binds fixture credentials to their configured issuer.
 // The JWT scenario supplies one PKCS#8 P-256 private key for signed authentication.
 func refereeClientRegistration(configuration authorizationContext) (*mcp.ClientRegistration, error) {
+	switch configuration.Authentication {
+	case "none":
+		return mcp.NewPublicClientRegistration(configuration.Issuer, configuration.ClientID)
+	case "client_secret_basic":
+		return mcp.NewBasicClientRegistration(configuration.Issuer, configuration.ClientID, configuration.ClientSecret)
+	case "client_secret_post":
+		return mcp.NewSecretClientRegistration(configuration.Issuer, configuration.ClientID, configuration.ClientSecret)
+	case "":
+		// The original registered scenarios select their fixed profile below.
+	default:
+		return nil, errors.New("unsupported referee authentication method")
+	}
 	switch configuration.Name {
-	case preregisteredScenario, basicMachineScenario:
+	case preregisteredScenario, basicMachineScenario, enterpriseScenario:
 		return mcp.NewBasicClientRegistration(configuration.Issuer, configuration.ClientID, configuration.ClientSecret)
 	case signedMachineScenario:
 		if configuration.SigningAlgorithm != "ES256" {
