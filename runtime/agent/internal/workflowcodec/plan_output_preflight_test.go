@@ -43,15 +43,28 @@ type (
 
 	preflightNamedPointer *string
 
+	preflightNamedBoolPointer *bool
+
+	preflightNamedIntegerPointer *int64
+
+	preflightNamedFloatPointer *float64
+
+	preflightTaggedPointer struct {
+		Text preflightNamedPointer `json:"text,string"`
+	}
+
 	preflightEmbeddedFields struct {
 		Text string `json:"text,string"`
 	}
 )
 
-const taggedPreflightString = "tagged string"
+const (
+	taggedPreflightString  = "tagged string"
+	taggedPreflightPointer = "tagged named pointer"
+)
 
 func TestPlanOutputCertificateBoundsEscapedSiblingsBeforeEncoding(t *testing.T) {
-	for _, name := range []string{"string", "nested metadata", taggedPreflightString} {
+	for _, name := range []string{"string", "nested metadata", taggedPreflightString, taggedPreflightPointer} {
 		t.Run(name, func(t *testing.T) {
 			output := certificateOutput()
 			output.PublicationBatchID = "12345678-1234-4234-8234-123456789abc"
@@ -59,7 +72,7 @@ func TestPlanOutputCertificateBoundsEscapedSiblingsBeforeEncoding(t *testing.T) 
 				model.ProviderErrorKindUnavailable, "capacity", strings.Repeat("x", 100000),
 				"request-1", true, nil)
 			length := 150000
-			if name == taggedPreflightString {
+			if name == taggedPreflightString || name == taggedPreflightPointer {
 				length = 130000
 			}
 			sibling := escapedPreflightSibling(name, strings.Repeat("\x00", length))
@@ -68,6 +81,18 @@ func TestPlanOutputCertificateBoundsEscapedSiblingsBeforeEncoding(t *testing.T) 
 			require.NoError(t, err)
 			siblingPayload, err := codec.ToPayload(sibling)
 			require.NoError(t, err)
+			largestSiblingPayload := siblingPayload
+			if name == taggedPreflightPointer {
+				// A named pointer may use either ordinary or quoted string JSON.
+				// The primitive field supplies the larger supported encoding, so
+				// this rejection must hold with either encoding/json implementation.
+				largestSiblingPayload, err = codec.ToPayload(preflightTaggedText{
+					Text: strings.Repeat("\x00", length),
+				})
+				require.NoError(t, err)
+				assert.LessOrEqual(t, len(siblingPayload.Data), len(largestSiblingPayload.Data))
+				assert.Len(t, largestSiblingPayload.Data, 910015)
+			}
 			if name == "string" {
 				assert.Len(t, siblingPayload.Data, 900002)
 			}
@@ -75,7 +100,7 @@ func TestPlanOutputCertificateBoundsEscapedSiblingsBeforeEncoding(t *testing.T) 
 				assert.Len(t, siblingPayload.Data, 910015)
 				assert.Greater(t, len(outputPayload.Data)+len(siblingPayload.Data), 1110015)
 			}
-			assert.Greater(t, len(outputPayload.Data)+len(siblingPayload.Data), 1100000)
+			assert.Greater(t, len(outputPayload.Data)+len(largestSiblingPayload.Data), 1100000)
 			assert.Less(t, len(outputPayload.Data), engine.MaxPayloadBytes)
 			assert.Less(t, len(siblingPayload.Data), engine.MaxPayloadBytes)
 
@@ -114,6 +139,7 @@ func TestPlanOutputCertificateBoundsEscapedSiblingsBeforeEncoding(t *testing.T) 
 
 func TestPlanOutputCertificateJSONFieldOptions(t *testing.T) {
 	escaped := "\"\\\b\f\n\r\t\x00<>&\u2028\u2029世界"
+	boolean, integer, floating := true, int64(math.MinInt64), -math.MaxFloat64
 	variants := []any{
 		true, false, int(math.MinInt), int8(math.MinInt8), int16(math.MinInt16),
 		int32(math.MinInt32), int64(math.MinInt64), uint(math.MaxUint), uint8(math.MaxUint8),
@@ -121,7 +147,9 @@ func TestPlanOutputCertificateJSONFieldOptions(t *testing.T) {
 		float32(math.SmallestNonzeroFloat32), -math.MaxFloat64, float64(0),
 		escaped, "", preflightNamedString(escaped), json.Number("1e100000"), json.Number(""),
 		[]string{escaped}, [1]string{escaped}, map[string]string{"text": escaped},
-		preflightNamedPointer(&escaped), preflightTaggedText{Text: escaped},
+		preflightNamedPointer(&escaped), preflightNamedBoolPointer(&boolean),
+		preflightNamedIntegerPointer(&integer), preflightNamedFloatPointer(&floating),
+		preflightTaggedText{Text: escaped},
 	}
 	for _, value := range variants {
 		for _, pointer := range []string{"value", "pointer", "nil pointer", "double pointer"} {
@@ -177,7 +205,7 @@ func TestPlanOutputCertificateQuotedStringCountMatchesJSON(t *testing.T) {
 	for index := range ascii {
 		ascii[index] = byte(index)
 	}
-	for _, text := range []string{"", string(ascii), "\u2028\u2029世界😀", "\xff", strings.Repeat("\x00", 130000)} {
+	for _, text := range []string{"", string(ascii), "\u2028\u2029世界😀", strings.Repeat("\x00", 130000)} {
 		once, err := json.Marshal(text)
 		require.NoError(t, err)
 		twice, err := json.Marshal(string(once))
@@ -191,6 +219,28 @@ func TestPlanOutputCertificateQuotedStringCountMatchesJSON(t *testing.T) {
 			}
 			assert.Equal(t, len(expected), budget.bytes)
 		}
+	}
+}
+
+func TestPlanOutputCertificateInvalidStringCountBoundsJSON(t *testing.T) {
+	for _, text := range []string{"\xff", "\xfe\xff", "before\x80after", "\xc0\xaf", "世界\xf0\x9f"} {
+		once, err := json.Marshal(text)
+		require.NoError(t, err)
+		twice, err := json.Marshal(string(once))
+		require.NoError(t, err)
+		for _, quoted := range []bool{false, true} {
+			var budget encodedOutputBudget
+			require.NoError(t, budget.addJSONString(quoted, text))
+			encoded := once
+			if quoted {
+				encoded = twice
+			}
+			// JSON encoders may emit the replacement rune directly or escaped.
+			// The size check must cover either spelling; source preflight still
+			// rejects the original invalid text before an encoder can run.
+			assert.GreaterOrEqual(t, budget.bytes, len(encoded))
+		}
+		require.ErrorContains(t, new(Budget).AddSource(text), "invalid UTF-8")
 	}
 }
 
@@ -257,6 +307,8 @@ func escapedPreflightSibling(kind, text string) any {
 		return map[string]any{"metadata": map[string]any{"text": text}}
 	case taggedPreflightString:
 		return preflightTaggedText{Text: text}
+	case taggedPreflightPointer:
+		return preflightTaggedPointer{Text: &text}
 	default:
 		return text
 	}

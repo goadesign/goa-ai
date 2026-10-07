@@ -457,9 +457,10 @@ func base64JSONBytes(length int) int {
 	return 2 + 4*((length+2)/3)
 }
 
-// jsonFieldEncoding follows encoding/json's field-name and ,string rules.
-// Invalid names use the Go name. Only primitive fields and their unnamed
-// pointer forms can request a quoted value; other field types ignore ,string.
+// jsonFieldEncoding counts ,string quoting for primitive fields and one pointer
+// to a primitive, including named pointers. This bounds both encoding/json
+// implementations even when one ignores the tag on named pointers. Invalid
+// field names use the Go name; other field types ignore ,string.
 func jsonFieldEncoding(field reflect.StructField) (string, bool) {
 	name, options, _ := strings.Cut(field.Tag.Get("json"), ",")
 	for _, char := range name {
@@ -473,7 +474,7 @@ func jsonFieldEncoding(field reflect.StructField) (string, bool) {
 		name = field.Name
 	}
 	typ := field.Type
-	if typ.Name() == "" && typ.Kind() == reflect.Pointer {
+	if typ.Kind() == reflect.Pointer {
 		typ = typ.Elem()
 	}
 	for option := range strings.SplitSeq(options, ",") {
