@@ -15,19 +15,23 @@ import (
 
 // Endpoints wraps the "access_tokens" service endpoints.
 type Endpoints struct {
-	Assertion goa.Endpoint
-	Secret    goa.Endpoint
-	Code      goa.Endpoint
-	Refresh   goa.Endpoint
+	Assertion     goa.Endpoint
+	Secret        goa.Endpoint
+	Code          goa.Endpoint
+	Refresh       goa.Endpoint
+	SignedCode    goa.Endpoint
+	SignedRefresh goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "access_tokens" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		Assertion: NewAssertionEndpoint(s),
-		Secret:    NewSecretEndpoint(s),
-		Code:      NewCodeEndpoint(s),
-		Refresh:   NewRefreshEndpoint(s),
+		Assertion:     NewAssertionEndpoint(s),
+		Secret:        NewSecretEndpoint(s),
+		Code:          NewCodeEndpoint(s),
+		Refresh:       NewRefreshEndpoint(s),
+		SignedCode:    NewSignedCodeEndpoint(s),
+		SignedRefresh: NewSignedRefreshEndpoint(s),
 	}
 }
 
@@ -38,6 +42,8 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Secret = m(e.Secret)
 	e.Code = m(e.Code)
 	e.Refresh = m(e.Refresh)
+	e.SignedCode = m(e.SignedCode)
+	e.SignedRefresh = m(e.SignedRefresh)
 }
 
 // NewAssertionEndpoint returns an endpoint function that calls the method
@@ -73,5 +79,23 @@ func NewRefreshEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*RefreshPayload)
 		return s.Refresh(ctx, p)
+	}
+}
+
+// NewSignedCodeEndpoint returns an endpoint function that calls the method
+// "signed_code" of service "access_tokens".
+func NewSignedCodeEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SignedCodePayload)
+		return s.SignedCode(ctx, p)
+	}
+}
+
+// NewSignedRefreshEndpoint returns an endpoint function that calls the method
+// "signed_refresh" of service "access_tokens".
+func NewSignedRefreshEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SignedRefreshPayload)
+		return s.SignedRefresh(ctx, p)
 	}
 }

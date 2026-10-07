@@ -18,11 +18,13 @@ import (
 
 // Server lists the access_tokens service endpoint HTTP handlers.
 type Server struct {
-	Mounts    []*MountPoint
-	Assertion http.Handler
-	Secret    http.Handler
-	Code      http.Handler
-	Refresh   http.Handler
+	Mounts        []*MountPoint
+	Assertion     http.Handler
+	Secret        http.Handler
+	Code          http.Handler
+	Refresh       http.Handler
+	SignedCode    http.Handler
+	SignedRefresh http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -56,11 +58,15 @@ func New(
 			{"Secret", "POST", "/token"},
 			{"Code", "POST", "/code"},
 			{"Refresh", "POST", "/refresh"},
+			{"SignedCode", "POST", "/signed_code"},
+			{"SignedRefresh", "POST", "/signed_refresh"},
 		},
-		Assertion: NewAssertionHandler(e.Assertion, mux, decoder, encoder, errhandler, formatter),
-		Secret:    NewSecretHandler(e.Secret, mux, decoder, encoder, errhandler, formatter),
-		Code:      NewCodeHandler(e.Code, mux, decoder, encoder, errhandler, formatter),
-		Refresh:   NewRefreshHandler(e.Refresh, mux, decoder, encoder, errhandler, formatter),
+		Assertion:     NewAssertionHandler(e.Assertion, mux, decoder, encoder, errhandler, formatter),
+		Secret:        NewSecretHandler(e.Secret, mux, decoder, encoder, errhandler, formatter),
+		Code:          NewCodeHandler(e.Code, mux, decoder, encoder, errhandler, formatter),
+		Refresh:       NewRefreshHandler(e.Refresh, mux, decoder, encoder, errhandler, formatter),
+		SignedCode:    NewSignedCodeHandler(e.SignedCode, mux, decoder, encoder, errhandler, formatter),
+		SignedRefresh: NewSignedRefreshHandler(e.SignedRefresh, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -73,6 +79,8 @@ func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.Secret = m(s.Secret)
 	s.Code = m(s.Code)
 	s.Refresh = m(s.Refresh)
+	s.SignedCode = m(s.SignedCode)
+	s.SignedRefresh = m(s.SignedRefresh)
 }
 
 // MethodNames returns the methods served.
@@ -84,6 +92,8 @@ func Mount(mux goahttp.Muxer, h *Server) {
 	MountSecretHandler(mux, h.Secret)
 	MountCodeHandler(mux, h.Code)
 	MountRefreshHandler(mux, h.Refresh)
+	MountSignedCodeHandler(mux, h.SignedCode)
+	MountSignedRefreshHandler(mux, h.SignedRefresh)
 }
 
 // Mount configures the mux to serve the access_tokens endpoints.
@@ -280,6 +290,112 @@ func NewRefreshHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "refresh")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountSignedCodeHandler configures the mux to serve the "access_tokens"
+// service "signed_code" endpoint.
+func MountSignedCodeHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/signed_code", f)
+}
+
+// NewSignedCodeHandler creates a HTTP handler which loads the HTTP request and
+// calls the "access_tokens" service "signed_code" endpoint.
+func NewSignedCodeHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeSignedCodeRequest(mux, decoder)
+		encodeResponse = EncodeSignedCodeResponse(encoder)
+		encodeError    = goahttp.ErrorEncoder(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "signed_code")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountSignedRefreshHandler configures the mux to serve the "access_tokens"
+// service "signed_refresh" endpoint.
+func MountSignedRefreshHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/signed_refresh", f)
+}
+
+// NewSignedRefreshHandler creates a HTTP handler which loads the HTTP request
+// and calls the "access_tokens" service "signed_refresh" endpoint.
+func NewSignedRefreshHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeSignedRefreshRequest(mux, decoder)
+		encodeResponse = EncodeSignedRefreshResponse(encoder)
+		encodeError    = goahttp.ErrorEncoder(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "signed_refresh")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
 		payload, err := decodeRequest(r)
 		if err != nil {

@@ -7,19 +7,47 @@
 
 package server
 
-import clientmetadata "goa.design/goa-ai/internal/mcpauth/gen/client_metadata"
+import (
+	jose "github.com/go-jose/go-jose/v4"
+	clientmetadata "goa.design/goa-ai/internal/mcpauth/gen/client_metadata"
+)
 
 // ReadResponseBody is the type of the "client_metadata" service "read"
 // endpoint HTTP response body.
 type ReadResponseBody struct {
+	// Registered authentication required at the token endpoint
+	TokenEndpointAuthMethod string `form:"token_endpoint_auth_method" json:"token_endpoint_auth_method" xml:"token_endpoint_auth_method"`
 	// Exact HTTPS URL hosting this client document
 	ClientID string `form:"client_id" json:"client_id" xml:"client_id"`
 	// Client name shown by the issuer during consent
 	ClientName string `form:"client_name" json:"client_name" xml:"client_name"`
 	// Registered callbacks owned by the client host
 	RedirectUris []string `form:"redirect_uris" json:"redirect_uris" xml:"redirect_uris"`
-	// Public-client token authentication
+	// Registered grants including authorization code and optional refresh
+	GrantTypes []string `form:"grant_types" json:"grant_types" xml:"grant_types"`
+	// Registered authorization responses
+	ResponseTypes []string `form:"response_types" json:"response_types" xml:"response_types"`
+	// Forbidden shared-secret registration member checked by the client
+	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty" xml:"client_secret,omitempty"`
+	// Forbidden shared-secret registration member checked by the client
+	ClientSecretExpiresAt *int64 `form:"client_secret_expires_at,omitempty" json:"client_secret_expires_at,omitempty" xml:"client_secret_expires_at,omitempty"`
+}
+
+// SignedReadResponseBody is the type of the "client_metadata" service
+// "signed_read" endpoint HTTP response body.
+type SignedReadResponseBody struct {
+	// Registered authentication required at the token endpoint
 	TokenEndpointAuthMethod string `form:"token_endpoint_auth_method" json:"token_endpoint_auth_method" xml:"token_endpoint_auth_method"`
+	// HTTPS address of the client's registered public keys
+	JwksURI *string `form:"jwks_uri,omitempty" json:"jwks_uri,omitempty" xml:"jwks_uri,omitempty"`
+	// Inline public keys decoded by the JOSE library
+	Jwks *jose.JSONWebKeySet `form:"jwks,omitempty" json:"jwks,omitempty" xml:"jwks,omitempty"`
+	// Exact HTTPS URL hosting this client document
+	ClientID string `form:"client_id" json:"client_id" xml:"client_id"`
+	// Client name shown by the issuer during consent
+	ClientName string `form:"client_name" json:"client_name" xml:"client_name"`
+	// Registered callbacks owned by the client host
+	RedirectUris []string `form:"redirect_uris" json:"redirect_uris" xml:"redirect_uris"`
 	// Registered grants including authorization code and optional refresh
 	GrantTypes []string `form:"grant_types" json:"grant_types" xml:"grant_types"`
 	// Registered authorization responses
@@ -34,9 +62,50 @@ type ReadResponseBody struct {
 // "read" endpoint of the "client_metadata" service.
 func NewReadResponseBody(res *clientmetadata.ReadResult) *ReadResponseBody {
 	body := &ReadResponseBody{
+		TokenEndpointAuthMethod: res.TokenEndpointAuthMethod,
 		ClientID:                res.ClientID,
 		ClientName:              res.ClientName,
+		ClientSecret:            res.ClientSecret,
+		ClientSecretExpiresAt:   res.ClientSecretExpiresAt,
+	}
+	if res.RedirectUris != nil {
+		body.RedirectUris = make([]string, len(res.RedirectUris))
+		for i, val := range res.RedirectUris {
+			body.RedirectUris[i] = val
+		}
+	} else {
+		body.RedirectUris = []string{}
+	}
+	if res.GrantTypes != nil {
+		body.GrantTypes = make([]string, len(res.GrantTypes))
+		for i, val := range res.GrantTypes {
+			body.GrantTypes[i] = val
+		}
+	}
+	if res.GrantTypes == nil {
+		body.GrantTypes = []string{"authorization_code"}
+	}
+	if res.ResponseTypes != nil {
+		body.ResponseTypes = make([]string, len(res.ResponseTypes))
+		for i, val := range res.ResponseTypes {
+			body.ResponseTypes[i] = val
+		}
+	}
+	if res.ResponseTypes == nil {
+		body.ResponseTypes = []string{"code"}
+	}
+	return body
+}
+
+// NewSignedReadResponseBody builds the HTTP response body from the result of
+// the "signed_read" endpoint of the "client_metadata" service.
+func NewSignedReadResponseBody(res *clientmetadata.SignedReadResult) *SignedReadResponseBody {
+	body := &SignedReadResponseBody{
 		TokenEndpointAuthMethod: res.TokenEndpointAuthMethod,
+		JwksURI:                 res.JwksURI,
+		Jwks:                    res.Jwks,
+		ClientID:                res.ClientID,
+		ClientName:              res.ClientName,
 		ClientSecret:            res.ClientSecret,
 		ClientSecretExpiresAt:   res.ClientSecretExpiresAt,
 	}

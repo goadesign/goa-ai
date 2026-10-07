@@ -81,3 +81,67 @@ func DecodeReadResponse(decoder func(*http.Response) goahttp.Decoder, restoreBod
 		}
 	}
 }
+
+// BuildSignedReadRequest instantiates a HTTP request object with method and
+// path set to call the "client_metadata" service "signed_read" endpoint
+func (c *Client) BuildSignedReadRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: SignedReadClientMetadataPath()}
+	req, err := http.NewRequest("GET", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("client_metadata", "signed_read", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// DecodeSignedReadResponse returns a decoder for responses returned by the
+// client_metadata signed_read endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+func DecodeSignedReadResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("client_metadata", "signed_read", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("client_metadata", "signed_read", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body SignedReadResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("client_metadata", "signed_read", err)
+			}
+			err = ValidateSignedReadResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("client_metadata", "signed_read", err)
+			}
+			res := NewSignedReadResultOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("client_metadata", "signed_read", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("client_metadata", "signed_read", resp.StatusCode, string(body))
+		}
+	}
+}

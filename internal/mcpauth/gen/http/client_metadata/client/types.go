@@ -10,6 +10,7 @@ package client
 import (
 	"unicode/utf8"
 
+	jose "github.com/go-jose/go-jose/v4"
 	clientmetadata "goa.design/goa-ai/internal/mcpauth/gen/client_metadata"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -17,14 +18,39 @@ import (
 // ReadResponseBody is the type of the "client_metadata" service "read"
 // endpoint HTTP response body.
 type ReadResponseBody struct {
+	// Registered authentication required at the token endpoint
+	TokenEndpointAuthMethod *string `form:"token_endpoint_auth_method,omitempty" json:"token_endpoint_auth_method,omitempty" xml:"token_endpoint_auth_method,omitempty"`
 	// Exact HTTPS URL hosting this client document
 	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
 	// Client name shown by the issuer during consent
 	ClientName *string `form:"client_name,omitempty" json:"client_name,omitempty" xml:"client_name,omitempty"`
 	// Registered callbacks owned by the client host
 	RedirectUris []string `form:"redirect_uris,omitempty" json:"redirect_uris,omitempty" xml:"redirect_uris,omitempty"`
-	// Public-client token authentication
+	// Registered grants including authorization code and optional refresh
+	GrantTypes []string `form:"grant_types,omitempty" json:"grant_types,omitempty" xml:"grant_types,omitempty"`
+	// Registered authorization responses
+	ResponseTypes []string `form:"response_types,omitempty" json:"response_types,omitempty" xml:"response_types,omitempty"`
+	// Forbidden shared-secret registration member checked by the client
+	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty" xml:"client_secret,omitempty"`
+	// Forbidden shared-secret registration member checked by the client
+	ClientSecretExpiresAt *int64 `form:"client_secret_expires_at,omitempty" json:"client_secret_expires_at,omitempty" xml:"client_secret_expires_at,omitempty"`
+}
+
+// SignedReadResponseBody is the type of the "client_metadata" service
+// "signed_read" endpoint HTTP response body.
+type SignedReadResponseBody struct {
+	// Registered authentication required at the token endpoint
 	TokenEndpointAuthMethod *string `form:"token_endpoint_auth_method,omitempty" json:"token_endpoint_auth_method,omitempty" xml:"token_endpoint_auth_method,omitempty"`
+	// HTTPS address of the client's registered public keys
+	JwksURI *string `form:"jwks_uri,omitempty" json:"jwks_uri,omitempty" xml:"jwks_uri,omitempty"`
+	// Inline public keys decoded by the JOSE library
+	Jwks *jose.JSONWebKeySet `form:"jwks,omitempty" json:"jwks,omitempty" xml:"jwks,omitempty"`
+	// Exact HTTPS URL hosting this client document
+	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
+	// Client name shown by the issuer during consent
+	ClientName *string `form:"client_name,omitempty" json:"client_name,omitempty" xml:"client_name,omitempty"`
+	// Registered callbacks owned by the client host
+	RedirectUris []string `form:"redirect_uris,omitempty" json:"redirect_uris,omitempty" xml:"redirect_uris,omitempty"`
 	// Registered grants including authorization code and optional refresh
 	GrantTypes []string `form:"grant_types,omitempty" json:"grant_types,omitempty" xml:"grant_types,omitempty"`
 	// Registered authorization responses
@@ -39,9 +65,47 @@ type ReadResponseBody struct {
 // from a HTTP "OK" response.
 func NewReadResultOK(body *ReadResponseBody) *clientmetadata.ReadResult {
 	v := &clientmetadata.ReadResult{
+		TokenEndpointAuthMethod: *body.TokenEndpointAuthMethod,
 		ClientID:                *body.ClientID,
 		ClientName:              *body.ClientName,
+		ClientSecret:            body.ClientSecret,
+		ClientSecretExpiresAt:   body.ClientSecretExpiresAt,
+	}
+	v.RedirectUris = make([]string, len(body.RedirectUris))
+	for i, val := range body.RedirectUris {
+		v.RedirectUris[i] = val
+	}
+	if body.GrantTypes != nil {
+		v.GrantTypes = make([]string, len(body.GrantTypes))
+		for i, val := range body.GrantTypes {
+			v.GrantTypes[i] = val
+		}
+	}
+	if body.GrantTypes == nil {
+		v.GrantTypes = []string{"authorization_code"}
+	}
+	if body.ResponseTypes != nil {
+		v.ResponseTypes = make([]string, len(body.ResponseTypes))
+		for i, val := range body.ResponseTypes {
+			v.ResponseTypes[i] = val
+		}
+	}
+	if body.ResponseTypes == nil {
+		v.ResponseTypes = []string{"code"}
+	}
+
+	return v
+}
+
+// NewSignedReadResultOK builds a "client_metadata" service "signed_read"
+// endpoint result from a HTTP "OK" response.
+func NewSignedReadResultOK(body *SignedReadResponseBody) *clientmetadata.SignedReadResult {
+	v := &clientmetadata.SignedReadResult{
 		TokenEndpointAuthMethod: *body.TokenEndpointAuthMethod,
+		JwksURI:                 body.JwksURI,
+		Jwks:                    body.Jwks,
+		ClientID:                *body.ClientID,
+		ClientName:              *body.ClientName,
 		ClientSecret:            body.ClientSecret,
 		ClientSecretExpiresAt:   body.ClientSecretExpiresAt,
 	}
@@ -73,6 +137,9 @@ func NewReadResultOK(body *ReadResponseBody) *clientmetadata.ReadResult {
 
 // ValidateReadResponseBody runs the validations defined on ReadResponseBody
 func ValidateReadResponseBody(body *ReadResponseBody) (err error) {
+	if body.TokenEndpointAuthMethod == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("token_endpoint_auth_method", "body"))
+	}
 	if body.ClientID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("client_id", "body"))
 	}
@@ -82,8 +149,10 @@ func ValidateReadResponseBody(body *ReadResponseBody) (err error) {
 	if body.RedirectUris == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("redirect_uris", "body"))
 	}
-	if body.TokenEndpointAuthMethod == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("token_endpoint_auth_method", "body"))
+	if body.TokenEndpointAuthMethod != nil {
+		if !(*body.TokenEndpointAuthMethod == "none") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.token_endpoint_auth_method", *body.TokenEndpointAuthMethod, []any{"none"}))
+		}
 	}
 	if body.ClientID != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.client_id", *body.ClientID, goa.FormatURI))
@@ -99,10 +168,45 @@ func ValidateReadResponseBody(body *ReadResponseBody) (err error) {
 	for _, e := range body.RedirectUris {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uris[*]", e, goa.FormatURI))
 	}
+	return
+}
+
+// ValidateSignedReadResponseBody runs the validations defined on
+// SignedReadResponseBody
+func ValidateSignedReadResponseBody(body *SignedReadResponseBody) (err error) {
+	if body.TokenEndpointAuthMethod == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("token_endpoint_auth_method", "body"))
+	}
+	if body.ClientID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_id", "body"))
+	}
+	if body.ClientName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_name", "body"))
+	}
+	if body.RedirectUris == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("redirect_uris", "body"))
+	}
 	if body.TokenEndpointAuthMethod != nil {
-		if !(*body.TokenEndpointAuthMethod == "none") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.token_endpoint_auth_method", *body.TokenEndpointAuthMethod, []any{"none"}))
+		if !(*body.TokenEndpointAuthMethod == "private_key_jwt") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.token_endpoint_auth_method", *body.TokenEndpointAuthMethod, []any{"private_key_jwt"}))
 		}
+	}
+	if body.JwksURI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.jwks_uri", *body.JwksURI, goa.FormatURI))
+	}
+	if body.ClientID != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.client_id", *body.ClientID, goa.FormatURI))
+	}
+	if body.ClientName != nil {
+		if utf8.RuneCountInString(*body.ClientName) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_name", *body.ClientName, utf8.RuneCountInString(*body.ClientName), 1, true))
+		}
+	}
+	if len(body.RedirectUris) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.redirect_uris", body.RedirectUris, len(body.RedirectUris), 1, true))
+	}
+	for _, e := range body.RedirectUris {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uris[*]", e, goa.FormatURI))
 	}
 	return
 }

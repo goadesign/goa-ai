@@ -33,8 +33,8 @@ func UsageCommands() []string {
 		"token-introspection read",
 		"resource-metadata read",
 		"issuer-metadata read",
-		"client-metadata read",
-		"access-tokens (assertion|secret|code|refresh)",
+		"client-metadata (read|signed-read)",
+		"access-tokens (assertion|secret|code|refresh|signed-code|signed-refresh)",
 		"authorization-responses receive",
 	}
 }
@@ -102,6 +102,8 @@ func ParseEndpoint(
 
 		clientMetadataReadFlags = flag.NewFlagSet("read", flag.ExitOnError)
 
+		clientMetadataSignedReadFlags = flag.NewFlagSet("signed-read", flag.ExitOnError)
+
 		accessTokensFlags = flag.NewFlagSet("access-tokens", flag.ContinueOnError)
 
 		accessTokensAssertionFlags    = flag.NewFlagSet("assertion", flag.ExitOnError)
@@ -115,6 +117,12 @@ func ParseEndpoint(
 
 		accessTokensRefreshFlags    = flag.NewFlagSet("refresh", flag.ExitOnError)
 		accessTokensRefreshBodyFlag = new(cliStringFlag)
+
+		accessTokensSignedCodeFlags    = flag.NewFlagSet("signed-code", flag.ExitOnError)
+		accessTokensSignedCodeBodyFlag = new(cliStringFlag)
+
+		accessTokensSignedRefreshFlags    = flag.NewFlagSet("signed-refresh", flag.ExitOnError)
+		accessTokensSignedRefreshBodyFlag = new(cliStringFlag)
 
 		authorizationResponsesFlags = flag.NewFlagSet("authorization-responses", flag.ContinueOnError)
 
@@ -132,6 +140,8 @@ func ParseEndpoint(
 	accessTokensSecretFlags.Var(accessTokensSecretBodyFlag, "body", "")
 	accessTokensCodeFlags.Var(accessTokensCodeBodyFlag, "body", "")
 	accessTokensRefreshFlags.Var(accessTokensRefreshBodyFlag, "body", "")
+	accessTokensSignedCodeFlags.Var(accessTokensSignedCodeBodyFlag, "body", "")
+	accessTokensSignedRefreshFlags.Var(accessTokensSignedRefreshBodyFlag, "body", "")
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveCodeFlag, "code", "")
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveErrorFlag, "error", "")
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveStateFlag, "state", "")
@@ -151,12 +161,15 @@ func ParseEndpoint(
 
 	clientMetadataFlags.Usage = clientMetadataUsage
 	clientMetadataReadFlags.Usage = clientMetadataReadUsage
+	clientMetadataSignedReadFlags.Usage = clientMetadataSignedReadUsage
 
 	accessTokensFlags.Usage = accessTokensUsage
 	accessTokensAssertionFlags.Usage = accessTokensAssertionUsage
 	accessTokensSecretFlags.Usage = accessTokensSecretUsage
 	accessTokensCodeFlags.Usage = accessTokensCodeUsage
 	accessTokensRefreshFlags.Usage = accessTokensRefreshUsage
+	accessTokensSignedCodeFlags.Usage = accessTokensSignedCodeUsage
+	accessTokensSignedRefreshFlags.Usage = accessTokensSignedRefreshUsage
 
 	authorizationResponsesFlags.Usage = authorizationResponsesUsage
 	authorizationResponsesReceiveFlags.Usage = authorizationResponsesReceiveUsage
@@ -238,6 +251,9 @@ func ParseEndpoint(
 			case "read":
 				epf = clientMetadataReadFlags
 
+			case "signed-read":
+				epf = clientMetadataSignedReadFlags
+
 			}
 
 		case "access-tokens":
@@ -253,6 +269,12 @@ func ParseEndpoint(
 
 			case "refresh":
 				epf = accessTokensRefreshFlags
+
+			case "signed-code":
+				epf = accessTokensSignedCodeFlags
+
+			case "signed-refresh":
+				epf = accessTokensSignedRefreshFlags
 
 			}
 
@@ -314,6 +336,8 @@ func ParseEndpoint(
 			switch epn {
 			case "read":
 				endpoint = c.Read()
+			case "signed-read":
+				endpoint = c.SignedRead()
 			}
 		case "access-tokens":
 			c := accesstokensc.NewClient(scheme, host, doer, enc, dec, restore)
@@ -330,6 +354,12 @@ func ParseEndpoint(
 			case "refresh":
 				endpoint = c.Refresh()
 				data, err = accesstokensc.BuildRefreshPayload(accessTokensRefreshBodyFlag.value)
+			case "signed-code":
+				endpoint = c.SignedCode()
+				data, err = accesstokensc.BuildSignedCodePayload(accessTokensSignedCodeBodyFlag.value)
+			case "signed-refresh":
+				endpoint = c.SignedRefresh()
+				data, err = accesstokensc.BuildSignedRefreshPayload(accessTokensSignedRefreshBodyFlag.value)
 			}
 		case "authorization-responses":
 			c := authorizationresponsesc.NewClient(scheme, host, doer, enc, dec, restore)
@@ -466,10 +496,11 @@ func issuerMetadataReadUsage() {
 // clientMetadataUsage displays the usage of the client-metadata command and
 // its subcommands.
 func clientMetadataUsage() {
-	fmt.Fprintln(os.Stderr, `Read a public client's self-hosted registration before using its HTTPS document URL as the client identifier.`)
+	fmt.Fprintln(os.Stderr, `Read a client's self-hosted registration before using its HTTPS document URL as the client identifier; each operation requires the configured authentication profile.`)
 	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] client-metadata COMMAND [flags]\n\n", os.Args[0])
 	fmt.Fprintln(os.Stderr, "COMMAND:")
-	fmt.Fprintln(os.Stderr, `    read: Check the client's document identity, public authentication and registered redirects before beginning browser consent.`)
+	fmt.Fprintln(os.Stderr, `    read: Check the document identity, registered callbacks and exact token authentication before beginning browser consent.`)
+	fmt.Fprintln(os.Stderr, `    signed-read: Check the document identity, registered callbacks and exact token authentication before beginning browser consent.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s client-metadata COMMAND --help\n", os.Args[0])
@@ -481,13 +512,29 @@ func clientMetadataReadUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Check the client's document identity, public authentication and registered redirects before beginning browser consent.`)
+	fmt.Fprintln(os.Stderr, `Check the document identity, registered callbacks and exact token authentication before beginning browser consent.`)
 
 	// Flags list
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "client-metadata read")
+}
+
+func clientMetadataSignedReadUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] client-metadata signed-read", os.Args[0])
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Check the document identity, registered callbacks and exact token authentication before beginning browser consent.`)
+
+	// Flags list
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "client-metadata signed-read")
 }
 
 // accessTokensUsage displays the usage of the access-tokens command and its
@@ -498,8 +545,10 @@ func accessTokensUsage() {
 	fmt.Fprintln(os.Stderr, "COMMAND:")
 	fmt.Fprintln(os.Stderr, `    assertion: Authenticate a preregistered client using one signed JWT assertion and request a bearer token for the exact MCP resource.`)
 	fmt.Fprintln(os.Stderr, `    secret: Exchange a preregistered client identifier and secret using request-body authentication for one resource and its configured permissions.`)
-	fmt.Fprintln(os.Stderr, `    code: Exchange one validated browser authorization code using the private PKCE verifier and the original resource and redirect.`)
-	fmt.Fprintln(os.Stderr, `    refresh: Replace an expired public-client access token using the refresh credential bound to the same issuer and resource.`)
+	fmt.Fprintln(os.Stderr, `    code: Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.`)
+	fmt.Fprintln(os.Stderr, `    refresh: Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.`)
+	fmt.Fprintln(os.Stderr, `    signed-code: Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.`)
+	fmt.Fprintln(os.Stderr, `    signed-refresh: Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s access-tokens COMMAND --help\n", os.Args[0])
@@ -548,7 +597,7 @@ func accessTokensCodeUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Exchange one validated browser authorization code using the private PKCE verifier and the original resource and redirect.`)
+	fmt.Fprintln(os.Stderr, `Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
@@ -566,7 +615,7 @@ func accessTokensRefreshUsage() {
 
 	// Description
 	fmt.Fprintln(os.Stderr)
-	fmt.Fprintln(os.Stderr, `Replace an expired public-client access token using the refresh credential bound to the same issuer and resource.`)
+	fmt.Fprintln(os.Stderr, `Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.`)
 
 	// Flags list
 	fmt.Fprintln(os.Stderr, `    -body JSON: `)
@@ -574,6 +623,42 @@ func accessTokensRefreshUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens refresh --body '{\n      \"client_id\": \"r\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"9gn\",\n      \"resource\": \"http://anderson.name/josefa\"\n   }'")
+}
+
+func accessTokensSignedCodeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens signed-code", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens signed-code --body '{\n      \"client_assertion\": \"N.N.i\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"code\": \"p41\",\n      \"code_verifier\": \"-6n.K~rysus5goayLiEbbzZ8KLERSMHoXUgFB2I17ie_lY1\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://kihn.com/esperanza.muller\",\n      \"resource\": \"http://torphy.biz/idell\"\n   }'")
+}
+
+func accessTokensSignedRefreshUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens signed-refresh", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens signed-refresh --body '{\n      \"client_assertion\": \"6.Yo.V8\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"uh4\",\n      \"resource\": \"http://weissnat.info/elody\"\n   }'")
 }
 
 // authorizationResponsesUsage displays the usage of the

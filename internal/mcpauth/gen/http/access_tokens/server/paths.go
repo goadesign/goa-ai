@@ -26,3 +26,13 @@ func CodeAccessTokensPath() string {
 func RefreshAccessTokensPath() string {
 	return "/refresh"
 }
+
+// SignedCodeAccessTokensPath returns the URL path to the access_tokens service signed_code HTTP endpoint.
+func SignedCodeAccessTokensPath() string {
+	return "/signed_code"
+}
+
+// SignedRefreshAccessTokensPath returns the URL path to the access_tokens service signed_refresh HTTP endpoint.
+func SignedRefreshAccessTokensPath() string {
+	return "/signed_refresh"
+}

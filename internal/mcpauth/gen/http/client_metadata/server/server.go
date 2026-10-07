@@ -18,8 +18,9 @@ import (
 
 // Server lists the client_metadata service endpoint HTTP handlers.
 type Server struct {
-	Mounts []*MountPoint
-	Read   http.Handler
+	Mounts     []*MountPoint
+	Read       http.Handler
+	SignedRead http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -49,9 +50,11 @@ func New(
 ) *Server {
 	return &Server{
 		Mounts: []*MountPoint{
-			{"Read", "GET", "/client"},
+			{"Read", "GET", "/read"},
+			{"SignedRead", "GET", "/signed_read"},
 		},
-		Read: NewReadHandler(e.Read, mux, decoder, encoder, errhandler, formatter),
+		Read:       NewReadHandler(e.Read, mux, decoder, encoder, errhandler, formatter),
+		SignedRead: NewSignedReadHandler(e.SignedRead, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -61,6 +64,7 @@ func (s *Server) Service() string { return "client_metadata" }
 // Use wraps the server handlers with the given middleware.
 func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.Read = m(s.Read)
+	s.SignedRead = m(s.SignedRead)
 }
 
 // MethodNames returns the methods served.
@@ -69,6 +73,7 @@ func (s *Server) MethodNames() []string { return clientmetadata.MethodNames[:] }
 // Mount configures the mux to serve the client_metadata endpoints.
 func Mount(mux goahttp.Muxer, h *Server) {
 	MountReadHandler(mux, h.Read)
+	MountSignedReadHandler(mux, h.SignedRead)
 }
 
 // Mount configures the mux to serve the client_metadata endpoints.
@@ -85,7 +90,7 @@ func MountReadHandler(mux goahttp.Muxer, h http.Handler) {
 			h.ServeHTTP(w, r)
 		}
 	}
-	mux.Handle("GET", "/client", f)
+	mux.Handle("GET", "/read", f)
 }
 
 // NewReadHandler creates a HTTP handler which loads the HTTP request and calls
@@ -105,6 +110,52 @@ func NewReadHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "read")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "client_metadata")
+		var err error
+		res, err := endpoint(ctx, nil)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountSignedReadHandler configures the mux to serve the "client_metadata"
+// service "signed_read" endpoint.
+func MountSignedReadHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("GET", "/signed_read", f)
+}
+
+// NewSignedReadHandler creates a HTTP handler which loads the HTTP request and
+// calls the "client_metadata" service "signed_read" endpoint.
+func NewSignedReadHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		encodeResponse = EncodeSignedReadResponse(encoder)
+		encodeError    = goahttp.ErrorEncoder(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "signed_read")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "client_metadata")
 		var err error
 		res, err := endpoint(ctx, nil)

@@ -2694,8 +2694,8 @@ rejections without changing its configured permissions. It does not advertise
 the authorization extension as complete.
 
 Browser authorization uses the same private grant owner and native generated
-OAuth contracts. Public constructors select preregistration or a client-hosted
-HTTPS metadata document. Client-metadata identity, redirect membership and the
+OAuth contracts. Public and signed constructors select preregistration or a
+client-hosted HTTPS metadata document. Client-metadata identity, redirect membership and the
 absence of shared-secret members are checked before consent. Native Goa query
 decoding uses `issuer:iss` mapping for callback transport names. The host owns
 browser interaction; state, PKCE verification, issuer binding and refresh-token
@@ -2713,8 +2713,7 @@ rejections reuse a credential already changed by another call instead of rotatin
 the same refresh token again. Definite authorization rejections remain distinct
 from lost tool results. A rejection after an earlier lost response retains the
 unknown outcome and the later HTTP status. Enterprise exchange, durable host
-authorization, and the built-in server verifier and generated resource policy
-remain release gates.
+authorization and independent conformance remain release gates.
 
 Native query credentials remain distinct from OAuth resource identity. The
 MCP generator consumes the original evaluated Goa credential mappings and emits
@@ -2730,12 +2729,18 @@ Unknown query names and malformed credential query values fail before network
 access. There is no model-controlled exception, URI normalization, schema walk,
 second credential owner or compatibility constructor.
 
-Signed client authentication implements the same private grant interface as
-client-secret and browser authorization. The host supplies a constructed
+Signed client authentication is independent of the grant. Machine and browser
+grants share one private signer and credential owner. The host supplies a constructed
 `jose.Signer` and explicit registered client, assertion issuer, audience and
 validity. Goa generates the `private_key_jwt` metadata field and token form,
 including fixed grant and assertion types; no handwritten form mapping or
-second token cache exists. The go-jose library owns JWT claims encoding and
+second token cache exists. A native DSL loop specializes public and signed
+code/refresh forms; each generated request has fixed authentication fields.
+Separate metadata operations require `none` or `private_key_jwt`, rather than
+choosing authentication from optional field presence. Signed metadata requires
+exactly one HTTPS public-key URL or an inline set containing only valid public
+keys. The authorization server resolves URLs and verifies the registered key;
+the client does not add a second key-discovery path. The go-jose library owns JWT claims encoding and
 signatures. Signing algorithms must be asymmetric and advertised by the issuer;
 unknown algorithms and signatures made with a shared secret stop before token exchange.
 

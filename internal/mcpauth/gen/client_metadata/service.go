@@ -7,14 +7,22 @@
 
 package clientmetadata
 
-import "context"
+import (
+	"context"
 
-// Read a public client's self-hosted registration before using its HTTPS
-// document URL as the client identifier.
+	jose "github.com/go-jose/go-jose/v4"
+)
+
+// Read a client's self-hosted registration before using its HTTPS document URL
+// as the client identifier; each operation requires the configured
+// authentication profile.
 type Service interface {
-	// Check the client's document identity, public authentication and registered
-	// redirects before beginning browser consent.
+	// Check the document identity, registered callbacks and exact token
+	// authentication before beginning browser consent.
 	Read(context.Context) (res *ReadResult, err error)
+	// Check the document identity, registered callbacks and exact token
+	// authentication before beginning browser consent.
+	SignedRead(context.Context) (res *SignedReadResult, err error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -31,18 +39,43 @@ const ServiceName = "client_metadata"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [1]string{"read"}
+var MethodNames = [2]string{"read", "signed_read"}
 
 // ReadResult is the result type of the client_metadata service read method.
 type ReadResult struct {
+	// Registered authentication required at the token endpoint
+	TokenEndpointAuthMethod string
 	// Exact HTTPS URL hosting this client document
 	ClientID string
 	// Client name shown by the issuer during consent
 	ClientName string
 	// Registered callbacks owned by the client host
 	RedirectUris []string
-	// Public-client token authentication
+	// Registered grants including authorization code and optional refresh
+	GrantTypes []string
+	// Registered authorization responses
+	ResponseTypes []string
+	// Forbidden shared-secret registration member checked by the client
+	ClientSecret *string
+	// Forbidden shared-secret registration member checked by the client
+	ClientSecretExpiresAt *int64
+}
+
+// SignedReadResult is the result type of the client_metadata service
+// signed_read method.
+type SignedReadResult struct {
+	// Registered authentication required at the token endpoint
 	TokenEndpointAuthMethod string
+	// HTTPS address of the client's registered public keys
+	JwksURI *string
+	// Inline public keys decoded by the JOSE library
+	Jwks *jose.JSONWebKeySet
+	// Exact HTTPS URL hosting this client document
+	ClientID string
+	// Client name shown by the issuer during consent
+	ClientName string
+	// Registered callbacks owned by the client host
+	RedirectUris []string
 	// Registered grants including authorization code and optional refresh
 	GrantTypes []string
 	// Registered authorization responses

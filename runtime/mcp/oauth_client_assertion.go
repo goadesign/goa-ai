@@ -1,4 +1,4 @@
-// Package mcp authenticates registered machine clients with signed OAuth
+// Package mcp authenticates registered machine and browser clients with signed OAuth
 // assertions. The shared credential owner selects the issuer and caches only
 // resource access tokens. Goa owns form requests and issuer metadata; JOSE owns
 // signing and compact JSON Web Token (JWT) encoding. Assertions never enter
@@ -53,6 +53,11 @@ type (
 	// clientAssertionGrant signs fresh authentication for each token acquisition.
 	// The existing credential owner serializes calls and retains the access token.
 	clientAssertionGrant struct {
+		clientAssertionAuthentication
+	}
+	// clientAssertionAuthentication signs the host's registration independently
+	// of the grant. Browser and machine exchanges receive the same checked JWT.
+	clientAssertionAuthentication struct {
 		credentials ClientAssertion
 	}
 )
@@ -70,31 +75,47 @@ var oauthAsymmetricAlgorithms = []jose.SignatureAlgorithm{
 // and the actual asymmetric signing algorithm. Redirects and authentication
 // fallback are rejected; an MCP 401 or 403 is returned without a new grant.
 func NewClientAssertionHTTPTransport(opts HTTPOptions, credentials ClientAssertion) (*HTTPTransport, error) {
-	if credentials.ClientID == "" || credentials.AssertionIssuer == "" || credentials.Audience == "" {
-		return nil, errors.New("mcp: registered client, assertion issuer and audience are required")
-	}
-	if credentials.Lifetime < time.Second || credentials.Lifetime%time.Second != 0 {
-		return nil, errors.New("mcp: assertion lifetime must be positive whole seconds")
-	}
-	if credentials.Signer == nil {
-		return nil, errors.New("mcp: assertion signer is required")
-	}
-	if _, overridden := credentials.Signer.Options().ExtraHeaders[jose.HeaderKey("alg")]; overridden {
-		return nil, errors.New("mcp: assertion signer must not override its algorithm header")
+	if err := validateClientAssertion(credentials); err != nil {
+		return nil, err
 	}
 	credentials.Scopes = slices.Clone(credentials.Scopes)
-	return newAuthorizationHTTPTransport(opts, credentials.Issuer, credentials.Scopes, &clientAssertionGrant{credentials: credentials})
+	return newAuthorizationHTTPTransport(opts, credentials.Issuer, credentials.Scopes, &clientAssertionGrant{clientAssertionAuthentication{credentials: credentials}})
+}
+
+// validateClientAssertion checks a host's signing registration before either a
+// machine or browser grant can send authentication to an authorization server.
+func validateClientAssertion(credentials ClientAssertion) error {
+	if credentials.ClientID == "" || credentials.AssertionIssuer == "" || credentials.Audience == "" {
+		return errors.New("mcp: registered client, assertion issuer and audience are required")
+	}
+	if credentials.Lifetime < time.Second || credentials.Lifetime%time.Second != 0 {
+		return errors.New("mcp: assertion lifetime must be positive whole seconds")
+	}
+	if credentials.Signer == nil {
+		return errors.New("mcp: assertion signer is required")
+	}
+	if _, overridden := credentials.Signer.Options().ExtraHeaders[jose.HeaderKey("alg")]; overridden {
+		return errors.New("mcp: assertion signer must not override its algorithm header")
+	}
+	return nil
+}
+
+// validateAssertionAuthentication checks signed authentication independently of
+// the grant, so browser and machine flows use the same advertised requirements.
+func validateAssertionAuthentication(issuer *genissuermetadata.ReadResult) error {
+	if !slices.Contains(issuer.TokenEndpointAuthMethodsSupported, "private_key_jwt") || len(issuer.TokenEndpointAuthSigningAlgValuesSupported) == 0 {
+		return errors.New("mcp: issuer must advertise private_key_jwt and signing algorithms")
+	}
+	return nil
 }
 
 // validateIssuer checks machine grants and signed authentication before the
 // credential owner can acquire or reuse this registration's access token.
 func (g *clientAssertionGrant) validateIssuer(issuer *genissuermetadata.ReadResult) error {
-	if !slices.Contains(issuer.GrantTypesSupported, "client_credentials") ||
-		!slices.Contains(issuer.TokenEndpointAuthMethodsSupported, "private_key_jwt") ||
-		len(issuer.TokenEndpointAuthSigningAlgValuesSupported) == 0 {
-		return errors.New("mcp: issuer must advertise client_credentials, private_key_jwt and signing algorithms")
+	if !slices.Contains(issuer.GrantTypesSupported, "client_credentials") {
+		return errors.New("mcp: issuer must advertise client_credentials")
 	}
-	return nil
+	return validateAssertionAuthentication(issuer)
 }
 
 // acquire signs one new assertion and sends it only to the validated issuer's
@@ -139,7 +160,7 @@ func (g *clientAssertionGrant) recoversChallenges() bool {
 // assertion creates registered client-authentication claims and a fresh random
 // identifier. It checks the actual signed header against issuer metadata and
 // returns no assertion after cancellation, expiration or signing failure.
-func (g *clientAssertionGrant) assertion(ctx context.Context, issuer *genissuermetadata.ReadResult) (assertion string, err error) {
+func (g *clientAssertionAuthentication) assertion(ctx context.Context, issuer *genissuermetadata.ReadResult) (assertion string, err error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.oauth.assertion.sign")
 	defer span.End()
 	defer func() {

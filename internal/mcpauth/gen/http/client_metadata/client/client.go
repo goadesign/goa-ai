@@ -20,6 +20,10 @@ type Client struct {
 	// Read Doer is the HTTP client used to make requests to the read endpoint.
 	ReadDoer goahttp.Doer
 
+	// SignedRead Doer is the HTTP client used to make requests to the signed_read
+	// endpoint.
+	SignedReadDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -42,6 +46,7 @@ func NewClient(
 ) *Client {
 	return &Client{
 		ReadDoer:            doer,
+		SignedReadDoer:      doer,
 		RestoreResponseBody: restoreBody,
 		scheme:              scheme,
 		host:                host,
@@ -64,6 +69,25 @@ func (c *Client) Read() goa.Endpoint {
 		resp, err := c.ReadDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("client_metadata", "read", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// SignedRead returns an endpoint that makes HTTP requests to the
+// client_metadata service signed_read server.
+func (c *Client) SignedRead() goa.Endpoint {
+	var (
+		decodeResponse = DecodeSignedReadResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSignedReadRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SignedReadDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("client_metadata", "signed_read", err)
 		}
 		return decodeResponse(resp)
 	}

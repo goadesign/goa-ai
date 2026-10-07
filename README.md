@@ -423,9 +423,12 @@ algorithm. See [signed client assertions](docs/runtime.md#signed-client-assertio
 
 Browser clients use `mcp.NewAuthorizationCodeHTTPTransport` with a registered
 public client, or `mcp.NewClientMetadataHTTPTransport` with the client's self-hosted
-HTTPS registration document. One shared owner handles PKCE, issuer and redirect
-checks, refresh rotation, and operation-specific scope upgrades. The host owns
-sign-in and consent; tokens remain private to its constructed transport.
+HTTPS registration document. Signed clients use `mcp.SignedAuthorizationCode`
+with `NewSignedAuthorizationCodeHTTPTransport` or `NewSignedClientMetadataHTTPTransport`.
+Both authentication profiles share PKCE, issuer and redirect checks, refresh
+rotation, and operation-specific scope upgrades. A signed client authenticates
+every code and refresh exchange with a fresh assertion. The host owns sign-in
+and consent; tokens remain private to its constructed transport.
 See [browser authorization](docs/runtime.md#browser-authorization).
 
 Application code owns planners, service behavior, authorization, side-effect

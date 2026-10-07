@@ -47,6 +47,7 @@ type (
 		forms           []url.Values
 		requests        []url.Values
 		proofs          map[string]string
+		verifyClient    func(url.Values) error
 	}
 )
 
@@ -689,7 +690,13 @@ func newBrowserOAuthPeer(t *testing.T) *browserOAuthPeer {
 			assert.Equal(t, "routing=selected", r.URL.RawQuery)
 			assert.Equal(t, "application/x-www-form-urlencoded", r.Header.Get("Content-Type"))
 			assert.NoError(t, r.ParseForm())
-			assert.Equal(t, peer.clientID, r.PostForm.Get("client_id"))
+			if peer.verifyClient == nil {
+				assert.Equal(t, peer.clientID, r.PostForm.Get("client_id"))
+			} else if err := peer.verifyClient(r.PostForm); err != nil {
+				t.Error(err)
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			assert.Equal(t, peer.resource, r.PostForm.Get("resource"))
 			peer.mutex.Lock()
 			peer.forms = append(peer.forms, r.PostForm)
@@ -774,6 +781,7 @@ func (p *browserOAuthPeer) authorize(t *testing.T) func(context.Context, string)
 		assert.Equal(t, "S256", query.Get("code_challenge_method"))
 		assert.Empty(t, query.Get("code_verifier"))
 		assert.Empty(t, query.Get("client_secret"))
+		assert.Empty(t, query.Get("client_assertion"))
 		code := "private-code-" + query.Get("state")
 		p.mutex.Lock()
 		p.requests = append(p.requests, query)

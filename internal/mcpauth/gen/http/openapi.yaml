@@ -35,6 +35,14 @@ paths:
                   required: true
                   type: string
                   pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+                - name: client_assertion_type
+                  in: formData
+                  description: JWT client authentication selected by this operation
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                  enum:
+                    - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
                 - name: scope
                   in: formData
                   description: Space-separated permissions requested by the configured client
@@ -49,14 +57,6 @@ paths:
                   default: client_credentials
                   enum:
                     - client_credentials
-                - name: client_assertion_type
-                  in: formData
-                  description: JWT client authentication selected by this operation
-                  required: false
-                  type: string
-                  default: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
-                  enum:
-                    - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
             responses:
                 "200":
                     description: OK response.
@@ -131,31 +131,12 @@ paths:
                     description: No Content response.
             schemes:
                 - http
-    /client:
-        get:
-            tags:
-                - client_metadata
-            summary: read client_metadata
-            description: Check the client's document identity, public authentication and registered redirects before beginning browser consent.
-            operationId: client_metadata#read
-            responses:
-                "200":
-                    description: OK response.
-                    schema:
-                        $ref: '#/definitions/ClientMetadataReadResponseBody'
-                        required:
-                            - client_id
-                            - client_name
-                            - redirect_uris
-                            - token_endpoint_auth_method
-            schemes:
-                - http
     /code:
         post:
             tags:
                 - access_tokens
             summary: code access_tokens
-            description: Exchange one validated browser authorization code using the private PKCE verifier and the original resource and redirect.
+            description: Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.
             operationId: access_tokens#code
             consumes:
                 - application/x-www-form-urlencoded
@@ -262,12 +243,31 @@ paths:
                             - token_endpoint
             schemes:
                 - http
+    /read:
+        get:
+            tags:
+                - client_metadata
+            summary: read client_metadata
+            description: Check the document identity, registered callbacks and exact token authentication before beginning browser consent.
+            operationId: client_metadata#read
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/ClientMetadataReadResponseBody'
+                        required:
+                            - token_endpoint_auth_method
+                            - client_id
+                            - client_name
+                            - redirect_uris
+            schemes:
+                - http
     /refresh:
         post:
             tags:
                 - access_tokens
             summary: refresh access_tokens
-            description: Replace an expired public-client access token using the refresh credential bound to the same issuer and resource.
+            description: Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.
             operationId: access_tokens#refresh
             consumes:
                 - application/x-www-form-urlencoded
@@ -324,6 +324,147 @@ paths:
                         required:
                             - resource
                             - authorization_servers
+            schemes:
+                - http
+    /signed_code:
+        post:
+            tags:
+                - access_tokens
+            summary: signed_code access_tokens
+            description: Exchange one validated browser code with the private PKCE verifier, original resource and redirect, and this profile's client authentication.
+            operationId: access_tokens#signed_code
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: client_assertion
+                  in: formData
+                  description: Signed compact JWT identifying the registered client
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+                - name: client_assertion_type
+                  in: formData
+                  description: JWT client authentication selected by this operation
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                  enum:
+                    - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                - name: code
+                  in: formData
+                  description: Authorization code from the validated redirect
+                  required: true
+                  type: string
+                  minLength: 1
+                  pattern: ^[\x20-\x7e]+$
+                - name: code_verifier
+                  in: formData
+                  description: Private PKCE verifier for this authorization exchange
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9._~-]{43,128}$
+                - name: redirect_uri
+                  in: formData
+                  description: Exact redirect used in the authorization request
+                  required: true
+                  type: string
+                  format: uri
+                - name: resource
+                  in: formData
+                  description: Exact resource for which the token is requested
+                  required: true
+                  type: string
+                  format: uri
+                - name: grant_type
+                  in: formData
+                  description: Authorization-code grant selected by this operation
+                  required: false
+                  type: string
+                  default: authorization_code
+                  enum:
+                    - authorization_code
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/BearerToken'
+                        required:
+                            - access_token
+                            - token_type
+            schemes:
+                - http
+    /signed_read:
+        get:
+            tags:
+                - client_metadata
+            summary: signed_read client_metadata
+            description: Check the document identity, registered callbacks and exact token authentication before beginning browser consent.
+            operationId: client_metadata#signed_read
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/ClientMetadataSignedReadResponseBody'
+                        required:
+                            - token_endpoint_auth_method
+                            - client_id
+                            - client_name
+                            - redirect_uris
+            schemes:
+                - http
+    /signed_refresh:
+        post:
+            tags:
+                - access_tokens
+            summary: signed_refresh access_tokens
+            description: Replace an expired access token using the original grant's private refresh credential and this profile's client authentication.
+            operationId: access_tokens#signed_refresh
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: client_assertion
+                  in: formData
+                  description: Signed compact JWT identifying the registered client
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+                - name: client_assertion_type
+                  in: formData
+                  description: JWT client authentication selected by this operation
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                  enum:
+                    - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                - name: refresh_token
+                  in: formData
+                  description: Private refresh credential from the original grant
+                  required: true
+                  type: string
+                  minLength: 1
+                  pattern: ^[\x20-\x7e]+$
+                - name: resource
+                  in: formData
+                  description: Exact resource of the original grant
+                  required: true
+                  type: string
+                  format: uri
+                - name: grant_type
+                  in: formData
+                  description: Refresh grant selected by this operation
+                  required: false
+                  type: string
+                  default: refresh_token
+                  enum:
+                    - refresh_token
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/BearerToken'
+                        required:
+                            - access_token
+                            - token_type
             schemes:
                 - http
     /token:
@@ -544,7 +685,7 @@ definitions:
                     - Id quas ex debitis rem rerum.
             token_endpoint_auth_method:
                 type: string
-                description: Public-client token authentication
+                description: Registered authentication required at the token endpoint
                 example: none
                 enum:
                     - none
@@ -564,10 +705,112 @@ definitions:
                 - Id quas ex debitis rem rerum.
             token_endpoint_auth_method: none
         required:
+            - token_endpoint_auth_method
             - client_id
             - client_name
             - redirect_uris
+    ClientMetadataSignedReadResponseBody:
+        title: ClientMetadataSignedReadResponseBody
+        type: object
+        properties:
+            client_id:
+                type: string
+                description: Exact HTTPS URL hosting this client document
+                example: http://mills.com/cameron
+                format: uri
+            client_name:
+                type: string
+                description: Client name shown by the issuer during consent
+                example: ct
+                minLength: 1
+            client_secret:
+                type: string
+                description: Forbidden shared-secret registration member checked by the client
+                example: Natus ducimus.
+            client_secret_expires_at:
+                type: integer
+                description: Forbidden shared-secret registration member checked by the client
+                example: 1164903116667818906
+                format: int64
+            grant_types:
+                type: array
+                items:
+                    type: string
+                    example: Voluptas non non dolore.
+                description: Registered grants including authorization code and optional refresh
+                default:
+                    - authorization_code
+                example:
+                    - Voluptas non non dolore.
+                    - Recusandae ullam nesciunt explicabo.
+                    - Voluptatem necessitatibus omnis dolor amet.
+                    - Non eos deserunt.
+            jwks:
+                description: Inline public keys decoded by the JOSE library
+                example: Beatae quis veniam quo omnis ut.
+            jwks_uri:
+                type: string
+                description: HTTPS address of the client's registered public keys
+                example: http://greenfelder.biz/garland
+                format: uri
+            redirect_uris:
+                type: array
+                items:
+                    type: string
+                    example: http://tillman.com/shaun
+                    format: uri
+                description: Registered callbacks owned by the client host
+                example:
+                    - http://tillman.com/shaun
+                    - http://schowalter.biz/myriam
+                    - http://blickschoen.name/noelia_feil
+                minItems: 1
+            response_types:
+                type: array
+                items:
+                    type: string
+                    example: Eaque repellat ea iure suscipit.
+                description: Registered authorization responses
+                default:
+                    - code
+                example:
+                    - Eaque repellat ea iure suscipit.
+                    - Id laborum facere est et.
+                    - Aut ducimus est corrupti.
+                    - Ut voluptas mollitia dicta.
+            token_endpoint_auth_method:
+                type: string
+                description: Registered authentication required at the token endpoint
+                example: private_key_jwt
+                enum:
+                    - private_key_jwt
+        example:
+            client_id: http://mills.com/cameron
+            client_name: ct
+            client_secret: Natus ducimus.
+            client_secret_expires_at: 1164903116667818906
+            grant_types:
+                - Voluptas non non dolore.
+                - Recusandae ullam nesciunt explicabo.
+                - Voluptatem necessitatibus omnis dolor amet.
+                - Non eos deserunt.
+            jwks: Beatae quis veniam quo omnis ut.
+            jwks_uri: http://greenfelder.biz/garland
+            redirect_uris:
+                - http://tillman.com/shaun
+                - http://schowalter.biz/myriam
+                - http://blickschoen.name/noelia_feil
+            response_types:
+                - Eaque repellat ea iure suscipit.
+                - Id laborum facere est et.
+                - Aut ducimus est corrupti.
+                - Ut voluptas mollitia dicta.
+            token_endpoint_auth_method: private_key_jwt
+        required:
             - token_endpoint_auth_method
+            - client_id
+            - client_name
+            - redirect_uris
     IssuerMetadataReadResponseBody:
         title: IssuerMetadataReadResponseBody
         type: object

@@ -15,14 +15,16 @@ import (
 
 // Endpoints wraps the "client_metadata" service endpoints.
 type Endpoints struct {
-	Read goa.Endpoint
+	Read       goa.Endpoint
+	SignedRead goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "client_metadata" service with
 // endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		Read: NewReadEndpoint(s),
+		Read:       NewReadEndpoint(s),
+		SignedRead: NewSignedReadEndpoint(s),
 	}
 }
 
@@ -30,6 +32,7 @@ func NewEndpoints(s Service) *Endpoints {
 // endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Read = m(e.Read)
+	e.SignedRead = m(e.SignedRead)
 }
 
 // NewReadEndpoint returns an endpoint function that calls the method "read" of
@@ -37,5 +40,13 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 func NewReadEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		return s.Read(ctx)
+	}
+}
+
+// NewSignedReadEndpoint returns an endpoint function that calls the method
+// "signed_read" of service "client_metadata".
+func NewSignedReadEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		return s.SignedRead(ctx)
 	}
 }

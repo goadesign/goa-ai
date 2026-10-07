@@ -15,13 +15,15 @@ import (
 
 // Client is the "client_metadata" service client.
 type Client struct {
-	ReadEndpoint goa.Endpoint
+	ReadEndpoint       goa.Endpoint
+	SignedReadEndpoint goa.Endpoint
 }
 
 // NewClient initializes a "client_metadata" service client given the endpoints.
-func NewClient(read goa.Endpoint) *Client {
+func NewClient(read, signedRead goa.Endpoint) *Client {
 	return &Client{
-		ReadEndpoint: read,
+		ReadEndpoint:       read,
+		SignedReadEndpoint: signedRead,
 	}
 }
 
@@ -33,4 +35,14 @@ func (c *Client) Read(ctx context.Context) (res *ReadResult, err error) {
 		return
 	}
 	return ires.(*ReadResult), nil
+}
+
+// SignedRead calls the "signed_read" endpoint of the "client_metadata" service.
+func (c *Client) SignedRead(ctx context.Context) (res *SignedReadResult, err error) {
+	var ires any
+	ires, err = c.SignedReadEndpoint(ctx, nil)
+	if err != nil {
+		return
+	}
+	return ires.(*SignedReadResult), nil
 }

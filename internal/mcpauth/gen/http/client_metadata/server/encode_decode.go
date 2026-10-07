@@ -26,3 +26,15 @@ func EncodeReadResponse(encoder func(context.Context, http.ResponseWriter) goaht
 		return enc.Encode(body)
 	}
 }
+
+// EncodeSignedReadResponse returns an encoder for responses returned by the
+// client_metadata signed_read endpoint.
+func EncodeSignedReadResponse(encoder func(context.Context, http.ResponseWriter) goahttp.Encoder) func(context.Context, http.ResponseWriter, any) error {
+	return func(ctx context.Context, w http.ResponseWriter, v any) error {
+		res, _ := v.(*clientmetadata.SignedReadResult)
+		enc := encoder(ctx, w)
+		body := NewSignedReadResponseBody(res)
+		w.WriteHeader(http.StatusOK)
+		return enc.Encode(body)
+	}
+}

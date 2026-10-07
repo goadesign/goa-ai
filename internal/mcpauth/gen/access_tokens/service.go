@@ -18,12 +18,18 @@ type Service interface {
 	// Exchange a preregistered client identifier and secret using request-body
 	// authentication for one resource and its configured permissions.
 	Secret(context.Context, *SecretPayload) (res *BearerToken, err error)
-	// Exchange one validated browser authorization code using the private PKCE
-	// verifier and the original resource and redirect.
+	// Exchange one validated browser code with the private PKCE verifier, original
+	// resource and redirect, and this profile's client authentication.
 	Code(context.Context, *CodePayload) (res *BearerToken, err error)
-	// Replace an expired public-client access token using the refresh credential
-	// bound to the same issuer and resource.
+	// Replace an expired access token using the original grant's private refresh
+	// credential and this profile's client authentication.
 	Refresh(context.Context, *RefreshPayload) (res *BearerToken, err error)
+	// Exchange one validated browser code with the private PKCE verifier, original
+	// resource and redirect, and this profile's client authentication.
+	SignedCode(context.Context, *SignedCodePayload) (res *BearerToken, err error)
+	// Replace an expired access token using the original grant's private refresh
+	// credential and this profile's client authentication.
+	SignedRefresh(context.Context, *SignedRefreshPayload) (res *BearerToken, err error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -40,7 +46,7 @@ const ServiceName = "access_tokens"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [4]string{"assertion", "secret", "code", "refresh"}
+var MethodNames = [6]string{"assertion", "secret", "code", "refresh", "signed_code", "signed_refresh"}
 
 // AssertionPayload is the payload type of the access_tokens service assertion
 // method.
@@ -49,12 +55,12 @@ type AssertionPayload struct {
 	Resource string
 	// Signed compact JWT identifying the registered client
 	ClientAssertion string
+	// JWT client authentication selected by this operation
+	ClientAssertionType string
 	// Space-separated permissions requested by the configured client
 	Scope *string
 	// Client-credentials grant selected by this operation
 	GrantType string
-	// JWT client authentication selected by this operation
-	ClientAssertionType string
 }
 
 // BearerToken is the result type of the access_tokens service assertion method.
@@ -111,5 +117,39 @@ type SecretPayload struct {
 	// Space-separated permissions requested by the configured client
 	Scope *string
 	// Client-credentials grant selected by this operation
+	GrantType string
+}
+
+// SignedCodePayload is the payload type of the access_tokens service
+// signed_code method.
+type SignedCodePayload struct {
+	// Signed compact JWT identifying the registered client
+	ClientAssertion string
+	// JWT client authentication selected by this operation
+	ClientAssertionType string
+	// Authorization code from the validated redirect
+	Code string
+	// Private PKCE verifier for this authorization exchange
+	CodeVerifier string
+	// Exact redirect used in the authorization request
+	RedirectURI string
+	// Exact resource for which the token is requested
+	Resource string
+	// Authorization-code grant selected by this operation
+	GrantType string
+}
+
+// SignedRefreshPayload is the payload type of the access_tokens service
+// signed_refresh method.
+type SignedRefreshPayload struct {
+	// Signed compact JWT identifying the registered client
+	ClientAssertion string
+	// JWT client authentication selected by this operation
+	ClientAssertionType string
+	// Private refresh credential from the original grant
+	RefreshToken string
+	// Exact resource of the original grant
+	Resource string
+	// Refresh grant selected by this operation
 	GrantType string
 }

@@ -6861,8 +6861,8 @@ Supply this transport to `HTTPOptions.Client` or a generated HTTP client's
 `NewClient`, then construct its normal `NewCaller`. Discovery, exact resource
 binding, token isolation and redirect rejection use the same implementation as
 other OAuth profiles. A machine client's HTTP 401 or 403 remains terminal.
-Resource-server verification, enterprise exchange, durable host authorization
-and independent conformance remain release gates.
+Enterprise exchange, durable host authorization and independent conformance
+remain release gates.
 [RFC 7523](https://www.rfc-editor.org/rfc/rfc7523.html),
 [MCP client-credentials profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/draft/oauth-client-credentials.mdx).
 
@@ -6907,6 +6907,47 @@ with dot path segments or no path component are rejected. The host owns publishi
 and making this document reachable; the transport checks it before consent and
 uses the same browser flow. It does not use deprecated dynamic registration.
 
+Signed browser clients use `SignedAuthorizationCode`, which embeds the existing
+`ClientAssertion` signing registration and adds `RedirectURI` and `Authorize`:
+
+```go
+transport, err := mcp.NewSignedAuthorizationCodeHTTPTransport(mcp.HTTPOptions{
+    Endpoint: "https://records.example/mcp",
+    Client: httpClient,
+    ClientInfo: mcp.ClientInfo{Name: "records-host", Version: "1"},
+}, mcp.SignedAuthorizationCode{
+    ClientAssertion: mcp.ClientAssertion{
+        Issuer: "https://identity.example/tenant",
+        ClientID: registeredClientID,
+        AssertionIssuer: registeredAssertionIssuer,
+        Audience: registeredAssertionAudience,
+        Lifetime: registeredAssertionLifetime,
+        Signer: registeredSigner,
+    },
+    RedirectURI: "https://host.example/oauth/callback",
+    Authorize: authorizeInBrowser,
+})
+```
+
+Check the constructor error and supply the transport to the same generated or
+discovered client. The issuer must advertise `private_key_jwt`, signing
+algorithms, authorization-code grants and S256. Every code and refresh request
+contains a fresh signed assertion; public-client and shared-secret
+authentication are never substituted. Consent, callback checks, refresh
+rotation, token reuse and challenge recovery use the same browser lifecycle.
+
+For signed self-hosted registration, use `NewSignedClientMetadataHTTPTransport`
+with the same configuration and an HTTPS metadata URL as `ClientID`. The issuer
+must advertise document support. The document must bind that exact identifier
+and redirect, declare `private_key_jwt`, and contain exactly one `jwks_uri` or
+inline `jwks`. Key URLs must use HTTPS; inline sets must contain only valid public
+keys. The authorization server resolves the key URL and verifies the signing
+registration. The client checks the document before consent but does not fetch
+another key catalog. Documents declaring public authentication, shared secrets,
+both key sources or neither are rejected before consent. These rules follow
+[MCP client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration)
+and [client metadata authentication](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-01.html#section-6.2).
+
 An expired token can use its private refresh credential when the issuer supports
 refresh. A client-metadata registration must also include `refresh_token` in its
 registered grant list. A rotated refresh credential replaces the previous value;
@@ -6933,8 +6974,8 @@ request round. A later host-input round receives its own allowance. If an
 earlier stream lost its tool result, a later rejected attempt
 returns `OutcomeUnknownError`; its HTTP rejection remains available through
 `errors.As`. That rejection cannot establish that the earlier tool never ran.
-These clients do not yet complete server resource authorization, durable host
-authorization or enterprise exchange, which remain release requirements.
+Durable host authorization, enterprise exchange and independent conformance
+remain release requirements.
 
 ### Request-scoped MCP progress
 

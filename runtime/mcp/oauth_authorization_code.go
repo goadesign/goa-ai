@@ -19,10 +19,8 @@ import (
 	"golang.org/x/oauth2"
 
 	genaccesstokens "goa.design/goa-ai/internal/mcpauth/gen/access_tokens"
-	genclientmetadata "goa.design/goa-ai/internal/mcpauth/gen/client_metadata"
 	gentokenclient "goa.design/goa-ai/internal/mcpauth/gen/http/access_tokens/client"
 	gencallbackserver "goa.design/goa-ai/internal/mcpauth/gen/http/authorization_responses/server"
-	genclientmetadataclient "goa.design/goa-ai/internal/mcpauth/gen/http/client_metadata/client"
 	genissuermetadata "goa.design/goa-ai/internal/mcpauth/gen/issuer_metadata"
 	goahttp "goa.design/goa/v3/http"
 )
@@ -48,12 +46,25 @@ type (
 		// redirect URL. It must respect cancellation and must not log either URL.
 		Authorize func(context.Context, string) (string, error)
 	}
-	// authorizationCodeGrant retains one public client's registered redirect and
+	// SignedAuthorizationCode configures browser consent with signed client
+	// authentication. The embedded registration supplies one issuer, client
+	// identity, signer and permission set for both code exchange and refresh.
+	SignedAuthorizationCode struct {
+		// ClientAssertion is the registered authentication used at the token endpoint.
+		ClientAssertion
+		// RedirectURI is the registered HTTPS or HTTP loopback callback address.
+		RedirectURI string
+		// Authorize handles sign-in and consent and returns the complete redirect.
+		// It must respect cancellation and must not log either URL.
+		Authorize func(context.Context, string) (string, error)
+	}
+	// authorizationCodeGrant retains one client's registered redirect and
 	// host callback. PKCE values and state exist only during the active exchange.
 	authorizationCodeGrant struct {
 		client   AuthorizationCode
 		redirect *url.URL
 		metadata *url.URL
+		signed   *clientAssertionAuthentication
 	}
 )
 
@@ -61,7 +72,7 @@ type (
 // flow. It verifies advertised S256 support before asking the host for consent,
 // retains tokens privately, and uses the active request context for refresh.
 func NewAuthorizationCodeHTTPTransport(opts HTTPOptions, client AuthorizationCode) (*HTTPTransport, error) {
-	return newAuthorizationCodeTransport(opts, client, nil)
+	return newAuthorizationCodeTransport(opts, client, nil, nil)
 }
 
 // NewClientMetadataHTTPTransport constructs a public client whose ClientID is
@@ -69,30 +80,55 @@ func NewAuthorizationCodeHTTPTransport(opts HTTPOptions, client AuthorizationCod
 // this transport validates it and the issuer's support before user consent.
 // Unsupported registration never falls back to legacy dynamic registration.
 func NewClientMetadataHTTPTransport(opts HTTPOptions, client AuthorizationCode) (*HTTPTransport, error) {
-	address, err := authorizationURL(client.ClientID, false)
-	if err != nil || address.Path == "" {
-		return nil, errors.New("mcp: client metadata identifier must be an exact HTTPS URL with a path")
+	address, err := clientMetadataAddress(client.ClientID)
+	if err != nil {
+		return nil, err
 	}
-	for _, segment := range strings.Split(address.Path, "/") {
-		if segment == "." || segment == ".." {
-			return nil, errors.New("mcp: client metadata identifier cannot contain dot path segments")
-		}
+	return newAuthorizationCodeTransport(opts, client, address, nil)
+}
+
+// NewSignedAuthorizationCodeHTTPTransport constructs a pre-registered browser
+// flow that signs fresh authentication for code exchange and token refresh.
+// Consent, PKCE and credential ownership follow the same browser flow.
+func NewSignedAuthorizationCodeHTTPTransport(opts HTTPOptions, client SignedAuthorizationCode) (*HTTPTransport, error) {
+	return newSignedAuthorizationCodeTransport(opts, client, nil)
+}
+
+// NewSignedClientMetadataHTTPTransport constructs a signed browser client whose
+// identifier is its HTTPS registration document. The document must declare
+// private_key_jwt and exactly one public-key source before consent is requested.
+func NewSignedClientMetadataHTTPTransport(opts HTTPOptions, client SignedAuthorizationCode) (*HTTPTransport, error) {
+	address, err := clientMetadataAddress(client.ClientID)
+	if err != nil {
+		return nil, err
 	}
-	return newAuthorizationCodeTransport(opts, client, address)
+	return newSignedAuthorizationCodeTransport(opts, client, address)
+}
+
+// newSignedAuthorizationCodeTransport validates the signing registration and
+// installs it in the shared browser grant; no second token owner is constructed.
+func newSignedAuthorizationCodeTransport(opts HTTPOptions, client SignedAuthorizationCode, metadata *url.URL) (*HTTPTransport, error) {
+	if err := validateClientAssertion(client.ClientAssertion); err != nil {
+		return nil, err
+	}
+	return newAuthorizationCodeTransport(opts, AuthorizationCode{
+		Issuer: client.Issuer, ClientID: client.ClientID, Scopes: client.Scopes,
+		RedirectURI: client.RedirectURI, Authorize: client.Authorize,
+	}, metadata, &clientAssertionAuthentication{credentials: client.ClientAssertion})
 }
 
 // newAuthorizationCodeTransport checks host configuration once and constructs
 // the selected registration before exposing the shared transport to callers.
-func newAuthorizationCodeTransport(opts HTTPOptions, client AuthorizationCode, metadata *url.URL) (*HTTPTransport, error) {
+func newAuthorizationCodeTransport(opts HTTPOptions, client AuthorizationCode, metadata *url.URL, signed *clientAssertionAuthentication) (*HTTPTransport, error) {
 	if client.ClientID == "" || client.Authorize == nil {
-		return nil, errors.New("mcp: a registered public client and host authorization callback are required")
+		return nil, errors.New("mcp: a registered client and host authorization callback are required")
 	}
 	redirect, err := authorizationRedirect(client.RedirectURI)
 	if err != nil {
 		return nil, err
 	}
 	client.Scopes = slices.Clone(client.Scopes)
-	return newAuthorizationHTTPTransport(opts, client.Issuer, client.Scopes, &authorizationCodeGrant{client: client, redirect: redirect, metadata: metadata})
+	return newAuthorizationHTTPTransport(opts, client.Issuer, client.Scopes, &authorizationCodeGrant{client: client, redirect: redirect, metadata: metadata, signed: signed})
 }
 
 // authorizationRedirect validates the host's registered callback and excludes
@@ -122,13 +158,50 @@ func authorizationRedirect(value string) (*url.URL, error) {
 	return parsed, nil
 }
 
-// validateIssuer verifies this public client's advertised grant, PKCE and token
+// authorizationRequest preserves the issuer's routing query and adds runtime-
+// owned OAuth fields. Existing reserved fields are rejected instead of overwritten;
+// the host receives one unambiguous request for the exact configured resource.
+func authorizationRequest(endpoint string, client AuthorizationCode, resource string, scopes []string, verifier, state string) (string, error) {
+	address, err := authorizationURL(endpoint, false)
+	if err != nil {
+		return "", err
+	}
+	query, err := url.ParseQuery(address.RawQuery)
+	if err != nil {
+		return "", errors.New("mcp: authorization endpoint has invalid query encoding")
+	}
+	for _, name := range []string{"response_type", "client_id", "redirect_uri", "resource", "scope", "code_challenge", "code_challenge_method", "state"} {
+		if query.Has(name) {
+			return "", errors.New("mcp: authorization endpoint contains a reserved OAuth request parameter")
+		}
+	}
+	query.Set("response_type", "code")
+	query.Set("client_id", client.ClientID)
+	query.Set("redirect_uri", client.RedirectURI)
+	query.Set("resource", resource)
+	query.Set("code_challenge_method", "S256")
+	query.Set("code_challenge", oauth2.S256ChallengeFromVerifier(verifier))
+	query.Set("state", state)
+	if len(scopes) > 0 {
+		query.Set("scope", strings.Join(scopes, " "))
+	}
+	address.RawQuery = query.Encode()
+	return address.String(), nil
+}
+
+// validateIssuer checks the selected client's advertised grant, PKCE and token
 // authentication before consent or cache reuse. Unsupported profiles fail rather
 // than assume default endpoints or try a different credential placement.
 func (g *authorizationCodeGrant) validateIssuer(issuer *genissuermetadata.ReadResult) error {
-	if issuer.AuthorizationEndpoint == nil || !slices.Contains(issuer.CodeChallengeMethodsSupported, "S256") ||
-		!slices.Contains(issuer.GrantTypesSupported, "authorization_code") || !slices.Contains(issuer.TokenEndpointAuthMethodsSupported, "none") {
-		return errors.New("mcp: public-client issuer must advertise authorization_code, S256 and none authentication with an authorization endpoint")
+	if issuer.AuthorizationEndpoint == nil || !slices.Contains(issuer.CodeChallengeMethodsSupported, "S256") || !slices.Contains(issuer.GrantTypesSupported, "authorization_code") {
+		return errors.New("mcp: browser issuer must advertise authorization_code and S256 with an authorization endpoint")
+	}
+	if g.signed != nil {
+		if err := validateAssertionAuthentication(issuer); err != nil {
+			return err
+		}
+	} else if !slices.Contains(issuer.TokenEndpointAuthMethodsSupported, "none") {
+		return errors.New("mcp: public-client issuer must advertise none authentication")
 	}
 	if g.metadata != nil && (issuer.ClientIDMetadataDocumentSupported == nil || !*issuer.ClientIDMetadataDocumentSupported) {
 		return errors.New("mcp: issuer does not support client metadata documents")
@@ -145,11 +218,11 @@ func (g *authorizationCodeGrant) validateIssuer(issuer *genissuermetadata.ReadRe
 func (g *authorizationCodeGrant) acquire(ctx context.Context, client *http.Client, resource string, issuer *genissuermetadata.ReadResult, scopes []string, previous *genaccesstokens.BearerToken) (*genaccesstokens.BearerToken, time.Time, error) {
 	canRefresh := true
 	if g.metadata != nil {
-		metadata, err := g.validateMetadata(ctx, client)
+		registeredRefresh, err := g.validateMetadata(ctx, client)
 		if err != nil {
 			return nil, time.Time{}, err
 		}
-		canRefresh = slices.Contains(metadata.GrantTypes, "refresh_token")
+		canRefresh = registeredRefresh
 	}
 	address, err := authorizationURL(issuer.TokenEndpoint, false)
 	if err != nil {
@@ -158,9 +231,21 @@ func (g *authorizationCodeGrant) acquire(ctx context.Context, client *http.Clien
 	if canRefresh && previous != nil && previous.RefreshToken != nil && slices.Contains(issuer.GrantTypesSupported, "refresh_token") {
 		generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "token_refresh"}, goahttp.RequestEncoder, authorizationDecoder, false)
 		obtained := time.Now()
-		value, err := generated.Refresh()(ctx, &genaccesstokens.RefreshPayload{
-			ClientID: g.client.ClientID, RefreshToken: *previous.RefreshToken, Resource: resource,
-		})
+		var value any
+		if g.signed != nil {
+			assertion, signingErr := g.signed.assertion(ctx, issuer)
+			if signingErr != nil {
+				return nil, time.Time{}, signingErr
+			}
+			obtained = time.Now()
+			value, err = generated.SignedRefresh()(ctx, &genaccesstokens.SignedRefreshPayload{
+				ClientAssertion: assertion, RefreshToken: *previous.RefreshToken, Resource: resource,
+			})
+		} else {
+			value, err = generated.Refresh()(ctx, &genaccesstokens.RefreshPayload{
+				ClientID: g.client.ClientID, RefreshToken: *previous.RefreshToken, Resource: resource,
+			})
+		}
 		if err != nil {
 			return nil, time.Time{}, authorizationFailure(ctx, "token refresh", err)
 		}
@@ -197,10 +282,23 @@ func (g *authorizationCodeGrant) acquire(ctx context.Context, client *http.Clien
 	}
 	generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "token_exchange"}, goahttp.RequestEncoder, authorizationDecoder, false)
 	obtained := time.Now()
-	value, err := generated.Code()(ctx, &genaccesstokens.CodePayload{
-		ClientID: g.client.ClientID, Code: code, CodeVerifier: verifier,
-		RedirectURI: g.client.RedirectURI, Resource: resource,
-	})
+	var value any
+	if g.signed != nil {
+		assertion, signingErr := g.signed.assertion(ctx, issuer)
+		if signingErr != nil {
+			return nil, time.Time{}, signingErr
+		}
+		obtained = time.Now()
+		value, err = generated.SignedCode()(ctx, &genaccesstokens.SignedCodePayload{
+			ClientAssertion: assertion, Code: code, CodeVerifier: verifier,
+			RedirectURI: g.client.RedirectURI, Resource: resource,
+		})
+	} else {
+		value, err = generated.Code()(ctx, &genaccesstokens.CodePayload{
+			ClientID: g.client.ClientID, Code: code, CodeVerifier: verifier,
+			RedirectURI: g.client.RedirectURI, Resource: resource,
+		})
+	}
 	if err != nil {
 		return nil, time.Time{}, authorizationFailure(ctx, "code exchange", err)
 	}
@@ -209,37 +307,6 @@ func (g *authorizationCodeGrant) acquire(ctx context.Context, client *http.Clien
 		return nil, time.Time{}, errors.New("mcp: code exchange has an invalid result type")
 	}
 	return token, obtained, nil
-}
-
-// authorizationRequest preserves the issuer's routing query and adds runtime-
-// owned OAuth fields. Existing reserved fields are rejected instead of overwritten;
-// the host receives one unambiguous request for the exact configured resource.
-func authorizationRequest(endpoint string, client AuthorizationCode, resource string, scopes []string, verifier, state string) (string, error) {
-	address, err := authorizationURL(endpoint, false)
-	if err != nil {
-		return "", err
-	}
-	query, err := url.ParseQuery(address.RawQuery)
-	if err != nil {
-		return "", errors.New("mcp: authorization endpoint has invalid query encoding")
-	}
-	for _, name := range []string{"response_type", "client_id", "redirect_uri", "resource", "scope", "code_challenge", "code_challenge_method", "state"} {
-		if query.Has(name) {
-			return "", errors.New("mcp: authorization endpoint contains a reserved OAuth request parameter")
-		}
-	}
-	query.Set("response_type", "code")
-	query.Set("client_id", client.ClientID)
-	query.Set("redirect_uri", client.RedirectURI)
-	query.Set("resource", resource)
-	query.Set("code_challenge_method", "S256")
-	query.Set("code_challenge", oauth2.S256ChallengeFromVerifier(verifier))
-	query.Set("state", state)
-	if len(scopes) > 0 {
-		query.Set("scope", strings.Join(scopes, " "))
-	}
-	address.RawQuery = query.Encode()
-	return address.String(), nil
 }
 
 // authorizationResponse checks the callback's exact route and fixed query, then
@@ -302,25 +369,4 @@ func (g *authorizationCodeGrant) authorizationResponse(ctx context.Context, call
 // resource rejection. Browser consent supports recovery; machine grants abort.
 func (g *authorizationCodeGrant) recoversChallenges() bool {
 	return true
-}
-
-// validateMetadata reads the host's document through a native generated client.
-// Exact identity, redirect membership and forbidden shared-secret members are
-// checked before consent; these relationships cannot be declared as field rules.
-func (g *authorizationCodeGrant) validateMetadata(ctx context.Context, client *http.Client) (*genclientmetadata.ReadResult, error) {
-	generated := genclientmetadataclient.NewClient(g.metadata.Scheme, g.metadata.Host, &authorizationDoer{client: client, address: g.metadata, operation: "client_metadata"}, nil, authorizationDecoder, false)
-	value, err := generated.Read()(ctx, nil)
-	if err != nil {
-		return nil, authorizationFailure(ctx, "client metadata", err)
-	}
-	metadata, ok := value.(*genclientmetadata.ReadResult)
-	if !ok {
-		return nil, errors.New("mcp: client metadata has an invalid result type")
-	}
-	if metadata.ClientID != g.client.ClientID || !slices.Contains(metadata.RedirectUris, g.client.RedirectURI) ||
-		!slices.Contains(metadata.GrantTypes, "authorization_code") || !slices.Contains(metadata.ResponseTypes, "code") ||
-		metadata.ClientSecret != nil || metadata.ClientSecretExpiresAt != nil {
-		return nil, errors.New("mcp: client metadata does not bind this public client and redirect")
-	}
-	return metadata, nil
 }

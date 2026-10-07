@@ -21,12 +21,12 @@ type AssertionRequestBody struct {
 	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
 	// Signed compact JWT identifying the registered client
 	ClientAssertion *string `form:"client_assertion,omitempty" json:"client_assertion,omitempty" xml:"client_assertion,omitempty"`
+	// JWT client authentication selected by this operation
+	ClientAssertionType *string `form:"client_assertion_type,omitempty" json:"client_assertion_type,omitempty" xml:"client_assertion_type,omitempty"`
 	// Space-separated permissions requested by the configured client
 	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
 	// Client-credentials grant selected by this operation
 	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
-	// JWT client authentication selected by this operation
-	ClientAssertionType *string `form:"client_assertion_type,omitempty" json:"client_assertion_type,omitempty" xml:"client_assertion_type,omitempty"`
 }
 
 // SecretRequestBody is the type of the "access_tokens" service "secret"
@@ -66,6 +66,40 @@ type CodeRequestBody struct {
 type RefreshRequestBody struct {
 	// Public client identifier of the original grant
 	ClientID *string `form:"client_id,omitempty" json:"client_id,omitempty" xml:"client_id,omitempty"`
+	// Private refresh credential from the original grant
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+	// Exact resource of the original grant
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Refresh grant selected by this operation
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
+}
+
+// SignedCodeRequestBody is the type of the "access_tokens" service
+// "signed_code" endpoint HTTP request body.
+type SignedCodeRequestBody struct {
+	// Signed compact JWT identifying the registered client
+	ClientAssertion *string `form:"client_assertion,omitempty" json:"client_assertion,omitempty" xml:"client_assertion,omitempty"`
+	// JWT client authentication selected by this operation
+	ClientAssertionType *string `form:"client_assertion_type,omitempty" json:"client_assertion_type,omitempty" xml:"client_assertion_type,omitempty"`
+	// Authorization code from the validated redirect
+	Code *string `form:"code,omitempty" json:"code,omitempty" xml:"code,omitempty"`
+	// Private PKCE verifier for this authorization exchange
+	CodeVerifier *string `form:"code_verifier,omitempty" json:"code_verifier,omitempty" xml:"code_verifier,omitempty"`
+	// Exact redirect used in the authorization request
+	RedirectURI *string `form:"redirect_uri,omitempty" json:"redirect_uri,omitempty" xml:"redirect_uri,omitempty"`
+	// Exact resource for which the token is requested
+	Resource *string `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Authorization-code grant selected by this operation
+	GrantType *string `form:"grant_type,omitempty" json:"grant_type,omitempty" xml:"grant_type,omitempty"`
+}
+
+// SignedRefreshRequestBody is the type of the "access_tokens" service
+// "signed_refresh" endpoint HTTP request body.
+type SignedRefreshRequestBody struct {
+	// Signed compact JWT identifying the registered client
+	ClientAssertion *string `form:"client_assertion,omitempty" json:"client_assertion,omitempty" xml:"client_assertion,omitempty"`
+	// JWT client authentication selected by this operation
+	ClientAssertionType *string `form:"client_assertion_type,omitempty" json:"client_assertion_type,omitempty" xml:"client_assertion_type,omitempty"`
 	// Private refresh credential from the original grant
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
 	// Exact resource of the original grant
@@ -134,6 +168,36 @@ type RefreshResponseBody struct {
 	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
 }
 
+// SignedCodeResponseBody is the type of the "access_tokens" service
+// "signed_code" endpoint HTTP response body.
+type SignedCodeResponseBody struct {
+	// Opaque bearer token returned by the issuer
+	AccessToken string `form:"access_token" json:"access_token" xml:"access_token"`
+	// Bearer token type, compared without case sensitivity
+	TokenType string `form:"token_type" json:"token_type" xml:"token_type"`
+	// Access token lifetime in seconds from the token response
+	ExpiresIn *int64 `form:"expires_in,omitempty" json:"expires_in,omitempty" xml:"expires_in,omitempty"`
+	// Space-separated permissions granted by the issuer
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Private refresh credential; never sent to a resource server
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+}
+
+// SignedRefreshResponseBody is the type of the "access_tokens" service
+// "signed_refresh" endpoint HTTP response body.
+type SignedRefreshResponseBody struct {
+	// Opaque bearer token returned by the issuer
+	AccessToken string `form:"access_token" json:"access_token" xml:"access_token"`
+	// Bearer token type, compared without case sensitivity
+	TokenType string `form:"token_type" json:"token_type" xml:"token_type"`
+	// Access token lifetime in seconds from the token response
+	ExpiresIn *int64 `form:"expires_in,omitempty" json:"expires_in,omitempty" xml:"expires_in,omitempty"`
+	// Space-separated permissions granted by the issuer
+	Scope *string `form:"scope,omitempty" json:"scope,omitempty" xml:"scope,omitempty"`
+	// Private refresh credential; never sent to a resource server
+	RefreshToken *string `form:"refresh_token,omitempty" json:"refresh_token,omitempty" xml:"refresh_token,omitempty"`
+}
+
 // NewAssertionResponseBody builds the HTTP response body from the result of
 // the "assertion" endpoint of the "access_tokens" service.
 func NewAssertionResponseBody(res *accesstokens.BearerToken) *AssertionResponseBody {
@@ -186,6 +250,32 @@ func NewRefreshResponseBody(res *accesstokens.BearerToken) *RefreshResponseBody 
 	return body
 }
 
+// NewSignedCodeResponseBody builds the HTTP response body from the result of
+// the "signed_code" endpoint of the "access_tokens" service.
+func NewSignedCodeResponseBody(res *accesstokens.BearerToken) *SignedCodeResponseBody {
+	body := &SignedCodeResponseBody{
+		AccessToken:  res.AccessToken,
+		TokenType:    res.TokenType,
+		ExpiresIn:    res.ExpiresIn,
+		Scope:        res.Scope,
+		RefreshToken: res.RefreshToken,
+	}
+	return body
+}
+
+// NewSignedRefreshResponseBody builds the HTTP response body from the result
+// of the "signed_refresh" endpoint of the "access_tokens" service.
+func NewSignedRefreshResponseBody(res *accesstokens.BearerToken) *SignedRefreshResponseBody {
+	body := &SignedRefreshResponseBody{
+		AccessToken:  res.AccessToken,
+		TokenType:    res.TokenType,
+		ExpiresIn:    res.ExpiresIn,
+		Scope:        res.Scope,
+		RefreshToken: res.RefreshToken,
+	}
+	return body
+}
+
 // NewAssertionPayload builds a access_tokens service assertion endpoint
 // payload.
 func NewAssertionPayload(body *AssertionRequestBody) *accesstokens.AssertionPayload {
@@ -194,17 +284,17 @@ func NewAssertionPayload(body *AssertionRequestBody) *accesstokens.AssertionPayl
 		ClientAssertion: *body.ClientAssertion,
 		Scope:           body.Scope,
 	}
-	if body.GrantType != nil {
-		v.GrantType = *body.GrantType
-	}
 	if body.ClientAssertionType != nil {
 		v.ClientAssertionType = *body.ClientAssertionType
 	}
-	if body.GrantType == nil {
-		v.GrantType = "client_credentials"
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
 	}
 	if body.ClientAssertionType == nil {
 		v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+	}
+	if body.GrantType == nil {
+		v.GrantType = "client_credentials"
 	}
 
 	return v
@@ -264,14 +354,64 @@ func NewRefreshPayload(body *RefreshRequestBody) *accesstokens.RefreshPayload {
 	return v
 }
 
+// NewSignedCodePayload builds a access_tokens service signed_code endpoint
+// payload.
+func NewSignedCodePayload(body *SignedCodeRequestBody) *accesstokens.SignedCodePayload {
+	v := &accesstokens.SignedCodePayload{
+		ClientAssertion: *body.ClientAssertion,
+		Code:            *body.Code,
+		CodeVerifier:    *body.CodeVerifier,
+		RedirectURI:     *body.RedirectURI,
+		Resource:        *body.Resource,
+	}
+	if body.ClientAssertionType != nil {
+		v.ClientAssertionType = *body.ClientAssertionType
+	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.ClientAssertionType == nil {
+		v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+	}
+	if body.GrantType == nil {
+		v.GrantType = "authorization_code"
+	}
+
+	return v
+}
+
+// NewSignedRefreshPayload builds a access_tokens service signed_refresh
+// endpoint payload.
+func NewSignedRefreshPayload(body *SignedRefreshRequestBody) *accesstokens.SignedRefreshPayload {
+	v := &accesstokens.SignedRefreshPayload{
+		ClientAssertion: *body.ClientAssertion,
+		RefreshToken:    *body.RefreshToken,
+		Resource:        *body.Resource,
+	}
+	if body.ClientAssertionType != nil {
+		v.ClientAssertionType = *body.ClientAssertionType
+	}
+	if body.GrantType != nil {
+		v.GrantType = *body.GrantType
+	}
+	if body.ClientAssertionType == nil {
+		v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+	}
+	if body.GrantType == nil {
+		v.GrantType = "refresh_token"
+	}
+
+	return v
+}
+
 // ValidateAssertionRequestBody runs the validations defined on
 // AssertionRequestBody
 func ValidateAssertionRequestBody(body *AssertionRequestBody) (err error) {
-	if body.Resource == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
-	}
 	if body.ClientAssertion == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("client_assertion", "body"))
+	}
+	if body.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
 	}
 	if body.Resource != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
@@ -279,17 +419,17 @@ func ValidateAssertionRequestBody(body *AssertionRequestBody) (err error) {
 	if body.ClientAssertion != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", *body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
 	}
+	if body.ClientAssertionType != nil {
+		if !(*body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", *body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
+		}
+	}
 	if body.Scope != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
 	}
 	if body.GrantType != nil {
 		if !(*body.GrantType == "client_credentials") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"client_credentials"}))
-		}
-	}
-	if body.ClientAssertionType != nil {
-		if !(*body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", *body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
 		}
 	}
 	return
@@ -389,6 +529,92 @@ func ValidateRefreshRequestBody(body *RefreshRequestBody) (err error) {
 	if body.ClientID != nil {
 		if utf8.RuneCountInString(*body.ClientID) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", *body.ClientID, utf8.RuneCountInString(*body.ClientID), 1, true))
+		}
+	}
+	if body.RefreshToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.refresh_token", *body.RefreshToken, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(*body.RefreshToken) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.refresh_token", *body.RefreshToken, utf8.RuneCountInString(*body.RefreshToken), 1, true))
+		}
+	}
+	if body.Resource != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "refresh_token") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"refresh_token"}))
+		}
+	}
+	return
+}
+
+// ValidateSignedCodeRequestBody runs the validations defined on
+// SignedCodeRequestBody
+func ValidateSignedCodeRequestBody(body *SignedCodeRequestBody) (err error) {
+	if body.ClientAssertion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_assertion", "body"))
+	}
+	if body.Code == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code", "body"))
+	}
+	if body.CodeVerifier == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("code_verifier", "body"))
+	}
+	if body.RedirectURI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("redirect_uri", "body"))
+	}
+	if body.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if body.ClientAssertion != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", *body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+	}
+	if body.ClientAssertionType != nil {
+		if !(*body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", *body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
+		}
+	}
+	if body.Code != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code", *body.Code, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(*body.Code) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.code", *body.Code, utf8.RuneCountInString(*body.Code), 1, true))
+		}
+	}
+	if body.CodeVerifier != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code_verifier", *body.CodeVerifier, "^[A-Za-z0-9._~-]{43,128}$"))
+	}
+	if body.RedirectURI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uri", *body.RedirectURI, goa.FormatURI))
+	}
+	if body.Resource != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", *body.Resource, goa.FormatURI))
+	}
+	if body.GrantType != nil {
+		if !(*body.GrantType == "authorization_code") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", *body.GrantType, []any{"authorization_code"}))
+		}
+	}
+	return
+}
+
+// ValidateSignedRefreshRequestBody runs the validations defined on
+// SignedRefreshRequestBody
+func ValidateSignedRefreshRequestBody(body *SignedRefreshRequestBody) (err error) {
+	if body.ClientAssertion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("client_assertion", "body"))
+	}
+	if body.RefreshToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("refresh_token", "body"))
+	}
+	if body.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if body.ClientAssertion != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", *body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+	}
+	if body.ClientAssertionType != nil {
+		if !(*body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", *body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
 		}
 	}
 	if body.RefreshToken != nil {

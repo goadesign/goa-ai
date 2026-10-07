@@ -15,19 +15,23 @@ import (
 
 // Client is the "access_tokens" service client.
 type Client struct {
-	AssertionEndpoint goa.Endpoint
-	SecretEndpoint    goa.Endpoint
-	CodeEndpoint      goa.Endpoint
-	RefreshEndpoint   goa.Endpoint
+	AssertionEndpoint     goa.Endpoint
+	SecretEndpoint        goa.Endpoint
+	CodeEndpoint          goa.Endpoint
+	RefreshEndpoint       goa.Endpoint
+	SignedCodeEndpoint    goa.Endpoint
+	SignedRefreshEndpoint goa.Endpoint
 }
 
 // NewClient initializes a "access_tokens" service client given the endpoints.
-func NewClient(assertion, secret, code, refresh goa.Endpoint) *Client {
+func NewClient(assertion, secret, code, refresh, signedCode, signedRefresh goa.Endpoint) *Client {
 	return &Client{
-		AssertionEndpoint: assertion,
-		SecretEndpoint:    secret,
-		CodeEndpoint:      code,
-		RefreshEndpoint:   refresh,
+		AssertionEndpoint:     assertion,
+		SecretEndpoint:        secret,
+		CodeEndpoint:          code,
+		RefreshEndpoint:       refresh,
+		SignedCodeEndpoint:    signedCode,
+		SignedRefreshEndpoint: signedRefresh,
 	}
 }
 
@@ -65,6 +69,27 @@ func (c *Client) Code(ctx context.Context, p *CodePayload) (res *BearerToken, er
 func (c *Client) Refresh(ctx context.Context, p *RefreshPayload) (res *BearerToken, err error) {
 	var ires any
 	ires, err = c.RefreshEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// SignedCode calls the "signed_code" endpoint of the "access_tokens" service.
+func (c *Client) SignedCode(ctx context.Context, p *SignedCodePayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.SignedCodeEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// SignedRefresh calls the "signed_refresh" endpoint of the "access_tokens"
+// service.
+func (c *Client) SignedRefresh(ctx context.Context, p *SignedRefreshPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.SignedRefreshEndpoint(ctx, p)
 	if err != nil {
 		return
 	}

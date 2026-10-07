@@ -2487,3 +2487,49 @@ profile's enum and infer authentication from field presence. Do not add a second
 cache or issuer discovery path. This corrects the earlier assumption that signed
 metadata registration was exclusively an enterprise-extension concern.
 [Current client-registration contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration).
+
+### Signed browser registration and grant composition
+
+Signed browser constructors now select preregistration or a self-hosted metadata
+document. `SignedAuthorizationCode` reuses the existing signing registration and
+adds the host's redirect and consent callback. Machine and browser grants share
+one private assertion signer; browser authentication adds no token cache or
+issuer discovery path. Public browser constructors retain public authentication.
+
+The private Goa design uses a loop to emit separate public and signed code and
+refresh operations. Every form has its profile's required fields and fixed grant
+and assertion types. A shared metadata type contains only shared fields; profile
+operations declare their own required authentication enum. A native probe caught
+that `Extend` replaces same-named local attributes with base attributes, so the
+authentication field must belong to each profile rather than a generic base.
+Compiled probe checks confirm each profile rejects the other enum and preserve
+typed inline keys and required empty arrays without an alternate codec.
+
+Browser metadata must identify the exact document, include the registered
+callback and permit authorization-code responses. Signed metadata requires
+exactly one HTTPS public-key address or an inline set containing only valid
+public keys. The existing JOSE dependency decodes algorithm-specific flat key
+shapes through a private concrete Goa field type; no public key DTO is added.
+The authorization server resolves key addresses and verifies client signatures.
+The client validates the document before consent without fetching a second
+key catalog. Shared-secret registration members and public authentication
+are rejected by a signed metadata client; neither causes fallback.
+
+PKCE, callback state/issuer checks, refresh rotation and scope recovery remain
+one browser lifecycle. Every signed code or refresh request receives a fresh
+assertion. Assertions remain confined to the authorization-server token form;
+the MCP resource receives only its access token. Enterprise exchange, durable
+host credentials, independent conformance and caller cutover remain OAuth gates.
+[Client metadata authentication](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-01.html#section-6.2),
+[public key registration](https://www.rfc-editor.org/rfc/rfc7591.html#section-2).
+
+Synthetic HTTPS peers verify preregistration, metadata key URLs and inline
+public keys through both transport composition and catalog-discovered callers.
+One consent exchange and two refresh rounds preserve PKCE checks, rotate or
+retain refresh credentials as specified, and use distinct signed identifiers.
+Invalid registration, duplicate/null values and private or malformed keys stop
+before consent. The complete MCP runtime race suite, configured lint with zero
+issues, root build and full uncached root race suite plus quickstart pass.
+Owning regeneration preserves all 92 OAuth artifact hashes.
+No live issuer or deployment was changed. Enterprise composition remains
+unfinished; signed browser support does not complete the OAuth release gate.

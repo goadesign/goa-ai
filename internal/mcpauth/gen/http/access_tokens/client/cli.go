@@ -31,14 +31,14 @@ func BuildAssertionPayload(accessTokensAssertionBody *string) (*accesstokens.Ass
 		}
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+		if !(body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
+		}
 		if body.Scope != nil {
 			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
 		}
 		if !(body.GrantType == "client_credentials") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"client_credentials"}))
-		}
-		if !(body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
 		}
 		if err != nil {
 			return nil, err
@@ -47,20 +47,20 @@ func BuildAssertionPayload(accessTokensAssertionBody *string) (*accesstokens.Ass
 	v := &accesstokens.AssertionPayload{
 		Resource:            body.Resource,
 		ClientAssertion:     body.ClientAssertion,
+		ClientAssertionType: body.ClientAssertionType,
 		Scope:               body.Scope,
 		GrantType:           body.GrantType,
-		ClientAssertionType: body.ClientAssertionType,
-	}
-	{
-		var zero string
-		if v.GrantType == zero {
-			v.GrantType = "client_credentials"
-		}
 	}
 	{
 		var zero string
 		if v.ClientAssertionType == zero {
 			v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+		}
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "client_credentials"
 		}
 	}
 
@@ -195,6 +195,114 @@ func BuildRefreshPayload(accessTokensRefreshBody *string) (*accesstokens.Refresh
 		RefreshToken: body.RefreshToken,
 		Resource:     body.Resource,
 		GrantType:    body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "refresh_token"
+		}
+	}
+
+	return v, nil
+}
+
+// BuildSignedCodePayload builds the payload for the access_tokens signed_code
+// endpoint from CLI flags.
+func BuildSignedCodePayload(accessTokensSignedCodeBody *string) (*accesstokens.SignedCodePayload, error) {
+	var err error
+	var body SignedCodeRequestBody
+	{
+		if accessTokensSignedCodeBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensSignedCodeBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_assertion\": \"N.N.i\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"code\": \"p41\",\n      \"code_verifier\": \"-6n.K~rysus5goayLiEbbzZ8KLERSMHoXUgFB2I17ie_lY1\",\n      \"grant_type\": \"authorization_code\",\n      \"redirect_uri\": \"http://kihn.com/esperanza.muller\",\n      \"resource\": \"http://torphy.biz/idell\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+		if !(body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code", body.Code, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(body.Code) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.code", body.Code, utf8.RuneCountInString(body.Code), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.code_verifier", body.CodeVerifier, "^[A-Za-z0-9._~-]{43,128}$"))
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.redirect_uri", body.RedirectURI, goa.FormatURI))
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if !(body.GrantType == "authorization_code") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"authorization_code"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.SignedCodePayload{
+		ClientAssertion:     body.ClientAssertion,
+		ClientAssertionType: body.ClientAssertionType,
+		Code:                body.Code,
+		CodeVerifier:        body.CodeVerifier,
+		RedirectURI:         body.RedirectURI,
+		Resource:            body.Resource,
+		GrantType:           body.GrantType,
+	}
+	{
+		var zero string
+		if v.ClientAssertionType == zero {
+			v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+		}
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "authorization_code"
+		}
+	}
+
+	return v, nil
+}
+
+// BuildSignedRefreshPayload builds the payload for the access_tokens
+// signed_refresh endpoint from CLI flags.
+func BuildSignedRefreshPayload(accessTokensSignedRefreshBody *string) (*accesstokens.SignedRefreshPayload, error) {
+	var err error
+	var body SignedRefreshRequestBody
+	{
+		if accessTokensSignedRefreshBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensSignedRefreshBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"client_assertion\": \"6.Yo.V8\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"uh4\",\n      \"resource\": \"http://weissnat.info/elody\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+		if !(body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.refresh_token", body.RefreshToken, "^[\\x20-\\x7e]+$"))
+		if utf8.RuneCountInString(body.RefreshToken) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.refresh_token", body.RefreshToken, utf8.RuneCountInString(body.RefreshToken), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		if !(body.GrantType == "refresh_token") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"refresh_token"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.SignedRefreshPayload{
+		ClientAssertion:     body.ClientAssertion,
+		ClientAssertionType: body.ClientAssertionType,
+		RefreshToken:        body.RefreshToken,
+		Resource:            body.Resource,
+		GrantType:           body.GrantType,
+	}
+	{
+		var zero string
+		if v.ClientAssertionType == zero {
+			v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+		}
 	}
 	{
 		var zero string

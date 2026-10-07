@@ -31,6 +31,14 @@ type Client struct {
 	// endpoint.
 	RefreshDoer goahttp.Doer
 
+	// SignedCode Doer is the HTTP client used to make requests to the signed_code
+	// endpoint.
+	SignedCodeDoer goahttp.Doer
+
+	// SignedRefresh Doer is the HTTP client used to make requests to the
+	// signed_refresh endpoint.
+	SignedRefreshDoer goahttp.Doer
+
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
 	RestoreResponseBody bool
@@ -56,6 +64,8 @@ func NewClient(
 		SecretDoer:          doer,
 		CodeDoer:            doer,
 		RefreshDoer:         doer,
+		SignedCodeDoer:      doer,
+		SignedRefreshDoer:   doer,
 		RestoreResponseBody: restoreBody,
 		scheme:              scheme,
 		host:                host,
@@ -155,6 +165,54 @@ func (c *Client) Refresh() goa.Endpoint {
 		resp, err := c.RefreshDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("access_tokens", "refresh", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// SignedCode returns an endpoint that makes HTTP requests to the access_tokens
+// service signed_code server.
+func (c *Client) SignedCode() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSignedCodeRequest(c.encoder)
+		decodeResponse = DecodeSignedCodeResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSignedCodeRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SignedCodeDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "signed_code", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// SignedRefresh returns an endpoint that makes HTTP requests to the
+// access_tokens service signed_refresh server.
+func (c *Client) SignedRefresh() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSignedRefreshRequest(c.encoder)
+		decodeResponse = DecodeSignedRefreshResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSignedRefreshRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SignedRefreshDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "signed_refresh", err)
 		}
 		return decodeResponse(resp)
 	}

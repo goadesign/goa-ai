@@ -9,5 +9,10 @@ package server
 
 // ReadClientMetadataPath returns the URL path to the client_metadata service read HTTP endpoint.
 func ReadClientMetadataPath() string {
-	return "/client"
+	return "/read"
+}
+
+// SignedReadClientMetadataPath returns the URL path to the client_metadata service signed_read HTTP endpoint.
+func SignedReadClientMetadataPath() string {
+	return "/signed_read"
 }
