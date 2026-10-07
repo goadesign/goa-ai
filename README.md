@@ -364,6 +364,9 @@ Server-data validation remains separate. See the [result envelope contract](docs
 for identity, retry, parser semantics, and tool-value validation responsibilities.
 
 Registry reads verify saved consumer contracts using their original JSON bytes.
+Warm lookups reuse validation only for identical saved bytes and execution kind,
+while checking current state and retirement on every read. The cache retains
+compact validation results rather than full definitions.
 New fields added by a framework upgrade do not change a saved declaration's
 fingerprint or routing token merely because its Go type has changed. This
 correction needs no storage conversion or provider regeneration; see

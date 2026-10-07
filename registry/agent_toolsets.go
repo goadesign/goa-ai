@@ -198,7 +198,7 @@ func (c *toolsetCatalog) RegisterAgent(ctx context.Context, definition *catalogT
 			RegistrationToken: token, RegisteredAt: now.Format(time.RFC3339Nano),
 		}
 		state.Info.RegisteredAt = state.RegisteredAt
-		updated, err := c.commit(ctx, key, raw, state, catalogWrite{Definition: string(definition.raw)})
+		updated, err := c.commit(ctx, key, raw, state, catalogWrite{Definition: definition.raw})
 		if err != nil {
 			return catalogState{}, err
 		}

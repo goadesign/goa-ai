@@ -144,7 +144,7 @@ func (c *toolsetCatalog) DeclareService(ctx context.Context, definition *catalog
 		}
 		state := newCatalogState(definition, revision, token, now)
 		updated, err := c.commit(ctx, toolsetCatalogKey(name), "", state, catalogWrite{
-			Definition: string(definition.raw), CandidateToken: token,
+			Definition: definition.raw, CandidateToken: token,
 		})
 		if err != nil {
 			return catalogEntry{}, err

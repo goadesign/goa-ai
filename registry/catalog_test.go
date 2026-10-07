@@ -320,7 +320,7 @@ func TestCatalogValidatesEveryPersistedEntry(t *testing.T) {
 			m := newTestCatalogMap()
 			m.content = test.content
 			for key := range test.content {
-				m.definitions[key] = string(validEntry.Toolset.raw)
+				m.definitions[key] = validEntry.Toolset.raw
 			}
 			catalog := newToolsetCatalog(m, newTestTimeSource(now))
 			err := catalog.validatePersistedEntries(context.Background())
@@ -355,9 +355,9 @@ func TestCatalogValidationReportsEveryIncompatibleKey(t *testing.T) {
 		toolsetCatalogKey("valid.toolset"):  validBody,
 	}
 	m.definitions = map[string]string{
-		toolsetCatalogKey("first.toolset"):  string(first.Toolset.raw),
-		toolsetCatalogKey("second.toolset"): string(second.Toolset.raw),
-		toolsetCatalogKey("valid.toolset"):  string(valid.Toolset.raw),
+		toolsetCatalogKey("first.toolset"):  first.Toolset.raw,
+		toolsetCatalogKey("second.toolset"): second.Toolset.raw,
+		toolsetCatalogKey("valid.toolset"):  valid.Toolset.raw,
 	}
 
 	err = newToolsetCatalog(m, newTestTimeSource(now)).validatePersistedEntries(context.Background())
@@ -587,13 +587,13 @@ func TestCatalogFailedReplacementPreservesAllRecords(t *testing.T) {
 	after, exists := store.Get(toolsetCatalogKey("tools"))
 	require.True(t, exists)
 	assert.Equal(t, before, after)
-	assert.Equal(t, string(old.Toolset.raw), store.definitions[toolsetCatalogKey("tools")])
+	assert.Equal(t, old.Toolset.raw, store.definitions[toolsetCatalogKey("tools")])
 	assert.Empty(t, store.retiredTokens)
 	require.NoError(t, catalog.validatePersistedEntries(ctx))
 
 	_, err = catalog.Register(ctx, definition, testAdmissionRevisionB, "provider", testIncarnationB, time.Minute)
 	require.NoError(t, err)
-	assert.Equal(t, string(definition.raw), store.definitions[toolsetCatalogKey("tools")])
+	assert.Equal(t, definition.raw, store.definitions[toolsetCatalogKey("tools")])
 	assert.Contains(t, store.retiredTokens, old.RegistrationToken)
 }
 

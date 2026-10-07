@@ -12,6 +12,7 @@ import (
 	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -62,9 +63,12 @@ type (
 
 	// toolsetCatalog owns atomic provider transitions and validated definitions.
 	toolsetCatalog struct {
-		store     catalogStore
-		clock     registryTimeSource
-		validator *schemaValidator
+		store           catalogStore
+		clock           registryTimeSource
+		validator       *schemaValidator
+		definitionsMu   sync.RWMutex
+		definitionLoads chan struct{}
+		definitions     map[string]*catalogDefinition
 	}
 
 	catalogEntryState string
@@ -87,7 +91,11 @@ var (
 
 // newToolsetCatalog constructs the canonical admission store.
 func newToolsetCatalog(store catalogStore, clock registryTimeSource) *toolsetCatalog {
-	return &toolsetCatalog{store: store, clock: clock, validator: newSchemaValidator()}
+	return &toolsetCatalog{
+		store: store, clock: clock, validator: newSchemaValidator(),
+		definitions:     make(map[string]*catalogDefinition),
+		definitionLoads: make(chan struct{}, 1),
+	}
 }
 
 // validatePersistedEntries checks all definition/state pairs and permanent
@@ -113,6 +121,7 @@ func (c *toolsetCatalog) validatePersistedEntries(ctx context.Context) error {
 		}
 	}
 	all := make(map[string]struct{}, len(keys)+len(definitionKeys))
+	c.pruneDefinitions(keys)
 	for _, key := range keys {
 		all[key] = struct{}{}
 	}
@@ -233,7 +242,7 @@ func (c *toolsetCatalog) Register(ctx context.Context, definition *catalogToolse
 		candidate.ProviderLeases[leaseKey] = lease
 		write := catalogWrite{CandidateToken: token}
 		if !exists || existing.SchemaFingerprint != definition.fingerprint {
-			write.Definition = string(definition.raw)
+			write.Definition = definition.raw
 		} else {
 			// Fingerprints ignore tag/tool order. Retaining the definition also
 			// retains its discovery summary, with the new registration time.
@@ -707,6 +716,7 @@ func (c *toolsetCatalog) ListToolsets(ctx context.Context, tags []string) ([]*ge
 	if err != nil {
 		return nil, err
 	}
+	c.pruneDefinitions(keys)
 	toolsets := make([]*genregistry.ToolsetInfo, 0, len(keys))
 	for _, key := range keys {
 		if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
@@ -740,6 +750,7 @@ func (c *toolsetCatalog) SearchToolsets(ctx context.Context, query string) ([]*g
 	if err != nil {
 		return nil, err
 	}
+	c.pruneDefinitions(keys)
 	toolsets := make([]*genregistry.ToolsetInfo, 0, len(keys))
 	for _, key := range keys {
 		if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
@@ -792,6 +803,9 @@ func (c *toolsetCatalog) exactRaw(ctx context.Context, key string) (string, bool
 	raw, exists, err := c.store.Read(ctx, key)
 	if err != nil {
 		return "", false, fmt.Errorf("read catalog key %q: %w", key, err)
+	}
+	if !exists {
+		c.forgetDefinition(strings.TrimPrefix(key, toolsetCatalogKeyPrefix))
 	}
 	return raw, exists, nil
 }

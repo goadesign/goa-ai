@@ -57,7 +57,7 @@ func BenchmarkCatalogHealthLifecycle(b *testing.B) {
 }
 
 // BenchmarkCatalogDefinitionRead measures the complete warm definition lookup,
-// including decoding, validation and compiled execution-schema reuse.
+// including exact-byte hashing, fresh state checks and validation reuse.
 func BenchmarkCatalogDefinitionRead(b *testing.B) {
 	for _, size := range []int{0, 32_768} {
 		name := "small"
