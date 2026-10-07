@@ -40,19 +40,26 @@ type (
 		metrics    telemetry.Metrics
 		tracer     telemetry.Tracer
 		baseCtx    context.Context
+		control    *workflowControl
 
 		commandCtx                  workflow.Context
 		cancelExecution             workflow.CancelFunc
-		cancellationHandler         engine.CancellationHandler
+		cancellationHandler         *engine.CancellationHandler
 		cancellationRegistrationErr error
 	}
 
 	contextKey string
 
+	temporalCarrier struct {
+		context.Context
+		ctx workflow.Context
+	}
+
 	temporalChildHandle struct {
-		future workflow.ChildWorkflowFuture
-		ctx    workflow.Context
-		cancel workflow.CancelFunc
+		future    workflow.ChildWorkflowFuture
+		ctx       workflow.Context
+		cancel    workflow.CancelFunc
+		execution workflow.Execution
 	}
 
 	temporalFuture[T any] struct {
@@ -88,25 +95,37 @@ const (
 // such as ExecuteAgentChild.
 //
 // The returned context uses engine defaults (queue, timeouts, retry) when invoking
-// typed planner/tool/record activities.
-func NewWorkflowContext(e *Engine, ctx workflow.Context) engine.WorkflowContext {
-	return newTemporalWorkflowContext(e, ctx)
+// typed planner/tool/record activities. A missing worker control interceptor or
+// an interceptor owned by another engine returns an error before any work starts.
+// Native workflows must return that error through their normal error result.
+// The supplied native context keeps its cancellation scope and current Temporal
+// coroutine. All adapters for this execution share recovery control and the
+// cancellation handler, so adapting a derived context does not create a new owner.
+func NewWorkflowContext(e *Engine, ctx workflow.Context) (engine.WorkflowContext, error) {
+	control, err := workflowControlFromContext(e, ctx)
+	if err != nil {
+		return nil, err
+	}
+	w := *control.workflow
+	w.ctx = ctx
+	return &w, nil
 }
 
 func newTemporalWorkflowContext(e *Engine, ctx workflow.Context) *temporalWorkflowContext {
 	info := workflow.GetInfo(ctx)
 	executionCtx, cancelExecution := workflow.WithCancel(ctx)
 	wfCtx := &temporalWorkflowContext{
-		engine:          e,
-		ctx:             executionCtx,
-		workflowID:      info.WorkflowExecution.ID,
-		runID:           info.WorkflowExecution.RunID,
-		sequence:        new(uint64),
-		logger:          e.logger,
-		metrics:         e.metrics,
-		tracer:          e.tracer,
-		commandCtx:      ctx,
-		cancelExecution: cancelExecution,
+		engine:              e,
+		ctx:                 executionCtx,
+		workflowID:          info.WorkflowExecution.ID,
+		runID:               info.WorkflowExecution.RunID,
+		sequence:            new(uint64),
+		logger:              e.logger,
+		metrics:             e.metrics,
+		tracer:              e.tracer,
+		commandCtx:          ctx,
+		cancelExecution:     cancelExecution,
+		cancellationHandler: new(engine.CancellationHandler),
 		// NOTE: workflow execution is distributed and replayed; we cannot rely on
 		// any process-local "base context registry" to initialize child workflows.
 		// For deterministic behavior, build the base context from scratch and rely
@@ -190,18 +209,25 @@ func convertRetryPolicy(r engine.RetryPolicy) *temporal.RetryPolicy {
 }
 
 func (w *temporalWorkflowContext) Context() context.Context {
-	ctx := context.WithValue(w.baseCtx, workflowIDKey, w.workflowID)
+	ctx := context.WithValue(&temporalCarrier{Context: w.baseCtx, ctx: w.ctx}, workflowIDKey, w.workflowID)
 	ctx = context.WithValue(ctx, runIDKey, w.runID)
+	ctx = context.WithValue(ctx, recoveryContextKey{}, w)
 	return engine.WithWorkflowContext(ctx, w)
+}
+
+// Err reports the cancellation of the receiver's Temporal scope. The Go
+// context carries identity; workflow waits still use Temporal's own context.
+func (c *temporalCarrier) Err() error {
+	return normalizeTemporalError(c.ctx.Err())
 }
 
 func (w *temporalWorkflowContext) SetQueryHandler(name string, handler any) error {
 	return workflow.SetQueryHandler(w.ctx, name, handler)
 }
 
-// SetCancellationHandler supplies the function that records cancellation. The
-// engine update is registered when the workflow context is created so requests
-// that arrive first wait inside this workflow.
+// SetCancellationHandler supplies the execution's one function for recording
+// cancellation. Native, derived, and detached context views share this handler;
+// an update that arrives before registration waits until the handler is supplied.
 func (w *temporalWorkflowContext) SetCancellationHandler(handler engine.CancellationHandler) error {
 	if handler == nil {
 		return errors.New("cancellation handler is required")
@@ -209,10 +235,10 @@ func (w *temporalWorkflowContext) SetCancellationHandler(handler engine.Cancella
 	if w.cancellationRegistrationErr != nil {
 		return w.cancellationRegistrationErr
 	}
-	if w.cancellationHandler != nil {
+	if *w.cancellationHandler != nil {
 		return errors.New("cancellation handler is already registered")
 	}
-	w.cancellationHandler = handler
+	*w.cancellationHandler = handler
 	return nil
 }
 
@@ -232,13 +258,13 @@ func (w *temporalWorkflowContext) registerCancellationUpdate() error {
 				)
 			}
 			if err := workflow.Await(ctx, func() bool {
-				return w.cancellationHandler != nil
+				return *w.cancellationHandler != nil
 			}); err != nil {
 				return "", err
 			}
 			updateCtx := *w
 			updateCtx.ctx = ctx
-			if err := w.cancellationHandler(&updateCtx, request); err != nil {
+			if err := (*w.cancellationHandler)(&updateCtx, request); err != nil {
 				var conflict *engine.CancellationConflictError
 				switch {
 				case errors.As(err, &conflict):
@@ -420,24 +446,14 @@ func (w *temporalWorkflowContext) Await(condition func() bool) error {
 	if condition == nil {
 		return errors.New("await condition is required")
 	}
-	return workflow.Await(w.ctx, condition)
+	return w.control.await(w.ctx, condition)
 }
 
 func (w *temporalWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 	cctx, cancel := workflow.WithCancel(w.ctx)
-	return &temporalWorkflowContext{
-			engine:     w.engine,
-			ctx:        cctx,
-			workflowID: w.workflowID,
-			runID:      w.runID,
-			sequence:   w.sequence,
-			logger:     w.logger,
-			metrics:    w.metrics,
-			tracer:     w.tracer,
-			baseCtx:    w.baseCtx,
-		}, func() {
-			cancel()
-		}
+	derived := *w
+	derived.ctx = cctx
+	return &derived, cancel
 }
 
 func (w *temporalWorkflowContext) activityOptionsFor(name string, override engine.ActivityOptions) workflow.ActivityOptions {
@@ -517,34 +533,35 @@ func (w *temporalWorkflowContext) StartChildWorkflow(_ context.Context, req engi
 
 	cctx := workflow.WithChildOptions(w.ctx, opts)
 	cctx, cancel := workflow.WithCancel(cctx)
+	cctx, child, err := w.prepareRecoveryChild(cctx, req.ID)
+	if err != nil {
+		cancel()
+		return nil, err
+	}
 	fut := workflow.ExecuteChildWorkflow(
 		cctx,
 		req.Workflow,
 		converter.NewRawValue(snapshot.InputPayload),
 	)
-	if err := fut.GetChildWorkflowExecution().Get(cctx, nil); err != nil {
+	var execution workflow.Execution
+	err = fut.GetChildWorkflowExecution().Get(cctx, &execution)
+	child.execution, child.bound, child.err = execution, true, err
+	w.control.processRecovery(w.ctx)
+	if err != nil {
 		cancel()
 		if temporal.IsWorkflowExecutionAlreadyStartedError(err) {
 			return nil, &engine.ChildWorkflowIDReuseError{ID: req.ID}
 		}
 		return nil, normalizeTemporalError(err)
 	}
-	return &temporalChildHandle{future: fut, ctx: cctx, cancel: cancel}, nil
+	return &temporalChildHandle{future: fut, ctx: cctx, cancel: cancel, execution: execution}, nil
 }
 
 func (w *temporalWorkflowContext) Detached() engine.WorkflowContext {
 	dctx, _ := workflow.NewDisconnectedContext(w.ctx)
-	return &temporalWorkflowContext{
-		engine:     w.engine,
-		ctx:        dctx,
-		workflowID: w.workflowID,
-		runID:      w.runID,
-		sequence:   w.sequence,
-		logger:     w.logger,
-		metrics:    w.metrics,
-		tracer:     w.tracer,
-		baseCtx:    w.baseCtx,
-	}
+	detached := *w
+	detached.ctx = dctx
+	return &detached
 }
 
 func (h *temporalChildHandle) Get(_ context.Context) (*api.RunOutput, error) {

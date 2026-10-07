@@ -35,6 +35,7 @@ type (
 		RunContext       run.Context
 		HistoryContext   *api.HistoryContext
 		providerRecovery *providerRecoveryBudget
+		providerControl  *providerRecoveryActor
 	}
 
 	workflowLoop struct {
@@ -77,7 +78,7 @@ func newWorkflowLoop(
 	resumeOpts engine.ActivityOptions,
 	toolOpts engine.ActivityOptions,
 ) *workflowLoop {
-	return &workflowLoop{
+	loop := &workflowLoop{
 		r:             r,
 		wfCtx:         wfCtx,
 		reg:           reg,
@@ -90,6 +91,11 @@ func newWorkflowLoop(
 		resumeOpts:    resumeOpts,
 		toolOpts:      toolOpts,
 	}
+	if base.providerControl != nil {
+		base.providerControl.budget = &loop.deadlines.Budget
+		base.providerControl.hard = &loop.deadlines.Hard
+	}
+	return loop
 }
 
 // shouldFinalize reports whether it is too late to schedule new work and the runtime

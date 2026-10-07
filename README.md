@@ -69,6 +69,13 @@ The Responses adapter preserves typed nested stream failures, including transien
 server-error metadata. Retry owners must still protect already-published output;
 classification does not replay streams. See the [provider stream contract](DESIGN.md#provider-stream-integrity-contract).
 
+An enabled provider recovery allowance also covers agent helpers started by the
+run. Each helper retains its unfinished planning request; completed tools are
+not repeated. Simultaneous failures consume overlapping elapsed time once.
+Custom engines must implement the workflow recovery control, and native
+Temporal workflows must handle the error returned by `NewWorkflowContext`.
+See [engine integration](docs/runtime.md#engine-integration) before upgrading.
+
 Live thinking streams send each new text fragment once. Complete reasoning
 blocks remain in the accepted provider transcript and do not repeat their text
 in the live stream. See the [streaming planner contract](docs/runtime.md#streaming-planners).

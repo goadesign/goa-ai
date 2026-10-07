@@ -8,22 +8,13 @@ package runtime
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/model"
-)
-
-type (
-	// providerRecoveryBudget is private workflow state. Remaining is retained
-	// in external-input checkpoints; elapsed credits only this workflow's
-	// provider failure time back to its active-work deadlines.
-	providerRecoveryBudget struct {
-		Remaining time.Duration
-		elapsed   time.Duration
-	}
 )
 
 // retryableProviderFailure accepts one failed model call only after all phases
@@ -165,28 +156,73 @@ func validateProviderFailureOutput(out *PlanActivityOutput) error {
 // provider failure. Every activity retains its single-attempt engine policy.
 // Timers survive worker replacement and cancellation interrupts every wait.
 func (r *Runtime) runPlanActivity(wfCtx engine.WorkflowContext, activityName string, options engine.ActivityOptions, input PlanActivityInput, base *workflowConversation, deadline time.Time) (*PlanActivityOutput, error) {
-	recovery := base.providerRecovery
+	if base.providerControl == nil {
+		wrapped, err := installProviderRecovery(wfCtx, base.providerRecovery)
+		if err != nil {
+			return nil, err
+		}
+		wfCtx = wrapped
+		base.providerControl = wrapped.actor
+	}
+	a := base.providerControl
+	before := a.elapsed
+	originalDeadline := deadline
 	var usage model.TokenUsage
+	var recovery *providerRecoveryExecution
+	defer func() { a.current = nil }()
 	for attempt := 1; ; attempt++ {
 		if err := wfCtx.Context().Err(); err != nil {
 			return nil, err
 		}
+		if a.failure != nil {
+			return nil, a.failure
+		}
+		if !originalDeadline.IsZero() {
+			deadline = originalDeadline.Add(a.elapsed - before)
+		}
 		attemptOptions := options
 		attemptDeadline := deadline
-		if attempt > 1 && (attemptOptions.StartToCloseTimeout == 0 || attemptOptions.StartToCloseTimeout > recovery.Remaining) {
-			attemptOptions.StartToCloseTimeout = recovery.Remaining
+		attemptCtx := wfCtx
+		var cancel func()
+		if recovery != nil {
+			expiry, err := recovery.attempt(wfCtx, deadline)
+			if err != nil {
+				return nil, err
+			}
+			if attemptDeadline.IsZero() || expiry.Before(attemptDeadline) {
+				attemptDeadline = expiry
+			}
+			remaining := expiry.Sub(wfCtx.Now())
+			if attemptOptions.StartToCloseTimeout == 0 || remaining < attemptOptions.StartToCloseTimeout {
+				attemptOptions.StartToCloseTimeout = remaining
+			}
+			attemptCtx, cancel = wfCtx.WithCancel()
+			recovery.cancel = cancel
 		}
 		started := wfCtx.Now()
-		if attempt > 1 {
-			// The retry's queue wait and execution must both fit the remaining
-			// recovery allowance. A timeout remains an ambiguous terminal error.
-			recoveryDeadline := started.Add(recovery.Remaining)
-			if attemptDeadline.IsZero() || recoveryDeadline.Before(attemptDeadline) {
-				attemptDeadline = recoveryDeadline
-			}
+		if recovery != nil {
+			// Entry time belongs to the issued permission, immediately before
+			// scheduling; retain it through result validation and publication.
+			started = recovery.state.started
 		}
-		out, err := r.runPlanActivityOnce(wfCtx, activityName, attemptOptions, input, base, attemptDeadline)
+		out, err := r.runPlanActivityOnce(attemptCtx, activityName, attemptOptions, input, base, attemptDeadline)
+		if cancel != nil {
+			cancel()
+			recovery.cancel = nil
+		}
 		if err != nil {
+			if recovery != nil {
+				message, stateErr := recovery.state.failUnproven(err)
+				if stateErr != nil {
+					return out, errors.Join(err, stateErr)
+				}
+				if sendErr := recovery.send(wfCtx, message); sendErr != nil {
+					return out, errors.Join(err, sendErr)
+				}
+				if recovery.state.stopped != nil {
+					return out, recovery.state.stopped
+				}
+			}
 			return out, err
 		}
 		usage, err = model.AddTokenUsage(usage, out.Usage)
@@ -194,40 +230,53 @@ func (r *Runtime) runPlanActivity(wfCtx engine.WorkflowContext, activityName str
 			return nil, fmt.Errorf("aggregate provider recovery usage: %w", err)
 		}
 		if out.ProviderFailure == nil {
+			if recovery != nil {
+				message, err := recovery.state.succeed()
+				if err != nil {
+					return nil, err
+				}
+				if err := recovery.send(wfCtx, message); err != nil {
+					return nil, err
+				}
+				if err := recovery.await(wfCtx, providerRecoveryRequestComplete); err != nil {
+					return nil, err
+				}
+			}
 			out.Usage = usage
 			return out, nil
 		}
-		failure := out.ProviderFailure
+		if a.owner == nil && !a.port.HasParent() {
+			return out, out.ProviderFailure
+		}
+		failure := engine.ProviderRecoveryFailure{
+			PublicationBatchID: out.PublicationBatchID,
+			StartedAt:          started, EndedAt: wfCtx.Now(), Err: out.ProviderFailure,
+		}
 		if recovery == nil {
-			return out, failure
+			recovery, err = a.openLocal(wfCtx, failure)
+		} else {
+			err = a.recordOwn(wfCtx, started, failure.EndedAt)
+			if err == nil {
+				var message engine.ProviderRecoveryMessage
+				message, err = recovery.state.fail(failure)
+				if err == nil {
+					err = recovery.send(wfCtx, message)
+				}
+			}
+			if err == nil {
+				err = recovery.await(wfCtx, providerRecoveryRequestWait)
+			}
 		}
-		elapsed := wfCtx.Now().Sub(started)
-		recovery.Remaining = max(0, recovery.Remaining-elapsed)
-		recovery.elapsed += elapsed
-		if !deadline.IsZero() {
-			deadline = deadline.Add(elapsed)
-		}
-		if recovery.Remaining == 0 {
-			return out, fmt.Errorf("provider recovery budget exhausted: %w", failure)
-		}
-		delay := min(providerRecoveryDelay(input.RunID, attempt), recovery.Remaining)
-		started = wfCtx.Now()
-		timer, err := wfCtx.NewTimer(wfCtx.Context(), delay)
 		if err != nil {
-			return nil, fmt.Errorf("schedule provider recovery: %w", err)
+			return out, err
 		}
-		_, waitErr := timer.Get(wfCtx.Context())
-		elapsed = wfCtx.Now().Sub(started)
-		recovery.Remaining = max(0, recovery.Remaining-elapsed)
-		recovery.elapsed += elapsed
-		if !deadline.IsZero() {
-			deadline = deadline.Add(elapsed)
+		if a.local != nil && a.local.Remaining == 0 {
+			if err := recovery.stop(wfCtx, providerRecoveryExhausted(failure.Err)); err != nil {
+				return out, err
+			}
 		}
-		if waitErr != nil {
-			return nil, waitErr
-		}
-		if recovery.Remaining == 0 {
-			return out, fmt.Errorf("provider recovery budget exhausted: %w", failure)
+		if err := recovery.wait(wfCtx, providerRecoveryDelay(input.RunID, attempt)); err != nil {
+			return out, err
 		}
 	}
 }
@@ -239,19 +288,4 @@ func providerRecoveryDelay(runID string, attempt int) time.Duration {
 	base := min(30*time.Second<<min(attempt-1, 4), 5*time.Minute)
 	digest := sha256.Sum256([]byte(fmt.Sprintf("%s/%d", runID, attempt)))
 	return base * time.Duration(80+int(digest[0])%21) / 100
-}
-
-// preserveProviderRecoveryDeadlines removes failed provider work and its waits
-// from active time while preserving the separate finite recovery allowance.
-func preserveProviderRecoveryDeadlines(base *workflowConversation, before time.Duration, budget, hard *time.Time) {
-	if base.providerRecovery == nil {
-		return
-	}
-	elapsed := base.providerRecovery.elapsed - before
-	if !budget.IsZero() {
-		*budget = budget.Add(elapsed)
-	}
-	if !hard.IsZero() {
-		*hard = hard.Add(elapsed)
-	}
 }

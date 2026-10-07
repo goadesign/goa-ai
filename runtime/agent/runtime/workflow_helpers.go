@@ -103,12 +103,20 @@ func (r *Runtime) executeGroupedToolCalls(
 	var out []*ToolExecutionResult
 	timedOutAny := false
 	var executionErr error
+	var recoveryElapsed time.Duration
+	if base.providerControl != nil {
+		recoveryElapsed = base.providerControl.elapsed
+	}
 	for i := range grouped {
 		opt := toolOpts
 		if timeouts[i] > 0 {
 			opt.StartToCloseTimeout = timeouts[i]
 		}
-		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.HistoryEndID, grouped[i], expectedChildren, parentTracker, finishBy)
+		groupDeadline := finishBy
+		if base.providerControl != nil && !finishBy.IsZero() {
+			groupDeadline = finishBy.Add(base.providerControl.elapsed - recoveryElapsed)
+		}
+		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.HistoryEndID, grouped[i], expectedChildren, parentTracker, groupDeadline)
 		out = append(out, sub...)
 		if timedOut {
 			timedOutAny = true

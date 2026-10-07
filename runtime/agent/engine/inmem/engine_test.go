@@ -962,8 +962,7 @@ func TestRequestCancellationWaitsForWorkflowHandler(t *testing.T) {
 			}); err != nil {
 				return nil, err
 			}
-			<-ctx.Context().Done()
-			return nil, ctx.Context().Err()
+			return nil, ctx.Await(func() bool { return false })
 		},
 	}))
 	handle, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
@@ -1005,8 +1004,7 @@ func TestRequestCancellationRetriesExactReasonAndRejectsConflict(t *testing.T) {
 				return nil, err
 			}
 			close(registered)
-			<-ctx.Context().Done()
-			return nil, ctx.Context().Err()
+			return nil, ctx.Await(func() bool { return false })
 		},
 	}))
 	_, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{

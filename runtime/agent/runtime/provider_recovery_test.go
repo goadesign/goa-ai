@@ -27,6 +27,10 @@ type (
 		delays  []time.Duration
 		onTimer func()
 	}
+	providerRecoveryScopedWorkflow struct {
+		engine.WorkflowContext
+		clock *providerRecoveryWorkflow
+	}
 )
 
 func (w *providerRecoveryWorkflow) Now() time.Time { return w.clock }
@@ -40,6 +44,24 @@ func (w *providerRecoveryWorkflow) NewTimer(ctx context.Context, delay time.Dura
 	future := &controlledTimeFuture{ready: make(chan struct{}), v: w.clock, err: ctx.Err()}
 	close(future.ready)
 	return future, nil
+}
+
+func (w *providerRecoveryWorkflow) WithCancel() (engine.WorkflowContext, func()) {
+	derived, cancel := w.routeWorkflowContext.WithCancel()
+	return &providerRecoveryScopedWorkflow{WorkflowContext: derived, clock: w}, cancel
+}
+
+func (w *providerRecoveryScopedWorkflow) Now() time.Time {
+	return w.clock.Now()
+}
+
+func (w *providerRecoveryScopedWorkflow) NewTimer(ctx context.Context, delay time.Duration) (engine.Future[time.Time], error) {
+	return w.clock.NewTimer(ctx, delay)
+}
+
+func (w *providerRecoveryScopedWorkflow) WithCancel() (engine.WorkflowContext, func()) {
+	derived, cancel := w.WorkflowContext.WithCancel()
+	return &providerRecoveryScopedWorkflow{WorkflowContext: derived, clock: w.clock}, cancel
 }
 
 func TestProviderRecoveryActivityProvesSafeFailure(t *testing.T) {
@@ -135,13 +157,18 @@ func TestProviderRecoveryRetainsRequestAndActiveBudget(t *testing.T) {
 	budget := w.Now().Add(15 * time.Minute)
 	hard := budget.Add(time.Minute)
 	initialBudget, initialHard := budget, hard
-	out, err := rt.runPlanActivity(w, "resume", engine.ActivityOptions{StartToCloseTimeout: time.Minute, RetryPolicy: engine.RetryPolicy{MaxAttempts: 1}}, input, base, budget)
+	wf, err := installProviderRecovery(w, base.providerRecovery)
 	require.NoError(t, err)
-	preserveProviderRecoveryDeadlines(base, 0, &budget, &hard)
+	base.providerControl = wf.actor
+	wf.actor.budget = &budget
+	wf.actor.hard = &hard
+	out, err := rt.runPlanActivity(wf, "resume", engine.ActivityOptions{StartToCloseTimeout: time.Minute, RetryPolicy: engine.RetryPolicy{MaxAttempts: 1}}, input, base, budget)
+	require.NoError(t, err)
 	assert.Equal(t, 3, calls)
 	require.Len(t, w.delays, 2)
 	assert.Equal(t, 5, out.Usage.TotalTokens)
 	credited := 4*time.Second + w.delays[0] + w.delays[1]
+	assert.Equal(t, credited, wf.actor.elapsed)
 	assert.Equal(t, initialBudget.Add(credited), budget)
 	assert.Equal(t, initialHard.Add(credited), hard)
 	assert.Equal(t, time.Hour-credited, base.providerRecovery.Remaining)
@@ -268,13 +295,18 @@ func TestProviderRecoveryCheckpointPreservesRemainingBudget(t *testing.T) {
 			suspension := suspensionContractFixture(t, spec.Name)
 			rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
 				checkpoint.Policy = &PolicyOverrides{ProviderRetryBudget: time.Hour}
-				checkpoint.ProviderRecovery = &providerRecoveryBudget{Remaining: remaining, elapsed: time.Minute}
+				checkpoint.ProviderRecovery = &providerRecoveryBudget{
+					Remaining: remaining,
+					allowance: &providerRecoveryAllowance{initial: time.Hour},
+				}
 			})
 			checkpoint, err := decodeWorkflowCheckpoint(suspension, testRuntimeDefinition(rt, "svc.agent"))
 			require.NoError(t, err)
 			require.NotNil(t, checkpoint.ProviderRecovery)
 			assert.Equal(t, remaining, checkpoint.ProviderRecovery.Remaining)
-			assert.Zero(t, checkpoint.ProviderRecovery.elapsed)
+			assert.Nil(t, checkpoint.ProviderRecovery.allowance)
+			checkpoint.ProviderRecovery.activate()
+			assert.Equal(t, remaining, checkpoint.ProviderRecovery.allowance.initial)
 		})
 	}
 }

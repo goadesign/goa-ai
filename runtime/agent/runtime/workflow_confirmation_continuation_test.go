@@ -109,7 +109,7 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 	seedRunMeta(t, runtime, secondInput)
 	secondContext := &testWorkflowContext{ctx: t.Context(), runtime: runtime}
 	second, err := runtime.resumeSuspendedWorkflow(
-		secondContext,
+		recoveryContinuationWorkflow(t, secondContext, checkpoint),
 		AgentRegistration{ExecuteToolActivity: "execute"},
 		secondInput,
 		checkpoint, seedTestContinuationHistory(t, runtime, secondInput, checkpoint),
@@ -198,7 +198,7 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 	seedRunMeta(t, runtime, secondInput)
 
 	second, err := runtime.resumeSuspendedWorkflow(
-		&testWorkflowContext{ctx: t.Context(), runtime: runtime},
+		recoveryContinuationWorkflow(t, &testWorkflowContext{ctx: t.Context(), runtime: runtime}, checkpoint),
 		registration,
 		secondInput,
 		checkpoint, seedTestContinuationHistory(t, runtime, secondInput, checkpoint),

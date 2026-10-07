@@ -67,7 +67,7 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 	require.NoError(t, restoreContinuationRunInput(secondInput, firstCheckpoint))
 	seedRunMeta(t, runtime, secondInput)
 	second, err := runtime.resumeSuspendedWorkflow(
-		&testWorkflowContext{ctx: t.Context(), runtime: runtime},
+		recoveryContinuationWorkflow(t, &testWorkflowContext{ctx: t.Context(), runtime: runtime}, firstCheckpoint),
 		registration,
 		secondInput,
 		firstCheckpoint, seedTestContinuationHistory(t, runtime, secondInput, firstCheckpoint),
@@ -100,7 +100,7 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 		}}},
 	}
 	third, err := runtime.resumeSuspendedWorkflow(
-		thirdContext,
+		recoveryContinuationWorkflow(t, thirdContext, secondCheckpoint),
 		registration,
 		thirdInput,
 		secondCheckpoint, seedTestContinuationHistory(t, runtime, thirdInput, secondCheckpoint),

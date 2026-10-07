@@ -16,9 +16,10 @@ import (
 // routeWorkflowContext routes activity execution through registered handlers so
 // tests can call runtime helpers without standing up a workflow engine.
 type routeWorkflowContext struct {
-	ctx   context.Context
-	runID string
-	now   func() time.Time
+	ctx          context.Context
+	runID        string
+	now          func() time.Time
+	recoveryPort *testProviderRecoveryPort
 
 	plannerRoutes map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error)
 	toolRoutes    map[string]func(context.Context, *ToolInput) (*ToolOutput, error)
@@ -179,7 +180,7 @@ func (r *routeWorkflowContext) ExecuteStorageActivity(call engine.StorageActivit
 func (r *routeWorkflowContext) ExecutePlannerActivity(
 	call engine.PlannerActivityCall,
 ) (*api.PlanActivityOutput, error) {
-	r.lastPlannerCall = call
+	r.root().lastPlannerCall = call
 	handler, ok := r.plannerRoutes[call.Name]
 	if !ok {
 		return nil, fmt.Errorf("no planner route for activity %q", call.Name)

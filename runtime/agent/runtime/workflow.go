@@ -273,6 +273,24 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	); err != nil {
 		return nil, err
 	}
+	var recoveryBudget *providerRecoveryBudget
+	if checkpoint != nil {
+		recoveryBudget = checkpoint.ProviderRecovery
+	} else if input.Policy != nil && input.Policy.ProviderRetryBudget > 0 {
+		recoveryBudget = &providerRecoveryBudget{Remaining: input.Policy.ProviderRetryBudget}
+	}
+	recoveryWorkflow, err := installProviderRecovery(wfCtx, recoveryBudget)
+	if err != nil {
+		return nil, err
+	}
+	wfCtx = recoveryWorkflow
+	recoveryWorkflow.actor.finalization = finalization
+	defer func() {
+		if err := recoveryWorkflow.actor.close(wfCtx, workflowErr); err != nil {
+			workflowErr = errors.Join(workflowErr, err)
+			output = nil
+		}
+	}()
 	if checkpoint != nil {
 		if err := r.publishHook(
 			wfCtx.Context(),
@@ -283,7 +301,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			finalStatus = terminalRunStatusForError(err)
 			return nil, err
 		}
-		out, err := r.resumeSuspendedWorkflow(wfCtx, reg, input, checkpoint, historyEndID)
+		out, err := r.resumeSuspendedWorkflow(recoveryWorkflow, reg, input, checkpoint, historyEndID)
 		if err != nil {
 			finalErr = err
 			finalStatus = terminalRunStatusForError(err)
@@ -293,11 +311,10 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 
 	planInput := &workflowConversation{
-		RunContext:   runCtx,
-		HistoryEndID: historyEndID,
-	}
-	if input.Policy != nil && input.Policy.ProviderRetryBudget > 0 {
-		planInput.providerRecovery = &providerRecoveryBudget{Remaining: input.Policy.ProviderRetryBudget}
+		RunContext:       runCtx,
+		HistoryEndID:     historyEndID,
+		providerRecovery: recoveryBudget,
+		providerControl:  recoveryWorkflow.actor,
 	}
 	// Materialize one active cap state before planning so ordinary tools,
 	// recovery turns, and terminal finalization all observe the same run budget.
@@ -325,6 +342,8 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		budgetDeadline = wfCtx.Now().Add(timeBudget)
 		hardDeadline = budgetDeadline.Add(grace)
 	}
+	recoveryWorkflow.actor.budget = &budgetDeadline
+	recoveryWorkflow.actor.hard = &hardDeadline
 	startReq := PlanActivityInput{
 		AgentID:      input.AgentID,
 		RunID:        input.RunID,
@@ -374,7 +393,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		return nil, err
 	}
 	firstOutput, err := r.runPlanActivity(wfCtx, reg.PlanActivityName, planOpts, startReq, planInput, budgetDeadline)
-	preserveProviderRecoveryDeadlines(planInput, 0, &budgetDeadline, &hardDeadline)
 	if err != nil {
 		if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) &&
 			!budgetDeadline.IsZero() {

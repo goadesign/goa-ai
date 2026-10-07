@@ -675,8 +675,9 @@ func (r *Runtime) recordActivity(ctx context.Context, command *api.StorageActivi
 
 // testWorkflowContext is a lightweight engine.WorkflowContext implementation used by tests.
 type testWorkflowContext struct {
-	ctx context.Context
-	now func() time.Time
+	ctx          context.Context
+	now          func() time.Time
+	recoveryPort *testProviderRecoveryPort
 
 	lastHookCall         engine.StorageActivityCall
 	lastPlannerCall      engine.PlannerActivityCall
