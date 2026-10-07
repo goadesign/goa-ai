@@ -2636,9 +2636,21 @@ minimum for each key. These are algorithm constraints, not framework budgets.
 Successful HTTP requests carry verified issuer, subject and client identity.
 Native OAuth, JWT and Bearer callbacks reuse a grant only for the same verifier,
 exact token hash and still-valid interval, then run Goa's own scope validator.
-Post-dispatch domain failures never become resource challenges. Opaque-token
-introspection, enterprise authorization, durable host credentials and complete
-extension conformance remain release gates.
+Post-dispatch domain failures never become resource challenges.
+
+Opaque tokens use an explicitly configured HTTPS introspection endpoint and a
+separate resource-server client registration. Native Goa Basic authentication
+keeps the individually form-encoded credentials in the header; the generated
+form carries only the submitted token and access-token lookup hint. The same
+resource owner requires current activity and the exact audience, checks supplied
+issuer and whole-second validity limits, then applies the generated scopes.
+The hint does not prove token purpose: the trusted issuer must report active only
+for access tokens usable by this resource. Missing subject/client claims remain
+empty identity values. Every guard and native callback asks the issuer anew;
+there is no introspection cache or token-format fallback. Inactive tokens receive
+401; issuer transport, authentication or response-contract failures receive 503
+without an invalid-token challenge. Enterprise authorization, durable host
+credentials and complete extension conformance remain release gates.
 
 The shared MCP HTTP transport records whether any attempt reached its
 configured HTTP dependency. Preparation failures retain their local error;

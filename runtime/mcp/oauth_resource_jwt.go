@@ -166,3 +166,20 @@ func (v *jwtResourceVerifier) verify(ctx context.Context, token string, now time
 	span.AddEvent("access token verified")
 	return claims, nil
 }
+
+// verifyGrant checks the signed token and keeps only identity, permissions and
+// its validity interval for the shared resource guard and native Goa callbacks.
+func (v *jwtResourceVerifier) verifyGrant(ctx context.Context, token string) (*verifiedResourceGrant, error) {
+	claims, err := v.verify(ctx, token, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	grant := &verifiedResourceGrant{
+		principal: ResourcePrincipal{Issuer: claims.Iss, Subject: claims.Sub, ClientID: claims.ClientID},
+		expires:   claims.Exp, notBefore: claims.Nbf,
+	}
+	if claims.Scope != nil {
+		grant.scopes = strings.Split(*claims.Scope, " ")
+	}
+	return grant, nil
+}

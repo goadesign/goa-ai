@@ -19,6 +19,7 @@ import (
 	clientmetadatac "goa.design/goa-ai/internal/mcpauth/gen/http/client_metadata/client"
 	issuermetadatac "goa.design/goa-ai/internal/mcpauth/gen/http/issuer_metadata/client"
 	resourcemetadatac "goa.design/goa-ai/internal/mcpauth/gen/http/resource_metadata/client"
+	tokenintrospectionc "goa.design/goa-ai/internal/mcpauth/gen/http/token_introspection/client"
 	goahttp "goa.design/goa/v3/http"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -29,6 +30,7 @@ import (
 func UsageCommands() []string {
 	return []string{
 		"access-token-claims decode",
+		"token-introspection read",
 		"resource-metadata read",
 		"issuer-metadata read",
 		"client-metadata read",
@@ -40,10 +42,10 @@ func UsageCommands() []string {
 // UsageExamples produces an example of a valid invocation of the CLI tool.
 func UsageExamples() string {
 	return os.Args[0] + " " + "access-token-claims decode --body '{\n      \"aud\": \"Voluptatem aut minima quia.\",\n      \"client_id\": \"zse\",\n      \"exp\": 0.9384970563171912,\n      \"iat\": 0.635850949987135,\n      \"iss\": \"9\",\n      \"jti\": \"9\",\n      \"nbf\": 0.4731574477305462,\n      \"scope\": \"yC K\",\n      \"sub\": \"y\"\n   }'" + "\n" +
+		os.Args[0] + " " + "token-introspection read --body '{\n      \"token\": \"e\",\n      \"token_type_hint\": \"access_token\"\n   }' --username \"Accusamus sapiente.\" --password \"Ab et nisi ab corporis accusantium quibusdam.\"" + "\n" +
 		os.Args[0] + " " + "resource-metadata read" + "\n" +
 		os.Args[0] + " " + "issuer-metadata read" + "\n" +
 		os.Args[0] + " " + "client-metadata read" + "\n" +
-		os.Args[0] + " " + "access-tokens assertion --body '{\n      \"client_assertion\": \"S.U.n\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"client_credentials\",\n      \"resource\": \"http://hudson.info/ignatius\",\n      \"scope\": \"z# r+ Y-\"\n   }'" + "\n" +
 		""
 }
 
@@ -81,6 +83,13 @@ func ParseEndpoint(
 		accessTokenClaimsDecodeFlags    = flag.NewFlagSet("decode", flag.ExitOnError)
 		accessTokenClaimsDecodeBodyFlag = new(cliStringFlag)
 
+		tokenIntrospectionFlags = flag.NewFlagSet("token-introspection", flag.ContinueOnError)
+
+		tokenIntrospectionReadFlags        = flag.NewFlagSet("read", flag.ExitOnError)
+		tokenIntrospectionReadBodyFlag     = new(cliStringFlag)
+		tokenIntrospectionReadUsernameFlag = new(cliStringFlag)
+		tokenIntrospectionReadPasswordFlag = new(cliStringFlag)
+
 		resourceMetadataFlags = flag.NewFlagSet("resource-metadata", flag.ContinueOnError)
 
 		resourceMetadataReadFlags = flag.NewFlagSet("read", flag.ExitOnError)
@@ -116,6 +125,9 @@ func ParseEndpoint(
 		authorizationResponsesReceiveIssuerFlag = new(cliStringFlag)
 	)
 	accessTokenClaimsDecodeFlags.Var(accessTokenClaimsDecodeBodyFlag, "body", "")
+	tokenIntrospectionReadFlags.Var(tokenIntrospectionReadBodyFlag, "body", "")
+	tokenIntrospectionReadFlags.Var(tokenIntrospectionReadUsernameFlag, "username", "Form-encoded client identifier registered for resource introspection")
+	tokenIntrospectionReadFlags.Var(tokenIntrospectionReadPasswordFlag, "password", "Form-encoded client secret registered for resource introspection")
 	accessTokensAssertionFlags.Var(accessTokensAssertionBodyFlag, "body", "")
 	accessTokensSecretFlags.Var(accessTokensSecretBodyFlag, "body", "")
 	accessTokensCodeFlags.Var(accessTokensCodeBodyFlag, "body", "")
@@ -127,6 +139,9 @@ func ParseEndpoint(
 
 	accessTokenClaimsFlags.Usage = accessTokenClaimsUsage
 	accessTokenClaimsDecodeFlags.Usage = accessTokenClaimsDecodeUsage
+
+	tokenIntrospectionFlags.Usage = tokenIntrospectionUsage
+	tokenIntrospectionReadFlags.Usage = tokenIntrospectionReadUsage
 
 	resourceMetadataFlags.Usage = resourceMetadataUsage
 	resourceMetadataReadFlags.Usage = resourceMetadataReadUsage
@@ -163,6 +178,8 @@ func ParseEndpoint(
 		switch svcn {
 		case "access-token-claims":
 			svcf = accessTokenClaimsFlags
+		case "token-introspection":
+			svcf = tokenIntrospectionFlags
 		case "resource-metadata":
 			svcf = resourceMetadataFlags
 		case "issuer-metadata":
@@ -192,6 +209,13 @@ func ParseEndpoint(
 			switch epn {
 			case "decode":
 				epf = accessTokenClaimsDecodeFlags
+
+			}
+
+		case "token-introspection":
+			switch epn {
+			case "read":
+				epf = tokenIntrospectionReadFlags
 
 			}
 
@@ -265,6 +289,13 @@ func ParseEndpoint(
 			case "decode":
 				endpoint = c.Decode()
 				data, err = accesstokenclaimsc.BuildDecodePayload(accessTokenClaimsDecodeBodyFlag.value)
+			}
+		case "token-introspection":
+			c := tokenintrospectionc.NewClient(scheme, host, doer, enc, dec, restore)
+			switch epn {
+			case "read":
+				endpoint = c.Read()
+				data, err = tokenintrospectionc.BuildReadPayload(tokenIntrospectionReadBodyFlag.value, tokenIntrospectionReadUsernameFlag.value, tokenIntrospectionReadPasswordFlag.value)
 			}
 		case "resource-metadata":
 			c := resourcemetadatac.NewClient(scheme, host, doer, enc, dec, restore)
@@ -343,6 +374,39 @@ func accessTokenClaimsDecodeUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-token-claims decode --body '{\n      \"aud\": \"Voluptatem aut minima quia.\",\n      \"client_id\": \"zse\",\n      \"exp\": 0.9384970563171912,\n      \"iat\": 0.635850949987135,\n      \"iss\": \"9\",\n      \"jti\": \"9\",\n      \"nbf\": 0.4731574477305462,\n      \"scope\": \"yC K\",\n      \"sub\": \"y\"\n   }'")
+}
+
+// tokenIntrospectionUsage displays the usage of the token-introspection
+// command and its subcommands.
+func tokenIntrospectionUsage() {
+	fmt.Fprintln(os.Stderr, `Ask a trusted authorization server whether an opaque access token is currently usable at this MCP resource, using a separate resource-server registration.`)
+	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] token-introspection COMMAND [flags]\n\n", os.Args[0])
+	fmt.Fprintln(os.Stderr, "COMMAND:")
+	fmt.Fprintln(os.Stderr, `    read: Authenticate the resource server and submit one access token in a generated form, then decode the issuer's current activity, audience and granted permissions.`)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Additional help:")
+	fmt.Fprintf(os.Stderr, "    %s token-introspection COMMAND --help\n", os.Args[0])
+}
+func tokenIntrospectionReadUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] token-introspection read", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -username STRING")
+	fmt.Fprint(os.Stderr, " -password STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Authenticate the resource server and submit one access token in a generated form, then decode the issuer's current activity, audience and granted permissions.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -username STRING: Form-encoded client identifier registered for resource introspection`)
+	fmt.Fprintln(os.Stderr, `    -password STRING: Form-encoded client secret registered for resource introspection`)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "token-introspection read --body '{\n      \"token\": \"e\",\n      \"token_type_hint\": \"access_token\"\n   }' --username \"Accusamus sapiente.\" --password \"Ab et nisi ab corporis accusantium quibusdam.\"")
 }
 
 // resourceMetadataUsage displays the usage of the resource-metadata command

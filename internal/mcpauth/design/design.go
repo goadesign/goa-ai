@@ -34,12 +34,52 @@ var _ = API("mcp_authorization", func() {
 	Description("Read protected-resource and issuer metadata and obtain resource-bound access tokens without exposing credentials to MCP tools.")
 })
 
+var introspectionCredentials = BasicAuthSecurity("introspection_credentials")
+
+var _ = Service("token_introspection", func() {
+	Description("Ask a trusted authorization server whether an opaque access token is currently usable at this MCP resource, using a separate resource-server registration.")
+	Method("read", func() {
+		Description("Authenticate the resource server and submit one access token in a generated form, then decode the issuer's current activity, audience and granted permissions.")
+		Security(introspectionCredentials)
+		Payload(func() {
+			Username("username", String, "Form-encoded client identifier registered for resource introspection")
+			Password("password", String, "Form-encoded client secret registered for resource introspection")
+			Field(1, "token", String, "Bearer access token submitted for verification", oauthBearerValue)
+			Field(2, "token_type_hint", String, "Access-token lookup hint; the issuer still owns token-purpose verification", func() {
+				Default("access_token")
+				Enum("access_token")
+				Example("access_token")
+			})
+			Required("username", "password", "token")
+		})
+		Result(func() {
+			Field(1, "active", Boolean, "Whether this token is currently usable by the authenticated resource")
+			// Introspection uses the same untagged audience value as signed tokens.
+			// The concrete SDK type rejects numbers and mixed arrays privately.
+			Field(2, "aud", Any, "Intended resource identifiers decoded by the JWT library", func() {
+				Meta("struct:field:type", "jwt.Audience", "github.com/go-jose/go-jose/v4/jwt", "jwt")
+			})
+			Field(3, "scope", String, "Space-separated permissions granted for this resource", oauthScope)
+			Field(4, "iss", String, "Exact authorization server identifier when supplied", func() { MinLength(1) })
+			Field(5, "sub", String, "Subject identified by the authorization server when supplied", func() { MinLength(1) })
+			Field(6, "client_id", String, "Client to which the access token was issued when supplied", func() { MinLength(1) })
+			Field(7, "exp", Int64, "Exclusive token expiration in whole Unix seconds when supplied")
+			Field(8, "nbf", Int64, "Inclusive first valid instant in whole Unix seconds when supplied")
+			Field(9, "token_type", String, "Bearer token type when supplied", func() {
+				Pattern("^[Bb][Ee][Aa][Rr][Ee][Rr]$")
+			})
+			Required("active")
+		})
+		HTTP(func() {
+			POST("/introspect")
+			FormRequest()
+		})
+	})
+})
+
 var bearerToken = Type("BearerToken", func() {
 	Description("An opaque resource access token and the optional refresh credential issued in the same grant.")
-	Field(1, "access_token", String, "Opaque bearer token returned by the issuer", func() {
-		MinLength(1)
-		Pattern("^[A-Za-z0-9._~+/-]+=*$")
-	})
+	Field(1, "access_token", String, "Opaque bearer token returned by the issuer", oauthBearerValue)
 	Field(2, "token_type", String, "Bearer token type, compared without case sensitivity", func() { Pattern("^[Bb][Ee][Aa][Rr][Ee][Rr]$") })
 	Field(3, "expires_in", Int64, "Access token lifetime in seconds from the token response", func() { Minimum(0) })
 	Field(4, "scope", String, "Space-separated permissions granted by the issuer", oauthScope)
@@ -226,6 +266,13 @@ var _ = Service("authorization_responses", func() {
 		})
 	})
 })
+
+// oauthBearerValue applies the bearer header grammar to issued and submitted
+// access tokens. Goa rejects malformed values before they cross either boundary.
+func oauthBearerValue() {
+	MinLength(1)
+	Pattern("^[A-Za-z0-9._~+/-]+=*$")
+}
 
 // oauthScope applies the OAuth scope grammar wherever an external grant carries
 // permissions. Generated response validators enforce this one declared rule.

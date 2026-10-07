@@ -209,6 +209,42 @@ paths:
                             - token_type
             schemes:
                 - http
+    /introspect:
+        post:
+            tags:
+                - token_introspection
+            summary: read token_introspection
+            description: Authenticate the resource server and submit one access token in a generated form, then decode the issuer's current activity, audience and granted permissions.
+            operationId: token_introspection#read
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: token
+                  in: formData
+                  description: Bearer access token submitted for verification
+                  required: true
+                  type: string
+                  minLength: 1
+                  pattern: ^[A-Za-z0-9._~+/-]+=*$
+                - name: token_type_hint
+                  in: formData
+                  description: Access-token lookup hint; the issuer still owns token-purpose verification
+                  required: false
+                  type: string
+                  default: access_token
+                  enum:
+                    - access_token
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/TokenIntrospectionReadResponseBody'
+                        required:
+                            - active
+            schemes:
+                - http
+            security:
+                - introspection_credentials_header_Authorization: []
     /issuer:
         get:
             tags:
@@ -686,3 +722,64 @@ definitions:
         required:
             - resource
             - authorization_servers
+    TokenIntrospectionReadResponseBody:
+        title: TokenIntrospectionReadResponseBody
+        type: object
+        properties:
+            active:
+                type: boolean
+                description: Whether this token is currently usable by the authenticated resource
+                example: true
+            aud:
+                description: Intended resource identifiers decoded by the JWT library
+                example: Voluptas soluta.
+            client_id:
+                type: string
+                description: Client to which the access token was issued when supplied
+                example: s
+                minLength: 1
+            exp:
+                type: integer
+                description: Exclusive token expiration in whole Unix seconds when supplied
+                example: 2961581614934032011
+                format: int64
+            iss:
+                type: string
+                description: Exact authorization server identifier when supplied
+                example: r7w
+                minLength: 1
+            nbf:
+                type: integer
+                description: Inclusive first valid instant in whole Unix seconds when supplied
+                example: 8924386129086123817
+                format: int64
+            scope:
+                type: string
+                description: Space-separated permissions granted for this resource
+                example: iT l <
+                pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+            sub:
+                type: string
+                description: Subject identified by the authorization server when supplied
+                example: 8jz
+                minLength: 1
+            token_type:
+                type: string
+                description: Bearer token type when supplied
+                example: BEARER
+                pattern: ^[Bb][Ee][Aa][Rr][Ee][Rr]$
+        example:
+            active: true
+            aud: Voluptas soluta.
+            client_id: s
+            exp: 2961581614934032011
+            iss: r7w
+            nbf: 8924386129086123817
+            scope: iT l <
+            sub: 8jz
+            token_type: BEARER
+        required:
+            - active
+securityDefinitions:
+    introspection_credentials_header_Authorization:
+        type: basic

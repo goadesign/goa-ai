@@ -369,11 +369,14 @@ Generated HTTP bindings fill the original typed service payload from its declare
 header, query or cookie before calling the configured endpoint. An unannotated
 field named `token` remains an ordinary argument. See
 [secured MCP methods](docs/dsl.md#secured-mcp-methods). Protected MCP servers now
-derive resource scopes from Goa security expressions and require a signed-token
-verifier before middleware or service work. Catalogs use basic-access scopes;
+derive resource scopes from Goa security expressions and require a resource
+owner before middleware or service work. Choose trusted signed-token keys or
+authenticated opaque-token introspection at construction. Catalogs use basic-access scopes;
 tools, resources, prompts, completions and subscriptions keep their own scope
 alternatives. [Resource servers](docs/runtime.md#mcp-resource-servers) verify
-issuer, audience, signature and expiry and preserve original Goa authentication.
+issuer, audience and token validity and preserve original Goa authentication.
+Introspection checks current issuer state without caching; issuer failures
+receive 503 rather than an invalid-token challenge.
 Complete OAuth and the remaining protocol capabilities are still release gates
 in the [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
 

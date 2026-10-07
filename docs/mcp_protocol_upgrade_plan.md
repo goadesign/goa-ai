@@ -1854,10 +1854,12 @@ only the final audience-bound access token; it neither trusts the original
 identity token nor consumes the intermediate grant. Model arguments and stored
 agent continuations must not carry any of these credentials. Generate separate
 typed exchanges and compose them with the shared access-token owner; do not add
-a generic callback that can return any token. Private-key client metadata in
-the enterprise profile follows its referenced metadata-document revision,
-independently of the core public-client profile. Verify those contracts before
-choosing new public configuration.
+a generic callback that can return any token. The current core client-registration
+page also allows private-key client metadata, rather than limiting that option
+to enterprise clients. The implemented public metadata profile remains explicit
+about public authentication; signed metadata registration must compose with
+browser and enterprise grants through shared client authentication. Verify those
+contracts before choosing new public configuration.
 [enterprise profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/stable/enterprise-managed-authorization.mdx),
 [client metadata authentication](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-01.html#section-6.2).
 
@@ -2417,3 +2419,71 @@ Acceptance after the RSA parameter correction passes configured lint with zero
 issues, root build, and the complete uncached root race suite plus quickstart.
 The runtime checks verify standard PSS signatures and reject nonstandard salt
 lengths through the same resource owner used by generated transports.
+
+## Opaque-access-token resource verification
+
+The resource-server path now has two explicit construction profiles: trusted
+signed access tokens, and authenticated RFC 7662 introspection. Both return the
+same required `ResourceServer`; generated policies, operation selection, metadata,
+HTTP guard, native scope validation and original endpoints remain shared.
+No public verifier callback, raw claims record or parallel middleware is added.
+
+The private OAuth design declares native Basic authentication, a form containing
+only the submitted token and access-token lookup hint, and a typed issuer response.
+A compiled native-client probe proved that credentials stay outside the form.
+The resource registration is separately configured; each Basic credential is
+form encoded before Goa constructs the header. The exact trusted HTTPS endpoint,
+escaped path and query survive native request construction. Redirects are rejected
+on a private HTTP client copy; the host owns network timeouts.
+
+Active introspection responses must identify the configured resource audience.
+Supplied issuer and integer validity claims are checked; absent subject, client
+and times remain optional as RFC 7662 specifies. The trusted issuer owns current
+revocation and access-token purpose. The lookup hint is advisory, so it cannot
+authorize a refresh token. No token-format heuristic or signed-token fallback is
+used. Invalid bearer grammar is rejected through generated Goa validation before
+any issuer request.
+
+Each guard and native callback asks the issuer again, including when an earlier
+context carries a grant for the same token. There is no introspection cache.
+Generated operations with an original resource callback perform two read-only
+checks; catalogs perform one. This pays issuer latency for a current decision.
+Inactive or wrongly addressed tokens receive 401, insufficient permissions 403,
+and issuer transport, registration or response-contract failures 503 without an
+invalid-token challenge. Request cancellation is preserved. No response body,
+submitted token or registration credential enters returned errors or spans.
+
+Focused runtime race checks pass real HTTPS exchanges, strict generated response
+decoding, optional identity, exact audience, timestamps, revocation, cancellation,
+redirect rejection and safe issuer failures. A compiled generated MCP fixture
+passes all seven operation paths twice: fourteen original domain authentications,
+resource callbacks and service operations, one client token acquisition, and
+twenty-eight introspection requests. Catalog-only tokens and missing/invalid
+credentials exercise the shared pre-middleware rejection path.
+
+This increment has no live issuer or deployment evidence. Enterprise exchange,
+durable host credentials, complete independent conformance and external cutover
+remain OAuth gates. All other nondeferred protocol capabilities remain required
+before PR #409 can merge or the upgrade can release.
+[Token introspection](https://www.rfc-editor.org/rfc/rfc7662.html),
+[MCP resource authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization).
+
+Completed introspection acceptance passes configured lint with zero issues,
+root build, and the full uncached root race suite plus quickstart. A second owning
+OAuth regeneration preserves all 92 generated artifact hashes. Verification
+uses synthetic issuers; no live authorization service or deployment was changed.
+
+### Signed metadata registration and grant composition reassessment
+
+The current versioned client-registration page explicitly permits
+`private_key_jwt` with client-hosted public-key configuration. The existing
+`client_metadata.read` contract selects public authentication, while
+`clientAssertionGrant.validateIssuer` selects machine client-credentials grants.
+Neither alone composes signed registration with browser or enterprise grants.
+The remaining OAuth work must separate client authentication from the selected
+grant and reuse it across those flows, retaining one credential owner. Public
+and signed metadata contracts should remain explicit; do not widen a public
+profile's enum and infer authentication from field presence. Do not add a second
+cache or issuer discovery path. This corrects the earlier assumption that signed
+metadata registration was exclusively an enterprise-extension concern.
+[Current client-registration contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration).

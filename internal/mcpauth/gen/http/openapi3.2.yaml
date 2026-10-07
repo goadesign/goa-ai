@@ -134,7 +134,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/ReadResponseBody3'
+                                $ref: '#/components/schemas/ReadResponseBody4'
                             example:
                                 client_id: http://conroy.name/eden_prohaska
                                 client_name: 9s
@@ -184,6 +184,42 @@ paths:
                                 refresh_token: d
                                 scope: ^a {
                                 token_type: BEARER
+    /introspect:
+        post:
+            tags:
+                - token_introspection
+            summary: read token_introspection
+            description: Authenticate the resource server and submit one access token in a generated form, then decode the issuer's current activity, audience and granted permissions.
+            operationId: token_introspection#read
+            requestBody:
+                description: Request body for read.
+                required: true
+                content:
+                    application/x-www-form-urlencoded:
+                        schema:
+                            $ref: '#/components/schemas/ReadRequestBody'
+                        example:
+                            token: e
+                            token_type_hint: access_token
+            responses:
+                "200":
+                    description: OK response.
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ReadResponseBody'
+                            example:
+                                active: true
+                                aud: Voluptas soluta.
+                                client_id: s
+                                exp: 2961581614934032011
+                                iss: r7w
+                                nbf: 8924386129086123817
+                                scope: iT l <
+                                sub: 8jz
+                                token_type: BEARER
+            security:
+                - introspection_credentials_header_Authorization: []
     /issuer:
         get:
             tags:
@@ -197,7 +233,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/ReadResponseBody2'
+                                $ref: '#/components/schemas/ReadResponseBody3'
                             example:
                                 authorization_endpoint: http://haley.biz/ayden
                                 authorization_response_iss_parameter_supported: true
@@ -269,7 +305,7 @@ paths:
                     content:
                         application/json:
                             schema:
-                                $ref: '#/components/schemas/ReadResponseBody'
+                                $ref: '#/components/schemas/ReadResponseBody2'
                             example:
                                 authorization_servers:
                                     - http://wiegand.org/faustino_graham
@@ -512,7 +548,86 @@ components:
                 - iat
                 - jti
                 - client_id
+        ReadRequestBody:
+            type: object
+            properties:
+                token:
+                    type: string
+                    description: Bearer access token submitted for verification
+                    example: e
+                    pattern: ^[A-Za-z0-9._~+/-]+=*$
+                    minLength: 1
+                token_type_hint:
+                    type: string
+                    description: Access-token lookup hint; the issuer still owns token-purpose verification
+                    default: access_token
+                    example: access_token
+                    enum:
+                        - access_token
+            description: Request body for read.
+            example:
+                token: e
+                token_type_hint: access_token
+            required:
+                - token
         ReadResponseBody:
+            type: object
+            properties:
+                active:
+                    type: boolean
+                    description: Whether this token is currently usable by the authenticated resource
+                    example: true
+                aud:
+                    description: Intended resource identifiers decoded by the JWT library
+                    example: Voluptas soluta.
+                client_id:
+                    type: string
+                    description: Client to which the access token was issued when supplied
+                    example: s
+                    minLength: 1
+                exp:
+                    type: integer
+                    description: Exclusive token expiration in whole Unix seconds when supplied
+                    example: 2961581614934032011
+                    format: int64
+                iss:
+                    type: string
+                    description: Exact authorization server identifier when supplied
+                    example: r7w
+                    minLength: 1
+                nbf:
+                    type: integer
+                    description: Inclusive first valid instant in whole Unix seconds when supplied
+                    example: 8924386129086123817
+                    format: int64
+                scope:
+                    type: string
+                    description: Space-separated permissions granted for this resource
+                    example: iT l <
+                    pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                sub:
+                    type: string
+                    description: Subject identified by the authorization server when supplied
+                    example: 8jz
+                    minLength: 1
+                token_type:
+                    type: string
+                    description: Bearer token type when supplied
+                    example: BEARER
+                    pattern: ^[Bb][Ee][Aa][Rr][Ee][Rr]$
+            example:
+                active: true
+                aud: Voluptas soluta.
+                client_id: s
+                exp: 2961581614934032011
+                iss: r7w
+                nbf: 8924386129086123817
+                scope: iT l <
+                sub: 8jz
+                token_type: BEARER
+            required:
+                - active
+        ReadResponseBody2:
             type: object
             properties:
                 authorization_servers:
@@ -554,7 +669,7 @@ components:
             required:
                 - resource
                 - authorization_servers
-        ReadResponseBody2:
+        ReadResponseBody3:
             type: object
             properties:
                 authorization_endpoint:
@@ -664,7 +779,7 @@ components:
             required:
                 - issuer
                 - token_endpoint
-        ReadResponseBody3:
+        ReadResponseBody4:
             type: object
             properties:
                 client_id:
@@ -822,9 +937,15 @@ components:
                 - client_id
                 - client_secret
                 - resource
+    securitySchemes:
+        introspection_credentials_header_Authorization:
+            type: http
+            scheme: basic
 tags:
     - name: access_token_claims
       description: Decode verified JWT access-token claims before the resource server checks their issuer, audience and validity times.
+    - name: token_introspection
+      description: Ask a trusted authorization server whether an opaque access token is currently usable at this MCP resource, using a separate resource-server registration.
     - name: resource_metadata
       description: Identify the protected resource and the independent authorization servers trusted to issue its access tokens.
     - name: issuer_metadata

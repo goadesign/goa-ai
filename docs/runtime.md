@@ -6558,6 +6558,44 @@ selected hash. JOSE's verifier extension calls Go's cryptographic primitives
 with that required salt length; the SDK's default verification accepts a wider
 range. These constraints apply to individual keys and signatures.
 
+For opaque tokens, construct the same required owner with authenticated
+introspection instead of signing keys:
+
+```go
+owner, err := mcp.NewIntrospectionResourceServer(mcp.IntrospectionResource{
+    Issuer:       "https://issuer.example",
+    Resource:     "https://api.example/mcp",
+    Endpoint:     "https://issuer.example/introspect",
+    ClientID:     resourceClientID,
+    ClientSecret: resourceClientSecret,
+    Client:       issuerHTTPClient,
+})
+```
+
+Check the error and pass this owner to the same generated constructor. The host
+supplies a trusted HTTPS endpoint and a separate resource-server registration
+that supports HTTP Basic authentication. Goa generates the form and Basic header;
+credentials are individually form encoded before header encoding and never enter
+the token form. A private HTTP client copy rejects redirects. An omitted client
+uses `http.DefaultClient`; the host controls network timeouts.
+
+The trusted issuer must report `active: true` only for access tokens currently
+usable by this resource, including revocation and token-purpose checks. The
+`access_token` lookup hint does not prove purpose. Active responses must include
+the exact resource audience. Supplied issuer claims must match; supplied integer
+timestamps use whole Unix seconds, with inclusive not-before and exclusive
+expiration. Missing times leave validity with the issuer's current activity
+decision. Missing subject and client identifiers are returned as empty strings;
+the resource owner does not invent identities.
+
+Introspection checks are uncached, including native Goa authentication callbacks.
+A generated operation followed by an original resource-auth callback makes two
+checks; catalogs normally make one. This keeps each decision current with issuer
+revocation at the cost of network latency. Token spelling never selects a profile
+or causes fallback to signed-token parsing. An issuer outage, rejected resource
+registration, or malformed issuer response receives HTTP 503 without a bearer
+invalid-token challenge. It cannot trigger automatic client reauthorization.
+
 Missing or invalid tokens receive 401. A valid token lacking the selected
 operation's scopes receives 403 with an `insufficient_scope` challenge. Challenges
 identify the configured metadata address and one complete scope alternative.
@@ -6575,14 +6613,14 @@ the original configured Goa endpoint.
 `owner.OAuth2Auth`, `owner.JWTAuth` and `owner.BearerAuth` implement Goa's native
 authentication signatures. A service may embed the owner or delegate its original
 authentication callback to the matching method. Each callback runs Goa's own
-scope validator. It reuses token verification only for the same owner, exact
-token hash and still-valid signed interval. Direct Goa calls without a matching
-request grant verify the token before returning authenticated context.
+scope validator. The signed profile reuses token verification only for the same
+owner, exact token hash and still-valid interval. Introspection always asks the
+issuer again. Direct Goa calls verify before returning authenticated context.
 
 Regenerate protected servers and update their composition roots together. There
 is no optional verifier or compatibility constructor. Independent API keys keep
 their native bindings; a different credential owner cannot share the bearer
-header. Opaque-token introspection, enterprise authorization and durable host
+header. Enterprise authorization and durable host
 credentials remain required before the full MCP upgrade is released.
 
 For a fixed Goa result view, server encoding, the advertised result schema and

@@ -41,22 +41,26 @@ type (
 	// ResourceServer verifies resource access before an MCP request is dispatched.
 	// Generated transports provide scopes from the evaluated Goa security design.
 	ResourceServer struct {
-		verifier *jwtResourceVerifier
-		metadata *url.URL
+		verify           func(context.Context, string) (*verifiedResourceGrant, error)
+		issuer           string
+		resource         string
+		metadata         *url.URL
+		reuseSignedGrant bool
 	}
 	// ResourcePrincipal identifies the subject and client verified for a resource
 	// request. Tool arguments cannot supply or replace these identity values.
 	ResourcePrincipal struct {
-		// Issuer is the authorization server that signed the accepted access token.
+		// Issuer is the trusted authorization server that verified the access token.
 		Issuer string
-		// Subject is the subject identified by that authorization server.
+		// Subject is the issuer's subject, or empty if introspection omits it.
 		Subject string
-		// ClientID is the client to which the accepted access token was issued.
+		// ClientID is the issued client, or empty if introspection omits it.
 		ClientID string
 	}
 	// verifiedResourceGrant belongs to this verifier and this exact token. Native
 	// Goa auth callbacks reuse its scope and identity checks only for the same
 	// verifier, the same SHA-256 token hash and a still-valid signed interval.
+	// Introspection grants retain identity and scopes but are never reused.
 	verifiedResourceGrant struct {
 		owner       *ResourceServer
 		fingerprint [sha256.Size]byte
@@ -73,6 +77,8 @@ type (
 	}
 )
 
+var errResourceAuthorizationUnavailable = errors.New("mcp: resource authorization unavailable")
+
 // NewJWTResourceServer constructs an RFC 9068 signed-access-token resource owner.
 // It copies trusted public keys and rejects unsafe configuration. It accepts no
 // ID tokens, client assertions, embedded token keys or token-selected key URLs.
@@ -85,7 +91,10 @@ func NewJWTResourceServer(config JWTResource) (*ResourceServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &ResourceServer{verifier: verifier, metadata: resourceMetadataAddresses(resource)[0]}, nil
+	return &ResourceServer{
+		verify: verifier.verifyGrant, issuer: config.Issuer, resource: config.Resource,
+		metadata: resourceMetadataAddresses(resource)[0], reuseSignedGrant: true,
+	}, nil
 }
 
 // ResourcePrincipalFromContext returns the identity verified by the resource
@@ -143,13 +152,20 @@ func (s *ResourceServer) AuthorizeHTTP(writer http.ResponseWriter, request *http
 		span.AddEvent("bearer credential required")
 		return nil
 	}
-	// RFC 6750 permits one or more spaces after the scheme. Spaces within a
-	// compact signed token remain invalid and fail signature parsing.
+	// RFC 6750 permits one or more spaces after the scheme. The selected profile
+	// rejects invalid token characters before signature parsing or introspection.
 	token = strings.TrimLeft(token, " ")
 	grant, err := s.verifyGrant(ctx, token)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			span.AddEvent("request canceled during token verification")
+			return nil
+		}
+		if errors.Is(err, errResourceAuthorizationUnavailable) {
+			writer.Header().Set("Cache-Control", "no-store")
+			writer.WriteHeader(http.StatusServiceUnavailable)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil
 		}
 		s.rejectHTTP(writer, http.StatusUnauthorized, "invalid_token", challenged)
@@ -167,8 +183,8 @@ func (s *ResourceServer) AuthorizeHTTP(writer http.ResponseWriter, request *http
 }
 
 // OAuth2Auth implements Goa's OAuth authentication signature. A verified MCP
-// request reuses its exact token grant; ordinary Goa callers verify the token
-// here. Goa's own scope validator checks the original method's requirements.
+// request can reuse a signed token grant; introspection and ordinary Goa callers
+// verify here. Goa's scope validator checks the original method's requirements.
 func (s *ResourceServer) OAuth2Auth(ctx context.Context, token string, scheme *security.OAuth2Scheme) (context.Context, error) {
 	return s.authenticate(ctx, token, scheme.Validate)
 }
@@ -192,8 +208,8 @@ func (s *ResourceServer) BearerAuth(ctx context.Context, token string, scheme *s
 // is public and never invokes MCP middleware, authentication or a service tool.
 func (s *ResourceServer) MountMetadata(mux goahttp.Muxer, scopes []string) {
 	service := &resourceMetadataService{
-		resource: s.verifier.resource,
-		issuer:   s.verifier.issuer,
+		resource: s.resource,
+		issuer:   s.issuer,
 		scopes:   slices.Clone(scopes),
 	}
 	server := genmetadatasrv.New(genmetadata.NewEndpoints(service), mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, nil, nil)
@@ -237,8 +253,8 @@ func resourceScopesSatisfied(alternatives [][]string, granted []string) bool {
 	return false
 }
 
-// authenticate accepts only a grant for this verifier and the exact supplied
-// token. Direct Goa calls have no HTTP grant, so they verify the token first.
+// authenticate reuses signed grants only for this verifier and the exact token.
+// Direct Goa calls verify first, and introspection always checks current state.
 // A scope rejection returns the original context and never creates a principal.
 func (s *ResourceServer) authenticate(ctx context.Context, token string, validate func([]string) error) (authenticated context.Context, err error) {
 	authenticated = ctx
@@ -255,14 +271,14 @@ func (s *ResourceServer) authenticate(ctx context.Context, token string, validat
 		return authenticated, err
 	}
 	grant, ok := ctx.Value(resourcePrincipalContextKey{}).(*verifiedResourceGrant)
-	if !ok || grant.owner != s || grant.fingerprint != sha256.Sum256([]byte(token)) {
+	if !s.reuseSignedGrant || !ok || grant.owner != s || grant.fingerprint != sha256.Sum256([]byte(token)) {
 		var err error
 		grant, err = s.verifyGrant(ctx, token)
 		if err != nil {
 			return authenticated, err
 		}
 	}
-	if !resourceTokenTimeValid(time.Now(), grant.expires, grant.notBefore) {
+	if s.reuseSignedGrant && !resourceTokenTimeValid(time.Now(), grant.expires, grant.notBefore) {
 		return authenticated, errInvalidAccessToken
 	}
 	if err := validate(grant.scopes); err != nil {
@@ -276,18 +292,12 @@ func (s *ResourceServer) authenticate(ctx context.Context, token string, validat
 // token fingerprint needed by native auth callbacks. Raw tokens and unrelated
 // signed claims do not enter the authenticated request context.
 func (s *ResourceServer) verifyGrant(ctx context.Context, token string) (*verifiedResourceGrant, error) {
-	claims, err := s.verifier.verify(ctx, token, time.Now())
+	grant, err := s.verify(ctx, token)
 	if err != nil {
 		return nil, err
 	}
-	grant := &verifiedResourceGrant{
-		owner: s, fingerprint: sha256.Sum256([]byte(token)),
-		principal: ResourcePrincipal{Issuer: claims.Iss, Subject: claims.Sub, ClientID: claims.ClientID},
-		expires:   claims.Exp, notBefore: claims.Nbf,
-	}
-	if claims.Scope != nil {
-		grant.scopes = strings.Split(*claims.Scope, " ")
-	}
+	grant.owner = s
+	grant.fingerprint = sha256.Sum256([]byte(token))
 	return grant, nil
 }
 
