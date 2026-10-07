@@ -64,9 +64,13 @@ func TestMCPDispatchMethodsDeclareAndMapProtocolErrors(t *testing.T) {
 	}
 	for _, methodName := range []string{"tools/call", "resources/read", "prompts/get"} {
 		method := mcpService.Method(methodName)
-		require.Len(t, method.Errors, len(want), methodName)
+		require.Len(t, method.Errors, len(want)+1, methodName)
 		endpoint := httpService.EndpointFor(method)
-		require.Len(t, endpoint.HTTPErrors, len(want), methodName)
+		require.Len(t, endpoint.HTTPErrors, len(want)+1, methodName)
+		capabilityError := method.Error("missing_client_capability")
+		require.NotNil(t, capabilityError)
+		require.True(t, capabilityError.IsRequired("requiredCapabilities"))
+		require.Equal(t, -32021, endpoint.HTTPErrors[len(want)].Response.StatusCode)
 		for index, expected := range want {
 			methodError := method.Errors[index]
 			require.Equal(t, expected.name, methodError.Name)

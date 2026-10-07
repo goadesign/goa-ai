@@ -347,6 +347,11 @@ Authored URL mappings use Goa's `Param("payload_field:url_name")` notation.
 Generated clients retain the complete API and service path; adapters decode and
 validate each method's own typed URL values before endpoint execution. These
 values stay outside model arguments. See [URL values](docs/dsl.md#url-values-and-mapped-attributes).
+`InputExchange(continuationField, outcomeField)` lets unary tools, resource readers
+and prompts collect typed form input or URL consent before completion. Generation
+derives the form schema and answer codec from Goa types; continuation data stays
+outside model arguments and original endpoint authentication runs each round.
+See [additional input](docs/dsl.md#additional-input-from-mcp-methods).
 Generated adapters distinguish domain tool failures from invalid server results.
 Server faults remain internal protocol errors after application message redaction
 and never authorize replaying a tool call.

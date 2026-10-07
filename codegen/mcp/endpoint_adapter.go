@@ -49,10 +49,13 @@ type (
 		ResultValue string
 		// ProjectedResult selects the view fields already returned by the endpoint.
 		ProjectedResult bool
+		// InputExchange fills typed host answers and selects pending outcomes.
+		InputExchange *inputExchangeAdapter
 
-		method        *expr.MethodExpr
-		payloadLayout *codegen.GoTypePlan
-		resultLayout  *codegen.GoTypePlan
+		method          *expr.MethodExpr
+		payloadLayout   *codegen.GoTypePlan
+		resultLayout    *codegen.GoTypePlan
+		resultAttribute *expr.AttributeExpr
 	}
 )
 
@@ -94,7 +97,7 @@ func planEndpointAdapters(generation *codegen.Generation, services *goaservice.P
 			var layout *codegen.GoTypePlan
 			var err error
 			if side.attribute == method.Result {
-				_, layout, err = planMCPResult(services, method)
+				call.resultAttribute, layout, err = planEndpointResult(services, method)
 			} else {
 				layout, err = services.MethodTypeLayout(method, side.attribute)
 			}
@@ -176,7 +179,7 @@ func bindEndpointAdapters(service *goaservice.Data, data *AdapterData) error {
 			// Goa returns collection wrappers by value and object wrappers by
 			// pointer. Keep that endpoint contract for the generated type check.
 			call.EndpointResultRef = layout.Link(data.mcpImportPath, data.mcpPackage.ImportName).RefWithPointer(!view.IsCollection)
-			if _, fixed := mcpcontract.FixedView(call.method); fixed {
+			if _, fixed := mcpcontract.FixedView(call.method.Result); fixed {
 				call.ProjectedResult = true
 			} else {
 				call.ExecutionView = true

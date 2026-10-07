@@ -274,7 +274,12 @@ func (t *ToolExpr) Validate() error {
 		verr.Add(t, "tool %q method %q payload must be an object", t.Name, t.Method.Name)
 	}
 	if t.ContentField != "" {
-		object := expr.AsObject(t.Method.Result.Type)
+		completed, err := mcpinput.CompleteResult(t.Method)
+		if err != nil {
+			verr.Add(t, "%s", err.Error())
+			return verr
+		}
+		object := expr.AsObject(completed.Type)
 		if object == nil || object.Attribute(t.ContentField) == nil {
 			verr.Add(t, "ToolContent(%q) must name a field on the method result", t.ContentField)
 		} else {
@@ -288,7 +293,7 @@ func (t *ToolExpr) Validate() error {
 				}
 			}
 			validation := expr.EffectiveValidation(object.Attribute(t.ContentField))
-			required := expr.EffectiveValidation(t.Method.Result)
+			required := expr.EffectiveValidation(completed)
 			if required != nil && slices.Contains(required.Required, t.ContentField) && (validation == nil || validation.MinLength == nil || *validation.MinLength < 1) {
 				verr.Add(t, "required ToolContent(%q) must declare MinLength(1)", t.ContentField)
 			}
@@ -331,11 +336,16 @@ func (r *ResourceExpr) Validate() error {
 		verr.Add(r, "resource %q method %q must define a result", r.Name, r.Method.Name)
 	}
 	if r.Method != nil && hasValue(r.Method.Result) && r.MimeType != "" {
+		completed, err := mcpinput.CompleteResult(r.Method)
+		if err != nil {
+			verr.Add(r, "%s", err.Error())
+			return verr
+		}
 		mediaType, _, err := mime.ParseMediaType(r.MimeType)
 		switch {
 		case err != nil:
 			verr.Add(r, "resource %q MIME type %q is invalid", r.Name, r.MimeType)
-		case strings.HasPrefix(mediaType, "text/") && !isPrimitive(r.Method.Result.Type, expr.String) && !isPrimitive(r.Method.Result.Type, expr.Bytes):
+		case strings.HasPrefix(mediaType, "text/") && !isPrimitive(completed.Type, expr.String) && !isPrimitive(completed.Type, expr.Bytes):
 			verr.Add(
 				r,
 				"resource %q uses MIME type %q but method %q does not return a string or bytes",
@@ -343,7 +353,7 @@ func (r *ResourceExpr) Validate() error {
 				r.MimeType,
 				r.Method.Name,
 			)
-		case !strings.HasPrefix(mediaType, "text/") && mediaType != "application/json" && !isPrimitive(r.Method.Result.Type, expr.Bytes):
+		case !strings.HasPrefix(mediaType, "text/") && mediaType != "application/json" && !isPrimitive(completed.Type, expr.Bytes):
 			verr.Add(r, "resource %q uses MIME type %q but method %q does not return bytes", r.Name, r.MimeType, r.Method.Name)
 		}
 	}

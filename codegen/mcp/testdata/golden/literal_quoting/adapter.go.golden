@@ -30,14 +30,13 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 // toolCallError lets the client correct a recognized tool's arguments or
 // observe an application failure without treating it as a protocol failure.
 func toolCallError(message string) *ToolsCallResult {
-	return &ToolsCallResult{
-		ResultType: "complete",
-		Meta:       resultMeta(),
+	return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
+		Meta: resultMeta(),
 		Content: []*ContentItem{
 			{Type: "text", Text: stringPtr(message)},
 		},
 		IsError: boolPtr(true),
-	}
+	})}
 }
 
 // ToolsCall decodes the named tool's arguments through its generated codec,
@@ -71,12 +70,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		return &ToolsCallResult{
-			ResultType:        "complete",
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
 			Meta:              resultMeta(),
 			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}, nil
+		})}, nil
 	default:
 		return nil, goa.PermanentError("invalid_params", "unknown tool: %s", p.Name)
 	}
@@ -128,13 +126,13 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 			},
 		})
 
-		res := &PromptsGetResult{
-			ResultType: "complete", Meta: resultMeta(),
+		res := &PromptsGetCompleteResult{
+			Meta:        resultMeta(),
 			Description: stringPtr("Prepare the daily report."),
 			Messages:    msgs,
 		}
 
-		return res, nil
+		return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(res)}, nil
 
 	}
 	failure := goa.PermanentError("invalid_params", "unknown prompt: %s", p.Name)

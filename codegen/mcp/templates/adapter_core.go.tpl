@@ -213,10 +213,13 @@ func (e *endpointResultError) Error() string {
 // {{ .ResultEncode }} encodes the endpoint's selected view and its exact fields.
 // The declared OneOf tag keeps that choice visible to decoders and saved results.
 func {{ .ResultEncode }}(result {{ $endpoint.EndpointResultRef }}) ([]byte, error) {
+    {{- if $endpoint.InputExchange }}
+    completedResult, _ := {{ $endpoint.InputExchange.OutcomeValue }}.AsComplete()
+    {{- end }}
     switch result.View {
     {{- range .ResultViews }}
     case {{ quote .Name }}:
-        encoded, err := {{ $.CodecPackage }}.{{ .Encode }}(result.Projected)
+        encoded, err := {{ $.CodecPackage }}.{{ .Encode }}({{ if $endpoint.InputExchange }}completedResult{{ else }}result.Projected{{ end }})
         if err != nil {
             return nil, err
         }
@@ -234,10 +237,13 @@ func {{ .ResultEncode }}(result {{ $endpoint.EndpointResultRef }}) ([]byte, erro
 // {{ .ResultValidate }} checks the fields of the endpoint's selected view
 // before a prompt, resource or suggestion is copied into its MCP response.
 func {{ .ResultValidate }}(result {{ $endpoint.EndpointResultRef }}) error {
+    {{- if $endpoint.InputExchange }}
+    completedResult, _ := {{ $endpoint.InputExchange.OutcomeValue }}.AsComplete()
+    {{- end }}
     switch result.View {
     {{- range .ResultViews }}
     case {{ quote .Name }}:
-        return {{ $.CodecPackage }}.{{ .Validate }}(result.Projected)
+        return {{ $.CodecPackage }}.{{ .Validate }}({{ if $endpoint.InputExchange }}completedResult{{ else }}result.Projected{{ end }})
     {{- end }}
     default:
         return fmt.Errorf("endpoint returned undeclared result view %q", result.View)
@@ -249,11 +255,11 @@ func {{ .ResultValidate }}(result {{ $endpoint.EndpointResultRef }}) error {
 {{- end }}
 
 {{- range .EndpointMethods }}
-{{- if or .Credentials .Paths }}
-// fill{{ .CallName }}Inputs decodes URL values and places native credentials in
+{{- if or .Credentials .Paths .InputExchange }}
+// fill{{ .CallName }}Inputs places transport values and typed host answers in
 // the original service payload. Full validation runs before endpoint dispatch;
 // invalid credentials return a fixed error without disclosing their values.
-func fill{{ .CallName }}Inputs(payload {{ .PayloadRef }}{{ range $index, $field := .Credentials }}, credential{{ $index }} *string{{ end }}{{ range .Paths }}, {{ .ValueName }}Raw string{{ end }}) error {
+func fill{{ .CallName }}Inputs(payload {{ .PayloadRef }}{{ range $index, $field := .Credentials }}, credential{{ $index }} *string{{ end }}{{ range .Paths }}, {{ .ValueName }}Raw string{{ end }}{{ if .InputExchange }}, requestState *string, inputResponses map[string]json.RawMessage{{ end }}) error {
     {{- if .Paths }}
     var err error
     {{- range .Paths }}
@@ -304,8 +310,42 @@ func fill{{ .CallName }}Inputs(payload {{ .PayloadRef }}{{ range $index, $field 
         payload.{{ .Target }} = {{ if .Pointer }}&{{ end }}value
     }
     {{- end }}
+	{{- with .InputExchange }}
+    if requestState != nil || len(inputResponses) > 0 {
+        continuation := &{{ .ContinuationRef }}{}
+        {{- if .StateField }}
+        if requestState != nil {
+            value := {{ .StateRef }}(*requestState)
+            continuation.{{ .StateField }} = &value
+        }
+        {{- else }}
+        if requestState != nil {
+            return goa.PermanentError("invalid_params", "this operation does not accept requestState")
+        }
+        {{- end }}
+        {{- if .Questions }}
+        for name, raw := range inputResponses {
+            switch name {
+            {{- $input := . }}
+            {{- range .Questions }}
+            case {{ quote .Name }}:
+                answer, err := {{ .Decode }}(raw)
+                if err != nil {
+                    return goa.PermanentError("invalid_params", "input response %q: %s", name, err.Error())
+                }
+                if continuation.{{ $input.ResponsesField }} == nil {
+                    continuation.{{ $input.ResponsesField }} = &{{ $input.ResponsesRef }}{}
+                }
+                continuation.{{ $input.ResponsesField }}.{{ .ResponseField }} = &{{ .ResponseRef }}{ {{ .AnswerField }}: {{ if .AnswerDereference }}*{{ end }}answer }
+            {{- end }}
+            }
+        }
+        {{- end }}
+        payload.{{ .ContinuationField }} = continuation
+    }
+    {{- end }}
     if err := {{ .InputValidate }}(payload); err != nil {
-        return goa.PermanentError("invalid_params", "HTTP {{ if .Paths }}inputs{{ else }}credentials{{ end }} do not match the service contract")
+        return goa.PermanentError("invalid_params", "{{ if .InputExchange }}Operation inputs{{ else }}HTTP {{ if .Paths }}inputs{{ else }}credentials{{ end }}{{ end }} do not match the service contract")
     }
     return nil
 }
@@ -316,4 +356,105 @@ func {{ .Name }}(v {{ .ParamTypeRef }}) {{ .ResultTypeRef }} {
 }
 {{- end }}
 {{- end }}
+{{- end }}
+
+{{- range .EndpointMethods }}
+{{- $endpoint := . }}
+{{- with .InputExchange }}
+// convert{{ $endpoint.CallName }}Pending validates the service's unfinished
+// result and returns its selected questions and exact state. The current
+// request's capabilities must support every selected form or URL interaction.
+func convert{{ $endpoint.CallName }}Pending(pending {{ .PendingRef }}, meta json.RawMessage) (*InputRequiredResult, error) {
+    if err := {{ .PendingValidate }}(pending); err != nil {
+        return nil, goa.PermanentError("internal_error", "%s", err.Error())
+    }
+    result := &InputRequiredResult{Meta: resultMeta()}
+    {{- if .PendingStateField }}
+    if pending.{{ .PendingStateField }} != nil {
+        value := string(*pending.{{ .PendingStateField }})
+        result.RequestState = &value
+    }
+    {{- end }}
+    {{- if .RequestsField }}
+    {{- if .Questions }}
+    required := &RequiredClientCapabilities{Elicitation: &ElicitationCapabilities{}}
+    {{- end }}
+    if pending.{{ .RequestsField }} != nil {
+        result.InputRequests = make(map[string]*InputRequest)
+        {{- $input := . }}
+        {{- range .Questions }}
+        if question := pending.{{ $input.RequestsField }}.{{ .RequestField }}; question != nil {
+            {{- if .Schema }}
+            params := &ElicitationFormParams{Message: string({{ if .MessagePointer }}*{{ end }}question.{{ .MessageField }}), RequestedSchema: json.RawMessage({{ quote .Schema }})}
+            result.InputRequests[{{ quote .Name }}] = &InputRequest{Method: "elicitation/create", Params: NewElicitationParamsForm(params)}
+            required.Elicitation.Form = &struct{}{}
+            {{- else }}
+            params := &ElicitationURLParams{Message: string({{ if .MessagePointer }}*{{ end }}question.{{ .MessageField }}), URL: string({{ if .URLPointer }}*{{ end }}question.{{ .URLField }})}
+            result.InputRequests[{{ quote .Name }}] = &InputRequest{Method: "elicitation/create", Params: NewElicitationParamsURL(params)}
+            required.Elicitation.URL = &struct{}{}
+            {{- end }}
+        }
+        {{- end }}
+    }
+    {{- if .Questions }}
+    if len(result.InputRequests) > 0 {
+        if err := validateInputCapabilities(meta, required); err != nil {
+            return nil, err
+        }
+    }
+    {{- end }}
+    {{- end }}
+    if {{ if .RequestsField }}pending.{{ .RequestsField }} == nil && {{ end }}result.RequestState == nil {
+        return nil, goa.PermanentError("internal_error", "unfinished operation requires requests or requestState")
+    }
+    return result, nil
+}
+{{- end }}
+{{- end }}
+
+{{- $hasQuestions := false }}
+{{- range .EndpointMethods }}
+{{- with .InputExchange }}
+{{- if .Questions }}{{- $hasQuestions = true }}{{- end }}
+{{- end }}
+{{- end }}
+{{- if $hasQuestions }}
+// validateInputCapabilities reads support advertised on this request and returns
+// the native MCP capability error when a selected question cannot be answered.
+func validateInputCapabilities(meta json.RawMessage, required *RequiredClientCapabilities) error {
+    var advertised struct {
+        Capabilities *struct {
+            Elicitation json.RawMessage `json:"elicitation"`
+        } `json:"io.modelcontextprotocol/clientCapabilities"`
+    }
+    if err := json.Unmarshal(meta, &advertised); err != nil {
+        return goa.PermanentError("invalid_params", "invalid clientCapabilities: %s", err.Error())
+    }
+    if advertised.Capabilities == nil || len(advertised.Capabilities.Elicitation) == 0 {
+        return &MissingClientCapabilityError{RequiredCapabilities: required}
+    }
+    var modes map[string]json.RawMessage
+    if err := json.Unmarshal(advertised.Capabilities.Elicitation, &modes); err != nil || modes == nil {
+        return goa.PermanentError("invalid_params", "elicitation capability must be an object")
+    }
+    var form, url *struct{}
+    if raw, present := modes["form"]; present {
+        if err := json.Unmarshal(raw, &form); err != nil || form == nil {
+            return goa.PermanentError("invalid_params", "elicitation form capability must be an object")
+        }
+    }
+    if raw, present := modes["url"]; present {
+        if err := json.Unmarshal(raw, &url); err != nil || url == nil {
+            return goa.PermanentError("invalid_params", "elicitation URL capability must be an object")
+        }
+    }
+    // The current protocol defines an empty elicitation object as form-only
+    // support. Explicit modes still govern every nonempty capability object.
+    supportsForm := len(modes) == 0 || form != nil
+    if (required.Elicitation.Form != nil && !supportsForm) ||
+        (required.Elicitation.URL != nil && url == nil) {
+        return &MissingClientCapabilityError{RequiredCapabilities: required}
+    }
+    return nil
+}
 {{- end }}

@@ -359,7 +359,8 @@ func TestConfiguredEndpoints(t *testing.T){
  resourceClient:=genclient.NewClient(location.Scheme,location.Host,httpServer.Client(),goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
  resourceValue,err:=resourceClient.ResourcesRead()(t.Context(),&genmcp.ResourcesReadPayload{URI:"test://records"})
  if err!=nil{t.Fatal(err)}
- resourceResult:=resourceValue.(*genmcp.ResourcesReadResult)
+ completedReply1, isCompleteReply1 := resourceValue.(*genmcp.ResourcesReadResult).Outcome.AsComplete(); if !isCompleteReply1 {t.Fatalf("expected completed MCP result: %+v", resourceValue)}
+ resourceResult:=completedReply1
  if len(resourceResult.Contents)!=1||resourceResult.Contents[0].Text==nil||*resourceResult.Contents[0].Text!=string(emptyRecords.StructuredContent){t.Fatalf("viewed collection resource=%+v",resourceResult)}
  // A custom endpoint's wrong Go type must fail before result conversion.
  endpoints.Ping=func(context.Context,any)(any,error){return 42,nil}

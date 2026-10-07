@@ -10,7 +10,7 @@ import (
 )
 
 // localTransportAttribute builds one named JSON value and every nested named
-// type it needs. Object fields keep the names written in the Goa design.
+// type it needs. Object fields retain authored JSON names and use design names when untagged.
 func localTransportAttribute(attribute *goaexpr.AttributeExpr, key, preferredName string) (*goaexpr.AttributeExpr, []goaexpr.UserType) {
 	shape := attribute
 	if userType, ok := attribute.Type.(goaexpr.UserType); ok && userType != goaexpr.Empty {
@@ -32,8 +32,8 @@ func localTransportAttribute(attribute *goaexpr.AttributeExpr, key, preferredNam
 	return &goaexpr.AttributeExpr{Type: top}, append([]goaexpr.UserType{top}, nested...)
 }
 
-// normalizeTransportAttribute removes service package locations and writes
-// each design field name into its JSON tag. Repeated named types and unions are
+// normalizeTransportAttribute removes service package locations and supplies
+// JSON names for untagged fields. Authored tags remain intact. Named types and unions are
 // visited once so recursive designs finish and union names change only once.
 func normalizeTransportAttribute(
 	attribute *goaexpr.AttributeExpr,
@@ -60,8 +60,11 @@ func normalizeTransportAttribute(
 			if field.Attribute.Meta == nil {
 				field.Attribute.Meta = make(goaexpr.MetaExpr)
 			}
-			delete(field.Attribute.Meta, "struct:tag:json")
-			field.Attribute.Meta["struct:tag:json:name"] = []string{field.Name}
+			if _, full := field.Attribute.Meta["struct:tag:json"]; !full {
+				if _, named := field.Attribute.Meta["struct:tag:json:name"]; !named {
+					field.Attribute.Meta["struct:tag:json:name"] = []string{field.Name}
+				}
+			}
 			normalizeTransportAttribute(field.Attribute, prefix, seenTypes, seenUnions)
 		}
 	case *goaexpr.Array:

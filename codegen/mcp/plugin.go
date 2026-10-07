@@ -345,15 +345,13 @@ func planMCPJSONRPCServerImports(generation *goacodegen.Generation, data *Adapte
 	)))
 	fixed := []*goacodegen.ImportSpec{
 		goacodegen.SimpleImport("bytes"),
+		goacodegen.SimpleImport("encoding/json"),
 		goacodegen.SimpleImport("errors"),
 		goacodegen.SimpleImport("fmt"),
 		goacodegen.SimpleImport("io"),
 		goacodegen.SimpleImport("net/http"),
 		goacodegen.NewImport("goahttp", "goa.design/goa/v3/http"),
 		goacodegen.NewImport("mcpruntime", "goa.design/goa-ai/runtime/mcp"),
-	}
-	if data.ResourceSubscription != nil {
-		fixed = append(fixed, goacodegen.SimpleImport("encoding/json"))
 	}
 	if err := data.jsonrpcServerImports.Require(fixed...); err != nil {
 		return fmt.Errorf("plan MCP JSON-RPC server imports: %w", err)
@@ -469,6 +467,9 @@ func planMCPCodecs(
 				break
 			}
 		}
+		if err := planInputExchangeCodecs(services, prepared, data, planned, values.endpoint); err != nil {
+			return nil, nil, err
+		}
 		preferred := goacodegen.Goify(method.Name, true)
 		payloadDirection, resultDirection := mcpCodecDirections(data, method.Name)
 		if tool := toolMethods[method.Name]; tool != nil {
@@ -497,7 +498,7 @@ func planMCPCodecs(
 				return nil, nil, fmt.Errorf("plan MCP payload codec for method %q: %w", method.Name, err)
 			}
 		}
-		if len(prepared.credentials[method.Name]) > 0 || len(values.endpoint.Paths) > 0 {
+		if len(prepared.credentials[method.Name]) > 0 || len(values.endpoint.Paths) > 0 || values.endpoint.InputExchange != nil {
 			data.NeedsServerCodec = true
 			layout, layoutErr := services.MethodTypeLayout(method, method.Payload)
 			if layoutErr != nil {
@@ -509,7 +510,7 @@ func planMCPCodecs(
 			}
 		}
 		if hasMCPValue(method.Result) && resultDirection != 0 {
-			_, fixed := mcpcontract.FixedView(method)
+			_, fixed := mcpcontract.FixedView(method.Result)
 			if _, viewed := method.Result.Type.(*expr.ResultTypeExpr); viewed && !fixed {
 				values.views, err = planExecutionViewCodecs(planned, services, method, resultDirection, preferred)
 				if err != nil {
@@ -607,6 +608,23 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 			}
 			if err := value.BindService(writer); err != nil {
 				return nil, fmt.Errorf("bind MCP codec for method %q: %w", method.Name, err)
+			}
+		}
+		if input := values.endpoint.InputExchange; input != nil {
+			writer := attributor
+			if _, viewed := method.Result.Type.(*expr.ResultTypeExpr); viewed {
+				writer = services.ViewAttributor(planned.prepared.userService.Name, planned.adapterData.CodecImportPath)
+			}
+			if err := input.validation.BindService(writer); err != nil {
+				return nil, err
+			}
+			for _, question := range input.Questions {
+				if err := question.answer.BindService(attributor); err != nil {
+					return nil, err
+				}
+			}
+			if err := bindInputExchange(planned.adapterData, values.endpoint); err != nil {
+				return nil, err
 			}
 		}
 		for _, view := range values.views {

@@ -23,6 +23,12 @@ const (
 // Build returns a JSON Schema 2020-12 contract for one attribute graph. Named
 // recursion remains in local $defs; synthesized OpenAPI examples are removed.
 func Build(api *goaexpr.APIExpr, att *goaexpr.AttributeExpr, identity goaexpr.ExampleIdentity) ([]byte, error) {
+	return build(api, att, identity, true)
+}
+
+// build uses the same authored fields and constraints for tool and form
+// contracts. Only tool objects receive the generated unknown-field rejection.
+func build(api *goaexpr.APIExpr, att *goaexpr.AttributeExpr, identity goaexpr.ExampleIdentity, closeObjects bool) ([]byte, error) {
 	if _, err := jsonshape.Build(att); err != nil {
 		return nil, err
 	}
@@ -57,8 +63,14 @@ func Build(api *goaexpr.APIExpr, att *goaexpr.AttributeExpr, identity goaexpr.Ex
 	}
 	removeExamples(document)
 	defs, _ := document["$defs"].(map[string]any)
-	if err := alignSchemaNodeWithGeneratedDecoder(att, document, defs, make(map[string]struct{})); err != nil {
+	if err := alignSchemaNodeWithGeneratedDecoder(att, document, defs, make(map[string]struct{}), closeObjects); err != nil {
 		return nil, err
+	}
+	if !closeObjects {
+		// MCP forms have no root title or description. Remove Goa's object
+		// documentation while keeping each field's title and description.
+		delete(document, "description")
+		delete(document, "title")
 	}
 	document["$schema"] = "https://json-schema.org/draft/2020-12/schema"
 	encoded, err = json.Marshal(document)
@@ -71,7 +83,7 @@ func Build(api *goaexpr.APIExpr, att *goaexpr.AttributeExpr, identity goaexpr.Ex
 // alignSchemaNodeWithGeneratedDecoder updates one schema node using its Goa type.
 // Named types are followed through $defs while seen prevents recursive types
 // from visiting the same definition forever.
-func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
+func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[string]any, defs map[string]any, seen map[string]struct{}, closeObjects bool) error {
 	if att == nil || att.Type == nil || len(schema) == 0 {
 		return nil
 	}
@@ -85,7 +97,7 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 		}
 		seen[refName] = struct{}{}
 		defer delete(seen, refName)
-		return alignSchemaNodeWithGeneratedDecoder(att, defSchema, defs, seen)
+		return alignSchemaNodeWithGeneratedDecoder(att, defSchema, defs, seen, closeObjects)
 	}
 	if att.Description != "" {
 		schema["description"] = att.Description
@@ -97,6 +109,15 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 		schema["x-mcp-header"] = header[0]
 	}
 	switch dt := att.Type.(type) {
+	case goaexpr.Primitive:
+		if !closeObjects && (schema["type"] == "integer" || schema["type"] == "number") {
+			// OpenAPI adds numeric representation hints that MCP forms do not
+			// accept. Authored formats remain visible and must pass the contract.
+			validation := goaexpr.EffectiveValidation(att)
+			if validation == nil || validation.Format == "" {
+				delete(schema, "format")
+			}
+		}
 	case goaexpr.UserType:
 		// Named attributes may add required fields at the use site. Merge those
 		// constraints into a private copy; the original Goa graph stays intact.
@@ -109,32 +130,36 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 				effective.Validation.Merge(att.Validation)
 			}
 		}
-		return alignSchemaNodeWithGeneratedDecoder(&effective, schema, defs, seen)
+		return alignSchemaNodeWithGeneratedDecoder(&effective, schema, defs, seen, closeObjects)
 	case *goaexpr.Object:
-		schema["additionalProperties"] = false
+		if closeObjects {
+			schema["additionalProperties"] = false
+		} else if len(*dt) == 0 {
+			// MCP requires properties even when this authored form has no fields.
+			// The empty object lets the host return an accepted empty form.
+			schema["properties"] = map[string]any{}
+		}
 		properties, _ := schema["properties"].(map[string]any)
+		wireProperties := make(map[string]any, len(properties))
 		required := make([]string, 0, len(att.AllRequired()))
 		for _, nat := range *dt {
-			name, visible := fieldName(nat)
+			name, visible := jsonshape.FieldName(nat)
 			childSchema, ok := properties[nat.Name].(map[string]any)
 			if !ok {
 				return fmt.Errorf("schema for field %q is missing", nat.Name)
 			}
 			if !visible {
-				delete(properties, nat.Name)
 				continue
 			}
-			if name != nat.Name {
-				delete(properties, nat.Name)
-				properties[name] = childSchema
-			}
+			wireProperties[name] = childSchema
 			if att.IsRequired(nat.Name) {
 				required = append(required, name)
 			}
-			if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, childSchema, defs, seen); err != nil {
+			if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, childSchema, defs, seen, closeObjects); err != nil {
 				return err
 			}
 		}
+		schema["properties"] = wireProperties
 		if len(required) > 0 {
 			schema["required"] = required
 		} else {
@@ -145,7 +170,7 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 		if !ok {
 			return fmt.Errorf("array schema is missing items")
 		}
-		return alignSchemaNodeWithGeneratedDecoder(dt.ElemType, items, defs, seen)
+		return alignSchemaNodeWithGeneratedDecoder(dt.ElemType, items, defs, seen, closeObjects)
 	case *goaexpr.Map:
 		values, ok := schema["additionalProperties"].(map[string]any)
 		if !ok {
@@ -155,14 +180,14 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 			}
 			return fmt.Errorf("map schema is missing additionalProperties")
 		}
-		return alignSchemaNodeWithGeneratedDecoder(dt.ElemType, values, defs, seen)
+		return alignSchemaNodeWithGeneratedDecoder(dt.ElemType, values, defs, seen, closeObjects)
 	case *goaexpr.Union:
-		return rewriteUnionSchema(dt, schema, defs, seen)
+		return rewriteUnionSchema(dt, schema, defs, seen, closeObjects)
 	}
 	return nil
 }
 
-func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[string]any, seen map[string]struct{}) error {
+func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[string]any, seen map[string]struct{}, closeObjects bool) error {
 	typeKey := union.GetTypeKey()
 	if typeKey == "" {
 		typeKey = unionTypeKeyDefault
@@ -194,16 +219,18 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[st
 		if nat.Attribute.Description != "" {
 			branch["description"] = nat.Attribute.Description
 		}
-		branch["additionalProperties"] = false
+		if closeObjects {
+			branch["additionalProperties"] = false
+		}
 		if union.Flatten {
-			if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, branch, defs, seen); err != nil {
+			if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, branch, defs, seen, closeObjects); err != nil {
 				return err
 			}
 			required, _ := branch["required"].([]string)
 			branch["required"] = append(required, typeKey)
 			continue
 		}
-		if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, valueSchema, defs, seen); err != nil {
+		if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, valueSchema, defs, seen, closeObjects); err != nil {
 			return err
 		}
 	}
@@ -222,24 +249,6 @@ func schemaRefName(schema map[string]any) string {
 		return ""
 	}
 	return strings.TrimPrefix(ref, "#/$defs/")
-}
-
-// fieldName retains authored JSON tags, including hidden fields. The caller may
-// have already copied and renamed the graph for a model-visible contract.
-func fieldName(field *goaexpr.NamedAttributeExpr) (string, bool) {
-	if tag, ok := field.Attribute.Meta["struct:tag:json:name"]; ok && len(tag) > 0 {
-		return tag[0], tag[0] != "-"
-	}
-	if tag, ok := field.Attribute.Meta["struct:tag:json"]; ok && len(tag) > 0 {
-		name, _, _ := strings.Cut(tag[0], ",")
-		if name == "-" {
-			return "", false
-		}
-		if name != "" {
-			return name, true
-		}
-	}
-	return field.Name, true
 }
 
 // removeExamples strips values created by Goa's example generator; callers

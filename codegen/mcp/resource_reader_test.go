@@ -70,10 +70,12 @@ func TestResourceOnlyReader(t *testing.T) {
  fixed,err:=client.ResourcesList()(t.Context(),&genmcp.ResourcesListPayload{});if err!=nil{t.Fatal(err)}
  if len(fixed.(*genmcp.ResourcesListResult).Resources)!=0{t.Fatal("invented fixed resource")}
  got,err:=client.ResourcesRead()(t.Context(),&genmcp.ResourcesReadPayload{URI:"test://items/abc"});if err!=nil{t.Fatal(err)}
- result:=got.(*genmcp.ResourcesReadResult)
+ completedReply1, isCompleteReply1 := got.(*genmcp.ResourcesReadResult).Outcome.AsComplete(); if !isCompleteReply1 {t.Fatalf("expected completed MCP result: %+v", got)}
+ result:=completedReply1
  if service.calls!=1||service.address!="test://items/abc"||len(result.Contents)!=1||result.Contents[0].Text==nil||*result.Contents[0].Text!=""{t.Fatalf("result=%+v service=%+v",result,service)}
  service.result=&genreader.ReaderResult{}
  empty,err:=client.ResourcesRead()(t.Context(),&genmcp.ResourcesReadPayload{URI:"test://items/empty"});if err!=nil{t.Fatal(err)}
- if len(empty.(*genmcp.ResourcesReadResult).Contents)!=0{t.Fatal("empty resource gained content")}
+ completedReply2, isCompleteReply2 := empty.(*genmcp.ResourcesReadResult).Outcome.AsComplete(); if !isCompleteReply2 {t.Fatalf("expected completed MCP result: %+v", empty)}
+ if len(completedReply2.Contents)!=0{t.Fatal("empty resource gained content")}
 }
 `

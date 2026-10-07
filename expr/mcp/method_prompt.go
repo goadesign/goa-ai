@@ -48,10 +48,15 @@ func (p *MethodPromptExpr) Validate() error {
 			}
 		}
 	}
-	if !hasValue(p.Method.Result) || expr.AsObject(p.Method.Result.Type) == nil {
+	completed, err := mcpinput.CompleteResult(p.Method)
+	if err != nil {
+		verr.Add(p, "%s", err.Error())
+		return verr
+	}
+	if !hasValue(completed) || expr.AsObject(completed.Type) == nil {
 		verr.Add(p, "prompt result must be an object containing messages")
 	} else {
-		result := expr.AsObject(p.Method.Result.Type)
+		result := expr.AsObject(completed.Type)
 		messages := result.Attribute("messages")
 		if messages == nil || expr.AsArray(messages.Type) == nil {
 			verr.Add(p, "prompt result must contain a messages array")

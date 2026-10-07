@@ -22,6 +22,8 @@ type (
 		Validate      string
 		ExecutionView bool
 		Cases         []*toolContentCase
+		// OutcomeValue selects the completed branch inside a service-selected view.
+		OutcomeValue string
 
 		tool        *mcpexpr.ToolExpr
 		declaration *codegen.NameDeclaration
@@ -50,8 +52,8 @@ func (g *adapterGenerator) buildToolContentAdapter(tool *mcpexpr.ToolExpr) (*too
 	}
 	adapter := &toolContentAdapter{tool: tool}
 	if result, viewed := tool.Method.Result.Type.(*expr.ResultTypeExpr); viewed {
-		if view, fixed := mcpcontract.FixedView(tool.Method); fixed {
-			selected, err := mcpcontract.SelectView(tool.Method, view)
+		if view, fixed := mcpcontract.FixedView(tool.Method.Result); fixed {
+			selected, err := mcpcontract.ResultView(tool.Method, view)
 			if err != nil {
 				return nil, err
 			}
@@ -59,7 +61,7 @@ func (g *adapterGenerator) buildToolContentAdapter(tool *mcpexpr.ToolExpr) (*too
 		} else {
 			adapter.ExecutionView = true
 			for _, view := range result.Views {
-				selected, err := mcpcontract.SelectView(tool.Method, view.Name)
+				selected, err := mcpcontract.ResultView(tool.Method, view.Name)
 				if err != nil {
 					return nil, err
 				}
@@ -67,7 +69,11 @@ func (g *adapterGenerator) buildToolContentAdapter(tool *mcpexpr.ToolExpr) (*too
 			}
 		}
 	} else {
-		adapter.Cases = append(adapter.Cases, &toolContentCase{result: tool.Method.Result})
+		completed, err := mcpcontract.Result(tool.Method)
+		if err != nil {
+			return nil, err
+		}
+		adapter.Cases = append(adapter.Cases, &toolContentCase{result: completed})
 	}
 	builder := newMCPExprBuilder(g.originalService, g.mcp)
 	target := &expr.AttributeExpr{Type: builder.getOrCreateType("ContentItem", builder.buildContentItemType)}
@@ -106,7 +112,7 @@ func planToolContent(generation *codegen.Generation, services *goaservice.Plan, 
 		if method.Name != "tools/call" {
 			continue
 		}
-		target = expr.AsArray(expr.AsObject(method.Result.Type).Attribute("content").Type).ElemType
+		target = expr.AsArray(expr.AsObject(protocolCompletedResult(method.Result).Type).Attribute("content").Type).ElemType
 	}
 	for index, tool := range data.Tools {
 		content := tool.Content
@@ -186,8 +192,18 @@ func bindToolContent(services *goaservice.ServicesData, planned *plannedMCPServi
 		content.Name = content.declaration.Name()
 		content.SourceRef = tool.Endpoint.ResultRef
 		content.Validate = tool.Endpoint.Codec.ResultValidate
+		if input := tool.Endpoint.InputExchange; input != nil {
+			if tool.Endpoint.ExecutionView {
+				content.OutcomeValue = input.OutcomeValue
+			} else {
+				content.SourceRef = content.Cases[0].layout.Link(data.mcpImportPath, data.mcpPackage.ImportName).Ref()
+			}
+		}
 		for _, selected := range content.Cases {
 			selected.Value = tool.Endpoint.ResultValue
+			if !tool.Endpoint.ExecutionView {
+				selected.Value = "result"
+			}
 			if selected.conversion != nil {
 				attribute := expr.AsObject(selected.result.Type).Attribute(content.tool.ContentField)
 				selected.Field = source.Field(attribute, content.tool.ContentField, true)

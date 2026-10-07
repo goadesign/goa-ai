@@ -27,6 +27,8 @@ type (
 		ReadStrictJSON     string
 		ReadJSONValue      string
 		ValidateJSONText   string
+		// IntegerJSON names the package helper that reads exact whole JSON numbers.
+		IntegerJSON string
 	}
 
 	// typeData contains one transport type and its validation function.
@@ -38,6 +40,12 @@ type (
 		Reference  string
 		Pointer    bool
 		Validation string
+		// IntegerDecode emits numeric decoding only for a required integer transport type.
+		IntegerDecode bool
+		// UnsignedInteger selects the authored integer sign contract.
+		UnsignedInteger bool
+		// IntegerBits selects the authored width; zero uses the target Go int width.
+		IntegerBits int
 	}
 
 	// unionData contains one Goa OneOf type and its JSON behavior.
@@ -49,6 +57,7 @@ type (
 		Flatten  bool
 		Encode   bool
 		Decode   bool
+		Open     bool
 		Branches []*unionBranchData
 	}
 
@@ -78,6 +87,10 @@ type (
 		Shape             string
 		Preflight         string
 		OriginalValidator string
+		// Elicitation checks protocol actions before decoding native answer fields.
+		Elicitation bool
+		// Form selects non-sensitive form content rather than URL consent.
+		Form bool
 	}
 
 	// serviceTypeWriter lets Goa's service resolver add the package name to each
@@ -108,6 +121,9 @@ func (p *Plan) Files(packageName string) ([]*goacodegen.File, error) {
 		goacodegen.Header("Private JSON codecs for generated service values.", packageName, imports),
 		{Name: "json-codecs", Source: codecSource, Data: data},
 	}
+	if data.IntegerJSON != "" {
+		sections = append(sections, &goacodegen.SectionTemplate{Name: "integer-json", Source: integerSource, Data: data})
+	}
 	if len(data.JSONValidators) > 0 {
 		sections = append(sections, &goacodegen.SectionTemplate{
 			Name:   "strict-json-values",
@@ -124,6 +140,9 @@ func (p *Plan) Files(packageName string) ([]*goacodegen.File, error) {
 // link formats every retained plan with the final Goa names and import aliases.
 func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 	data := &fileData{Imports: p.importNames()}
+	if p.integerJSON != nil {
+		data.IntegerJSON = p.integerJSON.Name()
+	}
 	if p.jsonHelpers != nil {
 		data.JSONNames = p.jsonNames(data.Imports)
 		data.ReadStrictJSON = p.jsonHelpers.read.Name()
@@ -158,14 +177,22 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 			if err != nil {
 				return nil, nil, err
 			}
+			var unsigned bool
+			var bits int
+			if primitive, ok := integerPrimitive(planned.userType); ok {
+				_, unsigned, bits = jsonshape.IntegerShape(primitive.Kind())
+			}
 			data.Types = append(data.Types, &typeData{
-				Name:       planned.declaration.Name(),
-				Definition: linkedType.Def(),
-				Alias:      planned.alias,
-				Validator:  planned.validatorDeclaration.Name(),
-				Reference:  parameter.Ref(),
-				Pointer:    parameter.ReferenceIsPointer(),
-				Validation: linkedValidation.Render("value", "body"),
+				IntegerDecode:   planned.integerDecode,
+				UnsignedInteger: unsigned,
+				IntegerBits:     bits,
+				Name:            planned.declaration.Name(),
+				Definition:      linkedType.Def(),
+				Alias:           planned.alias,
+				Validator:       planned.validatorDeclaration.Name(),
+				Reference:       parameter.Ref(),
+				Pointer:         parameter.ReferenceIsPointer(),
+				Validation:      linkedValidation.Render("value", "body"),
 			})
 		}
 		for _, planned := range value.unions {
@@ -183,6 +210,7 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 				Flatten:  expression.Flatten,
 				Encode:   value.direction.encodes(),
 				Decode:   value.direction.decodes(),
+				Open:     value.elicitation != nil,
 			}
 			unionKeys[planned.name] = union
 			for _, branch := range planned.branches {
@@ -260,6 +288,10 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 		ServiceRef:   serviceWriter.Ref(v.service, ""),
 		TransportRef: transportLayout.Ref(),
 		Validator:    top.validatorDeclaration.Name(),
+	}
+	if v.elicitation != nil {
+		data.Elicitation = true
+		data.Form = v.elicitation.form
 	}
 	if v.standalone != nil {
 		data.Shape = v.standalone.names[v.standalone.root].Name()
@@ -348,6 +380,18 @@ const codecSource = `
 // {{ .Name }} stores JSON fields until they have been validated.
 type {{ .Name }} {{ if .Alias }}= {{ end }}{{ .Definition }}
 
+{{ if .IntegerDecode }}
+// UnmarshalJSON reads an exact whole JSON number and stores it within this type's
+// declared range. Decimal and exponent spellings do not change its value.
+func (value *{{ .Name }}) UnmarshalJSON(data []byte) error {
+ text, err := {{ $.IntegerJSON }}(data)
+ if err != nil { return err }
+ number, err := {{ $.Imports.Strconv }}.{{ if .UnsignedInteger }}ParseUint{{ else }}ParseInt{{ end }}(text, 10, {{ if .IntegerBits }}{{ .IntegerBits }}{{ else }}{{ $.Imports.Strconv }}.IntSize{{ end }})
+ if err != nil { return {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} integer: %w", err) }
+ *value = {{ .Name }}(number)
+ return nil
+}
+{{ end }}
 // {{ .Validator }} checks decoded JSON before it becomes a service value.
 func {{ .Validator }}(value {{ .Reference }}) (err error) {
 	{{- if .Pointer }}
@@ -470,6 +514,7 @@ func (u {{ .Name }}) MarshalJSON() ([]byte, error) {
 {{ if .Decode }}
 // UnmarshalJSON reads one complete branch name and value.
 func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
+	{{- $union := . }}
 	{{- if .Flatten }}
 	var fields map[string]{{ $.Imports.JSON }}.RawMessage
 	if err := {{ $.Imports.JSON }}.Unmarshal(data, &fields); err != nil { return err }
@@ -517,11 +562,17 @@ func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
 	{{- range .Branches }}
 	case string({{ .Kind }}):
 		var value {{ .FieldType }}
+		{{- if $union.Open }}
+		if err := {{ $.Imports.JSONV2 }}.Unmarshal(raw.Value, &value); err != nil {
+			return err
+		}
+		{{- else }}
 		decoder := {{ $.Imports.JSON }}.NewDecoder({{ $.Imports.Bytes }}.NewReader(raw.Value))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&value); err != nil {
 			return err
 		}
+		{{- end }}
 		u.kind = {{ .Kind }}
 		u.{{ .FieldName }} = value
 	{{- end }}
@@ -598,6 +649,15 @@ func {{ .Constructor }}(body {{ .TransportRef }}) (out {{ .ServiceRef }}, err er
 {{ if .Decode }}
 // {{ .Decode }} checks JSON field names from the Goa design and returns a service value.
 func {{ .Decode }}(data []byte) (out {{ .ServiceRef }}, err error) {
+	{{- if .Elicitation }}
+	{{- if .Form }}
+	if err := {{ $.Imports.MCP }}.ValidateFormResponse(data); err != nil {
+	{{- else }}
+	if err := {{ $.Imports.MCP }}.ValidateURLResponse(data); err != nil {
+	{{- end }}
+		return out, err
+	}
+	{{- end }}
 	{{- if .Shape }}
 	root, err := {{ $.ReadStrictJSON }}(data)
 	if err != nil {
@@ -608,6 +668,11 @@ func {{ .Decode }}(data []byte) (out {{ .ServiceRef }}, err error) {
 	}
 	{{- end }}
 	var body {{ .TransportRef }}
+	{{- if .Elicitation }}
+	if err := {{ $.Imports.JSONV2 }}.Unmarshal(data, &body); err != nil {
+		return out, {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} JSON: %w", err)
+	}
+	{{- else }}
 	decoder := {{ $.Imports.JSON }}.NewDecoder({{ $.Imports.Bytes }}.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
@@ -619,6 +684,7 @@ func {{ .Decode }}(data []byte) (out {{ .ServiceRef }}, err error) {
 		}
 		return out, {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} JSON after first value: %w", err)
 	}
+	{{- end }}
 	{{- if .Constructor }}
 	return {{ .Constructor }}(body)
 	{{- else }}

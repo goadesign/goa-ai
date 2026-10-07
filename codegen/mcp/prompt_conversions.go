@@ -6,6 +6,8 @@ package codegen
 import (
 	"fmt"
 
+	"goa.design/goa-ai/internal/mcpinput"
+
 	"goa.design/goa/v3/codegen"
 	goaservice "goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/expr"
@@ -23,7 +25,7 @@ func planContentConversions(generation *codegen.Generation, services *goaservice
 		if method.Name != "prompts/get" {
 			continue
 		}
-		messages := expr.AsArray(expr.AsObject(method.Result.Type).Attribute("messages").Type)
+		messages := expr.AsArray(expr.AsObject(protocolCompletedResult(method.Result).Type).Attribute("messages").Type)
 		content = expr.AsObject(messages.ElemType.Type).Attribute("content")
 	}
 	if content == nil {
@@ -38,6 +40,16 @@ func planContentConversions(generation *codegen.Generation, services *goaservice
 		}
 		method := *prompt.prompt.Method
 		method.Result = result
+		method.Payload, err = mcpinput.Arguments(prompt.prompt.Method)
+		if err != nil {
+			return err
+		}
+		method.Meta = make(expr.MetaExpr)
+		for key, value := range prompt.prompt.Method.Meta {
+			if key != mcpinput.ExchangeMetaKey {
+				method.Meta[key] = value
+			}
+		}
 		selected := *prompt.prompt
 		selected.Method = &method
 		if err := selected.Validate(); err != nil {

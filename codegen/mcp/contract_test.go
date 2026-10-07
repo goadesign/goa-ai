@@ -120,7 +120,12 @@ func TestPrepareServices_BuildsCurrentMCPWireTypes(t *testing.T) {
 	require.True(t, toolInfo.IsRequired("name"))
 	require.True(t, toolInfo.IsRequired("inputSchema"))
 	require.NotNil(t, expr.AsObject(toolInfo.Type).Attribute("outputSchema"))
-	callResult := testRootType(t, root, "ToolsCallResult")
+	callOutcome := testRootType(t, root, "ToolsCallResult")
+	require.True(t, callOutcome.IsRequired("outcome"))
+	choice := expr.AsUnion(callOutcome.Find("outcome").Type)
+	require.Equal(t, "resultType", choice.TypeKey)
+	require.True(t, choice.Flatten)
+	callResult := testRootType(t, root, "ToolsCallCompleteResult")
 	require.NotNil(t, expr.AsObject(callResult.Type).Attribute("structuredContent"))
 	content := testRootType(t, root, "ContentItem")
 	require.Equal(t, []string{"type"}, content.Validation.Required)
@@ -158,12 +163,12 @@ func TestPrepareServices_BuildsCurrentMCPWireTypes(t *testing.T) {
 		fieldName string
 	}{
 		{typeName: "ToolsListResult", fieldName: "tools"},
-		{typeName: "ToolsCallResult", fieldName: "content"},
+		{typeName: "ToolsCallCompleteResult", fieldName: "content"},
 		{typeName: "ResourcesListResult", fieldName: "resources"},
-		{typeName: "ResourcesReadResult", fieldName: "contents"},
+		{typeName: "ResourcesReadCompleteResult", fieldName: "contents"},
 		{typeName: "PromptsListResult", fieldName: "prompts"},
 		{typeName: "PromptInfo", fieldName: "arguments"},
-		{typeName: "PromptsGetResult", fieldName: "messages"},
+		{typeName: "PromptsGetCompleteResult", fieldName: "messages"},
 	} {
 		attribute := expr.AsObject(testRootType(t, root, tc.typeName).Type).Attribute(tc.fieldName)
 		require.True(t, expr.AsArray(attribute.Type).NonNullableElems, "%s.%s", tc.typeName, tc.fieldName)

@@ -112,7 +112,8 @@ func TestMethodBackedPrompts(t *testing.T) {
    if err:=decodeAuthoredPrompt(authored,service.result);err!=nil{t.Fatal(err)}
    before:=service.calls
    got,err:=client.PromptsGet()(t.Context(),&genmcpprompts.PromptsGetPayload{Name:"review",Arguments:map[string]string{"code":"x"}});if err!=nil{t.Fatal(err)}
-   result:=got.(*genmcpprompts.PromptsGetResult)
+   completedReply1, isCompleteReply1 := got.(*genmcpprompts.PromptsGetResult).Outcome.AsComplete(); if !isCompleteReply1 {t.Fatalf("expected completed MCP result: %+v", got)}
+   result:=completedReply1
    if service.calls!=before+1||service.code!="x"||service.style!="brief"||len(result.Messages)!=2||result.Description==nil||*result.Description!="Review"||result.Messages[0].Role!="user"||result.Messages[1].Role!="assistant" {t.Fatalf("result=%+v service=%+v",result,service)}
    var expected genmcpprompts.ContentItem
    if err:=json.Unmarshal([]byte(test.want),&expected);err!=nil{t.Fatal(err)}
@@ -134,9 +135,11 @@ func TestMethodBackedPrompts(t *testing.T) {
   if err==nil||service.calls!=before {t.Fatalf("arguments=%v err=%v calls=%d",arguments,err,service.calls)}
  }
  empty,err:=client.PromptsGet()(t.Context(),&genmcpprompts.PromptsGetPayload{Name:"empty"});if err!=nil{t.Fatal(err)}
- if len(empty.(*genmcpprompts.PromptsGetResult).Messages)!=0{t.Fatal("empty prompt gained messages")}
+ completedReply2, isCompleteReply2 := empty.(*genmcpprompts.PromptsGetResult).Outcome.AsComplete(); if !isCompleteReply2 {t.Fatalf("expected completed MCP result: %+v", empty)}
+ if len(completedReply2.Messages)!=0{t.Fatal("empty prompt gained messages")}
  fixed,err:=client.PromptsGet()(t.Context(),&genmcpprompts.PromptsGetPayload{Name:"fixed"});if err!=nil{t.Fatal(err)}
- if *fixed.(*genmcpprompts.PromptsGetResult).Messages[0].Content.Text!="Fixed instructions" {t.Fatal("static prompt changed")}
+ completedReply3, isCompleteReply3 := fixed.(*genmcpprompts.PromptsGetResult).Outcome.AsComplete(); if !isCompleteReply3 {t.Fatalf("expected completed MCP result: %+v", fixed)}
+ if *completedReply3.Messages[0].Content.Text!="Fixed instructions" {t.Fatal("static prompt changed")}
  for _,name:=range []string{"empty","fixed","missing"} {
   before:=service.calls
   _,err:=client.PromptsGet()(t.Context(),&genmcpprompts.PromptsGetPayload{Name:name,Arguments:map[string]string{"x":"y"}})

@@ -77,11 +77,11 @@ func validateExecutionViews(method *expr.MethodExpr, validate func(*expr.Attribu
 	if !viewed {
 		return nil
 	}
-	if _, fixed := mcpcontract.FixedView(method); fixed {
+	if _, fixed := mcpcontract.FixedView(method.Result); fixed {
 		return nil
 	}
 	for _, view := range result.Views {
-		selected, err := mcpcontract.SelectView(method, view.Name)
+		selected, err := mcpcontract.SelectView(method.Result, view.Name)
 		if err != nil {
 			return err
 		}

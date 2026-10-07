@@ -69,9 +69,14 @@ func (r *ResourceTemplateExpr) Validate() error {
 	if payload == nil || len(*payload) != 1 || payload.Attribute("uri") == nil || !isPrimitive(payload.Attribute("uri").Type, expr.String) || !arguments.IsRequired("uri") {
 		verr.Add(r, "resource template payload must contain only a required uri string")
 	}
+	completed, resultErr := mcpinput.CompleteResult(r.Method)
+	if resultErr != nil {
+		verr.Add(r, "%s", resultErr.Error())
+		return verr
+	}
 	var result *expr.Object
-	if hasValue(r.Method.Result) {
-		result = expr.AsObject(r.Method.Result.Type)
+	if hasValue(completed) {
+		result = expr.AsObject(completed.Type)
 	}
 	if result == nil || len(*result) != 1 || result.Attribute("contents") == nil {
 		verr.Add(r, "resource template result must contain only contents")
@@ -82,7 +87,7 @@ func (r *ResourceTemplateExpr) Validate() error {
 		if array == nil || !array.NonNullableElems {
 			verr.Add(r, "resource contents must use ArrayOfRequired")
 		} else {
-			if r.Method.Result.IsRequired("contents") && (bounds == nil || bounds.MinLength == nil || *bounds.MinLength < 1) {
+			if completed.IsRequired("contents") && (bounds == nil || bounds.MinLength == nil || *bounds.MinLength < 1) {
 				verr.Add(r, "required resource contents must declare MinLength(1); make contents optional when an empty resource is valid")
 			}
 			item := expr.AsObject(array.ElemType.Type)

@@ -40,7 +40,8 @@ func TestResourceContentBoundary(t *testing.T) {
    if test.valid && err!=nil{t.Fatal(err)}
    if !test.valid && err==nil{t.Fatalf("accepted invalid reply: %+v",result)}
    if test.valid {
-    content:=result.(*genmcpresources.ResourcesReadResult).Contents[0]
+    completedReply1, isCompleteReply1 := result.(*genmcpresources.ResourcesReadResult).Outcome.AsComplete(); if !isCompleteReply1 {t.Fatalf("expected completed MCP result: %+v", result)}
+    content:=completedReply1.Contents[0]
     if (content.Text==nil)==(content.Blob==nil){t.Fatalf("lost content presence: %+v",content)}
    }
   })

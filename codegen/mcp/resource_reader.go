@@ -8,6 +8,7 @@ import (
 
 	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/codegen"
 	goaservice "goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/expr"
@@ -69,7 +70,11 @@ func (g *adapterGenerator) buildResourceReaderAdapter() (*resourceReaderAdapter,
 	if err := checkContentGoType(method.Result); err != nil {
 		return nil, err
 	}
-	contents := expr.AsArray(expr.AsObject(method.Result.Type).Attribute("contents").Type)
+	completed, err := mcpinput.CompleteResult(method)
+	if err != nil {
+		return nil, err
+	}
+	contents := expr.AsArray(expr.AsObject(completed.Type).Attribute("contents").Type)
 	content := expr.AsObject(contents.ElemType.Type).Attribute("content")
 	builder := newMCPExprBuilder(g.originalService, g.mcp)
 	target := builder.getOrCreateType("ResourceContent", builder.buildResourceContentType)
@@ -92,6 +97,16 @@ func planResourceReader(generation *codegen.Generation, services *goaservice.Pla
 	}
 	method := *reader.method
 	method.Result = result
+	method.Payload, err = mcpinput.Arguments(reader.method)
+	if err != nil {
+		return err
+	}
+	method.Meta = make(expr.MetaExpr)
+	for key, value := range reader.method.Meta {
+		if key != mcpinput.ExchangeMetaKey {
+			method.Meta[key] = value
+		}
+	}
 	selected := *prepared.mcp.ResourceTemplates[0]
 	selected.Method = &method
 	if err := selected.Validate(); err != nil {
@@ -108,7 +123,7 @@ func planResourceReader(generation *codegen.Generation, services *goaservice.Pla
 			data.serverImportPaths = append(data.serverImportPaths, importPath)
 		}
 	}
-	target := expr.AsArray(expr.AsObject(prepared.mcpService.Method("resources/read").Result.Type).Attribute("contents").Type).ElemType
+	target := expr.AsArray(expr.AsObject(protocolCompletedResult(prepared.mcpService.Method("resources/read").Result).Type).Attribute("contents").Type).ElemType
 	contents := expr.AsObject(result.Type).Attribute("contents")
 	if contents == nil {
 		return fmt.Errorf("resource reader selected view omits contents")

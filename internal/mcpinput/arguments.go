@@ -14,12 +14,19 @@ import (
 )
 
 // Arguments returns the payload fields that clients may supply as MCP arguments.
-// Goa authentication annotations and the method's recorded path bindings select
-// excluded fields. Unbound domain fields keep their names, types, and examples.
+// Goa authentication annotations, URL bindings and typed continuation fields
+// select excluded fields. Unbound domain fields keep their names, types, and examples.
 // The original payload is never changed.
 func Arguments(method *expr.MethodExpr) (*expr.AttributeExpr, error) {
 	payload := method.Payload
 	names := append(Credentials(payload), method.Meta[pathFieldsKey]...)
+	mapping, err := InputExchange(method)
+	if err != nil {
+		return nil, err
+	}
+	if mapping != nil {
+		names = append(names, mapping.ContinuationName)
+	}
 	if len(names) == 0 {
 		return payload, nil
 	}

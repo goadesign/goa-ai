@@ -374,26 +374,30 @@ func TestCredentialsRemainOutsideArguments(t *testing.T){
   transport.basic=name=="basic"
   result,err:=client.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:name,Arguments:json.RawMessage("{\"token\":\"domain\"}")})
   if err!=nil{t.Fatalf("%s: %v",name,err)}
-  if string(result.(*genmcp.ToolsCallResult).StructuredContent)!="\"domain\""{t.Fatalf("%s domain input changed",name)}
+  completedReply1, isCompleteReply1 := result.(*genmcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply1 {t.Fatalf("expected completed MCP result: %+v", result)}
+  if string(completedReply1.StructuredContent)!="\"domain\""{t.Fatalf("%s domain input changed",name)}
  }
  transport.basic=false
  only,err:=client.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:"credential_only"})
  if err!=nil{t.Fatal(err)}
- assert.Equal(t,"\"credential_only\"",string(only.(*genmcp.ToolsCallResult).StructuredContent))
+ completedReply2, isCompleteReply2 := only.(*genmcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply2 {t.Fatalf("expected completed MCP result: %+v", only)}
+ assert.Equal(t,"\"credential_only\"",string(completedReply2.StructuredContent))
  // Both alternatives retain Goa's ordered callbacks and inactive nil fields.
  for _,basic:=range []bool{true,false}{
   transport.basic=basic
   beforeAuth,beforeBasic,beforeWork:=s.auth.Load(),s.basicCalls.Load(),s.work.Load()
   result,err:=client.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:"alternative",Arguments:json.RawMessage("{\"token\":\"domain\"}")})
   if err!=nil{t.Fatal(err)}
-  assert.Equal(t,"\"domain\"",string(result.(*genmcp.ToolsCallResult).StructuredContent))
+  completedReply3, isCompleteReply3 := result.(*genmcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply3 {t.Fatalf("expected completed MCP result: %+v", result)}
+  assert.Equal(t,"\"domain\"",string(completedReply3.StructuredContent))
   assert.Equal(t,beforeBasic+1,s.basicCalls.Load())
   assert.Equal(t,beforeAuth+1,s.auth.Load())
   assert.Equal(t,beforeWork+1,s.work.Load())
  }
  transport.basic=false
  result,err:=client.ResourcesRead()(t.Context(),&genmcp.ResourcesReadPayload{URI:"test://fixed"});if err!=nil{t.Fatal(err)}
- assert.Equal(t,"fixed",*result.(*genmcp.ResourcesReadResult).Contents[0].Text)
+ completedReply4, isCompleteReply4 := result.(*genmcp.ResourcesReadResult).Outcome.AsComplete(); if !isCompleteReply4 {t.Fatalf("expected completed MCP result: %+v", result)}
+ assert.Equal(t,"fixed",*completedReply4.Contents[0].Text)
  prompts,err:=client.PromptsList()(t.Context(),&genmcp.PromptsListPayload{});if err!=nil{t.Fatal(err)}
  arguments:=prompts.(*genmcp.PromptsListResult).Prompts[0].Arguments
  if len(arguments)!=1||arguments[0].Name!="topic"{t.Fatalf("prompt credential advertised: %+v",arguments)}
@@ -419,7 +423,8 @@ func TestCredentialsRemainOutsideArguments(t *testing.T){
   spaced:=genclient.NewClient(address.Scheme,address.Host,&authorizationDoer{client:peer.Client(),value:header},goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
   result,err:=spaced.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:"jwt",Arguments:json.RawMessage("{\"token\":\"domain\"}")})
   if err!=nil{t.Fatal(err)}
-  assert.Equal(t,"\"domain\"",string(result.(*genmcp.ToolsCallResult).StructuredContent))
+  completedReply5, isCompleteReply5 := result.(*genmcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply5 {t.Fatalf("expected completed MCP result: %+v", result)}
+  assert.Equal(t,"\"domain\"",string(completedReply5.StructuredContent))
   assert.Equal(t,beforeAuth+1,s.auth.Load())
   assert.Equal(t,beforeWork+1,s.work.Load())
   assert.Equal(t,beforeMiddleware+1,middleware.Load())
@@ -428,7 +433,8 @@ func TestCredentialsRemainOutsideArguments(t *testing.T){
  before:=s.work.Load()
  rejected,err:=client.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:"jwt",Arguments:json.RawMessage("{\"token\":\"domain\",\"private_jwt\":\"injected\"}")})
  if err!=nil{t.Fatal(err)}
- if rejected.(*genmcp.ToolsCallResult).IsError==nil||!*rejected.(*genmcp.ToolsCallResult).IsError{t.Fatal("credential injection accepted")}
+ completedReply6, isCompleteReply6 := rejected.(*genmcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply6 {t.Fatalf("expected completed MCP result: %+v", rejected)}
+ if completedReply6.IsError==nil||!*completedReply6.IsError{t.Fatal("credential injection accepted")}
  assert.Equal(t,before,s.work.Load())
  assert.Equal(t,before,middleware.Load())
  // Missing and malformed Bearer inputs fail before the configured endpoint.
@@ -436,7 +442,8 @@ func TestCredentialsRemainOutsideArguments(t *testing.T){
   uncredentialed:=genclient.NewClient(address.Scheme,address.Host,&authorizationDoer{client:peer.Client(),value:header},goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
   failure,err:=uncredentialed.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:"jwt",Arguments:json.RawMessage("{\"token\":\"domain\"}")})
   if err!=nil{t.Fatal(err)}
-  if failure.(*genmcp.ToolsCallResult).IsError==nil||!*failure.(*genmcp.ToolsCallResult).IsError{t.Fatalf("invalid credential accepted: %q",header)}
+  completedReply7, isCompleteReply7 := failure.(*genmcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply7 {t.Fatalf("expected completed MCP result: %+v", failure)}
+  if completedReply7.IsError==nil||!*completedReply7.IsError{t.Fatalf("invalid credential accepted: %q",header)}
   assert.Equal(t,before,s.work.Load())
   assert.Equal(t,before,middleware.Load())
  }
@@ -481,6 +488,7 @@ func TestServicesKeepIndependentCredentialInputs(t *testing.T){
  client:=gensecondaryclient.NewClient(address.Scheme,address.Host,&doer{client:peer.Client()},goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
  result,err:=client.ToolsCall()(t.Context(),&gensecondarymcp.ToolsCallPayload{Name:"read",Arguments:json.RawMessage("{\"value\":\"secondary-domain\"}")})
  if err!=nil{t.Fatal(err)}
- assert.Equal(t,"\"secondary-domain\"",string(result.(*gensecondarymcp.ToolsCallResult).StructuredContent))
+ completedReply8, isCompleteReply8 := result.(*gensecondarymcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply8 {t.Fatalf("expected completed MCP result: %+v", result)}
+ assert.Equal(t,"\"secondary-domain\"",string(completedReply8.StructuredContent))
 }
 `

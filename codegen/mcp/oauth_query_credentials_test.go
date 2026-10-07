@@ -189,7 +189,8 @@ func TestGeneratedOAuthQueryCredentials(t *testing.T){
  credential:="domain key +/"
  for range 2{
   result,err:=client.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:"read",HTTPCredential0:&credential});require.NoError(t,err)
-  assert.Equal(t,"\"record\"",string(result.(*genmcp.ToolsCallResult).StructuredContent))
+  completedReply1, isCompleteReply1 := result.(*genmcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply1 {t.Fatalf("expected completed MCP result: %+v", result)}
+  assert.Equal(t,"\"record\"",string(completedReply1.StructuredContent))
   for _,uri:=range []string{"test://fixed","test://items/one"}{
    _,err=client.ResourcesRead()(t.Context(),&genmcp.ResourcesReadPayload{URI:uri,HTTPCredential0:&credential});require.NoError(t,err)
   }

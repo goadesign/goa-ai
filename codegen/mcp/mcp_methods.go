@@ -68,8 +68,8 @@ func (b *mcpExprBuilder) buildToolsCallMethod() *expr.MethodExpr {
 		Name:        "tools/call",
 		Description: "Call a tool",
 		Payload:     b.userTypeAttr("ToolsCallPayload", b.buildToolsCallPayloadType),
-		Result:      b.userTypeAttr("ToolsCallResult", b.buildToolsCallResultType),
-		Errors:      buildMCPMethodErrors(mcpDispatchErrors[:]...),
+		Result:      b.inputResultAttr("ToolsCallResult", b.buildToolsCallResultType),
+		Errors:      b.buildInputMethodErrors(),
 	}
 }
 
@@ -90,8 +90,8 @@ func (b *mcpExprBuilder) buildResourcesReadMethod() *expr.MethodExpr {
 		Name:        "resources/read",
 		Description: "Read a resource",
 		Payload:     b.userTypeAttr("ResourcesReadPayload", b.buildResourcesReadPayloadType),
-		Result:      b.userTypeAttr("ResourcesReadResult", b.buildResourcesReadResultType),
-		Errors:      buildMCPMethodErrors(mcpDispatchErrors[:]...),
+		Result:      b.inputResultAttr("ResourcesReadResult", b.buildResourcesReadResultType),
+		Errors:      b.buildInputMethodErrors(),
 	}
 }
 
@@ -112,8 +112,8 @@ func (b *mcpExprBuilder) buildPromptsGetMethod() *expr.MethodExpr {
 		Name:        "prompts/get",
 		Description: "Get a prompt by name",
 		Payload:     b.userTypeAttr("PromptsGetPayload", b.buildPromptsGetPayloadType),
-		Result:      b.userTypeAttr("PromptsGetResult", b.buildPromptsGetResultType),
-		Errors:      buildMCPMethodErrors(mcpDispatchErrors[:]...),
+		Result:      b.inputResultAttr("PromptsGetResult", b.buildPromptsGetResultType),
+		Errors:      b.buildInputMethodErrors(),
 	}
 }
 

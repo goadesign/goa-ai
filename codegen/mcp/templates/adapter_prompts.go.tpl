@@ -53,13 +53,13 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p {{ index .PayloadRefs "pr
             },
         })
         {{ end }}
-        res := &PromptsGetResult{
- ResultType: "complete", Meta: resultMeta(),
+        res := &PromptsGetCompleteResult{
+ Meta: resultMeta(),
             Description: stringPtr({{ quote .Description }}),
             Messages: msgs,
         }
 
-        return res, nil
+        return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(res)}, nil
     {{ end }}
     {{ range .MethodPrompts }}
     case {{ quote .Name }}:
@@ -97,8 +97,8 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p {{ index .PayloadRefs "pr
             return nil, failure
         }
         {{ end }}
-        {{- if or .Endpoint.Credentials .Endpoint.Paths }}
-        if err := fill{{ .Endpoint.CallName }}Inputs(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "prompts/get" }}{{ end }}{{ range .Endpoint.Paths }}, p.{{ index .Sources "prompts/get" }}{{ end }}); err != nil {
+        {{- if or .Endpoint.Credentials .Endpoint.Paths .Endpoint.InputExchange }}
+        if err := fill{{ .Endpoint.CallName }}Inputs(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "prompts/get" }}{{ end }}{{ range .Endpoint.Paths }}, p.{{ index .Sources "prompts/get" }}{{ end }}{{ if .Endpoint.InputExchange }}, p.RequestState, p.InputResponses{{ end }}); err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return nil, err
@@ -110,7 +110,25 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p {{ index .PayloadRefs "pr
             span.SetStatus(codes.Error, err.Error())
             return nil, a.mapError(err, {{ if .Endpoint.FaultNames }}is{{ .Endpoint.CallName }}Fault{{ else }}isEndpointFault{{ end }}(err)).err
         }
-        if err := {{ .Codec.ResultValidate }}(result); err != nil {
+        {{- $endpoint := .Endpoint }}
+        {{- with .Endpoint.InputExchange }}
+        if err := {{ .OutcomeValue }}.Validate(); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, goa.PermanentError("internal_error", "%s", err.Error())
+        }
+        if pending, ok := {{ .OutcomeValue }}.AsInputRequired(); ok {
+            input, err := convert{{ $endpoint.CallName }}Pending(pending, p.Meta)
+            if err != nil {
+                span.RecordError(err)
+                span.SetStatus(codes.Error, err.Error())
+                return nil, err
+            }
+            return &PromptsGetResult{Outcome: NewPromptsGetOutcomeInputRequired(input)}, nil
+        }
+        completedResult, _ := {{ .OutcomeValue }}.AsComplete()
+        {{- end }}
+        if err := {{ .Codec.ResultValidate }}({{ if and .Endpoint.InputExchange (not .Endpoint.ExecutionView) }}completedResult{{ else }}result{{ end }}); err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("internal_error", "%s", err.Error())
@@ -125,7 +143,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p {{ index .PayloadRefs "pr
             }
             messages = append(messages, &PromptMessage{Role: string({{ if .RolePointer }}*{{ end }}message.{{ .RoleField }}), Content: content})
         }
-        response := &PromptsGetResult{ResultType: "complete", Meta: resultMeta(), Messages: messages}
+        response := &PromptsGetCompleteResult{Meta: resultMeta(), Messages: messages}
         {{ if .DescriptionField }}
         {{ if .DescriptionPointer }}
         if {{ .Endpoint.ResultValue }}.{{ .DescriptionField }} != nil {
@@ -135,7 +153,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p {{ index .PayloadRefs "pr
         response.Description = stringPtr(string({{ .Endpoint.ResultValue }}.{{ .DescriptionField }}))
         {{ end }}
         {{ end }}
-        return response, nil
+        return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(response)}, nil
     {{ end }}
     }
     failure := goa.PermanentError("invalid_params", "unknown prompt: %s", p.Name)

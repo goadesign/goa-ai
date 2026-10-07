@@ -580,7 +580,8 @@ func TestMCPResourceAccessKeepsDomainCredentialOwnership(t *testing.T) {
 					assert.Empty(t, writer.Header().Values("WWW-Authenticate"))
 					value, err := genmcpclient.DecodeToolsCallResponse(goahttp.ResponseDecoder, false)(writer.Result(), "owner")
 					require.NoError(t, err)
-					result, ok := value.(*genmcp.ToolsCallResult)
+					completedReply1, isCompleteReply1 := value.(*genmcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply1 {t.Fatalf("expected completed MCP result: %+v", value)}
+					result, ok := completedReply1
 					require.True(t, ok)
 					if tc.toolError {
 						require.NotNil(t, result.IsError)

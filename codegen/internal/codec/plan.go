@@ -23,6 +23,7 @@ type (
 		locatedImportPaths map[string]struct{}
 		originals          *originalTransportGraph
 		jsonHelpers        *jsonHelperPlan
+		integerJSON        *goacodegen.NameDeclaration
 	}
 
 	// Value records one service value and its private JSON representation.
@@ -46,6 +47,7 @@ type (
 		serviceAttributor   goacodegen.Attributor
 		standalone          *standalonePlan
 		originalLayout      *goacodegen.GoTypePlan
+		elicitation         *elicitationCodec
 	}
 
 	// TransportField describes one top-level field in a private JSON type.
@@ -78,6 +80,7 @@ type (
 		layout               *goacodegen.GoTypePlan
 		parameter            *goacodegen.GoTypePlan
 		validation           *goacodegen.ValidationPlan
+		integerDecode        bool
 	}
 
 	// plannedUnion contains one generated Goa OneOf declaration and its branches.
@@ -147,6 +150,13 @@ func (p *Plan) Add(
 	layout *goacodegen.GoTypePlan,
 	direction Direction,
 ) (*Value, error) {
+	return p.add(key, preferredName, attribute, layout, direction, nil)
+}
+
+// add records a value after the caller has selected its external JSON contract.
+// Ordinary tool values stay closed; elicitation answers use MCP's open result
+// fields and validate the complete response before typed decoding.
+func (p *Plan) add(key, preferredName string, attribute *goaexpr.AttributeExpr, layout *goacodegen.GoTypePlan, direction Direction, elicitation *elicitationCodec) (*Value, error) {
 	if key == "" {
 		return nil, fmt.Errorf("plan JSON value: key must not be empty")
 	}
@@ -169,6 +179,26 @@ func (p *Plan) Add(
 		return nil, fmt.Errorf("plan JSON value %q: service layout must not be nil", key)
 	}
 	transport, localTypes := localTransportAttribute(attribute, key, preferredName)
+	if direction.decodes() {
+		localTypes = append(localTypes, integerTransportFields(transport, key, preferredName)...)
+	}
+	if elicitation != nil {
+		choice := goaexpr.AsUnion(transport.Type)
+		choice.TypeKey = "action"
+		choice.Flatten = true
+		if elicitation.form {
+			// MCP fixes the accepted-answer envelope's content name. The fields
+			// inside that content retain their authored JSON names and constraints.
+			for _, branch := range choice.Values {
+				if branch.Name != "accept" {
+					continue
+				}
+				content := goaexpr.AsObject(branch.Attribute.Type).Attribute("content")
+				delete(content.Meta, "struct:tag:json")
+				content.Meta["struct:tag:json:name"] = []string{"content"}
+			}
+		}
+	}
 	if err := p.requireValueImports(direction, layout); err != nil {
 		return nil, fmt.Errorf("plan JSON value %q imports: %w", key, err)
 	}
@@ -180,9 +210,13 @@ func (p *Plan) Add(
 		service:       attribute,
 		serviceLayout: layout,
 		transport:     transport,
+		elicitation:   elicitation,
 	}
 	if err := value.declareTypes(localTypes); err != nil {
 		return nil, fmt.Errorf("plan JSON value %q types: %w", key, err)
+	}
+	if err := value.planIntegerJSON(); err != nil {
+		return nil, err
 	}
 	if err := value.declareUnions(); err != nil {
 		return nil, fmt.Errorf("plan JSON value %q unions: %w", key, err)
@@ -372,17 +406,22 @@ func (d Direction) decodes() bool {
 // declareTypes records the package-level type and validation names.
 func (v *Value) declareTypes(localTypes []goaexpr.UserType) error {
 	for index, userType := range localTypes {
-		typeDeclaration, err := v.plan.pkg.DeclareGeneratedType(
-			userType.Name(),
-			nameOrder{
-				packagePath: v.plan.pkg.ImportPath(),
-				key:         fmt.Sprintf("%s:type:%s:%06d", v.key, userType.Name(), index),
-			},
-		)
-		if err != nil {
-			return err
+		order := nameOrder{packagePath: v.plan.pkg.ImportPath(), key: fmt.Sprintf("%s:type:%s:%06d", v.key, userType.Name(), index)}
+		var typeDeclaration *goacodegen.TypeDeclaration
+		var declaration *goacodegen.NameDeclaration
+		if v.originalLayout != nil {
+			declaration = goacodegen.NewPreferredName(goacodegen.NameType, userType.Name(), goacodegen.UnexportedName, order)
+			if err := v.plan.pkg.DeclareName(declaration); err != nil {
+				return err
+			}
+		} else {
+			var err error
+			typeDeclaration, err = v.plan.pkg.DeclareGeneratedType(userType.Name(), order)
+			if err != nil {
+				return err
+			}
+			declaration = typeDeclaration.Declaration()
 		}
-		declaration := typeDeclaration.Declaration()
 		validator, err := v.plan.pkg.DeclareDependentName(
 			goacodegen.NameFunction,
 			declaration,

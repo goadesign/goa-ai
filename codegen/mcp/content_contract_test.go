@@ -80,14 +80,16 @@ func TestRichContentReplies(t *testing.T) {
      var reply any
      reply,err=client.ToolsCall()(context.Background(),&genmcpfmt.ToolsCallPayload{Name:"echo"})
      if err==nil {
-      for _, item := range reply.(*genmcpfmt.ToolsCallResult).Content {content=append(content,item)}
+      completedReply1, isCompleteReply1 := reply.(*genmcpfmt.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply1 {t.Fatalf("expected completed MCP result: %+v", reply)}
+      for _, item := range completedReply1.Content {content=append(content,item)}
      }
     } else {
      client:=genpromptclient.NewClient(location.Scheme,location.Host,server.Client(),goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
      var reply any
      reply,err=client.PromptsGet()(context.Background(),&genmcpprompts.PromptsGetPayload{Name:"daily_report"})
      if err==nil {
-      messages:=reply.(*genmcpprompts.PromptsGetResult).Messages
+      completedReply2, isCompleteReply2 := reply.(*genmcpprompts.PromptsGetResult).Outcome.AsComplete(); if !isCompleteReply2 {t.Fatalf("expected completed MCP result: %+v", reply)}
+      messages:=completedReply2.Messages
       if len(messages)!=2 || messages[0].Role!="assistant" || messages[1].Role!="user" {t.Fatalf("lost message order: %+v",messages)}
       for _, message := range messages {content=append(content,message.Content)}
      }

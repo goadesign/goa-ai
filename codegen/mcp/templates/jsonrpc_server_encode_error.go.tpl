@@ -13,6 +13,20 @@ func {{ .EncodeError.Name }}(ctx context.Context, w http.ResponseWriter, req *js
     if code == jsonrpc.InternalError {
         status = http.StatusInternalServerError
     }
+    if code == jsonrpc.Code(mcpruntime.MissingRequiredClientCapability) {
+        // This unique MCP error code carries its typed data directly. Goa's
+        // designed-error decoder removes only the framework's name wrapper.
+        encoded, err := json.Marshal(data)
+        if err != nil {
+            errhandler(ctx, w, fmt.Errorf("encode required client capabilities: %w", err))
+            return
+        }
+        name, body, ok := jsonrpc.DecodeServiceErrorData(encoded)
+        if !ok || name != "missing_client_capability" {
+            panic("MCP capability error does not match its designed Goa data")
+        }
+        data = body
+    }
     response := jsonrpc.MakeErrorResponse(req.ID, code, message, data)
     w.Header().Set("Content-Type", "application/json")
     w.WriteHeader(status)

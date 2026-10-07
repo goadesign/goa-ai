@@ -6,6 +6,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/url"
@@ -84,46 +85,90 @@ func (r *InputRequired) ValidateResponses(responses map[string]json.RawMessage) 
 		if !ok {
 			return fmt.Errorf("missing input response %q", id)
 		}
-		params, err := decodeElicitation(request)
-		if err != nil {
-			return err
-		}
-		var response elicitationResult
-		if err := json.Unmarshal(raw, &response); err != nil {
+		if err := request.ValidateResponse(raw); err != nil {
 			return fmt.Errorf("input response %q: %w", id, err)
-		}
-		switch response.Action {
-		case "accept":
-			if params.Mode == elicitationForm {
-				if len(response.Content) == 0 {
-					return fmt.Errorf("form response %q requires content", id)
-				}
-				shape, err := compileFormContent()
-				if err != nil {
-					return err
-				}
-				if err := jsonschema.Validate(shape, response.Content); err != nil {
-					return fmt.Errorf("form response %q: %w", id, err)
-				}
-				compiled, err := jsonschema.Compile(params.RequestedSchema)
-				if err != nil {
-					return err
-				}
-				if err := jsonschema.Validate(compiled, response.Content); err != nil {
-					return fmt.Errorf("form response %q: %w", id, err)
-				}
-			} else if len(response.Content) != 0 {
-				return fmt.Errorf("URL response %q cannot contain form content", id)
-			}
-		case "decline", "cancel":
-			if len(response.Content) != 0 {
-				return fmt.Errorf("%s response %q cannot contain form content", response.Action, id)
-			}
-		default:
-			return fmt.Errorf("input response %q requires accept, decline or cancel", id)
 		}
 	}
 	return nil
+}
+
+// ValidateFormResponse checks the action and flat content of one form answer
+// before typed decoding can drop extra fields. Generated Goa validation checks
+// declared field constraints after this check; decline and cancel have no content.
+func ValidateFormResponse(response json.RawMessage) error {
+	_, err := validateElicitationResult(elicitationForm, response)
+	return err
+}
+
+// ValidateURLResponse checks one URL-consent answer. Accept, decline and cancel
+// are the only actions, and none can carry form content. Extension fields remain
+// allowed because MCP result objects may contain extension values.
+func ValidateURLResponse(response json.RawMessage) error {
+	_, err := validateElicitationResult("url", response)
+	return err
+}
+
+// ValidateResponse checks one host answer against this exact input request.
+// The consumer and generated server use the same form and URL result contract.
+func (r InputRequest) ValidateResponse(response json.RawMessage) error {
+	params, err := decodeElicitation(r)
+	if err != nil {
+		return err
+	}
+	return validateElicitationResponse(params, response)
+}
+
+// validateElicitationResponse checks an external server's answer shape and then
+// validates accepted content against that server's exact requested schema.
+func validateElicitationResponse(params elicitationParams, raw json.RawMessage) error {
+	response, err := validateElicitationResult(params.Mode, raw)
+	if err != nil {
+		return err
+	}
+	if params.Mode == elicitationForm && response.Action == "accept" {
+		compiled, err := jsonschema.Compile(params.RequestedSchema)
+		if err != nil {
+			return err
+		}
+		if err := jsonschema.Validate(compiled, response.Content); err != nil {
+			return fmt.Errorf("form response: %w", err)
+		}
+	}
+	return nil
+}
+
+// validateElicitationResult checks actions and content before any typed decoder
+// can ignore extension fields. Unknown flat form values are allowed; nested
+// values fail. The caller receives the checked content for its own field rules.
+func validateElicitationResult(mode string, raw json.RawMessage) (elicitationResult, error) {
+	var response elicitationResult
+	if err := jsonv2.Unmarshal(raw, &response); err != nil {
+		return response, fmt.Errorf("input response: %w", err)
+	}
+	switch response.Action {
+	case "accept":
+		if mode == elicitationForm {
+			if len(response.Content) == 0 {
+				return response, errors.New("form response requires content")
+			}
+			shape, err := compileFormContent()
+			if err != nil {
+				return response, err
+			}
+			if err := jsonschema.Validate(shape, response.Content); err != nil {
+				return response, fmt.Errorf("form response: %w", err)
+			}
+		} else if len(response.Content) != 0 {
+			return response, errors.New("URL response cannot contain form content")
+		}
+	case "decline", "cancel":
+		if len(response.Content) != 0 {
+			return response, fmt.Errorf("%s response cannot contain form content", response.Action)
+		}
+	default:
+		return response, errors.New("input response requires accept, decline or cancel")
+	}
+	return response, nil
 }
 
 // decodeElicitation rejects unsupported methods and checks the distinct form
@@ -133,11 +178,11 @@ func decodeElicitation(request InputRequest) (elicitationParams, error) {
 		return elicitationParams{}, fmt.Errorf("unsupported input method %q", request.Method)
 	}
 	var params elicitationParams
-	if err := json.Unmarshal(request.Params, &params); err != nil || params.Message == nil {
+	if err := jsonv2.Unmarshal(request.Params, &params); err != nil || params.Message == nil {
 		return params, errors.New("elicitation requires an object with a message")
 	}
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(request.Params, &fields); err != nil {
+	if err := jsonv2.Unmarshal(request.Params, &fields); err != nil {
 		return params, err
 	}
 	// Only absence selects the default form mode. Null and an empty string are invalid.
@@ -153,7 +198,7 @@ func decodeElicitation(request InputRequest) (elicitationParams, error) {
 		if _, present := fields["url"]; present || len(params.RequestedSchema) == 0 {
 			return params, errors.New("form requires requestedSchema and cannot contain URL")
 		}
-		if err := validateFormSchema(params.RequestedSchema); err != nil {
+		if err := jsonschema.ValidateForm(params.RequestedSchema); err != nil {
 			return params, err
 		}
 	case "url":
@@ -168,18 +213,4 @@ func decodeElicitation(request InputRequest) (elicitationParams, error) {
 		return params, fmt.Errorf("unsupported elicitation mode %q", params.Mode)
 	}
 	return params, nil
-}
-
-// validateFormSchema enforces MCP's flat primitive form contract, including
-// string selection arrays. Arbitrary tool schemas use the full dialect instead.
-func validateFormSchema(raw json.RawMessage) error {
-	contract, err := compileFormSchema()
-	if err != nil {
-		return err
-	}
-	if err := jsonschema.Validate(contract, raw); err != nil {
-		return fmt.Errorf("unsupported form schema: %w", err)
-	}
-	_, err = jsonschema.Compile(raw)
-	return err
 }

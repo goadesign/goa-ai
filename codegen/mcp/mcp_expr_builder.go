@@ -50,6 +50,13 @@ var (
 		description: "The MCP service could not complete the request.",
 		code:        expr.RPCInternalError,
 	}
+	// mcpMissingClientCapabilityError identifies a required host interaction
+	// that the current request did not advertise.
+	mcpMissingClientCapabilityError = mcpErrorDefinition{
+		name:        "missing_client_capability",
+		description: "The client did not declare support for the requested input.",
+		code:        -32021,
+	}
 	// mcpDispatchErrors are returned by methods that validate a selection and
 	// then call authored service code.
 	mcpDispatchErrors = [...]mcpErrorDefinition{mcpInvalidParamsError, mcpInternalError}
@@ -110,16 +117,31 @@ func (b *mcpExprBuilder) userTypeAttr(name string, builder func() *expr.Attribut
 			Meta:        expr.MetaExpr{"struct:field:type": []string{"json.RawMessage", "encoding/json"}, "struct:tag:json": []string{"_meta,omitempty"}},
 		}}
 		*object = append(*object, meta)
+		switch name {
+		case "ToolsCallPayload", "ResourcesReadPayload", "PromptsGetPayload":
+			*object = append(*object,
+				&expr.NamedAttributeExpr{Name: "requestState", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Exact service-owned state from this operation's preceding input round"}},
+				&expr.NamedAttributeExpr{Name: "inputResponses", Attribute: &expr.AttributeExpr{
+					Type:        &expr.Map{KeyType: &expr.AttributeExpr{Type: expr.String}, ElemType: protocolJSONAttribute("Host response decoded according to the statically declared question")},
+					Description: "Host answers indexed by this operation's request identifiers",
+				}},
+			)
+		}
 		if strings.HasSuffix(name, "Payload") {
 			attribute.Validation.Required = append(attribute.Validation.Required, "_meta")
 		} else {
-			*object = append(*object, &expr.NamedAttributeExpr{Name: "resultType", Attribute: &expr.AttributeExpr{
-				Type: expr.String, Description: "This response contains a finished result",
-				Validation: &expr.ValidationExpr{Values: []any{"complete"}},
-			}})
-			attribute.Validation.Required = append(attribute.Validation.Required, "resultType")
 			switch name {
-			case "DiscoverResult", "ToolsListResult", "ResourcesListResult", "ResourceTemplatesListResult", "PromptsListResult", "ResourcesReadResult":
+			case "ToolsCallCompleteResult", "ResourcesReadCompleteResult", "PromptsGetCompleteResult":
+				// The enclosing native union writes resultType for these operations.
+			default:
+				*object = append(*object, &expr.NamedAttributeExpr{Name: "resultType", Attribute: &expr.AttributeExpr{
+					Type: expr.String, Description: "This response contains a finished result",
+					Validation: &expr.ValidationExpr{Values: []any{"complete"}},
+				}})
+				attribute.Validation.Required = append(attribute.Validation.Required, "resultType")
+			}
+			switch name {
+			case "DiscoverResult", "ToolsListResult", "ResourcesListResult", "ResourceTemplatesListResult", "PromptsListResult", "ResourcesReadCompleteResult":
 				minimum := float64(0)
 				*object = append(*object,
 					&expr.NamedAttributeExpr{Name: "ttlMs", Attribute: &expr.AttributeExpr{Type: expr.Int64, Description: "Milliseconds this one response may be cached", Validation: &expr.ValidationExpr{Minimum: &minimum}}},
@@ -156,6 +178,17 @@ func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr, routePat
 		httpService.Paths = append(httpService.Paths, "/"+routePath)
 	}
 	for _, endpoint := range httpService.HTTPEndpoints {
+		switch endpoint.MethodExpr.Name {
+		case "tools/call", "resources/read", "prompts/get":
+			body := expr.DupAtt(endpoint.MethodExpr.Result.Find("outcome"))
+			body.AddMeta("origin:attribute", "outcome")
+			body.AddMeta("http:body")
+			endpoint.Responses = []*expr.HTTPResponseExpr{{
+				StatusCode: expr.StatusOK,
+				Body:       body,
+				Parent:     endpoint,
+			}}
+		}
 		if inputs := b.httpInputs[endpoint.MethodExpr.Name]; inputs != nil {
 			bindProtocolHTTPInputs(endpoint, inputs)
 		}
@@ -191,7 +224,7 @@ func buildMCPMethodErrors(definitions ...mcpErrorDefinition) []*expr.ErrorExpr {
 // code before Goa plans the transport code.
 func buildMCPHTTPErrorMappings(endpoint *expr.HTTPEndpointExpr) []*expr.HTTPErrorExpr {
 	errors := make([]*expr.HTTPErrorExpr, 0, len(endpoint.MethodExpr.Errors))
-	for _, definition := range mcpDispatchErrors {
+	for _, definition := range append(mcpDispatchErrors[:], mcpMissingClientCapabilityError) {
 		if endpoint.MethodExpr.Error(definition.name) == nil {
 			continue
 		}

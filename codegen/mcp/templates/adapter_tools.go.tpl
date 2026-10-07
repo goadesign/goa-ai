@@ -42,14 +42,13 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p {{ index .PayloadRefs "too
 // toolCallError lets the client correct a recognized tool's arguments or
 // observe an application failure without treating it as a protocol failure.
 func toolCallError(message string) *ToolsCallResult {
-    return &ToolsCallResult{
-        ResultType: "complete",
+    return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
         Meta: resultMeta(),
         Content: []*ContentItem{
             {Type: "text", Text: stringPtr(message)},
         },
         IsError: boolPtr(true),
-    }
+    })}
 }
 
 // ToolsCall decodes the named tool's arguments through its generated codec,
@@ -74,8 +73,8 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "too
             return toolCallError("invalid arguments: " + err.Error()), nil
         }
         {{- end }}
-        {{- if or .Endpoint.Credentials .Endpoint.Paths }}
-        if err := fill{{ .Endpoint.CallName }}Inputs(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "tools/call" }}{{ end }}{{ range .Endpoint.Paths }}, p.{{ index .Sources "tools/call" }}{{ end }}); err != nil {
+        {{- if or .Endpoint.Credentials .Endpoint.Paths .Endpoint.InputExchange }}
+        if err := fill{{ .Endpoint.CallName }}Inputs(payload{{ range .Endpoint.Credentials }}, p.{{ index .Sources "tools/call" }}{{ end }}{{ range .Endpoint.Paths }}, p.{{ index .Sources "tools/call" }}{{ end }}{{ if .Endpoint.InputExchange }}, p.RequestState, p.InputResponses{{ end }}); err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return toolCallError(err.Error()), nil
@@ -96,22 +95,41 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "too
             }
             return toolCallError(failure.err.Error()), nil
         }
+        {{- $endpoint := .Endpoint }}
+        {{- with .Endpoint.InputExchange }}
+        if err := {{ .OutcomeValue }}.Validate(); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, goa.PermanentError("internal_error", "%s", err.Error())
+        }
+        if pending, ok := {{ .OutcomeValue }}.AsInputRequired(); ok {
+            input, err := convert{{ $endpoint.CallName }}Pending(pending, p.Meta)
+            if err != nil {
+                span.RecordError(err)
+                span.SetStatus(codes.Error, err.Error())
+                return nil, err
+            }
+            return &ToolsCallResult{Outcome: NewToolsCallOutcomeInputRequired(input)}, nil
+        }
+        {{- if not $endpoint.ExecutionView }}
+        completedResult, _ := {{ .OutcomeValue }}.AsComplete()
+        {{- end }}
+        {{- end }}
         {{- if .Content }}
-        content, encoded, err := {{ .Content.Name }}(result)
+        content, encoded, err := {{ .Content.Name }}({{ if and .Endpoint.InputExchange (not .Endpoint.ExecutionView) }}completedResult{{ else }}result{{ end }})
         {{- else }}
-        encoded, err := {{ .Codec.ResultEncode }}(result)
+        encoded, err := {{ .Codec.ResultEncode }}({{ if and .Endpoint.InputExchange (not .Endpoint.ExecutionView) }}completedResult{{ else }}result{{ end }})
         {{- end }}
         if err != nil {
             span.RecordError(err)
             span.SetStatus(codes.Error, err.Error())
             return nil, goa.PermanentError("internal_error", "%s", err.Error())
         }
-        return &ToolsCallResult{
-            ResultType: "complete",
+        return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
             Meta: resultMeta(),
             Content: {{ if .Content }}content{{ else }}[]*ContentItem{}{{ end }},
             StructuredContent: json.RawMessage(encoded),
-        }, nil
+        })}, nil
         {{- else }}
         {{- if .HasPayload }}
         err = a.{{ .Endpoint.CallName }}(ctx, payload)
@@ -127,7 +145,7 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "too
             }
             return toolCallError(failure.err.Error()), nil
         }
-        return &ToolsCallResult{ResultType: "complete", Meta: resultMeta(), Content: []*ContentItem{}}, nil
+        return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{Meta: resultMeta(), Content: []*ContentItem{}})}, nil
         {{- end }}
     {{- end }}
     default:
@@ -142,6 +160,9 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "too
 // structured JSON. A service-selected view keeps both outputs within that view.
 func {{ .Name }}(result {{ .SourceRef }}) ([]*ContentItem, json.RawMessage, error) {
     if err := {{ .Validate }}(result); err != nil { return nil, nil, err }
+    {{- if .OutcomeValue }}
+    completedResult, _ := {{ .OutcomeValue }}.AsComplete()
+    {{- end }}
     {{- if .ExecutionView }}
     switch result.View {
     {{- end }}

@@ -44,14 +44,13 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 // toolCallError lets the client correct a recognized tool's arguments or
 // observe an application failure without treating it as a protocol failure.
 func toolCallError(message string) *ToolsCallResult {
-	return &ToolsCallResult{
-		ResultType: "complete",
-		Meta:       resultMeta(),
+	return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
+		Meta: resultMeta(),
 		Content: []*ContentItem{
 			{Type: "text", Text: stringPtr(message)},
 		},
 		IsError: boolPtr(true),
-	}
+	})}
 }
 
 // ToolsCall decodes the named tool's arguments through its generated codec,
@@ -85,12 +84,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		return &ToolsCallResult{
-			ResultType:        "complete",
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
 			Meta:              resultMeta(),
 			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}, nil
+		})}, nil
 	case "title":
 		if err := validateNoArguments(p.Arguments); err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
@@ -111,12 +109,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		return &ToolsCallResult{
-			ResultType:        "complete",
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
 			Meta:              resultMeta(),
 			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}, nil
+		})}, nil
 	case "tags":
 		if err := validateNoArguments(p.Arguments); err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
@@ -137,12 +134,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		return &ToolsCallResult{
-			ResultType:        "complete",
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
 			Meta:              resultMeta(),
 			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}, nil
+		})}, nil
 	case "notify":
 		if err := validateNoArguments(p.Arguments); err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
@@ -157,7 +153,7 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			}
 			return toolCallError(failure.err.Error()), nil
 		}
-		return &ToolsCallResult{ResultType: "complete", Meta: resultMeta(), Content: []*ContentItem{}}, nil
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{Meta: resultMeta(), Content: []*ContentItem{}})}, nil
 	default:
 		return nil, goa.PermanentError("invalid_params", "unknown tool: %s", p.Name)
 	}

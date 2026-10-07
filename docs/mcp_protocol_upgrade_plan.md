@@ -1,6 +1,6 @@
 # Upgrade goa-ai to MCP 2026-07-28
 
-Research and implementation plan, prepared 2026-10-02 and revised 2026-10-06 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
+Research and implementation plan, prepared 2026-10-02 and revised 2026-10-07 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
 
 ## Outcome and scope
 
@@ -3035,3 +3035,66 @@ Reproduction and scope are recorded in the
 This closes the local current-protocol POST-interruption acceptance gap. It does
 not claim a stock referee tier or external rollout; all remaining capability and
 caller-cutover gates still apply.
+
+
+## Generated server input exchanges
+
+`InputExchange(continuationField, outcomeField)` now binds a unary Goa method's
+optional continuation and required complete/input-required outcome union. The
+method retains its native types, locations and Go field names. Catalogs omit
+continuation and advertise only completion. Forms derive their schema from the
+same native accepted-answer type that supplies decoding and Goa validation;
+there is no separately authored schema or runtime schema interpreter for those
+static fields. Unsupported form rules fail generation.
+
+Tools, resource reads and method-backed prompts preserve their configured Goa
+endpoint, security, scopes, interceptors and middleware on every round. Native
+flattened JSON-RPC unions supply result discrimination and typed form/URL
+requests. Current request capabilities govern selected questions. An empty
+elicitation capability object means form support under the current protocol;
+explicit URL-only support cannot satisfy a form, and malformed declarations
+return invalid params. Missing support returns typed `-32021` data without Goa's
+designed-error name wrapper. Other designed errors retain their existing shape.
+
+Empty state strings and empty request objects remain present. Unknown answer
+identifiers are ignored; missing declared answers remain absent. Form answers
+accept protocol extension fields only within the allowed flat content grammar;
+URL acceptance is consent, not evidence that an external action finished. The
+service owns state integrity, user binding and domain completion. Fixed and
+service-selected views continue to govern completed fields and validation.
+
+The shared private JSON codecs now preserve authored JSON tags. Schema and
+strict checks use Goa's tag precedence, reject duplicate wire names and retain
+each field's constraints when JSON names are swapped. Shared runtime checks and
+generated answer decoders match field names exactly; case-distinct extension
+fields cannot populate or overwrite declared values. Exact integer decoding
+accepts whole-number decimal/exponent spellings and checks the native field's
+range without floating-point rounding. Both ordinary and original-value codecs
+share those rules; custom Go representations retain their own decoder.
+
+A compiled synthetic HTTP peer verifies form and URL accept/decline/cancel,
+missing and unknown answers, empty state/requests, malformed answers, model
+argument separation, authentication on each round, tool/resource/prompt results
+and fixed/service-selected views. Generation plus its race-tested peer passes
+in 13.2 seconds. An official Go SDK v1.8.0 client also completes explicit rounds
+through this generated server with nonempty opaque state. Its current string
+representation loses explicitly empty request state, so that independent check
+cannot establish empty-state preservation; the framework peer covers that
+case. The SDK remains a test-module dependency only.
+
+Focused codec, schema, mapping, DSL and expression packages pass; ordinary and
+original-value generated codecs verify renamed fields and native integer
+boundaries. Existing endpoint, core-plan, independent SDK, generator golden and
+agent transport-name checks remain covered. A runtime package check found a
+stale OAuth span-parent assertion after credential storage gained its own child
+span. The corrected focused test verifies preparation → credential storage →
+HTTP request and keeps its credential-exclusion checks; OAuth runtime behavior
+is unchanged. No full root suite is repeated for this increment.
+
+Direct local `BindTo` continuation remains required. It must consume this same
+native mapping and generated answer/schema ownership, then return the existing
+`AwaitMCPInput` result to the durable workflow. It must not add an HTTP loop,
+model-owned continuation fields or a second question/answer conversion stack.
+Tasks, dynamic catalogs, remaining authorization evidence, Apps, Skills and
+external caller cutover still gate release. Generated stdio servers remain
+deferred under the user's scope decision.

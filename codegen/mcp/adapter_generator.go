@@ -405,7 +405,11 @@ func (g *adapterGenerator) buildResourceAdapters() ([]*ResourceAdapter, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse MIME type for resource %q: %w", resource.Name, err)
 		}
-		resultType := resource.Method.Result.Type
+		completed, err := mcpinput.CompleteResult(resource.Method)
+		if err != nil {
+			return nil, err
+		}
+		resultType := completed.Type
 		for {
 			named, ok := resultType.(expr.UserType)
 			if !ok {

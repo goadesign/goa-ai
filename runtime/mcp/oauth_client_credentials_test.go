@@ -507,16 +507,24 @@ func TestClientCredentialsTracesExcludeCredentialContent(t *testing.T) {
 	transport := peer.transport(t, "client", "private-secret", nil)
 	require.Error(t, callOAuthPeer(t.Context(), transport, peer.resource))
 	ended := recorder.Ended()
-	var prepare sdktrace.ReadOnlySpan
+	var prepare, credentials sdktrace.ReadOnlySpan
 	for _, span := range ended {
-		if span.Name() == "mcp.oauth.prepare" {
+		switch span.Name() {
+		case "mcp.oauth.prepare":
 			prepare = span
+		case "mcp.oauth.credentials":
+			credentials = span
 		}
 	}
 	require.NotNil(t, prepare)
+	require.NotNil(t, credentials)
+	assert.Equal(t, prepare.SpanContext().SpanID(), credentials.Parent().SpanID())
+	assert.Equal(t, prepare.SpanContext().TraceID(), credentials.SpanContext().TraceID())
 	assert.Equal(t, codes.Error, prepare.Status().Code)
 	httpSpans := 0
 	for _, span := range ended {
+		assert.NotContains(t, fmt.Sprint(span.Attributes()), "private-secret")
+		assert.NotContains(t, fmt.Sprint(span.Attributes()), "private issuer diagnostic")
 		for _, event := range span.Events() {
 			assert.NotContains(t, fmt.Sprint(event.Attributes), "private-secret")
 			assert.NotContains(t, fmt.Sprint(event.Attributes), "private issuer diagnostic")
@@ -526,7 +534,7 @@ func TestClientCredentialsTracesExcludeCredentialContent(t *testing.T) {
 			continue
 		}
 		httpSpans++
-		assert.Equal(t, prepare.SpanContext().SpanID(), span.Parent().SpanID())
+		assert.Equal(t, credentials.SpanContext().SpanID(), span.Parent().SpanID())
 		for _, attr := range span.Attributes() {
 			if string(attr.Key) == "http.response.status_code" && attr.Value.AsInt64() == http.StatusNotFound {
 				assert.Equal(t, codes.Unset, span.Status().Code)

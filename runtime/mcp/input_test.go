@@ -21,6 +21,9 @@ func TestElicitationContractsAndAnswers(t *testing.T) {
 	}{
 		{"accept", `{"action":"accept","content":{"colors":["red"],"count":2}}`, true},
 		{"decline", `{"action":"decline"}`, true},
+		{"case-distinct extensions", `{"action":"accept","ACTION":"cancel","CONTENT":false,"content":{"colors":["red"]}}`, true},
+		{"missing exact action", `{"ACTION":"decline"}`, false},
+		{"duplicate action", `{"action":"accept","action":"decline"}`, false},
 		{"cancel", `{"action":"cancel"}`, true},
 		{"invalid choice", `{"action":"accept","content":{"colors":["green"]}}`, false},
 		{"nested extra value", `{"action":"accept","content":{"colors":["red"],"extra":{"hidden":true}}}`, false},
@@ -39,6 +42,7 @@ func TestElicitationContractsAndAnswers(t *testing.T) {
 	}
 	require.Error(t, pending.ValidateResponses(map[string]json.RawMessage{"other-id": json.RawMessage(`{"action":"decline"}`)}))
 	for _, invalid := range []string{
+		`{"MESSAGE":"Prompt","requestedSchema":{"type":"object","properties":{}}}`,
 		`{"mode":null,"message":"Prompt","requestedSchema":{"type":"object","properties":{}}}`,
 		`{"mode":"","message":"Prompt","requestedSchema":{"type":"object","properties":{}}}`,
 		`{"message":"Prompt","url":null,"requestedSchema":{"type":"object","properties":{}}}`,

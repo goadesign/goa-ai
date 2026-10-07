@@ -1816,8 +1816,113 @@ the adapter produces MCP's flat content objects and base64. Invalid service
 results return a protocol internal error. Optional `messages` permits an empty
 message sequence; requiring a nonempty sequence remains an authored domain rule.
 A method may also be a tool when its tool contract is valid. Static prompts keep
-their fixed role/text pairs. Server-produced requests for additional input remain
-tracked separately in the [upgrade plan](mcp_protocol_upgrade_plan.md).
+their fixed role/text pairs. Methods can request additional user input through
+[`InputExchange`](#additional-input-from-mcp-methods).
+
+### Additional input from MCP methods
+
+`InputExchange(continuationField, outcomeField)` lets a unary tool, resource
+reader or prompt return a question and finish after the host answers. The method
+keeps its ordinary Goa payload and result. Generation derives the form schema,
+answer decoding and result conversion from those same types.
+
+```go
+var EmptyAnswer = Type("EmptyAnswer", func() {})
+var LabelContent = Type("LabelContent", func() {
+    Field(1, "label", String, "Label selected by the user")
+    Required("label")
+})
+var LabelAccepted = Type("LabelAccepted", func() {
+    Field(1, "content", LabelContent, "Accepted label")
+    Required("content")
+})
+var LabelAnswer = Type("LabelAnswer", func() {
+    OneOf("answer", "User decision", func() {
+        Attribute("accept", LabelAccepted, "Accepted form")
+        Attribute("decline", EmptyAnswer, "Explicit refusal")
+        Attribute("cancel", EmptyAnswer, "Dismissed question")
+    })
+    Required("answer")
+})
+var LabelContinuation = Type("LabelContinuation", func() {
+    Field(1, "state", String, "Opaque state returned by this operation")
+    Field(2, "responses", "Answers returned for this input round", func() {
+        Field(1, "label", LabelAnswer, "Answer to the label question")
+    })
+})
+var LabelPending = Type("LabelPending", func() {
+    Field(1, "state", String, "Opaque state for the next round")
+    Field(2, "requests", "Questions selected for this input round", func() {
+        Field(1, "label", "Label question selected by the service", func() {
+            Field(1, "message", String, "Question shown to the user")
+            Required("message")
+        })
+    })
+})
+var LabelOutcome = Type("LabelOutcome", func() {
+    OneOf("outcome", "Completed label or requested input", func() {
+        Attribute("complete", String, "Completed label")
+        Attribute("input_required", LabelPending, "Question for the host")
+    })
+    Required("outcome")
+})
+
+// Inside an MCP-enabled service:
+Method("choose_label", func() {
+    Description("Collects a user-selected label before completing the operation.")
+    Payload(func() {
+        Field(1, "continuation", LabelContinuation, "Input supplied by the host")
+    })
+    Result(LabelOutcome)
+    InputExchange("continuation", "outcome")
+    Tool("choose_label", "Choose a label with user input")
+})
+```
+
+The continuation object is optional. Its `state` and `responses` fields are
+optional too. The result contains only the required outcome union, with
+`complete` and `input_required` branches. Pending `requests` and continuation
+`responses` declare the same optional question identifiers; the service chooses
+which questions to return in each round. Missing answers can produce another
+input round. Unknown response identifiers are ignored.
+
+A form question declares a required `message: String`. Its accepted answer
+contains only required `content`, a flat object of primitive fields or non-null
+string-selection arrays. Goa descriptions, defaults and supported constraints
+supply the form schema. Authored JSON tags select the same field names in the
+schema and answer decoder. Hidden fields and JSON tag options that change the
+value encoding are rejected. Unsupported form constraints fail generation. Equivalent
+integer spellings such as `3`, `3.0` and `3e0` decode to the same typed integer;
+fractional and out-of-range values fail before endpoint execution.
+
+A URL question declares required `message` and `url: String` with
+`Format(FormatURI)`. Its accept, decline and cancel branches are empty objects.
+The host must show the URL and obtain consent before opening it. Acceptance
+means consent, not proof that the external interaction has finished; the service
+checks completion on the next round. Forms must not request secrets or payment
+credentials. Sensitive interactions use URL consent.
+
+Each pending reply supplies requests, state, or both. An explicitly empty
+requests object and an explicitly empty state string are valid; neither means
+absence. The client echoes the state exactly. The service must authenticate the
+caller again and verify state integrity and ownership before trusting it.
+Original Goa security, method scopes, interceptors and endpoint middleware run
+on every round. State and host answers remain outside model arguments, and only
+the completed branch enters the tool's advertised result contract. Fixed and
+service-selected Goa views still govern completed fields.
+
+The server checks the capabilities on the current request before returning
+questions. Unsupported modes return JSON-RPC `-32021` with typed
+`requiredCapabilities` data. Invalid mode declarations return invalid params.
+The current protocol defines `elicitation: {}` as form-only support; URL support
+must be explicit. Generated servers always emit the selected `form` or `url`
+mode. See the [current elicitation contract](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation).
+
+Regenerate typed JSON-RPC consumers: tool, resource-read and prompt-read results
+now have native `Outcome` unions. Select `AsComplete()` or `AsInputRequired()`
+instead of reading completed fields directly. Framework MCP callers keep their
+existing `CallResponse` contract. Direct agent `BindTo` continuation wiring remains
+an unfinished [upgrade milestone](mcp_protocol_upgrade_plan.md).
 
 ### MCP prompt argument suggestions
 

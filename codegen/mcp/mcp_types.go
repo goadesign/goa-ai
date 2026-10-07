@@ -207,6 +207,7 @@ func (b *mcpExprBuilder) buildToolsCallResultType() *expr.AttributeExpr {
 					NonNullableElems: true,
 				},
 				Description: "Tool execution results",
+				Meta:        expr.MetaExpr{"struct:tag:json": {"content"}},
 			}},
 			{Name: "isError", Attribute: &expr.AttributeExpr{
 				Type:        expr.Boolean,
@@ -306,6 +307,7 @@ func (b *mcpExprBuilder) buildResourcesReadResultType() *expr.AttributeExpr {
 					NonNullableElems: true,
 				},
 				Description: "Resource contents",
+				Meta:        expr.MetaExpr{"struct:tag:json": {"contents"}},
 			}},
 		},
 		Validation: &expr.ValidationExpr{
@@ -428,6 +430,7 @@ func (b *mcpExprBuilder) buildPromptsGetResultType() *expr.AttributeExpr {
 					NonNullableElems: true,
 				},
 				Description: "Prompt messages",
+				Meta:        expr.MetaExpr{"struct:tag:json": {"messages"}},
 			}},
 		},
 		Validation: &expr.ValidationExpr{

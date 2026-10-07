@@ -152,8 +152,12 @@ func (g *adapterGenerator) buildMethodPromptAdapters() ([]*MethodPromptAdapter, 
 				return nil, fmt.Errorf("prompt %q arguments: %w", prompt.Name, err)
 			}
 		}
-		result := expr.AsObject(prompt.Method.Result.Type)
-		if err := checkContentFields(prompt.Method.Result, []string{"description", "messages"}); err != nil {
+		completed, err := mcpinput.CompleteResult(prompt.Method)
+		if err != nil {
+			return nil, err
+		}
+		result := expr.AsObject(completed.Type)
+		if err := checkContentFields(completed, []string{"description", "messages"}); err != nil {
 			return nil, fmt.Errorf("prompt %q result: %w", prompt.Name, err)
 		}
 		if description := result.Attribute("description"); description != nil && primitiveType(description.Type) != expr.String {

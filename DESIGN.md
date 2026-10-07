@@ -2037,6 +2037,25 @@ cannot reopen the invocation. Each selected branch retains its required fields
 and null checks. Independent HTTP peers from the official Go SDK test these
 contracts without adding an application dependency.
 
+An authored `InputExchange` maps an optional native payload continuation and a
+required completed-or-input-required result union. Generation derives matching
+question identifiers, flat form schemas, native answer codecs and pending-result
+validation from the same Goa attributes. Tool arguments exclude continuation;
+tool results expose only completion. Resource and prompt methods use the same
+input filler and result planning. Exact empty state and empty request objects
+retain their protocol presence. The service owns state integrity and user
+binding; its configured endpoint runs authorization and middleware each round.
+Current request capabilities govern selected questions. The protocol's empty
+elicitation object means form-only support; malformed declarations fail before
+answer conversion. Shared runtime checks and generated answer decoders use exact
+JSON names, so extension fields cannot replace declared values. Direct local `BindTo` continuation remains unfinished.
+
+Private JSON integer types accept exact whole-number decimal and exponent
+spellings before applying each native integer range. Named aliases, fields,
+collections and union branches share this decoding rule. Shape checks establish
+JSON number type; typed decoding owns integrality and range without floating-point
+rounding. Explicit custom Go types retain their own decoding contract.
+
 An unfinished remote call returns `input_required`. The runtime stores its
 original arguments and opaque state in a version-11 checkpoint, publishes typed
 host input requests, and validates the exact answers before the next activity.
@@ -2136,8 +2155,9 @@ endpoint still returns its full typed result; generated code validates that
 result and converts content separately. A fixed result containing only the
 marked field returns content without structured JSON. Service-selected views
 retain their declared name and exclude content when that view omits the field.
-Tasks, subscriptions and server-produced additional input require their own
-typed service bindings before they can be advertised.
+Tasks and dynamic catalogs still require their own typed service bindings.
+Server-produced additional input now has its authored `InputExchange` binding;
+resource subscriptions use their existing typed stream binding.
 See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
 [the upgrade plan](docs/mcp_protocol_upgrade_plan.md) for remaining proof and scope.
 

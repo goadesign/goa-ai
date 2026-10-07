@@ -232,7 +232,8 @@ func TestMappedValuesReachEveryEndpoint(t *testing.T){
    before:=calls.Load()
    result,err:=client.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:tc.name,Arguments:json.RawMessage(tc.arguments),HTTPPath0:tc.path})
    require.NoError(t,err)
-   value:=result.(*genmcp.ToolsCallResult)
+   completedReply1, isCompleteReply1 := result.(*genmcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply1 {t.Fatalf("expected completed MCP result: %+v", result)}
+   value:=completedReply1
    require.Nil(t,value.IsError,string(value.StructuredContent))
    assert.Equal(t,"\""+tc.want+"\"",string(value.StructuredContent))
    assert.Equal(t,before+1,calls.Load())
@@ -251,13 +252,15 @@ func TestMappedValuesReachEveryEndpoint(t *testing.T){
   before:=calls.Load()
   result,err:=client.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:tc.name,Arguments:json.RawMessage(tc.arguments),HTTPPath0:tc.path})
   require.NoError(t,err)
-  failure:=result.(*genmcp.ToolsCallResult)
+  completedReply2, isCompleteReply2 := result.(*genmcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply2 {t.Fatalf("expected completed MCP result: %+v", result)}
+  failure:=completedReply2
   require.NotNil(t,failure.IsError)
   assert.True(t,*failure.IsError)
   assert.Equal(t,before,calls.Load())
  }
  fixed,err:=client.ResourcesRead()(t.Context(),&genmcp.ResourcesReadPayload{URI:"test://fixed",HTTPPath0:"blue"});require.NoError(t,err)
- assert.Equal(t,"blue",*fixed.(*genmcp.ResourcesReadResult).Contents[0].Text)
+ completedReply3, isCompleteReply3 := fixed.(*genmcp.ResourcesReadResult).Outcome.AsComplete(); if !isCompleteReply3 {t.Fatalf("expected completed MCP result: %+v", fixed)}
+ assert.Equal(t,"blue",*completedReply3.Contents[0].Text)
  prompts,err:=client.PromptsList()(t.Context(),&genmcp.PromptsListPayload{HTTPPath0:"blue"});require.NoError(t,err)
  arguments:=prompts.(*genmcp.PromptsListResult).Prompts[0].Arguments
  require.Len(t,arguments,1);assert.Equal(t,"topic",arguments[0].Name)
