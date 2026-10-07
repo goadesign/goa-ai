@@ -6939,8 +6939,80 @@ request round. A later host-input round receives its own allowance. If an
 earlier stream lost its tool result, a later rejected attempt
 returns `OutcomeUnknownError`; its HTTP rejection remains available through
 `errors.As`. That rejection cannot establish that the earlier tool never ran.
-Durable host authorization, enterprise exchange and independent conformance
-remain release requirements.
+Durable host authorization and independent conformance remain release requirements.
+
+### Enterprise authorization
+
+An enterprise client can use a user's existing single sign-on (SSO) credential to
+request access to an MCP resource. The identity provider issues a signed grant for
+the resource's authorization server. That server validates the grant and issues the
+access token sent to MCP. These are separate registrations and token purposes;
+an identity credential or intermediate grant is never an MCP bearer token.
+
+Construct one `EnterpriseIdentity` per host user and identity-provider registration:
+
+- `NewIDTokenEnterpriseIdentity` uses the host's validated OpenID Connect ID token,
+  including an encrypted token.
+- `NewSAMLEnterpriseIdentity` uses a validated SAML assertion. The runtime applies
+  the required base64url encoding and exchanges it once for an identity-provider
+  refresh credential shared across that user's MCP resources.
+- `NewRefreshTokenEnterpriseIdentity` obtains the current identity-provider refresh
+  credential from the host's existing SSO owner.
+
+Each constructor takes a constructed `ClientRegistration`, an already-built trusted
+`*http.Client`, and `func(context.Context) (string, error)`. The callback returns a
+credential already validated for this registration and user; the host owns sign-in,
+identity validation and any new user interaction. Share registrations across users,
+but never share their identities. Prefer confidential registration for enterprise
+authorization; explicitly configured public registration is also supported.
+
+```go
+identity, err := mcp.NewIDTokenEnterpriseIdentity(idpRegistration, idpClient, hostIDToken)
+if err != nil {
+    return err
+}
+transport, err := mcp.NewEnterpriseHTTPTransport(mcp.HTTPOptions{
+    Endpoint: resourceURL,
+    Client: resourceClient,
+    ClientInfo: mcp.ClientInfo{Name: "host", Version: "1"},
+}, mcp.EnterpriseAuthorization{
+    Identity: identity,
+    Registration: resourceRegistration,
+    Scopes: []string{"records:read"},
+})
+if err != nil {
+    return err
+}
+```
+
+The identity-provider client and resource client retain their own trust settings.
+All four registration authentication methods compose through native generated
+forms. A fresh signed client assertion authenticates each signed exchange. The
+identity request names the exact resource issuer as its audience and the exact
+MCP resource. Returned scope restrictions are preserved during redemption and
+when the final response omits scope.
+
+The ordinary HTTP transport retains final resource tokens, serializes replacement
+and bounds recovery after an explicit authorization rejection. Token renewal asks
+for a fresh identity grant; it does not use a resource refresh credential as a
+substitute browser flow. Resource transports keep separate access tokens even
+when they share one user's SAML bootstrap. A bootstrap failure or reported refresh
+expiration stops that identity; new host credentials require a newly constructed
+identity, and a consumed assertion is never automatically resent.
+
+Optional enterprise metadata advertisements may be absent when the host explicitly
+configures this flow. An advertised profile must satisfy its mandatory grant
+relationships. Metadata documents still require the configured authentication,
+exact client identity and registered enterprise grant; non-browser documents can
+have an empty redirect list. Intermediate grants with the wrong purpose, bearer
+usage, malformed shape or reported expiration fail before resource redemption.
+Host credential errors are returned without secret details; cancellation is preserved.
+
+Identity bootstrap and resource tokens currently remain process-local. Durable
+host credentials, independent conformance and coordinated caller regeneration
+remain release gates. See the [stable enterprise profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/stable/enterprise-managed-authorization.mdx)
+and its [identity authorization grant contract](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-assertion-authz-grant-04.html).
+
 
 ### Request-scoped MCP progress
 

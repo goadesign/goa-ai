@@ -9,6 +9,15 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
+var oauthRegistrationProfiles = []struct {
+	machine, prefix, authentication string
+}{
+	{"", "", "none"},
+	{"basic", "basic_", "client_secret_basic"},
+	{"secret", "secret_", "client_secret_post"},
+	{"assertion", "signed_", "private_key_jwt"},
+}
+
 var machineExchange = Type("MachineExchange", func() {
 	Description("Request an access token for one resource and permission set using a confidential application registration.")
 	Field(1, "resource", String, "Exact protected resource identifier", func() { Format(FormatURI) })
@@ -49,14 +58,7 @@ var refreshExchange = Type("RefreshExchange", func() {
 
 var _ = Service("access_tokens", func() {
 	Description("Obtain resource-bound bearer tokens through separately generated registration authentication and grant contracts; credentials never enter MCP requests.")
-	for _, profile := range []struct {
-		machine, prefix, authentication string
-	}{
-		{"", "", "none"},
-		{"basic", "basic_", "client_secret_basic"},
-		{"secret", "secret_", "client_secret_post"},
-		{"assertion", "signed_", "private_key_jwt"},
-	} {
+	for _, profile := range oauthRegistrationProfiles {
 		if profile.machine != "" {
 			Method(profile.machine, func() {
 				Description("Request a machine access token for the exact resource using this registration's required authentication.")
@@ -75,12 +77,13 @@ var _ = Service("access_tokens", func() {
 			})
 		}
 		for _, grant := range []struct {
-			name               string
-			fields             expr.UserType
-			secretTag, typeTag int
+			name                            string
+			fields                          expr.UserType
+			identityTag, secretTag, typeTag int
 		}{
-			{"code", codeExchange, 7, 7},
-			{"refresh", refreshExchange, 5, 5},
+			{"code", codeExchange, 1, 7, 7},
+			{"refresh", refreshExchange, 1, 5, 5},
+			{"redeem", identityRedemption, 5, 7, 6},
 		} {
 			Method(profile.prefix+grant.name, func() {
 				Description("Complete the selected user grant with this registration's required authentication and the original resource binding.")
@@ -89,7 +92,7 @@ var _ = Service("access_tokens", func() {
 				}
 				Payload(func() {
 					Extend(grant.fields)
-					oauthClientAuthentication(profile.authentication, 1, grant.secretTag, grant.typeTag)
+					oauthClientAuthentication(profile.authentication, grant.identityTag, grant.secretTag, grant.typeTag)
 				})
 				Result(bearerToken)
 				HTTP(func() {

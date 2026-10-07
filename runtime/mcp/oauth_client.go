@@ -128,7 +128,7 @@ func (g *authorizationClient) prepare(request *http.Request, credentialQueries, 
 	if err != nil {
 		return nil, err
 	}
-	issuer, err := g.discoverIssuer(ctx)
+	issuer, err := discoverAuthorizationIssuer(ctx, g.client, g.issuer)
 	if err != nil {
 		return nil, err
 	}
@@ -157,11 +157,11 @@ func (g *authorizationClient) prepare(request *http.Request, credentialQueries, 
 	return g.token, nil
 }
 
-// discoverIssuer reads OAuth and OpenID metadata in the specified order. The
+// discoverAuthorizationIssuer reads OAuth and OpenID metadata in the specified order. The
 // exact issuer and HTTPS token endpoint are checked before any grant executes.
-func (g *authorizationClient) discoverIssuer(ctx context.Context) (*genissuermetadata.ReadResult, error) {
-	for _, address := range issuerMetadataAddresses(g.issuer) {
-		client := genissuerclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: g.client, address: address, operation: "issuer_metadata"}, nil, authorizationDecoder, false)
+func discoverAuthorizationIssuer(ctx context.Context, httpClient *http.Client, identifier *url.URL) (*genissuermetadata.ReadResult, error) {
+	for _, address := range issuerMetadataAddresses(identifier) {
+		client := genissuerclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: httpClient, address: address, operation: "issuer_metadata"}, nil, authorizationDecoder, false)
 		value, err := client.Read()(ctx, nil)
 		if metadataMissing(err) {
 			continue
@@ -173,7 +173,7 @@ func (g *authorizationClient) discoverIssuer(ctx context.Context) (*genissuermet
 		if !ok {
 			return nil, errors.New("mcp: authorization metadata has an invalid result type")
 		}
-		if issuer.Issuer != g.issuer.String() {
+		if issuer.Issuer != identifier.String() {
 			return nil, errors.New("mcp: authorization metadata issuer does not match the configured issuer")
 		}
 		if _, err := authorizationURL(issuer.TokenEndpoint, false); err != nil {
@@ -252,7 +252,7 @@ func (g *authorizationClient) recover(request *http.Request, response *HTTPRespo
 	if challenge.error == oauthInsufficientScope && includesScopes(g.requested, challenge.scopes) {
 		return false, nil
 	}
-	issuer, err := g.discoverIssuer(ctx)
+	issuer, err := discoverAuthorizationIssuer(ctx, g.client, g.issuer)
 	if err != nil {
 		return false, err
 	}

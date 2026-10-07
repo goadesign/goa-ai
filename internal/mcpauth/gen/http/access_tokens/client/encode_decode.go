@@ -234,6 +234,113 @@ func DecodeRefreshResponse(decoder func(*http.Response) goahttp.Decoder, restore
 	}
 }
 
+// BuildRedeemRequest instantiates a HTTP request object with method and path
+// set to call the "access_tokens" service "redeem" endpoint
+func (c *Client) BuildRedeemRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: RedeemAccessTokensPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("access_tokens", "redeem", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeRedeemRequest returns an encoder for requests sent to the
+// access_tokens redeem server.
+func EncodeRedeemRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*accesstokens.RedeemPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("access_tokens", "redeem", "*accesstokens.RedeemPayload", v)
+		}
+		body := NewRedeemRequestBody(p)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 5)
+		{
+			value := body.ClientID
+			form.Set("client_id", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		{
+			value := body.Assertion
+			form.Set("assertion", value)
+		}
+		if body.Scope != nil {
+			value := *body.Scope
+			form.Set("scope", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
+		}
+		return nil
+	}
+}
+
+// DecodeRedeemResponse returns a decoder for responses returned by the
+// access_tokens redeem endpoint. restoreBody controls whether the response
+// body should be restored after having been read.
+func DecodeRedeemResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "redeem", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "redeem", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body RedeemResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "redeem", err)
+			}
+			err = ValidateRedeemResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("access_tokens", "redeem", err)
+			}
+			res := NewRedeemBearerTokenOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "redeem", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("access_tokens", "redeem", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildBasicRequest instantiates a HTTP request object with method and path
 // set to call the "access_tokens" service "basic" endpoint
 func (c *Client) BuildBasicRequest(ctx context.Context, v any) (*http.Request, error) {
@@ -538,6 +645,110 @@ func DecodeBasicRefreshResponse(decoder func(*http.Response) goahttp.Decoder, re
 				return nil, goahttp.ErrDecodingError("access_tokens", "basic_refresh", err)
 			}
 			return nil, goahttp.ErrInvalidResponse("access_tokens", "basic_refresh", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildBasicRedeemRequest instantiates a HTTP request object with method and
+// path set to call the "access_tokens" service "basic_redeem" endpoint
+func (c *Client) BuildBasicRedeemRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: BasicRedeemAccessTokensPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("access_tokens", "basic_redeem", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeBasicRedeemRequest returns an encoder for requests sent to the
+// access_tokens basic_redeem server.
+func EncodeBasicRedeemRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*accesstokens.BasicRedeemPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("access_tokens", "basic_redeem", "*accesstokens.BasicRedeemPayload", v)
+		}
+		body := NewBasicRedeemRequestBody(p)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 4)
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		{
+			value := body.Assertion
+			form.Set("assertion", value)
+		}
+		if body.Scope != nil {
+			value := *body.Scope
+			form.Set("scope", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
+		}
+		req.SetBasicAuth(string(p.ClientID), string(p.ClientSecret))
+		return nil
+	}
+}
+
+// DecodeBasicRedeemResponse returns a decoder for responses returned by the
+// access_tokens basic_redeem endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+func DecodeBasicRedeemResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic_redeem", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "basic_redeem", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body BasicRedeemResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic_redeem", err)
+			}
+			err = ValidateBasicRedeemResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("access_tokens", "basic_redeem", err)
+			}
+			res := NewBasicRedeemBearerTokenOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "basic_redeem", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("access_tokens", "basic_redeem", resp.StatusCode, string(body))
 		}
 	}
 }
@@ -871,6 +1082,117 @@ func DecodeSecretRefreshResponse(decoder func(*http.Response) goahttp.Decoder, r
 	}
 }
 
+// BuildSecretRedeemRequest instantiates a HTTP request object with method and
+// path set to call the "access_tokens" service "secret_redeem" endpoint
+func (c *Client) BuildSecretRedeemRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: SecretRedeemAccessTokensPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("access_tokens", "secret_redeem", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeSecretRedeemRequest returns an encoder for requests sent to the
+// access_tokens secret_redeem server.
+func EncodeSecretRedeemRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*accesstokens.SecretRedeemPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("access_tokens", "secret_redeem", "*accesstokens.SecretRedeemPayload", v)
+		}
+		body := NewSecretRedeemRequestBody(p)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 6)
+		{
+			value := body.ClientID
+			form.Set("client_id", value)
+		}
+		{
+			value := body.ClientSecret
+			form.Set("client_secret", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		{
+			value := body.Assertion
+			form.Set("assertion", value)
+		}
+		if body.Scope != nil {
+			value := *body.Scope
+			form.Set("scope", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
+		}
+		return nil
+	}
+}
+
+// DecodeSecretRedeemResponse returns a decoder for responses returned by the
+// access_tokens secret_redeem endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+func DecodeSecretRedeemResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret_redeem", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "secret_redeem", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body SecretRedeemResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret_redeem", err)
+			}
+			err = ValidateSecretRedeemResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("access_tokens", "secret_redeem", err)
+			}
+			res := NewSecretRedeemBearerTokenOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "secret_redeem", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("access_tokens", "secret_redeem", resp.StatusCode, string(body))
+		}
+	}
+}
+
 // BuildAssertionRequest instantiates a HTTP request object with method and
 // path set to call the "access_tokens" service "assertion" endpoint
 func (c *Client) BuildAssertionRequest(ctx context.Context, v any) (*http.Request, error) {
@@ -1196,6 +1518,117 @@ func DecodeSignedRefreshResponse(decoder func(*http.Response) goahttp.Decoder, r
 				return nil, goahttp.ErrDecodingError("access_tokens", "signed_refresh", err)
 			}
 			return nil, goahttp.ErrInvalidResponse("access_tokens", "signed_refresh", resp.StatusCode, string(body))
+		}
+	}
+}
+
+// BuildSignedRedeemRequest instantiates a HTTP request object with method and
+// path set to call the "access_tokens" service "signed_redeem" endpoint
+func (c *Client) BuildSignedRedeemRequest(ctx context.Context, v any) (*http.Request, error) {
+	u := &url.URL{Scheme: c.scheme, Host: c.host, Path: SignedRedeemAccessTokensPath()}
+	req, err := http.NewRequest("POST", u.String(), nil)
+	if err != nil {
+		return nil, goahttp.ErrInvalidURL("access_tokens", "signed_redeem", u.String(), err)
+	}
+	if ctx != nil {
+		req = req.WithContext(ctx)
+	}
+
+	return req, nil
+}
+
+// EncodeSignedRedeemRequest returns an encoder for requests sent to the
+// access_tokens signed_redeem server.
+func EncodeSignedRedeemRequest(encoder func(*http.Request) goahttp.Encoder) func(*http.Request, any) error {
+	return func(req *http.Request, v any) error {
+		p, ok := v.(*accesstokens.SignedRedeemPayload)
+		if !ok {
+			return goahttp.ErrInvalidType("access_tokens", "signed_redeem", "*accesstokens.SignedRedeemPayload", v)
+		}
+		body := NewSignedRedeemRequestBody(p)
+		// Convert the typed body fields into the form keys selected by the design.
+		form := make(url.Values, 6)
+		{
+			value := body.ClientAssertion
+			form.Set("client_assertion", value)
+		}
+		{
+			value := body.ClientAssertionType
+			form.Set("client_assertion_type", value)
+		}
+		{
+			value := body.Resource
+			form.Set("resource", value)
+		}
+		{
+			value := body.Assertion
+			form.Set("assertion", value)
+		}
+		if body.Scope != nil {
+			value := *body.Scope
+			form.Set("scope", value)
+		}
+		{
+			value := body.GrantType
+			form.Set("grant_type", value)
+		}
+		// Retain the exact encoded body so the HTTP client can replay these bytes.
+		encoded := form.Encode()
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req.Body = io.NopCloser(strings.NewReader(encoded))
+		req.ContentLength = int64(len(encoded))
+		req.GetBody = func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader(encoded)), nil
+		}
+		return nil
+	}
+}
+
+// DecodeSignedRedeemResponse returns a decoder for responses returned by the
+// access_tokens signed_redeem endpoint. restoreBody controls whether the
+// response body should be restored after having been read.
+func DecodeSignedRedeemResponse(decoder func(*http.Response) goahttp.Decoder, restoreBody bool) func(*http.Response) (any, error) {
+	return func(resp *http.Response) (result any, decodeErr error) {
+		responseBody := resp.Body
+		if restoreBody {
+			b, readErr := io.ReadAll(responseBody)
+			closeErr := responseBody.Close()
+			if err := errors.Join(readErr, closeErr); err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "signed_redeem", err)
+			}
+			resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			defer func() {
+				resp.Body = io.NopCloser(bytes.NewBuffer(b))
+			}()
+		} else {
+			defer func() {
+				if err := responseBody.Close(); err != nil {
+					decodeErr = errors.Join(decodeErr, goahttp.ErrDecodingError("access_tokens", "signed_redeem", err))
+				}
+			}()
+		}
+		switch resp.StatusCode {
+		case http.StatusOK:
+			var (
+				body SignedRedeemResponseBody
+				err  error
+			)
+			err = decoder(resp).Decode(&body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "signed_redeem", err)
+			}
+			err = ValidateSignedRedeemResponseBody(&body)
+			if err != nil {
+				return nil, goahttp.ErrValidationError("access_tokens", "signed_redeem", err)
+			}
+			res := NewSignedRedeemBearerTokenOK(&body)
+			return res, nil
+		default:
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				return nil, goahttp.ErrDecodingError("access_tokens", "signed_redeem", err)
+			}
+			return nil, goahttp.ErrInvalidResponse("access_tokens", "signed_redeem", resp.StatusCode, string(body))
 		}
 	}
 }

@@ -51,7 +51,8 @@ type ReadResult struct {
 	ClientName string
 	// Registered callbacks owned by the client host
 	RedirectUris []string
-	// Registered grants including authorization code and optional refresh
+	// Grants registered for this application, including browser or enterprise
+	// exchanges
 	GrantTypes []string
 	// Registered authorization responses
 	ResponseTypes []string
@@ -59,6 +60,9 @@ type ReadResult struct {
 	ClientSecret *string
 	// Forbidden shared-secret registration member checked by the client
 	ClientSecretExpiresAt *int64
+	// Optional registered authorization profiles; identity grants require both
+	// exchange and redemption grants
+	AuthorizationGrantProfilesSupported []string
 }
 
 // SignedReadResult is the result type of the client_metadata service
@@ -76,7 +80,8 @@ type SignedReadResult struct {
 	ClientName string
 	// Registered callbacks owned by the client host
 	RedirectUris []string
-	// Registered grants including authorization code and optional refresh
+	// Grants registered for this application, including browser or enterprise
+	// exchanges
 	GrantTypes []string
 	// Registered authorization responses
 	ResponseTypes []string
@@ -84,4 +89,7 @@ type SignedReadResult struct {
 	ClientSecret *string
 	// Forbidden shared-secret registration member checked by the client
 	ClientSecretExpiresAt *int64
+	// Optional registered authorization profiles; identity grants require both
+	// exchange and redemption grants
+	AuthorizationGrantProfilesSupported []string
 }

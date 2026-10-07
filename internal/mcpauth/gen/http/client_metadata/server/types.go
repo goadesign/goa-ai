@@ -23,7 +23,8 @@ type ReadResponseBody struct {
 	ClientName string `form:"client_name" json:"client_name" xml:"client_name"`
 	// Registered callbacks owned by the client host
 	RedirectUris []string `form:"redirect_uris" json:"redirect_uris" xml:"redirect_uris"`
-	// Registered grants including authorization code and optional refresh
+	// Grants registered for this application, including browser or enterprise
+	// exchanges
 	GrantTypes []string `form:"grant_types" json:"grant_types" xml:"grant_types"`
 	// Registered authorization responses
 	ResponseTypes []string `form:"response_types" json:"response_types" xml:"response_types"`
@@ -31,6 +32,9 @@ type ReadResponseBody struct {
 	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty" xml:"client_secret,omitempty"`
 	// Forbidden shared-secret registration member checked by the client
 	ClientSecretExpiresAt *int64 `form:"client_secret_expires_at,omitempty" json:"client_secret_expires_at,omitempty" xml:"client_secret_expires_at,omitempty"`
+	// Optional registered authorization profiles; identity grants require both
+	// exchange and redemption grants
+	AuthorizationGrantProfilesSupported []string `form:"authorization_grant_profiles_supported,omitempty" json:"authorization_grant_profiles_supported,omitempty" xml:"authorization_grant_profiles_supported,omitempty"`
 }
 
 // SignedReadResponseBody is the type of the "client_metadata" service
@@ -48,7 +52,8 @@ type SignedReadResponseBody struct {
 	ClientName string `form:"client_name" json:"client_name" xml:"client_name"`
 	// Registered callbacks owned by the client host
 	RedirectUris []string `form:"redirect_uris" json:"redirect_uris" xml:"redirect_uris"`
-	// Registered grants including authorization code and optional refresh
+	// Grants registered for this application, including browser or enterprise
+	// exchanges
 	GrantTypes []string `form:"grant_types" json:"grant_types" xml:"grant_types"`
 	// Registered authorization responses
 	ResponseTypes []string `form:"response_types" json:"response_types" xml:"response_types"`
@@ -56,6 +61,9 @@ type SignedReadResponseBody struct {
 	ClientSecret *string `form:"client_secret,omitempty" json:"client_secret,omitempty" xml:"client_secret,omitempty"`
 	// Forbidden shared-secret registration member checked by the client
 	ClientSecretExpiresAt *int64 `form:"client_secret_expires_at,omitempty" json:"client_secret_expires_at,omitempty" xml:"client_secret_expires_at,omitempty"`
+	// Optional registered authorization profiles; identity grants require both
+	// exchange and redemption grants
+	AuthorizationGrantProfilesSupported []string `form:"authorization_grant_profiles_supported,omitempty" json:"authorization_grant_profiles_supported,omitempty" xml:"authorization_grant_profiles_supported,omitempty"`
 }
 
 // NewReadResponseBody builds the HTTP response body from the result of the
@@ -93,6 +101,12 @@ func NewReadResponseBody(res *clientmetadata.ReadResult) *ReadResponseBody {
 	}
 	if res.ResponseTypes == nil {
 		body.ResponseTypes = []string{"code"}
+	}
+	if res.AuthorizationGrantProfilesSupported != nil {
+		body.AuthorizationGrantProfilesSupported = make([]string, len(res.AuthorizationGrantProfilesSupported))
+		for i, val := range res.AuthorizationGrantProfilesSupported {
+			body.AuthorizationGrantProfilesSupported[i] = val
+		}
 	}
 	return body
 }
@@ -134,6 +148,12 @@ func NewSignedReadResponseBody(res *clientmetadata.SignedReadResult) *SignedRead
 	}
 	if res.ResponseTypes == nil {
 		body.ResponseTypes = []string{"code"}
+	}
+	if res.AuthorizationGrantProfilesSupported != nil {
+		body.AuthorizationGrantProfilesSupported = make([]string, len(res.AuthorizationGrantProfilesSupported))
+		for i, val := range res.AuthorizationGrantProfilesSupported {
+			body.AuthorizationGrantProfilesSupported[i] = val
+		}
 	}
 	return body
 }

@@ -2716,8 +2716,24 @@ The limit spans one HTTP request round, including stream retries. Concurrent
 rejections reuse a credential already changed by another call instead of rotating
 the same refresh token again. Definite authorization rejections remain distinct
 from lost tool results. A rejection after an earlier lost response retains the
-unknown outcome and the later HTTP status. Enterprise exchange, durable host
-authorization and independent conformance remain release gates.
+unknown outcome and the later HTTP status. Durable host authorization and
+independent conformance remain release gates.
+
+Enterprise authorization adds a user identity owner above the existing resource
+grant owner. Application registration remains immutable and user-independent.
+The host supplies a validated ID token, SAML assertion or IdP refresh credential.
+Native Goa expressions specialize the identity token-exchange and final JWT-grant
+forms for each constructed authentication profile. Identity grants require their
+exact issued purpose and token_type=N_A; only resource redemption returns the
+existing bearer result. Separate IdP and resource clients retain separate trust.
+A user identity serializes SAML bootstrap and retains its IdP refresh credential
+across resources; resource access tokens remain isolated. Failed bootstrap is
+terminal for that identity rather than permission to resend a consumed assertion.
+Renewal requests a fresh IdP grant rather than substituting browser refresh.
+An IdP scope restriction remains effective when the resource response omits scope.
+Optional profile advertisements do not replace explicit configuration; positive
+advertisements must satisfy the protocol's required grant relationships.
+Intermediate grants and SSO credentials never enter MCP arguments or checkpoints.
 
 Native query credentials remain distinct from OAuth resource identity. The
 MCP generator consumes the original evaluated Goa credential mappings and emits

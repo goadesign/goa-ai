@@ -21,15 +21,19 @@ type Server struct {
 	Mounts        []*MountPoint
 	Code          http.Handler
 	Refresh       http.Handler
+	Redeem        http.Handler
 	Basic         http.Handler
 	BasicCode     http.Handler
 	BasicRefresh  http.Handler
+	BasicRedeem   http.Handler
 	Secret        http.Handler
 	SecretCode    http.Handler
 	SecretRefresh http.Handler
+	SecretRedeem  http.Handler
 	Assertion     http.Handler
 	SignedCode    http.Handler
 	SignedRefresh http.Handler
+	SignedRedeem  http.Handler
 }
 
 // MountPoint holds information about the mounted endpoints.
@@ -61,27 +65,35 @@ func New(
 		Mounts: []*MountPoint{
 			{"Code", "POST", "/code"},
 			{"Refresh", "POST", "/refresh"},
+			{"Redeem", "POST", "/redeem"},
 			{"Basic", "POST", "/basic"},
 			{"BasicCode", "POST", "/basic_code"},
 			{"BasicRefresh", "POST", "/basic_refresh"},
+			{"BasicRedeem", "POST", "/basic_redeem"},
 			{"Secret", "POST", "/secret"},
 			{"SecretCode", "POST", "/secret_code"},
 			{"SecretRefresh", "POST", "/secret_refresh"},
+			{"SecretRedeem", "POST", "/secret_redeem"},
 			{"Assertion", "POST", "/assertion"},
 			{"SignedCode", "POST", "/signed_code"},
 			{"SignedRefresh", "POST", "/signed_refresh"},
+			{"SignedRedeem", "POST", "/signed_redeem"},
 		},
 		Code:          NewCodeHandler(e.Code, mux, decoder, encoder, errhandler, formatter),
 		Refresh:       NewRefreshHandler(e.Refresh, mux, decoder, encoder, errhandler, formatter),
+		Redeem:        NewRedeemHandler(e.Redeem, mux, decoder, encoder, errhandler, formatter),
 		Basic:         NewBasicHandler(e.Basic, mux, decoder, encoder, errhandler, formatter),
 		BasicCode:     NewBasicCodeHandler(e.BasicCode, mux, decoder, encoder, errhandler, formatter),
 		BasicRefresh:  NewBasicRefreshHandler(e.BasicRefresh, mux, decoder, encoder, errhandler, formatter),
+		BasicRedeem:   NewBasicRedeemHandler(e.BasicRedeem, mux, decoder, encoder, errhandler, formatter),
 		Secret:        NewSecretHandler(e.Secret, mux, decoder, encoder, errhandler, formatter),
 		SecretCode:    NewSecretCodeHandler(e.SecretCode, mux, decoder, encoder, errhandler, formatter),
 		SecretRefresh: NewSecretRefreshHandler(e.SecretRefresh, mux, decoder, encoder, errhandler, formatter),
+		SecretRedeem:  NewSecretRedeemHandler(e.SecretRedeem, mux, decoder, encoder, errhandler, formatter),
 		Assertion:     NewAssertionHandler(e.Assertion, mux, decoder, encoder, errhandler, formatter),
 		SignedCode:    NewSignedCodeHandler(e.SignedCode, mux, decoder, encoder, errhandler, formatter),
 		SignedRefresh: NewSignedRefreshHandler(e.SignedRefresh, mux, decoder, encoder, errhandler, formatter),
+		SignedRedeem:  NewSignedRedeemHandler(e.SignedRedeem, mux, decoder, encoder, errhandler, formatter),
 	}
 }
 
@@ -92,15 +104,19 @@ func (s *Server) Service() string { return "access_tokens" }
 func (s *Server) Use(m func(http.Handler) http.Handler) {
 	s.Code = m(s.Code)
 	s.Refresh = m(s.Refresh)
+	s.Redeem = m(s.Redeem)
 	s.Basic = m(s.Basic)
 	s.BasicCode = m(s.BasicCode)
 	s.BasicRefresh = m(s.BasicRefresh)
+	s.BasicRedeem = m(s.BasicRedeem)
 	s.Secret = m(s.Secret)
 	s.SecretCode = m(s.SecretCode)
 	s.SecretRefresh = m(s.SecretRefresh)
+	s.SecretRedeem = m(s.SecretRedeem)
 	s.Assertion = m(s.Assertion)
 	s.SignedCode = m(s.SignedCode)
 	s.SignedRefresh = m(s.SignedRefresh)
+	s.SignedRedeem = m(s.SignedRedeem)
 }
 
 // MethodNames returns the methods served.
@@ -110,15 +126,19 @@ func (s *Server) MethodNames() []string { return accesstokens.MethodNames[:] }
 func Mount(mux goahttp.Muxer, h *Server) {
 	MountCodeHandler(mux, h.Code)
 	MountRefreshHandler(mux, h.Refresh)
+	MountRedeemHandler(mux, h.Redeem)
 	MountBasicHandler(mux, h.Basic)
 	MountBasicCodeHandler(mux, h.BasicCode)
 	MountBasicRefreshHandler(mux, h.BasicRefresh)
+	MountBasicRedeemHandler(mux, h.BasicRedeem)
 	MountSecretHandler(mux, h.Secret)
 	MountSecretCodeHandler(mux, h.SecretCode)
 	MountSecretRefreshHandler(mux, h.SecretRefresh)
+	MountSecretRedeemHandler(mux, h.SecretRedeem)
 	MountAssertionHandler(mux, h.Assertion)
 	MountSignedCodeHandler(mux, h.SignedCode)
 	MountSignedRefreshHandler(mux, h.SignedRefresh)
+	MountSignedRedeemHandler(mux, h.SignedRedeem)
 }
 
 // Mount configures the mux to serve the access_tokens endpoints.
@@ -209,6 +229,59 @@ func NewRefreshHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "refresh")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountRedeemHandler configures the mux to serve the "access_tokens" service
+// "redeem" endpoint.
+func MountRedeemHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/redeem", f)
+}
+
+// NewRedeemHandler creates a HTTP handler which loads the HTTP request and
+// calls the "access_tokens" service "redeem" endpoint.
+func NewRedeemHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeRedeemRequest(mux, decoder)
+		encodeResponse = EncodeRedeemResponse(encoder)
+		encodeError    = goahttp.ErrorEncoder(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "redeem")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
 		payload, err := decodeRequest(r)
 		if err != nil {
@@ -391,6 +464,59 @@ func NewBasicRefreshHandler(
 	})
 }
 
+// MountBasicRedeemHandler configures the mux to serve the "access_tokens"
+// service "basic_redeem" endpoint.
+func MountBasicRedeemHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/basic_redeem", f)
+}
+
+// NewBasicRedeemHandler creates a HTTP handler which loads the HTTP request
+// and calls the "access_tokens" service "basic_redeem" endpoint.
+func NewBasicRedeemHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeBasicRedeemRequest(mux, decoder)
+		encodeResponse = EncodeBasicRedeemResponse(encoder)
+		encodeError    = goahttp.ErrorEncoder(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "basic_redeem")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
 // MountSecretHandler configures the mux to serve the "access_tokens" service
 // "secret" endpoint.
 func MountSecretHandler(mux goahttp.Muxer, h http.Handler) {
@@ -550,6 +676,59 @@ func NewSecretRefreshHandler(
 	})
 }
 
+// MountSecretRedeemHandler configures the mux to serve the "access_tokens"
+// service "secret_redeem" endpoint.
+func MountSecretRedeemHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/secret_redeem", f)
+}
+
+// NewSecretRedeemHandler creates a HTTP handler which loads the HTTP request
+// and calls the "access_tokens" service "secret_redeem" endpoint.
+func NewSecretRedeemHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeSecretRedeemRequest(mux, decoder)
+		encodeResponse = EncodeSecretRedeemResponse(encoder)
+		encodeError    = goahttp.ErrorEncoder(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "secret_redeem")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
 // MountAssertionHandler configures the mux to serve the "access_tokens"
 // service "assertion" endpoint.
 func MountAssertionHandler(mux goahttp.Muxer, h http.Handler) {
@@ -686,6 +865,59 @@ func NewSignedRefreshHandler(
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
 		ctx = context.WithValue(ctx, goa.MethodKey, "signed_refresh")
+		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
+		payload, err := decodeRequest(r)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		res, err := endpoint(ctx, payload)
+		if err != nil {
+			if err := encodeError(ctx, w, err); err != nil && errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+			return
+		}
+		if err := encodeResponse(ctx, w, res); err != nil {
+			if errhandler != nil {
+				errhandler(ctx, w, err)
+			}
+		}
+	})
+}
+
+// MountSignedRedeemHandler configures the mux to serve the "access_tokens"
+// service "signed_redeem" endpoint.
+func MountSignedRedeemHandler(mux goahttp.Muxer, h http.Handler) {
+	f, ok := h.(http.HandlerFunc)
+	if !ok {
+		f = func(w http.ResponseWriter, r *http.Request) {
+			h.ServeHTTP(w, r)
+		}
+	}
+	mux.Handle("POST", "/signed_redeem", f)
+}
+
+// NewSignedRedeemHandler creates a HTTP handler which loads the HTTP request
+// and calls the "access_tokens" service "signed_redeem" endpoint.
+func NewSignedRedeemHandler(
+	endpoint goa.Endpoint,
+	mux goahttp.Muxer,
+	decoder func(*http.Request) goahttp.Decoder,
+	encoder func(context.Context, http.ResponseWriter) goahttp.Encoder,
+	errhandler func(context.Context, http.ResponseWriter, error),
+	formatter func(ctx context.Context, err error) goahttp.Statuser,
+) http.Handler {
+	var (
+		decodeRequest  = DecodeSignedRedeemRequest(mux, decoder)
+		encodeResponse = EncodeSignedRedeemResponse(encoder)
+		encodeError    = goahttp.ErrorEncoder(encoder, formatter)
+	)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), goahttp.AcceptTypeKey, r.Header.Get("Accept"))
+		ctx = context.WithValue(ctx, goa.MethodKey, "signed_redeem")
 		ctx = context.WithValue(ctx, goa.ServiceKey, "access_tokens")
 		payload, err := decodeRequest(r)
 		if err != nil {

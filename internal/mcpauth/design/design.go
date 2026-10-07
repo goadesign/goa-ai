@@ -126,6 +126,8 @@ var _ = Service("issuer_metadata", func() {
 			Field(10, "token_endpoint_auth_signing_alg_values_supported", ArrayOf(String), "Signature algorithms accepted for signed client authentication; required only by a signed client profile", func() {
 				Elem(func() { MinLength(1) })
 			})
+			Field(11, "identity_chaining_requested_token_types_supported", ArrayOf(String), "Optional token purposes supported by identity chaining", func() { Elem(func() { MinLength(1) }) })
+			Field(12, "authorization_grant_profiles_supported", ArrayOf(String), "Optional authorization profiles; advertised identity grants require JWT-bearer support", func() { Elem(func() { MinLength(1) }) })
 			Required("issuer", "token_endpoint")
 		})
 		HTTP(func() { GET("/issuer") })
@@ -133,7 +135,7 @@ var _ = Service("issuer_metadata", func() {
 })
 
 var clientMetadata = Type("ClientMetadata", func() {
-	Description("Shared registration identity and browser grant fields; each metadata operation declares its own required authentication method.")
+	Description("Shared registration identity and permitted grant fields; each metadata operation declares its own required authentication method.")
 	Field(1, "client_id", String, "Exact HTTPS URL hosting this client document", func() { Format(FormatURI) })
 	Field(2, "client_name", String, "Client name shown by the issuer during consent", func() { MinLength(1) })
 	// The external metadata contract requires this property even when a client
@@ -141,7 +143,7 @@ var clientMetadata = Type("ClientMetadata", func() {
 	Field(3, "redirect_uris", ArrayOf(String), "Registered callbacks owned by the client host", func() {
 		Elem(func() { Format(FormatURI) })
 	})
-	Field(5, "grant_types", ArrayOf(String), "Registered grants including authorization code and optional refresh", func() {
+	Field(5, "grant_types", ArrayOf(String), "Grants registered for this application, including browser or enterprise exchanges", func() {
 		Default([]string{"authorization_code"})
 	})
 	Field(6, "response_types", ArrayOf(String), "Registered authorization responses", func() {
@@ -149,6 +151,7 @@ var clientMetadata = Type("ClientMetadata", func() {
 	})
 	Field(7, "client_secret", String, "Forbidden shared-secret registration member checked by the client")
 	Field(8, "client_secret_expires_at", Int64, "Forbidden shared-secret registration member checked by the client")
+	Field(11, "authorization_grant_profiles_supported", ArrayOf(String), "Optional registered authorization profiles; identity grants require both exchange and redemption grants", func() { Elem(func() { MinLength(1) }) })
 	Required("client_id", "client_name", "redirect_uris")
 })
 

@@ -38,6 +38,11 @@ type ReadResponseBody struct {
 	// Signature algorithms accepted for signed client authentication; required
 	// only by a signed client profile
 	TokenEndpointAuthSigningAlgValuesSupported []string `form:"token_endpoint_auth_signing_alg_values_supported,omitempty" json:"token_endpoint_auth_signing_alg_values_supported,omitempty" xml:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
+	// Optional token purposes supported by identity chaining
+	IdentityChainingRequestedTokenTypesSupported []string `form:"identity_chaining_requested_token_types_supported,omitempty" json:"identity_chaining_requested_token_types_supported,omitempty" xml:"identity_chaining_requested_token_types_supported,omitempty"`
+	// Optional authorization profiles; advertised identity grants require
+	// JWT-bearer support
+	AuthorizationGrantProfilesSupported []string `form:"authorization_grant_profiles_supported,omitempty" json:"authorization_grant_profiles_supported,omitempty" xml:"authorization_grant_profiles_supported,omitempty"`
 }
 
 // NewReadResultOK builds a "issuer_metadata" service "read" endpoint result
@@ -83,6 +88,18 @@ func NewReadResultOK(body *ReadResponseBody) *issuermetadata.ReadResult {
 			v.TokenEndpointAuthSigningAlgValuesSupported[i] = val
 		}
 	}
+	if body.IdentityChainingRequestedTokenTypesSupported != nil {
+		v.IdentityChainingRequestedTokenTypesSupported = make([]string, len(body.IdentityChainingRequestedTokenTypesSupported))
+		for i, val := range body.IdentityChainingRequestedTokenTypesSupported {
+			v.IdentityChainingRequestedTokenTypesSupported[i] = val
+		}
+	}
+	if body.AuthorizationGrantProfilesSupported != nil {
+		v.AuthorizationGrantProfilesSupported = make([]string, len(body.AuthorizationGrantProfilesSupported))
+		for i, val := range body.AuthorizationGrantProfilesSupported {
+			v.AuthorizationGrantProfilesSupported[i] = val
+		}
+	}
 
 	return v
 }
@@ -110,6 +127,16 @@ func ValidateReadResponseBody(body *ReadResponseBody) (err error) {
 	for _, e := range body.TokenEndpointAuthSigningAlgValuesSupported {
 		if utf8.RuneCountInString(e) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.token_endpoint_auth_signing_alg_values_supported[*]", e, utf8.RuneCountInString(e), 1, true))
+		}
+	}
+	for _, e := range body.IdentityChainingRequestedTokenTypesSupported {
+		if utf8.RuneCountInString(e) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.identity_chaining_requested_token_types_supported[*]", e, utf8.RuneCountInString(e), 1, true))
+		}
+	}
+	for _, e := range body.AuthorizationGrantProfilesSupported {
+		if utf8.RuneCountInString(e) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.authorization_grant_profiles_supported[*]", e, utf8.RuneCountInString(e), 1, true))
 		}
 	}
 	return

@@ -164,6 +164,126 @@ paths:
                 - http
             security:
                 - registration_credentials_header_Authorization: []
+    /basic_exchange:
+        post:
+            tags:
+                - identity_grants
+            summary: basic_exchange identity_grants
+            description: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.
+            operationId: identity_grants#basic_exchange
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: grant_type
+                  in: formData
+                  description: Fixed OAuth token-exchange grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:token-exchange
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:token-exchange
+                - name: subject_token
+                  in: formData
+                  description: Host-validated SSO identity or refresh credential
+                  required: true
+                  type: string
+                  minLength: 1
+                  pattern: ^[\x20-\x7e]+$
+                - name: audience
+                  in: formData
+                  description: Exact issuer identifier of the resource authorization server
+                  required: true
+                  type: string
+                  format: uri
+                - name: resource
+                  in: formData
+                  description: Exact MCP protected resource identifier
+                  required: true
+                  type: string
+                  format: uri
+                - name: scope
+                  in: formData
+                  description: Permissions requested for this MCP resource
+                  required: false
+                  type: string
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: subject_token_type
+                  in: formData
+                  description: The constructed identity owner supplies an ID token or identity refresh credential
+                  required: true
+                  type: string
+                  enum:
+                    - urn:ietf:params:oauth:token-type:id_token
+                    - urn:ietf:params:oauth:token-type:refresh_token
+                - name: requested_token_type
+                  in: formData
+                  description: Fixed identity grant response purpose
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:id-jag
+                  enum:
+                    - urn:ietf:params:oauth:token-type:id-jag
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/IdentityGrant'
+                        required:
+                            - issued_token_type
+                            - access_token
+                            - token_type
+            schemes:
+                - http
+            security:
+                - registration_credentials_header_Authorization: []
+    /basic_redeem:
+        post:
+            tags:
+                - access_tokens
+            summary: basic_redeem access_tokens
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
+            operationId: access_tokens#basic_redeem
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: resource
+                  in: formData
+                  description: Exact MCP resource for which the access token is requested
+                  required: true
+                  type: string
+                  format: uri
+                - name: assertion
+                  in: formData
+                  description: Signed identity authorization grant from the identity provider
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+                - name: scope
+                  in: formData
+                  description: Permissions requested within the identity provider's granted permissions
+                  required: false
+                  type: string
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: grant_type
+                  in: formData
+                  description: Fixed JWT authorization grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:jwt-bearer
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:jwt-bearer
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/BearerToken'
+                        required:
+                            - access_token
+                            - token_type
+            schemes:
+                - http
+            security:
+                - registration_credentials_header_Authorization: []
     /basic_refresh:
         post:
             tags:
@@ -201,6 +321,66 @@ paths:
                     schema:
                         $ref: '#/definitions/BearerToken'
                         required:
+                            - access_token
+                            - token_type
+            schemes:
+                - http
+            security:
+                - registration_credentials_header_Authorization: []
+    /basic_saml:
+        post:
+            tags:
+                - identity_grants
+            summary: basic_saml identity_grants
+            description: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.
+            operationId: identity_grants#basic_saml
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: subject_token_type
+                  in: formData
+                  description: Fixed host SSO credential kind for this exchange
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:saml2
+                  enum:
+                    - urn:ietf:params:oauth:token-type:saml2
+                - name: grant_type
+                  in: formData
+                  description: Fixed OAuth token-exchange grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:token-exchange
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:token-exchange
+                - name: subject_token
+                  in: formData
+                  description: Base64url-encoded SAML assertion already validated by the host
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+$
+                - name: scope
+                  in: formData
+                  description: SSO permissions requested for reusable identity credentials
+                  required: false
+                  type: string
+                  default: openid offline_access
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: requested_token_type
+                  in: formData
+                  description: Fixed identity refresh response purpose
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:refresh_token
+                  enum:
+                    - urn:ietf:params:oauth:token-type:refresh_token
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/IdentityRefresh'
+                        required:
+                            - issued_token_type
                             - access_token
                             - token_type
             schemes:
@@ -330,6 +510,82 @@ paths:
                             - token_type
             schemes:
                 - http
+    /exchange:
+        post:
+            tags:
+                - identity_grants
+            summary: exchange identity_grants
+            description: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.
+            operationId: identity_grants#exchange
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: client_id
+                  in: formData
+                  description: Registered public client identifier
+                  required: true
+                  type: string
+                  minLength: 1
+                - name: grant_type
+                  in: formData
+                  description: Fixed OAuth token-exchange grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:token-exchange
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:token-exchange
+                - name: subject_token
+                  in: formData
+                  description: Host-validated SSO identity or refresh credential
+                  required: true
+                  type: string
+                  minLength: 1
+                  pattern: ^[\x20-\x7e]+$
+                - name: audience
+                  in: formData
+                  description: Exact issuer identifier of the resource authorization server
+                  required: true
+                  type: string
+                  format: uri
+                - name: resource
+                  in: formData
+                  description: Exact MCP protected resource identifier
+                  required: true
+                  type: string
+                  format: uri
+                - name: scope
+                  in: formData
+                  description: Permissions requested for this MCP resource
+                  required: false
+                  type: string
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: subject_token_type
+                  in: formData
+                  description: The constructed identity owner supplies an ID token or identity refresh credential
+                  required: true
+                  type: string
+                  enum:
+                    - urn:ietf:params:oauth:token-type:id_token
+                    - urn:ietf:params:oauth:token-type:refresh_token
+                - name: requested_token_type
+                  in: formData
+                  description: Fixed identity grant response purpose
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:id-jag
+                  enum:
+                    - urn:ietf:params:oauth:token-type:id-jag
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/IdentityGrant'
+                        required:
+                            - issued_token_type
+                            - access_token
+                            - token_type
+            schemes:
+                - http
     /introspect:
         post:
             tags:
@@ -402,6 +658,58 @@ paths:
                             - redirect_uris
             schemes:
                 - http
+    /redeem:
+        post:
+            tags:
+                - access_tokens
+            summary: redeem access_tokens
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
+            operationId: access_tokens#redeem
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: client_id
+                  in: formData
+                  description: Registered public client identifier
+                  required: true
+                  type: string
+                  minLength: 1
+                - name: resource
+                  in: formData
+                  description: Exact MCP resource for which the access token is requested
+                  required: true
+                  type: string
+                  format: uri
+                - name: assertion
+                  in: formData
+                  description: Signed identity authorization grant from the identity provider
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+                - name: scope
+                  in: formData
+                  description: Permissions requested within the identity provider's granted permissions
+                  required: false
+                  type: string
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: grant_type
+                  in: formData
+                  description: Fixed JWT authorization grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:jwt-bearer
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:jwt-bearer
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/BearerToken'
+                        required:
+                            - access_token
+                            - token_type
+            schemes:
+                - http
     /refresh:
         post:
             tags:
@@ -464,6 +772,70 @@ paths:
                         required:
                             - resource
                             - authorization_servers
+            schemes:
+                - http
+    /saml:
+        post:
+            tags:
+                - identity_grants
+            summary: saml identity_grants
+            description: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.
+            operationId: identity_grants#saml
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: subject_token_type
+                  in: formData
+                  description: Fixed host SSO credential kind for this exchange
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:saml2
+                  enum:
+                    - urn:ietf:params:oauth:token-type:saml2
+                - name: client_id
+                  in: formData
+                  description: Registered public client identifier
+                  required: true
+                  type: string
+                  minLength: 1
+                - name: grant_type
+                  in: formData
+                  description: Fixed OAuth token-exchange grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:token-exchange
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:token-exchange
+                - name: subject_token
+                  in: formData
+                  description: Base64url-encoded SAML assertion already validated by the host
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+$
+                - name: scope
+                  in: formData
+                  description: SSO permissions requested for reusable identity credentials
+                  required: false
+                  type: string
+                  default: openid offline_access
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: requested_token_type
+                  in: formData
+                  description: Fixed identity refresh response purpose
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:refresh_token
+                  enum:
+                    - urn:ietf:params:oauth:token-type:refresh_token
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/IdentityRefresh'
+                        required:
+                            - issued_token_type
+                            - access_token
+                            - token_type
             schemes:
                 - http
     /secret:
@@ -583,6 +955,146 @@ paths:
                             - token_type
             schemes:
                 - http
+    /secret_exchange:
+        post:
+            tags:
+                - identity_grants
+            summary: secret_exchange identity_grants
+            description: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.
+            operationId: identity_grants#secret_exchange
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: client_id
+                  in: formData
+                  description: Registered client identifier
+                  required: true
+                  type: string
+                  minLength: 1
+                - name: client_secret
+                  in: formData
+                  description: Secret registered with this authorization server
+                  required: true
+                  type: string
+                  minLength: 1
+                - name: grant_type
+                  in: formData
+                  description: Fixed OAuth token-exchange grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:token-exchange
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:token-exchange
+                - name: subject_token
+                  in: formData
+                  description: Host-validated SSO identity or refresh credential
+                  required: true
+                  type: string
+                  minLength: 1
+                  pattern: ^[\x20-\x7e]+$
+                - name: audience
+                  in: formData
+                  description: Exact issuer identifier of the resource authorization server
+                  required: true
+                  type: string
+                  format: uri
+                - name: resource
+                  in: formData
+                  description: Exact MCP protected resource identifier
+                  required: true
+                  type: string
+                  format: uri
+                - name: scope
+                  in: formData
+                  description: Permissions requested for this MCP resource
+                  required: false
+                  type: string
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: subject_token_type
+                  in: formData
+                  description: The constructed identity owner supplies an ID token or identity refresh credential
+                  required: true
+                  type: string
+                  enum:
+                    - urn:ietf:params:oauth:token-type:id_token
+                    - urn:ietf:params:oauth:token-type:refresh_token
+                - name: requested_token_type
+                  in: formData
+                  description: Fixed identity grant response purpose
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:id-jag
+                  enum:
+                    - urn:ietf:params:oauth:token-type:id-jag
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/IdentityGrant'
+                        required:
+                            - issued_token_type
+                            - access_token
+                            - token_type
+            schemes:
+                - http
+    /secret_redeem:
+        post:
+            tags:
+                - access_tokens
+            summary: secret_redeem access_tokens
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
+            operationId: access_tokens#secret_redeem
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: client_id
+                  in: formData
+                  description: Registered client identifier
+                  required: true
+                  type: string
+                  minLength: 1
+                - name: client_secret
+                  in: formData
+                  description: Secret registered with this authorization server
+                  required: true
+                  type: string
+                  minLength: 1
+                - name: resource
+                  in: formData
+                  description: Exact MCP resource for which the access token is requested
+                  required: true
+                  type: string
+                  format: uri
+                - name: assertion
+                  in: formData
+                  description: Signed identity authorization grant from the identity provider
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+                - name: scope
+                  in: formData
+                  description: Permissions requested within the identity provider's granted permissions
+                  required: false
+                  type: string
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: grant_type
+                  in: formData
+                  description: Fixed JWT authorization grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:jwt-bearer
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:jwt-bearer
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/BearerToken'
+                        required:
+                            - access_token
+                            - token_type
+            schemes:
+                - http
     /secret_refresh:
         post:
             tags:
@@ -632,6 +1144,76 @@ paths:
                     schema:
                         $ref: '#/definitions/BearerToken'
                         required:
+                            - access_token
+                            - token_type
+            schemes:
+                - http
+    /secret_saml:
+        post:
+            tags:
+                - identity_grants
+            summary: secret_saml identity_grants
+            description: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.
+            operationId: identity_grants#secret_saml
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: subject_token_type
+                  in: formData
+                  description: Fixed host SSO credential kind for this exchange
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:saml2
+                  enum:
+                    - urn:ietf:params:oauth:token-type:saml2
+                - name: client_id
+                  in: formData
+                  description: Registered client identifier
+                  required: true
+                  type: string
+                  minLength: 1
+                - name: client_secret
+                  in: formData
+                  description: Secret registered with this authorization server
+                  required: true
+                  type: string
+                  minLength: 1
+                - name: grant_type
+                  in: formData
+                  description: Fixed OAuth token-exchange grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:token-exchange
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:token-exchange
+                - name: subject_token
+                  in: formData
+                  description: Base64url-encoded SAML assertion already validated by the host
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+$
+                - name: scope
+                  in: formData
+                  description: SSO permissions requested for reusable identity credentials
+                  required: false
+                  type: string
+                  default: openid offline_access
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: requested_token_type
+                  in: formData
+                  description: Fixed identity refresh response purpose
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:refresh_token
+                  enum:
+                    - urn:ietf:params:oauth:token-type:refresh_token
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/IdentityRefresh'
+                        required:
+                            - issued_token_type
                             - access_token
                             - token_type
             schemes:
@@ -703,6 +1285,90 @@ paths:
                             - token_type
             schemes:
                 - http
+    /signed_exchange:
+        post:
+            tags:
+                - identity_grants
+            summary: signed_exchange identity_grants
+            description: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.
+            operationId: identity_grants#signed_exchange
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: client_assertion
+                  in: formData
+                  description: Signed compact JWT identifying the registered client
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+                - name: client_assertion_type
+                  in: formData
+                  description: JWT client authentication selected by this operation
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                  enum:
+                    - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                - name: grant_type
+                  in: formData
+                  description: Fixed OAuth token-exchange grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:token-exchange
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:token-exchange
+                - name: subject_token
+                  in: formData
+                  description: Host-validated SSO identity or refresh credential
+                  required: true
+                  type: string
+                  minLength: 1
+                  pattern: ^[\x20-\x7e]+$
+                - name: audience
+                  in: formData
+                  description: Exact issuer identifier of the resource authorization server
+                  required: true
+                  type: string
+                  format: uri
+                - name: resource
+                  in: formData
+                  description: Exact MCP protected resource identifier
+                  required: true
+                  type: string
+                  format: uri
+                - name: scope
+                  in: formData
+                  description: Permissions requested for this MCP resource
+                  required: false
+                  type: string
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: subject_token_type
+                  in: formData
+                  description: The constructed identity owner supplies an ID token or identity refresh credential
+                  required: true
+                  type: string
+                  enum:
+                    - urn:ietf:params:oauth:token-type:id_token
+                    - urn:ietf:params:oauth:token-type:refresh_token
+                - name: requested_token_type
+                  in: formData
+                  description: Fixed identity grant response purpose
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:id-jag
+                  enum:
+                    - urn:ietf:params:oauth:token-type:id-jag
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/IdentityGrant'
+                        required:
+                            - issued_token_type
+                            - access_token
+                            - token_type
+            schemes:
+                - http
     /signed_read:
         get:
             tags:
@@ -720,6 +1386,66 @@ paths:
                             - client_id
                             - client_name
                             - redirect_uris
+            schemes:
+                - http
+    /signed_redeem:
+        post:
+            tags:
+                - access_tokens
+            summary: signed_redeem access_tokens
+            description: Complete the selected user grant with this registration's required authentication and the original resource binding.
+            operationId: access_tokens#signed_redeem
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: client_assertion
+                  in: formData
+                  description: Signed compact JWT identifying the registered client
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+                - name: client_assertion_type
+                  in: formData
+                  description: JWT client authentication selected by this operation
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                  enum:
+                    - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                - name: resource
+                  in: formData
+                  description: Exact MCP resource for which the access token is requested
+                  required: true
+                  type: string
+                  format: uri
+                - name: assertion
+                  in: formData
+                  description: Signed identity authorization grant from the identity provider
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+                - name: scope
+                  in: formData
+                  description: Permissions requested within the identity provider's granted permissions
+                  required: false
+                  type: string
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: grant_type
+                  in: formData
+                  description: Fixed JWT authorization grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:jwt-bearer
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:jwt-bearer
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/BearerToken'
+                        required:
+                            - access_token
+                            - token_type
             schemes:
                 - http
     /signed_refresh:
@@ -773,6 +1499,78 @@ paths:
                     schema:
                         $ref: '#/definitions/BearerToken'
                         required:
+                            - access_token
+                            - token_type
+            schemes:
+                - http
+    /signed_saml:
+        post:
+            tags:
+                - identity_grants
+            summary: signed_saml identity_grants
+            description: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.
+            operationId: identity_grants#signed_saml
+            consumes:
+                - application/x-www-form-urlencoded
+            parameters:
+                - name: subject_token_type
+                  in: formData
+                  description: Fixed host SSO credential kind for this exchange
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:saml2
+                  enum:
+                    - urn:ietf:params:oauth:token-type:saml2
+                - name: client_assertion
+                  in: formData
+                  description: Signed compact JWT identifying the registered client
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+                - name: client_assertion_type
+                  in: formData
+                  description: JWT client authentication selected by this operation
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                  enum:
+                    - urn:ietf:params:oauth:client-assertion-type:jwt-bearer
+                - name: grant_type
+                  in: formData
+                  description: Fixed OAuth token-exchange grant
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:grant-type:token-exchange
+                  enum:
+                    - urn:ietf:params:oauth:grant-type:token-exchange
+                - name: subject_token
+                  in: formData
+                  description: Base64url-encoded SAML assertion already validated by the host
+                  required: true
+                  type: string
+                  pattern: ^[A-Za-z0-9_-]+$
+                - name: scope
+                  in: formData
+                  description: SSO permissions requested for reusable identity credentials
+                  required: false
+                  type: string
+                  default: openid offline_access
+                  pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+                - name: requested_token_type
+                  in: formData
+                  description: Fixed identity refresh response purpose
+                  required: false
+                  type: string
+                  default: urn:ietf:params:oauth:token-type:refresh_token
+                  enum:
+                    - urn:ietf:params:oauth:token-type:refresh_token
+            responses:
+                "200":
+                    description: OK response.
+                    schema:
+                        $ref: '#/definitions/IdentityRefresh'
+                        required:
+                            - issued_token_type
                             - access_token
                             - token_type
             schemes:
@@ -889,6 +1687,15 @@ definitions:
         title: ClientMetadataReadResponseBody
         type: object
         properties:
+            authorization_grant_profiles_supported:
+                type: array
+                items:
+                    type: string
+                    example: qq
+                    minLength: 1
+                description: Optional registered authorization profiles; identity grants require both exchange and redemption grants
+                example:
+                    - qq
             client_id:
                 type: string
                 description: Exact HTTPS URL hosting this client document
@@ -913,7 +1720,7 @@ definitions:
                 items:
                     type: string
                     example: Accusamus deserunt.
-                description: Registered grants including authorization code and optional refresh
+                description: Grants registered for this application, including browser or enterprise exchanges
                 default:
                     - authorization_code
                 example:
@@ -948,6 +1755,8 @@ definitions:
                 enum:
                     - none
         example:
+            authorization_grant_profiles_supported:
+                - qq
             client_id: http://conroy.name/eden_prohaska
             client_name: 9s
             client_secret: Aut ea facilis vitae excepturi.
@@ -972,6 +1781,15 @@ definitions:
         title: ClientMetadataSignedReadResponseBody
         type: object
         properties:
+            authorization_grant_profiles_supported:
+                type: array
+                items:
+                    type: string
+                    example: hgl
+                    minLength: 1
+                description: Optional registered authorization profiles; identity grants require both exchange and redemption grants
+                example:
+                    - hgl
             client_id:
                 type: string
                 description: Exact HTTPS URL hosting this client document
@@ -996,7 +1814,7 @@ definitions:
                 items:
                     type: string
                     example: Voluptas non non dolore.
-                description: Registered grants including authorization code and optional refresh
+                description: Grants registered for this application, including browser or enterprise exchanges
                 default:
                     - authorization_code
                 example:
@@ -1044,6 +1862,8 @@ definitions:
                 enum:
                     - private_key_jwt
         example:
+            authorization_grant_profiles_supported:
+                - hgl
             client_id: http://mills.com/cameron
             client_name: ct
             client_secret: Natus ducimus.
@@ -1071,6 +1891,100 @@ definitions:
             - client_id
             - client_name
             - redirect_uris
+    IdentityGrant:
+        title: IdentityGrant
+        type: object
+        properties:
+            access_token:
+                type: string
+                description: Signed compact identity authorization grant for the resource issuer
+                example: T.17.cx
+                pattern: ^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$
+            expires_in:
+                type: integer
+                description: Exclusive grant lifetime in seconds from its token exchange
+                example: 3609667011698477653
+                format: int64
+                minimum: 0
+            issued_token_type:
+                type: string
+                description: Required identity authorization grant purpose
+                example: urn:ietf:params:oauth:token-type:id-jag
+                enum:
+                    - urn:ietf:params:oauth:token-type:id-jag
+            refresh_token:
+                type: string
+                description: Optional issuer credential that this identity-grant response does not retain
+                example: pmq
+                pattern: ^[\x20-\x7e]+$
+                minLength: 1
+            scope:
+                type: string
+                description: Permissions allowed by the identity provider for the requested MCP resource
+                example: 41 ?5 _
+                pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+            token_type:
+                type: string
+                description: No HTTP bearer usage is permitted for this grant
+                example: N_A
+                enum:
+                    - N_A
+        description: A signed authorization grant issued by the identity provider for redemption at the resource issuer; it is never an MCP bearer token.
+        example:
+            access_token: T.17.cx
+            expires_in: 3609667011698477653
+            issued_token_type: urn:ietf:params:oauth:token-type:id-jag
+            refresh_token: pmq
+            scope: 41 ?5 _
+            token_type: N_A
+        required:
+            - issued_token_type
+            - access_token
+            - token_type
+    IdentityRefresh:
+        title: IdentityRefresh
+        type: object
+        properties:
+            access_token:
+                type: string
+                description: Opaque identity refresh credential carried in the token-exchange response field
+                example: 8s
+                pattern: ^[\x20-\x7e]+$
+                minLength: 1
+            expires_in:
+                type: integer
+                description: Exclusive identity refresh lifetime in seconds when the issuer reports it
+                example: 7108143979867369890
+                format: int64
+                minimum: 0
+            issued_token_type:
+                type: string
+                description: Required identity refresh credential purpose
+                example: urn:ietf:params:oauth:token-type:refresh_token
+                enum:
+                    - urn:ietf:params:oauth:token-type:refresh_token
+            scope:
+                type: string
+                description: SSO permissions issued for identity refresh, separate from MCP permissions
+                example: d m
+                pattern: ^[\x21\x23-\x5b\x5d-\x7e]+( [\x21\x23-\x5b\x5d-\x7e]+)*$
+            token_type:
+                type: string
+                description: No HTTP bearer usage is permitted for this identity credential
+                example: N_A
+                enum:
+                    - N_A
+        description: An identity-provider refresh credential obtained from a SAML assertion; the user identity owner retains it across MCP resources.
+        example:
+            access_token: 8s
+            expires_in: 7108143979867369890
+            issued_token_type: urn:ietf:params:oauth:token-type:refresh_token
+            scope: d m
+            token_type: N_A
+        required:
+            - issued_token_type
+            - access_token
+            - token_type
     IssuerMetadataReadResponseBody:
         title: IssuerMetadataReadResponseBody
         type: object
@@ -1080,6 +1994,17 @@ definitions:
                 description: HTTPS endpoint for user sign-in and consent
                 example: http://haley.biz/ayden
                 format: uri
+            authorization_grant_profiles_supported:
+                type: array
+                items:
+                    type: string
+                    example: 6d
+                    minLength: 1
+                description: Optional authorization profiles; advertised identity grants require JWT-bearer support
+                example:
+                    - 6d
+                    - fp7
+                    - 5v
             authorization_response_iss_parameter_supported:
                 type: boolean
                 description: Whether every authorization response must identify its issuer
@@ -1111,6 +2036,16 @@ definitions:
                     - Laboriosam itaque laudantium.
                     - Sed laboriosam voluptatibus earum autem doloremque natus.
                     - Similique vel est.
+            identity_chaining_requested_token_types_supported:
+                type: array
+                items:
+                    type: string
+                    example: 8h
+                    minLength: 1
+                description: Optional token purposes supported by identity chaining
+                example:
+                    - 8h
+                    - j0m
             issuer:
                 type: string
                 description: Exact identifier of the authorization server
@@ -1155,6 +2090,10 @@ definitions:
                     - "4"
         example:
             authorization_endpoint: http://haley.biz/ayden
+            authorization_grant_profiles_supported:
+                - 6d
+                - fp7
+                - 5v
             authorization_response_iss_parameter_supported: true
             client_id_metadata_document_supported: false
             code_challenge_methods_supported:
@@ -1165,6 +2104,9 @@ definitions:
                 - Laboriosam itaque laudantium.
                 - Sed laboriosam voluptatibus earum autem doloremque natus.
                 - Similique vel est.
+            identity_chaining_requested_token_types_supported:
+                - 8h
+                - j0m
             issuer: http://connelly.com/jane.volkman
             scopes_supported:
                 - 2a

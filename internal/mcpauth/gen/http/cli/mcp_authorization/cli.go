@@ -17,6 +17,7 @@ import (
 	accesstokensc "goa.design/goa-ai/internal/mcpauth/gen/http/access_tokens/client"
 	authorizationresponsesc "goa.design/goa-ai/internal/mcpauth/gen/http/authorization_responses/client"
 	clientmetadatac "goa.design/goa-ai/internal/mcpauth/gen/http/client_metadata/client"
+	identitygrantsc "goa.design/goa-ai/internal/mcpauth/gen/http/identity_grants/client"
 	issuermetadatac "goa.design/goa-ai/internal/mcpauth/gen/http/issuer_metadata/client"
 	resourcemetadatac "goa.design/goa-ai/internal/mcpauth/gen/http/resource_metadata/client"
 	tokenintrospectionc "goa.design/goa-ai/internal/mcpauth/gen/http/token_introspection/client"
@@ -35,7 +36,8 @@ func UsageCommands() []string {
 		"issuer-metadata read",
 		"client-metadata (read|signed-read)",
 		"authorization-responses receive",
-		"access-tokens (code|refresh|basic|basic-code|basic-refresh|secret|secret-code|secret-refresh|assertion|signed-code|signed-refresh)",
+		"identity-grants (exchange|saml|basic-exchange|basic-saml|secret-exchange|secret-saml|signed-exchange|signed-saml)",
+		"access-tokens (code|refresh|redeem|basic|basic-code|basic-refresh|basic-redeem|secret|secret-code|secret-refresh|secret-redeem|assertion|signed-code|signed-refresh|signed-redeem)",
 	}
 }
 
@@ -112,6 +114,36 @@ func ParseEndpoint(
 		authorizationResponsesReceiveStateFlag  = new(cliStringFlag)
 		authorizationResponsesReceiveIssuerFlag = new(cliStringFlag)
 
+		identityGrantsFlags = flag.NewFlagSet("identity-grants", flag.ContinueOnError)
+
+		identityGrantsExchangeFlags    = flag.NewFlagSet("exchange", flag.ExitOnError)
+		identityGrantsExchangeBodyFlag = new(cliStringFlag)
+
+		identityGrantsSamlFlags    = flag.NewFlagSet("saml", flag.ExitOnError)
+		identityGrantsSamlBodyFlag = new(cliStringFlag)
+
+		identityGrantsBasicExchangeFlags            = flag.NewFlagSet("basic-exchange", flag.ExitOnError)
+		identityGrantsBasicExchangeBodyFlag         = new(cliStringFlag)
+		identityGrantsBasicExchangeClientIDFlag     = new(cliStringFlag)
+		identityGrantsBasicExchangeClientSecretFlag = new(cliStringFlag)
+
+		identityGrantsBasicSamlFlags            = flag.NewFlagSet("basic-saml", flag.ExitOnError)
+		identityGrantsBasicSamlBodyFlag         = new(cliStringFlag)
+		identityGrantsBasicSamlClientIDFlag     = new(cliStringFlag)
+		identityGrantsBasicSamlClientSecretFlag = new(cliStringFlag)
+
+		identityGrantsSecretExchangeFlags    = flag.NewFlagSet("secret-exchange", flag.ExitOnError)
+		identityGrantsSecretExchangeBodyFlag = new(cliStringFlag)
+
+		identityGrantsSecretSamlFlags    = flag.NewFlagSet("secret-saml", flag.ExitOnError)
+		identityGrantsSecretSamlBodyFlag = new(cliStringFlag)
+
+		identityGrantsSignedExchangeFlags    = flag.NewFlagSet("signed-exchange", flag.ExitOnError)
+		identityGrantsSignedExchangeBodyFlag = new(cliStringFlag)
+
+		identityGrantsSignedSamlFlags    = flag.NewFlagSet("signed-saml", flag.ExitOnError)
+		identityGrantsSignedSamlBodyFlag = new(cliStringFlag)
+
 		accessTokensFlags = flag.NewFlagSet("access-tokens", flag.ContinueOnError)
 
 		accessTokensCodeFlags    = flag.NewFlagSet("code", flag.ExitOnError)
@@ -119,6 +151,9 @@ func ParseEndpoint(
 
 		accessTokensRefreshFlags    = flag.NewFlagSet("refresh", flag.ExitOnError)
 		accessTokensRefreshBodyFlag = new(cliStringFlag)
+
+		accessTokensRedeemFlags    = flag.NewFlagSet("redeem", flag.ExitOnError)
+		accessTokensRedeemBodyFlag = new(cliStringFlag)
 
 		accessTokensBasicFlags            = flag.NewFlagSet("basic", flag.ExitOnError)
 		accessTokensBasicBodyFlag         = new(cliStringFlag)
@@ -135,6 +170,11 @@ func ParseEndpoint(
 		accessTokensBasicRefreshClientIDFlag     = new(cliStringFlag)
 		accessTokensBasicRefreshClientSecretFlag = new(cliStringFlag)
 
+		accessTokensBasicRedeemFlags            = flag.NewFlagSet("basic-redeem", flag.ExitOnError)
+		accessTokensBasicRedeemBodyFlag         = new(cliStringFlag)
+		accessTokensBasicRedeemClientIDFlag     = new(cliStringFlag)
+		accessTokensBasicRedeemClientSecretFlag = new(cliStringFlag)
+
 		accessTokensSecretFlags    = flag.NewFlagSet("secret", flag.ExitOnError)
 		accessTokensSecretBodyFlag = new(cliStringFlag)
 
@@ -144,6 +184,9 @@ func ParseEndpoint(
 		accessTokensSecretRefreshFlags    = flag.NewFlagSet("secret-refresh", flag.ExitOnError)
 		accessTokensSecretRefreshBodyFlag = new(cliStringFlag)
 
+		accessTokensSecretRedeemFlags    = flag.NewFlagSet("secret-redeem", flag.ExitOnError)
+		accessTokensSecretRedeemBodyFlag = new(cliStringFlag)
+
 		accessTokensAssertionFlags    = flag.NewFlagSet("assertion", flag.ExitOnError)
 		accessTokensAssertionBodyFlag = new(cliStringFlag)
 
@@ -152,6 +195,9 @@ func ParseEndpoint(
 
 		accessTokensSignedRefreshFlags    = flag.NewFlagSet("signed-refresh", flag.ExitOnError)
 		accessTokensSignedRefreshBodyFlag = new(cliStringFlag)
+
+		accessTokensSignedRedeemFlags    = flag.NewFlagSet("signed-redeem", flag.ExitOnError)
+		accessTokensSignedRedeemBodyFlag = new(cliStringFlag)
 	)
 	accessTokenClaimsDecodeFlags.Var(accessTokenClaimsDecodeBodyFlag, "body", "")
 	tokenIntrospectionReadFlags.Var(tokenIntrospectionReadBodyFlag, "body", "")
@@ -161,8 +207,21 @@ func ParseEndpoint(
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveErrorFlag, "error", "")
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveStateFlag, "state", "")
 	authorizationResponsesReceiveFlags.Var(authorizationResponsesReceiveIssuerFlag, "issuer", "")
+	identityGrantsExchangeFlags.Var(identityGrantsExchangeBodyFlag, "body", "")
+	identityGrantsSamlFlags.Var(identityGrantsSamlBodyFlag, "body", "")
+	identityGrantsBasicExchangeFlags.Var(identityGrantsBasicExchangeBodyFlag, "body", "")
+	identityGrantsBasicExchangeFlags.Var(identityGrantsBasicExchangeClientIDFlag, "client-id", "Individually form-encoded client identifier for the Basic header")
+	identityGrantsBasicExchangeFlags.Var(identityGrantsBasicExchangeClientSecretFlag, "client-secret", "Individually form-encoded secret for the Basic header")
+	identityGrantsBasicSamlFlags.Var(identityGrantsBasicSamlBodyFlag, "body", "")
+	identityGrantsBasicSamlFlags.Var(identityGrantsBasicSamlClientIDFlag, "client-id", "Individually form-encoded client identifier for the Basic header")
+	identityGrantsBasicSamlFlags.Var(identityGrantsBasicSamlClientSecretFlag, "client-secret", "Individually form-encoded secret for the Basic header")
+	identityGrantsSecretExchangeFlags.Var(identityGrantsSecretExchangeBodyFlag, "body", "")
+	identityGrantsSecretSamlFlags.Var(identityGrantsSecretSamlBodyFlag, "body", "")
+	identityGrantsSignedExchangeFlags.Var(identityGrantsSignedExchangeBodyFlag, "body", "")
+	identityGrantsSignedSamlFlags.Var(identityGrantsSignedSamlBodyFlag, "body", "")
 	accessTokensCodeFlags.Var(accessTokensCodeBodyFlag, "body", "")
 	accessTokensRefreshFlags.Var(accessTokensRefreshBodyFlag, "body", "")
+	accessTokensRedeemFlags.Var(accessTokensRedeemBodyFlag, "body", "")
 	accessTokensBasicFlags.Var(accessTokensBasicBodyFlag, "body", "")
 	accessTokensBasicFlags.Var(accessTokensBasicClientIDFlag, "client-id", "Individually form-encoded client identifier for the Basic header")
 	accessTokensBasicFlags.Var(accessTokensBasicClientSecretFlag, "client-secret", "Individually form-encoded secret for the Basic header")
@@ -172,12 +231,17 @@ func ParseEndpoint(
 	accessTokensBasicRefreshFlags.Var(accessTokensBasicRefreshBodyFlag, "body", "")
 	accessTokensBasicRefreshFlags.Var(accessTokensBasicRefreshClientIDFlag, "client-id", "Individually form-encoded client identifier for the Basic header")
 	accessTokensBasicRefreshFlags.Var(accessTokensBasicRefreshClientSecretFlag, "client-secret", "Individually form-encoded secret for the Basic header")
+	accessTokensBasicRedeemFlags.Var(accessTokensBasicRedeemBodyFlag, "body", "")
+	accessTokensBasicRedeemFlags.Var(accessTokensBasicRedeemClientIDFlag, "client-id", "Individually form-encoded client identifier for the Basic header")
+	accessTokensBasicRedeemFlags.Var(accessTokensBasicRedeemClientSecretFlag, "client-secret", "Individually form-encoded secret for the Basic header")
 	accessTokensSecretFlags.Var(accessTokensSecretBodyFlag, "body", "")
 	accessTokensSecretCodeFlags.Var(accessTokensSecretCodeBodyFlag, "body", "")
 	accessTokensSecretRefreshFlags.Var(accessTokensSecretRefreshBodyFlag, "body", "")
+	accessTokensSecretRedeemFlags.Var(accessTokensSecretRedeemBodyFlag, "body", "")
 	accessTokensAssertionFlags.Var(accessTokensAssertionBodyFlag, "body", "")
 	accessTokensSignedCodeFlags.Var(accessTokensSignedCodeBodyFlag, "body", "")
 	accessTokensSignedRefreshFlags.Var(accessTokensSignedRefreshBodyFlag, "body", "")
+	accessTokensSignedRedeemFlags.Var(accessTokensSignedRedeemBodyFlag, "body", "")
 
 	accessTokenClaimsFlags.Usage = accessTokenClaimsUsage
 	accessTokenClaimsDecodeFlags.Usage = accessTokenClaimsDecodeUsage
@@ -198,18 +262,32 @@ func ParseEndpoint(
 	authorizationResponsesFlags.Usage = authorizationResponsesUsage
 	authorizationResponsesReceiveFlags.Usage = authorizationResponsesReceiveUsage
 
+	identityGrantsFlags.Usage = identityGrantsUsage
+	identityGrantsExchangeFlags.Usage = identityGrantsExchangeUsage
+	identityGrantsSamlFlags.Usage = identityGrantsSamlUsage
+	identityGrantsBasicExchangeFlags.Usage = identityGrantsBasicExchangeUsage
+	identityGrantsBasicSamlFlags.Usage = identityGrantsBasicSamlUsage
+	identityGrantsSecretExchangeFlags.Usage = identityGrantsSecretExchangeUsage
+	identityGrantsSecretSamlFlags.Usage = identityGrantsSecretSamlUsage
+	identityGrantsSignedExchangeFlags.Usage = identityGrantsSignedExchangeUsage
+	identityGrantsSignedSamlFlags.Usage = identityGrantsSignedSamlUsage
+
 	accessTokensFlags.Usage = accessTokensUsage
 	accessTokensCodeFlags.Usage = accessTokensCodeUsage
 	accessTokensRefreshFlags.Usage = accessTokensRefreshUsage
+	accessTokensRedeemFlags.Usage = accessTokensRedeemUsage
 	accessTokensBasicFlags.Usage = accessTokensBasicUsage
 	accessTokensBasicCodeFlags.Usage = accessTokensBasicCodeUsage
 	accessTokensBasicRefreshFlags.Usage = accessTokensBasicRefreshUsage
+	accessTokensBasicRedeemFlags.Usage = accessTokensBasicRedeemUsage
 	accessTokensSecretFlags.Usage = accessTokensSecretUsage
 	accessTokensSecretCodeFlags.Usage = accessTokensSecretCodeUsage
 	accessTokensSecretRefreshFlags.Usage = accessTokensSecretRefreshUsage
+	accessTokensSecretRedeemFlags.Usage = accessTokensSecretRedeemUsage
 	accessTokensAssertionFlags.Usage = accessTokensAssertionUsage
 	accessTokensSignedCodeFlags.Usage = accessTokensSignedCodeUsage
 	accessTokensSignedRefreshFlags.Usage = accessTokensSignedRefreshUsage
+	accessTokensSignedRedeemFlags.Usage = accessTokensSignedRedeemUsage
 
 	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
 		return nil, nil, err
@@ -238,6 +316,8 @@ func ParseEndpoint(
 			svcf = clientMetadataFlags
 		case "authorization-responses":
 			svcf = authorizationResponsesFlags
+		case "identity-grants":
+			svcf = identityGrantsFlags
 		case "access-tokens":
 			svcf = accessTokensFlags
 		default:
@@ -300,6 +380,34 @@ func ParseEndpoint(
 
 			}
 
+		case "identity-grants":
+			switch epn {
+			case "exchange":
+				epf = identityGrantsExchangeFlags
+
+			case "saml":
+				epf = identityGrantsSamlFlags
+
+			case "basic-exchange":
+				epf = identityGrantsBasicExchangeFlags
+
+			case "basic-saml":
+				epf = identityGrantsBasicSamlFlags
+
+			case "secret-exchange":
+				epf = identityGrantsSecretExchangeFlags
+
+			case "secret-saml":
+				epf = identityGrantsSecretSamlFlags
+
+			case "signed-exchange":
+				epf = identityGrantsSignedExchangeFlags
+
+			case "signed-saml":
+				epf = identityGrantsSignedSamlFlags
+
+			}
+
 		case "access-tokens":
 			switch epn {
 			case "code":
@@ -307,6 +415,9 @@ func ParseEndpoint(
 
 			case "refresh":
 				epf = accessTokensRefreshFlags
+
+			case "redeem":
+				epf = accessTokensRedeemFlags
 
 			case "basic":
 				epf = accessTokensBasicFlags
@@ -317,6 +428,9 @@ func ParseEndpoint(
 			case "basic-refresh":
 				epf = accessTokensBasicRefreshFlags
 
+			case "basic-redeem":
+				epf = accessTokensBasicRedeemFlags
+
 			case "secret":
 				epf = accessTokensSecretFlags
 
@@ -326,6 +440,9 @@ func ParseEndpoint(
 			case "secret-refresh":
 				epf = accessTokensSecretRefreshFlags
 
+			case "secret-redeem":
+				epf = accessTokensSecretRedeemFlags
+
 			case "assertion":
 				epf = accessTokensAssertionFlags
 
@@ -334,6 +451,9 @@ func ParseEndpoint(
 
 			case "signed-refresh":
 				epf = accessTokensSignedRefreshFlags
+
+			case "signed-redeem":
+				epf = accessTokensSignedRedeemFlags
 
 			}
 
@@ -398,6 +518,34 @@ func ParseEndpoint(
 				endpoint = c.Receive()
 				data, err = authorizationresponsesc.BuildReceivePayload(authorizationResponsesReceiveCodeFlag.value, authorizationResponsesReceiveErrorFlag.value, authorizationResponsesReceiveStateFlag.value, authorizationResponsesReceiveIssuerFlag.value)
 			}
+		case "identity-grants":
+			c := identitygrantsc.NewClient(scheme, host, doer, enc, dec, restore)
+			switch epn {
+			case "exchange":
+				endpoint = c.Exchange()
+				data, err = identitygrantsc.BuildExchangePayload(identityGrantsExchangeBodyFlag.value)
+			case "saml":
+				endpoint = c.Saml()
+				data, err = identitygrantsc.BuildSamlPayload(identityGrantsSamlBodyFlag.value)
+			case "basic-exchange":
+				endpoint = c.BasicExchange()
+				data, err = identitygrantsc.BuildBasicExchangePayload(identityGrantsBasicExchangeBodyFlag.value, identityGrantsBasicExchangeClientIDFlag.value, identityGrantsBasicExchangeClientSecretFlag.value)
+			case "basic-saml":
+				endpoint = c.BasicSaml()
+				data, err = identitygrantsc.BuildBasicSamlPayload(identityGrantsBasicSamlBodyFlag.value, identityGrantsBasicSamlClientIDFlag.value, identityGrantsBasicSamlClientSecretFlag.value)
+			case "secret-exchange":
+				endpoint = c.SecretExchange()
+				data, err = identitygrantsc.BuildSecretExchangePayload(identityGrantsSecretExchangeBodyFlag.value)
+			case "secret-saml":
+				endpoint = c.SecretSaml()
+				data, err = identitygrantsc.BuildSecretSamlPayload(identityGrantsSecretSamlBodyFlag.value)
+			case "signed-exchange":
+				endpoint = c.SignedExchange()
+				data, err = identitygrantsc.BuildSignedExchangePayload(identityGrantsSignedExchangeBodyFlag.value)
+			case "signed-saml":
+				endpoint = c.SignedSaml()
+				data, err = identitygrantsc.BuildSignedSamlPayload(identityGrantsSignedSamlBodyFlag.value)
+			}
 		case "access-tokens":
 			c := accesstokensc.NewClient(scheme, host, doer, enc, dec, restore)
 			switch epn {
@@ -407,6 +555,9 @@ func ParseEndpoint(
 			case "refresh":
 				endpoint = c.Refresh()
 				data, err = accesstokensc.BuildRefreshPayload(accessTokensRefreshBodyFlag.value)
+			case "redeem":
+				endpoint = c.Redeem()
+				data, err = accesstokensc.BuildRedeemPayload(accessTokensRedeemBodyFlag.value)
 			case "basic":
 				endpoint = c.Basic()
 				data, err = accesstokensc.BuildBasicPayload(accessTokensBasicBodyFlag.value, accessTokensBasicClientIDFlag.value, accessTokensBasicClientSecretFlag.value)
@@ -416,6 +567,9 @@ func ParseEndpoint(
 			case "basic-refresh":
 				endpoint = c.BasicRefresh()
 				data, err = accesstokensc.BuildBasicRefreshPayload(accessTokensBasicRefreshBodyFlag.value, accessTokensBasicRefreshClientIDFlag.value, accessTokensBasicRefreshClientSecretFlag.value)
+			case "basic-redeem":
+				endpoint = c.BasicRedeem()
+				data, err = accesstokensc.BuildBasicRedeemPayload(accessTokensBasicRedeemBodyFlag.value, accessTokensBasicRedeemClientIDFlag.value, accessTokensBasicRedeemClientSecretFlag.value)
 			case "secret":
 				endpoint = c.Secret()
 				data, err = accesstokensc.BuildSecretPayload(accessTokensSecretBodyFlag.value)
@@ -425,6 +579,9 @@ func ParseEndpoint(
 			case "secret-refresh":
 				endpoint = c.SecretRefresh()
 				data, err = accesstokensc.BuildSecretRefreshPayload(accessTokensSecretRefreshBodyFlag.value)
+			case "secret-redeem":
+				endpoint = c.SecretRedeem()
+				data, err = accesstokensc.BuildSecretRedeemPayload(accessTokensSecretRedeemBodyFlag.value)
 			case "assertion":
 				endpoint = c.Assertion()
 				data, err = accesstokensc.BuildAssertionPayload(accessTokensAssertionBodyFlag.value)
@@ -434,6 +591,9 @@ func ParseEndpoint(
 			case "signed-refresh":
 				endpoint = c.SignedRefresh()
 				data, err = accesstokensc.BuildSignedRefreshPayload(accessTokensSignedRefreshBodyFlag.value)
+			case "signed-redeem":
+				endpoint = c.SignedRedeem()
+				data, err = accesstokensc.BuildSignedRedeemPayload(accessTokensSignedRedeemBodyFlag.value)
 			}
 		}
 	}
@@ -639,6 +799,176 @@ func authorizationResponsesReceiveUsage() {
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "authorization-responses receive --code \"x\" --error \";\\u0026\" --state \"1f\" --issuer \"http://rice.name/wilfrid.vandervort\"")
 }
 
+// identityGrantsUsage displays the usage of the identity-grants command and
+// its subcommands.
+func identityGrantsUsage() {
+	fmt.Fprintln(os.Stderr, `Obtain identity-provider authorization grants and SAML bootstrap credentials through separate native purposes and registered authentication profiles.`)
+	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] identity-grants COMMAND [flags]\n\n", os.Args[0])
+	fmt.Fprintln(os.Stderr, "COMMAND:")
+	fmt.Fprintln(os.Stderr, `    exchange: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+	fmt.Fprintln(os.Stderr, `    saml: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+	fmt.Fprintln(os.Stderr, `    basic-exchange: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+	fmt.Fprintln(os.Stderr, `    basic-saml: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+	fmt.Fprintln(os.Stderr, `    secret-exchange: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+	fmt.Fprintln(os.Stderr, `    secret-saml: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+	fmt.Fprintln(os.Stderr, `    signed-exchange: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+	fmt.Fprintln(os.Stderr, `    signed-saml: Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Additional help:")
+	fmt.Fprintf(os.Stderr, "    %s identity-grants COMMAND --help\n", os.Args[0])
+}
+func identityGrantsExchangeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] identity-grants exchange", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "identity-grants exchange --body '{\n      \"audience\": \"http://brakus.com/alfred\",\n      \"client_id\": \"inu\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:token-exchange\",\n      \"requested_token_type\": \"urn:ietf:params:oauth:token-type:id-jag\",\n      \"resource\": \"http://mcculloughborer.net/frank_medhurst\",\n      \"scope\": \"i( 4 \\u003e\",\n      \"subject_token\": \"xo7\",\n      \"subject_token_type\": \"urn:ietf:params:oauth:token-type:refresh_token\"\n   }'")
+}
+
+func identityGrantsSamlUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] identity-grants saml", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "identity-grants saml --body '{\n      \"client_id\": \"309\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:token-exchange\",\n      \"requested_token_type\": \"urn:ietf:params:oauth:token-type:refresh_token\",\n      \"scope\": \"\\'g c K\",\n      \"subject_token\": \"ea\",\n      \"subject_token_type\": \"urn:ietf:params:oauth:token-type:saml2\"\n   }'")
+}
+
+func identityGrantsBasicExchangeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] identity-grants basic-exchange", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -client-id STRING")
+	fmt.Fprint(os.Stderr, " -client-secret STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -client-id STRING: Individually form-encoded client identifier for the Basic header`)
+	fmt.Fprintln(os.Stderr, `    -client-secret STRING: Individually form-encoded secret for the Basic header`)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "identity-grants basic-exchange --body '{\n      \"audience\": \"http://barton.biz/isaac_marvin\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:token-exchange\",\n      \"requested_token_type\": \"urn:ietf:params:oauth:token-type:id-jag\",\n      \"resource\": \"http://oreilly.com/lera_eichmann\",\n      \"scope\": \"kO MV\",\n      \"subject_token\": \"m\",\n      \"subject_token_type\": \"urn:ietf:params:oauth:token-type:id_token\"\n   }' --client-id \"d\" --client-secret \"et\"")
+}
+
+func identityGrantsBasicSamlUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] identity-grants basic-saml", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -client-id STRING")
+	fmt.Fprint(os.Stderr, " -client-secret STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -client-id STRING: Individually form-encoded client identifier for the Basic header`)
+	fmt.Fprintln(os.Stderr, `    -client-secret STRING: Individually form-encoded secret for the Basic header`)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "identity-grants basic-saml --body '{\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:token-exchange\",\n      \"requested_token_type\": \"urn:ietf:params:oauth:token-type:refresh_token\",\n      \"scope\": \"(X\",\n      \"subject_token\": \"s\",\n      \"subject_token_type\": \"urn:ietf:params:oauth:token-type:saml2\"\n   }' --client-id \"w5\" --client-secret \"f\"")
+}
+
+func identityGrantsSecretExchangeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] identity-grants secret-exchange", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "identity-grants secret-exchange --body '{\n      \"audience\": \"http://bernhardebert.biz/adelbert\",\n      \"client_id\": \"ir\",\n      \"client_secret\": \"l\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:token-exchange\",\n      \"requested_token_type\": \"urn:ietf:params:oauth:token-type:id-jag\",\n      \"resource\": \"http://boehm.com/milo\",\n      \"scope\": \"Yz R ;3\",\n      \"subject_token\": \"vm\",\n      \"subject_token_type\": \"urn:ietf:params:oauth:token-type:refresh_token\"\n   }'")
+}
+
+func identityGrantsSecretSamlUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] identity-grants secret-saml", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "identity-grants secret-saml --body '{\n      \"client_id\": \"jrr\",\n      \"client_secret\": \"22\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:token-exchange\",\n      \"requested_token_type\": \"urn:ietf:params:oauth:token-type:refresh_token\",\n      \"scope\": \"s% 7\",\n      \"subject_token\": \"0e\",\n      \"subject_token_type\": \"urn:ietf:params:oauth:token-type:saml2\"\n   }'")
+}
+
+func identityGrantsSignedExchangeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] identity-grants signed-exchange", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "identity-grants signed-exchange --body '{\n      \"audience\": \"http://huels.biz/everett.wiza\",\n      \"client_assertion\": \"u.3.-\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:token-exchange\",\n      \"requested_token_type\": \"urn:ietf:params:oauth:token-type:id-jag\",\n      \"resource\": \"http://rennerschaden.net/jesse\",\n      \"scope\": \"n]\",\n      \"subject_token\": \"yqb\",\n      \"subject_token_type\": \"urn:ietf:params:oauth:token-type:id_token\"\n   }'")
+}
+
+func identityGrantsSignedSamlUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] identity-grants signed-saml", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Authenticate this identity-provider registration and exchange the fixed SSO credential kind; return only the declared non-bearer purpose.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "identity-grants signed-saml --body '{\n      \"client_assertion\": \"Fv.A.wI\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:token-exchange\",\n      \"requested_token_type\": \"urn:ietf:params:oauth:token-type:refresh_token\",\n      \"scope\": \"0Y\",\n      \"subject_token\": \"9f\",\n      \"subject_token_type\": \"urn:ietf:params:oauth:token-type:saml2\"\n   }'")
+}
+
 // accessTokensUsage displays the usage of the access-tokens command and its
 // subcommands.
 func accessTokensUsage() {
@@ -647,15 +977,19 @@ func accessTokensUsage() {
 	fmt.Fprintln(os.Stderr, "COMMAND:")
 	fmt.Fprintln(os.Stderr, `    code: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
 	fmt.Fprintln(os.Stderr, `    refresh: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr, `    redeem: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
 	fmt.Fprintln(os.Stderr, `    basic: Request a machine access token for the exact resource using this registration's required authentication.`)
 	fmt.Fprintln(os.Stderr, `    basic-code: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
 	fmt.Fprintln(os.Stderr, `    basic-refresh: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr, `    basic-redeem: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
 	fmt.Fprintln(os.Stderr, `    secret: Request a machine access token for the exact resource using this registration's required authentication.`)
 	fmt.Fprintln(os.Stderr, `    secret-code: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
 	fmt.Fprintln(os.Stderr, `    secret-refresh: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr, `    secret-redeem: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
 	fmt.Fprintln(os.Stderr, `    assertion: Request a machine access token for the exact resource using this registration's required authentication.`)
 	fmt.Fprintln(os.Stderr, `    signed-code: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
 	fmt.Fprintln(os.Stderr, `    signed-refresh: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+	fmt.Fprintln(os.Stderr, `    signed-redeem: Complete the selected user grant with this registration's required authentication and the original resource binding.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s access-tokens COMMAND --help\n", os.Args[0])
@@ -694,6 +1028,24 @@ func accessTokensRefreshUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens refresh --body '{\n      \"client_id\": \"r\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"9gn\",\n      \"resource\": \"http://anderson.name/josefa\"\n   }'")
+}
+
+func accessTokensRedeemUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens redeem", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens redeem --body '{\n      \"assertion\": \"4a.b7.A\",\n      \"client_id\": \"5f\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:jwt-bearer\",\n      \"resource\": \"http://volkman.org/golda.krajcik\",\n      \"scope\": \"QR\"\n   }'")
 }
 
 func accessTokensBasicUsage() {
@@ -762,6 +1114,28 @@ func accessTokensBasicRefreshUsage() {
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens basic-refresh --body '{\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"8\",\n      \"resource\": \"http://corkeryohara.com/kyra.langosh\"\n   }' --client-id \"h3j\" --client-secret \"4ui\"")
 }
 
+func accessTokensBasicRedeemUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens basic-redeem", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -client-id STRING")
+	fmt.Fprint(os.Stderr, " -client-secret STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -client-id STRING: Individually form-encoded client identifier for the Basic header`)
+	fmt.Fprintln(os.Stderr, `    -client-secret STRING: Individually form-encoded secret for the Basic header`)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens basic-redeem --body '{\n      \"assertion\": \"r.tR.kD\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:jwt-bearer\",\n      \"resource\": \"http://okuneva.org/stephan\",\n      \"scope\": \"y\\u0026\"\n   }' --client-id \"h\" --client-secret \"6a7\"")
+}
+
 func accessTokensSecretUsage() {
 	// Header with flags
 	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens secret", os.Args[0])
@@ -816,6 +1190,24 @@ func accessTokensSecretRefreshUsage() {
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens secret-refresh --body '{\n      \"client_id\": \"smq\",\n      \"client_secret\": \"n\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"m\",\n      \"resource\": \"http://erdmanbernhard.biz/edd.powlowski\"\n   }'")
 }
 
+func accessTokensSecretRedeemUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens secret-redeem", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens secret-redeem --body '{\n      \"assertion\": \"g2.qu.a\",\n      \"client_id\": \"d\",\n      \"client_secret\": \"c\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:jwt-bearer\",\n      \"resource\": \"http://ruecker.net/ayla\",\n      \"scope\": \"J}\"\n   }'")
+}
+
 func accessTokensAssertionUsage() {
 	// Header with flags
 	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens assertion", os.Args[0])
@@ -868,4 +1260,22 @@ func accessTokensSignedRefreshUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens signed-refresh --body '{\n      \"client_assertion\": \"6.Yo.V8\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"refresh_token\",\n      \"refresh_token\": \"uh4\",\n      \"resource\": \"http://weissnat.info/elody\"\n   }'")
+}
+
+func accessTokensSignedRedeemUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access-tokens signed-redeem", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Complete the selected user grant with this registration's required authentication and the original resource binding.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access-tokens signed-redeem --body '{\n      \"assertion\": \"tm.b.hm\",\n      \"client_assertion\": \"Un._e.6\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:jwt-bearer\",\n      \"resource\": \"http://oreilly.name/tomas.cronin\",\n      \"scope\": \"l AT }]\"\n   }'")
 }

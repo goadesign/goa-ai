@@ -34,6 +34,17 @@ func registeredTokenResult(ctx context.Context, operation string, value any, obt
 // tokenClient checks the exact token address and signs fresh authentication when
 // required. The returned native client sends only to that address without redirects.
 func (r *ClientRegistration) tokenClient(ctx context.Context, client *http.Client, issuer *genissuermetadata.ReadResult, operation string) (*gentokenclient.Client, string, error) {
+	address, assertion, err := r.tokenRequest(ctx, issuer)
+	if err != nil {
+		return nil, "", err
+	}
+	generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: operation}, goahttp.RequestEncoder, authorizationDecoder, false)
+	return generated, assertion, nil
+}
+
+// tokenRequest checks the destination and creates fresh registered authentication.
+// Grant clients receive only the checked token address and that request's assertion.
+func (r *ClientRegistration) tokenRequest(ctx context.Context, issuer *genissuermetadata.ReadResult) (*url.URL, string, error) {
 	address, err := authorizationURL(issuer.TokenEndpoint, false)
 	if err != nil {
 		return nil, "", err
@@ -45,8 +56,7 @@ func (r *ClientRegistration) tokenClient(ctx context.Context, client *http.Clien
 			return nil, "", err
 		}
 	}
-	generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: operation}, goahttp.RequestEncoder, authorizationDecoder, false)
-	return generated, assertion, nil
+	return address, assertion, nil
 }
 
 // machine sends resource permissions with exactly the configured confidential

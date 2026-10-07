@@ -377,7 +377,10 @@ alternatives. [Resource servers](docs/runtime.md#mcp-resource-servers) verify
 issuer, audience and token validity and preserve original Goa authentication.
 Introspection checks current issuer state without caching; issuer failures
 receive 503 rather than an invalid-token challenge.
-Complete OAuth and the remaining protocol capabilities are still release gates
+Enterprise clients can [exchange existing host identity credentials](docs/runtime.md#enterprise-authorization)
+through separate identity-provider and resource registrations. Native forms keep
+identity grants distinct from MCP bearer tokens; the existing transport owns
+resource-token renewal. Complete OAuth and the remaining protocol capabilities are still release gates
 in the [MCP upgrade plan](docs/mcp_protocol_upgrade_plan.md).
 
 The shared MCP HTTP transport keeps local preparation failures distinct from

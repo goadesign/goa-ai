@@ -23,6 +23,9 @@ type Service interface {
 	// Complete the selected user grant with this registration's required
 	// authentication and the original resource binding.
 	Refresh(context.Context, *RefreshPayload) (res *BearerToken, err error)
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
+	Redeem(context.Context, *RedeemPayload) (res *BearerToken, err error)
 	// Request a machine access token for the exact resource using this
 	// registration's required authentication.
 	Basic(context.Context, *BasicPayload) (res *BearerToken, err error)
@@ -32,6 +35,9 @@ type Service interface {
 	// Complete the selected user grant with this registration's required
 	// authentication and the original resource binding.
 	BasicRefresh(context.Context, *BasicRefreshPayload) (res *BearerToken, err error)
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
+	BasicRedeem(context.Context, *BasicRedeemPayload) (res *BearerToken, err error)
 	// Request a machine access token for the exact resource using this
 	// registration's required authentication.
 	Secret(context.Context, *SecretPayload) (res *BearerToken, err error)
@@ -41,6 +47,9 @@ type Service interface {
 	// Complete the selected user grant with this registration's required
 	// authentication and the original resource binding.
 	SecretRefresh(context.Context, *SecretRefreshPayload) (res *BearerToken, err error)
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
+	SecretRedeem(context.Context, *SecretRedeemPayload) (res *BearerToken, err error)
 	// Request a machine access token for the exact resource using this
 	// registration's required authentication.
 	Assertion(context.Context, *AssertionPayload) (res *BearerToken, err error)
@@ -50,6 +59,9 @@ type Service interface {
 	// Complete the selected user grant with this registration's required
 	// authentication and the original resource binding.
 	SignedRefresh(context.Context, *SignedRefreshPayload) (res *BearerToken, err error)
+	// Complete the selected user grant with this registration's required
+	// authentication and the original resource binding.
+	SignedRedeem(context.Context, *SignedRedeemPayload) (res *BearerToken, err error)
 }
 
 // Auther defines the authorization functions to be implemented by the service.
@@ -72,7 +84,7 @@ const ServiceName = "access_tokens"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [11]string{"code", "refresh", "basic", "basic_code", "basic_refresh", "secret", "secret_code", "secret_refresh", "assertion", "signed_code", "signed_refresh"}
+var MethodNames = [15]string{"code", "refresh", "redeem", "basic", "basic_code", "basic_refresh", "basic_redeem", "secret", "secret_code", "secret_refresh", "secret_redeem", "assertion", "signed_code", "signed_refresh", "signed_redeem"}
 
 // AssertionPayload is the payload type of the access_tokens service assertion
 // method.
@@ -122,6 +134,23 @@ type BasicPayload struct {
 	GrantType string
 }
 
+// BasicRedeemPayload is the payload type of the access_tokens service
+// basic_redeem method.
+type BasicRedeemPayload struct {
+	// Individually form-encoded client identifier for the Basic header
+	ClientID string
+	// Individually form-encoded secret for the Basic header
+	ClientSecret string
+	// Exact MCP resource for which the access token is requested
+	Resource string
+	// Signed identity authorization grant from the identity provider
+	Assertion string
+	// Permissions requested within the identity provider's granted permissions
+	Scope *string
+	// Fixed JWT authorization grant
+	GrantType string
+}
+
 // BasicRefreshPayload is the payload type of the access_tokens service
 // basic_refresh method.
 type BasicRefreshPayload struct {
@@ -164,6 +193,20 @@ type CodePayload struct {
 	// Exact protected resource identifier
 	Resource string
 	// Fixed authorization-code grant
+	GrantType string
+}
+
+// RedeemPayload is the payload type of the access_tokens service redeem method.
+type RedeemPayload struct {
+	// Registered public client identifier
+	ClientID string
+	// Exact MCP resource for which the access token is requested
+	Resource string
+	// Signed identity authorization grant from the identity provider
+	Assertion string
+	// Permissions requested within the identity provider's granted permissions
+	Scope *string
+	// Fixed JWT authorization grant
 	GrantType string
 }
 
@@ -213,6 +256,23 @@ type SecretPayload struct {
 	GrantType string
 }
 
+// SecretRedeemPayload is the payload type of the access_tokens service
+// secret_redeem method.
+type SecretRedeemPayload struct {
+	// Registered client identifier
+	ClientID string
+	// Secret registered with this authorization server
+	ClientSecret string
+	// Exact MCP resource for which the access token is requested
+	Resource string
+	// Signed identity authorization grant from the identity provider
+	Assertion string
+	// Permissions requested within the identity provider's granted permissions
+	Scope *string
+	// Fixed JWT authorization grant
+	GrantType string
+}
+
 // SecretRefreshPayload is the payload type of the access_tokens service
 // secret_refresh method.
 type SecretRefreshPayload struct {
@@ -244,6 +304,23 @@ type SignedCodePayload struct {
 	// Exact protected resource identifier
 	Resource string
 	// Fixed authorization-code grant
+	GrantType string
+}
+
+// SignedRedeemPayload is the payload type of the access_tokens service
+// signed_redeem method.
+type SignedRedeemPayload struct {
+	// Signed compact JWT identifying the registered client
+	ClientAssertion string
+	// JWT client authentication selected by this operation
+	ClientAssertionType string
+	// Exact MCP resource for which the access token is requested
+	Resource string
+	// Signed identity authorization grant from the identity provider
+	Assertion string
+	// Permissions requested within the identity provider's granted permissions
+	Scope *string
+	// Fixed JWT authorization grant
 	GrantType string
 }
 

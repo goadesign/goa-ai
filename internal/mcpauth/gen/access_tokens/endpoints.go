@@ -18,15 +18,19 @@ import (
 type Endpoints struct {
 	Code          goa.Endpoint
 	Refresh       goa.Endpoint
+	Redeem        goa.Endpoint
 	Basic         goa.Endpoint
 	BasicCode     goa.Endpoint
 	BasicRefresh  goa.Endpoint
+	BasicRedeem   goa.Endpoint
 	Secret        goa.Endpoint
 	SecretCode    goa.Endpoint
 	SecretRefresh goa.Endpoint
+	SecretRedeem  goa.Endpoint
 	Assertion     goa.Endpoint
 	SignedCode    goa.Endpoint
 	SignedRefresh goa.Endpoint
+	SignedRedeem  goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "access_tokens" service with endpoints.
@@ -36,15 +40,19 @@ func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
 		Code:          NewCodeEndpoint(s),
 		Refresh:       NewRefreshEndpoint(s),
+		Redeem:        NewRedeemEndpoint(s),
 		Basic:         NewBasicEndpoint(s, a.BasicAuth),
 		BasicCode:     NewBasicCodeEndpoint(s, a.BasicAuth),
 		BasicRefresh:  NewBasicRefreshEndpoint(s, a.BasicAuth),
+		BasicRedeem:   NewBasicRedeemEndpoint(s, a.BasicAuth),
 		Secret:        NewSecretEndpoint(s),
 		SecretCode:    NewSecretCodeEndpoint(s),
 		SecretRefresh: NewSecretRefreshEndpoint(s),
+		SecretRedeem:  NewSecretRedeemEndpoint(s),
 		Assertion:     NewAssertionEndpoint(s),
 		SignedCode:    NewSignedCodeEndpoint(s),
 		SignedRefresh: NewSignedRefreshEndpoint(s),
+		SignedRedeem:  NewSignedRedeemEndpoint(s),
 	}
 }
 
@@ -53,15 +61,19 @@ func NewEndpoints(s Service) *Endpoints {
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Code = m(e.Code)
 	e.Refresh = m(e.Refresh)
+	e.Redeem = m(e.Redeem)
 	e.Basic = m(e.Basic)
 	e.BasicCode = m(e.BasicCode)
 	e.BasicRefresh = m(e.BasicRefresh)
+	e.BasicRedeem = m(e.BasicRedeem)
 	e.Secret = m(e.Secret)
 	e.SecretCode = m(e.SecretCode)
 	e.SecretRefresh = m(e.SecretRefresh)
+	e.SecretRedeem = m(e.SecretRedeem)
 	e.Assertion = m(e.Assertion)
 	e.SignedCode = m(e.SignedCode)
 	e.SignedRefresh = m(e.SignedRefresh)
+	e.SignedRedeem = m(e.SignedRedeem)
 }
 
 // NewCodeEndpoint returns an endpoint function that calls the method "code" of
@@ -79,6 +91,15 @@ func NewRefreshEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*RefreshPayload)
 		return s.Refresh(ctx, p)
+	}
+}
+
+// NewRedeemEndpoint returns an endpoint function that calls the method
+// "redeem" of service "access_tokens".
+func NewRedeemEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*RedeemPayload)
+		return s.Redeem(ctx, p)
 	}
 }
 
@@ -139,6 +160,25 @@ func NewBasicRefreshEndpoint(s Service, authBasicFn security.AuthBasicFunc) goa.
 	}
 }
 
+// NewBasicRedeemEndpoint returns an endpoint function that calls the method
+// "basic_redeem" of service "access_tokens".
+func NewBasicRedeemEndpoint(s Service, authBasicFn security.AuthBasicFunc) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*BasicRedeemPayload)
+		var err error
+		sc := security.BasicScheme{
+			Name:           "registration_credentials",
+			Scopes:         []string{},
+			RequiredScopes: []string{},
+		}
+		ctx, err = authBasicFn(ctx, string(p.ClientID), string(p.ClientSecret), &sc)
+		if err != nil {
+			return nil, err
+		}
+		return s.BasicRedeem(ctx, p)
+	}
+}
+
 // NewSecretEndpoint returns an endpoint function that calls the method
 // "secret" of service "access_tokens".
 func NewSecretEndpoint(s Service) goa.Endpoint {
@@ -166,6 +206,15 @@ func NewSecretRefreshEndpoint(s Service) goa.Endpoint {
 	}
 }
 
+// NewSecretRedeemEndpoint returns an endpoint function that calls the method
+// "secret_redeem" of service "access_tokens".
+func NewSecretRedeemEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SecretRedeemPayload)
+		return s.SecretRedeem(ctx, p)
+	}
+}
+
 // NewAssertionEndpoint returns an endpoint function that calls the method
 // "assertion" of service "access_tokens".
 func NewAssertionEndpoint(s Service) goa.Endpoint {
@@ -190,5 +239,14 @@ func NewSignedRefreshEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*SignedRefreshPayload)
 		return s.SignedRefresh(ctx, p)
+	}
+}
+
+// NewSignedRedeemEndpoint returns an endpoint function that calls the method
+// "signed_redeem" of service "access_tokens".
+func NewSignedRedeemEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SignedRedeemPayload)
+		return s.SignedRedeem(ctx, p)
 	}
 }

@@ -17,6 +17,11 @@ func RefreshAccessTokensPath() string {
 	return "/refresh"
 }
 
+// RedeemAccessTokensPath returns the URL path to the access_tokens service redeem HTTP endpoint.
+func RedeemAccessTokensPath() string {
+	return "/redeem"
+}
+
 // BasicAccessTokensPath returns the URL path to the access_tokens service basic HTTP endpoint.
 func BasicAccessTokensPath() string {
 	return "/basic"
@@ -30,6 +35,11 @@ func BasicCodeAccessTokensPath() string {
 // BasicRefreshAccessTokensPath returns the URL path to the access_tokens service basic_refresh HTTP endpoint.
 func BasicRefreshAccessTokensPath() string {
 	return "/basic_refresh"
+}
+
+// BasicRedeemAccessTokensPath returns the URL path to the access_tokens service basic_redeem HTTP endpoint.
+func BasicRedeemAccessTokensPath() string {
+	return "/basic_redeem"
 }
 
 // SecretAccessTokensPath returns the URL path to the access_tokens service secret HTTP endpoint.
@@ -47,6 +57,11 @@ func SecretRefreshAccessTokensPath() string {
 	return "/secret_refresh"
 }
 
+// SecretRedeemAccessTokensPath returns the URL path to the access_tokens service secret_redeem HTTP endpoint.
+func SecretRedeemAccessTokensPath() string {
+	return "/secret_redeem"
+}
+
 // AssertionAccessTokensPath returns the URL path to the access_tokens service assertion HTTP endpoint.
 func AssertionAccessTokensPath() string {
 	return "/assertion"
@@ -60,4 +75,9 @@ func SignedCodeAccessTokensPath() string {
 // SignedRefreshAccessTokensPath returns the URL path to the access_tokens service signed_refresh HTTP endpoint.
 func SignedRefreshAccessTokensPath() string {
 	return "/signed_refresh"
+}
+
+// SignedRedeemAccessTokensPath returns the URL path to the access_tokens service signed_redeem HTTP endpoint.
+func SignedRedeemAccessTokensPath() string {
+	return "/signed_redeem"
 }

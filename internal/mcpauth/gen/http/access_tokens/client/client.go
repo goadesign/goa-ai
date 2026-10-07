@@ -24,6 +24,9 @@ type Client struct {
 	// endpoint.
 	RefreshDoer goahttp.Doer
 
+	// Redeem Doer is the HTTP client used to make requests to the redeem endpoint.
+	RedeemDoer goahttp.Doer
+
 	// Basic Doer is the HTTP client used to make requests to the basic endpoint.
 	BasicDoer goahttp.Doer
 
@@ -34,6 +37,10 @@ type Client struct {
 	// BasicRefresh Doer is the HTTP client used to make requests to the
 	// basic_refresh endpoint.
 	BasicRefreshDoer goahttp.Doer
+
+	// BasicRedeem Doer is the HTTP client used to make requests to the
+	// basic_redeem endpoint.
+	BasicRedeemDoer goahttp.Doer
 
 	// Secret Doer is the HTTP client used to make requests to the secret endpoint.
 	SecretDoer goahttp.Doer
@@ -46,6 +53,10 @@ type Client struct {
 	// secret_refresh endpoint.
 	SecretRefreshDoer goahttp.Doer
 
+	// SecretRedeem Doer is the HTTP client used to make requests to the
+	// secret_redeem endpoint.
+	SecretRedeemDoer goahttp.Doer
+
 	// Assertion Doer is the HTTP client used to make requests to the assertion
 	// endpoint.
 	AssertionDoer goahttp.Doer
@@ -57,6 +68,10 @@ type Client struct {
 	// SignedRefresh Doer is the HTTP client used to make requests to the
 	// signed_refresh endpoint.
 	SignedRefreshDoer goahttp.Doer
+
+	// SignedRedeem Doer is the HTTP client used to make requests to the
+	// signed_redeem endpoint.
+	SignedRedeemDoer goahttp.Doer
 
 	// RestoreResponseBody controls whether the response bodies are reset after
 	// decoding so they can be read again.
@@ -81,15 +96,19 @@ func NewClient(
 	return &Client{
 		CodeDoer:            doer,
 		RefreshDoer:         doer,
+		RedeemDoer:          doer,
 		BasicDoer:           doer,
 		BasicCodeDoer:       doer,
 		BasicRefreshDoer:    doer,
+		BasicRedeemDoer:     doer,
 		SecretDoer:          doer,
 		SecretCodeDoer:      doer,
 		SecretRefreshDoer:   doer,
+		SecretRedeemDoer:    doer,
 		AssertionDoer:       doer,
 		SignedCodeDoer:      doer,
 		SignedRefreshDoer:   doer,
+		SignedRedeemDoer:    doer,
 		RestoreResponseBody: restoreBody,
 		scheme:              scheme,
 		host:                host,
@@ -141,6 +160,30 @@ func (c *Client) Refresh() goa.Endpoint {
 		resp, err := c.RefreshDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("access_tokens", "refresh", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// Redeem returns an endpoint that makes HTTP requests to the access_tokens
+// service redeem server.
+func (c *Client) Redeem() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeRedeemRequest(c.encoder)
+		decodeResponse = DecodeRedeemResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildRedeemRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.RedeemDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "redeem", err)
 		}
 		return decodeResponse(resp)
 	}
@@ -218,6 +261,30 @@ func (c *Client) BasicRefresh() goa.Endpoint {
 	}
 }
 
+// BasicRedeem returns an endpoint that makes HTTP requests to the
+// access_tokens service basic_redeem server.
+func (c *Client) BasicRedeem() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeBasicRedeemRequest(c.encoder)
+		decodeResponse = DecodeBasicRedeemResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildBasicRedeemRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.BasicRedeemDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "basic_redeem", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
 // Secret returns an endpoint that makes HTTP requests to the access_tokens
 // service secret server.
 func (c *Client) Secret() goa.Endpoint {
@@ -290,6 +357,30 @@ func (c *Client) SecretRefresh() goa.Endpoint {
 	}
 }
 
+// SecretRedeem returns an endpoint that makes HTTP requests to the
+// access_tokens service secret_redeem server.
+func (c *Client) SecretRedeem() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSecretRedeemRequest(c.encoder)
+		decodeResponse = DecodeSecretRedeemResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSecretRedeemRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SecretRedeemDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "secret_redeem", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
 // Assertion returns an endpoint that makes HTTP requests to the access_tokens
 // service assertion server.
 func (c *Client) Assertion() goa.Endpoint {
@@ -357,6 +448,30 @@ func (c *Client) SignedRefresh() goa.Endpoint {
 		resp, err := c.SignedRefreshDoer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("access_tokens", "signed_refresh", err)
+		}
+		return decodeResponse(resp)
+	}
+}
+
+// SignedRedeem returns an endpoint that makes HTTP requests to the
+// access_tokens service signed_redeem server.
+func (c *Client) SignedRedeem() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeSignedRedeemRequest(c.encoder)
+		decodeResponse = DecodeSignedRedeemResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildSignedRedeemRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		err = encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.SignedRedeemDoer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("access_tokens", "signed_redeem", err)
 		}
 		return decodeResponse(resp)
 	}

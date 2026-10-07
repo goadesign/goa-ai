@@ -67,8 +67,8 @@ func (r *ClientRegistration) readMetadata(ctx context.Context, client *http.Clie
 		if !ok {
 			return nil, errors.New("mcp: client metadata has an invalid result type")
 		}
-		if metadata.ClientID != r.clientID || metadata.ClientSecret != nil || metadata.ClientSecretExpiresAt != nil {
-			return nil, errors.New("mcp: client metadata has another identity or forbidden secret")
+		if err := r.validateMetadataRegistration(metadata.ClientID, metadata.ClientSecret != nil || metadata.ClientSecretExpiresAt != nil, metadata.GrantTypes, metadata.AuthorizationGrantProfilesSupported); err != nil {
+			return nil, err
 		}
 		return &clientRegistrationMetadata{redirects: metadata.RedirectUris, grants: metadata.GrantTypes, responses: metadata.ResponseTypes}, nil
 	}
@@ -80,8 +80,8 @@ func (r *ClientRegistration) readMetadata(ctx context.Context, client *http.Clie
 	if !ok {
 		return nil, errors.New("mcp: signed client metadata has an invalid result type")
 	}
-	if metadata.ClientID != r.clientID || metadata.ClientSecret != nil || metadata.ClientSecretExpiresAt != nil {
-		return nil, errors.New("mcp: client metadata has another identity or forbidden secret")
+	if err := r.validateMetadataRegistration(metadata.ClientID, metadata.ClientSecret != nil || metadata.ClientSecretExpiresAt != nil, metadata.GrantTypes, metadata.AuthorizationGrantProfilesSupported); err != nil {
+		return nil, err
 	}
 	if (metadata.JwksURI == nil) == (metadata.Jwks == nil) {
 		return nil, errors.New("mcp: signed client metadata requires exactly one public-key source")
@@ -101,4 +101,16 @@ func (r *ClientRegistration) readMetadata(ctx context.Context, client *http.Clie
 		}
 	}
 	return &clientRegistrationMetadata{redirects: metadata.RedirectUris, grants: metadata.GrantTypes, responses: metadata.ResponseTypes}, nil
+}
+
+// validateMetadataRegistration checks the document identity and forbidden secrets.
+// An advertised enterprise profile must register both exchanges, or no grant runs.
+func (r *ClientRegistration) validateMetadataRegistration(identifier string, secretPresent bool, grants, profiles []string) error {
+	if identifier != r.clientID || secretPresent {
+		return errors.New("mcp: client metadata has another identity or forbidden secret")
+	}
+	if slices.Contains(profiles, oauthIdentityProfile) && (!slices.Contains(grants, oauthIdentityExchange) || !slices.Contains(grants, oauthIdentityRedemption)) {
+		return errors.New("mcp: enterprise client metadata must register token exchange and JWT authorization grants")
+	}
+	return nil
 }

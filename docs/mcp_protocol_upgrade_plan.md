@@ -2586,3 +2586,139 @@ hashes. Positive checks cover Basic-only and body-secret-only issuers, exact
 credential encoding, browser refresh, independent resource-token owners sharing
 one registration, and signed machine metadata with an empty redirect list.
 Enterprise authorization and durable host credentials remain unfinished.
+
+### Enterprise authorization composition gate
+
+
+The current shared registration obtains client-credentials and browser grants.
+`authorizationClient.prepare` performs protected-resource discovery, checks the
+resource issuer, serializes a resource grant and sends only its final bearer token
+to MCP. `ClientRegistration` owns the exact application identity and token-endpoint
+authentication. `authorizationCodeGrant` alone owns consent, PKCE and browser
+refresh. Neither a registration nor a resource grant owns host SSO credentials.
+
+The stable extension at ext-auth fb374c7db2b34f18ca9183882e0beecdf661892b
+uses identity-grant draft 04. The new path is host SSO credential → IdP token
+exchange → signed identity authorization grant → resource-issuer redemption →
+resource bearer token → the existing MCP transport. Different IdP and resource
+registrations can have different client identifiers and authentication methods.
+The IdP owns their mapping; the client never guesses it. The resource issuer owns
+signature, purpose, audience and client binding of the intermediate grant.
+
+## Ownership and smallest public contract
+
+Add one opaque, user-specific `EnterpriseIdentity` owner, constructed from an
+existing IdP `ClientRegistration`, an already-built trusted HTTP client and the
+host's existing SSO credential callback. Three constructors select an ID token,
+SAML assertion or IdP refresh token. Their private implementation shares identity
+discovery, authentication and token exchange. This avoids a public credential DTO,
+token-type enum or callback that edits HTTP authentication fields.
+
+The host callback supplies a credential already validated for this exact IdP
+registration and user; it owns sign-in, identity validation and any new user
+interaction. Cancellation and safe error text remain mandatory. An ID token may
+be signed or encrypted; MCP code must not assume three compact JWT components.
+The SAML callback supplies the validated assertion itself. The shared owner applies
+RFC 8693 base64url encoding, requests openid/offline_access, and obtains an IdP
+refresh credential before requesting identity grants. It retains that credential
+only for its own host user and IdP registration, shared across resource transports.
+
+`EnterpriseAuthorization` references that constructed identity, a separate resource
+`ClientRegistration` and resource scopes. `NewEnterpriseHTTPTransport` installs a
+new grant strategy in the existing `authorizationClient`; discovery, access-token
+isolation, generated callers, scope challenges and request-round recovery remain
+shared. No enterprise token cache or special MCP dispatch track is added.
+
+Registration remains reusable across users. Enterprise identity is reusable only
+within one user and IdP registration. Resource access tokens remain scoped to one
+user, issuer, client registration, resource and permission request. SAML refresh
+credentials never belong to the resource registration. Counterexample: two MCP
+resources may share SSO bootstrap but must obtain different resource grants and
+must never exchange their access tokens.
+
+Alternatives rejected: embedding SSO credentials in resource transports duplicates
+bootstrap/refresh ownership; putting them on application registration shares user
+credentials; making every profile supply a custom token-form callback abandons
+native validation and permits arbitrary authentication fields. Starting from scratch
+would retain these same three lifetimes and reuse one resource-token owner.
+
+## Native expressions and external contracts
+
+Factor one private design-time authentication-profile table for machine, browser,
+identity exchange and redemption. Loop over expressions to specialize required
+fields, native Basic security and fixed grant/requested/subject types. Runtime
+dispatch follows constructed registration and identity owners. Emit separate
+identity-grant and identity-refresh results: both require token_type=N_A and their
+exact issued_token_type, and neither is a BearerToken. Resource redemption alone
+returns the existing native bearer contract. SDK/native clients own all forms and
+response decoding; there is no handwritten JSON, map DTO or form parser.
+
+Extract the existing issuer discovery algorithm to receive its constructed HTTP
+client and exact issuer so both resource and IdP owners reuse it. This does not
+change discovery ordering, redirects, identity checks or error semantics.
+
+Always request the exact resource-issuer identifier as audience and the exact MCP
+resource identifier. Include only that resource's requested scopes in the IdP grant
+exchange; SSO bootstrap scopes are separate. If the IdP returns narrowed scope,
+request those permissions during redemption. A final omitted scope retains the
+permissions requested for that redemption, just as browser refresh omission retains
+its existing grant; it cannot silently restore permissions denied by the IdP.
+
+Metadata profile advertisements are SHOULD, not universal prerequisites. Explicit
+enterprise configuration must work when optional advertisements are omitted. When
+an issuer positively advertises the identity-grant profile, enforce its mandatory
+JWT-bearer grant relationship. Client metadata positively advertising that profile
+must include both exchange and redemption grants. Selected authentication is always
+required. Do not invent a metadata fallback mode or infer support from token syntax.
+
+## Lifetimes, recovery and validation
+
+Intermediate expires_in protects only redemption of that one grant, measured in
+seconds from before its exchange, with exclusive expiration; zero is already
+expired. Omission creates no invented maximum. Do not persist or reuse intermediate
+grants in the first implementation; a resource renewal requests a fresh one. Final
+resource-token lifetimes use the existing owner. An IdP bootstrap expires_in, when
+supplied, protects only reuse of that returned identity refresh credential. An
+unreported refresh lifetime remains issuer-owned; rejection stops rather than
+automatically repeating a consumed assertion or changing user credentials.
+
+The resource issuer SHOULD NOT return a refresh credential for identity grants.
+Enterprise renewal uses the IdP path instead of the browser refresh path; optional
+credentials are never treated as permission to substitute that path. Any later
+durable-store contract must preserve these owners, serialized rotation, account
+binding, restart behavior and ambiguous exchange outcomes. It remains a separate
+design gate before the OAuth release gate can close.
+
+Prove the complete flow with independent HTTPS IdP/resource peers, different client
+identities and secrets/keys, generated and discovery callers, all authentication
+profiles, no MCP credential leakage, SAML bootstrap shared across resources, user
+isolation, narrowed scopes, missing advertisements, wrong metadata, malformed or
+Bearer intermediate responses, grant expiration, cancellation and safe errors.
+No live issuer or deployment is changed. This unreleased branch changes its owned
+callers atomically; external regeneration and coordinated cutover remain mandatory
+before release. PR409 stays draft until every nondeferred release gate completes.
+
+Enterprise identity exchange and resource redemption are now implemented through
+the native design and existing authorization owner. Focused race checks pass in
+2.9 seconds, covering all 16 authentication combinations with three identity
+source kinds, signed issuer/client/resource binding, scope restriction, metadata,
+shared bootstrap across resources, independent identity owners, lifetime,
+cancellation and explicit rejection recovery. These are synthetic protocol checks;
+no live issuer migration is claimed. Durable host credential ownership and
+independent conformance remain OAuth gates. Expensive generated-application
+fixtures run once per relevant generator increment; full-suite acceptance belongs
+to a substantive integration checkpoint.
+
+Native enterprise composition review: ID tokens and identity refresh credentials
+use one token-exchange request and result. The design now emits one exchange per
+authentication profile with the two legal subject-purpose values, derived by the
+constructed identity owner. SAML bootstrap remains a distinct operation and
+result. This removes duplicated dispatch rather than suppressing its lint finding.
+No public mode or alternate decoder is introduced.
+
+Enterprise publication evidence: the composed enterprise and affected OAuth race
+checks pass in 10.2 seconds. The generated-caller fixture passes in 14.6 seconds.
+Configured lint reports zero issues. A second owning generation preserves all 104
+OAuth artifact hashes. No full repository suite was repeated for this increment.
+The earlier full root race and quickstart acceptance covers shared registration;
+it does not close the remaining durable-store, conformance or cutover gates.

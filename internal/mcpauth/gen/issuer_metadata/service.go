@@ -56,4 +56,9 @@ type ReadResult struct {
 	// Signature algorithms accepted for signed client authentication; required
 	// only by a signed client profile
 	TokenEndpointAuthSigningAlgValuesSupported []string
+	// Optional token purposes supported by identity chaining
+	IdentityChainingRequestedTokenTypesSupported []string
+	// Optional authorization profiles; advertised identity grants require
+	// JWT-bearer support
+	AuthorizationGrantProfilesSupported []string
 }

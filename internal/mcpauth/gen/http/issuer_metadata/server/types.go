@@ -33,6 +33,11 @@ type ReadResponseBody struct {
 	// Signature algorithms accepted for signed client authentication; required
 	// only by a signed client profile
 	TokenEndpointAuthSigningAlgValuesSupported []string `form:"token_endpoint_auth_signing_alg_values_supported,omitempty" json:"token_endpoint_auth_signing_alg_values_supported,omitempty" xml:"token_endpoint_auth_signing_alg_values_supported,omitempty"`
+	// Optional token purposes supported by identity chaining
+	IdentityChainingRequestedTokenTypesSupported []string `form:"identity_chaining_requested_token_types_supported,omitempty" json:"identity_chaining_requested_token_types_supported,omitempty" xml:"identity_chaining_requested_token_types_supported,omitempty"`
+	// Optional authorization profiles; advertised identity grants require
+	// JWT-bearer support
+	AuthorizationGrantProfilesSupported []string `form:"authorization_grant_profiles_supported,omitempty" json:"authorization_grant_profiles_supported,omitempty" xml:"authorization_grant_profiles_supported,omitempty"`
 }
 
 // NewReadResponseBody builds the HTTP response body from the result of the
@@ -76,6 +81,18 @@ func NewReadResponseBody(res *issuermetadata.ReadResult) *ReadResponseBody {
 		body.TokenEndpointAuthSigningAlgValuesSupported = make([]string, len(res.TokenEndpointAuthSigningAlgValuesSupported))
 		for i, val := range res.TokenEndpointAuthSigningAlgValuesSupported {
 			body.TokenEndpointAuthSigningAlgValuesSupported[i] = val
+		}
+	}
+	if res.IdentityChainingRequestedTokenTypesSupported != nil {
+		body.IdentityChainingRequestedTokenTypesSupported = make([]string, len(res.IdentityChainingRequestedTokenTypesSupported))
+		for i, val := range res.IdentityChainingRequestedTokenTypesSupported {
+			body.IdentityChainingRequestedTokenTypesSupported[i] = val
+		}
+	}
+	if res.AuthorizationGrantProfilesSupported != nil {
+		body.AuthorizationGrantProfilesSupported = make([]string, len(res.AuthorizationGrantProfilesSupported))
+		for i, val := range res.AuthorizationGrantProfilesSupported {
+			body.AuthorizationGrantProfilesSupported[i] = val
 		}
 	}
 	return body

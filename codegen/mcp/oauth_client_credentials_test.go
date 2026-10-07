@@ -1,4 +1,4 @@
-// These tests generate an MCP client and give it the built-in machine or browser
+// These tests generate an MCP client and give it a built-in registered grant
 // transport. The synthetic issuer verifies that generated caller construction
 // preserves authorization and sends only a bearer token to its MCP endpoint.
 package codegen
@@ -54,7 +54,7 @@ import (
  "golang.org/x/oauth2"
 )
 func TestGeneratedOAuthCaller(t *testing.T){
- for _,profile:=range []string{"machine","browser","assertion"} {t.Run(profile,func(t *testing.T){
+ for _,profile:=range []string{"machine","browser","assertion","enterprise"} {t.Run(profile,func(t *testing.T){
  var origin, challenge, signedAssertion string
  var signingKey *rsa.PrivateKey
  var signer jose.Signer
@@ -72,6 +72,12 @@ func TestGeneratedOAuthCaller(t *testing.T){
    body=fmt.Sprintf("{\"resource\":%q,\"authorization_servers\":[%q]}",origin+"/mcp",origin+"/issuer")
   case "/.well-known/oauth-authorization-server/issuer":
    body=fmt.Sprintf("{\"issuer\":%q,\"token_endpoint\":%q,\"grant_types_supported\":[\"client_credentials\",\"authorization_code\"],\"token_endpoint_auth_methods_supported\":[\"client_secret_basic\",\"client_secret_post\",\"none\",\"private_key_jwt\"],\"token_endpoint_auth_signing_alg_values_supported\":[\"RS256\"],\"code_challenge_methods_supported\":[\"S256\"],\"authorization_endpoint\":%q,\"authorization_response_iss_parameter_supported\":true}",origin+"/issuer",origin+"/token",origin+"/authorize")
+  case "/.well-known/oauth-authorization-server/identity":
+   body=fmt.Sprintf("{\"issuer\":%q,\"token_endpoint\":%q,\"token_endpoint_auth_methods_supported\":[\"none\"]}",origin+"/identity",origin+"/identity/token")
+  case "/identity/token":
+   if err:=r.ParseForm();err!=nil {t.Error(err);return}
+   if r.Header.Get("Authorization")!="" || r.PostForm.Get("client_id")!="identity-application" || r.PostForm.Get("subject_token")!="host-identity" || r.PostForm.Get("subject_token_type")!="urn:ietf:params:oauth:token-type:id_token" || r.PostForm.Get("requested_token_type")!="urn:ietf:params:oauth:token-type:id-jag" || r.PostForm.Get("audience")!=origin+"/issuer" || r.PostForm.Get("resource")!=origin+"/mcp" {t.Error("wrong independent identity exchange")}
+   body="{\"issued_token_type\":\"urn:ietf:params:oauth:token-type:id-jag\",\"access_token\":\"a.b.c\",\"token_type\":\"N_A\",\"expires_in\":60}"
   case "/token":
    tokens.Add(1)
    if err:=r.ParseForm();err!=nil {t.Error(err);return}
@@ -80,6 +86,8 @@ func TestGeneratedOAuthCaller(t *testing.T){
     if r.PostForm.Get("client_secret")!="registered-secret" {t.Error("missing client secret")}
    } else if profile=="browser" {
     if r.PostForm.Get("client_secret")!="" || r.PostForm.Get("code")!="browser-code" || oauth2.S256ChallengeFromVerifier(r.PostForm.Get("code_verifier"))!=challenge {t.Error("wrong PKCE code exchange")}
+   } else if profile=="enterprise" {
+    if r.PostForm.Get("client_secret")!="registered-secret" || r.PostForm.Get("grant_type")!="urn:ietf:params:oauth:grant-type:jwt-bearer" || r.PostForm.Get("assertion")!="a.b.c" || r.PostForm.Get("subject_token")!="" {t.Error("wrong identity redemption")}
    } else {
     signedAssertion=r.PostForm.Get("client_assertion")
     token,err:=jwt.ParseSigned(signedAssertion,[]jose.SignatureAlgorithm{jose.RS256})
@@ -127,6 +135,11 @@ func TestGeneratedOAuthCaller(t *testing.T){
    return "https://host.example/callback?"+response.Encode(),nil
   },
  })
+ } else if profile=="enterprise" {
+ identityRegistration,registrationErr:=mcpruntime.NewPublicClientRegistration(origin+"/identity","identity-application");if registrationErr!=nil{t.Fatal(registrationErr)}
+ identity,identityErr:=mcpruntime.NewIDTokenEnterpriseIdentity(identityRegistration,server.Client(),func(context.Context)(string,error){return "host-identity",nil});if identityErr!=nil{t.Fatal(identityErr)}
+ registration,registrationErr:=mcpruntime.NewSecretClientRegistration(origin+"/issuer","registered","registered-secret");if registrationErr!=nil{t.Fatal(registrationErr)}
+ transport,err=mcpruntime.NewEnterpriseHTTPTransport(mcpruntime.HTTPOptions{Endpoint:origin+"/mcp",Client:server.Client(),ClientInfo:info},mcpruntime.EnterpriseAuthorization{Identity:identity,Registration:registration})
  } else {
  registration,registrationErr:=mcpruntime.NewSignedClientRegistration(mcpruntime.ClientAssertion{
   Issuer:origin+"/issuer",ClientID:"registered",AssertionIssuer:"registered-signer",Audience:"registered-audience",Lifetime:time.Minute,Signer:signer,

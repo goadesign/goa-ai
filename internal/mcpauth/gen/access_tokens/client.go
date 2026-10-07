@@ -17,31 +17,39 @@ import (
 type Client struct {
 	CodeEndpoint          goa.Endpoint
 	RefreshEndpoint       goa.Endpoint
+	RedeemEndpoint        goa.Endpoint
 	BasicEndpoint         goa.Endpoint
 	BasicCodeEndpoint     goa.Endpoint
 	BasicRefreshEndpoint  goa.Endpoint
+	BasicRedeemEndpoint   goa.Endpoint
 	SecretEndpoint        goa.Endpoint
 	SecretCodeEndpoint    goa.Endpoint
 	SecretRefreshEndpoint goa.Endpoint
+	SecretRedeemEndpoint  goa.Endpoint
 	AssertionEndpoint     goa.Endpoint
 	SignedCodeEndpoint    goa.Endpoint
 	SignedRefreshEndpoint goa.Endpoint
+	SignedRedeemEndpoint  goa.Endpoint
 }
 
 // NewClient initializes a "access_tokens" service client given the endpoints.
-func NewClient(code, refresh, basic, basicCode, basicRefresh, secret, secretCode, secretRefresh, assertion, signedCode, signedRefresh goa.Endpoint) *Client {
+func NewClient(code, refresh, redeem, basic, basicCode, basicRefresh, basicRedeem, secret, secretCode, secretRefresh, secretRedeem, assertion, signedCode, signedRefresh, signedRedeem goa.Endpoint) *Client {
 	return &Client{
 		CodeEndpoint:          code,
 		RefreshEndpoint:       refresh,
+		RedeemEndpoint:        redeem,
 		BasicEndpoint:         basic,
 		BasicCodeEndpoint:     basicCode,
 		BasicRefreshEndpoint:  basicRefresh,
+		BasicRedeemEndpoint:   basicRedeem,
 		SecretEndpoint:        secret,
 		SecretCodeEndpoint:    secretCode,
 		SecretRefreshEndpoint: secretRefresh,
+		SecretRedeemEndpoint:  secretRedeem,
 		AssertionEndpoint:     assertion,
 		SignedCodeEndpoint:    signedCode,
 		SignedRefreshEndpoint: signedRefresh,
+		SignedRedeemEndpoint:  signedRedeem,
 	}
 }
 
@@ -59,6 +67,16 @@ func (c *Client) Code(ctx context.Context, p *CodePayload) (res *BearerToken, er
 func (c *Client) Refresh(ctx context.Context, p *RefreshPayload) (res *BearerToken, err error) {
 	var ires any
 	ires, err = c.RefreshEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// Redeem calls the "redeem" endpoint of the "access_tokens" service.
+func (c *Client) Redeem(ctx context.Context, p *RedeemPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.RedeemEndpoint(ctx, p)
 	if err != nil {
 		return
 	}
@@ -96,6 +114,16 @@ func (c *Client) BasicRefresh(ctx context.Context, p *BasicRefreshPayload) (res 
 	return ires.(*BearerToken), nil
 }
 
+// BasicRedeem calls the "basic_redeem" endpoint of the "access_tokens" service.
+func (c *Client) BasicRedeem(ctx context.Context, p *BasicRedeemPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.BasicRedeemEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
 // Secret calls the "secret" endpoint of the "access_tokens" service.
 func (c *Client) Secret(ctx context.Context, p *SecretPayload) (res *BearerToken, err error) {
 	var ires any
@@ -127,6 +155,17 @@ func (c *Client) SecretRefresh(ctx context.Context, p *SecretRefreshPayload) (re
 	return ires.(*BearerToken), nil
 }
 
+// SecretRedeem calls the "secret_redeem" endpoint of the "access_tokens"
+// service.
+func (c *Client) SecretRedeem(ctx context.Context, p *SecretRedeemPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.SecretRedeemEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
 // Assertion calls the "assertion" endpoint of the "access_tokens" service.
 func (c *Client) Assertion(ctx context.Context, p *AssertionPayload) (res *BearerToken, err error) {
 	var ires any
@@ -152,6 +191,17 @@ func (c *Client) SignedCode(ctx context.Context, p *SignedCodePayload) (res *Bea
 func (c *Client) SignedRefresh(ctx context.Context, p *SignedRefreshPayload) (res *BearerToken, err error) {
 	var ires any
 	ires, err = c.SignedRefreshEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*BearerToken), nil
+}
+
+// SignedRedeem calls the "signed_redeem" endpoint of the "access_tokens"
+// service.
+func (c *Client) SignedRedeem(ctx context.Context, p *SignedRedeemPayload) (res *BearerToken, err error) {
+	var ires any
+	ires, err = c.SignedRedeemEndpoint(ctx, p)
 	if err != nil {
 		return
 	}

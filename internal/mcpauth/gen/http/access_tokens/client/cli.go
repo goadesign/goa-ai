@@ -108,6 +108,51 @@ func BuildRefreshPayload(accessTokensRefreshBody *string) (*accesstokens.Refresh
 	return v, nil
 }
 
+// BuildRedeemPayload builds the payload for the access_tokens redeem endpoint
+// from CLI flags.
+func BuildRedeemPayload(accessTokensRedeemBody *string) (*accesstokens.RedeemPayload, error) {
+	var err error
+	var body RedeemRequestBody
+	{
+		if accessTokensRedeemBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensRedeemBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"assertion\": \"4a.b7.A\",\n      \"client_id\": \"5f\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:jwt-bearer\",\n      \"resource\": \"http://volkman.org/golda.krajcik\",\n      \"scope\": \"QR\"\n   }'")
+		}
+		if utf8.RuneCountInString(body.ClientID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", body.ClientID, utf8.RuneCountInString(body.ClientID), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.assertion", body.Assertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+		if body.Scope != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+		}
+		if !(body.GrantType == "urn:ietf:params:oauth:grant-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"urn:ietf:params:oauth:grant-type:jwt-bearer"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.RedeemPayload{
+		ClientID:  body.ClientID,
+		Resource:  body.Resource,
+		Assertion: body.Assertion,
+		Scope:     body.Scope,
+		GrantType: body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+		}
+	}
+
+	return v, nil
+}
+
 // BuildBasicPayload builds the payload for the access_tokens basic endpoint
 // from CLI flags.
 func BuildBasicPayload(accessTokensBasicBody *string, accessTokensBasicClientID *string, accessTokensBasicClientSecret *string) (*accesstokens.BasicPayload, error) {
@@ -315,6 +360,75 @@ func BuildBasicRefreshPayload(accessTokensBasicRefreshBody *string, accessTokens
 	return v, nil
 }
 
+// BuildBasicRedeemPayload builds the payload for the access_tokens
+// basic_redeem endpoint from CLI flags.
+func BuildBasicRedeemPayload(accessTokensBasicRedeemBody *string, accessTokensBasicRedeemClientID *string, accessTokensBasicRedeemClientSecret *string) (*accesstokens.BasicRedeemPayload, error) {
+	var err error
+	var body BasicRedeemRequestBody
+	{
+		if accessTokensBasicRedeemBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensBasicRedeemBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"assertion\": \"r.tR.kD\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:jwt-bearer\",\n      \"resource\": \"http://okuneva.org/stephan\",\n      \"scope\": \"y\\u0026\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.assertion", body.Assertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+		if body.Scope != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+		}
+		if !(body.GrantType == "urn:ietf:params:oauth:grant-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"urn:ietf:params:oauth:grant-type:jwt-bearer"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var client_id string
+	{
+		if accessTokensBasicRedeemClientID == nil {
+			return nil, fmt.Errorf("missing required flag --client-id")
+		}
+		client_id = *accessTokensBasicRedeemClientID
+		if utf8.RuneCountInString(client_id) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("client_id", client_id, utf8.RuneCountInString(client_id), 1, true))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	var client_secret string
+	{
+		if accessTokensBasicRedeemClientSecret == nil {
+			return nil, fmt.Errorf("missing required flag --client-secret")
+		}
+		client_secret = *accessTokensBasicRedeemClientSecret
+		if utf8.RuneCountInString(client_secret) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("client_secret", client_secret, utf8.RuneCountInString(client_secret), 1, true))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.BasicRedeemPayload{
+		Resource:  body.Resource,
+		Assertion: body.Assertion,
+		Scope:     body.Scope,
+		GrantType: body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+		}
+	}
+	v.ClientID = client_id
+	v.ClientSecret = client_secret
+
+	return v, nil
+}
+
 // BuildSecretPayload builds the payload for the access_tokens secret endpoint
 // from CLI flags.
 func BuildSecretPayload(accessTokensSecretBody *string) (*accesstokens.SecretPayload, error) {
@@ -456,6 +570,55 @@ func BuildSecretRefreshPayload(accessTokensSecretRefreshBody *string) (*accessto
 		var zero string
 		if v.GrantType == zero {
 			v.GrantType = "refresh_token"
+		}
+	}
+
+	return v, nil
+}
+
+// BuildSecretRedeemPayload builds the payload for the access_tokens
+// secret_redeem endpoint from CLI flags.
+func BuildSecretRedeemPayload(accessTokensSecretRedeemBody *string) (*accesstokens.SecretRedeemPayload, error) {
+	var err error
+	var body SecretRedeemRequestBody
+	{
+		if accessTokensSecretRedeemBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensSecretRedeemBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"assertion\": \"g2.qu.a\",\n      \"client_id\": \"d\",\n      \"client_secret\": \"c\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:jwt-bearer\",\n      \"resource\": \"http://ruecker.net/ayla\",\n      \"scope\": \"J}\"\n   }'")
+		}
+		if utf8.RuneCountInString(body.ClientID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_id", body.ClientID, utf8.RuneCountInString(body.ClientID), 1, true))
+		}
+		if utf8.RuneCountInString(body.ClientSecret) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.client_secret", body.ClientSecret, utf8.RuneCountInString(body.ClientSecret), 1, true))
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.assertion", body.Assertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+		if body.Scope != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+		}
+		if !(body.GrantType == "urn:ietf:params:oauth:grant-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"urn:ietf:params:oauth:grant-type:jwt-bearer"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.SecretRedeemPayload{
+		ClientID:     body.ClientID,
+		ClientSecret: body.ClientSecret,
+		Resource:     body.Resource,
+		Assertion:    body.Assertion,
+		Scope:        body.Scope,
+		GrantType:    body.GrantType,
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 		}
 	}
 
@@ -615,6 +778,59 @@ func BuildSignedRefreshPayload(accessTokensSignedRefreshBody *string) (*accessto
 		var zero string
 		if v.GrantType == zero {
 			v.GrantType = "refresh_token"
+		}
+	}
+
+	return v, nil
+}
+
+// BuildSignedRedeemPayload builds the payload for the access_tokens
+// signed_redeem endpoint from CLI flags.
+func BuildSignedRedeemPayload(accessTokensSignedRedeemBody *string) (*accesstokens.SignedRedeemPayload, error) {
+	var err error
+	var body SignedRedeemRequestBody
+	{
+		if accessTokensSignedRedeemBody == nil {
+			return nil, fmt.Errorf("missing required flag --body")
+		}
+		err = json.Unmarshal([]byte(*accessTokensSignedRedeemBody), &body)
+		if err != nil {
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"assertion\": \"tm.b.hm\",\n      \"client_assertion\": \"Un._e.6\",\n      \"client_assertion_type\": \"urn:ietf:params:oauth:client-assertion-type:jwt-bearer\",\n      \"grant_type\": \"urn:ietf:params:oauth:grant-type:jwt-bearer\",\n      \"resource\": \"http://oreilly.name/tomas.cronin\",\n      \"scope\": \"l AT }]\"\n   }'")
+		}
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.client_assertion", body.ClientAssertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+		if !(body.ClientAssertionType == "urn:ietf:params:oauth:client-assertion-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.client_assertion_type", body.ClientAssertionType, []any{"urn:ietf:params:oauth:client-assertion-type:jwt-bearer"}))
+		}
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resource", body.Resource, goa.FormatURI))
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.assertion", body.Assertion, "^[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+\\.[A-Za-z0-9_-]+$"))
+		if body.Scope != nil {
+			err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *body.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
+		}
+		if !(body.GrantType == "urn:ietf:params:oauth:grant-type:jwt-bearer") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.grant_type", body.GrantType, []any{"urn:ietf:params:oauth:grant-type:jwt-bearer"}))
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	v := &accesstokens.SignedRedeemPayload{
+		ClientAssertion:     body.ClientAssertion,
+		ClientAssertionType: body.ClientAssertionType,
+		Resource:            body.Resource,
+		Assertion:           body.Assertion,
+		Scope:               body.Scope,
+		GrantType:           body.GrantType,
+	}
+	{
+		var zero string
+		if v.ClientAssertionType == zero {
+			v.ClientAssertionType = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+		}
+	}
+	{
+		var zero string
+		if v.GrantType == zero {
+			v.GrantType = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 		}
 	}
 
