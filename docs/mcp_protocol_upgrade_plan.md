@@ -2925,3 +2925,33 @@ Reproduction and adaptation limits live in the
 [conformance instructions](../integration_tests/conformance/README.md).
 Other profiles, external caller cutover and the remaining MCP capabilities still
 gate release. No deployment or release is performed.
+
+## Current POST interruption acceptance
+
+The pinned referee’s `sse-retry` source explicitly removes that scenario at
+`2026-07-28`; it verifies GET reconnection, sessions and `Last-Event-ID`, which
+this breaking upgrade removes. Reusing it would require restoring legacy
+behavior and would prove the wrong contract. The
+[current HTTP binding](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
+uses request-scoped POST streams and does not support stream resumption.
+
+`integration_tests/conformance/sse_retry.mjs` is a separate Node implementation
+with no Goa-AI imports. Twelve real HTTP cases pass in about 0.55 seconds.
+The production caller retries only when the host grants endpoint trust and the
+tool declares repeatability. Every retry has a new JSON-RPC ID with identical
+round parameters. Unsafe and untrusted tools are not repeated; idempotent
+execution has one effect across three attempts. Cancellation, completed invalid
+events and delivered errors are terminal. A later HTTP 401 retains the earlier
+unknown execution and exact HTTP error. Two host-input rounds each receive their
+own attempt allowance.
+
+The peer independently validates body/header agreement, client identity and empty
+capabilities, and rejects GET, session or event-resumption headers. One ten-second
+case deadline bounds its child process and sockets; this is test infrastructure,
+not a runtime timeout or operation-wide limit. Configured driver lint passes.
+No product code, public API, dependency or replay policy changes for this check.
+Reproduction and scope are recorded in the
+[conformance instructions](../integration_tests/conformance/README.md#independent-interrupted-post-peer).
+This closes the local current-protocol POST-interruption acceptance gap. It does
+not claim a stock referee tier or external rollout; all remaining capability and
+caller-cutover gates still apply.

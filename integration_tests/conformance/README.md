@@ -175,7 +175,9 @@ new caller in each worker. It checks original arguments, exact host answers and
 opaque state, distinct request IDs, and the final typed result using the SDK test
 environment; it does not constitute a deployed-cluster test.
 
-Interrupted SSE conformance remains a release gate. An explicit endpoint-trust
+The separate current-protocol SSE peer below verifies interrupted POST retries;
+the official referee’s session-based `sse-retry` scenario is removed at
+`2026-07-28` and cannot verify this contract. An explicit endpoint-trust
 policy and a trusted read-only or idempotent declaration authorize bounded
 retries of an interrupted HTTP 200 SSE response, with unchanged parameters and
 a fresh request ID. Without that authorization, a lost tool response returns
@@ -183,3 +185,35 @@ a fresh request ID. Without that authorization, a lost tool response returns
 The pinned SSE retry scenario excludes the new revision and tests the removed
 session behavior, so it cannot settle that requirement. See the
 [protocol conflict and required proof](../../docs/mcp_protocol_upgrade_plan.md#interrupted-http-responses-and-operation-ownership).
+
+## Independent interrupted-POST peer
+
+Build the existing Go client driver, then run:
+
+```sh
+go build -o .cache/mcp-conformance-client ./integration_tests/conformance/client
+node integration_tests/conformance/sse_retry.mjs
+```
+
+This Node peer imports no Goa-AI implementation. It listens on localhost, starts
+one production Go caller for each case, validates current body/header metadata,
+and observes actual requests and synthetic effects over HTTP. It emits one
+credential-free result per case and closes the child and sockets. A ten-second
+deadline bounds one test case’s local resources; it is not a production timeout
+or a limit on input rounds.
+
+On 2026-10-07, all twelve cases pass in about 0.55 seconds in total: trusted
+read-only and idempotent retries; untrusted and unsafe refusal; attempt exhaustion;
+a later 401 retaining an unknown earlier outcome; host cancellation; completed
+malformed, protocol-error and tool-error events; ordinary completion; and separate
+allowances for two state-only input rounds. The idempotent operation has one
+effect across three attempts, and the unsafe operation has one attempt and one
+effect. Retries keep exact round parameters and use distinct JSON-RPC IDs. No GET,
+protocol session or `Last-Event-ID` is used. Configured driver lint reports zero
+issues; no root suite is repeated for these verification-only changes.
+
+This is a locally authored independent peer, not a stock official-referee pass,
+full transport tier or external deployment test. Its assertions implement the
+[current POST transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http)
+and the documented host-owned replay policy. Ordinary runtime boundary tests
+retain broader event-framing and failure coverage.

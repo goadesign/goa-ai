@@ -36,6 +36,9 @@ func exercise() error {
 	if strings.HasPrefix(os.Getenv("MCP_CONFORMANCE_SCENARIO"), "auth/") {
 		return exerciseAuthorization(os.Args[1])
 	}
+	if os.Getenv("MCP_CONFORMANCE_SCENARIO") == "interrupted-sse" {
+		return exerciseInterruptedSSE(os.Args[1])
+	}
 	caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
 		Endpoint:   os.Args[1],
 		ClientInfo: mcp.ClientInfo{Name: "goa-ai-conformance", Version: "1"},
