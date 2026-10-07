@@ -151,6 +151,7 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 	}, pc, "todos.todos", specs)
 
 	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		TextOnly:  true,
 		RunID:     "run",
 		SessionID: "sess",
 		Labels:    map[string]string{"scope": "detached"},
@@ -165,6 +166,8 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 	assert.Equal(t, tools.Ident("queue.update_items"), res.ToolResult.Name)
 	assert.Equal(t, "todos.todos", dispatchedToolset)
 	assert.Equal(t, map[string]string{"scope": "detached"}, dispatchedMeta.Labels)
+	assert.True(t, dispatchedMeta.TextOnly)
+	assert.Zero(t, dispatchedMeta.InputRound)
 	assert.False(t, stream.destroyed)
 }
 

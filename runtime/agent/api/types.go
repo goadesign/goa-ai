@@ -574,6 +574,9 @@ type (
 		// MCPContinuation carries runtime-owned input for a later round of this
 		// invocation. It is never advertised as a model-authored argument.
 		MCPContinuation *mcp.CallContinuation
+		// InputRound counts completed host-input rounds for this invocation.
+		// The workflow saves it so duplicate activity delivery keeps one identity.
+		InputRound uint64
 		// TextOnly is derived from the accepted run policy and disables UI interaction.
 		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
 		// Registry retains the exact registered contract selected for this call.
@@ -977,6 +980,9 @@ type (
 		// MCPContinuation supplies only the answers and opaque state saved for
 		// this unfinished invocation. The original tool arguments stay in Payload.
 		MCPContinuation *mcp.CallContinuation
+		// InputRound counts completed host-input rounds for this invocation.
+		// The workflow saves it so duplicate activity delivery keeps one identity.
+		InputRound uint64
 		// TextOnly is derived from the accepted run policy and disables UI interaction.
 		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
 		// Registry carries the selected registration into the execution activity.

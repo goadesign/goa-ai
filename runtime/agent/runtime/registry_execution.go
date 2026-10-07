@@ -39,19 +39,33 @@ func (r *Runtime) executeRegistryTool(ctx context.Context, call *ToolCall) (*Too
 	if err != nil {
 		return nil, err
 	}
-	result, err := executor.Execute(ctx, &toolregistry.ToolCallMeta{
+	meta := &toolregistry.ToolCallMeta{
 		RunID: call.RunID, SessionID: call.SessionID, TurnID: call.TurnID,
 		ToolCallID: call.ToolCallID, ParentToolCallID: call.ParentToolCallID,
 		Labels: cloneLabels(call.Labels), TextOnly: call.TextOnly,
-	}, call)
+	}
+	result, err := executor.Execute(ctx, meta, call)
 	if err != nil {
 		return nil, err
 	}
-	return Executed(result), nil
+	if result.MCPInput != nil {
+		return AwaitMCPInput(result.MCPInput), nil
+	}
+	return Executed(executor.DecodeCompletedResult(call, meta, result)), nil
 }
 
 // CallTool admits only the registration whose definition produced the call.
 func (c resolvedRegistryClient) CallTool(ctx context.Context, toolset string, tool tools.Ident, payload []byte, meta toolregistry.ToolCallMeta) (toolregistry.ToolCallRef, error) {
+	var continuation *genregistry.InputContinuation
+	if meta.InputContinuation != nil {
+		continuation = &genregistry.InputContinuation{State: meta.InputContinuation.RequestState}
+		if meta.InputContinuation.InputResponses != nil {
+			continuation.Responses = make(map[string][]byte, len(meta.InputContinuation.InputResponses))
+			for id, answer := range meta.InputContinuation.InputResponses {
+				continuation.Responses[id] = append([]byte(nil), answer...)
+			}
+		}
+	}
 	result, err := c.client.CallResolvedTool(ctx, &genregistry.CallResolvedToolPayload{
 		ExpectedRegistrationToken: c.token,
 		Toolset:                   toolset, Tool: tool.String(), PayloadJSON: payload,
@@ -59,7 +73,8 @@ func (c resolvedRegistryClient) CallTool(ctx context.Context, toolset string, to
 		Meta: &genregistry.ToolCallMeta{
 			RunID: meta.RunID, SessionID: meta.SessionID, ToolCallID: meta.ToolCallID,
 			TurnID: &meta.TurnID, ParentToolCallID: &meta.ParentToolCallID,
-			Labels: cloneLabels(meta.Labels), TextOnly: meta.TextOnly,
+			Labels: cloneLabels(meta.Labels), TextOnly: meta.TextOnly, InputRound: meta.InputRound,
+			InputContinuation: continuation,
 		},
 	})
 	if err != nil {

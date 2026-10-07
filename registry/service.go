@@ -18,6 +18,7 @@ import (
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 	"goa.design/goa-ai/runtime/toolregistry"
 	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 	goa "goa.design/goa/v3/pkg"
@@ -1095,22 +1096,46 @@ func (s *Service) rejectPreparedToolCall(
 }
 
 // prepareToolCallIdentity derives the token-independent immutable request
-// identity used to attach global transport retries before current routing.
+// identity used to attach duplicate delivery before current routing. Each input
+// round includes an immutable copy of its state and host answers.
 func prepareToolCallIdentity(
 	toolset, tool string,
 	payload []byte,
 	meta *genregistry.ToolCallMeta,
 ) (preparedToolCall, error) {
 	toolUseID := toolUseIDForCall(meta)
-	messageMeta := toolregistry.ToolCallMeta{
-		TextOnly:         meta.TextOnly,
-		RunID:            meta.RunID,
-		SessionID:        meta.SessionID,
-		TurnID:           derefString(meta.TurnID),
-		ToolCallID:       meta.ToolCallID,
-		ParentToolCallID: derefString(meta.ParentToolCallID),
-		Labels:           maps.Clone(meta.Labels),
+	// Copy host input before validation and hashing so later caller mutations
+	// cannot change the request the provider receives.
+	var continuation *mcp.CallContinuation
+	if meta.InputContinuation != nil {
+		continuation = &mcp.CallContinuation{}
+		if meta.InputContinuation.State != nil {
+			state := *meta.InputContinuation.State
+			continuation.RequestState = &state
+		}
+		if meta.InputContinuation.Responses != nil {
+			continuation.InputResponses = make(map[string]json.RawMessage, len(meta.InputContinuation.Responses))
+			for id, answer := range meta.InputContinuation.Responses {
+				continuation.InputResponses[id] = append(json.RawMessage(nil), answer...)
+			}
+		}
 	}
+	if err := toolregistry.ValidateInputRound(meta.InputRound, continuation, meta.TextOnly); err != nil {
+		return preparedToolCall{}, genregistry.MakeValidationError(err)
+	}
+	messageMeta := toolregistry.ToolCallMeta{
+		TextOnly:          meta.TextOnly,
+		InputRound:        meta.InputRound,
+		InputContinuation: continuation,
+		RunID:             meta.RunID,
+		SessionID:         meta.SessionID,
+		TurnID:            derefString(meta.TurnID),
+		ToolCallID:        meta.ToolCallID,
+		ParentToolCallID:  derefString(meta.ParentToolCallID),
+		Labels:            maps.Clone(meta.Labels),
+	}
+	// Include the exact execution metadata in the request digest. Reusing a
+	// round number with different answers is an admission conflict.
 	body, err := json.Marshal(struct {
 		Toolset string                     `json:"toolset"`
 		Tool    tools.Ident                `json:"tool"`
@@ -1223,10 +1248,10 @@ func (e *providerUnavailableError) Error() string {
 }
 
 // toolUseIDForCall returns the stable transport identity for a registry-routed
-// tool execution. A model/provider ToolCallID is scoped by RunID before hashing
-// so retries reuse one result stream while concurrent runs cannot collide.
+// service invocation. Run ID, tool call ID and input round separate concurrent
+// invocations while duplicate delivery of one round reuses its result stream.
 func toolUseIDForCall(meta *genregistry.ToolCallMeta) string {
-	return toolregistry.DeriveToolUseID(meta.RunID, meta.ToolCallID)
+	return toolregistry.DeriveToolUseID(meta.RunID, meta.ToolCallID, meta.InputRound)
 }
 
 // callToolResult returns the stable replay contract for one admitted call.

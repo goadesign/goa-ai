@@ -15,6 +15,14 @@ var SemVer = Type("SemVer", String, func() {
 	Example("1.0.0")
 })
 
+// InputContinuation carries host answers and the saved service state for one
+// later invocation. Tool argument schemas never contain these values.
+var InputContinuation = Type("InputContinuation", func() {
+	Description("Saved service state and host answers for one unfinished tool invocation. The runtime supplies them after accepting the host input; models cannot author them.")
+	Field(1, "state", String, "Exact opaque state returned by the service, including an explicitly empty string.")
+	Field(2, "responses", MapOf(String, Bytes), "Host answer objects encoded as JSON, keyed by the exact requests the service returned. The provider uses its generated answer decoders to validate known questions.")
+})
+
 // ToolCallMeta describes execution context supplied with a tool invocation.
 var ToolCallMeta = Type("ToolCallMeta", func() {
 	Description("Context metadata propagated alongside tool calls for routing, correlation, and domain injection (for example, session-scoped data access).")
@@ -52,6 +60,8 @@ var ToolCallMeta = Type("ToolCallMeta", func() {
 		Example(map[string]string{"site_id": "site-123"})
 	})
 	Field(7, "text_only", Boolean, "Accepted execution restriction prohibiting UI output or external interaction.", func() { Default(false) })
+	Field(8, "input_round", UInt64, "Number of completed host-input rounds for this tool invocation. Zero identifies its first service call; the workflow saves later round numbers so delivery retries cannot run a round twice.", func() { Default(uint64(0)) })
+	Field(9, "input_continuation", InputContinuation, "Saved state and host answers for a later input round; absent on the initial call.")
 	Required("run_id", "session_id", "tool_call_id")
 })
 

@@ -1101,8 +1101,8 @@ func ValidateAttachProviderRequest(message *registrypb.AttachProviderRequest) (e
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 10) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		if !(*message.WireProtocolVersion == 11) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{11}))
 		}
 	}
 	return
@@ -1167,8 +1167,8 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 10) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		if !(*message.WireProtocolVersion == 11) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{11}))
 		}
 	}
 	if message.SchemaFingerprint != nil {
@@ -1545,8 +1545,8 @@ func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 10) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		if !(*message.WireProtocolVersion == 11) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{11}))
 		}
 	}
 	return
@@ -1663,8 +1663,8 @@ func ValidateCallResolvedToolRequest(message *registrypb.CallResolvedToolRequest
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 10) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		if !(*message.WireProtocolVersion == 11) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{11}))
 		}
 	}
 	return
@@ -1720,8 +1720,8 @@ func ValidateRetryToolRequest(message *registrypb.RetryToolRequest) (err error) 
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 10) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		if !(*message.WireProtocolVersion == 11) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{11}))
 		}
 	}
 	return
@@ -2635,6 +2635,9 @@ func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *regis
 	if v.TextOnly != nil {
 		res.TextOnly = *v.TextOnly
 	}
+	if v.InputRound != nil {
+		res.InputRound = *v.InputRound
+	}
 	if v.Labels != nil {
 		res.Labels = make(map[string]string, len(v.Labels))
 		for key, val := range v.Labels {
@@ -2645,6 +2648,31 @@ func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *regis
 	}
 	if v.TextOnly == nil {
 		res.TextOnly = false
+	}
+	if v.InputRound == nil {
+		res.InputRound = 0
+	}
+	if v.InputContinuation != nil {
+		res.InputContinuation = transformProtoInputContinuationToInputContinuation(v.InputContinuation)
+	}
+
+	return res
+}
+
+// transformProtoInputContinuationToInputContinuation builds a value of type
+// *registry.InputContinuation from a value of type
+// *registrypb.InputContinuation.
+func transformProtoInputContinuationToInputContinuation(v *registrypb.InputContinuation) *registry.InputContinuation {
+	res := &registry.InputContinuation{
+		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
 	}
 
 	return res

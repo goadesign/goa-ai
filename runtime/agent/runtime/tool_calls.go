@@ -574,6 +574,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		// Activity path (service-backed tools).
 		toolInput := ToolInput{
 			MCPContinuation:  call.MCPContinuation,
+			InputRound:       call.InputRound,
 			TextOnly:         call.TextOnly,
 			Registry:         call.Registry.Clone(),
 			AgentID:          e.agentID,

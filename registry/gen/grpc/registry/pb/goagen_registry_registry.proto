@@ -693,6 +693,25 @@ message ToolCallMeta {
 	map<string, string> labels = 6;
 	// Accepted execution restriction prohibiting UI output or external interaction.
 	optional bool text_only = 7;
+	// Number of completed host-input rounds for this tool invocation. Zero
+// identifies its first service call; the workflow saves later round numbers so
+// delivery retries cannot run a round twice.
+	optional uint64 input_round = 8;
+	// Saved state and host answers for a later input round; absent on the initial
+// call.
+	InputContinuation input_continuation = 9;
+}
+// Saved service state and host answers for one unfinished tool invocation. The
+// runtime supplies them after accepting the host input; models cannot author
+// them.
+message InputContinuation {
+	// Exact opaque state returned by the service, including an explicitly empty
+// string.
+	optional string state = 1;
+	// Host answer objects encoded as JSON, keyed by the exact requests the service
+// returned. The provider uses its generated answer decoders to validate known
+// questions.
+	map<string, bytes> responses = 2;
 }
 
 message CallToolResponse {

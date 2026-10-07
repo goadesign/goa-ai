@@ -417,6 +417,19 @@ type GetToolsetPayload struct {
 	Name string
 }
 
+// Saved service state and host answers for one unfinished tool invocation. The
+// runtime supplies them after accepting the host input; models cannot author
+// them.
+type InputContinuation struct {
+	// Exact opaque state returned by the service, including an explicitly empty
+	// string.
+	State *string
+	// Host answer objects encoded as JSON, keyed by the exact requests the service
+	// returned. The provider uses its generated answer decoders to validate known
+	// questions.
+	Responses map[string][]byte
+}
+
 // ListToolsetsPayload is the payload type of the registry service ListToolsets
 // method.
 type ListToolsetsPayload struct {
@@ -681,6 +694,13 @@ type ToolCallMeta struct {
 	Labels map[string]string
 	// Accepted execution restriction prohibiting UI output or external interaction.
 	TextOnly bool
+	// Number of completed host-input rounds for this tool invocation. Zero
+	// identifies its first service call; the workflow saves later round numbers so
+	// delivery retries cannot run a round twice.
+	InputRound uint64
+	// Saved state and host answers for a later input round; absent on the initial
+	// call.
+	InputContinuation *InputContinuation
 }
 
 // Marks one array index or map key without prescribing its value.

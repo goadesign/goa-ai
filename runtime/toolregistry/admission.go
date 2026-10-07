@@ -15,7 +15,7 @@ const (
 	// this runtime. Provider registration and consumer CallTool/RetryTool requests
 	// carry it explicitly so the registry rejects binaries that encode another
 	// message contract or registration schema contract before side effects.
-	WireProtocolVersion = 10
+	WireProtocolVersion = 11
 	// AdmissionRevisionPattern is the admission revision syntax shared by Goa
 	// and catalog state. Register accepts deployment-issued revisions;
 	// DeclareServiceToolset allocates a registry-issued UUID revision.

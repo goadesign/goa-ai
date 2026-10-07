@@ -582,6 +582,52 @@ func TestPrepareToolCallIdentityIncludesRunLabels(t *testing.T) {
 	assert.Equal(t, "allentown", prepared.meta.Labels["facility"])
 }
 
+// A new host-input round may repeat the same domain arguments. Its saved number
+// separates admission, while delivering that same round again keeps its identity.
+func TestPrepareToolCallIdentitySeparatesInputRounds(t *testing.T) {
+	t.Parallel()
+	meta := &genregistry.ToolCallMeta{RunID: "run-1", SessionID: "session-1", ToolCallID: "call-1"}
+	initial, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{"query":"same"}`), meta)
+	require.NoError(t, err)
+	seen := map[string]bool{initial.toolUseID: true}
+	for _, round := range []uint64{1, 2, ^uint64(0)} {
+		meta.InputRound = round
+		meta.InputContinuation = &genregistry.InputContinuation{}
+		next, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{"query":"same"}`), meta)
+		require.NoError(t, err)
+		replayed, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{"query":"same"}`), meta)
+		require.NoError(t, err)
+		assert.False(t, seen[next.toolUseID])
+		seen[next.toolUseID] = true
+		assert.NotEqual(t, initial.admissionDigest, next.admissionDigest)
+		assert.Equal(t, next, replayed)
+		assert.Equal(t, round, next.meta.InputRound)
+	}
+}
+
+func TestPrepareToolCallIdentityKeepsHostInputImmutable(t *testing.T) {
+	t.Parallel()
+	state := ""
+	answer := []byte(`{ "action": "cancel" }`)
+	meta := &genregistry.ToolCallMeta{
+		RunID: "run-1", SessionID: "session-1", ToolCallID: "call-1", InputRound: 1,
+		InputContinuation: &genregistry.InputContinuation{State: &state, Responses: map[string][]byte{"question": answer}},
+	}
+	prepared, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{}`), meta)
+	require.NoError(t, err)
+	require.NotNil(t, prepared.meta.InputContinuation)
+	assert.Empty(t, *prepared.meta.InputContinuation.RequestState)
+	assert.Equal(t, answer, []byte(prepared.meta.InputContinuation.InputResponses["question"]))
+	state = "changed"
+	changed, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{}`), meta)
+	require.NoError(t, err)
+	assert.Equal(t, prepared.toolUseID, changed.toolUseID)
+	assert.NotEqual(t, prepared.admissionDigest, changed.admissionDigest)
+	clear(answer)
+	assert.Empty(t, *prepared.meta.InputContinuation.RequestState)
+	assert.Equal(t, `{ "action": "cancel" }`, string(prepared.meta.InputContinuation.InputResponses["question"])) //nolint:testifylint // The admitted answer retains exact bytes, including whitespace.
+}
+
 func TestCallAdmissionParseResultPreservesRegistrationToken(t *testing.T) {
 	t.Parallel()
 
@@ -747,7 +793,7 @@ func TestToolUseIDForCallUsesRequiredRunScopedIdentity(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		toolregistry.DeriveToolUseID(meta.RunID, callID),
+		toolregistry.DeriveToolUseID(meta.RunID, callID, meta.InputRound),
 		toolUseIDForCall(meta),
 	)
 	otherRun := *meta

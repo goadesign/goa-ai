@@ -327,6 +327,14 @@ types without those encoders. Strict lifecycle and rejection record reads
 reject invalid raw UTF-8 instead of replacing bytes during JSON decoding.
 See the [JSON boundary contract](docs/runtime.md#json-boundary-contract).
 
+Registry users must regenerate and deploy registry replicas, providers and
+consumers together for wire protocol 11. It adds workflow-owned input-round
+identity and continuation metadata; earlier wire versions are rejected. Drain old
+providers and workers before cutover. Generated native `BindTo` input-exchange
+wiring is still being completed on the upgrade branch; see the
+[implementation plan](docs/mcp_protocol_upgrade_plan.md#registry-continuation-composition--2026-10-07)
+for the release gate.
+
 Generated MCP adapters accept the application's configured Goa endpoints.
 Authentication, method scopes, interceptors and endpoint middleware therefore run
 through the original service contract. Regenerate and replace bare-service

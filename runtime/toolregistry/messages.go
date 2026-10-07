@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -28,13 +29,19 @@ type (
 	// applying session-scoped policies without polluting tool payload schemas).
 	ToolCallMeta struct {
 		// TextOnly is the accepted execution restriction supplied by the runtime.
-		TextOnly  bool   `json:"text_only,omitempty"`
-		RunID     string `json:"run_id"`
-		SessionID string `json:"session_id"`
-		TurnID    string `json:"turn_id,omitempty"`
+		TextOnly bool `json:"text_only,omitempty"`
+		// InputRound identifies one service invocation within a host-input exchange.
+		// Zero is the first invocation; repeated delivery keeps the same value.
+		InputRound uint64 `json:"input_round"`
+		// InputContinuation carries saved state and host answers outside tool arguments.
+		// It is present only after the workflow accepted input for a pending round.
+		InputContinuation *mcp.CallContinuation `json:"input_continuation,omitempty"`
+		RunID             string                `json:"run_id"`
+		SessionID         string                `json:"session_id"`
+		TurnID            string                `json:"turn_id,omitempty"`
 		// ToolCallID is the model/provider call identity. The registry preserves it
-		// as metadata and derives the separate global ToolUseID from RunID plus
-		// ToolCallID.
+		// as metadata and derives the separate global ToolUseID from RunID,
+		// ToolCallID and InputRound.
 		ToolCallID       string `json:"tool_call_id"`
 		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 		// Labels carries run labels and runtime-supplied values fixed for this call.
@@ -84,8 +91,8 @@ type (
 	}
 
 	// ToolResultMessage is published to a per-call result stream. The gateway
-	// interprets only the retry-control variant; consumers decode terminal
-	// success and error variants using compiled tool contracts.
+	// interprets retry control and saves every admitted round outcome. Consumers
+	// decode completed values with compiled contracts or suspend required input.
 	ToolResultMessage struct {
 		// RegistrationToken echoes the exact token stamped on the tool call.
 		RegistrationToken string          `json:"registration_token"`
@@ -107,6 +114,9 @@ type (
 		// Retry asks registry orchestration to republish this exact admitted call.
 		// It is mutually exclusive with every terminal success and error field.
 		Retry *ToolRetry `json:"retry,omitempty"`
+		// InputRequired finishes this admitted service round with a host-input request.
+		// The runtime saves it and resumes later without publishing a completed result.
+		InputRequired *mcp.InputRequired `json:"input_required,omitempty"`
 	}
 
 	// ToolOutputDeltaMessage is published to a per-call result stream while a tool
@@ -281,6 +291,9 @@ func ValidateToolCallMessage(message ToolCallMessage) error {
 			message.Meta.ToolCallID == "" {
 			return fmt.Errorf("tool call run, session, and tool call metadata are required")
 		}
+		if err := ValidateInputRound(message.Meta.InputRound, message.Meta.InputContinuation, message.Meta.TextOnly); err != nil {
+			return err
+		}
 		for name, value := range map[string]string{
 			"run ID":              message.Meta.RunID,
 			"session ID":          message.Meta.SessionID,
@@ -404,14 +417,20 @@ func NewToolResultInvalidArgumentsMessage(
 	return out
 }
 
-// ValidateToolResultMessage enforces the top-level success, terminal-error, or
-// retry-control union before a consumer acts on the message.
+// ValidateToolResultMessage checks that each message contains one completed,
+// error, retry-control or required-input outcome before the consumer acts on it.
 func ValidateToolResultMessage(message ToolResultMessage) error {
 	if err := ValidateRegistrationToken(message.RegistrationToken); err != nil {
 		return err
 	}
 	if err := ValidateToolUseID(message.ToolUseID); err != nil {
 		return err
+	}
+	if message.InputRequired != nil {
+		if message.Retry != nil || message.Error != nil || rawMessageHasNonNullJSON(message.Result) || message.Bounds != nil || len(message.ServerData) > 0 {
+			return fmt.Errorf("input-required outcome cannot contain a completed result, error, retry, bounds or server data")
+		}
+		return message.InputRequired.Validate(mcp.InputSupport{Form: true, URL: true})
 	}
 	if message.Retry != nil {
 		if message.Error != nil {

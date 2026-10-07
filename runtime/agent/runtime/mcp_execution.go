@@ -61,6 +61,10 @@ func (l *workflowLoop) applyMCPContinuation(batch *stepBatch, pending *api.Pendi
 			return nil, err
 		}
 		call := cloneToolCall(record.call)
+		if call.InputRound == ^uint64(0) {
+			return nil, errors.New("saved input round cannot be incremented")
+		}
+		call.InputRound++
 		input := cloneMCPInput(record.mcpInput)
 		call.MCPContinuation = &mcp.CallContinuation{RequestState: input.RequestState, InputResponses: cloneMCPResponses(response.Responses)}
 		outcomes, timedOut, err := l.executeImmediateToolCalls([]ToolCall{call}, record.expectedChildren)
@@ -79,6 +83,7 @@ func (l *workflowLoop) applyMCPContinuation(batch *stepBatch, pending *api.Pendi
 		if id != record.call.ToolCallID {
 			return nil, errors.New("MCP continuation changed tool call identity")
 		}
+		record.call.InputRound = call.InputRound
 		record.duration += outcome.duration
 		record.mcpInput = outcome.mcpInput
 		if record.mcpInput != nil {
@@ -192,5 +197,6 @@ func sameMCPInvocation(current, original ToolCall) bool {
 	current.TurnID, original.TurnID = "", ""
 	current.ParentToolCallID, original.ParentToolCallID = "", ""
 	current.Labels, original.Labels = nil, nil
+	current.InputRound, original.InputRound = 0, 0
 	return reflect.DeepEqual(current, original)
 }

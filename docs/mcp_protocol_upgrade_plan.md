@@ -12,7 +12,7 @@ Implement all mandatory requirements on those paths. Include a generation/compos
 
 Reassessment changes the earlier feature assessment: goa-ai already has typed schemas, durable suspension and continuation, asynchronous workflow starts, cancellation, and private run streams. These are useful foundations for current MCP features. Their existence does not make MCP elicitation, Tasks, subscriptions, or dynamic authoring implemented today. Do not restore removed preview abstractions: implement each chosen capability through current typed services, generated contracts, existing execution ownership, and the new protocol.
 
-The user explicitly requires a breaking upgrade with no compatibility or legacy code. That authorizes removal of the old MCP contract; it does not justify removing unrelated service behavior or changing registry protocols.
+The user explicitly requires a breaking upgrade with no compatibility or legacy code. That authorizes removal of the old MCP contract; it does not justify removing unrelated service behavior. On 2026-10-07 the user additionally authorized extending registry calls and outcomes so native `InputExchange` methods compose through both local `BindTo` executors and registry providers. This scoped authorization supersedes the earlier exclusion of registry protocol changes.
 
 ### Deferred stdio server support
 
@@ -989,8 +989,8 @@ Shared-schema changes can also change registry declaration identity. The
 string result; the registry fingerprint includes exact payload/result schema
 bytes (`internal/toolregistry/admission.SchemaFingerprint`). Existing immutable
 service declarations reject a changed fingerprint. Regeneration therefore needs
-an explicit declaration comparison and normal registry cutover even though wire
-protocol 10 and storage do not change. Service providers use the existing
+an explicit declaration comparison and normal registry cutover without changing catalog storage. The later registry continuation scope
+separately changes wire protocol 10 to 11. Service providers use the existing
 `Register` admission-revision contract; native Agent declarations use
 `ReplaceAgentToolset` with the current token. Match providers and consumers to
 the replacement declaration and preserve already accepted calls. The Redis
@@ -3098,3 +3098,98 @@ model-owned continuation fields or a second question/answer conversion stack.
 Tasks, dynamic catalogs, remaining authorization evidence, Apps, Skills and
 external caller cutover still gate release. Generated stdio servers remain
 deferred under the user's scope decision.
+
+
+### Registry continuation composition — 2026-10-07
+
+The user authorized extending registry calls and outcomes for native
+`InputExchange` methods. This extends the upgrade scope; it does not permit
+unrelated registry behavior changes.
+
+The existing registry admits an immutable request, claims provider execution,
+and saves its exact outcome for repeated delivery. The consumer decodes only
+completed tool results. The native service executor and registry provider both
+map the method's full payload and full result. Those paths currently expose
+continuation fields or unfinished outcomes when inheriting `BindTo` contracts.
+The durable runtime already saves unfinished MCP calls and resumes the exact
+invocation after worker replacement. It must remain the owner of host input.
+
+The complete change is:
+
+1. Save an input-round number with each invocation and carry it into execution
+   activities. Derive registry transport identity from run ID, tool call ID and
+   round number. Include the round and continuation in the immutable request
+   digest. Duplicate delivery reuses one round's outcome; a subsequent round
+   receives its own admission even when state and answers are identical.
+2. Carry opaque state and raw host answers outside model arguments through the
+   generated registry contract. Use generated typed clients and servers. Reject
+   text-only continuation and inconsistent round/continuation combinations.
+3. Extend the registry's validated outcome union with unfinished input, mutually
+   exclusive with success, error, retry, bounds and server data. Saving this
+   outcome completes the admitted service invocation, not the logical tool call.
+4. Keep shared registry admission and stream reading independent of workflow
+   scheduling. Decode completed results using generated tool codecs; pass
+   unfinished input to the existing durable runtime suspension contract.
+5. Share native input-exchange planning and generated conversion logic between
+   MCP, local `BindTo` and registry providers. Generate static answer decoders and
+   request schemas once. Inherit only domain arguments and completed results;
+   retain original native payload/result layouts for service invocation.
+6. Prove duplicate delivery, repeated identical state and answers, partial and
+   multiple input rounds, worker replacement, parallel-call correlation,
+   text-only rejection, authenticated service context and unchanged model
+   history through synthetic generated callers and providers.
+7. Update framework and website contracts and publish one coordinated registry
+   protocol upgrade. Regenerate applications and drain old workers/providers
+   before cutover; mixed protocol versions are rejected. Rollback requires the
+   prior binaries and their compatible saved registry/workflow data.
+
+The number counts service invocations within one logical tool call. It is a
+`uint64` representation, not a product limit on input rounds, attempts, tools or
+runs. Initial invocation is zero; each accepted continuation increments once
+before its activity is recorded. Worker replay retains that recorded value.
+Opaque state and answers cannot replace this number: identical state and answers
+are valid across distinct rounds. Random identity generated in the provider
+would prevent duplicate delivery from finding its saved outcome. Identity owned
+by the host would assign a mechanical execution decision to the wrong caller.
+
+Implementation and acceptance remain incomplete until all seven steps pass.
+
+
+Registry continuation foundation verification:
+
+- Registry protocol is now 11. Generated gRPC metadata carries the input-round
+  number, optional opaque state and keyed raw JSON answers. Admission validates
+  the round/continuation relationship and copies state and answer bytes before
+  hashing or publication.
+- Registry outcomes can carry required input, exclusive with every completed
+  field. Their record remains replayable through the ordinary admission and
+  settlement implementation. Text-only providers and consumers reject host
+  input; a consumer classifies unexpected input as malformed output with the
+  existing finish recovery action.
+- The shared registry call implementation now returns the existing activity
+  output. Static and discovered consumers suspend required input before completed
+  result decoding. No new public execution-result type or persistence owner was
+  introduced.
+- The owning registry packages passed: provider 1.655 s, registry service 1.381 s,
+  executor 0.637 s, message boundary 0.355 s, contract 0.369 s and schema 0.291 s.
+  New focused input checks passed: message boundary 0.426 s; admission 0.446 s;
+  saved rounds through worker replacement 0.857 s, including identical state
+  on consecutive rounds. The final activity and immutable
+  admission checks passed in 0.658 s and 0.434 s respectively. Early activity-test
+  setup failures were corrected by using the existing generated tool contract,
+  in-memory store, codec type and metadata pointer.
+- The final focused message checks passed in 0.372 s, and scoped registry/runtime
+  lint reported zero issues. The root suite was not repeated for this milestone.
+- Shared native generation, generated registry-provider continuation, and the
+  complete generated caller/provider acceptance milestone remain unfinished.
+  These foundations do not advertise that complete capability or permit release.
+
+Tasks research is pinned to the official dated specification and schema at
+[revision `0d0a6bd4c258b35caa3c810a1dd506cf105b1501`](https://github.com/modelcontextprotocol/ext-tasks/blob/0d0a6bd4c258b35caa3c810a1dd506cf105b1501/specification/2026-07-28/tasks.md).
+That commit locks the 2026-07-28 documents. Task creation is server-directed and
+only augments `tools/call` in this revision. `tasks/get` returns the complete
+current state, including the completed result, required input or JSON-RPC error;
+there is no separate `tasks/result` method. Task IDs must refer to durably created
+work before the initial response. Cancellation acknowledges intent and does not
+prove that work stopped. The implementation must use these current contracts,
+including the inline creation shape, rather than the superseded preview API.

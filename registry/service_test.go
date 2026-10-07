@@ -456,7 +456,7 @@ func TestCallToolDerivesGlobalTransportIdentity(t *testing.T) {
 	third, err := svc.CallTool(ctx, &otherRun)
 	require.NoError(t, err)
 
-	expected := toolregistry.DeriveToolUseID("run-1", toolCallID)
+	expected := toolregistry.DeriveToolUseID("run-1", toolCallID, 0)
 	require.Equal(t, expected, first.ToolUseID)
 	require.Equal(t, expected, second.ToolUseID)
 	require.NotEqual(t, expected, third.ToolUseID)

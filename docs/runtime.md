@@ -7273,8 +7273,19 @@ regenerate all packages. Deploy clients and servers using the same current
 protocol. Drain version-9 suspended runs before installing the new runtime;
 version-9 checkpoints are rejected, with no legacy reader or conversion path.
 Rollback requires restoring the previous binaries and their matching generated
-contracts; version-10 suspensions cannot be resumed by the previous runtime.
-The registry's independent wire protocol does not change.
+contracts; version-11 suspensions cannot be resumed by the previous runtime.
+
+Registry wire protocol 11 carries the workflow-owned input round and host
+continuation separately from tool arguments. Each round has its own admission
+identity; duplicate delivery of that round returns its saved outcome. Required
+input completes one service invocation while the durable workflow keeps the
+logical tool call unfinished. Regenerate and deploy registry replicas, providers
+and consumers together. Drain accepted calls and old providers before cutover;
+mixed wire versions are rejected. Preserve catalog and retirement history.
+Rollback requires the previous binaries and their matching saved registry and
+workflow data. The separate catalog storage conversion described in the
+[registry storage upgrade](#registry-storage-upgrade) still applies when upgrading
+from combined catalog records.
 Regenerated schemas may have different descriptions or local definitions, so
 compare the generated `ToolSchemas()` records and declaration fingerprints before
 updating registry-backed providers or consumers. `DeclareServiceToolset` preserves

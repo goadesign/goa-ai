@@ -1218,6 +1218,15 @@ var AnthropicRegistry = Registry("anthropic", func() {
 - **DSL registry source**: `Registry(...)` declares a remote catalog and `FromRegistry(...)` binds a toolset to it.
 - **Generated registry client**: `gen/<svc>/registry/<name>/` contains the agent-side client/helpers for one declared DSL registry source.
 - **Registry wire protocol**: `runtime/toolregistry/` defines the Pulse stream names, message envelopes, and output-delta context used by providers, executors, and the clustered gateway.
+  Registry protocol 11 also carries workflow-owned input rounds and host answers
+  outside model arguments. Each service round has its own admission identity;
+  duplicate delivery of that round reuses the saved outcome. Required input is
+  exclusive with completed result data, errors, retries, bounds and server data.
+  Its saved outcome finishes one service invocation while the durable workflow
+  keeps the logical tool call unfinished. The shared registry reader returns the
+  existing activity output; static and discovered consumers route required input
+  to runtime suspension before decoding any completed result.
+
 - **Clustered registry service**: `registry/` implements the standalone multi-node service that admits toolsets, tracks provider health, and routes tool calls over the wire protocol.
 
 Generated `registry.go` files in agent packages are local runtime registration helpers; they do not implement the clustered registry service.
@@ -1584,7 +1593,9 @@ invocation, catalog lookup, health checks, result-stream creation, call
 admission, or Pulse publication. Register validates the provider's supplied
 version at startup. Renewal sends no repeated wire version: the exact token and
 strictly validated current state bind the version already admitted. The storage
-split changes neither wire protocol 10 nor schema fingerprints or token derivation.
+split kept wire protocol 10 and preserved schema fingerprints and token derivation.
+The MCP input upgrade separately moves the coordinated message contract to
+protocol 11; old providers and consumers must be drained before that cutover.
 
 Loss of current registration or exact lease authority is terminal for an active
 provider. `RenewProvider` returns `provider_lease_lost` for a missing, expired,
@@ -1663,11 +1674,12 @@ run-scoped decision is retained, so the executor may safely replan. Generated
 decision record. Errors after request publication remain ambiguous and produce
 `outcome_unknown`, which forbids replacement execution because an effect may
 have occurred.
-The explicit decision record is wire protocol version 10. Registry replicas,
+The explicit decision record is wire protocol version 11. Registry replicas,
 providers, and consumers use that exact protocol. Records with another shape
 are rejected and never rewritten.
 The earlier protocol-8/9 transition changed message and call-record contracts;
-it is distinct from the current protocol-10 storage split. Do not apply a
+it is distinct from the catalog storage split, which kept protocol 10,
+and the MCP input upgrade to protocol 11. Do not apply a
 historical catalog reset to current state or retirement history. See the
 [preview upgrade guide](docs/runtime.md#preview-upgrade-guide) for the separate
 source, storage, and historical wire-version requirements.

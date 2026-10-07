@@ -25,24 +25,29 @@ import (
 )
 
 func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
-	for _, mode := range []string{"form", "state", "clarification"} {
+	for _, mode := range []string{"form", "state", "identical_state", "clarification"} {
 		t.Run(mode, func(t *testing.T) {
-			stateOnly := mode == "state"
+			stateOnly := mode == "state" || mode == "identical_state"
 			spec := newAnyJSONSpec("remote.tools.lookup")
 			definition := testAgentDefinition("test.agent", "test.workflow", "test.queue", []tools.ToolSpec{spec}, nil)
 			registration := AgentRegistration{Definition: definition, ExecuteToolActivity: "execute", ResumeActivityName: "resume"}
 			rt := New(newTestStore())
-			round := 0
+			round := uint64(0)
 			install := func(rt *Runtime) {
 				rt.agents["test.agent"] = registration
 				seedTestToolset(rt, "remote.tools", spec)
 				binding := rt.toolsets["remote.tools"]
 				binding.Execute = func(_ context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 					round++
+					assert.Equal(t, round-1, call.InputRound)
 					assert.JSONEq(t, `{"query":"original"}`, string(call.Payload))
 					if round > 1 {
 						require.NotNil(t, call.MCPContinuation)
-						assert.Equal(t, fmt.Sprintf("opaque state %d", round-1), *call.MCPContinuation.RequestState)
+						expectedState := fmt.Sprintf("opaque state %d", round-1)
+						if mode == "identical_state" {
+							expectedState = ""
+						}
+						assert.Equal(t, expectedState, *call.MCPContinuation.RequestState)
 						if !stateOnly {
 							assert.JSONEq(t, `{"action":"accept","content":{"choice":"yes"}}`, string(call.MCPContinuation.InputResponses["same-request-id"]))
 						}
@@ -57,6 +62,9 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 						return result, nil
 					}
 					state := fmt.Sprintf("opaque state %d", round)
+					if mode == "identical_state" {
+						state = ""
+					}
 					input := &mcp.InputRequired{RequestState: &state}
 					if !stateOnly {
 						input.Requests = map[string]mcp.InputRequest{"same-request-id": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{"choice":{"type":"string"}},"required":["choice"]}}`)}}
@@ -95,7 +103,7 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 				require.NoError(t, err)
 				require.NotNil(t, out)
 				if successor == 2 {
-					require.Equal(t, successor, round)
+					require.EqualValues(t, successor, round)
 					require.NotNil(t, out.Suspension)
 					suspension = out.Suspension
 				} else {
@@ -126,7 +134,7 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 					assert.JSONEq(t, `{"answer":42}`, string(outputs[0].Result))
 				}
 			}
-			assert.Equal(t, 3, round)
+			assert.Equal(t, uint64(3), round)
 		})
 	}
 }

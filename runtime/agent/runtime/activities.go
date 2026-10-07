@@ -1410,6 +1410,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	raw := append(rawjson.Message(nil), req.Payload...)
 	call := ToolCall{
 		MCPContinuation:  req.MCPContinuation,
+		InputRound:       req.InputRound,
 		TextOnly:         req.TextOnly,
 		Registry:         req.Registry.Clone(),
 		Name:             req.ToolName,
