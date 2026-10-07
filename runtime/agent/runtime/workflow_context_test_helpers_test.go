@@ -17,6 +17,7 @@ import (
 // tests can call runtime helpers without standing up a workflow engine.
 type routeWorkflowContext struct {
 	ctx          context.Context
+	workflowID   string
 	runID        string
 	now          func() time.Time
 	recoveryPort *testProviderRecoveryPort
@@ -54,6 +55,9 @@ func (r *routeWorkflowContext) Context() context.Context {
 }
 
 func (r *routeWorkflowContext) WorkflowID() string {
+	if r.workflowID != "" {
+		return r.workflowID
+	}
 	return "wf"
 }
 
@@ -81,6 +85,7 @@ func (r *routeWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 func (r *routeWorkflowContext) withContext(ctx context.Context) *routeWorkflowContext {
 	return &routeWorkflowContext{
 		ctx:             ctx,
+		workflowID:      r.workflowID,
 		runID:           r.runID,
 		now:             r.now,
 		plannerRoutes:   r.plannerRoutes,
@@ -159,10 +164,24 @@ func (r *routeWorkflowContext) StartChildWorkflow(
 	_ context.Context,
 	request engine.ChildWorkflowRequest,
 ) (engine.ChildWorkflowHandle, error) {
+	// A child request keeps the activity and storage routes but starts a new
+	// workflow context. Its receiver registration and sequence counter belong
+	// to the child, while nested updates still use the shared runtime and Store.
+	child := &routeWorkflowContext{
+		ctx:              r.ctx,
+		workflowID:       request.ID,
+		runID:            request.ID,
+		now:              r.now,
+		plannerRoutes:    r.plannerRoutes,
+		toolRoutes:       r.toolRoutes,
+		hookRuntime:      r.hookRuntime,
+		childRuntime:     r.childRuntime,
+		continuationRead: r.continuationRead,
+	}
 	return &testChildHandle{
 		runtime: r.childRuntime,
 		request: request,
-		wfCtx:   r,
+		wfCtx:   child,
 	}, nil
 }
 
