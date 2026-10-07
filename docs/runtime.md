@@ -7287,7 +7287,9 @@ contains the server's exact input IDs, elicitation requests, and optional opaque
 request state. Configure `InputSupport{Form: true, URL: true}` only when the host
 can present those interactions and return trusted answers. A form uses the
 protocol's flat primitive schema. URL consent, decline, and cancel carry no form
-content.
+content. Server-assigned input keys are arbitrary strings, including an empty
+string. Keep each key unchanged in the answer object; whitespace, case and
+Unicode are significant. The runtime requires the exact requested keys.
 
 The caller uses `resultType` to select the result contract. MCP permits extra
 result fields; completed-content fields on an `input_required` response never

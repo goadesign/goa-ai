@@ -2084,6 +2084,9 @@ rounding. Explicit custom Go types retain their own decoding contract.
 An unfinished remote call returns `input_required`. The runtime stores its
 original arguments and opaque state in a version-11 checkpoint, publishes typed
 host input requests, and validates the exact answers before the next activity.
+Server-assigned input keys are arbitrary strings, including an empty string;
+validation preserves their exact value and requires matching answer keys. Typed
+question names authored as Goa fields retain their separate design rules.
 Only a finished call enters completed tool history. MCP network rounds allow one
 activity attempt; an engine retry must not silently duplicate remote work.
 Inside that activity, explicit host trust and a per-round HTTP attempt allowance

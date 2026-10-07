@@ -89,3 +89,27 @@ func TestContinuationPresence(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &saved))
 	assert.NotNil(t, saved.InputResponses)
 }
+
+// TestMCPInputIdentifierIdentity checks arbitrary server keys through validation
+// and saved continuation JSON. Answers must preserve the exact selected key;
+// accepting an empty key does not allow answers for another request.
+func TestMCPInputIdentifierIdentity(t *testing.T) {
+	for _, id := range []string{"", " ", "profile / α"} {
+		t.Run(id, func(t *testing.T) {
+			pending := &InputRequired{Requests: map[string]InputRequest{id: {
+				Method: "elicitation/create",
+				Params: json.RawMessage(`{"mode":"form","message":"Choose","requestedSchema":{"type":"object","properties":{}}}`),
+			}}}
+			require.NoError(t, pending.Validate(InputSupport{Form: true}))
+			answers := map[string]json.RawMessage{id: json.RawMessage(`{"action":"cancel"}`)}
+			require.NoError(t, pending.ValidateResponses(answers))
+			require.Error(t, pending.ValidateResponses(map[string]json.RawMessage{id + "different": json.RawMessage(`{"action":"cancel"}`)}))
+			raw, err := json.Marshal(CallContinuation{InputResponses: answers})
+			require.NoError(t, err)
+			var saved CallContinuation
+			require.NoError(t, json.Unmarshal(raw, &saved))
+			assert.Equal(t, answers, saved.InputResponses)
+			require.NoError(t, pending.ValidateResponses(saved.InputResponses))
+		})
+	}
+}

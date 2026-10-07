@@ -60,9 +60,6 @@ func (r *InputRequired) Validate(support InputSupport) error {
 		return errors.New("input_required needs inputRequests or requestState")
 	}
 	for id, request := range r.Requests {
-		if id == "" {
-			return errors.New("input request ID must not be empty")
-		}
 		params, err := decodeElicitation(request)
 		if err != nil {
 			return fmt.Errorf("input request %q: %w", id, err)

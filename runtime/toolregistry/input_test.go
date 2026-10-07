@@ -35,7 +35,7 @@ func TestRegistryInputRoundBoundary(t *testing.T) {
 		{name: "null answer", round: 1, input: &mcp.CallContinuation{InputResponses: map[string]json.RawMessage{"question": json.RawMessage(`null`)}}, wantError: true},
 		{name: "scalar answer", round: 1, input: &mcp.CallContinuation{InputResponses: map[string]json.RawMessage{"question": json.RawMessage(`true`)}}, wantError: true},
 		{name: "duplicate answer member", round: 1, input: &mcp.CallContinuation{InputResponses: map[string]json.RawMessage{"question": json.RawMessage(`{"action":"accept","action":"cancel"}`)}}, wantError: true},
-		{name: "empty answer id", round: 1, input: &mcp.CallContinuation{InputResponses: map[string]json.RawMessage{"": json.RawMessage(`{}`)}}, wantError: true},
+		{name: "empty answer id", round: 1, input: &mcp.CallContinuation{InputResponses: map[string]json.RawMessage{"": json.RawMessage(`{"action":"cancel"}`)}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			err := ValidateInputRound(test.round, test.input, test.textOnly)
@@ -55,6 +55,7 @@ func TestRegistryRequiredInputOutcomeBoundary(t *testing.T) {
 		name  string
 		input *mcp.InputRequired
 	}{
+		{name: "empty request id", input: &mcp.InputRequired{Requests: map[string]mcp.InputRequest{"": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{}}}`)}}}},
 		{name: "empty state", input: &mcp.InputRequired{RequestState: &state}},
 		{name: "empty requests", input: &mcp.InputRequired{Requests: map[string]mcp.InputRequest{}}},
 		{name: "form", input: &mcp.InputRequired{Requests: map[string]mcp.InputRequest{"question": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{}}}`)}}}},

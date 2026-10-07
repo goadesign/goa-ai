@@ -179,7 +179,7 @@ func TestTaskSubscriptionHostInputSupport(t *testing.T) {
 				delivered++
 				input, ok := event.Task.AsInputRequired()
 				require.True(t, ok)
-				assert.Contains(t, input.Requests, "q")
+				assert.Contains(t, input.Requests, "")
 				return nil
 			})
 			if item.disabled {
@@ -188,7 +188,7 @@ func TestTaskSubscriptionHostInputSupport(t *testing.T) {
 			receiver, err := newSubscriptionReceiver(ctx, json.RawMessage(`1`), json.RawMessage(`{"taskIds":["job / α"]}`), InputSupport{Form: true})
 			require.NoError(t, err)
 			require.NoError(t, receiver.acknowledge(SubscriptionFilter{TaskIDs: []string{taskPeerID}}))
-			message := rpcMessage{Method: string(SubscriptionTaskChanged), Params: json.RawMessage(`{"_meta":{"io.modelcontextprotocol/subscriptionId":1},"taskId":"job / α","status":"input_required","createdAt":"date","lastUpdatedAt":"date","ttlMs":null,"inputRequests":{"q":{"method":"elicitation/create","params":{"mode":"form","message":"value?","requestedSchema":{"type":"object","properties":{}}}}}}`)}
+			message := rpcMessage{Method: string(SubscriptionTaskChanged), Params: json.RawMessage(`{"_meta":{"io.modelcontextprotocol/subscriptionId":1},"taskId":"job / α","status":"input_required","createdAt":"date","lastUpdatedAt":"date","ttlMs":null,"inputRequests":{"":{"method":"elicitation/create","params":{"mode":"form","message":"value?","requestedSchema":{"type":"object","properties":{}}}}}}`)}
 			err = receiver.notification(ctx, message)
 			if item.disabled {
 				require.ErrorContains(t, err, "host input is disabled")

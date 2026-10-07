@@ -3379,3 +3379,21 @@ previous saved observation. The next contract must preserve one model invocation
 and task ID while assigning each query/update a workflow-owned execution identity.
 Task input answers must use `tasks/update`, and known answered request keys must
 remain saved across worker replacement and successor runs.
+
+
+### Exact input-key contract — 2026-10-07
+
+The [2026-07-28 schema](https://raw.githubusercontent.com/modelcontextprotocol/modelcontextprotocol/main/schema/2026-07-28/schema.ts)
+defines InputRequests and InputResponses as maps with arbitrary string keys.
+Shared MCP input validation and registry admission had added a nonempty-key
+restriction that was absent from that wire contract. Both boundaries now accept
+an empty key while preserving exact request/answer matching. No normalization,
+inference, new public type or generated named-question rule is introduced.
+
+Focused core input/continuation, Task host-input and registry round/result checks
+passed in 0.339 s for MCP and 0.353 s for registry. Empty, whitespace and Unicode
+keys survive saved answer JSON; a different answer key still fails. Empty request
+keys survive retained registry result JSON. Text-only restrictions and absence
+rules remain enforced. Scoped lint reports zero issues; the whole suite was not
+repeated. Existing named-key callers are unchanged, and no stored format or
+migration changes. Task generation and durable consumption remain release gates.

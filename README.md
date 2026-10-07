@@ -330,6 +330,8 @@ See the [JSON boundary contract](docs/runtime.md#json-boundary-contract).
 MCP callers preserve empty input continuations. When a service returns an empty
 request object without state, a later call still receives its native continuation
 object. Generated clients and shared HTTP/stdio callers use the same behavior.
+Input keys from external servers stay exact, including empty strings, through
+validation and registry continuation records.
 
 Registry users must regenerate and deploy registry replicas, providers and
 consumers together for wire protocol 11. It adds workflow-owned input-round

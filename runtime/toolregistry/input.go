@@ -25,9 +25,6 @@ func ValidateInputRound(round uint64, continuation *mcp.CallContinuation, textOn
 		return fmt.Errorf("text-only calls cannot carry input continuation")
 	}
 	for id, answer := range continuation.InputResponses {
-		if id == "" {
-			return fmt.Errorf("input response ID must not be empty")
-		}
 		var object map[string]json.RawMessage
 		if err := jsonv2.Unmarshal(answer, &object); err != nil {
 			return fmt.Errorf("input response %q: %w", id, err)
