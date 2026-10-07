@@ -2811,11 +2811,13 @@ merged commit after the v3.34.0 release.
 
 The authorization extension's main revision is still `fb374c7`; its DPoP and
 workload-identity proposals remain open and unmerged. They are not claimed as
-released capabilities. Independent authorization conformance remains open: the
-current referee's localhost HTTP issuer fixtures conflict with the protocol's
-mandatory HTTPS authorization-server endpoints. A loopback HTTP redirect exception
-does not authorize an HTTP issuer. Do not relax transport security or claim a
-stock referee pass to bypass this mismatch.
+released capabilities. The referee's localhost HTTP issuer fixtures conflict
+with the protocol's mandatory HTTPS authorization-server endpoints. A loopback
+HTTP redirect exception does not authorize an HTTP issuer. The tracked local
+`integration_tests/conformance/https_fixture.mjs` selects an HTTPS listener and
+base URL while retaining the original command, OAuth handlers and assertions.
+Both peers explicitly trust the local test CA and verify certificates. Do not
+relax production transport security or describe this adaptation as a stock pass.
 
 The existing Goa-AI complete-value codec and schema builders now consume that
 mapping. Strict codecs reject duplicate keys, extra fields, nulls, invalid branch
@@ -2827,3 +2829,31 @@ flat example must supply its discriminator rather than request branch guessing.
 Configured lint reports zero issues. No new public runtime type, callback or
 MCP-only serializer is added. These foundations do not by themselves implement
 server-produced additional input.
+
+## Independent preregistered authorization acceptance
+
+On 2026-10-07, the pinned referee's HTTPS-adapted `auth/pre-registration`
+scenario passes all 13 checks with no failures or warnings through Goa-AI's
+production browser authorization transport. It checks protected-resource and
+issuer discovery, S256 PKCE and verifier matching, issuer-bound preregistered
+Basic authentication, token exchange, and bearer-authorized tool list/call.
+The final tracked setup and rebuilt driver pass; focused driver lint reports
+zero issues. No complete suite was repeated for this driver change.
+
+The original scenario and lifecycle source hashes are unchanged:
+`pre-registration.ts` is
+`c5745afaabc02efc37dac45e93a7799420827f89af6f0c7bbce217ef77ddc545`, and
+`serverLifecycle.ts` is
+`648d29aaeab63b3a5954d9b1f65a3e665eabd69c8823bd0229b059bf796c5dc7`.
+The [driver instructions](../integration_tests/conformance/README.md#https-authorization-fixture)
+record the reproducible command and trust setup. Raw reports remain local because
+OAuth captures contain synthetic secrets and credentials.
+
+This evidence closes only the selected browser/preregistration path. The pinned
+machine and enterprise scenario contexts omit the resource registration's exact
+issuer. A host must bind credentials to that issuer before discovery; inferring
+it from a resource URL or sending credentials to any discovered issuer would
+weaken the production trust contract. Extend local fixture configuration
+explicitly before claiming those paths. Independent negative cases, other
+registration/grant profiles, interrupted SSE acceptance and external caller
+cutover remain release gates. No release or deployment is performed.

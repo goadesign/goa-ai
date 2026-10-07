@@ -56,12 +56,51 @@ Repeat the client command for `request-metadata`, `http-standard-headers`,
 An unsupported driver scenario is an error. No expected-failures file masks
 mandatory failures. Stop the local server with an interrupt when done.
 
+## HTTPS authorization fixture
+
+The pinned referee binds its authorization fixtures to HTTP. The current MCP
+contract requires HTTPS issuer and authorization endpoints; its loopback HTTP
+exception applies only to browser redirects. `https_fixture.mjs` changes the
+referee's listening socket and resulting base URL to HTTPS. The original command,
+OAuth handlers, scenario and checks remain unchanged. This is an HTTPS-adapted
+scenario, not a stock referee pass or a complete authorization-conformance claim.
+
+From the repository root, create a local test certificate and build the driver:
+
+```sh
+umask 077
+mkdir -p .cache/conformance-tls
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' -keyout .cache/conformance-tls/key.pem -out .cache/conformance-tls/cert.pem
+go build -o .cache/mcp-conformance-client ./integration_tests/conformance/client
+export MCP_CONFORMANCE_TLS_KEY="$PWD/.cache/conformance-tls/key.pem"
+export MCP_CONFORMANCE_CA_FILE="$PWD/.cache/conformance-tls/cert.pem"
+export NODE_EXTRA_CA_CERTS="$MCP_CONFORMANCE_CA_FILE"
+export MCP_CONFORMANCE_DRIVER="$PWD/.cache/mcp-conformance-client"
+export MCP_CONFORMANCE_SETUP="$PWD/integration_tests/conformance/https_fixture.mjs"
+export MCP_CONFORMANCE_RESULTS="$PWD/.cache/conformance/authorization-https"
+cd .cache/mcp-conformance
+node --import tsx --import "$MCP_CONFORMANCE_SETUP" src/index.ts client --command "$MCP_CONFORMANCE_DRIVER" --scenario auth/pre-registration --spec-version 2026-07-28 --output-dir "$MCP_CONFORMANCE_RESULTS"
+```
+
+Both Node and the production Goa-AI transport trust that explicit test CA;
+certificate verification stays enabled. The driver obtains its exact issuer and
+registered credentials from the referee's typed scenario context. It supplies
+host consent through the fixture's browser redirect and uses an explicit
+process-lifetime credential store. Production OAuth code owns discovery, PKCE,
+callback validation, token exchange and authorized MCP dispatch.
+
+The certificate's one-day validity is local test setup, not an OAuth token or
+product retention rule. Keep the private key and raw reports out of commits:
+reports contain synthetic secrets, authorization codes and tokens. After the
+run, stop any fixture process and remove the local test key when no longer needed.
+
 ## Observed results
 
 Verified on 2026-10-03 with the pinned referee:
 
 | Role / scenario | Result | Limit of the evidence |
 | --- | --- | --- |
+| Client / `auth/pre-registration`, HTTPS-adapted, verified 2026-10-07 | 13 passed, no failures or warnings | Protected-resource and issuer discovery, S256 PKCE, preregistered Basic authentication, token exchange and authorized list/call through production OAuth. Other authorization profiles and negative cases remain open. |
 | Client / `tools_call` | 2 checks passed | Simple tool call and its wire schema |
 | Client / `request-metadata` | 4 passed, 3 skipped, 1 warning; overall failure | Roots, sampling, and elicitation are unclaimed by this driver. The peer rejects `2026-07-28` while advertising that same revision as supported; it warns because the client stops instead of repeating the request. This is not an old-version fallback test. |
 | Client / `http-standard-headers` | 3 passed, 8 skipped | Tool list/call method headers and tool name header. The driver does not exercise resource/prompt methods or removed initialization methods. |
@@ -85,7 +124,7 @@ transport tests independently verify null header omission. It does not claim a
 successful invalid-argument call.
 
 The broader released requirement set also covers additional content authoring, URI-template argument
-suggestions, authorization flows, server-produced multi-round input, and other
+suggestions, other authorization profiles and negative cases, server-produced multi-round input, and other
 paths that this fixture does not implement. The complete released-set runs
 exercised these scenarios and failed where the implementation or fixture is absent. See the [full audit](audit.md)
 for scored and additional scenario counts. These drivers have not passed the full

@@ -33,6 +33,9 @@ func exercise() error {
 	if os.Getenv("MCP_CONFORMANCE_PROTOCOL_VERSION") != mcp.ProtocolVersion {
 		return errors.New("conformance client requires the current protocol revision")
 	}
+	if os.Getenv("MCP_CONFORMANCE_SCENARIO") == "auth/pre-registration" {
+		return exerciseAuthorization(os.Args[1])
+	}
 	caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
 		Endpoint:   os.Args[1],
 		ClientInfo: mcp.ClientInfo{Name: "goa-ai-conformance", Version: "1"},
