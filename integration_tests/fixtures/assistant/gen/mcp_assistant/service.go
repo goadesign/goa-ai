@@ -8,13 +8,14 @@
 package mcpassistant
 
 import (
-	bytes "bytes"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	io "io"
 	sort "sort"
 	strconv "strconv"
+	strings "strings"
 	utf8 "unicode/utf8"
 
 	goa "goa.design/goa/v3/pkg"
@@ -192,6 +193,51 @@ type DiscoverResult struct {
 	CacheScope string
 }
 
+type ElicitationCapabilities struct {
+	// Support for non-sensitive form input
+	Form *struct {
+	}
+	// Support for external URL consent
+	URL *struct {
+	}
+}
+
+type ElicitationFormParams struct {
+	// Non-sensitive information requested from the user
+	Message string
+	// The flat form schema generated from accepted answer content
+	RequestedSchema json.RawMessage
+}
+
+type ElicitationURLParams struct {
+	// The external interaction the user is asked to approve
+	Message string
+	// Absolute URL opened by the consenting host
+	URL string
+}
+
+type InputRequest struct {
+	// Client operation requested to complete this input round
+	Method string
+	// A typed form request or URL-consent request
+	Params ElicitationParams
+}
+
+type InputRequiredResult struct {
+	// Questions indexed by service-assigned identifiers within this input round
+	InputRequests map[string]*InputRequest `json:"inputRequests,omitzero"`
+	// Opaque service-owned operation state echoed exactly on continuation
+	RequestState *string
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage
+}
+
+// The client did not declare support for the requested input.
+type MissingClientCapabilityError struct {
+	// Capabilities required to fulfill this operation's questions
+	RequiredCapabilities *RequiredClientCapabilities
+}
+
 type PromptArgument struct {
 	// Argument name
 	Name string
@@ -221,6 +267,15 @@ type PromptMessage struct {
 type PromptsCapability struct {
 }
 
+type PromptsGetCompleteResult struct {
+	// Prompt description
+	Description *string
+	// Prompt messages
+	Messages []*PromptMessage `json:"messages"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
 // PromptsGetPayload is the payload type of the mcp_assistant service
 // prompts/get method.
 type PromptsGetPayload struct {
@@ -230,19 +285,18 @@ type PromptsGetPayload struct {
 	Arguments map[string]string
 	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact service-owned state from this operation's preceding input round
+	RequestState *string
+	// Host answers indexed by this operation's request identifiers; an empty
+	// object still identifies a continuation
+	InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"`
 }
 
 // PromptsGetResult is the result type of the mcp_assistant service prompts/get
 // method.
 type PromptsGetResult struct {
-	// Prompt description
-	Description *string
-	// Prompt messages
-	Messages []*PromptMessage
-	// Namespaced protocol metadata and extension values
-	Meta json.RawMessage `json:"_meta,omitempty"`
-	// This response contains a finished result
-	ResultType string
+	// Completed operation data or additional input requested by the service
+	Outcome PromptsGetOutcome
 }
 
 // PromptsListPayload is the payload type of the mcp_assistant service
@@ -269,6 +323,11 @@ type PromptsListResult struct {
 	TTLMs int64
 	// Whether this response may be reused across authorization contexts
 	CacheScope string
+}
+
+type RequiredClientCapabilities struct {
+	// Required forms of user input
+	Elicitation *ElicitationCapabilities
 }
 
 type ResourceContent struct {
@@ -362,6 +421,17 @@ type ResourcesListResult struct {
 	CacheScope string
 }
 
+type ResourcesReadCompleteResult struct {
+	// Resource contents
+	Contents []*ResourceContent `json:"contents"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Milliseconds this one response may be cached
+	TTLMs int64
+	// Whether this response may be reused across authorization contexts
+	CacheScope string
+}
+
 // ResourcesReadPayload is the payload type of the mcp_assistant service
 // resources/read method.
 type ResourcesReadPayload struct {
@@ -369,21 +439,18 @@ type ResourcesReadPayload struct {
 	URI string
 	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact service-owned state from this operation's preceding input round
+	RequestState *string
+	// Host answers indexed by this operation's request identifiers; an empty
+	// object still identifies a continuation
+	InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"`
 }
 
 // ResourcesReadResult is the result type of the mcp_assistant service
 // resources/read method.
 type ResourcesReadResult struct {
-	// Resource contents
-	Contents []*ResourceContent
-	// Namespaced protocol metadata and extension values
-	Meta json.RawMessage `json:"_meta,omitempty"`
-	// This response contains a finished result
-	ResultType string
-	// Milliseconds this one response may be cached
-	TTLMs int64
-	// Whether this response may be reused across authorization contexts
-	CacheScope string
+	// Completed operation data or additional input requested by the service
+	Outcome ResourcesReadOutcome
 }
 
 type ServerCapabilities struct {
@@ -423,6 +490,17 @@ type ToolInfo struct {
 	OutputSchema json.RawMessage
 }
 
+type ToolsCallCompleteResult struct {
+	// Tool execution results
+	Content []*ContentItem `json:"content"`
+	// Whether the tool encountered an error
+	IsError *bool
+	// Structured tool result
+	StructuredContent json.RawMessage
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
 // ToolsCallPayload is the payload type of the mcp_assistant service tools/call
 // method.
 type ToolsCallPayload struct {
@@ -432,21 +510,18 @@ type ToolsCallPayload struct {
 	Arguments json.RawMessage
 	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact service-owned state from this operation's preceding input round
+	RequestState *string
+	// Host answers indexed by this operation's request identifiers; an empty
+	// object still identifies a continuation
+	InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"`
 }
 
 // ToolsCallResult is the result type of the mcp_assistant service tools/call
 // method.
 type ToolsCallResult struct {
-	// Tool execution results
-	Content []*ContentItem
-	// Whether the tool encountered an error
-	IsError *bool
-	// Structured tool result
-	StructuredContent json.RawMessage
-	// Namespaced protocol metadata and extension values
-	Meta json.RawMessage `json:"_meta,omitempty"`
-	// This response contains a finished result
-	ResultType string
+	// Completed operation data or additional input requested by the service
+	Outcome ToolsCallOutcome
 }
 
 // Tool capabilities
@@ -479,6 +554,23 @@ type ToolsListResult struct {
 	CacheScope string
 }
 
+// Error returns an error description.
+func (e *MissingClientCapabilityError) Error() string {
+	return "The client did not declare support for the requested input."
+}
+
+// ErrorName returns the error name.
+//
+// Deprecated: Use GoaErrorName - https://github.com/goadesign/goa/issues/3105
+func (e *MissingClientCapabilityError) ErrorName() string {
+	return e.GoaErrorName()
+}
+
+// GoaErrorName returns the error name.
+func (e *MissingClientCapabilityError) GoaErrorName() string {
+	return "missing_client_capability"
+}
+
 // MakeInvalidParams builds a goa.ServiceError from an error.
 func MakeInvalidParams(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "invalid_params", false, false, false)
@@ -487,6 +579,30 @@ func MakeInvalidParams(err error) *goa.ServiceError {
 // MakeInternalError builds a goa.ServiceError from an error.
 func MakeInternalError(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "internal_error", false, false, false)
+}
+
+// completionSuggestionInt64Transport stores JSON fields until they have been validated.
+type completionSuggestionInt64Transport int64
+
+// UnmarshalJSON reads an exact whole JSON number and stores it within this type's
+// declared range. Decimal and exponent spellings do not change its value.
+func (value *completionSuggestionInt64Transport) UnmarshalJSON(data []byte) error {
+	text, err := integerJSONText(data)
+	if err != nil {
+		return err
+	}
+	number, err := strconv.ParseInt(text, 10, 64)
+	if err != nil {
+		return fmt.Errorf("decode completionSuggestionInt64Transport integer: %w", err)
+	}
+	*value = completionSuggestionInt64Transport(number)
+	return nil
+}
+
+// ValidatecompletionSuggestionInt64Transport checks decoded JSON before it becomes a service value.
+func ValidatecompletionSuggestionInt64Transport(value completionSuggestionInt64Transport) (err error) {
+
+	return err
 }
 
 // jsonCompletionArgumentTransport stores JSON fields until they have been validated.
@@ -559,7 +675,7 @@ type jsonCompletionSuggestionTransport struct {
 	// Suggestions in service-selected relevance order
 	Values []*string `json:"values"`
 	// Total available matches, which can exceed the returned count
-	Total *int64 `json:"total,omitempty"`
+	Total *completionSuggestionInt64Transport `json:"total,omitempty"`
 	// Whether further matches exist
 	HasMore *bool `json:"hasMore,omitempty"`
 }
@@ -658,6 +774,72 @@ func validatejsonContentIconTransport(value *jsonContentIconTransport) (err erro
 	return err
 }
 
+// jsonElicitationCapabilitiesTransport stores JSON fields until they have been validated.
+type jsonElicitationCapabilitiesTransport struct {
+	// Support for non-sensitive form input
+	Form *struct {
+	} `json:"form,omitempty"`
+	// Support for external URL consent
+	URL *struct {
+	} `json:"url,omitempty"`
+}
+
+// validatejsonElicitationCapabilitiesTransport checks decoded JSON before it becomes a service value.
+func validatejsonElicitationCapabilitiesTransport(value *jsonElicitationCapabilitiesTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+
+	return err
+}
+
+// jsonElicitationURLParamsTransport stores JSON fields until they have been validated.
+type jsonElicitationURLParamsTransport struct {
+	// The external interaction the user is asked to approve
+	Message *string `json:"message"`
+	// Absolute URL opened by the consenting host
+	URL *string `json:"url"`
+}
+
+// validatejsonElicitationURLParamsTransport checks decoded JSON before it becomes a service value.
+func validatejsonElicitationURLParamsTransport(value *jsonElicitationURLParamsTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if value.URL == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("url", "body"))
+	}
+	if value.URL != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.url", *value.URL, goa.FormatURI))
+	}
+	return err
+}
+
+// jsonMissingClientCapabilityErrorTransport stores JSON fields until they have been validated.
+type jsonMissingClientCapabilityErrorTransport struct {
+	// Capabilities required to fulfill this operation's questions
+	RequiredCapabilities *jsonRequiredClientCapabilitiesTransport `json:"requiredCapabilities"`
+}
+
+// validatejsonMissingClientCapabilityErrorTransport checks decoded JSON before it becomes a service value.
+func validatejsonMissingClientCapabilityErrorTransport(value *jsonMissingClientCapabilityErrorTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.RequiredCapabilities == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requiredCapabilities", "body"))
+	}
+	if value.RequiredCapabilities != nil {
+		if err2 := validatejsonRequiredClientCapabilitiesTransport(value.RequiredCapabilities); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return err
+}
+
 // jsonPromptArgumentTransport stores JSON fields until they have been validated.
 type jsonPromptArgumentTransport struct {
 	// Argument name
@@ -720,6 +902,23 @@ func validatejsonPromptsCapabilityTransport(value *jsonPromptsCapabilityTranspor
 		return goa.MissingFieldError("body", "JSON value")
 	}
 
+	return err
+}
+
+// jsonRequiredClientCapabilitiesTransport stores JSON fields until they have been validated.
+type jsonRequiredClientCapabilitiesTransport struct {
+	// Required forms of user input
+	Elicitation *jsonElicitationCapabilitiesTransport `json:"elicitation"`
+}
+
+// validatejsonRequiredClientCapabilitiesTransport checks decoded JSON before it becomes a service value.
+func validatejsonRequiredClientCapabilitiesTransport(value *jsonRequiredClientCapabilitiesTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Elicitation == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("elicitation", "body"))
+	}
 	return err
 }
 
@@ -893,12 +1092,47 @@ func validateContentIconOriginal(value *ContentIcon) (err error) {
 	return err
 }
 
+// validateElicitationURLParamsOriginal checks the original typed value before JSON conversion.
+func validateElicitationURLParamsOriginal(value *ElicitationURLParams) (err error) {
+	err = goa.MergeErrors(err, goa.ValidateFormat("value.url", value.URL, goa.FormatURI))
+	return err
+}
+
+// validateMissingClientCapabilityErrorOriginal checks the original typed value before JSON conversion.
+func validateMissingClientCapabilityErrorOriginal(value *MissingClientCapabilityError) (err error) {
+	if value.RequiredCapabilities == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requiredCapabilities", "value"))
+	}
+	if value.RequiredCapabilities != nil {
+		if err2 := validateRequiredClientCapabilitiesOriginal(value.RequiredCapabilities); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return err
+}
+
+// validateRequiredClientCapabilitiesOriginal checks the original typed value before JSON conversion.
+func validateRequiredClientCapabilitiesOriginal(value *RequiredClientCapabilities) (err error) {
+	if value.Elicitation == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("elicitation", "value"))
+	}
+	return err
+}
+
 // validatePromptInfoOriginal checks the original typed value before JSON conversion.
 func validatePromptInfoOriginal(value *PromptInfo) (err error) {
 	for _, e := range value.Arguments {
 		if e == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("value.arguments", "[*]"))
 		}
+	}
+	return err
+}
+
+// validateRequiredClientCapabilitiesOriginal2 checks the original typed value before JSON conversion.
+func validateRequiredClientCapabilitiesOriginal2(value *RequiredClientCapabilities) (err error) {
+	if value.Elicitation == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("elicitation", "value"))
 	}
 	return err
 }
@@ -1096,8 +1330,11 @@ func EncodeCompletionSuggestion(in *CompletionSuggestion) ([]byte, error) {
 	var body *jsonCompletionSuggestionTransport
 	{
 		body = &jsonCompletionSuggestionTransport{
-			Total:   in.Total,
 			HasMore: in.HasMore,
+		}
+		if in.Total != nil {
+			total := completionSuggestionInt64Transport(*in.Total)
+			body.Total = &total
 		}
 		body.Values = make([]*string, len(in.Values))
 		for i, val := range in.Values {
@@ -1142,8 +1379,11 @@ func DecodeCompletionSuggestion(data []byte) (out *CompletionSuggestion, err err
 	}
 	{
 		out = &CompletionSuggestion{
-			Total:   body.Total,
 			HasMore: body.HasMore,
+		}
+		if body.Total != nil {
+			total := int64(*body.Total)
+			out.Total = &total
 		}
 		out.Values = make([]string, len(body.Values))
 		for i, val := range body.Values {
@@ -1344,6 +1584,183 @@ func DecodeContentIcon(data []byte) (out *ContentIcon, err error) {
 	return out, nil
 }
 
+// EncodeElicitationCapabilities turns a service value into JSON using the field names in the Goa design.
+func EncodeElicitationCapabilities(in *ElicitationCapabilities) ([]byte, error) {
+	if err := checkElicitationCapabilitiesValue(in); err != nil {
+		return nil, fmt.Errorf("encode ElicitationCapabilities JSON: %w", err)
+	}
+	var body *jsonElicitationCapabilitiesTransport
+	{
+		body = &jsonElicitationCapabilitiesTransport{}
+		if in.Form != nil {
+			body.Form = &struct {
+			}{}
+		}
+		if in.URL != nil {
+			body.URL = &struct {
+			}{}
+		}
+	}
+	if err := validatejsonElicitationCapabilitiesTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ElicitationCapabilities JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ElicitationCapabilities JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeElicitationCapabilities checks JSON field names from the Goa design and returns a service value.
+func DecodeElicitationCapabilities(data []byte) (out *ElicitationCapabilities, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ElicitationCapabilities JSON: %w", err)
+	}
+	if err := validateElicitationCapabilitiesJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ElicitationCapabilities JSON: %w", err)
+	}
+	var body *jsonElicitationCapabilitiesTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ElicitationCapabilities JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ElicitationCapabilities JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ElicitationCapabilities JSON after first value: %w", err)
+	}
+	if err := validatejsonElicitationCapabilitiesTransport(body); err != nil {
+		return out, fmt.Errorf("validate ElicitationCapabilities JSON: %w", err)
+	}
+	{
+		out = &ElicitationCapabilities{}
+		if body.Form != nil {
+			out.Form = &struct {
+			}{}
+		}
+		if body.URL != nil {
+			out.URL = &struct {
+			}{}
+		}
+	}
+	return out, nil
+}
+
+// EncodeElicitationURLParams turns a service value into JSON using the field names in the Goa design.
+func EncodeElicitationURLParams(in *ElicitationURLParams) ([]byte, error) {
+	if err := checkElicitationURLParamsValue(in); err != nil {
+		return nil, fmt.Errorf("encode ElicitationURLParams JSON: %w", err)
+	}
+	if err := validateElicitationURLParamsOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate ElicitationURLParams value: %w", err)
+	}
+	var body *jsonElicitationURLParamsTransport
+	{
+		body = &jsonElicitationURLParamsTransport{
+			Message: &in.Message,
+			URL:     &in.URL,
+		}
+	}
+	if err := validatejsonElicitationURLParamsTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ElicitationURLParams JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ElicitationURLParams JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeElicitationURLParams checks JSON field names from the Goa design and returns a service value.
+func DecodeElicitationURLParams(data []byte) (out *ElicitationURLParams, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ElicitationURLParams JSON: %w", err)
+	}
+	if err := validateElicitationURLParamsJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ElicitationURLParams JSON: %w", err)
+	}
+	var body *jsonElicitationURLParamsTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ElicitationURLParams JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ElicitationURLParams JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ElicitationURLParams JSON after first value: %w", err)
+	}
+	if err := validatejsonElicitationURLParamsTransport(body); err != nil {
+		return out, fmt.Errorf("validate ElicitationURLParams JSON: %w", err)
+	}
+	{
+		out = &ElicitationURLParams{
+			Message: *body.Message,
+			URL:     *body.URL,
+		}
+	}
+	return out, nil
+}
+
+// EncodeMissingClientCapabilityError turns a service value into JSON using the field names in the Goa design.
+func EncodeMissingClientCapabilityError(in *MissingClientCapabilityError) ([]byte, error) {
+	if err := checkMissingClientCapabilityErrorValue(in); err != nil {
+		return nil, fmt.Errorf("encode MissingClientCapabilityError JSON: %w", err)
+	}
+	if err := validateMissingClientCapabilityErrorOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate MissingClientCapabilityError value: %w", err)
+	}
+	var body *jsonMissingClientCapabilityErrorTransport
+	{
+		body = &jsonMissingClientCapabilityErrorTransport{}
+		body.RequiredCapabilities = encodeRequiredClientCapabilitiesToRequiredClientCapabilitiesTransport(in.RequiredCapabilities)
+	}
+	if err := validatejsonMissingClientCapabilityErrorTransport(body); err != nil {
+		return nil, fmt.Errorf("validate MissingClientCapabilityError JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode MissingClientCapabilityError JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeMissingClientCapabilityError checks JSON field names from the Goa design and returns a service value.
+func DecodeMissingClientCapabilityError(data []byte) (out *MissingClientCapabilityError, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode MissingClientCapabilityError JSON: %w", err)
+	}
+	if err := validateMissingClientCapabilityErrorJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode MissingClientCapabilityError JSON: %w", err)
+	}
+	var body *jsonMissingClientCapabilityErrorTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode MissingClientCapabilityError JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode MissingClientCapabilityError JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode MissingClientCapabilityError JSON after first value: %w", err)
+	}
+	if err := validatejsonMissingClientCapabilityErrorTransport(body); err != nil {
+		return out, fmt.Errorf("validate MissingClientCapabilityError JSON: %w", err)
+	}
+	{
+		out = &MissingClientCapabilityError{}
+		out.RequiredCapabilities = decodeRequiredClientCapabilitiesTransportToRequiredClientCapabilities(body.RequiredCapabilities)
+	}
+	return out, nil
+}
+
 // EncodePromptArgument turns a service value into JSON using the field names in the Goa design.
 func EncodePromptArgument(in *PromptArgument) ([]byte, error) {
 	if err := checkPromptArgumentValue(in); err != nil {
@@ -1524,6 +1941,60 @@ func DecodePromptsCapability(data []byte) (out *PromptsCapability, err error) {
 	}
 	{
 		out = &PromptsCapability{}
+	}
+	return out, nil
+}
+
+// EncodeRequiredClientCapabilities turns a service value into JSON using the field names in the Goa design.
+func EncodeRequiredClientCapabilities(in *RequiredClientCapabilities) ([]byte, error) {
+	if err := checkRequiredClientCapabilitiesValue(in); err != nil {
+		return nil, fmt.Errorf("encode RequiredClientCapabilities JSON: %w", err)
+	}
+	if err := validateRequiredClientCapabilitiesOriginal2(in); err != nil {
+		return nil, fmt.Errorf("validate RequiredClientCapabilities value: %w", err)
+	}
+	var body *jsonRequiredClientCapabilitiesTransport
+	{
+		body = &jsonRequiredClientCapabilitiesTransport{}
+		body.Elicitation = encodeElicitationCapabilitiesToElicitationCapabilitiesTransport2(in.Elicitation)
+	}
+	if err := validatejsonRequiredClientCapabilitiesTransport(body); err != nil {
+		return nil, fmt.Errorf("validate RequiredClientCapabilities JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode RequiredClientCapabilities JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeRequiredClientCapabilities checks JSON field names from the Goa design and returns a service value.
+func DecodeRequiredClientCapabilities(data []byte) (out *RequiredClientCapabilities, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode RequiredClientCapabilities JSON: %w", err)
+	}
+	if err := validateRequiredClientCapabilitiesJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode RequiredClientCapabilities JSON: %w", err)
+	}
+	var body *jsonRequiredClientCapabilitiesTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode RequiredClientCapabilities JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode RequiredClientCapabilities JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode RequiredClientCapabilities JSON after first value: %w", err)
+	}
+	if err := validatejsonRequiredClientCapabilitiesTransport(body); err != nil {
+		return out, fmt.Errorf("validate RequiredClientCapabilities JSON: %w", err)
+	}
+	{
+		out = &RequiredClientCapabilities{}
+		out.Elicitation = decodeElicitationCapabilitiesTransportToElicitationCapabilities2(body.Elicitation)
 	}
 	return out, nil
 }
@@ -1884,6 +2355,34 @@ func decodeCompletionsCapabilityTransportToCompletionsCapability(v *jsonCompleti
 	return res
 }
 
+func decodeElicitationCapabilitiesTransportToElicitationCapabilities(v *jsonElicitationCapabilitiesTransport) *ElicitationCapabilities {
+	res := &ElicitationCapabilities{}
+	if v.Form != nil {
+		res.Form = &struct {
+		}{}
+	}
+	if v.URL != nil {
+		res.URL = &struct {
+		}{}
+	}
+
+	return res
+}
+
+func decodeElicitationCapabilitiesTransportToElicitationCapabilities2(v *jsonElicitationCapabilitiesTransport) *ElicitationCapabilities {
+	res := &ElicitationCapabilities{}
+	if v.Form != nil {
+		res.Form = &struct {
+		}{}
+	}
+	if v.URL != nil {
+		res.URL = &struct {
+		}{}
+	}
+
+	return res
+}
+
 func decodePromptArgumentTransportToPromptArgument(v *jsonPromptArgumentTransport) *PromptArgument {
 	res := &PromptArgument{
 		Name:        *v.Name,
@@ -1896,6 +2395,13 @@ func decodePromptArgumentTransportToPromptArgument(v *jsonPromptArgumentTranspor
 
 func decodePromptsCapabilityTransportToPromptsCapability(v *jsonPromptsCapabilityTransport) *PromptsCapability {
 	res := &PromptsCapability{}
+
+	return res
+}
+
+func decodeRequiredClientCapabilitiesTransportToRequiredClientCapabilities(v *jsonRequiredClientCapabilitiesTransport) *RequiredClientCapabilities {
+	res := &RequiredClientCapabilities{}
+	res.Elicitation = decodeElicitationCapabilitiesTransportToElicitationCapabilities(v.Elicitation)
 
 	return res
 }
@@ -1918,6 +2424,34 @@ func encodeCompletionsCapabilityToCompletionsCapabilityTransport(v *CompletionsC
 	return res
 }
 
+func encodeElicitationCapabilitiesToElicitationCapabilitiesTransport(v *ElicitationCapabilities) *jsonElicitationCapabilitiesTransport {
+	res := &jsonElicitationCapabilitiesTransport{}
+	if v.Form != nil {
+		res.Form = &struct {
+		}{}
+	}
+	if v.URL != nil {
+		res.URL = &struct {
+		}{}
+	}
+
+	return res
+}
+
+func encodeElicitationCapabilitiesToElicitationCapabilitiesTransport2(v *ElicitationCapabilities) *jsonElicitationCapabilitiesTransport {
+	res := &jsonElicitationCapabilitiesTransport{}
+	if v.Form != nil {
+		res.Form = &struct {
+		}{}
+	}
+	if v.URL != nil {
+		res.URL = &struct {
+		}{}
+	}
+
+	return res
+}
+
 func encodePromptArgumentToPromptArgumentTransport(v *PromptArgument) *jsonPromptArgumentTransport {
 	res := &jsonPromptArgumentTransport{
 		Name:        &v.Name,
@@ -1934,6 +2468,13 @@ func encodePromptsCapabilityToPromptsCapabilityTransport(v *PromptsCapability) *
 	return res
 }
 
+func encodeRequiredClientCapabilitiesToRequiredClientCapabilitiesTransport(v *RequiredClientCapabilities) *jsonRequiredClientCapabilitiesTransport {
+	res := &jsonRequiredClientCapabilitiesTransport{}
+	res.Elicitation = encodeElicitationCapabilitiesToElicitationCapabilitiesTransport(v.Elicitation)
+
+	return res
+}
+
 func encodeResourcesCapabilityToResourcesCapabilityTransport(v *ResourcesCapability) *jsonResourcesCapabilityTransport {
 	res := &jsonResourcesCapabilityTransport{}
 
@@ -1944,6 +2485,58 @@ func encodeToolsCapabilityToToolsCapabilityTransport(v *ToolsCapability) *jsonTo
 	res := &jsonToolsCapabilityTransport{}
 
 	return res
+}
+
+// integerJSONText reads a JSON number and returns the same whole number in
+// decimal notation. Fractional values and values beyond native integer ranges fail.
+func integerJSONText(data []byte) (string, error) {
+	text := string(bytes.TrimSpace(data))
+	if len(text) == 0 || (text[0] != '-' && (text[0] < '0' || text[0] > '9')) || !json.Valid([]byte(text)) {
+		return "", fmt.Errorf("expected an integer JSON number")
+	}
+	negative := text[0] == '-'
+	if negative {
+		text = text[1:]
+	}
+	coefficient, exponentText, hasExponent := strings.Cut(text, "e")
+	if !hasExponent {
+		coefficient, exponentText, hasExponent = strings.Cut(text, "E")
+	}
+	whole, fraction, _ := strings.Cut(coefficient, ".")
+	digits := strings.TrimLeft(whole+fraction, "0")
+	if digits == "" {
+		return "0", nil
+	}
+	exponent := 0
+	if hasExponent {
+		parsed, err := strconv.Atoi(exponentText)
+		if err != nil {
+			return "", fmt.Errorf("JSON number cannot be represented as an integer")
+		}
+		exponent = parsed
+	}
+	// A negative exponent cannot cancel more digits than the input contains.
+	// Comparing before subtraction also prevents overflow for extreme exponents.
+	if exponent < -len(digits) || exponent > len(fraction)+len(strconv.FormatUint(^uint64(0), 10)) {
+		return "", fmt.Errorf("JSON number cannot be represented as an integer")
+	}
+	scale := exponent - len(fraction)
+	if scale < 0 {
+		removed := -scale
+		if removed >= len(digits) || strings.Trim(digits[len(digits)-removed:], "0") != "" {
+			return "", fmt.Errorf("expected a whole JSON number")
+		}
+		digits = digits[:len(digits)-removed]
+		scale = 0
+	}
+	if len(digits)+scale > len(strconv.FormatUint(^uint64(0), 10)) {
+		return "", fmt.Errorf("JSON number cannot be represented as an integer")
+	}
+	digits += strings.Repeat("0", scale)
+	if negative {
+		digits = "-" + digits
+	}
+	return digits, nil
 }
 
 // validateCompletionArgumentJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
@@ -2304,12 +2897,9 @@ func validateCompletionSuggestionJSONValue3(path string, value any, description 
 	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	typed, ok := value.(json.Number)
+	_, ok := value.(json.Number)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	if _, err := strconv.ParseInt(typed.String(), 10, 64); err != nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
 	}
 	return nil
 }
@@ -2653,6 +3243,350 @@ func validateContentIconJSONValue6(path string, value any, description string) e
 	return nil
 }
 
+// validateElicitationCapabilitiesJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateElicitationCapabilitiesJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "form":
+			if err := validateElicitationCapabilitiesJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Support for non-sensitive form input",
+			); err != nil {
+				return err
+			}
+		case "url":
+			if err := validateElicitationCapabilitiesJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Support for external URL consent",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"form",
+				"url",
+			})
+		}
+	}
+	return nil
+}
+
+// validateElicitationCapabilitiesJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateElicitationCapabilitiesJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
+	}
+	return nil
+}
+
+// validateElicitationCapabilitiesJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateElicitationCapabilitiesJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
+	}
+	return nil
+}
+
+// validateElicitationURLParamsJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateElicitationURLParamsJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "message":
+			if err := validateElicitationURLParamsJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The external interaction the user is asked to approve",
+			); err != nil {
+				return err
+			}
+		case "url":
+			if err := validateElicitationURLParamsJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Absolute URL opened by the consenting host",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"message",
+				"url",
+			})
+		}
+	}
+	return nil
+}
+
+// validateElicitationURLParamsJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateElicitationURLParamsJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateElicitationURLParamsJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateElicitationURLParamsJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateMissingClientCapabilityErrorJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateMissingClientCapabilityErrorJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "requiredCapabilities":
+			if err := validateMissingClientCapabilityErrorJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Capabilities required to fulfill this operation's questions",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"requiredCapabilities",
+			})
+		}
+	}
+	return nil
+}
+
+// validateMissingClientCapabilityErrorJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateMissingClientCapabilityErrorJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "elicitation":
+			if err := validateMissingClientCapabilityErrorJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Required forms of user input",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"elicitation",
+			})
+		}
+	}
+	return nil
+}
+
+// validateMissingClientCapabilityErrorJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateMissingClientCapabilityErrorJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "form":
+			if err := validateMissingClientCapabilityErrorJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Support for non-sensitive form input",
+			); err != nil {
+				return err
+			}
+		case "url":
+			if err := validateMissingClientCapabilityErrorJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Support for external URL consent",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"form",
+				"url",
+			})
+		}
+	}
+	return nil
+}
+
+// validateMissingClientCapabilityErrorJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateMissingClientCapabilityErrorJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
+	}
+	return nil
+}
+
+// validateMissingClientCapabilityErrorJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateMissingClientCapabilityErrorJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
+	}
+	return nil
+}
+
 // validatePromptArgumentJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validatePromptArgumentJSONValue(path string, value any, description string) error {
 	field := path
@@ -2963,6 +3897,140 @@ func validatePromptInfoJSONValue8(path string, value any, description string) er
 
 // validatePromptsCapabilityJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validatePromptsCapabilityJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
+	}
+	return nil
+}
+
+// validateRequiredClientCapabilitiesJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRequiredClientCapabilitiesJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "elicitation":
+			if err := validateRequiredClientCapabilitiesJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Required forms of user input",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"elicitation",
+			})
+		}
+	}
+	return nil
+}
+
+// validateRequiredClientCapabilitiesJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRequiredClientCapabilitiesJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "form":
+			if err := validateRequiredClientCapabilitiesJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Support for non-sensitive form input",
+			); err != nil {
+				return err
+			}
+		case "url":
+			if err := validateRequiredClientCapabilitiesJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Support for external URL consent",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"form",
+				"url",
+			})
+		}
+	}
+	return nil
+}
+
+// validateRequiredClientCapabilitiesJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRequiredClientCapabilitiesJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
+	}
+	return nil
+}
+
+// validateRequiredClientCapabilitiesJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRequiredClientCapabilitiesJSONValue4(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -4014,6 +5082,137 @@ func checkContentIconContentIconValue(in *ContentIcon, field string, active map[
 	return nil
 }
 
+// checkElicitationCapabilitiesValue checks text and cycles before conversion.
+func checkElicitationCapabilitiesValue(in *ElicitationCapabilities) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkElicitationCapabilitiesElicitationCapabilitiesValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkElicitationCapabilitiesElicitationCapabilitiesValue checks one generated value on the active path.
+func checkElicitationCapabilitiesElicitationCapabilitiesValue(in *ElicitationCapabilities, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if in.Form != nil {
+		}
+		if in.URL != nil {
+		}
+	}
+	return nil
+}
+
+// checkElicitationURLParamsValue checks text and cycles before conversion.
+func checkElicitationURLParamsValue(in *ElicitationURLParams) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkElicitationURLParamsElicitationURLParamsValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkElicitationURLParamsElicitationURLParamsValue checks one generated value on the active path.
+func checkElicitationURLParamsElicitationURLParamsValue(in *ElicitationURLParams, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Message)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "message", false))
+		}
+		if !utf8.ValidString(string(in.URL)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "url", false))
+		}
+	}
+	return nil
+}
+
+// checkMissingClientCapabilityErrorValue checks text and cycles before conversion.
+func checkMissingClientCapabilityErrorValue(in *MissingClientCapabilityError) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkMissingClientCapabilityErrorMissingClientCapabilityErrorValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkMissingClientCapabilityErrorMissingClientCapabilityErrorValue checks one generated value on the active path.
+func checkMissingClientCapabilityErrorMissingClientCapabilityErrorValue(in *MissingClientCapabilityError, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if err := checkMissingClientCapabilityErrorRequiredClientCapabilitiesValue(in.RequiredCapabilities, generatedJSONChildPath(field, "requiredCapabilities", false), active); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkMissingClientCapabilityErrorRequiredClientCapabilitiesValue checks one generated value on the active path.
+func checkMissingClientCapabilityErrorRequiredClientCapabilitiesValue(in *RequiredClientCapabilities, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if err := checkMissingClientCapabilityErrorElicitationCapabilitiesValue(in.Elicitation, generatedJSONChildPath(field, "elicitation", false), active); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkMissingClientCapabilityErrorElicitationCapabilitiesValue checks one generated value on the active path.
+func checkMissingClientCapabilityErrorElicitationCapabilitiesValue(in *ElicitationCapabilities, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if in.Form != nil {
+		}
+		if in.URL != nil {
+		}
+	}
+	return nil
+}
+
 // checkPromptArgumentValue checks text and cycles before conversion.
 func checkPromptArgumentValue(in *PromptArgument) error {
 	if in == nil {
@@ -4137,6 +5336,55 @@ func checkPromptsCapabilityPromptsCapabilityValue(in *PromptsCapability, field s
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+	}
+	return nil
+}
+
+// checkRequiredClientCapabilitiesValue checks text and cycles before conversion.
+func checkRequiredClientCapabilitiesValue(in *RequiredClientCapabilities) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkRequiredClientCapabilitiesRequiredClientCapabilitiesValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkRequiredClientCapabilitiesRequiredClientCapabilitiesValue checks one generated value on the active path.
+func checkRequiredClientCapabilitiesRequiredClientCapabilitiesValue(in *RequiredClientCapabilities, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if err := checkRequiredClientCapabilitiesElicitationCapabilitiesValue(in.Elicitation, generatedJSONChildPath(field, "elicitation", false), active); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkRequiredClientCapabilitiesElicitationCapabilitiesValue checks one generated value on the active path.
+func checkRequiredClientCapabilitiesElicitationCapabilitiesValue(in *ElicitationCapabilities, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if in.Form != nil {
+		}
+		if in.URL != nil {
+		}
 	}
 	return nil
 }

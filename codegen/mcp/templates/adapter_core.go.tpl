@@ -311,7 +311,7 @@ func fill{{ .CallName }}Inputs(payload {{ .PayloadRef }}{{ range $index, $field 
     }
     {{- end }}
 	{{- with .InputExchange }}
-    if requestState != nil || len(inputResponses) > 0 {
+    if requestState != nil || inputResponses != nil {
         continuation := &{{ .ContinuationRef }}{}
         {{- if .StateField }}
         if requestState != nil {

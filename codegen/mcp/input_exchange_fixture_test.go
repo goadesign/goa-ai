@@ -163,7 +163,10 @@ func(s *recordService)Read(ctx context.Context,p *genrecords.ReadPayload)(*genre
  if p.Target=="interop"{state="opaque-for-independent-peer"}
  question:=&genrecords.Pending{OpaqueState:&state}
  if p.Target=="url"{question.Requests=&genrecords.InputQuestions{Payment:&genrecords.URLQuestion{Message:"Approve external interaction",URL:"https://consent.example/approve"}}}else{question.Requests=&genrecords.InputQuestions{Profile:&genrecords.FormQuestion{PromptText:"Choose a label"}}}
- if p.Target=="empty"{return &genrecords.OperationResult{Outcome:genrecords.NewOperationOutcomeInputRequired(&genrecords.Pending{Requests:&genrecords.InputQuestions{}})},nil}
+ if p.Target=="empty"{
+  if p.HostInput!=nil{return &genrecords.OperationResult{Outcome:genrecords.NewOperationOutcomeComplete("empty-continuation")},nil}
+  return &genrecords.OperationResult{Outcome:genrecords.NewOperationOutcomeInputRequired(&genrecords.Pending{Requests:&genrecords.InputQuestions{}})},nil
+ }
  if p.Target=="state_only"{return &genrecords.OperationResult{Outcome:genrecords.NewOperationOutcomeInputRequired(&genrecords.Pending{OpaqueState:&state})},nil}
  if p.Target=="absent"{return &genrecords.OperationResult{Outcome:genrecords.NewOperationOutcomeInputRequired(&genrecords.Pending{})},nil}
  if p.Target=="invalid"{question.Requests.Profile.PromptText=""}
@@ -289,7 +292,11 @@ func TestGeneratedInputRounds(t *testing.T){
  for _,target:=range []string{"empty","state_only"}{
   result,err:=caller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"read",Payload:json.RawMessage("{\"target\":\""+target+"\"}")})
   require.NoError(t,err);require.NotNil(t,result.InputRequired);assert.Empty(t,result.InputRequired.Requests)
-  if target=="empty"{assert.Nil(t,result.InputRequired.RequestState)}else{require.NotNil(t,result.InputRequired.RequestState);assert.Equal(t,"",*result.InputRequired.RequestState)}
+  if target=="empty"{
+   assert.Nil(t,result.InputRequired.RequestState)
+   complete,err:=caller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"read",Payload:json.RawMessage("{\"target\":\"empty\"}"),Continuation:&mcpruntime.CallContinuation{}})
+   require.NoError(t,err);assert.Nil(t,complete.InputRequired);assert.JSONEq(t,"\"empty-continuation\"",string(complete.StructuredContent))
+  }else{require.NotNil(t,result.InputRequired.RequestState);assert.Equal(t,"",*result.InputRequired.RequestState)}
  }
  for _,target:=range []string{"absent","invalid"}{
   _,err:=caller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"read",Payload:json.RawMessage("{\"target\":\""+target+"\"}")})
@@ -312,6 +319,8 @@ func TestGeneratedInputRounds(t *testing.T){
  location,err:=url.Parse(peer.URL);require.NoError(t,err)
  typedClient:=genclient.NewClient(location.Scheme,location.Host,client,goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
  typedClient.Doer=mcpruntime.NewHTTPTransport(typedClient.Doer,mcpruntime.ClientInfo{Name:"typed-host",Version:"1"},mcpruntime.HTTPBindings{},mcpruntime.InputSupport{Form:true,URL:true},mcpruntime.HTTPRetryPolicy{})
+ typedEmpty,err:=typedClient.ToolsCall()(t.Context(),&genmcp.ToolsCallPayload{Name:"read",Arguments:json.RawMessage("{\"target\":\"empty\"}"),InputResponses:map[string]json.RawMessage{}})
+ require.NoError(t,err);typedComplete,ok:=typedEmpty.(*genmcp.ToolsCallResult).Outcome.AsComplete();require.True(t,ok);assert.JSONEq(t,"\"empty-continuation\"",string(typedComplete.StructuredContent))
  resource,err:=typedClient.ResourcesRead()(t.Context(),&genmcp.ResourcesReadPayload{URI:"record://reference"})
  require.NoError(t,err)
  unfinished,ok:=resource.(*genmcp.ResourcesReadResult).Outcome.AsInputRequired();require.True(t,ok);require.NotNil(t,unfinished.RequestState)

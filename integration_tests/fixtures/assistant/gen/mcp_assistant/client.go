@@ -69,6 +69,7 @@ func (c *Client) ToolsList(ctx context.Context, p *ToolsListPayload) (res *Tools
 // ToolsCall may return the following errors:
 //   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
 //   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
+//   - "missing_client_capability" (type *MissingClientCapabilityError): The client did not declare support for the requested input.
 //   - error: internal error
 func (c *Client) ToolsCall(ctx context.Context, p *ToolsCallPayload) (res *ToolsCallResult, err error) {
 	var ires any
@@ -98,6 +99,7 @@ func (c *Client) ResourcesList(ctx context.Context, p *ResourcesListPayload) (re
 // ResourcesRead may return the following errors:
 //   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
 //   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
+//   - "missing_client_capability" (type *MissingClientCapabilityError): The client did not declare support for the requested input.
 //   - error: internal error
 func (c *Client) ResourcesRead(ctx context.Context, p *ResourcesReadPayload) (res *ResourcesReadResult, err error) {
 	var ires any
@@ -139,6 +141,7 @@ func (c *Client) PromptsList(ctx context.Context, p *PromptsListPayload) (res *P
 // PromptsGet may return the following errors:
 //   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
 //   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
+//   - "missing_client_capability" (type *MissingClientCapabilityError): The client did not declare support for the requested input.
 //   - error: internal error
 func (c *Client) PromptsGet(ctx context.Context, p *PromptsGetPayload) (res *PromptsGetResult, err error) {
 	var ires any

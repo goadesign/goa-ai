@@ -533,14 +533,13 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 // toolCallError lets the client correct a recognized tool's arguments or
 // observe an application failure without treating it as a protocol failure.
 func toolCallError(message string) *ToolsCallResult {
-	return &ToolsCallResult{
-		ResultType: "complete",
-		Meta:       resultMeta(),
+	return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
+		Meta: resultMeta(),
 		Content: []*ContentItem{
 			{Type: "text", Text: stringPtr(message)},
 		},
 		IsError: boolPtr(true),
-	}
+	})}
 }
 
 // ToolsCall decodes the named tool's arguments through its generated codec,
@@ -574,12 +573,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		return &ToolsCallResult{
-			ResultType:        "complete",
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
 			Meta:              resultMeta(),
 			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}, nil
+		})}, nil
 	case "execute_code":
 		arguments := p.Arguments
 		if len(arguments) == 0 {
@@ -605,12 +603,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		return &ToolsCallResult{
-			ResultType:        "complete",
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
 			Meta:              resultMeta(),
 			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}, nil
+		})}, nil
 	case "extract_keywords":
 		arguments := p.Arguments
 		if len(arguments) == 0 {
@@ -636,12 +633,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		return &ToolsCallResult{
-			ResultType:        "complete",
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
 			Meta:              resultMeta(),
 			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}, nil
+		})}, nil
 	case "process_batch":
 		arguments := p.Arguments
 		if len(arguments) == 0 {
@@ -667,12 +663,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		return &ToolsCallResult{
-			ResultType:        "complete",
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
 			Meta:              resultMeta(),
 			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}, nil
+		})}, nil
 	case "search":
 		arguments := p.Arguments
 		if len(arguments) == 0 {
@@ -698,12 +693,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		return &ToolsCallResult{
-			ResultType:        "complete",
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
 			Meta:              resultMeta(),
 			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}, nil
+		})}, nil
 	case "summarize_text":
 		arguments := p.Arguments
 		if len(arguments) == 0 {
@@ -729,12 +723,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		return &ToolsCallResult{
-			ResultType:        "complete",
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
 			Meta:              resultMeta(),
 			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}, nil
+		})}, nil
 	case "test_tool_with_progress":
 		if err := validateNoArguments(p.Arguments); err != nil {
 			return toolCallError("invalid arguments: " + err.Error()), nil
@@ -755,12 +748,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		return &ToolsCallResult{
-			ResultType:        "complete",
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
 			Meta:              resultMeta(),
 			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}, nil
+		})}, nil
 	default:
 		return nil, goa.PermanentError("invalid_params", "unknown tool: %s", p.Name)
 	}
@@ -810,14 +802,14 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
 		text := string(encoded)
-		res := &ResourcesReadResult{
-			ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
+		res := &ResourcesReadCompleteResult{
+			Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
 			Contents: []*ResourceContent{
 				{URI: p.URI, MimeType: stringPtr("application/json"), Text: &text},
 			},
 		}
 
-		return res, nil
+		return &ResourcesReadResult{Outcome: NewResourcesReadOutcomeComplete(res)}, nil
 	case "system://info":
 		result, err := a.invokeMCPMethod8(ctx)
 		if err != nil {
@@ -832,14 +824,14 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
 		text := string(encoded)
-		res := &ResourcesReadResult{
-			ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
+		res := &ResourcesReadCompleteResult{
+			Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
 			Contents: []*ResourceContent{
 				{URI: p.URI, MimeType: stringPtr("application/json"), Text: &text},
 			},
 		}
 
-		return res, nil
+		return &ResourcesReadResult{Outcome: NewResourcesReadOutcomeComplete(res)}, nil
 	case "test://empty-binary":
 		result, err := a.invokeMCPMethod10(ctx)
 		if err != nil {
@@ -848,14 +840,14 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		blob := base64.StdEncoding.EncodeToString(result)
-		res := &ResourcesReadResult{
-			ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
+		res := &ResourcesReadCompleteResult{
+			Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
 			Contents: []*ResourceContent{
 				{URI: p.URI, MimeType: stringPtr("application/octet-stream"), Blob: &blob},
 			},
 		}
 
-		return res, nil
+		return &ResourcesReadResult{Outcome: NewResourcesReadOutcomeComplete(res)}, nil
 	case "test://static-binary":
 		result, err := a.invokeMCPMethod9(ctx)
 		if err != nil {
@@ -864,14 +856,14 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		blob := base64.StdEncoding.EncodeToString(result)
-		res := &ResourcesReadResult{
-			ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
+		res := &ResourcesReadCompleteResult{
+			Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
 			Contents: []*ResourceContent{
 				{URI: p.URI, MimeType: stringPtr("image/png"), Blob: &blob},
 			},
 		}
 
-		return res, nil
+		return &ResourcesReadResult{Outcome: NewResourcesReadOutcomeComplete(res)}, nil
 	default:
 		body := &mcpcodec.ReadResourcePayloadTransport{}
 		uri := string(p.URI)
@@ -903,7 +895,7 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 			}
 			contents = append(contents, content)
 		}
-		return &ResourcesReadResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Contents: contents}, nil
+		return &ResourcesReadResult{Outcome: NewResourcesReadOutcomeComplete(&ResourcesReadCompleteResult{Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Contents: contents})}, nil
 	}
 }
 
@@ -989,13 +981,13 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 			},
 		})
 
-		res := &PromptsGetResult{
-			ResultType: "complete", Meta: resultMeta(),
+		res := &PromptsGetCompleteResult{
+			Meta:        resultMeta(),
 			Description: stringPtr("Simple code review prompt"),
 			Messages:    msgs,
 		}
 
-		return res, nil
+		return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(res)}, nil
 
 	case "test_prompt_with_arguments":
 
@@ -1053,9 +1045,9 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 			}
 			messages = append(messages, &PromptMessage{Role: string(message.Role), Content: content})
 		}
-		response := &PromptsGetResult{ResultType: "complete", Meta: resultMeta(), Messages: messages}
+		response := &PromptsGetCompleteResult{Meta: resultMeta(), Messages: messages}
 
-		return response, nil
+		return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(response)}, nil
 
 	case "test_prompt_with_embedded_resource":
 
@@ -1098,7 +1090,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 		}
 		messages := make([]*PromptMessage, 0, len(result.Messages))
 		for _, message := range result.Messages {
-			content, err := convertPrompt0Content(message.Content)
+			content, err := convertPrompt1Content(message.Content)
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
@@ -1106,9 +1098,9 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 			}
 			messages = append(messages, &PromptMessage{Role: string(message.Role), Content: content})
 		}
-		response := &PromptsGetResult{ResultType: "complete", Meta: resultMeta(), Messages: messages}
+		response := &PromptsGetCompleteResult{Meta: resultMeta(), Messages: messages}
 
-		return response, nil
+		return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(response)}, nil
 
 	case "test_prompt_with_image":
 
@@ -1132,7 +1124,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 		}
 		messages := make([]*PromptMessage, 0, len(result.Messages))
 		for _, message := range result.Messages {
-			content, err := convertPrompt0Content(message.Content)
+			content, err := convertPrompt2Content(message.Content)
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
@@ -1140,9 +1132,9 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 			}
 			messages = append(messages, &PromptMessage{Role: string(message.Role), Content: content})
 		}
-		response := &PromptsGetResult{ResultType: "complete", Meta: resultMeta(), Messages: messages}
+		response := &PromptsGetCompleteResult{Meta: resultMeta(), Messages: messages}
 
-		return response, nil
+		return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(response)}, nil
 
 	case "test_simple_prompt":
 
@@ -1166,7 +1158,7 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 		}
 		messages := make([]*PromptMessage, 0, len(result.Messages))
 		for _, message := range result.Messages {
-			content, err := convertPrompt0Content(message.Content)
+			content, err := convertPrompt3Content(message.Content)
 			if err != nil {
 				span.RecordError(err)
 				span.SetStatus(codes.Error, err.Error())
@@ -1174,9 +1166,9 @@ func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*Pro
 			}
 			messages = append(messages, &PromptMessage{Role: string(message.Role), Content: content})
 		}
-		response := &PromptsGetResult{ResultType: "complete", Meta: resultMeta(), Messages: messages}
+		response := &PromptsGetCompleteResult{Meta: resultMeta(), Messages: messages}
 
-		return response, nil
+		return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(response)}, nil
 
 	}
 	failure := goa.PermanentError("invalid_params", "unknown prompt: %s", p.Name)
@@ -1289,6 +1281,240 @@ func convertPrompt0Content(value assistant.Content) (*ContentItem, error) {
 		out.Type = "resource"
 
 		resource, err := convertPrompt0ContentResource2(selected.Resource)
+		if err != nil {
+			return nil, err
+		}
+		out.Resource = resource
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt1ContentResource2 checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt1ContentResource2(value assistant.Resource) (*ResourceContent, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ResourceKindText:
+		selected, _ := value.AsText()
+
+		out := &ResourceContent{
+			URI:  selected.URI,
+			Text: &selected.Text,
+		}
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt1Content checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt1Content(value assistant.Content) (*ContentItem, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ContentKindText:
+		selected, _ := value.AsText()
+
+		out := &ContentItem{
+			Text: &selected.Text,
+		}
+
+		out.Type = "text"
+
+		return out, nil
+
+	case assistant.ContentKindImage:
+		selected, _ := value.AsImage()
+
+		out := &ContentItem{
+			MimeType: &selected.MimeType,
+		}
+
+		out.Type = "image"
+
+		encoded := base64.StdEncoding.EncodeToString(selected.Data)
+		out.Data = &encoded
+
+		return out, nil
+
+	case assistant.ContentKindResource:
+		selected, _ := value.AsResource()
+
+		out := &ContentItem{}
+
+		out.Type = "resource"
+
+		resource, err := convertPrompt1ContentResource2(selected.Resource)
+		if err != nil {
+			return nil, err
+		}
+		out.Resource = resource
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt2ContentResource2 checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt2ContentResource2(value assistant.Resource) (*ResourceContent, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ResourceKindText:
+		selected, _ := value.AsText()
+
+		out := &ResourceContent{
+			URI:  selected.URI,
+			Text: &selected.Text,
+		}
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt2Content checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt2Content(value assistant.Content) (*ContentItem, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ContentKindText:
+		selected, _ := value.AsText()
+
+		out := &ContentItem{
+			Text: &selected.Text,
+		}
+
+		out.Type = "text"
+
+		return out, nil
+
+	case assistant.ContentKindImage:
+		selected, _ := value.AsImage()
+
+		out := &ContentItem{
+			MimeType: &selected.MimeType,
+		}
+
+		out.Type = "image"
+
+		encoded := base64.StdEncoding.EncodeToString(selected.Data)
+		out.Data = &encoded
+
+		return out, nil
+
+	case assistant.ContentKindResource:
+		selected, _ := value.AsResource()
+
+		out := &ContentItem{}
+
+		out.Type = "resource"
+
+		resource, err := convertPrompt2ContentResource2(selected.Resource)
+		if err != nil {
+			return nil, err
+		}
+		out.Resource = resource
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt3ContentResource2 checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt3ContentResource2(value assistant.Resource) (*ResourceContent, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ResourceKindText:
+		selected, _ := value.AsText()
+
+		out := &ResourceContent{
+			URI:  selected.URI,
+			Text: &selected.Text,
+		}
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt3Content checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt3Content(value assistant.Content) (*ContentItem, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ContentKindText:
+		selected, _ := value.AsText()
+
+		out := &ContentItem{
+			Text: &selected.Text,
+		}
+
+		out.Type = "text"
+
+		return out, nil
+
+	case assistant.ContentKindImage:
+		selected, _ := value.AsImage()
+
+		out := &ContentItem{
+			MimeType: &selected.MimeType,
+		}
+
+		out.Type = "image"
+
+		encoded := base64.StdEncoding.EncodeToString(selected.Data)
+		out.Data = &encoded
+
+		return out, nil
+
+	case assistant.ContentKindResource:
+		selected, _ := value.AsResource()
+
+		out := &ContentItem{}
+
+		out.Type = "resource"
+
+		resource, err := convertPrompt3ContentResource2(selected.Resource)
 		if err != nil {
 			return nil, err
 		}

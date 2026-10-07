@@ -105,7 +105,8 @@ func TestResourceTemplateHTTP(t *testing.T) {
 		before := service.calls
 		got, err := client.ResourcesRead()(t.Context(), &genmcp.ResourcesReadPayload{URI: uri})
 		require.NoError(t, err)
-		result := got.(*genmcp.ResourcesReadResult)
+		result, ok := got.(*genmcp.ResourcesReadResult).Outcome.AsComplete()
+		require.True(t, ok)
 		assert.Equal(t, before+1, service.calls)
 		assert.Equal(t, uri, service.address)
 		assert.Len(t, result.Contents, 2)

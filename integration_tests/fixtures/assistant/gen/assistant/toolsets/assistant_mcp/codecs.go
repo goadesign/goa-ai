@@ -2153,12 +2153,9 @@ func validateIntJSONValue(path string, value any, description string) error {
 	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	typed, ok := value.(json.Number)
+	_, ok := value.(json.Number)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	if _, err := strconv.ParseInt(typed.String(), 10, strconv.IntSize); err != nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
 	}
 	return nil
 }

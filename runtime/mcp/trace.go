@@ -84,8 +84,14 @@ func toolParams(ctx context.Context, req CallRequest) (map[string]any, error) {
 	if req.Continuation != nil && req.Continuation.RequestState != nil {
 		params["requestState"] = *req.Continuation.RequestState
 	}
-	if req.Continuation != nil && len(req.Continuation.InputResponses) > 0 {
-		params["inputResponses"] = req.Continuation.InputResponses
+	if req.Continuation != nil {
+		// An empty answer object marks a continuation even when the service
+		// returned no state or questions. Omitting it would start a new call.
+		responses := req.Continuation.InputResponses
+		if responses == nil {
+			responses = map[string]json.RawMessage{}
+		}
+		params["inputResponses"] = responses
 	}
 	return params, nil
 }

@@ -305,7 +305,7 @@ func mcpAssistantToolsCallUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant tools-call --body '{\n      \"_meta\": \"Quia in vero sint dolore fugit enim.\",\n      \"arguments\": \"Molestiae dolores deserunt.\",\n      \"name\": \"Quibusdam et quis porro deserunt nihil qui.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant tools-call --body '{\n      \"_meta\": \"Quia in vero sint dolore fugit enim.\",\n      \"arguments\": \"Molestiae dolores deserunt.\",\n      \"inputResponses\": {\n         \"Libero voluptas ullam impedit doloremque aut.\": \"Tempora neque repellendus iure doloremque natus.\"\n      },\n      \"name\": \"Quibusdam et quis porro deserunt nihil qui.\",\n      \"requestState\": \"Unde vel.\"\n   }'")
 }
 
 func mcpAssistantResourcesListUsage() {
@@ -341,7 +341,7 @@ func mcpAssistantResourcesReadUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant resources-read --body '{\n      \"_meta\": \"Praesentium eius.\",\n      \"uri\": \"http://raynorschiller.biz/kianna\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant resources-read --body '{\n      \"_meta\": \"Praesentium eius.\",\n      \"inputResponses\": {\n         \"Et qui accusamus voluptatibus dicta.\": \"Unde neque aut voluptate soluta.\",\n         \"Optio quae.\": \"Enim repellendus veritatis voluptatum tenetur ea placeat.\",\n         \"Quia voluptas blanditiis qui laboriosam ut.\": \"Commodi suscipit placeat eos.\"\n      },\n      \"requestState\": \"Autem in asperiores ipsum exercitationem.\",\n      \"uri\": \"http://raynorschiller.biz/kianna\"\n   }'")
 }
 
 func mcpAssistantResourcesTemplatesListUsage() {
@@ -395,7 +395,7 @@ func mcpAssistantPromptsGetUsage() {
 
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
-	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant prompts-get --body '{\n      \"_meta\": \"Occaecati maiores laudantium quis sint mollitia placeat.\",\n      \"arguments\": {\n         \"Quidem est sint reiciendis.\": \"Repellat autem qui quis inventore recusandae fugit.\"\n      },\n      \"name\": \"Voluptas accusamus rerum quo.\"\n   }'")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "mcp-assistant prompts-get --body '{\n      \"_meta\": \"Occaecati maiores laudantium quis sint mollitia placeat.\",\n      \"arguments\": {\n         \"Quidem est sint reiciendis.\": \"Repellat autem qui quis inventore recusandae fugit.\"\n      },\n      \"inputResponses\": {\n         \"Est atque rerum amet.\": \"Aliquam occaecati dignissimos earum.\",\n         \"Magnam dolor et architecto.\": \"Ad quasi.\",\n         \"Sequi vitae qui quis quis iste illum.\": \"Ab velit.\"\n      },\n      \"name\": \"Voluptas accusamus rerum quo.\",\n      \"requestState\": \"Sint laboriosam ratione omnis suscipit et nulla.\"\n   }'")
 }
 
 func mcpAssistantCompletionCompleteUsage() {

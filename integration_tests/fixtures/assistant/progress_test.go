@@ -106,7 +106,9 @@ func TestGeneratedHTTPProgressBeforeResult(t *testing.T) {
 	result := <-final
 	require.NoError(t, result.err)
 	assert.Equal(t, int64(1), transportCalls.Load())
-	assert.JSONEq(t, `"finished"`, string(result.result.(*genmcp.ToolsCallResult).StructuredContent))
+	complete, ok := result.result.(*genmcp.ToolsCallResult).Outcome.AsComplete()
+	require.True(t, ok)
+	assert.JSONEq(t, `"finished"`, string(complete.StructuredContent))
 }
 
 func TestGeneratedHTTPProgressRetry(t *testing.T) {
@@ -143,7 +145,9 @@ func TestGeneratedHTTPProgressRetry(t *testing.T) {
 	ctx := mcpruntime.WithProgress(t.Context(), func(_ context.Context, p mcpruntime.Progress) error { updates = append(updates, p); return nil })
 	result, err := client.ToolsCall()(ctx, &genmcp.ToolsCallPayload{Name: "test_tool_with_progress", Arguments: json.RawMessage(`{}`)})
 	require.NoError(t, err)
-	assert.JSONEq(t, `"finished"`, string(result.(*genmcp.ToolsCallResult).StructuredContent))
+	complete, ok := result.(*genmcp.ToolsCallResult).Outcome.AsComplete()
+	require.True(t, ok)
+	assert.JSONEq(t, `"finished"`, string(complete.StructuredContent))
 	require.Len(t, ids, 2)
 	assert.NotEqual(t, ids[0], ids[1])
 	require.Len(t, updates, 2)

@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	goahttp "goa.design/goa/v3/http"
 	"goa.design/goa/v3/jsonrpc"
+	goa "goa.design/goa/v3/pkg"
 )
 
 // BuildServerDiscoverRequest instantiates a HTTP request object with method
@@ -376,20 +377,56 @@ func DecodeToolsCallResponse(decoder func(*http.Response) goahttp.Decoder, resto
 				default:
 					return nil, jresp.Error
 				}
+			case -32021:
+				switch serviceErrorName {
+				case "missing_client_capability":
+					resp.Body = io.NopCloser(bytes.NewReader(serviceErrorBody))
+					var (
+						body ToolsCallMissingClientCapabilityResponseBody
+						err  error
+					)
+					err = decoder(resp).Decode(&body)
+					if err != nil {
+						return nil, goahttp.ErrDecodingError("mcp_assistant", "tools/call", err)
+					}
+					err = ValidateToolsCallMissingClientCapabilityResponseBody(&body)
+					if err != nil {
+						return nil, goahttp.ErrValidationError("mcp_assistant", "tools/call", err)
+					}
+					return nil, NewToolsCallMissingClientCapability(&body)
+				default:
+					return nil, jresp.Error
+				}
 			default:
 				return nil, jresp.Error
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
 		var (
-			body ToolsCallResponseBody
+			body ToolsCallOutcomeResponseBody
 			err  error
 		)
 		err = decoder(resp).Decode(&body)
 		if err != nil {
 			return nil, goahttp.ErrDecodingError("mcp_assistant", "tools/call", err)
 		}
-		err = ValidateToolsCallResponseBody(&body)
+		switch string(body.Kind()) {
+		case "complete":
+			actual, _ := body.AsComplete()
+			if actual != nil {
+				if err2 := validateToolsCallCompleteResultResponse(actual, "body.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "input_required":
+			actual, _ := body.AsInputRequired()
+			if actual != nil {
+				if err2 := validateInputRequiredResultResponse(actual, "body.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
 		if err != nil {
 			return nil, goahttp.ErrValidationError("mcp_assistant", "tools/call", err)
 		}
@@ -652,20 +689,56 @@ func DecodeResourcesReadResponse(decoder func(*http.Response) goahttp.Decoder, r
 				default:
 					return nil, jresp.Error
 				}
+			case -32021:
+				switch serviceErrorName {
+				case "missing_client_capability":
+					resp.Body = io.NopCloser(bytes.NewReader(serviceErrorBody))
+					var (
+						body ResourcesReadMissingClientCapabilityResponseBody
+						err  error
+					)
+					err = decoder(resp).Decode(&body)
+					if err != nil {
+						return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/read", err)
+					}
+					err = ValidateResourcesReadMissingClientCapabilityResponseBody(&body)
+					if err != nil {
+						return nil, goahttp.ErrValidationError("mcp_assistant", "resources/read", err)
+					}
+					return nil, NewResourcesReadMissingClientCapability(&body)
+				default:
+					return nil, jresp.Error
+				}
 			default:
 				return nil, jresp.Error
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
 		var (
-			body ResourcesReadResponseBody
+			body ResourcesReadOutcomeResponseBody
 			err  error
 		)
 		err = decoder(resp).Decode(&body)
 		if err != nil {
 			return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/read", err)
 		}
-		err = ValidateResourcesReadResponseBody(&body)
+		switch string(body.Kind()) {
+		case "complete":
+			actual, _ := body.AsComplete()
+			if actual != nil {
+				if err2 := validateResourcesReadCompleteResultResponse(actual, "body.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "input_required":
+			actual, _ := body.AsInputRequired()
+			if actual != nil {
+				if err2 := validateInputRequiredResultResponse(actual, "body.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
 		if err != nil {
 			return nil, goahttp.ErrValidationError("mcp_assistant", "resources/read", err)
 		}
@@ -1058,20 +1131,56 @@ func DecodePromptsGetResponse(decoder func(*http.Response) goahttp.Decoder, rest
 				default:
 					return nil, jresp.Error
 				}
+			case -32021:
+				switch serviceErrorName {
+				case "missing_client_capability":
+					resp.Body = io.NopCloser(bytes.NewReader(serviceErrorBody))
+					var (
+						body PromptsGetMissingClientCapabilityResponseBody
+						err  error
+					)
+					err = decoder(resp).Decode(&body)
+					if err != nil {
+						return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/get", err)
+					}
+					err = ValidatePromptsGetMissingClientCapabilityResponseBody(&body)
+					if err != nil {
+						return nil, goahttp.ErrValidationError("mcp_assistant", "prompts/get", err)
+					}
+					return nil, NewPromptsGetMissingClientCapability(&body)
+				default:
+					return nil, jresp.Error
+				}
 			default:
 				return nil, jresp.Error
 			}
 		}
 		resp.Body = io.NopCloser(bytes.NewBuffer(jresp.Result))
 		var (
-			body PromptsGetResponseBody
+			body PromptsGetOutcomeResponseBody
 			err  error
 		)
 		err = decoder(resp).Decode(&body)
 		if err != nil {
 			return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/get", err)
 		}
-		err = ValidatePromptsGetResponseBody(&body)
+		switch string(body.Kind()) {
+		case "complete":
+			actual, _ := body.AsComplete()
+			if actual != nil {
+				if err2 := validatePromptsGetCompleteResultResponse(actual, "body.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "input_required":
+			actual, _ := body.AsInputRequired()
+			if actual != nil {
+				if err2 := validateInputRequiredResultResponse(actual, "body.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
 		if err != nil {
 			return nil, goahttp.ErrValidationError("mcp_assistant", "prompts/get", err)
 		}
@@ -1317,9 +1426,30 @@ func unmarshalToolAnnotationsResponseBodyToMcpassistantToolAnnotations(v *ToolAn
 	return res
 }
 
-// unmarshalContentItemResponseBodyToMcpassistantContentItem builds a value of
-// type *mcpassistant.ContentItem from a value of type *ContentItemResponseBody.
-func unmarshalContentItemResponseBodyToMcpassistantContentItem(v *ContentItemResponseBody) *mcpassistant.ContentItem {
+// unmarshalToolsCallCompleteResultResponseToMcpassistantToolsCallCompleteResult
+// builds a value of type *mcpassistant.ToolsCallCompleteResult from a value of
+// type *ToolsCallCompleteResultResponse.
+func unmarshalToolsCallCompleteResultResponseToMcpassistantToolsCallCompleteResult(v *ToolsCallCompleteResultResponse) *mcpassistant.ToolsCallCompleteResult {
+	res := &mcpassistant.ToolsCallCompleteResult{
+		IsError:           v.IsError,
+		StructuredContent: v.StructuredContent,
+		Meta:              v.Meta,
+	}
+	res.Content = make([]*mcpassistant.ContentItem, len(v.Content))
+	for i, val := range v.Content {
+		if val == nil {
+			res.Content[i] = nil
+			continue
+		}
+		res.Content[i] = unmarshalContentItemResponseToMcpassistantContentItem(val)
+	}
+
+	return res
+}
+
+// unmarshalContentItemResponseToMcpassistantContentItem builds a value of type
+// *mcpassistant.ContentItem from a value of type *ContentItemResponse.
+func unmarshalContentItemResponseToMcpassistantContentItem(v *ContentItemResponse) *mcpassistant.ContentItem {
 	res := &mcpassistant.ContentItem{
 		Type:        *v.Type,
 		Text:        v.Text,
@@ -1339,22 +1469,22 @@ func unmarshalContentItemResponseBodyToMcpassistantContentItem(v *ContentItemRes
 				res.Icons[i] = nil
 				continue
 			}
-			res.Icons[i] = unmarshalContentIconResponseBodyToMcpassistantContentIcon(val)
+			res.Icons[i] = unmarshalContentIconResponseToMcpassistantContentIcon(val)
 		}
 	}
 	if v.Resource != nil {
-		res.Resource = unmarshalResourceContentResponseBodyToMcpassistantResourceContent(v.Resource)
+		res.Resource = unmarshalResourceContentResponseToMcpassistantResourceContent(v.Resource)
 	}
 	if v.Annotations != nil {
-		res.Annotations = unmarshalContentAnnotationsResponseBodyToMcpassistantContentAnnotations(v.Annotations)
+		res.Annotations = unmarshalContentAnnotationsResponseToMcpassistantContentAnnotations(v.Annotations)
 	}
 
 	return res
 }
 
-// unmarshalContentIconResponseBodyToMcpassistantContentIcon builds a value of
-// type *mcpassistant.ContentIcon from a value of type *ContentIconResponseBody.
-func unmarshalContentIconResponseBodyToMcpassistantContentIcon(v *ContentIconResponseBody) *mcpassistant.ContentIcon {
+// unmarshalContentIconResponseToMcpassistantContentIcon builds a value of type
+// *mcpassistant.ContentIcon from a value of type *ContentIconResponse.
+func unmarshalContentIconResponseToMcpassistantContentIcon(v *ContentIconResponse) *mcpassistant.ContentIcon {
 	res := &mcpassistant.ContentIcon{
 		Src:      *v.Src,
 		MimeType: v.MimeType,
@@ -1370,10 +1500,10 @@ func unmarshalContentIconResponseBodyToMcpassistantContentIcon(v *ContentIconRes
 	return res
 }
 
-// unmarshalResourceContentResponseBodyToMcpassistantResourceContent builds a
-// value of type *mcpassistant.ResourceContent from a value of type
-// *ResourceContentResponseBody.
-func unmarshalResourceContentResponseBodyToMcpassistantResourceContent(v *ResourceContentResponseBody) *mcpassistant.ResourceContent {
+// unmarshalResourceContentResponseToMcpassistantResourceContent builds a value
+// of type *mcpassistant.ResourceContent from a value of type
+// *ResourceContentResponse.
+func unmarshalResourceContentResponseToMcpassistantResourceContent(v *ResourceContentResponse) *mcpassistant.ResourceContent {
 	res := &mcpassistant.ResourceContent{
 		URI:      *v.URI,
 		MimeType: v.MimeType,
@@ -1385,10 +1515,10 @@ func unmarshalResourceContentResponseBodyToMcpassistantResourceContent(v *Resour
 	return res
 }
 
-// unmarshalContentAnnotationsResponseBodyToMcpassistantContentAnnotations
-// builds a value of type *mcpassistant.ContentAnnotations from a value of type
-// *ContentAnnotationsResponseBody.
-func unmarshalContentAnnotationsResponseBodyToMcpassistantContentAnnotations(v *ContentAnnotationsResponseBody) *mcpassistant.ContentAnnotations {
+// unmarshalContentAnnotationsResponseToMcpassistantContentAnnotations builds a
+// value of type *mcpassistant.ContentAnnotations from a value of type
+// *ContentAnnotationsResponse.
+func unmarshalContentAnnotationsResponseToMcpassistantContentAnnotations(v *ContentAnnotationsResponse) *mcpassistant.ContentAnnotations {
 	res := &mcpassistant.ContentAnnotations{
 		Priority:     v.Priority,
 		LastModified: v.LastModified,
@@ -1403,6 +1533,110 @@ func unmarshalContentAnnotationsResponseBodyToMcpassistantContentAnnotations(v *
 	return res
 }
 
+// unmarshalInputRequiredResultResponseToMcpassistantInputRequiredResult builds
+// a value of type *mcpassistant.InputRequiredResult from a value of type
+// *InputRequiredResultResponse.
+func unmarshalInputRequiredResultResponseToMcpassistantInputRequiredResult(v *InputRequiredResultResponse) *mcpassistant.InputRequiredResult {
+	res := &mcpassistant.InputRequiredResult{
+		RequestState: v.RequestState,
+		Meta:         v.Meta,
+	}
+	if v.InputRequests != nil {
+		res.InputRequests = make(map[string]*mcpassistant.InputRequest, len(v.InputRequests))
+		for key, val := range v.InputRequests {
+			tk := key
+			if val == nil {
+				res.InputRequests[tk] = nil
+				continue
+			}
+			res.InputRequests[tk] = unmarshalInputRequestResponseToMcpassistantInputRequest(val)
+		}
+	}
+
+	return res
+}
+
+// unmarshalInputRequestResponseToMcpassistantInputRequest builds a value of
+// type *mcpassistant.InputRequest from a value of type *InputRequestResponse.
+func unmarshalInputRequestResponseToMcpassistantInputRequest(v *InputRequestResponse) *mcpassistant.InputRequest {
+	res := &mcpassistant.InputRequest{
+		Method: *v.Method,
+	}
+	switch string(v.Params.Kind()) {
+	case "form":
+		actual, _ := v.Params.AsForm()
+		var obj *mcpassistant.ElicitationFormParams
+		if actual != nil {
+			obj = unmarshalElicitationFormParamsResponseToMcpassistantElicitationFormParams(actual)
+		}
+		u := res.Params
+		u.SetForm((*mcpassistant.ElicitationFormParams)(obj))
+		res.Params = u
+	case "url":
+		actual, _ := v.Params.AsURL()
+		var obj *mcpassistant.ElicitationURLParams
+		if actual != nil {
+			obj = unmarshalElicitationURLParamsResponseToMcpassistantElicitationURLParams(actual)
+		}
+		u := res.Params
+		u.SetURL((*mcpassistant.ElicitationURLParams)(obj))
+		res.Params = u
+	}
+
+	return res
+}
+
+// unmarshalElicitationFormParamsResponseToMcpassistantElicitationFormParams
+// builds a value of type *mcpassistant.ElicitationFormParams from a value of
+// type *ElicitationFormParamsResponse.
+func unmarshalElicitationFormParamsResponseToMcpassistantElicitationFormParams(v *ElicitationFormParamsResponse) *mcpassistant.ElicitationFormParams {
+	res := &mcpassistant.ElicitationFormParams{
+		Message:         *v.Message,
+		RequestedSchema: v.RequestedSchema,
+	}
+
+	return res
+}
+
+// unmarshalElicitationURLParamsResponseToMcpassistantElicitationURLParams
+// builds a value of type *mcpassistant.ElicitationURLParams from a value of
+// type *ElicitationURLParamsResponse.
+func unmarshalElicitationURLParamsResponseToMcpassistantElicitationURLParams(v *ElicitationURLParamsResponse) *mcpassistant.ElicitationURLParams {
+	res := &mcpassistant.ElicitationURLParams{
+		Message: *v.Message,
+		URL:     *v.URL,
+	}
+
+	return res
+}
+
+// unmarshalRequiredClientCapabilitiesResponseBodyToMcpassistantRequiredClientCapabilities
+// builds a value of type *mcpassistant.RequiredClientCapabilities from a value
+// of type *RequiredClientCapabilitiesResponseBody.
+func unmarshalRequiredClientCapabilitiesResponseBodyToMcpassistantRequiredClientCapabilities(v *RequiredClientCapabilitiesResponseBody) *mcpassistant.RequiredClientCapabilities {
+	res := &mcpassistant.RequiredClientCapabilities{}
+	res.Elicitation = unmarshalElicitationCapabilitiesResponseBodyToMcpassistantElicitationCapabilities(v.Elicitation)
+
+	return res
+}
+
+// unmarshalElicitationCapabilitiesResponseBodyToMcpassistantElicitationCapabilities
+// builds a value of type *mcpassistant.ElicitationCapabilities from a value of
+// type *ElicitationCapabilitiesResponseBody.
+func unmarshalElicitationCapabilitiesResponseBodyToMcpassistantElicitationCapabilities(v *ElicitationCapabilitiesResponseBody) *mcpassistant.ElicitationCapabilities {
+	res := &mcpassistant.ElicitationCapabilities{}
+	if v.Form != nil {
+		res.Form = &struct {
+		}{}
+	}
+	if v.URL != nil {
+		res.URL = &struct {
+		}{}
+	}
+
+	return res
+}
+
 // unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo builds a value
 // of type *mcpassistant.ResourceInfo from a value of type
 // *ResourceInfoResponseBody.
@@ -1412,6 +1646,27 @@ func unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo(v *ResourceInfo
 		Name:        *v.Name,
 		Description: v.Description,
 		MimeType:    v.MimeType,
+	}
+
+	return res
+}
+
+// unmarshalResourcesReadCompleteResultResponseToMcpassistantResourcesReadCompleteResult
+// builds a value of type *mcpassistant.ResourcesReadCompleteResult from a
+// value of type *ResourcesReadCompleteResultResponse.
+func unmarshalResourcesReadCompleteResultResponseToMcpassistantResourcesReadCompleteResult(v *ResourcesReadCompleteResultResponse) *mcpassistant.ResourcesReadCompleteResult {
+	res := &mcpassistant.ResourcesReadCompleteResult{
+		Meta:       v.Meta,
+		TTLMs:      *v.TTLMs,
+		CacheScope: *v.CacheScope,
+	}
+	res.Contents = make([]*mcpassistant.ResourceContent, len(v.Contents))
+	for i, val := range v.Contents {
+		if val == nil {
+			res.Contents[i] = nil
+			continue
+		}
+		res.Contents[i] = unmarshalResourceContentResponseToMcpassistantResourceContent(val)
 	}
 
 	return res
@@ -1465,14 +1720,33 @@ func unmarshalPromptArgumentResponseBodyToMcpassistantPromptArgument(v *PromptAr
 	return res
 }
 
-// unmarshalPromptMessageResponseBodyToMcpassistantPromptMessage builds a value
-// of type *mcpassistant.PromptMessage from a value of type
-// *PromptMessageResponseBody.
-func unmarshalPromptMessageResponseBodyToMcpassistantPromptMessage(v *PromptMessageResponseBody) *mcpassistant.PromptMessage {
+// unmarshalPromptsGetCompleteResultResponseToMcpassistantPromptsGetCompleteResult
+// builds a value of type *mcpassistant.PromptsGetCompleteResult from a value
+// of type *PromptsGetCompleteResultResponse.
+func unmarshalPromptsGetCompleteResultResponseToMcpassistantPromptsGetCompleteResult(v *PromptsGetCompleteResultResponse) *mcpassistant.PromptsGetCompleteResult {
+	res := &mcpassistant.PromptsGetCompleteResult{
+		Description: v.Description,
+		Meta:        v.Meta,
+	}
+	res.Messages = make([]*mcpassistant.PromptMessage, len(v.Messages))
+	for i, val := range v.Messages {
+		if val == nil {
+			res.Messages[i] = nil
+			continue
+		}
+		res.Messages[i] = unmarshalPromptMessageResponseToMcpassistantPromptMessage(val)
+	}
+
+	return res
+}
+
+// unmarshalPromptMessageResponseToMcpassistantPromptMessage builds a value of
+// type *mcpassistant.PromptMessage from a value of type *PromptMessageResponse.
+func unmarshalPromptMessageResponseToMcpassistantPromptMessage(v *PromptMessageResponse) *mcpassistant.PromptMessage {
 	res := &mcpassistant.PromptMessage{
 		Role: *v.Role,
 	}
-	res.Content = unmarshalContentItemResponseBodyToMcpassistantContentItem(v.Content)
+	res.Content = unmarshalContentItemResponseToMcpassistantContentItem(v.Content)
 
 	return res
 }

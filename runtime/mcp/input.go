@@ -31,7 +31,7 @@ type (
 		// RequestState is echoed byte-for-byte as the decoded server string.
 		RequestState *string `json:"requestState,omitempty"` //nolint:tagliatelle // MCP defines this wire field name.
 		// InputResponses maps exact server request IDs to their result objects.
-		InputResponses map[string]json.RawMessage `json:"inputResponses,omitempty"` //nolint:tagliatelle // MCP defines this wire field name.
+		InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"` //nolint:tagliatelle // MCP defines this wire field name.
 	}
 	// elicitationParams retains the closed form-or-URL interaction received from a server.
 	elicitationParams struct {

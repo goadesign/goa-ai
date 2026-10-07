@@ -3193,3 +3193,32 @@ there is no separate `tasks/result` method. Task IDs must refer to durably creat
 work before the initial response. Cancellation acknowledges intent and does not
 prove that work stopped. The implementation must use these current contracts,
 including the inline creation shape, rather than the superseded preview API.
+
+
+### Empty continuation presence — 2026-10-07
+
+The [dated protocol schema](https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2026-07-28/schema.ts)
+requires the presence of requests or state on an unfinished response; it does not
+require a nonempty request map. The generated server already retained an empty
+request object, but shared client construction dropped empty answers and the
+native filler tested their count. A subsequent empty round therefore looked
+like an initial invocation.
+
+Shared request construction now emits an empty answer object for every present
+continuation, including an empty continuation value. Generated protocol fields
+use `omitzero` to retain non-nil empty maps; native fillers test presence rather
+than count. Saved continuation JSON retains that distinction. No new public
+mechanism or product limit is introduced.
+
+Focused runtime caller/persistence checks passed in 0.459 s. The existing
+compiled InputExchange fixture proves completion through the shared HTTP caller
+and the generated JSON-RPC client with no state or answers: generation took
+2.789 s, nested race checks 15.744 s, total 18.56 s. Scoped MCP runtime/generator
+lint reported zero issues. The retained assistant fixture was regenerated with
+the owning generator; its accumulated prior generator changes are reviewed as
+an integration checkpoint. Its progress and resource tests now select
+`Outcome.AsComplete()` instead of accessing fields on the old result envelope;
+the migrated caller checks passed in 0.478 s. Changed-line fixture lint reported
+zero issues; the complete fixture lint reports 14 pre-existing findings in
+scaffolding, conformance setup and assertions, none on changed lines. Full native BindTo/provider
+generation and the other release gates remain open.

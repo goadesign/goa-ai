@@ -81,7 +81,7 @@ func BuildToolsCallPayload(mcpAssistantToolsCallBody *string) (*mcpassistant.Too
 		}
 		err = json.Unmarshal([]byte(*mcpAssistantToolsCallBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"_meta\": \"Quia in vero sint dolore fugit enim.\",\n      \"arguments\": \"Molestiae dolores deserunt.\",\n      \"name\": \"Quibusdam et quis porro deserunt nihil qui.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"_meta\": \"Quia in vero sint dolore fugit enim.\",\n      \"arguments\": \"Molestiae dolores deserunt.\",\n      \"inputResponses\": {\n         \"Libero voluptas ullam impedit doloremque aut.\": \"Tempora neque repellendus iure doloremque natus.\"\n      },\n      \"name\": \"Quibusdam et quis porro deserunt nihil qui.\",\n      \"requestState\": \"Unde vel.\"\n   }'")
 		}
 		if body.Meta == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
@@ -91,9 +91,18 @@ func BuildToolsCallPayload(mcpAssistantToolsCallBody *string) (*mcpassistant.Too
 		}
 	}
 	v := &mcpassistant.ToolsCallPayload{
-		Name:      body.Name,
-		Arguments: body.Arguments,
-		Meta:      body.Meta,
+		Name:         body.Name,
+		Arguments:    body.Arguments,
+		Meta:         body.Meta,
+		RequestState: body.RequestState,
+	}
+	if body.InputResponses != nil {
+		v.InputResponses = make(map[string]json.RawMessage, len(body.InputResponses))
+		for key, val := range body.InputResponses {
+			tk := key
+			tv := val
+			v.InputResponses[tk] = tv
+		}
 	}
 
 	return v, nil
@@ -138,7 +147,7 @@ func BuildResourcesReadPayload(mcpAssistantResourcesReadBody *string) (*mcpassis
 		}
 		err = json.Unmarshal([]byte(*mcpAssistantResourcesReadBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"_meta\": \"Praesentium eius.\",\n      \"uri\": \"http://raynorschiller.biz/kianna\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"_meta\": \"Praesentium eius.\",\n      \"inputResponses\": {\n         \"Et qui accusamus voluptatibus dicta.\": \"Unde neque aut voluptate soluta.\",\n         \"Optio quae.\": \"Enim repellendus veritatis voluptatum tenetur ea placeat.\",\n         \"Quia voluptas blanditiis qui laboriosam ut.\": \"Commodi suscipit placeat eos.\"\n      },\n      \"requestState\": \"Autem in asperiores ipsum exercitationem.\",\n      \"uri\": \"http://raynorschiller.biz/kianna\"\n   }'")
 		}
 		if body.Meta == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
@@ -150,8 +159,17 @@ func BuildResourcesReadPayload(mcpAssistantResourcesReadBody *string) (*mcpassis
 		}
 	}
 	v := &mcpassistant.ResourcesReadPayload{
-		URI:  body.URI,
-		Meta: body.Meta,
+		URI:          body.URI,
+		Meta:         body.Meta,
+		RequestState: body.RequestState,
+	}
+	if body.InputResponses != nil {
+		v.InputResponses = make(map[string]json.RawMessage, len(body.InputResponses))
+		for key, val := range body.InputResponses {
+			tk := key
+			tv := val
+			v.InputResponses[tk] = tv
+		}
 	}
 
 	return v, nil
@@ -224,7 +242,7 @@ func BuildPromptsGetPayload(mcpAssistantPromptsGetBody *string) (*mcpassistant.P
 		}
 		err = json.Unmarshal([]byte(*mcpAssistantPromptsGetBody), &body)
 		if err != nil {
-			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"_meta\": \"Occaecati maiores laudantium quis sint mollitia placeat.\",\n      \"arguments\": {\n         \"Quidem est sint reiciendis.\": \"Repellat autem qui quis inventore recusandae fugit.\"\n      },\n      \"name\": \"Voluptas accusamus rerum quo.\"\n   }'")
+			return nil, fmt.Errorf("invalid JSON for body, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"_meta\": \"Occaecati maiores laudantium quis sint mollitia placeat.\",\n      \"arguments\": {\n         \"Quidem est sint reiciendis.\": \"Repellat autem qui quis inventore recusandae fugit.\"\n      },\n      \"inputResponses\": {\n         \"Est atque rerum amet.\": \"Aliquam occaecati dignissimos earum.\",\n         \"Magnam dolor et architecto.\": \"Ad quasi.\",\n         \"Sequi vitae qui quis quis iste illum.\": \"Ab velit.\"\n      },\n      \"name\": \"Voluptas accusamus rerum quo.\",\n      \"requestState\": \"Sint laboriosam ratione omnis suscipit et nulla.\"\n   }'")
 		}
 		if body.Meta == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("_meta", "body"))
@@ -234,8 +252,9 @@ func BuildPromptsGetPayload(mcpAssistantPromptsGetBody *string) (*mcpassistant.P
 		}
 	}
 	v := &mcpassistant.PromptsGetPayload{
-		Name: body.Name,
-		Meta: body.Meta,
+		Name:         body.Name,
+		Meta:         body.Meta,
+		RequestState: body.RequestState,
 	}
 	if body.Arguments != nil {
 		v.Arguments = make(map[string]string, len(body.Arguments))
@@ -243,6 +262,14 @@ func BuildPromptsGetPayload(mcpAssistantPromptsGetBody *string) (*mcpassistant.P
 			tk := key
 			tv := val
 			v.Arguments[tk] = tv
+		}
+	}
+	if body.InputResponses != nil {
+		v.InputResponses = make(map[string]json.RawMessage, len(body.InputResponses))
+		for key, val := range body.InputResponses {
+			tk := key
+			tv := val
+			v.InputResponses[tk] = tv
 		}
 	}
 

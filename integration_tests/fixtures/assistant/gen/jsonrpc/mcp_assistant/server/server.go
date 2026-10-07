@@ -10,6 +10,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -470,6 +471,21 @@ func NewToolsCallHandler(
 					}
 					encodeJSONRPCError(ctx, w, req, -32603, err.Error(), data, encoder, errhandler)
 					return nil
+				case "missing_client_capability":
+					var res *mcpassistant.MissingClientCapabilityError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
+					}
+					body := NewToolsCallMissingClientCapabilityResponseBody(res)
+					data := struct {
+						Name string                                        `json:"name"`
+						Body *ToolsCallMissingClientCapabilityResponseBody `json:"body"`
+					}{
+						Name: "missing_client_capability",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32021, err.Error(), data, encoder, errhandler)
+					return nil
 				}
 			}
 			encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -594,6 +610,21 @@ func NewResourcesReadHandler(
 						Body: body,
 					}
 					encodeJSONRPCError(ctx, w, req, -32603, err.Error(), data, encoder, errhandler)
+					return nil
+				case "missing_client_capability":
+					var res *mcpassistant.MissingClientCapabilityError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
+					}
+					body := NewResourcesReadMissingClientCapabilityResponseBody(res)
+					data := struct {
+						Name string                                            `json:"name"`
+						Body *ResourcesReadMissingClientCapabilityResponseBody `json:"body"`
+					}{
+						Name: "missing_client_capability",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32021, err.Error(), data, encoder, errhandler)
 					return nil
 				}
 			}
@@ -775,6 +806,21 @@ func NewPromptsGetHandler(
 					}
 					encodeJSONRPCError(ctx, w, req, -32603, err.Error(), data, encoder, errhandler)
 					return nil
+				case "missing_client_capability":
+					var res *mcpassistant.MissingClientCapabilityError
+					if !errors.As(err, &res) {
+						panic("JSON-RPC error name does not match its generated service error type")
+					}
+					body := NewPromptsGetMissingClientCapabilityResponseBody(res)
+					data := struct {
+						Name string                                         `json:"name"`
+						Body *PromptsGetMissingClientCapabilityResponseBody `json:"body"`
+					}{
+						Name: "missing_client_capability",
+						Body: body,
+					}
+					encodeJSONRPCError(ctx, w, req, -32021, err.Error(), data, encoder, errhandler)
+					return nil
 				}
 			}
 			encodeJSONRPCError(ctx, w, req, jsonrpc.InternalError, err.Error(), nil, encoder, errhandler)
@@ -876,6 +922,20 @@ func encodeJSONRPCError(ctx context.Context, w http.ResponseWriter, req *jsonrpc
 	}
 	if code == jsonrpc.InternalError {
 		status = http.StatusInternalServerError
+	}
+	if code == jsonrpc.Code(mcpruntime.MissingRequiredClientCapability) {
+		// This unique MCP error code carries its typed data directly. Goa's
+		// designed-error decoder removes only the framework's name wrapper.
+		encoded, err := json.Marshal(data)
+		if err != nil {
+			errhandler(ctx, w, fmt.Errorf("encode required client capabilities: %w", err))
+			return
+		}
+		name, body, ok := jsonrpc.DecodeServiceErrorData(encoded)
+		if !ok || name != "missing_client_capability" {
+			panic("MCP capability error does not match its designed Goa data")
+		}
+		data = body
 	}
 	response := jsonrpc.MakeErrorResponse(req.ID, code, message, data)
 	w.Header().Set("Content-Type", "application/json")

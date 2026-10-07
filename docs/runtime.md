@@ -7256,7 +7256,9 @@ resumes the exact saved suspension with `PendingInputResponse.MCP`, containing
 the tool call ID and a response for each requested input ID. The runtime validates
 the answers and executes the next round of the same call. The model never authors
 transport IDs or server state. A state-only round has an empty request map; the
-host decides when to resume it with an empty response map. No completed tool event
+host decides when to resume it with an empty response map. An empty request
+object with no state also resumes with an explicit empty answer object; both
+shared callers and generated clients preserve that continuation presence. No completed tool event
 or model-visible result is recorded until the remote call finishes.
 
 ### Executable ownership and upgrade

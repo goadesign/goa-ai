@@ -123,7 +123,8 @@ func (b *mcpExprBuilder) userTypeAttr(name string, builder func() *expr.Attribut
 				&expr.NamedAttributeExpr{Name: "requestState", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Exact service-owned state from this operation's preceding input round"}},
 				&expr.NamedAttributeExpr{Name: "inputResponses", Attribute: &expr.AttributeExpr{
 					Type:        &expr.Map{KeyType: &expr.AttributeExpr{Type: expr.String}, ElemType: protocolJSONAttribute("Host response decoded according to the statically declared question")},
-					Description: "Host answers indexed by this operation's request identifiers",
+					Description: "Host answers indexed by this operation's request identifiers; an empty object still identifies a continuation",
+					Meta:        expr.MetaExpr{"struct:tag:json": {"inputResponses,omitzero"}},
 				}},
 			)
 		}

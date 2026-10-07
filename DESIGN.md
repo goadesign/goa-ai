@@ -2062,6 +2062,12 @@ elicitation object means form-only support; malformed declarations fail before
 answer conversion. Shared runtime checks and generated answer decoders use exact
 JSON names, so extension fields cannot replace declared values. Direct local `BindTo` continuation remains unfinished.
 
+MCP additional-input continuation retains presence independently of answer count.
+An explicit empty request object may require a later round without state or
+answers. Shared callers emit an empty `inputResponses` object for that round;
+generated payloads retain it and native input fillers construct the authored
+continuation object. An absent continuation remains an initial service call.
+
 Private JSON integer types accept exact whole-number decimal and exponent
 spellings before applying each native integer range. Named aliases, fields,
 collections and union branches share this decoding rule. Shape checks establish

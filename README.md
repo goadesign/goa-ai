@@ -327,6 +327,10 @@ types without those encoders. Strict lifecycle and rejection record reads
 reject invalid raw UTF-8 instead of replacing bytes during JSON decoding.
 See the [JSON boundary contract](docs/runtime.md#json-boundary-contract).
 
+MCP callers preserve empty input continuations. When a service returns an empty
+request object without state, a later call still receives its native continuation
+object. Generated clients and shared HTTP/stdio callers use the same behavior.
+
 Registry users must regenerate and deploy registry replicas, providers and
 consumers together for wire protocol 11. It adds workflow-owned input-round
 identity and continuation metadata; earlier wire versions are rejected. Drain old

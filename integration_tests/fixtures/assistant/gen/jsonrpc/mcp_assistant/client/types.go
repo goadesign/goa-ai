@@ -8,8 +8,10 @@
 package client
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
 	goa "goa.design/goa/v3/pkg"
@@ -40,6 +42,11 @@ type ToolsCallRequestBody struct {
 	Arguments json.RawMessage `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
 	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact service-owned state from this operation's preceding input round
+	RequestState *string `form:"requestState,omitempty" json:"requestState,omitempty" xml:"requestState,omitempty"`
+	// Host answers indexed by this operation's request identifiers; an empty
+	// object still identifies a continuation
+	InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"`
 }
 
 // ResourcesListRequestBody is the type of the "mcp_assistant" service
@@ -58,6 +65,11 @@ type ResourcesReadRequestBody struct {
 	URI string `form:"uri" json:"uri" xml:"uri"`
 	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact service-owned state from this operation's preceding input round
+	RequestState *string `form:"requestState,omitempty" json:"requestState,omitempty" xml:"requestState,omitempty"`
+	// Host answers indexed by this operation's request identifiers; an empty
+	// object still identifies a continuation
+	InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"`
 }
 
 // ResourcesTemplatesListRequestBody is the type of the "mcp_assistant" service
@@ -87,6 +99,11 @@ type PromptsGetRequestBody struct {
 	Arguments map[string]string `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
 	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact service-owned state from this operation's preceding input round
+	RequestState *string `form:"requestState,omitempty" json:"requestState,omitempty" xml:"requestState,omitempty"`
+	// Host answers indexed by this operation's request identifiers; an empty
+	// object still identifies a continuation
+	InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"`
 }
 
 // CompletionCompleteRequestBody is the type of the "mcp_assistant" service
@@ -136,21 +153,6 @@ type ToolsListResponseBody struct {
 	CacheScope *string `form:"cacheScope,omitempty" json:"cacheScope,omitempty" xml:"cacheScope,omitempty"`
 }
 
-// ToolsCallResponseBody is the type of the "mcp_assistant" service
-// "tools/call" endpoint HTTP response body.
-type ToolsCallResponseBody struct {
-	// Tool execution results
-	Content []*ContentItemResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
-	// Whether the tool encountered an error
-	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
-	// Structured tool result
-	StructuredContent json.RawMessage `form:"structuredContent,omitempty" json:"structuredContent,omitempty" xml:"structuredContent,omitempty"`
-	// Namespaced protocol metadata and extension values
-	Meta json.RawMessage `json:"_meta,omitempty"`
-	// This response contains a finished result
-	ResultType *string `form:"resultType,omitempty" json:"resultType,omitempty" xml:"resultType,omitempty"`
-}
-
 // ResourcesListResponseBody is the type of the "mcp_assistant" service
 // "resources/list" endpoint HTTP response body.
 type ResourcesListResponseBody struct {
@@ -158,21 +160,6 @@ type ResourcesListResponseBody struct {
 	Resources []*ResourceInfoResponseBody `form:"resources,omitempty" json:"resources,omitempty" xml:"resources,omitempty"`
 	// Cursor for the next page
 	NextCursor *string `form:"nextCursor,omitempty" json:"nextCursor,omitempty" xml:"nextCursor,omitempty"`
-	// Namespaced protocol metadata and extension values
-	Meta json.RawMessage `json:"_meta,omitempty"`
-	// This response contains a finished result
-	ResultType *string `form:"resultType,omitempty" json:"resultType,omitempty" xml:"resultType,omitempty"`
-	// Milliseconds this one response may be cached
-	TTLMs *int64 `form:"ttlMs,omitempty" json:"ttlMs,omitempty" xml:"ttlMs,omitempty"`
-	// Whether this response may be reused across authorization contexts
-	CacheScope *string `form:"cacheScope,omitempty" json:"cacheScope,omitempty" xml:"cacheScope,omitempty"`
-}
-
-// ResourcesReadResponseBody is the type of the "mcp_assistant" service
-// "resources/read" endpoint HTTP response body.
-type ResourcesReadResponseBody struct {
-	// Resource contents
-	Contents []*ResourceContentResponseBody `form:"contents,omitempty" json:"contents,omitempty" xml:"contents,omitempty"`
 	// Namespaced protocol metadata and extension values
 	Meta json.RawMessage `json:"_meta,omitempty"`
 	// This response contains a finished result
@@ -215,19 +202,6 @@ type PromptsListResponseBody struct {
 	TTLMs *int64 `form:"ttlMs,omitempty" json:"ttlMs,omitempty" xml:"ttlMs,omitempty"`
 	// Whether this response may be reused across authorization contexts
 	CacheScope *string `form:"cacheScope,omitempty" json:"cacheScope,omitempty" xml:"cacheScope,omitempty"`
-}
-
-// PromptsGetResponseBody is the type of the "mcp_assistant" service
-// "prompts/get" endpoint HTTP response body.
-type PromptsGetResponseBody struct {
-	// Prompt description
-	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
-	// Prompt messages
-	Messages []*PromptMessageResponseBody `form:"messages,omitempty" json:"messages,omitempty" xml:"messages,omitempty"`
-	// Namespaced protocol metadata and extension values
-	Meta json.RawMessage `json:"_meta,omitempty"`
-	// This response contains a finished result
-	ResultType *string `form:"resultType,omitempty" json:"resultType,omitempty" xml:"resultType,omitempty"`
 }
 
 // CompletionCompleteResponseBody is the type of the "mcp_assistant" service
@@ -298,6 +272,14 @@ type ToolsCallInternalErrorResponseBody struct {
 	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
 }
 
+// ToolsCallMissingClientCapabilityResponseBody is the type of the
+// "mcp_assistant" service "tools/call" endpoint HTTP response body for the
+// "missing_client_capability" error.
+type ToolsCallMissingClientCapabilityResponseBody struct {
+	// Capabilities required to fulfill this operation's questions
+	RequiredCapabilities *RequiredClientCapabilitiesResponseBody `form:"requiredCapabilities,omitempty" json:"requiredCapabilities,omitempty" xml:"requiredCapabilities,omitempty"`
+}
+
 // ResourcesListInvalidParamsResponseBody is the type of the "mcp_assistant"
 // service "resources/list" endpoint HTTP response body for the
 // "invalid_params" error.
@@ -353,6 +335,14 @@ type ResourcesReadInternalErrorResponseBody struct {
 	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
 	// Is the error a server-side fault?
 	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ResourcesReadMissingClientCapabilityResponseBody is the type of the
+// "mcp_assistant" service "resources/read" endpoint HTTP response body for the
+// "missing_client_capability" error.
+type ResourcesReadMissingClientCapabilityResponseBody struct {
+	// Capabilities required to fulfill this operation's questions
+	RequiredCapabilities *RequiredClientCapabilitiesResponseBody `form:"requiredCapabilities,omitempty" json:"requiredCapabilities,omitempty" xml:"requiredCapabilities,omitempty"`
 }
 
 // ResourcesTemplatesListInvalidParamsResponseBody is the type of the
@@ -429,6 +419,14 @@ type PromptsGetInternalErrorResponseBody struct {
 	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
 	// Is the error a server-side fault?
 	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// PromptsGetMissingClientCapabilityResponseBody is the type of the
+// "mcp_assistant" service "prompts/get" endpoint HTTP response body for the
+// "missing_client_capability" error.
+type PromptsGetMissingClientCapabilityResponseBody struct {
+	// Capabilities required to fulfill this operation's questions
+	RequiredCapabilities *RequiredClientCapabilitiesResponseBody `form:"requiredCapabilities,omitempty" json:"requiredCapabilities,omitempty" xml:"requiredCapabilities,omitempty"`
 }
 
 // CompletionCompleteInvalidParamsResponseBody is the type of the
@@ -529,8 +527,21 @@ type ToolAnnotationsResponseBody struct {
 	OpenWorldHint *bool `form:"openWorldHint,omitempty" json:"openWorldHint,omitempty" xml:"openWorldHint,omitempty"`
 }
 
-// ContentItemResponseBody is used to define fields on response body types.
-type ContentItemResponseBody struct {
+// ToolsCallCompleteResultResponse is used to define fields on response body
+// types.
+type ToolsCallCompleteResultResponse struct {
+	// Tool execution results
+	Content []*ContentItemResponse `json:"content"`
+	// Whether the tool encountered an error
+	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
+	// Structured tool result
+	StructuredContent json.RawMessage `form:"structuredContent,omitempty" json:"structuredContent,omitempty" xml:"structuredContent,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// ContentItemResponse is used to define fields on response body types.
+type ContentItemResponse struct {
 	// Selects the required content fields
 	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
 	// Text for the text variant, including an empty string
@@ -550,17 +561,17 @@ type ContentItemResponseBody struct {
 	// Raw bytes in the linked resource before base64 encoding
 	Size *float64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 	// Optional resource link icons
-	Icons []*ContentIconResponseBody `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	Icons []*ContentIconResponse `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
 	// Required text or binary contents for embedded resources
-	Resource *ResourceContentResponseBody `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	Resource *ResourceContentResponse `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
 	// Optional audience and importance for this content
-	Annotations *ContentAnnotationsResponseBody `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	Annotations *ContentAnnotationsResponse `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
 	// Namespaced extension metadata retained without interpreting its fields
 	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
-// ContentIconResponseBody is used to define fields on response body types.
-type ContentIconResponseBody struct {
+// ContentIconResponse is used to define fields on response body types.
+type ContentIconResponse struct {
 	// URI of the icon; decoding does not fetch it
 	Src *string `form:"src,omitempty" json:"src,omitempty" xml:"src,omitempty"`
 	// Optional image MIME type
@@ -571,8 +582,8 @@ type ContentIconResponseBody struct {
 	Theme *string `form:"theme,omitempty" json:"theme,omitempty" xml:"theme,omitempty"`
 }
 
-// ResourceContentResponseBody is used to define fields on response body types.
-type ResourceContentResponseBody struct {
+// ResourceContentResponse is used to define fields on response body types.
+type ResourceContentResponse struct {
 	// Resource URI
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
 	// Content MIME type
@@ -585,15 +596,67 @@ type ResourceContentResponseBody struct {
 	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
-// ContentAnnotationsResponseBody is used to define fields on response body
-// types.
-type ContentAnnotationsResponseBody struct {
+// ContentAnnotationsResponse is used to define fields on response body types.
+type ContentAnnotationsResponse struct {
 	// Roles that should see this content
 	Audience []string `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
 	// Importance from zero through one, inclusive, for this content item
 	Priority *float64 `form:"priority,omitempty" json:"priority,omitempty" xml:"priority,omitempty"`
 	// Time this content last changed
 	LastModified *string `form:"lastModified,omitempty" json:"lastModified,omitempty" xml:"lastModified,omitempty"`
+}
+
+// InputRequiredResultResponse is used to define fields on response body types.
+type InputRequiredResultResponse struct {
+	// Questions indexed by service-assigned identifiers within this input round
+	InputRequests map[string]*InputRequestResponse `json:"inputRequests,omitzero"`
+	// Opaque service-owned operation state echoed exactly on continuation
+	RequestState *string `form:"requestState,omitempty" json:"requestState,omitempty" xml:"requestState,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `form:"_meta,omitempty" json:"_meta,omitempty" xml:"_meta,omitempty"`
+}
+
+// InputRequestResponse is used to define fields on response body types.
+type InputRequestResponse struct {
+	// Client operation requested to complete this input round
+	Method *string `form:"method,omitempty" json:"method,omitempty" xml:"method,omitempty"`
+	// A typed form request or URL-consent request
+	Params *ElicitationParamsResponseBody `form:"params,omitempty" json:"params,omitempty" xml:"params,omitempty"`
+}
+
+// ElicitationFormParamsResponse is used to define fields on response body
+// types.
+type ElicitationFormParamsResponse struct {
+	// Non-sensitive information requested from the user
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// The flat form schema generated from accepted answer content
+	RequestedSchema json.RawMessage `form:"requestedSchema,omitempty" json:"requestedSchema,omitempty" xml:"requestedSchema,omitempty"`
+}
+
+// ElicitationURLParamsResponse is used to define fields on response body types.
+type ElicitationURLParamsResponse struct {
+	// The external interaction the user is asked to approve
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Absolute URL opened by the consenting host
+	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
+}
+
+// RequiredClientCapabilitiesResponseBody is used to define fields on response
+// body types.
+type RequiredClientCapabilitiesResponseBody struct {
+	// Required forms of user input
+	Elicitation *ElicitationCapabilitiesResponseBody `form:"elicitation,omitempty" json:"elicitation,omitempty" xml:"elicitation,omitempty"`
+}
+
+// ElicitationCapabilitiesResponseBody is used to define fields on response
+// body types.
+type ElicitationCapabilitiesResponseBody struct {
+	// Support for non-sensitive form input
+	Form *struct {
+	} `form:"form,omitempty" json:"form,omitempty" xml:"form,omitempty"`
+	// Support for external URL consent
+	URL *struct {
+	} `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 }
 
 // ResourceInfoResponseBody is used to define fields on response body types.
@@ -606,6 +669,19 @@ type ResourceInfoResponseBody struct {
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
 	// Resource MIME type
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+}
+
+// ResourcesReadCompleteResultResponse is used to define fields on response
+// body types.
+type ResourcesReadCompleteResultResponse struct {
+	// Resource contents
+	Contents []*ResourceContentResponse `json:"contents"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Milliseconds this one response may be cached
+	TTLMs *int64 `form:"ttlMs,omitempty" json:"ttlMs,omitempty" xml:"ttlMs,omitempty"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope *string `form:"cacheScope,omitempty" json:"cacheScope,omitempty" xml:"cacheScope,omitempty"`
 }
 
 // ResourceTemplateInfoResponseBody is used to define fields on response body
@@ -641,12 +717,23 @@ type PromptArgumentResponseBody struct {
 	Required *bool `form:"required,omitempty" json:"required,omitempty" xml:"required,omitempty"`
 }
 
-// PromptMessageResponseBody is used to define fields on response body types.
-type PromptMessageResponseBody struct {
+// PromptsGetCompleteResultResponse is used to define fields on response body
+// types.
+type PromptsGetCompleteResultResponse struct {
+	// Prompt description
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Prompt messages
+	Messages []*PromptMessageResponse `json:"messages"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// PromptMessageResponse is used to define fields on response body types.
+type PromptMessageResponse struct {
 	// Message role
 	Role *string `form:"role,omitempty" json:"role,omitempty" xml:"role,omitempty"`
 	// Message content
-	Content *ContentItemResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
+	Content *ContentItemResponse `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
 }
 
 // CompletionSuggestionResponseBody is used to define fields on response body
@@ -687,6 +774,746 @@ type CompletionContextRequestBody struct {
 	Arguments map[string]string `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
 }
 
+// ElicitationParamsResponseBody holds exactly one of its branch values.
+type ElicitationParamsResponseBody struct {
+	kind ElicitationParamsResponseBodyKind
+	form *ElicitationFormParamsResponse
+	url_ *ElicitationURLParamsResponse
+}
+
+// ElicitationParamsResponseBodyKind records which ElicitationParamsResponseBody branch is selected.
+type ElicitationParamsResponseBodyKind string
+
+const (
+	// ElicitationParamsResponseBodyKindForm identifies the form branch.
+	ElicitationParamsResponseBodyKindForm ElicitationParamsResponseBodyKind = "form"
+	// ElicitationParamsResponseBodyKindURL identifies the url branch.
+	ElicitationParamsResponseBodyKindURL ElicitationParamsResponseBodyKind = "url"
+)
+
+// Kind returns the selected branch.
+func (u ElicitationParamsResponseBody) Kind() ElicitationParamsResponseBodyKind {
+	return u.kind
+}
+
+// NewElicitationParamsResponseBodyForm constructs ElicitationParamsResponseBody with the form branch set.
+func NewElicitationParamsResponseBodyForm(v *ElicitationFormParamsResponse) ElicitationParamsResponseBody {
+	return ElicitationParamsResponseBody{
+		kind: ElicitationParamsResponseBodyKindForm,
+		form: v,
+	}
+}
+
+// AsForm returns the value when the form branch is selected.
+func (u ElicitationParamsResponseBody) AsForm() (_ *ElicitationFormParamsResponse, ok bool) {
+	if u.kind != ElicitationParamsResponseBodyKindForm {
+		return
+	}
+	return u.form, true
+}
+
+// SetForm selects the form branch and stores v.
+func (u *ElicitationParamsResponseBody) SetForm(v *ElicitationFormParamsResponse) {
+	*u = ElicitationParamsResponseBody{
+		kind: ElicitationParamsResponseBodyKindForm,
+		form: v,
+	}
+}
+
+// NewElicitationParamsResponseBodyURL constructs ElicitationParamsResponseBody with the url branch set.
+func NewElicitationParamsResponseBodyURL(v *ElicitationURLParamsResponse) ElicitationParamsResponseBody {
+	return ElicitationParamsResponseBody{
+		kind: ElicitationParamsResponseBodyKindURL,
+		url_: v,
+	}
+}
+
+// AsURL returns the value when the url branch is selected.
+func (u ElicitationParamsResponseBody) AsURL() (_ *ElicitationURLParamsResponse, ok bool) {
+	if u.kind != ElicitationParamsResponseBodyKindURL {
+		return
+	}
+	return u.url_, true
+}
+
+// SetURL selects the url branch and stores v.
+func (u *ElicitationParamsResponseBody) SetURL(v *ElicitationURLParamsResponse) {
+	*u = ElicitationParamsResponseBody{
+		kind: ElicitationParamsResponseBodyKindURL,
+		url_: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u ElicitationParamsResponseBody) Validate() error {
+	switch u.kind {
+	case "":
+		return goa.InvalidEnumValueError("mode", "", []any{
+			string(ElicitationParamsResponseBodyKindForm),
+			string(ElicitationParamsResponseBodyKindURL),
+		})
+	case ElicitationParamsResponseBodyKindForm:
+		if u.form == nil {
+			return goa.MissingFieldError("value", "ElicitationParamsResponseBody")
+		}
+		return nil
+	case ElicitationParamsResponseBodyKindURL:
+		if u.url_ == nil {
+			return goa.MissingFieldError("value", "ElicitationParamsResponseBody")
+		}
+		return nil
+	default:
+		return goa.InvalidEnumValueError("mode", u.kind, []any{
+			string(ElicitationParamsResponseBodyKindForm),
+			string(ElicitationParamsResponseBodyKindURL),
+		})
+	}
+}
+
+// MarshalJSON writes the selected object branch beside its discriminator.
+func (u ElicitationParamsResponseBody) MarshalJSON() ([]byte, error) {
+	if err := u.Validate(); err != nil {
+		return nil, err
+	}
+	var (
+		value any
+	)
+	switch u.kind {
+	case ElicitationParamsResponseBodyKindForm:
+		value = u.form
+	case ElicitationParamsResponseBodyKindURL:
+		value = u.url_
+	default:
+		return nil, fmt.Errorf("unexpected ElicitationParamsResponseBody kind %q", u.kind)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, goa.InvalidFieldTypeError("mode", nil, "non-null JSON object")
+	}
+	if _, exists := fields["mode"]; exists {
+		return nil, fmt.Errorf("ElicitationParamsResponseBody branch already contains discriminator %q", "mode")
+	}
+	tag, err := json.Marshal(string(u.kind))
+	if err != nil {
+		return nil, err
+	}
+	fields["mode"] = tag
+	return json.Marshal(fields)
+}
+
+// UnmarshalJSON reads the discriminator and decodes its declared object branch.
+func (u *ElicitationParamsResponseBody) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	tag, exists := fields["mode"]
+	if !exists {
+		return goa.MissingFieldError("mode", "ElicitationParamsResponseBody")
+	}
+	if bytes.Equal(bytes.TrimSpace(tag), []byte("null")) {
+		return goa.InvalidFieldTypeError("mode", nil, "JSON string")
+	}
+	var raw struct {
+		Type  string
+		Value json.RawMessage
+	}
+	if err := json.Unmarshal(tag, &raw.Type); err != nil {
+		return err
+	}
+	delete(fields, "mode")
+	value, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	raw.Value = value
+	switch raw.Type {
+	case string(ElicitationParamsResponseBodyKindForm):
+		var v *ElicitationFormParamsResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetForm(v)
+	case string(ElicitationParamsResponseBodyKindURL):
+		var v *ElicitationURLParamsResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetURL(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("mode", "ElicitationParamsResponseBody")
+		}
+		return goa.InvalidEnumValueError("mode", raw.Type, []any{
+			string(ElicitationParamsResponseBodyKindForm),
+			string(ElicitationParamsResponseBodyKindURL),
+		})
+	}
+	return nil
+}
+
+// PromptsGetOutcomeResponseBody holds exactly one of its branch values.
+type PromptsGetOutcomeResponseBody struct {
+	kind          PromptsGetOutcomeResponseBodyKind
+	complete      *PromptsGetCompleteResultResponse
+	inputRequired *InputRequiredResultResponse
+}
+
+// PromptsGetOutcomeResponseBodyKind records which PromptsGetOutcomeResponseBody branch is selected.
+type PromptsGetOutcomeResponseBodyKind string
+
+const (
+	// PromptsGetOutcomeResponseBodyKindComplete identifies the complete branch.
+	PromptsGetOutcomeResponseBodyKindComplete PromptsGetOutcomeResponseBodyKind = "complete"
+	// PromptsGetOutcomeResponseBodyKindInputRequired identifies the input_required branch.
+	PromptsGetOutcomeResponseBodyKindInputRequired PromptsGetOutcomeResponseBodyKind = "input_required"
+)
+
+// Kind returns the selected branch.
+func (u PromptsGetOutcomeResponseBody) Kind() PromptsGetOutcomeResponseBodyKind {
+	return u.kind
+}
+
+// NewPromptsGetOutcomeResponseBodyComplete constructs PromptsGetOutcomeResponseBody with the complete branch set.
+func NewPromptsGetOutcomeResponseBodyComplete(v *PromptsGetCompleteResultResponse) PromptsGetOutcomeResponseBody {
+	return PromptsGetOutcomeResponseBody{
+		kind:     PromptsGetOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// AsComplete returns the value when the complete branch is selected.
+func (u PromptsGetOutcomeResponseBody) AsComplete() (_ *PromptsGetCompleteResultResponse, ok bool) {
+	if u.kind != PromptsGetOutcomeResponseBodyKindComplete {
+		return
+	}
+	return u.complete, true
+}
+
+// SetComplete selects the complete branch and stores v.
+func (u *PromptsGetOutcomeResponseBody) SetComplete(v *PromptsGetCompleteResultResponse) {
+	*u = PromptsGetOutcomeResponseBody{
+		kind:     PromptsGetOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// NewPromptsGetOutcomeResponseBodyInputRequired constructs PromptsGetOutcomeResponseBody with the input_required branch set.
+func NewPromptsGetOutcomeResponseBodyInputRequired(v *InputRequiredResultResponse) PromptsGetOutcomeResponseBody {
+	return PromptsGetOutcomeResponseBody{
+		kind:          PromptsGetOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// AsInputRequired returns the value when the input_required branch is selected.
+func (u PromptsGetOutcomeResponseBody) AsInputRequired() (_ *InputRequiredResultResponse, ok bool) {
+	if u.kind != PromptsGetOutcomeResponseBodyKindInputRequired {
+		return
+	}
+	return u.inputRequired, true
+}
+
+// SetInputRequired selects the input_required branch and stores v.
+func (u *PromptsGetOutcomeResponseBody) SetInputRequired(v *InputRequiredResultResponse) {
+	*u = PromptsGetOutcomeResponseBody{
+		kind:          PromptsGetOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u PromptsGetOutcomeResponseBody) Validate() error {
+	switch u.kind {
+	case "":
+		return goa.InvalidEnumValueError("resultType", "", []any{
+			string(PromptsGetOutcomeResponseBodyKindComplete),
+			string(PromptsGetOutcomeResponseBodyKindInputRequired),
+		})
+	case PromptsGetOutcomeResponseBodyKindComplete:
+		if u.complete == nil {
+			return goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
+		}
+		return nil
+	case PromptsGetOutcomeResponseBodyKindInputRequired:
+		if u.inputRequired == nil {
+			return goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
+		}
+		return nil
+	default:
+		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+			string(PromptsGetOutcomeResponseBodyKindComplete),
+			string(PromptsGetOutcomeResponseBodyKindInputRequired),
+		})
+	}
+}
+
+// MarshalJSON writes the selected object branch beside its discriminator.
+func (u PromptsGetOutcomeResponseBody) MarshalJSON() ([]byte, error) {
+	if err := u.Validate(); err != nil {
+		return nil, err
+	}
+	var (
+		value any
+	)
+	switch u.kind {
+	case PromptsGetOutcomeResponseBodyKindComplete:
+		value = u.complete
+	case PromptsGetOutcomeResponseBodyKindInputRequired:
+		value = u.inputRequired
+	default:
+		return nil, fmt.Errorf("unexpected PromptsGetOutcomeResponseBody kind %q", u.kind)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, goa.InvalidFieldTypeError("resultType", nil, "non-null JSON object")
+	}
+	if _, exists := fields["resultType"]; exists {
+		return nil, fmt.Errorf("PromptsGetOutcomeResponseBody branch already contains discriminator %q", "resultType")
+	}
+	tag, err := json.Marshal(string(u.kind))
+	if err != nil {
+		return nil, err
+	}
+	fields["resultType"] = tag
+	return json.Marshal(fields)
+}
+
+// UnmarshalJSON reads the discriminator and decodes its declared object branch.
+func (u *PromptsGetOutcomeResponseBody) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	tag, exists := fields["resultType"]
+	if !exists {
+		return goa.MissingFieldError("resultType", "PromptsGetOutcomeResponseBody")
+	}
+	if bytes.Equal(bytes.TrimSpace(tag), []byte("null")) {
+		return goa.InvalidFieldTypeError("resultType", nil, "JSON string")
+	}
+	var raw struct {
+		Type  string
+		Value json.RawMessage
+	}
+	if err := json.Unmarshal(tag, &raw.Type); err != nil {
+		return err
+	}
+	delete(fields, "resultType")
+	value, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	raw.Value = value
+	switch raw.Type {
+	case string(PromptsGetOutcomeResponseBodyKindComplete):
+		var v *PromptsGetCompleteResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetComplete(v)
+	case string(PromptsGetOutcomeResponseBodyKindInputRequired):
+		var v *InputRequiredResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetInputRequired(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("resultType", "PromptsGetOutcomeResponseBody")
+		}
+		return goa.InvalidEnumValueError("resultType", raw.Type, []any{
+			string(PromptsGetOutcomeResponseBodyKindComplete),
+			string(PromptsGetOutcomeResponseBodyKindInputRequired),
+		})
+	}
+	return nil
+}
+
+// ResourcesReadOutcomeResponseBody holds exactly one of its branch values.
+type ResourcesReadOutcomeResponseBody struct {
+	kind          ResourcesReadOutcomeResponseBodyKind
+	complete      *ResourcesReadCompleteResultResponse
+	inputRequired *InputRequiredResultResponse
+}
+
+// ResourcesReadOutcomeResponseBodyKind records which ResourcesReadOutcomeResponseBody branch is selected.
+type ResourcesReadOutcomeResponseBodyKind string
+
+const (
+	// ResourcesReadOutcomeResponseBodyKindComplete identifies the complete branch.
+	ResourcesReadOutcomeResponseBodyKindComplete ResourcesReadOutcomeResponseBodyKind = "complete"
+	// ResourcesReadOutcomeResponseBodyKindInputRequired identifies the input_required branch.
+	ResourcesReadOutcomeResponseBodyKindInputRequired ResourcesReadOutcomeResponseBodyKind = "input_required"
+)
+
+// Kind returns the selected branch.
+func (u ResourcesReadOutcomeResponseBody) Kind() ResourcesReadOutcomeResponseBodyKind {
+	return u.kind
+}
+
+// NewResourcesReadOutcomeResponseBodyComplete constructs ResourcesReadOutcomeResponseBody with the complete branch set.
+func NewResourcesReadOutcomeResponseBodyComplete(v *ResourcesReadCompleteResultResponse) ResourcesReadOutcomeResponseBody {
+	return ResourcesReadOutcomeResponseBody{
+		kind:     ResourcesReadOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// AsComplete returns the value when the complete branch is selected.
+func (u ResourcesReadOutcomeResponseBody) AsComplete() (_ *ResourcesReadCompleteResultResponse, ok bool) {
+	if u.kind != ResourcesReadOutcomeResponseBodyKindComplete {
+		return
+	}
+	return u.complete, true
+}
+
+// SetComplete selects the complete branch and stores v.
+func (u *ResourcesReadOutcomeResponseBody) SetComplete(v *ResourcesReadCompleteResultResponse) {
+	*u = ResourcesReadOutcomeResponseBody{
+		kind:     ResourcesReadOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// NewResourcesReadOutcomeResponseBodyInputRequired constructs ResourcesReadOutcomeResponseBody with the input_required branch set.
+func NewResourcesReadOutcomeResponseBodyInputRequired(v *InputRequiredResultResponse) ResourcesReadOutcomeResponseBody {
+	return ResourcesReadOutcomeResponseBody{
+		kind:          ResourcesReadOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// AsInputRequired returns the value when the input_required branch is selected.
+func (u ResourcesReadOutcomeResponseBody) AsInputRequired() (_ *InputRequiredResultResponse, ok bool) {
+	if u.kind != ResourcesReadOutcomeResponseBodyKindInputRequired {
+		return
+	}
+	return u.inputRequired, true
+}
+
+// SetInputRequired selects the input_required branch and stores v.
+func (u *ResourcesReadOutcomeResponseBody) SetInputRequired(v *InputRequiredResultResponse) {
+	*u = ResourcesReadOutcomeResponseBody{
+		kind:          ResourcesReadOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u ResourcesReadOutcomeResponseBody) Validate() error {
+	switch u.kind {
+	case "":
+		return goa.InvalidEnumValueError("resultType", "", []any{
+			string(ResourcesReadOutcomeResponseBodyKindComplete),
+			string(ResourcesReadOutcomeResponseBodyKindInputRequired),
+		})
+	case ResourcesReadOutcomeResponseBodyKindComplete:
+		if u.complete == nil {
+			return goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
+		}
+		return nil
+	case ResourcesReadOutcomeResponseBodyKindInputRequired:
+		if u.inputRequired == nil {
+			return goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
+		}
+		return nil
+	default:
+		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+			string(ResourcesReadOutcomeResponseBodyKindComplete),
+			string(ResourcesReadOutcomeResponseBodyKindInputRequired),
+		})
+	}
+}
+
+// MarshalJSON writes the selected object branch beside its discriminator.
+func (u ResourcesReadOutcomeResponseBody) MarshalJSON() ([]byte, error) {
+	if err := u.Validate(); err != nil {
+		return nil, err
+	}
+	var (
+		value any
+	)
+	switch u.kind {
+	case ResourcesReadOutcomeResponseBodyKindComplete:
+		value = u.complete
+	case ResourcesReadOutcomeResponseBodyKindInputRequired:
+		value = u.inputRequired
+	default:
+		return nil, fmt.Errorf("unexpected ResourcesReadOutcomeResponseBody kind %q", u.kind)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, goa.InvalidFieldTypeError("resultType", nil, "non-null JSON object")
+	}
+	if _, exists := fields["resultType"]; exists {
+		return nil, fmt.Errorf("ResourcesReadOutcomeResponseBody branch already contains discriminator %q", "resultType")
+	}
+	tag, err := json.Marshal(string(u.kind))
+	if err != nil {
+		return nil, err
+	}
+	fields["resultType"] = tag
+	return json.Marshal(fields)
+}
+
+// UnmarshalJSON reads the discriminator and decodes its declared object branch.
+func (u *ResourcesReadOutcomeResponseBody) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	tag, exists := fields["resultType"]
+	if !exists {
+		return goa.MissingFieldError("resultType", "ResourcesReadOutcomeResponseBody")
+	}
+	if bytes.Equal(bytes.TrimSpace(tag), []byte("null")) {
+		return goa.InvalidFieldTypeError("resultType", nil, "JSON string")
+	}
+	var raw struct {
+		Type  string
+		Value json.RawMessage
+	}
+	if err := json.Unmarshal(tag, &raw.Type); err != nil {
+		return err
+	}
+	delete(fields, "resultType")
+	value, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	raw.Value = value
+	switch raw.Type {
+	case string(ResourcesReadOutcomeResponseBodyKindComplete):
+		var v *ResourcesReadCompleteResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetComplete(v)
+	case string(ResourcesReadOutcomeResponseBodyKindInputRequired):
+		var v *InputRequiredResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetInputRequired(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("resultType", "ResourcesReadOutcomeResponseBody")
+		}
+		return goa.InvalidEnumValueError("resultType", raw.Type, []any{
+			string(ResourcesReadOutcomeResponseBodyKindComplete),
+			string(ResourcesReadOutcomeResponseBodyKindInputRequired),
+		})
+	}
+	return nil
+}
+
+// ToolsCallOutcomeResponseBody holds exactly one of its branch values.
+type ToolsCallOutcomeResponseBody struct {
+	kind          ToolsCallOutcomeResponseBodyKind
+	complete      *ToolsCallCompleteResultResponse
+	inputRequired *InputRequiredResultResponse
+}
+
+// ToolsCallOutcomeResponseBodyKind records which ToolsCallOutcomeResponseBody branch is selected.
+type ToolsCallOutcomeResponseBodyKind string
+
+const (
+	// ToolsCallOutcomeResponseBodyKindComplete identifies the complete branch.
+	ToolsCallOutcomeResponseBodyKindComplete ToolsCallOutcomeResponseBodyKind = "complete"
+	// ToolsCallOutcomeResponseBodyKindInputRequired identifies the input_required branch.
+	ToolsCallOutcomeResponseBodyKindInputRequired ToolsCallOutcomeResponseBodyKind = "input_required"
+)
+
+// Kind returns the selected branch.
+func (u ToolsCallOutcomeResponseBody) Kind() ToolsCallOutcomeResponseBodyKind {
+	return u.kind
+}
+
+// NewToolsCallOutcomeResponseBodyComplete constructs ToolsCallOutcomeResponseBody with the complete branch set.
+func NewToolsCallOutcomeResponseBodyComplete(v *ToolsCallCompleteResultResponse) ToolsCallOutcomeResponseBody {
+	return ToolsCallOutcomeResponseBody{
+		kind:     ToolsCallOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// AsComplete returns the value when the complete branch is selected.
+func (u ToolsCallOutcomeResponseBody) AsComplete() (_ *ToolsCallCompleteResultResponse, ok bool) {
+	if u.kind != ToolsCallOutcomeResponseBodyKindComplete {
+		return
+	}
+	return u.complete, true
+}
+
+// SetComplete selects the complete branch and stores v.
+func (u *ToolsCallOutcomeResponseBody) SetComplete(v *ToolsCallCompleteResultResponse) {
+	*u = ToolsCallOutcomeResponseBody{
+		kind:     ToolsCallOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// NewToolsCallOutcomeResponseBodyInputRequired constructs ToolsCallOutcomeResponseBody with the input_required branch set.
+func NewToolsCallOutcomeResponseBodyInputRequired(v *InputRequiredResultResponse) ToolsCallOutcomeResponseBody {
+	return ToolsCallOutcomeResponseBody{
+		kind:          ToolsCallOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// AsInputRequired returns the value when the input_required branch is selected.
+func (u ToolsCallOutcomeResponseBody) AsInputRequired() (_ *InputRequiredResultResponse, ok bool) {
+	if u.kind != ToolsCallOutcomeResponseBodyKindInputRequired {
+		return
+	}
+	return u.inputRequired, true
+}
+
+// SetInputRequired selects the input_required branch and stores v.
+func (u *ToolsCallOutcomeResponseBody) SetInputRequired(v *InputRequiredResultResponse) {
+	*u = ToolsCallOutcomeResponseBody{
+		kind:          ToolsCallOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u ToolsCallOutcomeResponseBody) Validate() error {
+	switch u.kind {
+	case "":
+		return goa.InvalidEnumValueError("resultType", "", []any{
+			string(ToolsCallOutcomeResponseBodyKindComplete),
+			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+		})
+	case ToolsCallOutcomeResponseBodyKindComplete:
+		if u.complete == nil {
+			return goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
+		}
+		return nil
+	case ToolsCallOutcomeResponseBodyKindInputRequired:
+		if u.inputRequired == nil {
+			return goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
+		}
+		return nil
+	default:
+		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+			string(ToolsCallOutcomeResponseBodyKindComplete),
+			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+		})
+	}
+}
+
+// MarshalJSON writes the selected object branch beside its discriminator.
+func (u ToolsCallOutcomeResponseBody) MarshalJSON() ([]byte, error) {
+	if err := u.Validate(); err != nil {
+		return nil, err
+	}
+	var (
+		value any
+	)
+	switch u.kind {
+	case ToolsCallOutcomeResponseBodyKindComplete:
+		value = u.complete
+	case ToolsCallOutcomeResponseBodyKindInputRequired:
+		value = u.inputRequired
+	default:
+		return nil, fmt.Errorf("unexpected ToolsCallOutcomeResponseBody kind %q", u.kind)
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, goa.InvalidFieldTypeError("resultType", nil, "non-null JSON object")
+	}
+	if _, exists := fields["resultType"]; exists {
+		return nil, fmt.Errorf("ToolsCallOutcomeResponseBody branch already contains discriminator %q", "resultType")
+	}
+	tag, err := json.Marshal(string(u.kind))
+	if err != nil {
+		return nil, err
+	}
+	fields["resultType"] = tag
+	return json.Marshal(fields)
+}
+
+// UnmarshalJSON reads the discriminator and decodes its declared object branch.
+func (u *ToolsCallOutcomeResponseBody) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	tag, exists := fields["resultType"]
+	if !exists {
+		return goa.MissingFieldError("resultType", "ToolsCallOutcomeResponseBody")
+	}
+	if bytes.Equal(bytes.TrimSpace(tag), []byte("null")) {
+		return goa.InvalidFieldTypeError("resultType", nil, "JSON string")
+	}
+	var raw struct {
+		Type  string
+		Value json.RawMessage
+	}
+	if err := json.Unmarshal(tag, &raw.Type); err != nil {
+		return err
+	}
+	delete(fields, "resultType")
+	value, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	raw.Value = value
+	switch raw.Type {
+	case string(ToolsCallOutcomeResponseBodyKindComplete):
+		var v *ToolsCallCompleteResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetComplete(v)
+	case string(ToolsCallOutcomeResponseBodyKindInputRequired):
+		var v *InputRequiredResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetInputRequired(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("resultType", "ToolsCallOutcomeResponseBody")
+		}
+		return goa.InvalidEnumValueError("resultType", raw.Type, []any{
+			string(ToolsCallOutcomeResponseBodyKindComplete),
+			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+		})
+	}
+	return nil
+}
+
 // NewServerDiscoverRequestBody builds the HTTP request body from the payload
 // of the "server/discover" endpoint of the "mcp_assistant" service.
 func NewServerDiscoverRequestBody(p *mcpassistant.DiscoverPayload) *ServerDiscoverRequestBody {
@@ -710,9 +1537,18 @@ func NewToolsListRequestBody(p *mcpassistant.ToolsListPayload) *ToolsListRequest
 // "tools/call" endpoint of the "mcp_assistant" service.
 func NewToolsCallRequestBody(p *mcpassistant.ToolsCallPayload) *ToolsCallRequestBody {
 	body := &ToolsCallRequestBody{
-		Name:      p.Name,
-		Arguments: p.Arguments,
-		Meta:      p.Meta,
+		Name:         p.Name,
+		Arguments:    p.Arguments,
+		Meta:         p.Meta,
+		RequestState: p.RequestState,
+	}
+	if p.InputResponses != nil {
+		body.InputResponses = make(map[string]json.RawMessage, len(p.InputResponses))
+		for key, val := range p.InputResponses {
+			tk := key
+			tv := val
+			body.InputResponses[tk] = tv
+		}
 	}
 	return body
 }
@@ -731,8 +1567,17 @@ func NewResourcesListRequestBody(p *mcpassistant.ResourcesListPayload) *Resource
 // the "resources/read" endpoint of the "mcp_assistant" service.
 func NewResourcesReadRequestBody(p *mcpassistant.ResourcesReadPayload) *ResourcesReadRequestBody {
 	body := &ResourcesReadRequestBody{
-		URI:  p.URI,
-		Meta: p.Meta,
+		URI:          p.URI,
+		Meta:         p.Meta,
+		RequestState: p.RequestState,
+	}
+	if p.InputResponses != nil {
+		body.InputResponses = make(map[string]json.RawMessage, len(p.InputResponses))
+		for key, val := range p.InputResponses {
+			tk := key
+			tv := val
+			body.InputResponses[tk] = tv
+		}
 	}
 	return body
 }
@@ -762,8 +1607,9 @@ func NewPromptsListRequestBody(p *mcpassistant.PromptsListPayload) *PromptsListR
 // the "prompts/get" endpoint of the "mcp_assistant" service.
 func NewPromptsGetRequestBody(p *mcpassistant.PromptsGetPayload) *PromptsGetRequestBody {
 	body := &PromptsGetRequestBody{
-		Name: p.Name,
-		Meta: p.Meta,
+		Name:         p.Name,
+		Meta:         p.Meta,
+		RequestState: p.RequestState,
 	}
 	if p.Arguments != nil {
 		body.Arguments = make(map[string]string, len(p.Arguments))
@@ -771,6 +1617,14 @@ func NewPromptsGetRequestBody(p *mcpassistant.PromptsGetPayload) *PromptsGetRequ
 			tk := key
 			tv := val
 			body.Arguments[tk] = tv
+		}
+	}
+	if p.InputResponses != nil {
+		body.InputResponses = make(map[string]json.RawMessage, len(p.InputResponses))
+		for key, val := range p.InputResponses {
+			tk := key
+			tv := val
+			body.InputResponses[tk] = tv
 		}
 	}
 	return body
@@ -851,23 +1705,33 @@ func NewToolsListInvalidParams(body *ToolsListInvalidParamsResponseBody) *goa.Se
 
 // NewToolsCallResultOK builds a "mcp_assistant" service "tools/call" endpoint
 // result from a HTTP "OK" response.
-func NewToolsCallResultOK(body *ToolsCallResponseBody) *mcpassistant.ToolsCallResult {
-	v := &mcpassistant.ToolsCallResult{
-		IsError:           body.IsError,
-		StructuredContent: body.StructuredContent,
-		Meta:              body.Meta,
-		ResultType:        *body.ResultType,
-	}
-	v.Content = make([]*mcpassistant.ContentItem, len(body.Content))
-	for i, val := range body.Content {
-		if val == nil {
-			v.Content[i] = nil
-			continue
+func NewToolsCallResultOK(body *ToolsCallOutcomeResponseBody) *mcpassistant.ToolsCallResult {
+	var v *mcpassistant.ToolsCallOutcome
+	switch string(body.Kind()) {
+	case "complete":
+		actual, _ := body.AsComplete()
+		var obj *mcpassistant.ToolsCallCompleteResult
+		if actual != nil {
+			obj = unmarshalToolsCallCompleteResultResponseToMcpassistantToolsCallCompleteResult(actual)
 		}
-		v.Content[i] = unmarshalContentItemResponseBodyToMcpassistantContentItem(val)
+		var u mcpassistant.ToolsCallOutcome
+		u.SetComplete((*mcpassistant.ToolsCallCompleteResult)(obj))
+		v = &u
+	case "input_required":
+		actual, _ := body.AsInputRequired()
+		var obj *mcpassistant.InputRequiredResult
+		if actual != nil {
+			obj = unmarshalInputRequiredResultResponseToMcpassistantInputRequiredResult(actual)
+		}
+		var u mcpassistant.ToolsCallOutcome
+		u.SetInputRequired((*mcpassistant.InputRequiredResult)(obj))
+		v = &u
+	}
+	res := &mcpassistant.ToolsCallResult{
+		Outcome: *v,
 	}
 
-	return v
+	return res
 }
 
 // NewToolsCallInvalidParams builds a mcp_assistant service tools/call endpoint
@@ -896,6 +1760,15 @@ func NewToolsCallInternalError(body *ToolsCallInternalErrorResponseBody) *goa.Se
 		Timeout:   *body.Timeout,
 		Fault:     *body.Fault,
 	}
+
+	return v
+}
+
+// NewToolsCallMissingClientCapability builds a mcp_assistant service
+// tools/call endpoint missing_client_capability error.
+func NewToolsCallMissingClientCapability(body *ToolsCallMissingClientCapabilityResponseBody) *mcpassistant.MissingClientCapabilityError {
+	v := &mcpassistant.MissingClientCapabilityError{}
+	v.RequiredCapabilities = unmarshalRequiredClientCapabilitiesResponseBodyToMcpassistantRequiredClientCapabilities(body.RequiredCapabilities)
 
 	return v
 }
@@ -939,23 +1812,33 @@ func NewResourcesListInvalidParams(body *ResourcesListInvalidParamsResponseBody)
 
 // NewResourcesReadResultOK builds a "mcp_assistant" service "resources/read"
 // endpoint result from a HTTP "OK" response.
-func NewResourcesReadResultOK(body *ResourcesReadResponseBody) *mcpassistant.ResourcesReadResult {
-	v := &mcpassistant.ResourcesReadResult{
-		Meta:       body.Meta,
-		ResultType: *body.ResultType,
-		TTLMs:      *body.TTLMs,
-		CacheScope: *body.CacheScope,
-	}
-	v.Contents = make([]*mcpassistant.ResourceContent, len(body.Contents))
-	for i, val := range body.Contents {
-		if val == nil {
-			v.Contents[i] = nil
-			continue
+func NewResourcesReadResultOK(body *ResourcesReadOutcomeResponseBody) *mcpassistant.ResourcesReadResult {
+	var v *mcpassistant.ResourcesReadOutcome
+	switch string(body.Kind()) {
+	case "complete":
+		actual, _ := body.AsComplete()
+		var obj *mcpassistant.ResourcesReadCompleteResult
+		if actual != nil {
+			obj = unmarshalResourcesReadCompleteResultResponseToMcpassistantResourcesReadCompleteResult(actual)
 		}
-		v.Contents[i] = unmarshalResourceContentResponseBodyToMcpassistantResourceContent(val)
+		var u mcpassistant.ResourcesReadOutcome
+		u.SetComplete((*mcpassistant.ResourcesReadCompleteResult)(obj))
+		v = &u
+	case "input_required":
+		actual, _ := body.AsInputRequired()
+		var obj *mcpassistant.InputRequiredResult
+		if actual != nil {
+			obj = unmarshalInputRequiredResultResponseToMcpassistantInputRequiredResult(actual)
+		}
+		var u mcpassistant.ResourcesReadOutcome
+		u.SetInputRequired((*mcpassistant.InputRequiredResult)(obj))
+		v = &u
+	}
+	res := &mcpassistant.ResourcesReadResult{
+		Outcome: *v,
 	}
 
-	return v
+	return res
 }
 
 // NewResourcesReadInvalidParams builds a mcp_assistant service resources/read
@@ -984,6 +1867,15 @@ func NewResourcesReadInternalError(body *ResourcesReadInternalErrorResponseBody)
 		Timeout:   *body.Timeout,
 		Fault:     *body.Fault,
 	}
+
+	return v
+}
+
+// NewResourcesReadMissingClientCapability builds a mcp_assistant service
+// resources/read endpoint missing_client_capability error.
+func NewResourcesReadMissingClientCapability(body *ResourcesReadMissingClientCapabilityResponseBody) *mcpassistant.MissingClientCapabilityError {
+	v := &mcpassistant.MissingClientCapabilityError{}
+	v.RequiredCapabilities = unmarshalRequiredClientCapabilitiesResponseBodyToMcpassistantRequiredClientCapabilities(body.RequiredCapabilities)
 
 	return v
 }
@@ -1065,22 +1957,33 @@ func NewPromptsListInvalidParams(body *PromptsListInvalidParamsResponseBody) *go
 
 // NewPromptsGetResultOK builds a "mcp_assistant" service "prompts/get"
 // endpoint result from a HTTP "OK" response.
-func NewPromptsGetResultOK(body *PromptsGetResponseBody) *mcpassistant.PromptsGetResult {
-	v := &mcpassistant.PromptsGetResult{
-		Description: body.Description,
-		Meta:        body.Meta,
-		ResultType:  *body.ResultType,
-	}
-	v.Messages = make([]*mcpassistant.PromptMessage, len(body.Messages))
-	for i, val := range body.Messages {
-		if val == nil {
-			v.Messages[i] = nil
-			continue
+func NewPromptsGetResultOK(body *PromptsGetOutcomeResponseBody) *mcpassistant.PromptsGetResult {
+	var v *mcpassistant.PromptsGetOutcome
+	switch string(body.Kind()) {
+	case "complete":
+		actual, _ := body.AsComplete()
+		var obj *mcpassistant.PromptsGetCompleteResult
+		if actual != nil {
+			obj = unmarshalPromptsGetCompleteResultResponseToMcpassistantPromptsGetCompleteResult(actual)
 		}
-		v.Messages[i] = unmarshalPromptMessageResponseBodyToMcpassistantPromptMessage(val)
+		var u mcpassistant.PromptsGetOutcome
+		u.SetComplete((*mcpassistant.PromptsGetCompleteResult)(obj))
+		v = &u
+	case "input_required":
+		actual, _ := body.AsInputRequired()
+		var obj *mcpassistant.InputRequiredResult
+		if actual != nil {
+			obj = unmarshalInputRequiredResultResponseToMcpassistantInputRequiredResult(actual)
+		}
+		var u mcpassistant.PromptsGetOutcome
+		u.SetInputRequired((*mcpassistant.InputRequiredResult)(obj))
+		v = &u
+	}
+	res := &mcpassistant.PromptsGetResult{
+		Outcome: *v,
 	}
 
-	return v
+	return res
 }
 
 // NewPromptsGetInvalidParams builds a mcp_assistant service prompts/get
@@ -1109,6 +2012,15 @@ func NewPromptsGetInternalError(body *PromptsGetInternalErrorResponseBody) *goa.
 		Timeout:   *body.Timeout,
 		Fault:     *body.Fault,
 	}
+
+	return v
+}
+
+// NewPromptsGetMissingClientCapability builds a mcp_assistant service
+// prompts/get endpoint missing_client_capability error.
+func NewPromptsGetMissingClientCapability(body *PromptsGetMissingClientCapabilityResponseBody) *mcpassistant.MissingClientCapabilityError {
+	v := &mcpassistant.MissingClientCapabilityError{}
+	v.RequiredCapabilities = unmarshalRequiredClientCapabilitiesResponseBodyToMcpassistantRequiredClientCapabilities(body.RequiredCapabilities)
 
 	return v
 }
@@ -1234,33 +2146,6 @@ func ValidateToolsListResponseBody(body *ToolsListResponseBody) (err error) {
 	return
 }
 
-// ValidateToolsCallResponseBody runs the validations defined on
-// ToolsCallResponseBody
-func ValidateToolsCallResponseBody(body *ToolsCallResponseBody) (err error) {
-	if body.Content == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
-	}
-	if body.ResultType == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("resultType", "body"))
-	}
-	for _, e := range body.Content {
-		if e == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("body.content", "[*]"))
-		}
-		if e != nil {
-			if err2 := validateContentItemResponseBody(e, "body.content[*]"); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-	if body.ResultType != nil {
-		if !(*body.ResultType == "complete") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resultType", *body.ResultType, []any{"complete"}))
-		}
-	}
-	return
-}
-
 // ValidateResourcesListResponseBody runs the validations defined on
 // ResourcesListResponseBody
 func ValidateResourcesListResponseBody(body *ResourcesListResponseBody) (err error) {
@@ -1282,49 +2167,6 @@ func ValidateResourcesListResponseBody(body *ResourcesListResponseBody) (err err
 		}
 		if e != nil {
 			if err2 := validateResourceInfoResponseBody(e, "body.resources[*]"); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-	if body.ResultType != nil {
-		if !(*body.ResultType == "complete") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resultType", *body.ResultType, []any{"complete"}))
-		}
-	}
-	if body.TTLMs != nil {
-		if *body.TTLMs < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.ttlMs", *body.TTLMs, 0, true))
-		}
-	}
-	if body.CacheScope != nil {
-		if !(*body.CacheScope == "public" || *body.CacheScope == "private") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.cacheScope", *body.CacheScope, []any{"public", "private"}))
-		}
-	}
-	return
-}
-
-// ValidateResourcesReadResponseBody runs the validations defined on
-// ResourcesReadResponseBody
-func ValidateResourcesReadResponseBody(body *ResourcesReadResponseBody) (err error) {
-	if body.Contents == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("contents", "body"))
-	}
-	if body.ResultType == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("resultType", "body"))
-	}
-	if body.TTLMs == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("ttlMs", "body"))
-	}
-	if body.CacheScope == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("cacheScope", "body"))
-	}
-	for _, e := range body.Contents {
-		if e == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("body.contents", "[*]"))
-		}
-		if e != nil {
-			if err2 := validateResourceContentResponseBody(e, "body.contents[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -1433,33 +2275,6 @@ func ValidatePromptsListResponseBody(body *PromptsListResponseBody) (err error) 
 	return
 }
 
-// ValidatePromptsGetResponseBody runs the validations defined on
-// PromptsGetResponseBody
-func ValidatePromptsGetResponseBody(body *PromptsGetResponseBody) (err error) {
-	if body.Messages == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("messages", "body"))
-	}
-	if body.ResultType == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("resultType", "body"))
-	}
-	for _, e := range body.Messages {
-		if e == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("body.messages", "[*]"))
-		}
-		if e != nil {
-			if err2 := validatePromptMessageResponseBody(e, "body.messages[*]"); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-	if body.ResultType != nil {
-		if !(*body.ResultType == "complete") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resultType", *body.ResultType, []any{"complete"}))
-		}
-	}
-	return
-}
-
 // ValidateCompletionCompleteResponseBody runs the validations defined on
 // CompletionCompleteResponseBody
 func ValidateCompletionCompleteResponseBody(body *CompletionCompleteResponseBody) (err error) {
@@ -1554,6 +2369,20 @@ func ValidateToolsCallInternalErrorResponseBody(body *ToolsCallInternalErrorResp
 	return
 }
 
+// ValidateToolsCallMissingClientCapabilityResponseBody runs the validations
+// defined on ToolsCallMissingClientCapabilityResponseBody
+func ValidateToolsCallMissingClientCapabilityResponseBody(body *ToolsCallMissingClientCapabilityResponseBody) (err error) {
+	if body.RequiredCapabilities == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requiredCapabilities", "body"))
+	}
+	if body.RequiredCapabilities != nil {
+		if err2 := validateRequiredClientCapabilitiesResponseBody(body.RequiredCapabilities, "body.requiredCapabilities"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
 // ValidateResourcesListInvalidParamsResponseBody runs the validations defined
 // on ResourcesListInvalidParamsResponseBody
 func ValidateResourcesListInvalidParamsResponseBody(body *ResourcesListInvalidParamsResponseBody) (err error) {
@@ -1622,6 +2451,20 @@ func ValidateResourcesReadInternalErrorResponseBody(body *ResourcesReadInternalE
 	}
 	if body.Fault == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateResourcesReadMissingClientCapabilityResponseBody runs the
+// validations defined on ResourcesReadMissingClientCapabilityResponseBody
+func ValidateResourcesReadMissingClientCapabilityResponseBody(body *ResourcesReadMissingClientCapabilityResponseBody) (err error) {
+	if body.RequiredCapabilities == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requiredCapabilities", "body"))
+	}
+	if body.RequiredCapabilities != nil {
+		if err2 := validateRequiredClientCapabilitiesResponseBody(body.RequiredCapabilities, "body.requiredCapabilities"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
 	}
 	return
 }
@@ -1722,6 +2565,20 @@ func ValidatePromptsGetInternalErrorResponseBody(body *PromptsGetInternalErrorRe
 	return
 }
 
+// ValidatePromptsGetMissingClientCapabilityResponseBody runs the validations
+// defined on PromptsGetMissingClientCapabilityResponseBody
+func ValidatePromptsGetMissingClientCapabilityResponseBody(body *PromptsGetMissingClientCapabilityResponseBody) (err error) {
+	if body.RequiredCapabilities == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requiredCapabilities", "body"))
+	}
+	if body.RequiredCapabilities != nil {
+		if err2 := validateRequiredClientCapabilitiesResponseBody(body.RequiredCapabilities, "body.requiredCapabilities"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
 // ValidateCompletionCompleteInvalidParamsResponseBody runs the validations
 // defined on CompletionCompleteInvalidParamsResponseBody
 func ValidateCompletionCompleteInvalidParamsResponseBody(body *CompletionCompleteInvalidParamsResponseBody) (err error) {
@@ -1793,8 +2650,46 @@ func validateToolInfoResponseBody(body *ToolInfoResponseBody, path string) (err 
 	return
 }
 
-// ValidateContentItemResponseBody runs the validations defined on ContentItem
-func ValidateContentItemResponseBody(body *ContentItemResponseBody) (err error) {
+// ValidateToolsCallCompleteResultResponse runs the validations defined on
+// ToolsCallCompleteResult
+func ValidateToolsCallCompleteResultResponse(body *ToolsCallCompleteResultResponse) (err error) {
+	if body.Content == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
+	}
+	for _, e := range body.Content {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.content", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentItemResponse(e, "body.content[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// validateToolsCallCompleteResultResponse checks ToolsCallCompleteResult and
+// reports errors using the path supplied by its caller
+func validateToolsCallCompleteResultResponse(body *ToolsCallCompleteResultResponse, path string) (err error) {
+	if body.Content == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", path))
+	}
+	for _, e := range body.Content {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".content", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentItemResponse(e, path+".content[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateContentItemResponse runs the validations defined on ContentItem
+func ValidateContentItemResponse(body *ContentItemResponse) (err error) {
 	if body.Type == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
 	}
@@ -1816,18 +2711,18 @@ func ValidateContentItemResponseBody(body *ContentItemResponseBody) (err error) 
 			err = goa.MergeErrors(err, goa.MissingFieldError("body.icons", "[*]"))
 		}
 		if e != nil {
-			if err2 := validateContentIconResponseBody(e, "body.icons[*]"); err2 != nil {
+			if err2 := validateContentIconResponse(e, "body.icons[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	}
 	if body.Resource != nil {
-		if err2 := validateResourceContentResponseBody(body.Resource, "body.resource"); err2 != nil {
+		if err2 := validateResourceContentResponse(body.Resource, "body.resource"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	if body.Annotations != nil {
-		if err2 := validateContentAnnotationsResponseBody(body.Annotations, "body.annotations"); err2 != nil {
+		if err2 := validateContentAnnotationsResponse(body.Annotations, "body.annotations"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -1871,9 +2766,9 @@ func ValidateContentItemResponseBody(body *ContentItemResponseBody) (err error) 
 	return
 }
 
-// validateContentItemResponseBody checks ContentItem and reports errors using
-// the path supplied by its caller
-func validateContentItemResponseBody(body *ContentItemResponseBody, path string) (err error) {
+// validateContentItemResponse checks ContentItem and reports errors using the
+// path supplied by its caller
+func validateContentItemResponse(body *ContentItemResponse, path string) (err error) {
 	if body.Type == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
 	}
@@ -1895,18 +2790,18 @@ func validateContentItemResponseBody(body *ContentItemResponseBody, path string)
 			err = goa.MergeErrors(err, goa.MissingFieldError(path+".icons", "[*]"))
 		}
 		if e != nil {
-			if err2 := validateContentIconResponseBody(e, path+".icons[*]"); err2 != nil {
+			if err2 := validateContentIconResponse(e, path+".icons[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	}
 	if body.Resource != nil {
-		if err2 := validateResourceContentResponseBody(body.Resource, path+".resource"); err2 != nil {
+		if err2 := validateResourceContentResponse(body.Resource, path+".resource"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	if body.Annotations != nil {
-		if err2 := validateContentAnnotationsResponseBody(body.Annotations, path+".annotations"); err2 != nil {
+		if err2 := validateContentAnnotationsResponse(body.Annotations, path+".annotations"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -1950,8 +2845,8 @@ func validateContentItemResponseBody(body *ContentItemResponseBody, path string)
 	return
 }
 
-// ValidateContentIconResponseBody runs the validations defined on ContentIcon
-func ValidateContentIconResponseBody(body *ContentIconResponseBody) (err error) {
+// ValidateContentIconResponse runs the validations defined on ContentIcon
+func ValidateContentIconResponse(body *ContentIconResponse) (err error) {
 	if body.Src == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("src", "body"))
 	}
@@ -1966,9 +2861,9 @@ func ValidateContentIconResponseBody(body *ContentIconResponseBody) (err error) 
 	return
 }
 
-// validateContentIconResponseBody checks ContentIcon and reports errors using
-// the path supplied by its caller
-func validateContentIconResponseBody(body *ContentIconResponseBody, path string) (err error) {
+// validateContentIconResponse checks ContentIcon and reports errors using the
+// path supplied by its caller
+func validateContentIconResponse(body *ContentIconResponse, path string) (err error) {
 	if body.Src == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("src", path))
 	}
@@ -1983,9 +2878,9 @@ func validateContentIconResponseBody(body *ContentIconResponseBody, path string)
 	return
 }
 
-// ValidateResourceContentResponseBody runs the validations defined on
+// ValidateResourceContentResponse runs the validations defined on
 // ResourceContent
-func ValidateResourceContentResponseBody(body *ResourceContentResponseBody) (err error) {
+func ValidateResourceContentResponse(body *ResourceContentResponse) (err error) {
 	if body.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
 	}
@@ -2012,9 +2907,9 @@ func ValidateResourceContentResponseBody(body *ResourceContentResponseBody) (err
 	return
 }
 
-// validateResourceContentResponseBody checks ResourceContent and reports
-// errors using the path supplied by its caller
-func validateResourceContentResponseBody(body *ResourceContentResponseBody, path string) (err error) {
+// validateResourceContentResponse checks ResourceContent and reports errors
+// using the path supplied by its caller
+func validateResourceContentResponse(body *ResourceContentResponse, path string) (err error) {
 	if body.URI == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("uri", path))
 	}
@@ -2041,9 +2936,9 @@ func validateResourceContentResponseBody(body *ResourceContentResponseBody, path
 	return
 }
 
-// ValidateContentAnnotationsResponseBody runs the validations defined on
+// ValidateContentAnnotationsResponse runs the validations defined on
 // ContentAnnotations
-func ValidateContentAnnotationsResponseBody(body *ContentAnnotationsResponseBody) (err error) {
+func ValidateContentAnnotationsResponse(body *ContentAnnotationsResponse) (err error) {
 	for _, e := range body.Audience {
 		if !(e == "user" || e == "assistant") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.audience[*]", e, []any{"user", "assistant"}))
@@ -2060,9 +2955,9 @@ func ValidateContentAnnotationsResponseBody(body *ContentAnnotationsResponseBody
 	return
 }
 
-// validateContentAnnotationsResponseBody checks ContentAnnotations and reports
+// validateContentAnnotationsResponse checks ContentAnnotations and reports
 // errors using the path supplied by its caller
-func validateContentAnnotationsResponseBody(body *ContentAnnotationsResponseBody, path string) (err error) {
+func validateContentAnnotationsResponse(body *ContentAnnotationsResponse, path string) (err error) {
 	for _, e := range body.Audience {
 		if !(e == "user" || e == "assistant") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".audience[*]", e, []any{"user", "assistant"}))
@@ -2075,6 +2970,176 @@ func validateContentAnnotationsResponseBody(body *ContentAnnotationsResponseBody
 		if *body.Priority > 1 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".priority", *body.Priority, 1, false))
 		}
+	}
+	return
+}
+
+// ValidateInputRequiredResultResponse runs the validations defined on
+// InputRequiredResult
+func ValidateInputRequiredResultResponse(body *InputRequiredResultResponse) (err error) {
+	for _, v := range body.InputRequests {
+		if v != nil {
+			if err2 := validateInputRequestResponse(v, "body.inputRequests[key]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// validateInputRequiredResultResponse checks InputRequiredResult and reports
+// errors using the path supplied by its caller
+func validateInputRequiredResultResponse(body *InputRequiredResultResponse, path string) (err error) {
+	for _, v := range body.InputRequests {
+		if v != nil {
+			if err2 := validateInputRequestResponse(v, path+".inputRequests[key]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateInputRequestResponse runs the validations defined on InputRequest
+func ValidateInputRequestResponse(body *InputRequestResponse) (err error) {
+	if body.Method == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("method", "body"))
+	}
+	if body.Params == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("params", "body"))
+	}
+	if body.Method != nil {
+		if !(*body.Method == "elicitation/create") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.method", *body.Method, []any{"elicitation/create"}))
+		}
+	}
+	if body.Params != nil {
+		switch string(body.Params.Kind()) {
+		case "form":
+			actual, _ := body.Params.AsForm()
+			if actual != nil {
+				if err2 := validateElicitationFormParamsResponse(actual, "body.params.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "url":
+			actual, _ := body.Params.AsURL()
+			if actual != nil {
+				if err2 := validateElicitationURLParamsResponse(actual, "body.params.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return
+}
+
+// validateInputRequestResponse checks InputRequest and reports errors using
+// the path supplied by its caller
+func validateInputRequestResponse(body *InputRequestResponse, path string) (err error) {
+	if body.Method == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("method", path))
+	}
+	if body.Params == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("params", path))
+	}
+	if body.Method != nil {
+		if !(*body.Method == "elicitation/create") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".method", *body.Method, []any{"elicitation/create"}))
+		}
+	}
+	if body.Params != nil {
+		switch string(body.Params.Kind()) {
+		case "form":
+			actual, _ := body.Params.AsForm()
+			if actual != nil {
+				if err2 := validateElicitationFormParamsResponse(actual, path+".params.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "url":
+			actual, _ := body.Params.AsURL()
+			if actual != nil {
+				if err2 := validateElicitationURLParamsResponse(actual, path+".params.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return
+}
+
+// ValidateElicitationFormParamsResponse runs the validations defined on
+// ElicitationFormParams
+func ValidateElicitationFormParamsResponse(body *ElicitationFormParamsResponse) (err error) {
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.RequestedSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requestedSchema", "body"))
+	}
+	return
+}
+
+// validateElicitationFormParamsResponse checks ElicitationFormParams and
+// reports errors using the path supplied by its caller
+func validateElicitationFormParamsResponse(body *ElicitationFormParamsResponse, path string) (err error) {
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", path))
+	}
+	if body.RequestedSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requestedSchema", path))
+	}
+	return
+}
+
+// ValidateElicitationURLParamsResponse runs the validations defined on
+// ElicitationURLParams
+func ValidateElicitationURLParamsResponse(body *ElicitationURLParamsResponse) (err error) {
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.URL == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("url", "body"))
+	}
+	if body.URL != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.url", *body.URL, goa.FormatURI))
+	}
+	return
+}
+
+// validateElicitationURLParamsResponse checks ElicitationURLParams and reports
+// errors using the path supplied by its caller
+func validateElicitationURLParamsResponse(body *ElicitationURLParamsResponse, path string) (err error) {
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", path))
+	}
+	if body.URL == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("url", path))
+	}
+	if body.URL != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".url", *body.URL, goa.FormatURI))
+	}
+	return
+}
+
+// ValidateRequiredClientCapabilitiesResponseBody runs the validations defined
+// on RequiredClientCapabilities
+func ValidateRequiredClientCapabilitiesResponseBody(body *RequiredClientCapabilitiesResponseBody) (err error) {
+	if body.Elicitation == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("elicitation", "body"))
+	}
+	return
+}
+
+// validateRequiredClientCapabilitiesResponseBody checks
+// RequiredClientCapabilities and reports errors using the path supplied by its
+// caller
+func validateRequiredClientCapabilitiesResponseBody(body *RequiredClientCapabilitiesResponseBody, path string) (err error) {
+	if body.Elicitation == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("elicitation", path))
 	}
 	return
 }
@@ -2098,6 +3163,77 @@ func validateResourceInfoResponseBody(body *ResourceInfoResponseBody, path strin
 	}
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	return
+}
+
+// ValidateResourcesReadCompleteResultResponse runs the validations defined on
+// ResourcesReadCompleteResult
+func ValidateResourcesReadCompleteResultResponse(body *ResourcesReadCompleteResultResponse) (err error) {
+	if body.Contents == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("contents", "body"))
+	}
+	if body.TTLMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ttlMs", "body"))
+	}
+	if body.CacheScope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cacheScope", "body"))
+	}
+	for _, e := range body.Contents {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.contents", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateResourceContentResponse(e, "body.contents[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.TTLMs != nil {
+		if *body.TTLMs < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.ttlMs", *body.TTLMs, 0, true))
+		}
+	}
+	if body.CacheScope != nil {
+		if !(*body.CacheScope == "public" || *body.CacheScope == "private") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.cacheScope", *body.CacheScope, []any{"public", "private"}))
+		}
+	}
+	return
+}
+
+// validateResourcesReadCompleteResultResponse checks
+// ResourcesReadCompleteResult and reports errors using the path supplied by
+// its caller
+func validateResourcesReadCompleteResultResponse(body *ResourcesReadCompleteResultResponse, path string) (err error) {
+	if body.Contents == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("contents", path))
+	}
+	if body.TTLMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ttlMs", path))
+	}
+	if body.CacheScope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cacheScope", path))
+	}
+	for _, e := range body.Contents {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".contents", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateResourceContentResponse(e, path+".contents[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.TTLMs != nil {
+		if *body.TTLMs < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".ttlMs", *body.TTLMs, 0, true))
+		}
+	}
+	if body.CacheScope != nil {
+		if !(*body.CacheScope == "public" || *body.CacheScope == "private") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".cacheScope", *body.CacheScope, []any{"public", "private"}))
+		}
 	}
 	return
 }
@@ -2181,9 +3317,46 @@ func validatePromptArgumentResponseBody(body *PromptArgumentResponseBody, path s
 	return
 }
 
-// ValidatePromptMessageResponseBody runs the validations defined on
-// PromptMessage
-func ValidatePromptMessageResponseBody(body *PromptMessageResponseBody) (err error) {
+// ValidatePromptsGetCompleteResultResponse runs the validations defined on
+// PromptsGetCompleteResult
+func ValidatePromptsGetCompleteResultResponse(body *PromptsGetCompleteResultResponse) (err error) {
+	if body.Messages == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("messages", "body"))
+	}
+	for _, e := range body.Messages {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.messages", "[*]"))
+		}
+		if e != nil {
+			if err2 := validatePromptMessageResponse(e, "body.messages[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// validatePromptsGetCompleteResultResponse checks PromptsGetCompleteResult and
+// reports errors using the path supplied by its caller
+func validatePromptsGetCompleteResultResponse(body *PromptsGetCompleteResultResponse, path string) (err error) {
+	if body.Messages == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("messages", path))
+	}
+	for _, e := range body.Messages {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".messages", "[*]"))
+		}
+		if e != nil {
+			if err2 := validatePromptMessageResponse(e, path+".messages[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidatePromptMessageResponse runs the validations defined on PromptMessage
+func ValidatePromptMessageResponse(body *PromptMessageResponse) (err error) {
 	if body.Role == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("role", "body"))
 	}
@@ -2196,16 +3369,16 @@ func ValidatePromptMessageResponseBody(body *PromptMessageResponseBody) (err err
 		}
 	}
 	if body.Content != nil {
-		if err2 := validateContentItemResponseBody(body.Content, "body.content"); err2 != nil {
+		if err2 := validateContentItemResponse(body.Content, "body.content"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return
 }
 
-// validatePromptMessageResponseBody checks PromptMessage and reports errors
-// using the path supplied by its caller
-func validatePromptMessageResponseBody(body *PromptMessageResponseBody, path string) (err error) {
+// validatePromptMessageResponse checks PromptMessage and reports errors using
+// the path supplied by its caller
+func validatePromptMessageResponse(body *PromptMessageResponse, path string) (err error) {
 	if body.Role == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("role", path))
 	}
@@ -2218,7 +3391,7 @@ func validatePromptMessageResponseBody(body *PromptMessageResponseBody, path str
 		}
 	}
 	if body.Content != nil {
-		if err2 := validateContentItemResponseBody(body.Content, path+".content"); err2 != nil {
+		if err2 := validateContentItemResponse(body.Content, path+".content"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}

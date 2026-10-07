@@ -57,3 +57,35 @@ func TestElicitationContractsAndAnswers(t *testing.T) {
 	assert.NoError(t, urlInput.ValidateResponses(map[string]json.RawMessage{"consent": json.RawMessage(`{"action":"accept"}`)}))
 	require.Error(t, urlInput.ValidateResponses(map[string]json.RawMessage{"consent": json.RawMessage(`{"action":"accept","content":{}}`)}))
 }
+
+// TestContinuationPresence checks that shared HTTP and stdio parameters retain
+// an empty input round, and that saved non-nil answer objects keep their presence.
+func TestContinuationPresence(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		continuation *CallContinuation
+		present      bool
+	}{
+		{name: "initial"},
+		{name: "empty continuation", continuation: &CallContinuation{}, present: true},
+		{name: "empty answers", continuation: &CallContinuation{InputResponses: map[string]json.RawMessage{}}, present: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			params, err := toolParams(t.Context(), CallRequest{Tool: "read", Continuation: test.continuation})
+			require.NoError(t, err)
+			_, present := params["inputResponses"]
+			assert.Equal(t, test.present, present)
+			if test.present {
+				raw, err := json.Marshal(params["inputResponses"])
+				require.NoError(t, err)
+				assert.JSONEq(t, `{}`, string(raw))
+			}
+		})
+	}
+	raw, err := json.Marshal(CallContinuation{InputResponses: map[string]json.RawMessage{}})
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"inputResponses":{}}`, string(raw))
+	var saved CallContinuation
+	require.NoError(t, json.Unmarshal(raw, &saved))
+	assert.NotNil(t, saved.InputResponses)
+}
