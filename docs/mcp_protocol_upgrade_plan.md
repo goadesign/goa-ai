@@ -1458,6 +1458,30 @@ State-only continuation is mechanical, but not an excuse for an unbounded client
 
 For authored servers, a service operation that can require input must explicitly represent that domain outcome in its typed contract, or expose an owned durable job. The adapter translates a declared binding into MCP; it cannot infer a missing-input request from arbitrary service errors or mutable context callbacks. Final DSL/type names and the smallest binding require a generated fixture before implementation, including calls through ordinary Goa transports. No deprecated sampling/roots requests are added.
 
+The pinned merged Goa release has been checked with an ordinary generated
+JSON-RPC service: `OneOf` with `Meta("oneof:json:flatten")` and
+`Meta("oneof:type:field", "resultType")`, followed by `Body("outcome")`, emits
+the selected branch directly as the JSON-RPC result. Both generated server and
+client preserve completed output, legitimate empty content, an explicitly empty
+state string, and exact request IDs. The client selects only the input-required
+branch when that reply also contains completed-content extension fields. Use
+this native mechanism for tools, resource reads and prompt gets; do not add a
+separate result encoder or a successful-result struct with optional continuation
+fields. This verifies the transport mechanism, not the unfinished server adapter
+or direct-tool execution path.
+
+Form answer decoding must also follow the advertised form contract. MCP's
+restricted schema requires a `properties` object but has no
+`additionalProperties: false` slot. A flat answer can therefore contain values
+beyond the declared fields. Validate the complete received form before typed
+conversion; do not let the ordinary closed tool-argument codec reject a valid
+form or let conversion discard an invalid nested extra value before validation.
+For example, a form declaring `label` can accept an additional string field,
+while an additional nested object still violates MCP's flat value contract.
+Reuse the existing form validator and generated typed construction. Keep
+ordinary model-authored tool arguments closed. This boundary must be proved
+through generated clients and servers before publishing server input support.
+
 **Alternatives:** a caller-local input callback holds I/O open and loses state on restart; mapping to successful clarification fabricates completion; a model-visible continuation tool delegates correlation to the model. The existing durable workflow/checkpoint owner avoids those errors and preserves the framework's execution model. Direct generated clients need the same explicit unfinished outcome even when they are not running an agent; they must never silently run a second interaction framework.
 
 ### Decision 7: compose MCP with ordinary toolset registration
