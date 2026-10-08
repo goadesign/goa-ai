@@ -173,6 +173,7 @@ func (r *Runtime) resolveConfirmationDecision(
 		grouped,
 		timeouts,
 		toolOpts,
+		nil,
 	)
 	records, resultErr := stepToolRecordsAfterExecution(
 		[]ToolCall{call},

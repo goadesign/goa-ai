@@ -255,3 +255,207 @@ func (u *Operation) UnmarshalJSON(data []byte) error {
 	}
 	return nil
 }
+
+// Outcome holds exactly one of its branch values.
+type Outcome struct {
+	kind      OutcomeKind
+	input     *PendingInput
+	taskWait  *TaskWait
+	taskInput *TaskInput
+}
+
+// OutcomeKind records which Outcome branch is selected.
+type OutcomeKind string
+
+const (
+	// OutcomeKindInput identifies the input branch.
+	OutcomeKindInput OutcomeKind = "input"
+	// OutcomeKindTaskWait identifies the task_wait branch.
+	OutcomeKindTaskWait OutcomeKind = "task_wait"
+	// OutcomeKindTaskInput identifies the task_input branch.
+	OutcomeKindTaskInput OutcomeKind = "task_input"
+)
+
+// Kind returns the selected branch.
+func (u Outcome) Kind() OutcomeKind {
+	return u.kind
+}
+
+// NewOutcomeInput constructs Outcome with the input branch set.
+func NewOutcomeInput(v *PendingInput) Outcome {
+	return Outcome{
+		kind:  OutcomeKindInput,
+		input: v,
+	}
+}
+
+// AsInput returns the value when the input branch is selected.
+func (u Outcome) AsInput() (_ *PendingInput, ok bool) {
+	if u.kind != OutcomeKindInput {
+		return
+	}
+	return u.input, true
+}
+
+// SetInput selects the input branch and stores v.
+func (u *Outcome) SetInput(v *PendingInput) {
+	*u = Outcome{
+		kind:  OutcomeKindInput,
+		input: v,
+	}
+}
+
+// NewOutcomeTaskWait constructs Outcome with the task_wait branch set.
+func NewOutcomeTaskWait(v *TaskWait) Outcome {
+	return Outcome{
+		kind:     OutcomeKindTaskWait,
+		taskWait: v,
+	}
+}
+
+// AsTaskWait returns the value when the task_wait branch is selected.
+func (u Outcome) AsTaskWait() (_ *TaskWait, ok bool) {
+	if u.kind != OutcomeKindTaskWait {
+		return
+	}
+	return u.taskWait, true
+}
+
+// SetTaskWait selects the task_wait branch and stores v.
+func (u *Outcome) SetTaskWait(v *TaskWait) {
+	*u = Outcome{
+		kind:     OutcomeKindTaskWait,
+		taskWait: v,
+	}
+}
+
+// NewOutcomeTaskInput constructs Outcome with the task_input branch set.
+func NewOutcomeTaskInput(v *TaskInput) Outcome {
+	return Outcome{
+		kind:      OutcomeKindTaskInput,
+		taskInput: v,
+	}
+}
+
+// AsTaskInput returns the value when the task_input branch is selected.
+func (u Outcome) AsTaskInput() (_ *TaskInput, ok bool) {
+	if u.kind != OutcomeKindTaskInput {
+		return
+	}
+	return u.taskInput, true
+}
+
+// SetTaskInput selects the task_input branch and stores v.
+func (u *Outcome) SetTaskInput(v *TaskInput) {
+	*u = Outcome{
+		kind:      OutcomeKindTaskInput,
+		taskInput: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u Outcome) Validate() error {
+	switch u.kind {
+	case "":
+		return goa.InvalidEnumValueError("type", "", []any{
+			string(OutcomeKindInput),
+			string(OutcomeKindTaskWait),
+			string(OutcomeKindTaskInput),
+		})
+	case OutcomeKindInput:
+		if u.input == nil {
+			return goa.MissingFieldError("value", "Outcome")
+		}
+		return nil
+	case OutcomeKindTaskWait:
+		if u.taskWait == nil {
+			return goa.MissingFieldError("value", "Outcome")
+		}
+		return nil
+	case OutcomeKindTaskInput:
+		if u.taskInput == nil {
+			return goa.MissingFieldError("value", "Outcome")
+		}
+		return nil
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{
+			string(OutcomeKindInput),
+			string(OutcomeKindTaskWait),
+			string(OutcomeKindTaskInput),
+		})
+	}
+}
+
+// MarshalJSON marshals the union into the canonical {type,value} JSON shape.
+func (u Outcome) MarshalJSON() ([]byte, error) {
+	if err := u.Validate(); err != nil {
+		return nil, err
+	}
+	var (
+		value any
+	)
+	switch u.kind {
+	case OutcomeKindInput:
+		value = u.input
+	case OutcomeKindTaskWait:
+		value = u.taskWait
+	case OutcomeKindTaskInput:
+		value = u.taskInput
+	default:
+		return nil, fmt.Errorf("unexpected Outcome kind %q", u.kind)
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{
+		Type:  string(u.kind),
+		Value: value,
+	})
+}
+
+// UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
+func (u *Outcome) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "Outcome")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(OutcomeKindInput):
+		var v *PendingInput
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetInput(v)
+	case string(OutcomeKindTaskWait):
+		var v *TaskWait
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetTaskWait(v)
+	case string(OutcomeKindTaskInput):
+		var v *TaskInput
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetTaskInput(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "Outcome")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(OutcomeKindInput),
+			string(OutcomeKindTaskWait),
+			string(OutcomeKindTaskInput),
+		})
+	}
+	return nil
+}

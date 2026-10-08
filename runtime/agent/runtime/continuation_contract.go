@@ -269,7 +269,7 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 		}
 	}
 	for i, record := range checkpoint.Batch.Records {
-		if record.ChildSuspension != nil || record.MCPInput != nil {
+		if record.ChildSuspension != nil || record.MCPPending != nil {
 			if record.ResultRecord != nil {
 				return fmt.Errorf("unfinished child %q has a materialized result record", record.Call.ToolCallID)
 			}

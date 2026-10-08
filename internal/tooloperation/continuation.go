@@ -81,12 +81,25 @@ func Value(operation *Continuation) *gentooloperations.ExecutionContinuation {
 	return &gentooloperations.ExecutionContinuation{Operation: cloneOperation(operation.value)}
 }
 
-// EncodedJSONSize lets workflow guards charge only this framework-owned value.
+// EncodedJSONSize lets workflow guards charge only framework-owned saved values.
 // The generated JSON was validated at construction, so checking its length does
 // not serialize, copy or traverse caller data. Other types remain unsupported.
 func EncodedJSONSize(value any) (size int, recognized bool, err error) {
 	var operation *Continuation
 	switch value := value.(type) {
+	case Pending:
+		if err := value.Validate(); err != nil {
+			return 0, true, err
+		}
+		return len(value.encoded), true, nil
+	case *Pending:
+		if value == nil {
+			return len("null"), true, nil
+		}
+		if err := value.Validate(); err != nil {
+			return 0, true, err
+		}
+		return len(value.encoded), true, nil
 	case Continuation:
 		operation = &value
 	case *Continuation:

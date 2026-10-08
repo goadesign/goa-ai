@@ -49,8 +49,8 @@ func (r *Runtime) executeRegistryTool(ctx context.Context, call *ToolCall) (*Too
 	if err != nil {
 		return nil, err
 	}
-	if result.MCPInput != nil {
-		return AwaitMCPInput(result.MCPInput), nil
+	if result.PendingExecution != nil {
+		return Unfinished(result.PendingExecution)
 	}
 	return Executed(executor.DecodeCompletedResult(call, meta, result)), nil
 }

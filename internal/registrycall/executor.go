@@ -442,16 +442,16 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 				"toolregistry.tool_use_id", toolUseID,
 				"toolregistry.result_stream_id", resultStreamID,
 			)
-			if msg.InputRequired != nil {
-				if tmeta.TextOnly {
+			if msg.PendingExecution != nil {
+				if _, _, waiting := msg.PendingExecution.AsTaskWait(); tmeta.TextOnly && !waiting {
 					err := errors.New("text-only registry call returned host input")
 					span.RecordError(err)
 					span.SetStatus(codes.Error, "provider returned unsupported host input")
 					return &api.ToolOutput{Failure: malformedResultFailure(err)}, nil
 				}
-				span.AddEvent("toolregistry.input_required")
-				span.SetStatus(codes.Ok, "waiting for host input")
-				return &api.ToolOutput{MCPInput: msg.InputRequired}, nil
+				span.AddEvent("toolregistry.unfinished")
+				span.SetStatus(codes.Ok, "unfinished execution saved")
+				return &api.ToolOutput{PendingExecution: msg.PendingExecution}, nil
 			}
 			if msg.Error != nil {
 				return &api.ToolOutput{Failure: toolFailureFromRegistryError(msg.Error)}, nil

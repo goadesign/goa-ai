@@ -28,6 +28,10 @@ type (
 	// accessors expose copied input or exact Task identifiers, never model arguments.
 	ExecutionContinuation = tooloperation.Continuation
 
+	// PendingExecution retains exactly one unfinished input or Task outcome.
+	// Accessors return copies; completed data cannot be added to its branch.
+	PendingExecution = tooloperation.Pending
+
 	// RunInput captures everything an initial or continuation workflow needs.
 	// Initial history has already been published; engine commands carry its
 	// position plus caller-provided control values.
@@ -1067,9 +1071,9 @@ type (
 		// invocation, including when execution failed.
 		Blocks content.Blocks
 
-		// MCPInput is an unfinished outcome, mutually exclusive with every final
+		// PendingExecution is an unfinished outcome, mutually exclusive with every final
 		// result field. The workflow saves it before requesting host interaction.
-		MCPInput *mcp.InputRequired
+		PendingExecution *PendingExecution
 		// Payload is the tool result encoded as JSON. The runtime decodes it using the registered tool codec.
 		Payload rawjson.Message
 
@@ -1242,10 +1246,10 @@ const (
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
 	// RunSuspensionVersion identifies the checkpoint emitted by this runtime.
-	// Version 12 retains the workflow-selected execution sequence alongside
-	// ordered tool content, the accepted catalog, unfinished arguments and host
+	// Version 13 retains one closed unfinished outcome and its saved execution
+	// sequence alongside ordered tool content, the accepted catalog, unfinished arguments and host
 	// requests. Earlier versions are rejected without conversion.
-	RunSuspensionVersion = "goa-ai.run-suspension.v12"
+	RunSuspensionVersion = "goa-ai.run-suspension.v13"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

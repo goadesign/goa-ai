@@ -25,7 +25,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/mcp"
 	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
@@ -61,7 +60,8 @@ type (
 		duration         time.Duration
 		clarification    *ToolClarification
 		childSuspension  *api.RunSuspension
-		mcpInput         *mcp.InputRequired
+		mcpPending       *api.PendingExecution
+		task             *taskExecution
 		requiresResume   bool
 	}
 
@@ -1257,7 +1257,7 @@ func stepToolResults(records []stepToolRecord) []*planner.ToolResult {
 	}
 	results := make([]*planner.ToolResult, 0, len(records))
 	for _, record := range records {
-		if record.mcpInput == nil {
+		if record.mcpPending == nil {
 			results = append(results, record.result)
 		}
 	}
@@ -1293,7 +1293,8 @@ func stepToolRecordsFromExecutions(calls []ToolCall, outcomes []*ToolExecutionRe
 			result:           outcome.ToolResult,
 			clarification:    outcome.Clarification,
 			childSuspension:  outcome.childSuspension,
-			mcpInput:         outcome.mcpInput,
+			mcpPending:       outcome.mcpPending,
+			task:             outcome.task,
 			resultPublished:  outcome.resultPublished,
 			resultRecord:     outcome.resultRecord,
 			scheduleRequired: !outcome.schedulePublished,
@@ -1302,6 +1303,7 @@ func stepToolRecordsFromExecutions(calls []ToolCall, outcomes []*ToolExecutionRe
 			expectedChildren: outcome.expectedChildren,
 			duration:         outcome.duration,
 		}
+		record.call.ExecutionSequence = max(record.call.ExecutionSequence, outcome.executionSequence)
 		if err := validateStepToolRecord("workflow step execution", record); err != nil {
 			return nil, err
 		}
@@ -1355,7 +1357,8 @@ func stepToolRecordsAfterExecution(
 			result:           outcome.ToolResult,
 			clarification:    outcome.Clarification,
 			childSuspension:  outcome.childSuspension,
-			mcpInput:         outcome.mcpInput,
+			mcpPending:       outcome.mcpPending,
+			task:             outcome.task,
 			resultPublished:  outcome.resultPublished,
 			resultRecord:     outcome.resultRecord,
 			scheduleRequired: !outcome.schedulePublished,
@@ -1364,6 +1367,7 @@ func stepToolRecordsAfterExecution(
 			expectedChildren: outcome.expectedChildren,
 			duration:         outcome.duration,
 		}
+		record.call.ExecutionSequence = max(record.call.ExecutionSequence, outcome.executionSequence)
 		if err := validateStepToolRecord("workflow step execution", record); err != nil {
 			resultErr = errors.Join(resultErr, err)
 			continue

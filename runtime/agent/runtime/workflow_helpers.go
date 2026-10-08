@@ -99,6 +99,7 @@ func (r *Runtime) executeGroupedToolCalls(
 	grouped [][]ToolCall,
 	timeouts []time.Duration,
 	toolOpts engine.ActivityOptions,
+	taskStates map[string]*taskExecution,
 ) ([]*ToolExecutionResult, bool, error) {
 	var out []*ToolExecutionResult
 	timedOutAny := false
@@ -108,7 +109,7 @@ func (r *Runtime) executeGroupedToolCalls(
 		if timeouts[i] > 0 {
 			opt.StartToCloseTimeout = timeouts[i]
 		}
-		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.HistoryEndID, grouped[i], expectedChildren, parentTracker, finishBy)
+		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.HistoryEndID, grouped[i], expectedChildren, parentTracker, finishBy, taskStates)
 		out = append(out, sub...)
 		if timedOut {
 			timedOutAny = true
@@ -254,7 +255,10 @@ func validateStepToolRecord(context string, record stepToolRecord) error {
 	if record.call.ToolCallID == "" {
 		return fmt.Errorf("%s: missing call tool_call_id for %s", context, record.call.Name)
 	}
-	if record.mcpInput != nil {
+	if record.mcpPending != nil {
+		if pendingHostInput(record.mcpPending) == nil {
+			return fmt.Errorf("%s: Task waiting escaped activity collection", context)
+		}
 		if record.result != nil || record.clarification != nil || record.childSuspension != nil || record.resultPublished || record.resultRecord != nil {
 			return fmt.Errorf("%s: unfinished MCP call has a completed result", context)
 		}

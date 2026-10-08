@@ -146,7 +146,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
             if msg.Meta.TextOnly {
                 return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "unsupported_interaction", "text-only tool returned required host input"), nil
             }
-            return toolregistry.ToolResultMessage{RegistrationToken:msg.RegistrationToken,ToolUseID:msg.ToolUseID,InputRequired:pending},nil
+            return toolregistry.NewInputRequiredResult(msg.RegistrationToken,msg.ToolUseID,pending)
         }
 {{- end }}
 {{- if .HasResult }}

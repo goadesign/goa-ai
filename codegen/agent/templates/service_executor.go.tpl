@@ -220,7 +220,7 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
                 if call.TextOnly {
                     return runtime.Executed({{ $.Names.FailedCallResult }}(call, errors.New("text-only tool returned required host input"))), nil
                 }
-                return runtime.AwaitMCPInput(pending), nil
+                return runtime.AwaitMCPInput(pending)
             }
             methodOut = completed
             {{- end }}

@@ -28,6 +28,6 @@ func TestPlanActivityOutputBudgetMeasuresExecutionContinuation(t *testing.T) {
 	one := &PlanActivityOutput{Result: &PlanResult{ToolCalls: []ToolCall{{ExecutionSequence: 1, ExecutionContinuation: operation}}}}
 	require.NoError(t, checkPlanActivityOutputBudget(one))
 	one.Result.ToolCalls = append(one.Result.ToolCalls, one.Result.ToolCalls[0])
-	assert.ErrorContains(t, checkPlanActivityOutputBudget(one), "conservative encoded-size bound")
+	require.ErrorContains(t, checkPlanActivityOutputBudget(one), "conservative encoded-size bound")
 	assert.Error(t, (&planActivityOutputBudget{}).add(tooloperation.Continuation{}))
 }

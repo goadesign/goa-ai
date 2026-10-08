@@ -72,8 +72,8 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 	if err != nil {
 		return nil, err
 	}
-	if result.MCPInput != nil {
-		return runtime.AwaitMCPInput(result.MCPInput), nil
+	if result.PendingExecution != nil {
+		return runtime.Unfinished(result.PendingExecution)
 	}
 	return runtime.Executed(e.calls.DecodeCompletedResult(call, registryMeta, result)), nil
 }

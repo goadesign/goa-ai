@@ -107,7 +107,8 @@ func TestRegistryRequiredInputOutcomeBoundary(t *testing.T) {
 		{name: "url", input: &mcp.InputRequired{Requests: map[string]mcp.InputRequest{"consent": {Method: "elicitation/create", Params: json.RawMessage(`{"mode":"url","message":"Authorize","url":"https://example.test/authorize"}`)}}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			message := ToolResultMessage{RegistrationToken: strings.Repeat("a", 64), ToolUseID: "call", InputRequired: test.input}
+			message, err := NewInputRequiredResult(strings.Repeat("a", 64), "call", test.input)
+			require.NoError(t, err)
 			raw, err := json.Marshal(message)
 			require.NoError(t, err)
 			decoded, err := DecodeToolResultMessage(raw)
@@ -124,10 +125,10 @@ func TestRegistryRequiredInputOutcomeBoundary(t *testing.T) {
 			} {
 				mixed := decoded
 				mutate(&mixed)
-				assert.ErrorContains(t, ValidateToolResultMessage(mixed), "input-required outcome cannot contain")
+				assert.ErrorContains(t, ValidateToolResultMessage(mixed), "unfinished outcome cannot contain")
 			}
 		})
 	}
-	invalid := ToolResultMessage{RegistrationToken: strings.Repeat("a", 64), ToolUseID: "call", InputRequired: &mcp.InputRequired{}}
-	assert.ErrorContains(t, ValidateToolResultMessage(invalid), "input_required needs")
+	_, err := NewInputRequiredResult(strings.Repeat("a", 64), "call", &mcp.InputRequired{})
+	require.ErrorContains(t, err, "input_required needs inputRequests or requestState")
 }

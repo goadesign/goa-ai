@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -93,7 +94,7 @@ type (
 
 	// ToolResultMessage is published to a per-call result stream. The gateway
 	// interprets retry control and saves every admitted round outcome. Consumers
-	// decode completed values with compiled contracts or suspend required input.
+	// decode completed values with compiled contracts or retain unfinished execution.
 	ToolResultMessage struct {
 		// RegistrationToken echoes the exact token stamped on the tool call.
 		RegistrationToken string          `json:"registration_token"`
@@ -115,9 +116,9 @@ type (
 		// Retry asks registry orchestration to republish this exact admitted call.
 		// It is mutually exclusive with every terminal success and error field.
 		Retry *ToolRetry `json:"retry,omitempty"`
-		// InputRequired finishes this admitted service round with a host-input request.
+		// PendingExecution finishes this admitted operation with an unfinished outcome.
 		// The runtime saves it and resumes later without publishing a completed result.
-		InputRequired *mcp.InputRequired `json:"input_required,omitempty"`
+		PendingExecution *api.PendingExecution `json:"pending_execution,omitempty"`
 	}
 
 	// ToolOutputDeltaMessage is published to a per-call result stream while a tool
@@ -418,8 +419,18 @@ func NewToolResultInvalidArgumentsMessage(
 	return out
 }
 
+// NewInputRequiredResult copies and validates host input before publishing one
+// unfinished provider operation. Completed result fields remain absent.
+func NewInputRequiredResult(registrationToken, toolUseID string, input *mcp.InputRequired) (ToolResultMessage, error) {
+	pending, err := tooloperation.NewPendingInput(input)
+	if err != nil {
+		return ToolResultMessage{}, err
+	}
+	return ToolResultMessage{RegistrationToken: registrationToken, ToolUseID: toolUseID, PendingExecution: pending}, nil
+}
+
 // ValidateToolResultMessage checks that each message contains one completed,
-// error, retry-control or required-input outcome before the consumer acts on it.
+// error, retry-control or unfinished outcome before the consumer acts on it.
 func ValidateToolResultMessage(message ToolResultMessage) error {
 	if err := ValidateRegistrationToken(message.RegistrationToken); err != nil {
 		return err
@@ -427,11 +438,11 @@ func ValidateToolResultMessage(message ToolResultMessage) error {
 	if err := ValidateToolUseID(message.ToolUseID); err != nil {
 		return err
 	}
-	if message.InputRequired != nil {
+	if message.PendingExecution != nil {
 		if message.Retry != nil || message.Error != nil || rawMessageHasNonNullJSON(message.Result) || message.Bounds != nil || len(message.ServerData) > 0 {
-			return fmt.Errorf("input-required outcome cannot contain a completed result, error, retry, bounds or server data")
+			return fmt.Errorf("unfinished outcome cannot contain a completed result, error, retry, bounds or server data")
 		}
-		return message.InputRequired.Validate(mcp.InputSupport{Form: true, URL: true})
+		return message.PendingExecution.Validate()
 	}
 	if message.Retry != nil {
 		if message.Error != nil {

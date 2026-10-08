@@ -310,7 +310,7 @@ func TestRegistryAgentConcurrentChildrenKeepIndependentConfigurations(t *testing
 	done := make(chan outcome, 1)
 	historyEndID := testToolHistory(t, rt, parent.route.ID, *(parentRun), nil)
 	go func() {
-		results, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, parent.route.ID, parentRun, historyEndID, calls, 0, nil, time.Time{})
+		results, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, parent.route.ID, parentRun, historyEndID, calls, 0, nil, time.Time{}, nil)
 		done <- outcome{results, err}
 	}()
 	first := waitForChildHandle(t, children, "first native child")
@@ -352,7 +352,7 @@ func TestRegistryAgentCancellationWaitsForChild(t *testing.T) {
 	done := make(chan error, 1)
 	historyEndID := testToolHistory(t, rt, parent.route.ID, *parentRun, nil)
 	go func() {
-		_, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, parent.route.ID, parentRun, historyEndID, []ToolCall{call}, 0, nil, time.Time{})
+		_, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, parent.route.ID, parentRun, historyEndID, []ToolCall{call}, 0, nil, time.Time{}, nil)
 		done <- err
 	}()
 	handle := waitForChildHandle(t, children, "native child")

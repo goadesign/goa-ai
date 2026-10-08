@@ -91,7 +91,7 @@ func TestExecuteToolCalls_AgentToolsPublishResultsAsComplete(t *testing.T) {
 	done := make(chan out, 1)
 	historyEndID := testToolHistory(t, rt, agent.Ident("parent.agent"), *(runCtx), nil)
 	go func() {
-		results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, historyEndID, calls, 0, nil, time.Time{})
+		results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, historyEndID, calls, 0, nil, time.Time{}, nil)
 		done <- out{results: results, err: err}
 	}()
 
@@ -192,7 +192,7 @@ func TestExecuteToolCalls_CancelsAgentToolAtParentDeadline(t *testing.T) {
 			calls,
 			0,
 			nil,
-			finishBy,
+			finishBy, nil,
 		)
 		done <- executionResult{results: results, timedOut: timedOut, err: err}
 	}()
@@ -278,7 +278,7 @@ func TestExecuteToolCalls_WaitsForAgentChildAfterParentCancellation(t *testing.T
 			calls,
 			0,
 			nil,
-			time.Time{},
+			time.Time{}, nil,
 		)
 		done <- err
 	}()

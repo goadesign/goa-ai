@@ -300,11 +300,10 @@ func (p *toolsetHelperPackagePlan) planMethodImports(servicePlan *service.Plan, 
 // planMCPImports reserves every package used by mcp_executor.go.
 func (p *toolsetHelperPackagePlan) planMCPImports() error {
 	imports := []*goacodegen.ImportSpec{
-		goacodegen.SimpleImport("context"), goacodegen.SimpleImport("encoding/json"), goacodegen.SimpleImport("errors"),
+		goacodegen.SimpleImport("context"), goacodegen.SimpleImport("errors"),
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/planner"),
 		goacodegen.NewImport("runtime", "goa.design/goa-ai/runtime/agent/runtime"),
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
-		goacodegen.SimpleImport("goa.design/goa-ai/runtime/toolregistry"),
 		goacodegen.NewImport("mcpruntime", "goa.design/goa-ai/runtime/mcp"),
 		goacodegen.NewImport("gen"+p.reference.SpecsPackageName, p.reference.SpecsImportPath),
 	}

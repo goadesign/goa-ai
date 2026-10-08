@@ -27,7 +27,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/mcp"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
 
@@ -1497,17 +1496,17 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if execResult == nil {
 		return nil, errors.New("tool execution returned nil execution result")
 	}
-	if execResult.mcpInput != nil {
-		if call.TextOnly {
+	if execResult.mcpPending != nil {
+		if call.TextOnly && pendingHostInput(execResult.mcpPending) != nil {
 			return nil, engine.MarkActivityErrorNonRetryable(errors.New("text-only tools cannot request MCP host input"))
 		}
 		if execResult.ToolResult != nil || execResult.Clarification != nil || execResult.childSuspension != nil {
 			return nil, errors.New("MCP input cannot accompany a completed tool result")
 		}
-		if err := execResult.mcpInput.Validate(mcp.InputSupport{Form: true, URL: true}); err != nil {
+		if err := execResult.mcpPending.Validate(); err != nil {
 			return nil, err
 		}
-		out := &ToolOutput{MCPInput: execResult.mcpInput}
+		out := &ToolOutput{PendingExecution: execResult.mcpPending}
 		if err := validateToolActivityOutputBudget(out); err != nil {
 			return nil, outputcontract.NewWithOrigin(err, outputcontract.OriginTool)
 		}

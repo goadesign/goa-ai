@@ -16,6 +16,7 @@ import (
 	strconv "strconv"
 	utf8 "unicode/utf8"
 
+	rawjson "goa.design/goa-ai/runtime/agent/rawjson"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -50,6 +51,28 @@ func validatejsonExecutionContinuationTransport(value *jsonExecutionContinuation
 			}
 		}
 
+	}
+	return err
+}
+
+// jsonHostRequestTransport stores JSON fields until they have been validated.
+type jsonHostRequestTransport struct {
+	// Exact MCP interaction method.
+	Method *string `json:"method"`
+	// Original JSON object describing the host interaction.
+	Params []byte `json:"params"`
+}
+
+// validatejsonHostRequestTransport checks decoded JSON before it becomes a service value.
+func validatejsonHostRequestTransport(value *jsonHostRequestTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Method == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("method", "body"))
+	}
+	if value.Params == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("params", "body"))
 	}
 	return err
 }
@@ -89,6 +112,72 @@ func validatejsonOperationBranchTaskGetTransport(value jsonOperationBranchTaskGe
 	return err
 }
 
+// jsonPendingExecutionTransport stores JSON fields until they have been validated.
+type jsonPendingExecutionTransport struct {
+	Outcome *jsonOutcomeTransport `json:"outcome"`
+}
+
+// validatejsonPendingExecutionTransport checks decoded JSON before it becomes a service value.
+func validatejsonPendingExecutionTransport(value *jsonPendingExecutionTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Outcome == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "body"))
+	}
+	if value.Outcome != nil {
+		switch string(value.Outcome.Kind()) {
+		case "input":
+			actual, _ := value.Outcome.AsInput()
+			if actual != nil {
+				if err2 := validatejsonPendingInputTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "task_wait":
+			actual, _ := value.Outcome.AsTaskWait()
+			if actual != nil {
+				if err2 := validatejsonTaskWaitTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "task_input":
+			actual, _ := value.Outcome.AsTaskInput()
+			if actual != nil {
+				if err2 := validatejsonTaskInputTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// jsonPendingInputTransport stores JSON fields until they have been validated.
+type jsonPendingInputTransport struct {
+	// Exact optional service state, including an explicitly empty string.
+	State *string `json:"state,omitempty"`
+	// Host questions keyed by exact server identifiers. An explicit empty object
+	// is valid.
+	Requests map[string]*jsonHostRequestTransport `json:"requests,omitzero"`
+}
+
+// validatejsonPendingInputTransport checks decoded JSON before it becomes a service value.
+func validatejsonPendingInputTransport(value *jsonPendingInputTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	for _, v := range value.Requests {
+		if v != nil {
+			if err2 := validatejsonHostRequestTransport(v); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
 // jsonTaskAnswersTransport stores JSON fields until they have been validated.
 type jsonTaskAnswersTransport struct {
 	// Exact server-owned Task identifier, including an empty string.
@@ -108,6 +197,79 @@ func validatejsonTaskAnswersTransport(value *jsonTaskAnswersTransport) (err erro
 	if value.Responses == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("responses", "body"))
 	}
+	return err
+}
+
+// jsonTaskInputTransport stores JSON fields until they have been validated.
+type jsonTaskInputTransport struct {
+	// Exact server-owned Task identifier, including an empty string.
+	TaskID *string `json:"task_id"`
+	// Optional server guidance for observing the Task after host answers are
+	// acknowledged.
+	PollIntervalMs *pendingExecutionInt64Transport `json:"poll_interval_ms,omitempty"`
+	// Outstanding host questions keyed by exact identifiers unique over this
+	// Task's lifetime. An empty object is valid.
+	Requests map[string]*jsonHostRequestTransport `json:"requests"`
+}
+
+// validatejsonTaskInputTransport checks decoded JSON before it becomes a service value.
+func validatejsonTaskInputTransport(value *jsonTaskInputTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.TaskID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("task_id", "body"))
+	}
+	if value.Requests == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requests", "body"))
+	}
+	for _, v := range value.Requests {
+		if v != nil {
+			if err2 := validatejsonHostRequestTransport(v); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
+// jsonTaskWaitTransport stores JSON fields until they have been validated.
+type jsonTaskWaitTransport struct {
+	// Exact server-owned Task identifier, including an empty string.
+	TaskID *string `json:"task_id"`
+	// Optional server guidance for the next observation in integer milliseconds;
+	// this is not a Task lifetime limit.
+	PollIntervalMs *pendingExecutionInt64Transport `json:"poll_interval_ms,omitempty"`
+}
+
+// validatejsonTaskWaitTransport checks decoded JSON before it becomes a service value.
+func validatejsonTaskWaitTransport(value *jsonTaskWaitTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.TaskID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("task_id", "body"))
+	}
+	return err
+}
+
+// pendingExecutionInt64Transport stores JSON fields until they have been validated.
+type pendingExecutionInt64Transport int64
+
+// UnmarshalJSON reads an exact whole JSON number and stores it within this type's
+// declared range. Decimal and exponent spellings do not change its value.
+func (value *pendingExecutionInt64Transport) UnmarshalJSON(data []byte) error {
+	number, err := rawjson.DecodeInteger[int64](data)
+	if err != nil {
+		return fmt.Errorf("decode pendingExecutionInt64Transport integer: %w", err)
+	}
+	*value = pendingExecutionInt64Transport(number)
+	return nil
+}
+
+// ValidatependingExecutionInt64Transport checks decoded JSON before it becomes a service value.
+func ValidatependingExecutionInt64Transport(value pendingExecutionInt64Transport) (err error) {
+
 	return err
 }
 
@@ -137,10 +299,121 @@ func validateTaskAnswersOriginal(value *TaskAnswers) (err error) {
 	return err
 }
 
+// validateHostRequestOriginal checks the original typed value before JSON conversion.
+func validateHostRequestOriginal(value *HostRequest) (err error) {
+	if value.Params == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("params", "value"))
+	}
+	return err
+}
+
+// validatePendingExecutionOriginal checks the original typed value before JSON conversion.
+func validatePendingExecutionOriginal(value *PendingExecution) (err error) {
+	if value.Outcome.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "value"))
+	}
+	switch string(value.Outcome.Kind()) {
+	case "input":
+		actual, _ := value.Outcome.AsInput()
+		if actual != nil {
+			if err2 := validatePendingInputOriginal(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "task_input":
+		actual, _ := value.Outcome.AsTaskInput()
+		if actual != nil {
+			if err2 := validateTaskInputOriginal(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validatePendingInputOriginal checks the original typed value before JSON conversion.
+func validatePendingInputOriginal(value *PendingInput) (err error) {
+	for _, v := range value.Requests {
+		if v != nil {
+			if err2 := validateHostRequestOriginal2(v); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
+// validateHostRequestOriginal2 checks the original typed value before JSON conversion.
+func validateHostRequestOriginal2(value *HostRequest) (err error) {
+	if value.Params == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("params", "value"))
+	}
+	return err
+}
+
+// validateTaskInputOriginal checks the original typed value before JSON conversion.
+func validateTaskInputOriginal(value *TaskInput) (err error) {
+	if value.Requests == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requests", "value"))
+	}
+	for _, v := range value.Requests {
+		if v != nil {
+			if err2 := validateHostRequestOriginal2(v); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
+// validatePendingInputOriginal2 checks the original typed value before JSON conversion.
+func validatePendingInputOriginal2(value *PendingInput) (err error) {
+	for _, v := range value.Requests {
+		if v != nil {
+			if err2 := validateHostRequestOriginal3(v); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
+// validateHostRequestOriginal3 checks the original typed value before JSON conversion.
+func validateHostRequestOriginal3(value *HostRequest) (err error) {
+	if value.Params == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("params", "value"))
+	}
+	return err
+}
+
 // validateTaskAnswersOriginal2 checks the original typed value before JSON conversion.
 func validateTaskAnswersOriginal2(value *TaskAnswers) (err error) {
 	if value.Responses == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("responses", "value"))
+	}
+	return err
+}
+
+// validateTaskInputOriginal2 checks the original typed value before JSON conversion.
+func validateTaskInputOriginal2(value *TaskInput) (err error) {
+	if value.Requests == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requests", "value"))
+	}
+	for _, v := range value.Requests {
+		if v != nil {
+			if err2 := validateHostRequestOriginal4(v); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
+// validateHostRequestOriginal4 checks the original typed value before JSON conversion.
+func validateHostRequestOriginal4(value *HostRequest) (err error) {
+	if value.Params == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("params", "value"))
 	}
 	return err
 }
@@ -362,6 +635,192 @@ func (u *jsonOperationTransport) UnmarshalJSON(data []byte) error {
 	return u.Validate()
 }
 
+// jsonOutcomeTransport stores exactly one selected Goa OneOf branch.
+type jsonOutcomeTransport struct {
+	kind      jsonOutcomeTransportKind
+	Input     *jsonPendingInputTransport
+	TaskWait  *jsonTaskWaitTransport
+	TaskInput *jsonTaskInputTransport
+}
+
+// jsonOutcomeTransportKind identifies the selected branch of jsonOutcomeTransport.
+type jsonOutcomeTransportKind string
+
+const (
+	jsonOutcomeTransportKindInput     jsonOutcomeTransportKind = "input"
+	jsonOutcomeTransportKindTaskWait  jsonOutcomeTransportKind = "task_wait"
+	jsonOutcomeTransportKindTaskInput jsonOutcomeTransportKind = "task_input"
+)
+
+// Kind returns the selected branch.
+func (u jsonOutcomeTransport) Kind() jsonOutcomeTransportKind {
+	return u.kind
+}
+
+// newjsonOutcomeTransportInput creates jsonOutcomeTransport with its input branch selected.
+func newjsonOutcomeTransportInput(value *jsonPendingInputTransport) jsonOutcomeTransport {
+	return jsonOutcomeTransport{kind: jsonOutcomeTransportKindInput, Input: value}
+}
+
+// AsInput returns the input branch when it is selected.
+func (u jsonOutcomeTransport) AsInput() (_ *jsonPendingInputTransport, ok bool) {
+	if u.kind != jsonOutcomeTransportKindInput {
+		return
+	}
+	return u.Input, true
+}
+
+// SetInput selects the input branch.
+func (u *jsonOutcomeTransport) SetInput(value *jsonPendingInputTransport) {
+	u.kind = jsonOutcomeTransportKindInput
+	u.Input = value
+}
+
+// newjsonOutcomeTransportTaskWait creates jsonOutcomeTransport with its task_wait branch selected.
+func newjsonOutcomeTransportTaskWait(value *jsonTaskWaitTransport) jsonOutcomeTransport {
+	return jsonOutcomeTransport{kind: jsonOutcomeTransportKindTaskWait, TaskWait: value}
+}
+
+// AsTaskWait returns the task_wait branch when it is selected.
+func (u jsonOutcomeTransport) AsTaskWait() (_ *jsonTaskWaitTransport, ok bool) {
+	if u.kind != jsonOutcomeTransportKindTaskWait {
+		return
+	}
+	return u.TaskWait, true
+}
+
+// SetTaskWait selects the task_wait branch.
+func (u *jsonOutcomeTransport) SetTaskWait(value *jsonTaskWaitTransport) {
+	u.kind = jsonOutcomeTransportKindTaskWait
+	u.TaskWait = value
+}
+
+// newjsonOutcomeTransportTaskInput creates jsonOutcomeTransport with its task_input branch selected.
+func newjsonOutcomeTransportTaskInput(value *jsonTaskInputTransport) jsonOutcomeTransport {
+	return jsonOutcomeTransport{kind: jsonOutcomeTransportKindTaskInput, TaskInput: value}
+}
+
+// AsTaskInput returns the task_input branch when it is selected.
+func (u jsonOutcomeTransport) AsTaskInput() (_ *jsonTaskInputTransport, ok bool) {
+	if u.kind != jsonOutcomeTransportKindTaskInput {
+		return
+	}
+	return u.TaskInput, true
+}
+
+// SetTaskInput selects the task_input branch.
+func (u *jsonOutcomeTransport) SetTaskInput(value *jsonTaskInputTransport) {
+	u.kind = jsonOutcomeTransportKindTaskInput
+	u.TaskInput = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u jsonOutcomeTransport) Validate() error {
+	switch u.kind {
+	case jsonOutcomeTransportKindInput:
+		if u.Input == nil {
+			return goa.MissingFieldError("value", "jsonOutcomeTransport")
+		}
+		return nil
+	case jsonOutcomeTransportKindTaskWait:
+		if u.TaskWait == nil {
+			return goa.MissingFieldError("value", "jsonOutcomeTransport")
+		}
+		return nil
+	case jsonOutcomeTransportKindTaskInput:
+		if u.TaskInput == nil {
+			return goa.MissingFieldError("value", "jsonOutcomeTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "jsonOutcomeTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(jsonOutcomeTransportKindInput), string(jsonOutcomeTransportKindTaskWait), string(jsonOutcomeTransportKindTaskInput)})
+	}
+}
+
+// MarshalJSON writes the selected branch name and value.
+func (u jsonOutcomeTransport) MarshalJSON() ([]byte, error) {
+	if err := u.Validate(); err != nil {
+		return nil, err
+	}
+	var value any
+	switch u.kind {
+	case jsonOutcomeTransportKindInput:
+		value = u.Input
+	case jsonOutcomeTransportKindTaskWait:
+		value = u.TaskWait
+	case jsonOutcomeTransportKindTaskInput:
+		value = u.TaskInput
+	default:
+		return nil, fmt.Errorf("unexpected jsonOutcomeTransport branch %q", u.kind)
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{Type: string(u.kind), Value: value})
+}
+
+// UnmarshalJSON reads one complete branch name and value.
+func (u *jsonOutcomeTransport) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&raw); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("decode jsonOutcomeTransport JSON: multiple JSON values")
+		}
+		return err
+	}
+	if raw.Type == "" {
+		return goa.MissingFieldError("type", "jsonOutcomeTransport")
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "jsonOutcomeTransport")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(jsonOutcomeTransportKindInput):
+		var value *jsonPendingInputTransport
+		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		u.kind = jsonOutcomeTransportKindInput
+		u.Input = value
+	case string(jsonOutcomeTransportKindTaskWait):
+		var value *jsonTaskWaitTransport
+		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		u.kind = jsonOutcomeTransportKindTaskWait
+		u.TaskWait = value
+	case string(jsonOutcomeTransportKindTaskInput):
+		var value *jsonTaskInputTransport
+		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		u.kind = jsonOutcomeTransportKindTaskInput
+		u.TaskInput = value
+	default:
+		return goa.InvalidEnumValueError("type", raw.Type, []any{string(jsonOutcomeTransportKindInput), string(jsonOutcomeTransportKindTaskWait), string(jsonOutcomeTransportKindTaskInput)})
+	}
+	return u.Validate()
+}
+
 // EncodeExecutionContinuation turns a service value into JSON using the field names in the Goa design.
 func EncodeExecutionContinuation(in *ExecutionContinuation) ([]byte, error) {
 	if err := checkExecutionContinuationValue(in); err != nil {
@@ -484,6 +943,64 @@ func DecodeExecutionContinuation(data []byte) (out *ExecutionContinuation, err e
 	return out, nil
 }
 
+// EncodeHostRequest turns a service value into JSON using the field names in the Goa design.
+func EncodeHostRequest(in *HostRequest) ([]byte, error) {
+	if err := checkHostRequestValue(in); err != nil {
+		return nil, fmt.Errorf("encode HostRequest JSON: %w", err)
+	}
+	if err := validateHostRequestOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate HostRequest value: %w", err)
+	}
+	var body *jsonHostRequestTransport
+	{
+		body = &jsonHostRequestTransport{
+			Method: &in.Method,
+			Params: in.Params,
+		}
+	}
+	if err := validatejsonHostRequestTransport(body); err != nil {
+		return nil, fmt.Errorf("validate HostRequest JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode HostRequest JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeHostRequest checks JSON field names from the Goa design and returns a service value.
+func DecodeHostRequest(data []byte) (out *HostRequest, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode HostRequest JSON: %w", err)
+	}
+	if err := validateHostRequestJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode HostRequest JSON: %w", err)
+	}
+	var body *jsonHostRequestTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode HostRequest JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode HostRequest JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode HostRequest JSON after first value: %w", err)
+	}
+	if err := validatejsonHostRequestTransport(body); err != nil {
+		return out, fmt.Errorf("validate HostRequest JSON: %w", err)
+	}
+	{
+		out = &HostRequest{
+			Method: *body.Method,
+			Params: body.Params,
+		}
+	}
+	return out, nil
+}
+
 // EncodeInputContinuation turns a service value into JSON using the field names in the Goa design.
 func EncodeInputContinuation(in *InputContinuation) ([]byte, error) {
 	if err := checkInputContinuationValue(in); err != nil {
@@ -547,6 +1064,196 @@ func DecodeInputContinuation(data []byte) (out *InputContinuation, err error) {
 				tk := key
 				tv := val
 				out.Responses[tk] = tv
+			}
+		}
+	}
+	return out, nil
+}
+
+// EncodePendingExecution turns a service value into JSON using the field names in the Goa design.
+func EncodePendingExecution(in *PendingExecution) ([]byte, error) {
+	if err := checkPendingExecutionValue(in); err != nil {
+		return nil, fmt.Errorf("encode PendingExecution JSON: %w", err)
+	}
+	if err := validatePendingExecutionOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate PendingExecution value: %w", err)
+	}
+	var body *jsonPendingExecutionTransport
+	{
+		body = &jsonPendingExecutionTransport{}
+		var outcomeValue jsonOutcomeTransport
+		switch string(in.Outcome.Kind()) {
+		case "input":
+			actual, _ := in.Outcome.AsInput()
+			var obj *jsonPendingInputTransport
+			if actual != nil {
+				obj = encodePendingInputToPendingInputTransport(actual)
+			}
+			u := outcomeValue
+			u.SetInput((*jsonPendingInputTransport)(obj))
+			outcomeValue = u
+		case "task_wait":
+			actual, _ := in.Outcome.AsTaskWait()
+			var obj *jsonTaskWaitTransport
+			if actual != nil {
+				obj = encodeTaskWaitToTaskWaitTransport(actual)
+			}
+			u := outcomeValue
+			u.SetTaskWait((*jsonTaskWaitTransport)(obj))
+			outcomeValue = u
+		case "task_input":
+			actual, _ := in.Outcome.AsTaskInput()
+			var obj *jsonTaskInputTransport
+			if actual != nil {
+				obj = encodeTaskInputToTaskInputTransport(actual)
+			}
+			u := outcomeValue
+			u.SetTaskInput((*jsonTaskInputTransport)(obj))
+			outcomeValue = u
+		}
+		body.Outcome = &outcomeValue
+	}
+	if err := validatejsonPendingExecutionTransport(body); err != nil {
+		return nil, fmt.Errorf("validate PendingExecution JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode PendingExecution JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodePendingExecution checks JSON field names from the Goa design and returns a service value.
+func DecodePendingExecution(data []byte) (out *PendingExecution, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode PendingExecution JSON: %w", err)
+	}
+	if err := validatePendingExecutionJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode PendingExecution JSON: %w", err)
+	}
+	var body *jsonPendingExecutionTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode PendingExecution JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode PendingExecution JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode PendingExecution JSON after first value: %w", err)
+	}
+	if err := validatejsonPendingExecutionTransport(body); err != nil {
+		return out, fmt.Errorf("validate PendingExecution JSON: %w", err)
+	}
+	{
+		out = &PendingExecution{}
+		switch string(body.Outcome.Kind()) {
+		case "input":
+			actual, _ := body.Outcome.AsInput()
+			var obj *PendingInput
+			if actual != nil {
+				obj = decodePendingInputTransportToPendingInput(actual)
+			}
+			u := out.Outcome
+			u.SetInput((*PendingInput)(obj))
+			out.Outcome = u
+		case "task_wait":
+			actual, _ := body.Outcome.AsTaskWait()
+			var obj *TaskWait
+			if actual != nil {
+				obj = decodeTaskWaitTransportToTaskWait(actual)
+			}
+			u := out.Outcome
+			u.SetTaskWait((*TaskWait)(obj))
+			out.Outcome = u
+		case "task_input":
+			actual, _ := body.Outcome.AsTaskInput()
+			var obj *TaskInput
+			if actual != nil {
+				obj = decodeTaskInputTransportToTaskInput(actual)
+			}
+			u := out.Outcome
+			u.SetTaskInput((*TaskInput)(obj))
+			out.Outcome = u
+		}
+	}
+	return out, nil
+}
+
+// EncodePendingInput turns a service value into JSON using the field names in the Goa design.
+func EncodePendingInput(in *PendingInput) ([]byte, error) {
+	if err := checkPendingInputValue(in); err != nil {
+		return nil, fmt.Errorf("encode PendingInput JSON: %w", err)
+	}
+	if err := validatePendingInputOriginal2(in); err != nil {
+		return nil, fmt.Errorf("validate PendingInput value: %w", err)
+	}
+	var body *jsonPendingInputTransport
+	{
+		body = &jsonPendingInputTransport{
+			State: in.State,
+		}
+		if in.Requests != nil {
+			body.Requests = make(map[string]*jsonHostRequestTransport, len(in.Requests))
+			for key, val := range in.Requests {
+				tk := key
+				if val == nil {
+					body.Requests[tk] = nil
+					continue
+				}
+				body.Requests[tk] = encodeHostRequestToHostRequestTransport3(val)
+			}
+		}
+	}
+	if err := validatejsonPendingInputTransport(body); err != nil {
+		return nil, fmt.Errorf("validate PendingInput JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode PendingInput JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodePendingInput checks JSON field names from the Goa design and returns a service value.
+func DecodePendingInput(data []byte) (out *PendingInput, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode PendingInput JSON: %w", err)
+	}
+	if err := validatePendingInputJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode PendingInput JSON: %w", err)
+	}
+	var body *jsonPendingInputTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode PendingInput JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode PendingInput JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode PendingInput JSON after first value: %w", err)
+	}
+	if err := validatejsonPendingInputTransport(body); err != nil {
+		return out, fmt.Errorf("validate PendingInput JSON: %w", err)
+	}
+	{
+		out = &PendingInput{
+			State: body.State,
+		}
+		if body.Requests != nil {
+			out.Requests = make(map[string]*HostRequest, len(body.Requests))
+			for key, val := range body.Requests {
+				tk := key
+				if val == nil {
+					out.Requests[tk] = nil
+					continue
+				}
+				out.Requests[tk] = decodeHostRequestTransportToHostRequest3(val)
 			}
 		}
 	}
@@ -621,6 +1328,185 @@ func DecodeTaskAnswers(data []byte) (out *TaskAnswers, err error) {
 	return out, nil
 }
 
+// EncodeTaskInput turns a service value into JSON using the field names in the Goa design.
+func EncodeTaskInput(in *TaskInput) ([]byte, error) {
+	if err := checkTaskInputValue(in); err != nil {
+		return nil, fmt.Errorf("encode TaskInput JSON: %w", err)
+	}
+	if err := validateTaskInputOriginal2(in); err != nil {
+		return nil, fmt.Errorf("validate TaskInput value: %w", err)
+	}
+	var body *jsonTaskInputTransport
+	{
+		body = &jsonTaskInputTransport{
+			TaskID: &in.TaskID,
+		}
+		if in.PollIntervalMs != nil {
+			pollIntervalMs := pendingExecutionInt64Transport(*in.PollIntervalMs)
+			body.PollIntervalMs = &pollIntervalMs
+		}
+		body.Requests = make(map[string]*jsonHostRequestTransport, len(in.Requests))
+		for key, val := range in.Requests {
+			tk := key
+			if val == nil {
+				body.Requests[tk] = nil
+				continue
+			}
+			body.Requests[tk] = encodeHostRequestToHostRequestTransport4(val)
+		}
+	}
+	if err := validatejsonTaskInputTransport(body); err != nil {
+		return nil, fmt.Errorf("validate TaskInput JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode TaskInput JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeTaskInput checks JSON field names from the Goa design and returns a service value.
+func DecodeTaskInput(data []byte) (out *TaskInput, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode TaskInput JSON: %w", err)
+	}
+	if err := validateTaskInputJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode TaskInput JSON: %w", err)
+	}
+	var body *jsonTaskInputTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode TaskInput JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode TaskInput JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode TaskInput JSON after first value: %w", err)
+	}
+	if err := validatejsonTaskInputTransport(body); err != nil {
+		return out, fmt.Errorf("validate TaskInput JSON: %w", err)
+	}
+	{
+		out = &TaskInput{
+			TaskID: *body.TaskID,
+		}
+		if body.PollIntervalMs != nil {
+			pollIntervalMs := int64(*body.PollIntervalMs)
+			out.PollIntervalMs = &pollIntervalMs
+		}
+		out.Requests = make(map[string]*HostRequest, len(body.Requests))
+		for key, val := range body.Requests {
+			tk := key
+			if val == nil {
+				out.Requests[tk] = nil
+				continue
+			}
+			out.Requests[tk] = decodeHostRequestTransportToHostRequest4(val)
+		}
+	}
+	return out, nil
+}
+
+// EncodeTaskWait turns a service value into JSON using the field names in the Goa design.
+func EncodeTaskWait(in *TaskWait) ([]byte, error) {
+	if err := checkTaskWaitValue(in); err != nil {
+		return nil, fmt.Errorf("encode TaskWait JSON: %w", err)
+	}
+	var body *jsonTaskWaitTransport
+	{
+		body = &jsonTaskWaitTransport{
+			TaskID: &in.TaskID,
+		}
+		if in.PollIntervalMs != nil {
+			pollIntervalMs := pendingExecutionInt64Transport(*in.PollIntervalMs)
+			body.PollIntervalMs = &pollIntervalMs
+		}
+	}
+	if err := validatejsonTaskWaitTransport(body); err != nil {
+		return nil, fmt.Errorf("validate TaskWait JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode TaskWait JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeTaskWait checks JSON field names from the Goa design and returns a service value.
+func DecodeTaskWait(data []byte) (out *TaskWait, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode TaskWait JSON: %w", err)
+	}
+	if err := validateTaskWaitJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode TaskWait JSON: %w", err)
+	}
+	var body *jsonTaskWaitTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode TaskWait JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode TaskWait JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode TaskWait JSON after first value: %w", err)
+	}
+	if err := validatejsonTaskWaitTransport(body); err != nil {
+		return out, fmt.Errorf("validate TaskWait JSON: %w", err)
+	}
+	{
+		out = &TaskWait{
+			TaskID: *body.TaskID,
+		}
+		if body.PollIntervalMs != nil {
+			pollIntervalMs := int64(*body.PollIntervalMs)
+			out.PollIntervalMs = &pollIntervalMs
+		}
+	}
+	return out, nil
+}
+
+func decodeHostRequestTransportToHostRequest(v *jsonHostRequestTransport) *HostRequest {
+	res := &HostRequest{
+		Method: *v.Method,
+		Params: v.Params,
+	}
+
+	return res
+}
+
+func decodeHostRequestTransportToHostRequest2(v *jsonHostRequestTransport) *HostRequest {
+	res := &HostRequest{
+		Method: *v.Method,
+		Params: v.Params,
+	}
+
+	return res
+}
+
+func decodeHostRequestTransportToHostRequest3(v *jsonHostRequestTransport) *HostRequest {
+	res := &HostRequest{
+		Method: *v.Method,
+		Params: v.Params,
+	}
+
+	return res
+}
+
+func decodeHostRequestTransportToHostRequest4(v *jsonHostRequestTransport) *HostRequest {
+	res := &HostRequest{
+		Method: *v.Method,
+		Params: v.Params,
+	}
+
+	return res
+}
+
 func decodeInputContinuationTransportToInputContinuation(v *jsonInputContinuationTransport) *InputContinuation {
 	res := &InputContinuation{
 		State: v.State,
@@ -637,6 +1523,25 @@ func decodeInputContinuationTransportToInputContinuation(v *jsonInputContinuatio
 	return res
 }
 
+func decodePendingInputTransportToPendingInput(v *jsonPendingInputTransport) *PendingInput {
+	res := &PendingInput{
+		State: v.State,
+	}
+	if v.Requests != nil {
+		res.Requests = make(map[string]*HostRequest, len(v.Requests))
+		for key, val := range v.Requests {
+			tk := key
+			if val == nil {
+				res.Requests[tk] = nil
+				continue
+			}
+			res.Requests[tk] = decodeHostRequestTransportToHostRequest(val)
+		}
+	}
+
+	return res
+}
+
 func decodeTaskAnswersTransportToTaskAnswers(v *jsonTaskAnswersTransport) *TaskAnswers {
 	res := &TaskAnswers{
 		TaskID: *v.TaskID,
@@ -646,6 +1551,75 @@ func decodeTaskAnswersTransportToTaskAnswers(v *jsonTaskAnswersTransport) *TaskA
 		tk := key
 		tv := val
 		res.Responses[tk] = tv
+	}
+
+	return res
+}
+
+func decodeTaskInputTransportToTaskInput(v *jsonTaskInputTransport) *TaskInput {
+	res := &TaskInput{
+		TaskID: *v.TaskID,
+	}
+	if v.PollIntervalMs != nil {
+		pollIntervalMs := int64(*v.PollIntervalMs)
+		res.PollIntervalMs = &pollIntervalMs
+	}
+	res.Requests = make(map[string]*HostRequest, len(v.Requests))
+	for key, val := range v.Requests {
+		tk := key
+		if val == nil {
+			res.Requests[tk] = nil
+			continue
+		}
+		res.Requests[tk] = decodeHostRequestTransportToHostRequest2(val)
+	}
+
+	return res
+}
+
+func decodeTaskWaitTransportToTaskWait(v *jsonTaskWaitTransport) *TaskWait {
+	res := &TaskWait{
+		TaskID: *v.TaskID,
+	}
+	if v.PollIntervalMs != nil {
+		pollIntervalMs := int64(*v.PollIntervalMs)
+		res.PollIntervalMs = &pollIntervalMs
+	}
+
+	return res
+}
+
+func encodeHostRequestToHostRequestTransport(v *HostRequest) *jsonHostRequestTransport {
+	res := &jsonHostRequestTransport{
+		Method: &v.Method,
+		Params: v.Params,
+	}
+
+	return res
+}
+
+func encodeHostRequestToHostRequestTransport2(v *HostRequest) *jsonHostRequestTransport {
+	res := &jsonHostRequestTransport{
+		Method: &v.Method,
+		Params: v.Params,
+	}
+
+	return res
+}
+
+func encodeHostRequestToHostRequestTransport3(v *HostRequest) *jsonHostRequestTransport {
+	res := &jsonHostRequestTransport{
+		Method: &v.Method,
+		Params: v.Params,
+	}
+
+	return res
+}
+
+func encodeHostRequestToHostRequestTransport4(v *HostRequest) *jsonHostRequestTransport {
+	res := &jsonHostRequestTransport{
+		Method: &v.Method,
+		Params: v.Params,
 	}
 
 	return res
@@ -667,6 +1641,25 @@ func encodeInputContinuationToInputContinuationTransport(v *InputContinuation) *
 	return res
 }
 
+func encodePendingInputToPendingInputTransport(v *PendingInput) *jsonPendingInputTransport {
+	res := &jsonPendingInputTransport{
+		State: v.State,
+	}
+	if v.Requests != nil {
+		res.Requests = make(map[string]*jsonHostRequestTransport, len(v.Requests))
+		for key, val := range v.Requests {
+			tk := key
+			if val == nil {
+				res.Requests[tk] = nil
+				continue
+			}
+			res.Requests[tk] = encodeHostRequestToHostRequestTransport(val)
+		}
+	}
+
+	return res
+}
+
 func encodeTaskAnswersToTaskAnswersTransport(v *TaskAnswers) *jsonTaskAnswersTransport {
 	res := &jsonTaskAnswersTransport{
 		TaskID: &v.TaskID,
@@ -676,6 +1669,39 @@ func encodeTaskAnswersToTaskAnswersTransport(v *TaskAnswers) *jsonTaskAnswersTra
 		tk := key
 		tv := val
 		res.Responses[tk] = tv
+	}
+
+	return res
+}
+
+func encodeTaskInputToTaskInputTransport(v *TaskInput) *jsonTaskInputTransport {
+	res := &jsonTaskInputTransport{
+		TaskID: &v.TaskID,
+	}
+	if v.PollIntervalMs != nil {
+		pollIntervalMs := pendingExecutionInt64Transport(*v.PollIntervalMs)
+		res.PollIntervalMs = &pollIntervalMs
+	}
+	res.Requests = make(map[string]*jsonHostRequestTransport, len(v.Requests))
+	for key, val := range v.Requests {
+		tk := key
+		if val == nil {
+			res.Requests[tk] = nil
+			continue
+		}
+		res.Requests[tk] = encodeHostRequestToHostRequestTransport2(val)
+	}
+
+	return res
+}
+
+func encodeTaskWaitToTaskWaitTransport(v *TaskWait) *jsonTaskWaitTransport {
+	res := &jsonTaskWaitTransport{
+		TaskID: &v.TaskID,
+	}
+	if v.PollIntervalMs != nil {
+		pollIntervalMs := pendingExecutionInt64Transport(*v.PollIntervalMs)
+		res.PollIntervalMs = &pollIntervalMs
 	}
 
 	return res
@@ -1005,6 +2031,82 @@ func validateExecutionContinuationJSONValue4(path string, value any, description
 	return nil
 }
 
+// validateHostRequestJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateHostRequestJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "method":
+			if err := validateHostRequestJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact MCP interaction method.",
+			); err != nil {
+				return err
+			}
+		case "params":
+			if err := validateHostRequestJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original JSON object describing the host interaction.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"method",
+				"params",
+			})
+		}
+	}
+	return nil
+}
+
+// validateHostRequestJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateHostRequestJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateHostRequestJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateHostRequestJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
 // validateInputContinuationJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validateInputContinuationJSONValue(path string, value any, description string) error {
 	field := path
@@ -1113,6 +2215,608 @@ func validateInputContinuationJSONValue4(path string, value any, description str
 	return nil
 }
 
+// validatePendingExecutionJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "outcome":
+			if err := validatePendingExecutionJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"outcome",
+			})
+		}
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
+		}
+	}
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "input":
+		return validatePendingExecutionJSONValue8(generatedJSONChildPath(path, "value", false), branch, "Ask the host to continue the original non-Task tool call.")
+	case "task_wait":
+		return validatePendingExecutionJSONValue14(generatedJSONChildPath(path, "value", false), branch, "Wait before observing the existing Task.")
+	case "task_input":
+		return validatePendingExecutionJSONValue4(generatedJSONChildPath(path, "value", false), branch, "Ask the host for outstanding Task answers.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
+}
+
+// validatePendingExecutionJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue8(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "requests":
+			if err := validatePendingExecutionJSONValue9(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Host questions keyed by exact server identifiers. An explicit empty object is valid.",
+			); err != nil {
+				return err
+			}
+		case "state":
+			if err := validatePendingExecutionJSONValue13(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact optional service state, including an explicitly empty string.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"requests",
+				"state",
+			})
+		}
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue9(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if typed[key] == nil {
+			continue
+		}
+		if err := validatePendingExecutionJSONValue10(
+			generatedJSONChildPath(path, key, true),
+			typed[key], description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue10(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "method":
+			if err := validatePendingExecutionJSONValue11(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact MCP interaction method.",
+			); err != nil {
+				return err
+			}
+		case "params":
+			if err := validatePendingExecutionJSONValue12(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original JSON object describing the host interaction.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"method",
+				"params",
+			})
+		}
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue11(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue12(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue13(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue14(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "poll_interval_ms":
+			if err := validatePendingExecutionJSONValue15(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Optional server guidance for the next observation in integer milliseconds; this is not a Task lifetime limit.",
+			); err != nil {
+				return err
+			}
+		case "task_id":
+			if err := validatePendingExecutionJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact server-owned Task identifier, including an empty string.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"poll_interval_ms",
+				"task_id",
+			})
+		}
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue15 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue15(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "poll_interval_ms":
+			if err := validatePendingExecutionJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Optional server guidance for observing the Task after host answers are acknowledged.",
+			); err != nil {
+				return err
+			}
+		case "requests":
+			if err := validatePendingExecutionJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Outstanding host questions keyed by exact identifiers unique over this Task's lifetime. An empty object is valid.",
+			); err != nil {
+				return err
+			}
+		case "task_id":
+			if err := validatePendingExecutionJSONValue7(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact server-owned Task identifier, including an empty string.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"poll_interval_ms",
+				"requests",
+				"task_id",
+			})
+		}
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if typed[key] == nil {
+			continue
+		}
+		if err := validatePendingExecutionJSONValue10(
+			generatedJSONChildPath(path, key, true),
+			typed[key], description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validatePendingExecutionJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingExecutionJSONValue7(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validatePendingInputJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingInputJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "requests":
+			if err := validatePendingInputJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Host questions keyed by exact server identifiers. An explicit empty object is valid.",
+			); err != nil {
+				return err
+			}
+		case "state":
+			if err := validatePendingInputJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact optional service state, including an explicitly empty string.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"requests",
+				"state",
+			})
+		}
+	}
+	return nil
+}
+
+// validatePendingInputJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingInputJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if typed[key] == nil {
+			continue
+		}
+		if err := validatePendingInputJSONValue3(
+			generatedJSONChildPath(path, key, true),
+			typed[key], description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validatePendingInputJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingInputJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "method":
+			if err := validatePendingInputJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact MCP interaction method.",
+			); err != nil {
+				return err
+			}
+		case "params":
+			if err := validatePendingInputJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original JSON object describing the host interaction.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"method",
+				"params",
+			})
+		}
+	}
+	return nil
+}
+
+// validatePendingInputJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingInputJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validatePendingInputJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingInputJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validatePendingInputJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validatePendingInputJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
 // validateTaskAnswersJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validateTaskAnswersJSONValue(path string, value any, description string) error {
 	field := path
@@ -1207,6 +2911,274 @@ func validateTaskAnswersJSONValue3(path string, value any, description string) e
 
 // validateTaskAnswersJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateTaskAnswersJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTaskInputJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTaskInputJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "poll_interval_ms":
+			if err := validateTaskInputJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Optional server guidance for observing the Task after host answers are acknowledged.",
+			); err != nil {
+				return err
+			}
+		case "requests":
+			if err := validateTaskInputJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Outstanding host questions keyed by exact identifiers unique over this Task's lifetime. An empty object is valid.",
+			); err != nil {
+				return err
+			}
+		case "task_id":
+			if err := validateTaskInputJSONValue7(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact server-owned Task identifier, including an empty string.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"poll_interval_ms",
+				"requests",
+				"task_id",
+			})
+		}
+	}
+	return nil
+}
+
+// validateTaskInputJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTaskInputJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTaskInputJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTaskInputJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if typed[key] == nil {
+			continue
+		}
+		if err := validateTaskInputJSONValue4(
+			generatedJSONChildPath(path, key, true),
+			typed[key], description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTaskInputJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTaskInputJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "method":
+			if err := validateTaskInputJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact MCP interaction method.",
+			); err != nil {
+				return err
+			}
+		case "params":
+			if err := validateTaskInputJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original JSON object describing the host interaction.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"method",
+				"params",
+			})
+		}
+	}
+	return nil
+}
+
+// validateTaskInputJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTaskInputJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTaskInputJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTaskInputJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTaskInputJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTaskInputJSONValue7(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTaskWaitJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTaskWaitJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "poll_interval_ms":
+			if err := validateTaskWaitJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Optional server guidance for the next observation in integer milliseconds; this is not a Task lifetime limit.",
+			); err != nil {
+				return err
+			}
+		case "task_id":
+			if err := validateTaskWaitJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact server-owned Task identifier, including an empty string.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"poll_interval_ms",
+				"task_id",
+			})
+		}
+	}
+	return nil
+}
+
+// validateTaskWaitJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTaskWaitJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTaskWaitJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTaskWaitJSONValue3(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1485,6 +3457,36 @@ func checkExecutionContinuationoperationTaskCancelValue(in OperationBranchTaskCa
 	return nil
 }
 
+// checkHostRequestValue checks text and cycles before conversion.
+func checkHostRequestValue(in *HostRequest) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkHostRequestHostRequestValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkHostRequestHostRequestValue checks one generated value on the active path.
+func checkHostRequestHostRequestValue(in *HostRequest, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Method)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "method", false))
+		}
+	}
+	return nil
+}
+
 // checkInputContinuationValue checks text and cycles before conversion.
 func checkInputContinuationValue(in *InputContinuation) error {
 	if in == nil {
@@ -1523,6 +3525,202 @@ func checkInputContinuationInputContinuationValue(in *InputContinuation, field s
 	return nil
 }
 
+// checkPendingExecutionValue checks text and cycles before conversion.
+func checkPendingExecutionValue(in *PendingExecution) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkPendingExecutionPendingExecutionValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkPendingExecutionPendingExecutionValue checks one generated value on the active path.
+func checkPendingExecutionPendingExecutionValue(in *PendingExecution, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if branch1, ok := in.Outcome.AsInput(); ok {
+			_ = branch1
+			if err := checkPendingExecutionPendingInputValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "outcome", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Outcome.AsTaskWait(); ok {
+			_ = branch1
+			if err := checkPendingExecutionTaskWaitValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "outcome", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Outcome.AsTaskInput(); ok {
+			_ = branch1
+			if err := checkPendingExecutionTaskInputValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "outcome", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkPendingExecutionPendingInputValue checks one generated value on the active path.
+func checkPendingExecutionPendingInputValue(in *PendingInput, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if in.State != nil {
+			if !utf8.ValidString(string(*in.State)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "state", false))
+			}
+		}
+		for key1, item1 := range in.Requests {
+			_ = item1
+			if !utf8.ValidString(string(key1)) {
+				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "requests", false))
+			}
+			if err := checkPendingExecutionHostRequestValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "requests", false), string(key1), true), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkPendingExecutionHostRequestValue checks one generated value on the active path.
+func checkPendingExecutionHostRequestValue(in *HostRequest, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Method)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "method", false))
+		}
+	}
+	return nil
+}
+
+// checkPendingExecutionTaskWaitValue checks one generated value on the active path.
+func checkPendingExecutionTaskWaitValue(in *TaskWait, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.TaskID)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "task_id", false))
+		}
+	}
+	return nil
+}
+
+// checkPendingExecutionTaskInputValue checks one generated value on the active path.
+func checkPendingExecutionTaskInputValue(in *TaskInput, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.TaskID)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "task_id", false))
+		}
+		for key1, item1 := range in.Requests {
+			_ = item1
+			if !utf8.ValidString(string(key1)) {
+				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "requests", false))
+			}
+			if err := checkPendingExecutionHostRequestValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "requests", false), string(key1), true), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkPendingInputValue checks text and cycles before conversion.
+func checkPendingInputValue(in *PendingInput) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkPendingInputPendingInputValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkPendingInputPendingInputValue checks one generated value on the active path.
+func checkPendingInputPendingInputValue(in *PendingInput, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if in.State != nil {
+			if !utf8.ValidString(string(*in.State)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "state", false))
+			}
+		}
+		for key1, item1 := range in.Requests {
+			_ = item1
+			if !utf8.ValidString(string(key1)) {
+				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "requests", false))
+			}
+			if err := checkPendingInputHostRequestValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "requests", false), string(key1), true), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkPendingInputHostRequestValue checks one generated value on the active path.
+func checkPendingInputHostRequestValue(in *HostRequest, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Method)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "method", false))
+		}
+	}
+	return nil
+}
+
 // checkTaskAnswersValue checks text and cycles before conversion.
 func checkTaskAnswersValue(in *TaskAnswers) error {
 	if in == nil {
@@ -1554,6 +3752,93 @@ func checkTaskAnswersTaskAnswersValue(in *TaskAnswers, field string, active map[
 			if !utf8.ValidString(string(key1)) {
 				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "responses", false))
 			}
+		}
+	}
+	return nil
+}
+
+// checkTaskInputValue checks text and cycles before conversion.
+func checkTaskInputValue(in *TaskInput) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkTaskInputTaskInputValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkTaskInputTaskInputValue checks one generated value on the active path.
+func checkTaskInputTaskInputValue(in *TaskInput, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.TaskID)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "task_id", false))
+		}
+		for key1, item1 := range in.Requests {
+			_ = item1
+			if !utf8.ValidString(string(key1)) {
+				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "requests", false))
+			}
+			if err := checkTaskInputHostRequestValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "requests", false), string(key1), true), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkTaskInputHostRequestValue checks one generated value on the active path.
+func checkTaskInputHostRequestValue(in *HostRequest, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Method)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "method", false))
+		}
+	}
+	return nil
+}
+
+// checkTaskWaitValue checks text and cycles before conversion.
+func checkTaskWaitValue(in *TaskWait) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkTaskWaitTaskWaitValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkTaskWaitTaskWaitValue checks one generated value on the active path.
+func checkTaskWaitTaskWaitValue(in *TaskWait, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.TaskID)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "task_id", false))
 		}
 	}
 	return nil

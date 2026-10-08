@@ -3472,3 +3472,70 @@ removed. The current synthetic suspension fixture is version 12, while version
 Final focused lint reported zero issues. A second registry generation produced
 the same SHA-256 hashes for all 22 generated files. The regenerated assistant
 executor compiled successfully; that package has no test cases.
+
+
+### One unfinished outcome and workflow-owned Task observation — 2026-10-07
+
+The current unfinished result selects ordinary input, Task waiting or Task input
+through one generated Goa union. The runtime retains immutable validated JSON
+and copied typed values. `ToolOutput.PendingExecution` and the registry's
+`pending_execution` carry that same outcome; completed result fields cannot
+accompany it. Ordinary state-only input and explicitly empty questions round-trip
+through Goa's existing `struct:tag:json` metadata with `requests,omitzero`; no
+separate state-only branch or compatibility reader is needed. Generated native
+input methods use the checked input factory, and generated MCP executors supply
+only their remote name and original specification to the shared lifecycle.
+
+This changes the current draft registry protocol from 12 to 13 and the private
+suspension schema from version 12 to version 13. Regenerate providers, consumers
+and agents, then deploy matching replicas and workers together after older work
+has drained. Version 12 remains only as a rejected fixture. Mixed versions are
+rejected. Rollback requires matching earlier workers and saved data.
+
+The ordinary workflow activity collector now owns Task observations. A creation
+acknowledgment finishes its activity before the first read. Updates finish their
+activity before a later read. Each operation advances `ExecutionSequence` while
+preserving the original arguments, specification and model tool budget. Task
+input uses the existing host-input suspension and resume path, with exact Task
+identity and acknowledged request keys saved in the private checkpoint.
+Eventually consistent observations may still repeat answered keys; the workflow
+suppresses them without asking again or resubmitting answers. Empty outstanding
+questions continue observation rather than creating a host question.
+
+A server-provided integer-millisecond polling hint applies to that Task's next
+observation. The workflow retains the exact value. A wait larger than a Go timer
+is split into successive representable segments without shortening its total.
+When guidance is absent, a one-second framework delay spaces this Task's reads;
+it is neither a retention rule nor a complete-run limit. Explicit nonpositive
+hints remain valid and use a zero-duration workflow timer. There is no live
+configuration or telemetry for this greenfield consumer; the private default is
+verified with synthetic paths rather than claimed as an external limit.
+
+Active cancellation, a deadline or another batch failure sends `tasks/cancel`
+for accepted Tasks through the same activity route using a detached workflow
+context. The workflow waits for the saved acknowledgment and performs no later
+read. That acknowledgment records cancellation intent; it does not prove that
+server effects stopped. Delivery errors remain errors rather than successful
+cleanup and are not blindly retried by the client.
+
+Focused verification includes generated presence round-trips (0.372 s), the
+simplified pending values (0.375 s), ordinary input and the shared MCP lifecycle
+(0.872 s), saved Task answers and timer segments (0.899 s), active cancellation
+and deadline cleanup alongside those Task paths (3.394 s), and actual Temporal
+ordinary/Task worker replacement (0.914 s). The Temporal Task path starts the tool
+once, sends one update, reads three observations, suppresses the repeated answered
+question and delivers one final result. These checks do not prove suspended-run
+cancellation, Task production or notification production.
+
+**Release gates remain open.** `CancelRun` currently treats a closed suspension
+as already settled, and store admission currently permits more than one successor
+of a suspended predecessor. Before advertising Tasks, the shared continuation
+contract must select either answering or cancellation through one closed action,
+and the owning store must atomically claim one successor. Task observations and
+cancellation also need a durable policy for temporary delivery failures, with
+permanent contract/authorization errors kept distinct and no replay of the
+creating tool. Suspended child runs
+must compose through that same path. Migrate every storage implementation and
+caller with the breaking contract. Generated native Task creation, full producer
+bindings and notifications also remain required, along with the other capability
+gates in this plan. Keep the pull request draft and do not release this checkpoint.

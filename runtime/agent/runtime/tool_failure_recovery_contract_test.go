@@ -106,7 +106,7 @@ func TestRuntimeOwnsCorrectCallRecoveryContext(t *testing.T) {
 				[]ToolCall{call},
 				0,
 				nil,
-				time.Time{},
+				time.Time{}, nil,
 			)
 
 			require.NoError(t, err)
@@ -408,7 +408,7 @@ func TestAutomaticContinuationCannotRequestCorrectCall(t *testing.T) {
 		plan.ToolCalls,
 		0,
 		nil,
-		time.Time{},
+		time.Time{}, nil,
 	)
 
 	require.ErrorContains(t, err, "correct-call recovery requires a model-authored call")

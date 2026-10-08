@@ -76,7 +76,7 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 					if !stateOnly {
 						input.Requests = map[string]mcp.InputRequest{requestID: {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{"choice":{"type":"string"}},"required":["choice"]}}`)}}
 					}
-					return AwaitMCPInput(input), nil
+					return AwaitMCPInput(input)
 				}
 				rt.toolsets["remote.tools"] = binding
 			}
@@ -169,7 +169,7 @@ func TestMCPActivityRetryDoesNotChangeLocalTools(t *testing.T) {
 			rt.toolsets["lookup"] = binding
 			ctx := run.Context{RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
 			wf := &testWorkflowContext{ctx: t.Context(), asyncResult: ToolOutput{Payload: []byte(`{}`)}}
-			_, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{MaxAttempts: 5}}, "test.agent", &ctx, testToolHistory(t, rt, "test.agent", ctx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "call-1", Payload: []byte(`{}`)}}, 0, nil, time.Time{})
+			_, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{MaxAttempts: 5}}, "test.agent", &ctx, testToolHistory(t, rt, "test.agent", ctx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "call-1", Payload: []byte(`{}`)}}, 0, nil, time.Time{}, nil)
 			require.NoError(t, err)
 			want := 5
 			if remote {
@@ -188,7 +188,7 @@ func TestMCPCheckpointCorrelatesParallelCalls(t *testing.T) {
 	first := ToolCall{Name: "remote.lookup", ToolCallID: "call-1", Payload: []byte(`{"key":"first"}`)}
 	second := ToolCall{Name: first.Name, ToolCallID: "call-2", Payload: []byte(`{"key":"second"}`)}
 	inputs := []*mcp.InputRequired{{RequestState: &firstState, Requests: requests}, {RequestState: &secondState, Requests: requests}}
-	checkpoint := &workflowCheckpoint{Batch: checkpointStepBatch{Calls: []ToolCall{first, second}, Records: []checkpointToolRecord{{Call: first, MCPInput: inputs[0]}, {Call: second, MCPInput: inputs[1]}}}, Pending: []checkpointPendingInput{{MCP: pendingMCPInput(first, inputs[0])}, {MCP: pendingMCPInput(second, inputs[1])}}}
+	checkpoint := &workflowCheckpoint{Batch: checkpointStepBatch{Calls: []ToolCall{first, second}, Records: []checkpointToolRecord{{Call: first, MCPPending: mustPendingInput(t, inputs[0])}, {Call: second, MCPPending: mustPendingInput(t, inputs[1])}}}, Pending: []checkpointPendingInput{{MCP: pendingMCPInput(first, mustPendingInput(t, inputs[0]))}, {MCP: pendingMCPInput(second, mustPendingInput(t, inputs[1]))}}}
 	require.NoError(t, validateCheckpointMCPInputs(checkpoint))
 	for _, mutate := range []func(*workflowCheckpoint){
 		func(c *workflowCheckpoint) { c.Pending[0].MCP.ToolCallID = "call-2" },
@@ -224,7 +224,7 @@ func TestTextOnlyMCPInputBoundaries(t *testing.T) {
 				calls := 0
 				require.NoError(t, rt.RegisterToolset(ToolsetRegistration{Name: "records", Specs: []tools.ToolSpec{spec}, Execute: func(context.Context, *ToolCall) (*ToolExecutionResult, error) {
 					calls++
-					return AwaitMCPInput(input), nil
+					return AwaitMCPInput(input)
 				}}))
 				output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{ToolName: genrecords.Read, ToolsetName: "records", RunID: "run", ToolCallID: "read", Payload: []byte(`{"query":"active"}`), TextOnly: restricted})
 				assert.Equal(t, 1, calls)
@@ -234,17 +234,17 @@ func TestTextOnlyMCPInputBoundaries(t *testing.T) {
 					assert.True(t, engine.IsActivityErrorNonRetryable(err))
 				} else {
 					require.NoError(t, err)
-					assert.Equal(t, input, output.MCPInput)
+					assert.Equal(t, input, pendingHostInput(output.PendingExecution))
 				}
 				call := ToolCall{Name: genrecords.Read, ToolCallID: "read", TextOnly: restricted}
 				execution := &toolBatchExec{r: rt}
-				outcome, err := execution.executionFromActivityOutput(t.Context(), futureInfo{call: call}, &ToolOutput{MCPInput: input}, 0)
+				outcome, err := execution.executionFromActivityOutput(t.Context(), futureInfo{call: call}, &ToolOutput{PendingExecution: mustPendingInput(t, input)}, 0)
 				if restricted {
 					assert.Nil(t, outcome)
 					require.ErrorContains(t, err, "text-only tools cannot request MCP host input")
 				} else {
 					require.NoError(t, err)
-					assert.Equal(t, input, outcome.mcpInput)
+					assert.Equal(t, input, pendingHostInput(outcome.mcpPending))
 					assert.Equal(t, "read", outcome.mcpToolCallID)
 				}
 			})
@@ -284,12 +284,20 @@ func TestTextOnlyCheckpointCannotRetainMCPInput(t *testing.T) {
 			case "policy":
 				checkpoint.Policy = &PolicyOverrides{TextOnly: true}
 			}
-			checkpoint.Batch = checkpointStepBatch{Calls: []ToolCall{call}, Records: []checkpointToolRecord{{Call: call, MCPInput: input}}}
-			checkpoint.Pending = []checkpointPendingInput{{MCP: pendingMCPInput(call, input)}}
+			checkpoint.Batch = checkpointStepBatch{Calls: []ToolCall{call}, Records: []checkpointToolRecord{{Call: call, MCPPending: mustPendingInput(t, input)}}}
+			checkpoint.Pending = []checkpointPendingInput{{MCP: pendingMCPInput(call, mustPendingInput(t, input))}}
 			require.ErrorContains(t, validateCheckpointMCPInputs(checkpoint), "text-only checkpoint cannot contain MCP host input")
-			checkpoint.Batch.Records[0].MCPInput = nil
+			checkpoint.Batch.Records[0].MCPPending = nil
 			checkpoint.Pending = nil
 			require.NoError(t, validateCheckpointMCPInputs(checkpoint))
 		})
 	}
+}
+
+// mustPendingInput constructs a validated saved value for runtime boundary tests.
+func mustPendingInput(t *testing.T, input *mcp.InputRequired) *api.PendingExecution {
+	t.Helper()
+	pending, err := tooloperation.NewPendingInput(input)
+	require.NoError(t, err)
+	return pending
 }

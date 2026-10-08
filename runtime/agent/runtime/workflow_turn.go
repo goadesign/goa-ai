@@ -77,7 +77,7 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 	}
 	batch.budgetCost += program.budgetCost
 	l.r.logger.Info(ctx, "Executing allowed tool calls", "count", len(allowed))
-	outcomes, timedOut, executionErr := l.executeImmediateToolCalls(program.immediate, result.ExpectedChildren)
+	outcomes, timedOut, executionErr := l.executeImmediateToolCalls(program.immediate, result.ExpectedChildren, nil)
 	records, resultErr := stepToolRecordsAfterExecution(program.immediate, outcomes, executionErr)
 	batch.records = append(batch.records, records...)
 	batch.timedOut = batch.timedOut || timedOut
@@ -90,8 +90,8 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 
 	toolClarifications := toolClarificationsFromRecords(records)
 	for i := range records {
-		if records[i].mcpInput != nil {
-			batch.pending = append(batch.pending, checkpointPendingInput{MCP: pendingMCPInput(records[i].call, records[i].mcpInput)})
+		if records[i].mcpPending != nil {
+			batch.pending = append(batch.pending, checkpointPendingInput{MCP: pendingMCPInput(records[i].call, records[i].mcpPending)})
 			continue
 		}
 		if records[i].childSuspension == nil {
@@ -317,7 +317,7 @@ func (r *Runtime) validateTerminalToolClarifications(records []stepToolRecord) e
 
 // executeImmediateToolCalls applies each call's deadline class independently:
 // ordinary tools consume Budget, while bookkeeping obligations may use Hard.
-func (l *workflowLoop) executeImmediateToolCalls(calls []ToolCall, expectedChildren int) ([]*ToolExecutionResult, bool, error) {
+func (l *workflowLoop) executeImmediateToolCalls(calls []ToolCall, expectedChildren int, taskStates map[string]*taskExecution) ([]*ToolExecutionResult, bool, error) {
 	budgeted := make([]ToolCall, 0, len(calls))
 	bookkeeping := make([]ToolCall, 0, len(calls))
 	for _, call := range calls {
@@ -331,12 +331,14 @@ func (l *workflowLoop) executeImmediateToolCalls(calls []ToolCall, expectedChild
 		budgeted,
 		expectedChildren,
 		l.deadlines.Budget,
+		taskStates,
 	)
 	executionErr := err
 	bookkeepingOutcomes, hardTimedOut, err := l.executeImmediateToolClass(
 		bookkeeping,
 		expectedChildren,
 		l.deadlines.Hard,
+		taskStates,
 	)
 	if err != nil {
 		executionErr = errors.Join(executionErr, err)
@@ -348,6 +350,7 @@ func (l *workflowLoop) executeImmediateToolClass(
 	calls []ToolCall,
 	expectedChildren int,
 	finishBy time.Time,
+	taskStates map[string]*taskExecution,
 ) ([]*ToolExecutionResult, bool, error) {
 	if len(calls) == 0 {
 		return nil, false, nil
@@ -364,6 +367,7 @@ func (l *workflowLoop) executeImmediateToolClass(
 		grouped,
 		timeouts,
 		l.toolOpts,
+		taskStates,
 	)
 }
 
@@ -405,12 +409,14 @@ func (l *workflowLoop) resolveExpiredConfirmations(
 		expiredBudgeted,
 		expectedChildren,
 		l.deadlines.Budget,
+		nil,
 	)
 	executionErr := err
 	bookkeepingOutcomes, _, err := l.executeImmediateToolClass(
 		expiredBookkeeping,
 		expectedChildren,
 		l.deadlines.Hard,
+		nil,
 	)
 	if err != nil {
 		executionErr = errors.Join(executionErr, err)

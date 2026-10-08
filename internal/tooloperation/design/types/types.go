@@ -34,3 +34,54 @@ var ExecutionContinuation = Type("ExecutionContinuation", func() {
 	})
 	Required("operation")
 })
+
+// HostRequest retains one exact server request until the host answers it.
+var HostRequest = Type("HostRequest", func() {
+	Meta("struct:pkg:path", "tooloperations")
+	Description("One server-authored host interaction. Its parameter bytes remain exact; the MCP interaction validator checks their content before admission.")
+	Field(1, "method", String, "Exact MCP interaction method.")
+	Field(2, "params", Bytes, "Original JSON object describing the host interaction.")
+	Required("method", "params")
+})
+
+// PendingInput retains ordinary multi-round input without a Task identity.
+var PendingInput = Type("PendingInput", func() {
+	Meta("struct:pkg:path", "tooloperations")
+	Description("Host questions and optional service state for one ordinary unfinished tool call.")
+	Field(1, "state", String, "Exact optional service state, including an explicitly empty string.")
+	Field(2, "requests", MapOf(String, HostRequest), "Host questions keyed by exact server identifiers. An explicit empty object is valid.", func() {
+		Meta("struct:tag:json", "requests,omitzero")
+	})
+})
+
+// TaskWait identifies the Task whose next observation the workflow must read.
+var TaskWait = Type("TaskWait", func() {
+	Meta("struct:pkg:path", "tooloperations")
+	Description("An existing Task to observe after the accepted creation, a working observation or an acknowledged update. The saved operation identifies which event occurred.")
+	Field(1, "task_id", String, "Exact server-owned Task identifier, including an empty string.")
+	Field(2, "poll_interval_ms", Int64, "Optional server guidance for the next observation in integer milliseconds; this is not a Task lifetime limit.")
+	Required("task_id")
+})
+
+// TaskInput retains questions that must be answered through tasks/update.
+var TaskInput = Type("TaskInput", func() {
+	Meta("struct:pkg:path", "tooloperations")
+	Description("Outstanding host questions for one existing Task. Questions are answered with tasks/update rather than repeating the original tool call.")
+	Field(1, "task_id", String, "Exact server-owned Task identifier, including an empty string.")
+	Field(2, "poll_interval_ms", Int64, "Optional server guidance for observing the Task after host answers are acknowledged.")
+	Field(3, "requests", MapOf(String, HostRequest), "Outstanding host questions keyed by exact identifiers unique over this Task's lifetime. An empty object is valid.")
+	Required("task_id", "requests")
+})
+
+// PendingExecution selects the next action for one unfinished tool invocation.
+var PendingExecution = Type("PendingExecution", func() {
+	Meta("struct:pkg:path", "tooloperations")
+	Meta("type:generate:force")
+	Description("Exactly one unfinished execution branch. Ordinary input continues the tool call; Task waiting reads an existing Task; Task input submits host answers to that Task.")
+	OneOf("outcome", func() {
+		Field(1, "input", PendingInput, "Ask the host to continue the original non-Task tool call.")
+		Field(2, "task_wait", TaskWait, "Wait before observing the existing Task.")
+		Field(3, "task_input", TaskInput, "Ask the host for outstanding Task answers.")
+	})
+	Required("outcome")
+})

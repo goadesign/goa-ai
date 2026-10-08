@@ -34,7 +34,9 @@ func TestExecutorRequiredInputReachesActivityWithoutCompletedDecoding(t *testing
 				decoded++
 				return decodeCompleted(raw)
 			}
-			stream := &fakeStream{t: t, requiredStart: "0", events: []*streaming.Event{{ID: "1-0", EventName: toolregistry.ResultEventKey, Payload: mustJSON(t, toolregistry.ToolResultMessage{RegistrationToken: testRegistrationTokenA, ToolUseID: "input-round", InputRequired: pending})}}}
+			message, err := toolregistry.NewInputRequiredResult(testRegistrationTokenA, "input-round", pending)
+			require.NoError(t, err)
+			stream := &fakeStream{t: t, requiredStart: "0", events: []*streaming.Event{{ID: "1-0", EventName: toolregistry.ResultEventKey, Payload: mustJSON(t, message)}}}
 			var delivered toolregistry.ToolCallMeta
 			exec := newExecutor(t, fakeRegistryClient{toolUseID: "input-round", meta: &delivered}, fakePulseClient{streamID: toolregistry.ResultStreamID("input-round"), stream: stream}, "records", fakeSpecs{spec: &spec})
 			rt := agentsruntime.New(inmem.New())
@@ -46,13 +48,15 @@ func TestExecutorRequiredInputReachesActivityWithoutCompletedDecoding(t *testing
 			require.NoError(t, err)
 			require.NotNil(t, out)
 			if textOnly {
-				assert.Nil(t, out.MCPInput)
+				assert.Nil(t, out.PendingExecution)
 				require.NotNil(t, out.Failure)
 				assert.Equal(t, planner.FailureMalformedResult, out.Failure.Kind)
 				assert.Equal(t, planner.RecoveryFinish, out.Failure.Recovery.Action)
 			} else {
 				require.NotNil(t, out)
-				assert.Equal(t, pending, out.MCPInput)
+				received, ok := out.PendingExecution.AsInput()
+				require.True(t, ok)
+				assert.Equal(t, pending, received)
 				assert.Empty(t, out.Payload)
 				assert.Nil(t, out.Failure)
 			}

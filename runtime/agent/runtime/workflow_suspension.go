@@ -26,7 +26,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/mcp"
 )
 
 type (
@@ -108,7 +107,8 @@ type (
 		Duration         time.Duration
 		Clarification    *ToolClarification
 		ChildSuspension  *api.RunSuspension
-		MCPInput         *mcp.InputRequired
+		MCPPending       *api.PendingExecution
+		Task             *taskExecution
 		RequiresResume   bool
 	}
 
@@ -252,7 +252,7 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			return nil, nil, nil, err
 		}
 		var encodedResult *api.ToolEvent
-		if record.childSuspension == nil && record.mcpInput == nil {
+		if record.childSuspension == nil && record.mcpPending == nil {
 			encoded, err := encodeToolEvent(record.result, record.call, l.r.toolSpec)
 			if err != nil {
 				return nil, nil, nil, err
@@ -274,7 +274,8 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			Duration:         record.duration,
 			Clarification:    record.clarification,
 			ChildSuspension:  record.childSuspension,
-			MCPInput:         record.mcpInput,
+			MCPPending:       record.mcpPending,
+			Task:             cloneTaskExecution(record.task),
 			RequiresResume:   record.requiresResume,
 		})
 	}
@@ -724,7 +725,7 @@ func (r *Runtime) restoreCheckpointBatch(checkpoint checkpointStepBatch, input *
 	records := make([]stepToolRecord, 0, len(checkpoint.Records))
 	for _, record := range checkpoint.Records {
 		var decoded *planner.ToolResult
-		if record.ChildSuspension == nil && record.MCPInput == nil {
+		if record.ChildSuspension == nil && record.MCPPending == nil {
 			var err error
 			decoded, err = decodeCheckpointToolEvent(record.Result, record.Call, r.toolSpec)
 			if err != nil {
@@ -748,7 +749,8 @@ func (r *Runtime) restoreCheckpointBatch(checkpoint checkpointStepBatch, input *
 			duration:         record.Duration,
 			clarification:    record.Clarification,
 			childSuspension:  record.ChildSuspension,
-			mcpInput:         record.MCPInput,
+			mcpPending:       record.MCPPending,
+			task:             cloneTaskExecution(record.Task),
 			requiresResume:   record.RequiresResume,
 		})
 	}

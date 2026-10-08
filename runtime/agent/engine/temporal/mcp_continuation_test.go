@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -52,11 +51,22 @@ func (p *mcpInputPlanner) PlanResume(_ context.Context, input *planner.PlanResum
 }
 
 func TestMCPContinuationThroughTemporalWorkers(t *testing.T) {
+	testMCPContinuationThroughTemporalWorkers(t, false)
+}
+
+func TestTaskContinuationThroughTemporalWorkers(t *testing.T) {
+	testMCPContinuationThroughTemporalWorkers(t, true)
+}
+
+// The same prepared-start path restores ordinary input and Task input. Each
+// successor uses a new worker, the original result codec and the stored history.
+func testMCPContinuationThroughTemporalWorkers(t *testing.T, taskMode bool) {
 	store := storageinmem.New()
 	_, err := store.CreateSession(t.Context(), "mcp-session", time.Now().UTC())
 	require.NoError(t, err)
 	plan := &mcpInputPlanner{}
 	var calls atomic.Int32
+	var observations, updates atomic.Int32
 	var idMu sync.Mutex
 	var ids []string
 	peer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -83,6 +93,10 @@ func TestMCPContinuationThroughTemporalWorkers(t *testing.T) {
 			assert.JSONEq(t, `{"query":"original"}`, string(message.Params["arguments"]))
 			if calls.Add(1) == 1 {
 				assert.NotContains(t, message.Params, "requestState")
+				if taskMode {
+					result = map[string]any{"resultType": "task", "taskId": "", "status": "working", "createdAt": "2026-10-07T00:00:00Z", "lastUpdatedAt": "2026-10-07T00:00:00Z", "ttlMs": nil, "pollIntervalMs": 1}
+					break
+				}
 				result = map[string]any{"resultType": "input_required", "requestState": "opaque-state", "inputRequests": map[string]mcp.InputRequest{
 					"choice": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{"choice":{"type":"string"}},"required":["choice"]}}`)},
 				}}
@@ -91,6 +105,26 @@ func TestMCPContinuationThroughTemporalWorkers(t *testing.T) {
 				assert.JSONEq(t, `{"choice":{"action":"accept","content":{"choice":"yes"}}}`, string(message.Params["inputResponses"]))
 				result = map[string]any{"resultType": "complete", "content": []any{}, "structuredContent": json.RawMessage(`{"answer":42}`)}
 			}
+		case "tasks/get":
+			assert.True(t, taskMode)
+			assert.JSONEq(t, `""`, string(message.Params["taskId"]))
+			result = map[string]any{"resultType": "complete", "taskId": "", "createdAt": "2026-10-07T00:00:00Z", "lastUpdatedAt": "2026-10-07T00:00:00Z", "ttlMs": nil, "pollIntervalMs": 1}
+			observed := observations.Add(1)
+			if observed <= 2 {
+				result.(map[string]any)["status"] = "input_required"
+				result.(map[string]any)["inputRequests"] = map[string]mcp.InputRequest{
+					"choice": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{"choice":{"type":"string"}},"required":["choice"]}}`)},
+				}
+			} else {
+				result.(map[string]any)["status"] = "completed"
+				result.(map[string]any)["result"] = map[string]any{"resultType": "complete", "content": []any{}, "structuredContent": json.RawMessage(`{"answer":42}`)}
+			}
+		case "tasks/update":
+			assert.True(t, taskMode)
+			assert.JSONEq(t, `""`, string(message.Params["taskId"]))
+			assert.JSONEq(t, `{"choice":{"action":"accept","content":{"choice":"yes"}}}`, string(message.Params["inputResponses"]))
+			updates.Add(1)
+			result = map[string]any{"resultType": "complete"}
 		default:
 			t.Errorf("unexpected remote method %q", message.Method)
 			return
@@ -119,26 +153,10 @@ func TestMCPContinuationThroughTemporalWorkers(t *testing.T) {
 		require.NoError(t, rt.RegisterToolset(agentruntime.ToolsetRegistration{
 			Name: "remote", Specs: []tools.ToolSpec{spec}, ActivityRetryPolicy: &engine.RetryPolicy{MaxAttempts: 1},
 			Execute: func(ctx context.Context, call *agentruntime.ToolCall) (*agentruntime.ToolExecutionResult, error) {
-				var inputContinuation *mcp.CallContinuation
-				if call.ExecutionContinuation != nil {
-					var ok bool
-					inputContinuation, ok = call.ExecutionContinuation.AsInput()
-					if !ok {
-						return nil, fmt.Errorf("unexpected Task continuation")
-					}
+				if taskMode {
+					ctx = mcp.WithTaskSupport(ctx)
 				}
-				response, err := remote.CallTool(ctx, mcp.CallRequest{Tool: "lookup", Payload: json.RawMessage(call.Payload), Continuation: inputContinuation})
-				if err != nil {
-					return nil, err
-				}
-				if response.InputRequired != nil {
-					return agentruntime.AwaitMCPInput(response.InputRequired), nil
-				}
-				value, err := spec.Result.Codec.FromJSON(response.StructuredContent)
-				if err != nil {
-					return nil, err
-				}
-				return agentruntime.Executed(&planner.ToolResult{Name: call.Name, Result: value}), nil
+				return agentruntime.ExecuteMCPTool(ctx, remote, call, "lookup", spec)
 			},
 		}))
 		require.NoError(t, rt.RegisterAgent(t.Context(), agentruntime.AgentRegistration{
@@ -189,12 +207,22 @@ func TestMCPContinuationThroughTemporalWorkers(t *testing.T) {
 		}
 	}
 	idMu.Lock()
-	assert.Len(t, ids, 2)
-	if len(ids) == 2 {
-		assert.NotEqual(t, ids[0], ids[1], "a new worker must use a new JSON-RPC ID")
+	if taskMode {
+		assert.Len(t, ids, 1, "Task observations must not repeat tools/call")
+	} else {
+		assert.Len(t, ids, 2)
+		if len(ids) == 2 {
+			assert.NotEqual(t, ids[0], ids[1], "a new worker must use a new JSON-RPC ID")
+		}
 	}
 	idMu.Unlock()
-	assert.EqualValues(t, 2, calls.Load())
+	if taskMode {
+		assert.EqualValues(t, 1, calls.Load())
+		assert.EqualValues(t, 3, observations.Load())
+		assert.EqualValues(t, 1, updates.Load())
+	} else {
+		assert.EqualValues(t, 2, calls.Load())
+	}
 	assert.EqualValues(t, 1, plan.starts.Load())
 	assert.EqualValues(t, 1, plan.resumes.Load())
 }

@@ -50,6 +50,13 @@ import (
  "goa.design/goa-ai/runtime/toolregistry"
 )
 
+func requiredInput(t *testing.T,result toolregistry.ToolResultMessage) *mcp.InputRequired {
+ t.Helper()
+ require.NotNil(t,result.PendingExecution)
+ input,ok:=result.PendingExecution.AsInput()
+ require.True(t,ok)
+ return input
+}
 func executionInput(input *mcp.CallContinuation) *api.ExecutionContinuation {
  if input==nil {return nil}
  answers:=make(map[string][]byte,len(input.InputResponses))
@@ -150,17 +157,17 @@ func TestRegistryProviderInputRounds(t *testing.T) {
  msg:=toolregistry.ToolCallMessage{RegistrationToken:"registration",ToolUseID:toolregistry.DeriveToolUseID("run","call",0),Tool:genlookup.Read,Payload:[]byte("{\"target\":\"form\"}"),Meta:&toolregistry.ToolCallMeta{RunID:"run",SessionID:"session",ToolCallID:"call"}}
  pending,err:=provider.HandleToolCall(toolregistry.WithToolUseID(t.Context(),msg.ToolUseID),msg)
  require.NoError(t,err)
- require.NotNil(t,pending.InputRequired)
+ require.NotNil(t,requiredInput(t,pending))
  assert.Empty(t,pending.Result)
- require.NoError(t,pending.InputRequired.Validate(mcp.InputSupport{Form:true}))
- assert.Equal(t,"",*pending.InputRequired.RequestState)
- require.NoError(t,pending.InputRequired.ValidateResponses(hostAnswer("accept").InputResponses))
+ require.NoError(t,requiredInput(t,pending).Validate(mcp.InputSupport{Form:true}))
+ assert.Equal(t,"",*requiredInput(t,pending).RequestState)
+ require.NoError(t,requiredInput(t,pending).ValidateResponses(hostAnswer("accept").InputResponses))
  msg.Meta.ExecutionSequence=1
  msg.Meta.ExecutionContinuation=executionInput(hostAnswer("accept"))
  msg.ToolUseID=toolregistry.DeriveToolUseID("run","call",1)
  completed,err:=provider.HandleToolCall(toolregistry.WithToolUseID(t.Context(),msg.ToolUseID),msg)
  require.NoError(t,err)
- assert.Nil(t,completed.InputRequired)
+ assert.Nil(t,completed.PendingExecution)
  value,err:=genlookup.ReadResultCodec().FromJSON(completed.Result)
  require.NoError(t,err)
  assert.Equal(t,"accepted",value.Label)
@@ -185,12 +192,12 @@ func TestNativeURLConsent(t *testing.T) {
    msg:=toolregistry.ToolCallMessage{ToolUseID:toolregistry.DeriveToolUseID("run","url",0),Tool:genlookup.Read,Payload:[]byte("{\"target\":\"url\"}"),Meta:&toolregistry.ToolCallMeta{SessionID:"session"}}
    pending,err:=provider.HandleToolCall(toolregistry.WithToolUseID(t.Context(),msg.ToolUseID),msg)
    require.NoError(t,err)
-   require.NotNil(t,pending.InputRequired)
-   require.NoError(t,pending.InputRequired.Validate(mcp.InputSupport{URL:true}))
+   require.NotNil(t,requiredInput(t,pending))
+   require.NoError(t,requiredInput(t,pending).Validate(mcp.InputSupport{URL:true}))
    answer:=json.RawMessage("{\"action\":\""+action+"\"}")
    responses:=map[string]json.RawMessage{"payment":answer}
-   require.NoError(t,pending.InputRequired.ValidateResponses(responses))
-   input:=&mcp.CallContinuation{RequestState:pending.InputRequired.RequestState,InputResponses:responses}
+   require.NoError(t,requiredInput(t,pending).ValidateResponses(responses))
+   input:=&mcp.CallContinuation{RequestState:requiredInput(t,pending).RequestState,InputResponses:responses}
    executor:=genexecutor.NewScribeLookupExec(genexecutor.WithClient(genrecords.NewClient(genrecords.NewEndpoints(service).Read)))
    complete,err:=executor.Execute(t.Context(),&runtime.ToolCallMeta{SessionID:"session"},&runtime.ToolCall{Name:"lookup.read",Payload:rawjson.Message(msg.Payload),ExecutionSequence:1,ExecutionContinuation:executionInput(input)})
    require.NoError(t,err)
@@ -252,6 +259,13 @@ import (
  "goa.design/goa-ai/runtime/toolregistry"
 )
 
+func requiredInput(t *testing.T,result toolregistry.ToolResultMessage) *mcp.InputRequired {
+ t.Helper()
+ require.NotNil(t,result.PendingExecution)
+ input,ok:=result.PendingExecution.AsInput()
+ require.True(t,ok)
+ return input
+}
 func executionInput(input *mcp.CallContinuation) *api.ExecutionContinuation {
  if input==nil {return nil}
  answers:=make(map[string][]byte,len(input.InputResponses))
@@ -306,10 +320,10 @@ func TestRegistrySelectedView(t *testing.T) {
  msg:=toolregistry.ToolCallMessage{RegistrationToken:"registration",ToolUseID:toolregistry.DeriveToolUseID("run","call",0),Tool:genlookup.ReadProjected,Payload:[]byte("{\"target\":\"form\"}"),Meta:&toolregistry.ToolCallMeta{SessionID:"session"}}
  pending,err:=provider.HandleToolCall(toolregistry.WithToolUseID(t.Context(),msg.ToolUseID),msg)
  require.NoError(t,err)
- require.NotNil(t,pending.InputRequired)
- require.NoError(t,pending.InputRequired.Validate(mcp.InputSupport{Form:true}))
+ require.NotNil(t,requiredInput(t,pending))
+ require.NoError(t,requiredInput(t,pending).Validate(mcp.InputSupport{Form:true}))
  msg.Meta.ExecutionSequence=1
- msg.Meta.ExecutionContinuation=executionInput(&mcp.CallContinuation{RequestState:pending.InputRequired.RequestState,InputResponses:map[string]json.RawMessage{"profile":json.RawMessage("{\"action\":\"accept\",\"content\":{\"label\":\"value\"}}")}})
+ msg.Meta.ExecutionContinuation=executionInput(&mcp.CallContinuation{RequestState:requiredInput(t,pending).RequestState,InputResponses:map[string]json.RawMessage{"profile":json.RawMessage("{\"action\":\"accept\",\"content\":{\"label\":\"value\"}}")}})
  msg.ToolUseID=toolregistry.DeriveToolUseID("run","call",1)
  complete,err:=provider.HandleToolCall(toolregistry.WithToolUseID(t.Context(),msg.ToolUseID),msg)
  require.NoError(t,err)

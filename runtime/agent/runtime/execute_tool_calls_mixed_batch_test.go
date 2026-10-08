@@ -93,7 +93,7 @@ func TestExecuteToolCalls_MixedBatch_DoesNotRegressOrderingWithinCategories(t *t
 	done := make(chan out, 1)
 	historyEndID := testToolHistory(t, rt, agent.Ident("parent.agent"), *(runCtx), nil)
 	go func() {
-		results, timedOut, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, historyEndID, calls, 0, nil, time.Time{})
+		results, timedOut, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, agent.Ident("parent.agent"), runCtx, historyEndID, calls, 0, nil, time.Time{}, nil)
 		done <- out{results: results, timedOut: timedOut, err: err}
 	}()
 
@@ -168,7 +168,7 @@ func TestExecuteToolCalls_InlineCancellationCancelsRun(t *testing.T) {
 		[]ToolCall{call},
 		0,
 		nil,
-		time.Time{},
+		time.Time{}, nil,
 	)
 
 	require.Error(t, err)
@@ -238,7 +238,7 @@ func TestExecuteToolCalls_AgentChildCancellationCancelsRun(t *testing.T) {
 			[]ToolCall{call},
 			0,
 			nil,
-			time.Time{},
+			time.Time{}, nil,
 		)
 		done <- result{results: results, err: err}
 	}()

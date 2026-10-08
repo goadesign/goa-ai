@@ -8,201 +8,27 @@ package core
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	gencore "goa.design/goa-ai/gen/calc/toolsets/core"
 	"goa.design/goa-ai/runtime/agent/planner"
 	runtime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/tools"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
-	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // NewMCPExecutor returns a ToolCallExecutor that
 // sends tool calls through MCP and uses generated JSON converters for results.
 func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 	return runtime.ToolCallExecutorFunc(func(ctx context.Context, _ *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
-		if call.TextOnly {
-			ctx = mcpruntime.WithoutHostInput(ctx)
-		}
-		if err := toolregistry.ValidateExecution(call.ExecutionSequence, call.ExecutionContinuation, call.TextOnly); err != nil {
-			return runtime.Executed(failedMCPToolResult(call.Name, planner.FailureInvalidCall, planner.RecoveryFinish, err)), nil
-		}
-		var inputContinuation *mcpruntime.CallContinuation
-		if call.ExecutionContinuation != nil {
-			var ok bool
-			inputContinuation, ok = call.ExecutionContinuation.AsInput()
-			if !ok {
-				return runtime.Executed(failedMCPToolResult(call.Name, planner.FailureInvalidCall, planner.RecoveryFinish, errors.New("MCP Task execution is not enabled"))), nil
-			}
-		}
 		switch call.Name {
 		case gencore.Add:
-			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
-				Tool:         "add",
-				Payload:      json.RawMessage(call.Payload),
-				Continuation: inputContinuation,
-			})
-			if err != nil {
-				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
-			}
-			if resp.InputRequired != nil {
-				return runtime.AwaitMCPInput(resp.InputRequired), nil
-			}
-			if err := resp.Content.Validate(); err != nil {
-				return runtime.Executed(failedMCPToolResult(
-					call.Name,
-					planner.FailureMalformedResult,
-					planner.RecoveryFinish,
-					mcpruntime.NewMalformedResponseError(err),
-				)), nil
-			}
-			var value any
-			if len(resp.StructuredContent) == 0 {
-				return runtime.Executed(failedMCPToolResult(
-					call.Name,
-					planner.FailureMalformedResult,
-					planner.RecoveryFinish,
-					mcpruntime.NewMalformedResponseError(errors.New("MCP response is missing structured content")),
-				)), nil
-			}
-			v, err := gencore.SpecAdd().Result.Codec.FromJSON(resp.StructuredContent)
-			if err != nil {
-				return runtime.Executed(failedMCPToolResult(
-					call.Name,
-					planner.FailureMalformedResult,
-					planner.RecoveryFinish,
-					err,
-				)), nil
-			}
-			value = v
-			return runtime.Executed(&planner.ToolResult{
-				Name:   call.Name,
-				Result: value,
-				Blocks: resp.Content.Clone(),
-			}), nil
+			return runtime.ExecuteMCPTool(ctx, caller, call, "add", gencore.SpecAdd())
 		case gencore.Describe:
-			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
-				Tool:         "describe",
-				Payload:      json.RawMessage(call.Payload),
-				Continuation: inputContinuation,
-			})
-			if err != nil {
-				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
-			}
-			if resp.InputRequired != nil {
-				return runtime.AwaitMCPInput(resp.InputRequired), nil
-			}
-			if err := resp.Content.Validate(); err != nil {
-				return runtime.Executed(failedMCPToolResult(
-					call.Name,
-					planner.FailureMalformedResult,
-					planner.RecoveryFinish,
-					mcpruntime.NewMalformedResponseError(err),
-				)), nil
-			}
-			var value any
-			if len(resp.StructuredContent) == 0 {
-				return runtime.Executed(failedMCPToolResult(
-					call.Name,
-					planner.FailureMalformedResult,
-					planner.RecoveryFinish,
-					mcpruntime.NewMalformedResponseError(errors.New("MCP response is missing structured content")),
-				)), nil
-			}
-			v, err := gencore.SpecDescribe().Result.Codec.FromJSON(resp.StructuredContent)
-			if err != nil {
-				return runtime.Executed(failedMCPToolResult(
-					call.Name,
-					planner.FailureMalformedResult,
-					planner.RecoveryFinish,
-					err,
-				)), nil
-			}
-			value = v
-			return runtime.Executed(&planner.ToolResult{
-				Name:   call.Name,
-				Result: value,
-				Blocks: resp.Content.Clone(),
-			}), nil
+			return runtime.ExecuteMCPTool(ctx, caller, call, "describe", gencore.SpecDescribe())
 		case gencore.Label:
-			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
-				Tool:         "label",
-				Payload:      json.RawMessage(call.Payload),
-				Continuation: inputContinuation,
-			})
-			if err != nil {
-				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
-			}
-			if resp.InputRequired != nil {
-				return runtime.AwaitMCPInput(resp.InputRequired), nil
-			}
-			if err := resp.Content.Validate(); err != nil {
-				return runtime.Executed(failedMCPToolResult(
-					call.Name,
-					planner.FailureMalformedResult,
-					planner.RecoveryFinish,
-					mcpruntime.NewMalformedResponseError(err),
-				)), nil
-			}
-			var value any
-			if len(resp.StructuredContent) == 0 {
-				return runtime.Executed(failedMCPToolResult(
-					call.Name,
-					planner.FailureMalformedResult,
-					planner.RecoveryFinish,
-					mcpruntime.NewMalformedResponseError(errors.New("MCP response is missing structured content")),
-				)), nil
-			}
-			v, err := gencore.SpecLabel().Result.Codec.FromJSON(resp.StructuredContent)
-			if err != nil {
-				return runtime.Executed(failedMCPToolResult(
-					call.Name,
-					planner.FailureMalformedResult,
-					planner.RecoveryFinish,
-					err,
-				)), nil
-			}
-			value = v
-			return runtime.Executed(&planner.ToolResult{
-				Name:   call.Name,
-				Result: value,
-				Blocks: resp.Content.Clone(),
-			}), nil
+			return runtime.ExecuteMCPTool(ctx, caller, call, "label", gencore.SpecLabel())
 		case gencore.Reset:
-			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
-				Tool:         "reset",
-				Payload:      json.RawMessage(call.Payload),
-				Continuation: inputContinuation,
-			})
-			if err != nil {
-				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
-			}
-			if resp.InputRequired != nil {
-				return runtime.AwaitMCPInput(resp.InputRequired), nil
-			}
-			if err := resp.Content.Validate(); err != nil {
-				return runtime.Executed(failedMCPToolResult(
-					call.Name,
-					planner.FailureMalformedResult,
-					planner.RecoveryFinish,
-					mcpruntime.NewMalformedResponseError(err),
-				)), nil
-			}
-			var value any
-			if len(resp.StructuredContent) != 0 {
-				return runtime.Executed(failedMCPToolResult(
-					call.Name,
-					planner.FailureMalformedResult,
-					planner.RecoveryFinish,
-					mcpruntime.NewMalformedResponseError(errors.New("MCP response for a method without a result must omit structured content")),
-				)), nil
-			}
-			return runtime.Executed(&planner.ToolResult{
-				Name:   call.Name,
-				Result: value,
-				Blocks: resp.Content.Clone(),
-			}), nil
+			return runtime.ExecuteMCPTool(ctx, caller, call, "reset", gencore.SpecReset())
 		default:
 			return runtime.Executed(failedMCPToolResult(
 				call.Name,

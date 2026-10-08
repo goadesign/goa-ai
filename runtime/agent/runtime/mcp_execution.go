@@ -4,7 +4,6 @@
 package runtime
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -16,8 +15,35 @@ import (
 
 // AwaitMCPInput returns an unfinished execution outcome. The runtime validates
 // and saves it before publishing host input; no final tool result exists yet.
-func AwaitMCPInput(input *mcp.InputRequired) *ToolExecutionResult {
-	return &ToolExecutionResult{mcpInput: cloneMCPInput(input)}
+func AwaitMCPInput(input *mcp.InputRequired) (*ToolExecutionResult, error) {
+	pending, err := tooloperation.NewPendingInput(input)
+	if err != nil {
+		return nil, err
+	}
+	return Unfinished(pending)
+}
+
+// Unfinished validates and copies an accepted pending outcome. The caller
+// receives an execution with no completed tool data, or a construction error.
+func Unfinished(pending *api.PendingExecution) (*ToolExecutionResult, error) {
+	if pending == nil {
+		return nil, errors.New("unfinished execution requires a pending outcome")
+	}
+	if err := pending.Validate(); err != nil {
+		return nil, err
+	}
+	copy := *pending
+	return &ToolExecutionResult{mcpPending: &copy}, nil
+}
+
+// pendingHostInput returns copied questions for ordinary or Task input. Waiting
+// for a Task has no host questions and remains inside activity collection.
+func pendingHostInput(pending *api.PendingExecution) *mcp.InputRequired {
+	if input, ok := pending.AsInput(); ok {
+		return input
+	}
+	_, _, input, _ := pending.AsTaskInput()
+	return input
 }
 
 // executionToolCallID checks the final-or-unfinished outcome and returns its
@@ -26,7 +52,7 @@ func executionToolCallID(outcome *ToolExecutionResult) (string, error) {
 	if outcome == nil {
 		return "", errors.New("workflow step execution returned an empty outcome")
 	}
-	if outcome.mcpInput != nil {
+	if outcome.mcpPending != nil {
 		if outcome.ToolResult != nil || outcome.Clarification != nil || outcome.childSuspension != nil || outcome.mcpToolCallID == "" {
 			return "", errors.New("unfinished MCP execution has an invalid outcome")
 		}
@@ -40,8 +66,8 @@ func executionToolCallID(outcome *ToolExecutionResult) (string, error) {
 
 // pendingMCPInput exposes host requests while keeping the opaque state in the
 // trusted checkpoint. Empty Requests asks the host when to resume a state-only round.
-func pendingMCPInput(call ToolCall, input *mcp.InputRequired) *api.PendingMCPInput {
-	return &api.PendingMCPInput{ToolName: call.Name, ToolCallID: call.ToolCallID, Requests: cloneMCPInput(input).Requests}
+func pendingMCPInput(call ToolCall, pending *api.PendingExecution) *api.PendingMCPInput {
+	return &api.PendingMCPInput{ToolName: call.Name, ToolCallID: call.ToolCallID, Requests: pendingHostInput(pending).Requests}
 }
 
 // applyExecutionContinuation sends validated answers to the same unfinished call. It
@@ -55,10 +81,10 @@ func (l *workflowLoop) applyExecutionContinuation(batch *stepBatch, pending *api
 		if record.call.ToolCallID != pending.ToolCallID {
 			continue
 		}
-		if record.mcpInput == nil || !reflect.DeepEqual(pendingMCPInput(record.call, record.mcpInput), pending) {
+		if record.mcpPending == nil || !reflect.DeepEqual(pendingMCPInput(record.call, record.mcpPending), pending) {
 			return nil, errors.New("MCP continuation does not match saved input")
 		}
-		if err := record.mcpInput.ValidateResponses(response.Responses); err != nil {
+		if err := pendingHostInput(record.mcpPending).ValidateResponses(response.Responses); err != nil {
 			return nil, err
 		}
 		call := cloneToolCall(record.call)
@@ -66,13 +92,19 @@ func (l *workflowLoop) applyExecutionContinuation(batch *stepBatch, pending *api
 			return nil, errors.New("saved execution sequence cannot be incremented")
 		}
 		call.ExecutionSequence++
-		input := cloneMCPInput(record.mcpInput)
-		continuation, err := tooloperation.NewInput(&mcp.CallContinuation{RequestState: input.RequestState, InputResponses: response.Responses})
+		input := pendingHostInput(record.mcpPending)
+		var continuation *api.ExecutionContinuation
+		var err error
+		if record.task != nil {
+			continuation, err = tooloperation.NewTaskUpdate(record.task.TaskID, response.Responses)
+		} else {
+			continuation, err = tooloperation.NewInput(&mcp.CallContinuation{RequestState: input.RequestState, InputResponses: response.Responses})
+		}
 		if err != nil {
 			return nil, err
 		}
 		call.ExecutionContinuation = continuation
-		outcomes, timedOut, err := l.executeImmediateToolCalls([]ToolCall{call}, record.expectedChildren)
+		outcomes, timedOut, err := l.executeImmediateToolCalls([]ToolCall{call}, record.expectedChildren, map[string]*taskExecution{call.ToolCallID: record.task})
 		batch.timedOut = batch.timedOut || timedOut
 		if err != nil {
 			return nil, err
@@ -88,11 +120,12 @@ func (l *workflowLoop) applyExecutionContinuation(batch *stepBatch, pending *api
 		if id != record.call.ToolCallID {
 			return nil, errors.New("MCP continuation changed tool call identity")
 		}
-		record.call.ExecutionSequence = call.ExecutionSequence
+		record.call.ExecutionSequence = max(call.ExecutionSequence, outcome.executionSequence)
+		record.task = outcome.task
 		record.duration += outcome.duration
-		record.mcpInput = outcome.mcpInput
-		if record.mcpInput != nil {
-			return []checkpointPendingInput{{MCP: pendingMCPInput(record.call, record.mcpInput)}}, nil
+		record.mcpPending = outcome.mcpPending
+		if record.mcpPending != nil {
+			return []checkpointPendingInput{{MCP: pendingMCPInput(record.call, record.mcpPending)}}, nil
 		}
 		record.result = outcome.ToolResult
 		record.clarification = outcome.Clarification
@@ -122,7 +155,10 @@ func (l *workflowLoop) applyExecutionContinuation(batch *stepBatch, pending *api
 func validateCheckpointMCPInputs(checkpoint *workflowCheckpoint) error {
 	records := make(map[string]checkpointToolRecord)
 	for _, record := range checkpoint.Batch.Records {
-		if record.MCPInput == nil {
+		if record.MCPPending == nil {
+			if record.Task != nil {
+				return errors.New("saved task state requires unfinished task input")
+			}
 			continue
 		}
 		if record.Call.TextOnly || checkpoint.Context.TextOnly || checkpoint.Policy != nil && checkpoint.Policy.TextOnly {
@@ -131,7 +167,13 @@ func validateCheckpointMCPInputs(checkpoint *workflowCheckpoint) error {
 		if record.Result != nil || record.ResultRecord != nil || record.ResultPublished || len(record.ResultJSON) != 0 || record.Clarification != nil || record.ChildSuspension != nil {
 			return errors.New("unfinished MCP call has a completed result")
 		}
-		if err := record.MCPInput.Validate(mcp.InputSupport{Form: true, URL: true}); err != nil {
+		if err := record.MCPPending.Validate(); err != nil {
+			return err
+		}
+		if pendingHostInput(record.MCPPending) == nil {
+			return errors.New("task waiting cannot be saved as host input")
+		}
+		if err := validateTaskInputState(record.MCPPending, record.Task); err != nil {
 			return err
 		}
 		if _, exists := records[record.Call.ToolCallID]; exists {
@@ -154,7 +196,7 @@ func validateCheckpointMCPInputs(checkpoint *workflowCheckpoint) error {
 			continue
 		}
 		record, ok := records[pending.MCP.ToolCallID]
-		if !ok || !reflect.DeepEqual(pending.MCP, pendingMCPInput(record.Call, record.MCPInput)) {
+		if !ok || !reflect.DeepEqual(pending.MCP, pendingMCPInput(record.Call, record.MCPPending)) {
 			return errors.New("pending MCP input does not match saved invocation")
 		}
 		delete(records, pending.MCP.ToolCallID)
@@ -163,25 +205,6 @@ func validateCheckpointMCPInputs(checkpoint *workflowCheckpoint) error {
 		return errors.New("unfinished MCP call has no pending host input")
 	}
 	return nil
-}
-
-func cloneMCPInput(input *mcp.InputRequired) *mcp.InputRequired {
-	if input == nil {
-		return nil
-	}
-	copy := *input
-	if input.RequestState != nil {
-		state := *input.RequestState
-		copy.RequestState = &state
-	}
-	if input.Requests != nil {
-		copy.Requests = make(map[string]mcp.InputRequest, len(input.Requests))
-		for id, request := range input.Requests {
-			request.Params = append(json.RawMessage(nil), request.Params...)
-			copy.Requests[id] = request
-		}
-	}
-	return &copy
 }
 
 // sameMCPInvocation compares the saved arguments and stable call identity.

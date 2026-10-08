@@ -1184,8 +1184,8 @@ func validatejsonAttachProviderPayloadTransport(value *jsonAttachProviderPayload
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.provider_incarnation_id", *value.ProviderIncarnationID, goa.FormatUUID))
 	}
 	if value.WireProtocolVersion != nil {
-		if !(int(*value.WireProtocolVersion) == 12) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{12}))
+		if !(int(*value.WireProtocolVersion) == 13) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{13}))
 		}
 	}
 	return err
@@ -1264,8 +1264,8 @@ func validatejsonCallResolvedToolPayloadTransport(value *jsonCallResolvedToolPay
 		}
 	}
 	if value.WireProtocolVersion != nil {
-		if !(int(*value.WireProtocolVersion) == 12) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{12}))
+		if !(int(*value.WireProtocolVersion) == 13) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{13}))
 		}
 	}
 	return err
@@ -1336,8 +1336,8 @@ func validatejsonCallToolPayloadTransport(value *jsonCallToolPayloadTransport) (
 		}
 	}
 	if value.WireProtocolVersion != nil {
-		if !(int(*value.WireProtocolVersion) == 12) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{12}))
+		if !(int(*value.WireProtocolVersion) == 13) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{13}))
 		}
 	}
 	return err
@@ -2288,8 +2288,8 @@ func validatejsonRegisterPayloadTransport(value *jsonRegisterPayloadTransport) (
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.provider_incarnation_id", *value.ProviderIncarnationID, goa.FormatUUID))
 	}
 	if value.WireProtocolVersion != nil {
-		if !(int(*value.WireProtocolVersion) == 12) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{12}))
+		if !(int(*value.WireProtocolVersion) == 13) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{13}))
 		}
 	}
 	if value.SchemaFingerprint != nil {
@@ -2581,8 +2581,8 @@ func validatejsonRetryToolPayloadTransport(value *jsonRetryToolPayloadTransport)
 		}
 	}
 	if value.WireProtocolVersion != nil {
-		if !(int(*value.WireProtocolVersion) == 12) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{12}))
+		if !(int(*value.WireProtocolVersion) == 13) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{13}))
 		}
 	}
 	return err
@@ -3862,8 +3862,8 @@ func validateAttachProviderPayloadOriginal(value *AttachProviderPayload) (err er
 	}
 	err = goa.MergeErrors(err, goa.ValidatePattern("value.expected_registration_token", value.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
 	err = goa.MergeErrors(err, goa.ValidateFormat("value.provider_incarnation_id", value.ProviderIncarnationID, goa.FormatUUID))
-	if !(value.WireProtocolVersion == 12) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{12}))
+	if !(value.WireProtocolVersion == 13) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{13}))
 	}
 	return err
 }
@@ -3897,8 +3897,8 @@ func validateCallResolvedToolPayloadOriginal(value *CallResolvedToolPayload) (er
 			err = goa.MergeErrors(err, err2)
 		}
 	}
-	if !(value.WireProtocolVersion == 12) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{12}))
+	if !(value.WireProtocolVersion == 13) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{13}))
 	}
 	return err
 }
@@ -4006,8 +4006,8 @@ func validateCallToolPayloadOriginal(value *CallToolPayload) (err error) {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
-	if !(value.WireProtocolVersion == 12) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{12}))
+	if !(value.WireProtocolVersion == 13) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{13}))
 	}
 	return err
 }
@@ -4607,8 +4607,8 @@ func validateRegisterPayloadOriginal(value *RegisterPayload) (err error) {
 	}
 	err = goa.MergeErrors(err, goa.ValidatePattern("value.admission_revision", value.AdmissionRevision, "^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,255}$"))
 	err = goa.MergeErrors(err, goa.ValidateFormat("value.provider_incarnation_id", value.ProviderIncarnationID, goa.FormatUUID))
-	if !(value.WireProtocolVersion == 12) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{12}))
+	if !(value.WireProtocolVersion == 13) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{13}))
 	}
 	err = goa.MergeErrors(err, goa.ValidatePattern("value.schema_fingerprint", value.SchemaFingerprint, "^[0-9a-f]{64}$"))
 	return err
@@ -5314,8 +5314,8 @@ func validateRetryToolPayloadOriginal(value *RetryToolPayload) (err error) {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
-	if !(value.WireProtocolVersion == 12) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{12}))
+	if !(value.WireProtocolVersion == 13) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{13}))
 	}
 	return err
 }

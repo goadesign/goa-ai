@@ -12,7 +12,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/mcp"
 )
 
 type (
@@ -138,8 +137,10 @@ type (
 	// - Clarification is never copied into cumulative planner ToolOutputs history.
 	ToolExecutionResult struct {
 		ToolResult        *planner.ToolResult
-		mcpInput          *mcp.InputRequired
+		mcpPending        *api.PendingExecution
 		mcpToolCallID     string
+		task              *taskExecution
+		executionSequence uint64
 		Clarification     *ToolClarification
 		childSuspension   *api.RunSuspension
 		resultPublished   bool
