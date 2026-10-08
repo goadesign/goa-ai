@@ -41,12 +41,26 @@ import (
  genrecords "generated.local/gen/records"
  genlookup "generated.local/gen/records/toolsets/lookup"
  genexecutor "generated.local/gen/records/agents/scribe/lookup"
+ "goa.design/goa-ai/runtime/agent/api"
+ gentooloperations "goa.design/goa-ai/registry/gen/tooloperations"
  "goa.design/goa-ai/runtime/agent/runtime"
  "goa.design/goa-ai/runtime/agent/rawjson"
  "goa.design/goa-ai/runtime/agent/tools"
  "goa.design/goa-ai/runtime/mcp"
  "goa.design/goa-ai/runtime/toolregistry"
 )
+
+func executionInput(input *mcp.CallContinuation) *api.ExecutionContinuation {
+ if input==nil {return nil}
+ answers:=make(map[string][]byte,len(input.InputResponses))
+ for id,answer:=range input.InputResponses {answers[id]=answer}
+ value:=&gentooloperations.ExecutionContinuation{Operation:gentooloperations.NewOperationInput(&gentooloperations.InputContinuation{State:input.RequestState,Responses:answers})}
+ data,err:=gentooloperations.EncodeExecutionContinuation(value)
+ if err!=nil {panic(err)}
+ var operation api.ExecutionContinuation
+ if err:=json.Unmarshal(data,&operation);err!=nil {panic(err)}
+ return &operation
+}
 
 type recordService struct { calls int }
 
@@ -102,8 +116,8 @@ func TestLocalBoundInputRounds(t *testing.T) {
    pending,err:=executor.Execute(t.Context(),meta,call)
    require.NoError(t,err)
    assert.Nil(t,pending.ToolResult,"pending input must not enter completed tool history")
-   call.InputRound=1
-   call.MCPContinuation=hostAnswer(action)
+   call.ExecutionSequence=1
+   call.ExecutionContinuation=executionInput(hostAnswer(action))
    completed,err:=executor.Execute(t.Context(),meta,call)
    require.NoError(t,err)
    require.NotNil(t,completed.ToolResult)
@@ -141,8 +155,8 @@ func TestRegistryProviderInputRounds(t *testing.T) {
  require.NoError(t,pending.InputRequired.Validate(mcp.InputSupport{Form:true}))
  assert.Equal(t,"",*pending.InputRequired.RequestState)
  require.NoError(t,pending.InputRequired.ValidateResponses(hostAnswer("accept").InputResponses))
- msg.Meta.InputRound=1
- msg.Meta.InputContinuation=hostAnswer("accept")
+ msg.Meta.ExecutionSequence=1
+ msg.Meta.ExecutionContinuation=executionInput(hostAnswer("accept"))
  msg.ToolUseID=toolregistry.DeriveToolUseID("run","call",1)
  completed,err:=provider.HandleToolCall(toolregistry.WithToolUseID(t.Context(),msg.ToolUseID),msg)
  require.NoError(t,err)
@@ -178,7 +192,7 @@ func TestNativeURLConsent(t *testing.T) {
    require.NoError(t,pending.InputRequired.ValidateResponses(responses))
    input:=&mcp.CallContinuation{RequestState:pending.InputRequired.RequestState,InputResponses:responses}
    executor:=genexecutor.NewScribeLookupExec(genexecutor.WithClient(genrecords.NewClient(genrecords.NewEndpoints(service).Read)))
-   complete,err:=executor.Execute(t.Context(),&runtime.ToolCallMeta{SessionID:"session"},&runtime.ToolCall{Name:"lookup.read",Payload:rawjson.Message(msg.Payload),InputRound:1,MCPContinuation:input})
+   complete,err:=executor.Execute(t.Context(),&runtime.ToolCallMeta{SessionID:"session"},&runtime.ToolCall{Name:"lookup.read",Payload:rawjson.Message(msg.Payload),ExecutionSequence:1,ExecutionContinuation:executionInput(input)})
    require.NoError(t,err)
    require.NotNil(t,complete.ToolResult)
    require.Nil(t,complete.ToolResult.Failure)
@@ -203,14 +217,14 @@ func TestBoundInputBoundaryFailuresAndEmptyRound(t *testing.T) {
   t.Run(test.name,func(t *testing.T){
    service:=&recordService{}
    executor:=genexecutor.NewScribeLookupExec(genexecutor.WithClient(genrecords.NewClient(genrecords.NewEndpoints(service).Read)))
-   call:=&runtime.ToolCall{Name:"lookup.read",Payload:[]byte("{\"target\":\""+test.target+"\"}"),InputRound:test.round,MCPContinuation:test.input,TextOnly:test.textOnly}
+   call:=&runtime.ToolCall{Name:"lookup.read",Payload:[]byte("{\"target\":\""+test.target+"\"}"),ExecutionSequence:test.round,ExecutionContinuation:executionInput(test.input),TextOnly:test.textOnly}
    result,err:=executor.Execute(t.Context(),&runtime.ToolCallMeta{SessionID:"session"},call)
    require.NoError(t,err)
    require.NotNil(t,result.ToolResult)
    assert.Equal(t,test.failed,result.ToolResult.Failure!=nil)
    assert.Equal(t,test.calls,service.calls)
    provider:=genlookup.NewProvider(&recordService{})
-   msg:=toolregistry.ToolCallMessage{ToolUseID:toolregistry.DeriveToolUseID("run","call",test.round),Tool:genlookup.Read,Payload:json.RawMessage(call.Payload),Meta:&toolregistry.ToolCallMeta{SessionID:"session",InputRound:test.round,InputContinuation:test.input,TextOnly:test.textOnly}}
+   msg:=toolregistry.ToolCallMessage{ToolUseID:toolregistry.DeriveToolUseID("run","call",test.round),Tool:genlookup.Read,Payload:json.RawMessage(call.Payload),Meta:&toolregistry.ToolCallMeta{SessionID:"session",ExecutionSequence:test.round,ExecutionContinuation:executionInput(test.input),TextOnly:test.textOnly}}
    output,err:=provider.HandleToolCall(toolregistry.WithToolUseID(t.Context(),msg.ToolUseID),msg)
    require.NoError(t,err)
    assert.Equal(t,test.failed,output.Error!=nil)
@@ -231,10 +245,24 @@ import (
  genrecords "generated.local/gen/records"
  genlookup "generated.local/gen/records/toolsets/lookup"
  genexecutor "generated.local/gen/records/agents/scribe/lookup"
+ "goa.design/goa-ai/runtime/agent/api"
+ gentooloperations "goa.design/goa-ai/registry/gen/tooloperations"
  "goa.design/goa-ai/runtime/agent/runtime"
  "goa.design/goa-ai/runtime/mcp"
  "goa.design/goa-ai/runtime/toolregistry"
 )
+
+func executionInput(input *mcp.CallContinuation) *api.ExecutionContinuation {
+ if input==nil {return nil}
+ answers:=make(map[string][]byte,len(input.InputResponses))
+ for id,answer:=range input.InputResponses {answers[id]=answer}
+ value:=&gentooloperations.ExecutionContinuation{Operation:gentooloperations.NewOperationInput(&gentooloperations.InputContinuation{State:input.RequestState,Responses:answers})}
+ data,err:=gentooloperations.EncodeExecutionContinuation(value)
+ if err!=nil {panic(err)}
+ var operation api.ExecutionContinuation
+ if err:=json.Unmarshal(data,&operation);err!=nil {panic(err)}
+ return &operation
+}
 
 type viewedService struct{}
 
@@ -260,8 +288,8 @@ func TestLocalViewedService(t *testing.T) {
  pending,err:=executor.Execute(t.Context(),meta,call)
  require.NoError(t,err)
  require.Nil(t,pending.ToolResult)
- call.InputRound=1
- call.MCPContinuation=&mcp.CallContinuation{InputResponses:map[string]json.RawMessage{"profile":json.RawMessage("{\"action\":\"accept\",\"content\":{\"label\":\"value\"}}")}}
+ call.ExecutionSequence=1
+ call.ExecutionContinuation=executionInput(&mcp.CallContinuation{InputResponses:map[string]json.RawMessage{"profile":json.RawMessage("{\"action\":\"accept\",\"content\":{\"label\":\"value\"}}")}})
  complete,err:=executor.Execute(t.Context(),meta,call)
  require.NoError(t,err)
  require.NotNil(t,complete.ToolResult)
@@ -280,8 +308,8 @@ func TestRegistrySelectedView(t *testing.T) {
  require.NoError(t,err)
  require.NotNil(t,pending.InputRequired)
  require.NoError(t,pending.InputRequired.Validate(mcp.InputSupport{Form:true}))
- msg.Meta.InputRound=1
- msg.Meta.InputContinuation=&mcp.CallContinuation{RequestState:pending.InputRequired.RequestState,InputResponses:map[string]json.RawMessage{"profile":json.RawMessage("{\"action\":\"accept\",\"content\":{\"label\":\"value\"}}")}}
+ msg.Meta.ExecutionSequence=1
+ msg.Meta.ExecutionContinuation=executionInput(&mcp.CallContinuation{RequestState:pending.InputRequired.RequestState,InputResponses:map[string]json.RawMessage{"profile":json.RawMessage("{\"action\":\"accept\",\"content\":{\"label\":\"value\"}}")}})
  msg.ToolUseID=toolregistry.DeriveToolUseID("run","call",1)
  complete,err:=provider.HandleToolCall(toolregistry.WithToolUseID(t.Context(),msg.ToolUseID),msg)
  require.NoError(t,err)

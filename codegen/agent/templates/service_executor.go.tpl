@@ -131,11 +131,19 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
             {{- $hasBoundsProjection := and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
         case tools.Ident({{ printf "%q" .QualifiedName }}):
             {{- if .FillInputContinuation }}
-            if err := toolregistry.ValidateInputRound(call.InputRound, call.MCPContinuation, call.TextOnly); err != nil {
+            if err := toolregistry.ValidateExecution(call.ExecutionSequence, call.ExecutionContinuation, call.TextOnly); err != nil {
                 return runtime.Executed({{ $.Names.InvalidToolCall }}(call, err)), nil
             }
+            var inputContinuation *{{ $.MCPPackage }}.CallContinuation
+            if call.ExecutionContinuation != nil {
+                var ok bool
+                inputContinuation, ok = call.ExecutionContinuation.AsInput()
+                if !ok {
+                    return runtime.Executed({{ $.Names.InvalidToolCall }}(call, errors.New("tool does not accept Task continuation"))), nil
+                }
+            }
             {{- else }}
-            if call.MCPContinuation != nil || call.InputRound != 0 {
+            if call.ExecutionContinuation != nil || call.ExecutionSequence != 0 {
                 return runtime.Executed({{ $.Names.InvalidToolCall }}(call, errors.New("tool does not accept input continuation"))), nil
             }
             {{- end }}
@@ -188,7 +196,7 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
             if !ok {
                 return runtime.Executed({{ $.Names.FailedCallResult }}(call, fmt.Errorf("unexpected method payload type: %T", methodIn))), nil
             }
-            if err := {{ $.Toolset.SpecsPackageName }}.{{ .FillInputContinuation }}(nativePayload, call.MCPContinuation); err != nil {
+            if err := {{ $.Toolset.SpecsPackageName }}.{{ .FillInputContinuation }}(nativePayload, inputContinuation); err != nil {
                 return runtime.Executed({{ $.Names.InvalidToolCall }}(call, err)), nil
             }
             {{- end }}

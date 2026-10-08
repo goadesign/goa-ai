@@ -156,7 +156,7 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 		}
 		switch call.Name {
 		case tools.Ident("helpers.agent-id"):
-			if call.MCPContinuation != nil || call.InputRound != 0 {
+			if call.ExecutionContinuation != nil || call.ExecutionSequence != 0 {
 				return runtime.Executed(invalidServiceToolCall(call, errors.New("tool does not accept input continuation"))), nil
 			}
 			var toolArgs any
@@ -216,7 +216,7 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 				Result: result,
 			}), nil
 		case tools.Ident("helpers.agent_id"):
-			if call.MCPContinuation != nil || call.InputRound != 0 {
+			if call.ExecutionContinuation != nil || call.ExecutionSequence != 0 {
 				return runtime.Executed(invalidServiceToolCall(call, errors.New("tool does not accept input continuation"))), nil
 			}
 			var toolArgs any
@@ -276,7 +276,7 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 				Result: result,
 			}), nil
 		case tools.Ident("helpers.client"):
-			if call.MCPContinuation != nil || call.InputRound != 0 {
+			if call.ExecutionContinuation != nil || call.ExecutionSequence != 0 {
 				return runtime.Executed(invalidServiceToolCall(call, errors.New("tool does not accept input continuation"))), nil
 			}
 			var toolArgs any
@@ -336,7 +336,7 @@ func NewScribeHelpersExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 				Result: result,
 			}), nil
 		case tools.Ident("helpers.exec_opt"):
-			if call.MCPContinuation != nil || call.InputRound != 0 {
+			if call.ExecutionContinuation != nil || call.ExecutionSequence != 0 {
 				return runtime.Executed(invalidServiceToolCall(call, errors.New("tool does not accept input continuation"))), nil
 			}
 			var toolArgs any

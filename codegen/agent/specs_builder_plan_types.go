@@ -60,6 +60,9 @@ func (p *toolSpecsPlan) link(data *GeneratorData) error {
 		}
 		if toolsetHasMethodTools(owner) {
 			planned.specs.providerImports = importsForPaths(planned.public, planned.providerImportPaths)
+			if len(planned.inputMethods) != 0 {
+				planned.specs.mcpPackage = planned.public.ImportName(mcpRuntimeImportPath)
+			}
 			planned.specs.serviceTypeRef = planned.public.ImportName(planned.serviceImportPath) + "." + owner.SourceService.ServiceDeclaration.Name()
 		}
 		if err := planned.linkInputExchanges(services); err != nil {

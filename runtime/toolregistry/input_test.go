@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/mcp"
 )
@@ -38,12 +39,56 @@ func TestRegistryInputRoundBoundary(t *testing.T) {
 		{name: "empty answer id", round: 1, input: &mcp.CallContinuation{InputResponses: map[string]json.RawMessage{"": json.RawMessage(`{"action":"cancel"}`)}}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			err := ValidateInputRound(test.round, test.input, test.textOnly)
+			var operation *tooloperation.Continuation
+			var err error
+			if test.input != nil {
+				operation, err = tooloperation.NewInput(test.input)
+			}
+			if err == nil {
+				err = ValidateExecution(test.round, operation, test.textOnly)
+			}
 			if test.wantError {
 				assert.Error(t, err)
 			} else {
 				assert.NoError(t, err)
 			}
+		})
+	}
+}
+
+// Task methods retain their explicit operation even when IDs or answer objects
+// are empty. Text-only execution permits observations, but never host answers.
+func TestRegistryTaskOperationBoundary(t *testing.T) {
+	get, err := tooloperation.NewTaskGet("")
+	require.NoError(t, err)
+	cancel, err := tooloperation.NewTaskCancel("")
+	require.NoError(t, err)
+	update, err := tooloperation.NewTaskUpdate("", map[string]json.RawMessage{})
+	require.NoError(t, err)
+	missing, err := tooloperation.NewTaskUpdate("", nil)
+	require.Error(t, err)
+	assert.Nil(t, missing)
+	for _, test := range []struct {
+		name      string
+		operation *tooloperation.Continuation
+		textOnly  bool
+		wantError bool
+	}{
+		{name: "read", operation: get},
+		{name: "cancel", operation: cancel},
+		{name: "empty answers", operation: update},
+		{name: "text only read", operation: get, textOnly: true},
+		{name: "text only cancel", operation: cancel, textOnly: true},
+		{name: "text only answers", operation: update, textOnly: true, wantError: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateExecution(1, test.operation, test.textOnly)
+			if test.wantError {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Error(t, ValidateExecution(0, test.operation, test.textOnly))
 		})
 	}
 }

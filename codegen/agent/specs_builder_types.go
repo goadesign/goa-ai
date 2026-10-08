@@ -51,6 +51,8 @@ type (
 		adapterImports []*codegen.ImportSpec
 		// providerImports contains the final imports used by provider.go.
 		providerImports []*codegen.ImportSpec
+		// mcpPackage is the resolved import used by input-only native providers.
+		mcpPackage string
 		// serviceTypeRef is the final Goa service interface reference used by provider.go.
 		serviceTypeRef string
 	}

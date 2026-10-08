@@ -460,7 +460,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			queue:            queue,
 			expectedChildren: e.expectedChildren,
 		}
-		if call.MCPContinuation == nil {
+		if call.ExecutionContinuation == nil {
 			if err := e.publishToolCallScheduled(ctx, call, queue); err != nil {
 				executionErr = errors.Join(executionErr, err)
 				b.scheduleByID[call.ToolCallID] = state
@@ -573,20 +573,20 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 
 		// Activity path (service-backed tools).
 		toolInput := ToolInput{
-			MCPContinuation:  call.MCPContinuation,
-			InputRound:       call.InputRound,
-			TextOnly:         call.TextOnly,
-			Registry:         call.Registry.Clone(),
-			AgentID:          e.agentID,
-			RunID:            e.runID,
-			ToolsetName:      toolsetName,
-			ToolName:         call.Name,
-			ToolCallID:       call.ToolCallID,
-			Payload:          append(rawjson.Message(nil), call.Payload...),
-			SessionID:        call.SessionID,
-			Labels:           cloneLabels(call.Labels),
-			TurnID:           call.TurnID,
-			ParentToolCallID: call.ParentToolCallID,
+			ExecutionContinuation: call.ExecutionContinuation,
+			ExecutionSequence:     call.ExecutionSequence,
+			TextOnly:              call.TextOnly,
+			Registry:              call.Registry.Clone(),
+			AgentID:               e.agentID,
+			RunID:                 e.runID,
+			ToolsetName:           toolsetName,
+			ToolName:              call.Name,
+			ToolCallID:            call.ToolCallID,
+			Payload:               append(rawjson.Message(nil), call.Payload...),
+			SessionID:             call.SessionID,
+			Labels:                cloneLabels(call.Labels),
+			TurnID:                call.TurnID,
+			ParentToolCallID:      call.ParentToolCallID,
 		}
 		callOpts := computeToolActivityOptions(wfCtx, e.toolActOptions, e.finishBy)
 		if hasTS && ts.ActivityRetryPolicy != nil {

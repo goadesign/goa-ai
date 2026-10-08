@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/mcp"
 )
@@ -43,9 +44,9 @@ func pendingMCPInput(call ToolCall, input *mcp.InputRequired) *api.PendingMCPInp
 	return &api.PendingMCPInput{ToolName: call.Name, ToolCallID: call.ToolCallID, Requests: cloneMCPInput(input).Requests}
 }
 
-// applyMCPContinuation sends validated answers to the same unfinished call. It
+// applyExecutionContinuation sends validated answers to the same unfinished call. It
 // replaces its pending state on another round or installs its final tool result.
-func (l *workflowLoop) applyMCPContinuation(batch *stepBatch, pending *api.PendingMCPInput, response *api.MCPInputResponse) ([]checkpointPendingInput, error) {
+func (l *workflowLoop) applyExecutionContinuation(batch *stepBatch, pending *api.PendingMCPInput, response *api.MCPInputResponse) ([]checkpointPendingInput, error) {
 	if response == nil || response.ToolCallID != pending.ToolCallID {
 		return nil, errors.New("MCP response does not match the pending invocation")
 	}
@@ -61,12 +62,16 @@ func (l *workflowLoop) applyMCPContinuation(batch *stepBatch, pending *api.Pendi
 			return nil, err
 		}
 		call := cloneToolCall(record.call)
-		if call.InputRound == ^uint64(0) {
-			return nil, errors.New("saved input round cannot be incremented")
+		if call.ExecutionSequence == ^uint64(0) {
+			return nil, errors.New("saved execution sequence cannot be incremented")
 		}
-		call.InputRound++
+		call.ExecutionSequence++
 		input := cloneMCPInput(record.mcpInput)
-		call.MCPContinuation = &mcp.CallContinuation{RequestState: input.RequestState, InputResponses: cloneMCPResponses(response.Responses)}
+		continuation, err := tooloperation.NewInput(&mcp.CallContinuation{RequestState: input.RequestState, InputResponses: response.Responses})
+		if err != nil {
+			return nil, err
+		}
+		call.ExecutionContinuation = continuation
 		outcomes, timedOut, err := l.executeImmediateToolCalls([]ToolCall{call}, record.expectedChildren)
 		batch.timedOut = batch.timedOut || timedOut
 		if err != nil {
@@ -83,7 +88,7 @@ func (l *workflowLoop) applyMCPContinuation(batch *stepBatch, pending *api.Pendi
 		if id != record.call.ToolCallID {
 			return nil, errors.New("MCP continuation changed tool call identity")
 		}
-		record.call.InputRound = call.InputRound
+		record.call.ExecutionSequence = call.ExecutionSequence
 		record.duration += outcome.duration
 		record.mcpInput = outcome.mcpInput
 		if record.mcpInput != nil {
@@ -179,17 +184,6 @@ func cloneMCPInput(input *mcp.InputRequired) *mcp.InputRequired {
 	return &copy
 }
 
-func cloneMCPResponses(input map[string]json.RawMessage) map[string]json.RawMessage {
-	if input == nil {
-		return nil
-	}
-	copy := make(map[string]json.RawMessage, len(input))
-	for id, raw := range input {
-		copy[id] = append(json.RawMessage(nil), raw...)
-	}
-	return copy
-}
-
 // sameMCPInvocation compares the saved arguments and stable call identity.
 // A successor run changes execution labels and run ownership, not the invocation.
 func sameMCPInvocation(current, original ToolCall) bool {
@@ -197,6 +191,6 @@ func sameMCPInvocation(current, original ToolCall) bool {
 	current.TurnID, original.TurnID = "", ""
 	current.ParentToolCallID, original.ParentToolCallID = "", ""
 	current.Labels, original.Labels = nil, nil
-	current.InputRound, original.InputRound = 0, 0
+	current.ExecutionSequence, original.ExecutionSequence = 0, 0
 	return reflect.DeepEqual(current, original)
 }

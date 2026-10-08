@@ -167,7 +167,7 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 	assert.Equal(t, "todos.todos", dispatchedToolset)
 	assert.Equal(t, map[string]string{"scope": "detached"}, dispatchedMeta.Labels)
 	assert.True(t, dispatchedMeta.TextOnly)
-	assert.Zero(t, dispatchedMeta.InputRound)
+	assert.Zero(t, dispatchedMeta.ExecutionSequence)
 	assert.False(t, stream.destroyed)
 }
 

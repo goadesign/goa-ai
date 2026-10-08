@@ -24,7 +24,7 @@ type Caller struct {
 // NewCaller checks application identity and fixes the authored URL values for
 // this caller. Each request keeps those values outside tool arguments; creating
 // the caller does not contact the server.
-func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport, retry mcpruntime.HTTPRetryPolicy) (mcpruntime.Caller, error) {
+func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport, retry mcpruntime.HTTPRetryPolicy) (*Caller, error) {
 	if err := retry.Validate(); err != nil {
 		return nil, err
 	}
@@ -44,4 +44,41 @@ func (c *Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpr
 		return mcpruntime.CallResponse{}, err
 	}
 	return c.transport.CallTool(ctx, request.URL.String(), req)
+}
+
+// GetTask reads the current state using this caller's authored endpoint values.
+func (c *Caller) GetTask(ctx context.Context, taskID string) (mcpruntime.Task, error) {
+	endpoint, err := c.taskEndpoint(ctx)
+	if err != nil {
+		return mcpruntime.Task{}, err
+	}
+	return c.transport.GetTask(ctx, endpoint, taskID)
+}
+
+// UpdateTask submits answers and returns the server's acknowledgement.
+func (c *Caller) UpdateTask(ctx context.Context, taskID string, responses map[string]json.RawMessage) error {
+	endpoint, err := c.taskEndpoint(ctx)
+	if err != nil {
+		return err
+	}
+	return c.transport.UpdateTask(ctx, endpoint, taskID, responses)
+}
+
+// CancelTask requests cancellation; a later GetTask reports the final state.
+func (c *Caller) CancelTask(ctx context.Context, taskID string) error {
+	endpoint, err := c.taskEndpoint(ctx)
+	if err != nil {
+		return err
+	}
+	return c.transport.CancelTask(ctx, endpoint, taskID)
+}
+
+// taskEndpoint asks the generated request builder for its fixed route. Only
+// authored URL values enter this builder; the shared transport encodes task data.
+func (c *Caller) taskEndpoint(ctx context.Context) (string, error) {
+	request, err := c.client.BuildToolsCallRequest(ctx, &mcpassistant.ToolsCallPayload{})
+	if err != nil {
+		return "", err
+	}
+	return request.URL.String(), nil
 }

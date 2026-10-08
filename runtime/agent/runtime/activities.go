@@ -28,6 +28,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/mcp"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // plannerActivityInvocation is the shared prepared state for one planner
@@ -1396,8 +1397,8 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if req == nil {
 		return nil, errors.New("tool input is required")
 	}
-	if req.TextOnly && req.MCPContinuation != nil {
-		return nil, engine.MarkActivityErrorNonRetryable(errors.New("text-only tools cannot continue MCP host input"))
+	if err := toolregistry.ValidateExecution(req.ExecutionSequence, req.ExecutionContinuation, req.TextOnly); err != nil {
+		return nil, engine.MarkActivityErrorNonRetryable(err)
 	}
 	if req.ToolName == "" {
 		return nil, errors.New("tool name is required")
@@ -1409,19 +1410,19 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// retains the model-authored call and owns any later correction evidence.
 	raw := append(rawjson.Message(nil), req.Payload...)
 	call := ToolCall{
-		MCPContinuation:  req.MCPContinuation,
-		InputRound:       req.InputRound,
-		TextOnly:         req.TextOnly,
-		Registry:         req.Registry.Clone(),
-		Name:             req.ToolName,
-		Payload:          raw,
-		RunID:            req.RunID,
-		AgentID:          req.AgentID,
-		SessionID:        req.SessionID,
-		Labels:           cloneLabels(req.Labels),
-		TurnID:           req.TurnID,
-		ParentToolCallID: req.ParentToolCallID,
-		ToolCallID:       req.ToolCallID,
+		ExecutionContinuation: req.ExecutionContinuation,
+		ExecutionSequence:     req.ExecutionSequence,
+		TextOnly:              req.TextOnly,
+		Registry:              req.Registry.Clone(),
+		Name:                  req.ToolName,
+		Payload:               raw,
+		RunID:                 req.RunID,
+		AgentID:               req.AgentID,
+		SessionID:             req.SessionID,
+		Labels:                cloneLabels(req.Labels),
+		TurnID:                req.TurnID,
+		ParentToolCallID:      req.ParentToolCallID,
+		ToolCallID:            req.ToolCallID,
 	}
 
 	spec, hasSpec, err := lookupCallSpec(call, r.toolSpec)

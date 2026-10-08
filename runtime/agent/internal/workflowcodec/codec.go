@@ -18,6 +18,7 @@ import (
 	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/proto"
 
+	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -253,6 +254,14 @@ func (p *workflowJSONPreflight) walk(value reflect.Value, depth int) error {
 	}
 	if !value.IsValid() {
 		return nil
+	}
+	if value.CanInterface() {
+		if size, known, err := tooloperation.EncodedJSONSize(value.Interface()); known {
+			if err != nil {
+				return err
+			}
+			return p.budget.addBytes(size)
+		}
 	}
 	typ := value.Type()
 	if typ == plannerToolResultType ||

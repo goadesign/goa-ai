@@ -17,6 +17,7 @@ import (
 	runtime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/tools"
 	mcpruntime "goa.design/goa-ai/runtime/mcp"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // NewMCPExecutor returns a ToolCallExecutor that
@@ -26,12 +27,23 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 		if call.TextOnly {
 			ctx = mcpruntime.WithoutHostInput(ctx)
 		}
+		if err := toolregistry.ValidateExecution(call.ExecutionSequence, call.ExecutionContinuation, call.TextOnly); err != nil {
+			return runtime.Executed(failedMCPToolResult(call.Name, planner.FailureInvalidCall, planner.RecoveryFinish, err)), nil
+		}
+		var inputContinuation *mcpruntime.CallContinuation
+		if call.ExecutionContinuation != nil {
+			var ok bool
+			inputContinuation, ok = call.ExecutionContinuation.AsInput()
+			if !ok {
+				return runtime.Executed(failedMCPToolResult(call.Name, planner.FailureInvalidCall, planner.RecoveryFinish, errors.New("MCP Task execution is not enabled"))), nil
+			}
+		}
 		switch call.Name {
 		case genassistant_mcp.AnalyzeSentiment:
 			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
 				Tool:         "analyze_sentiment",
 				Payload:      json.RawMessage(call.Payload),
-				Continuation: call.MCPContinuation,
+				Continuation: inputContinuation,
 			})
 			if err != nil {
 				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
@@ -75,7 +87,7 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
 				Tool:         "execute_code",
 				Payload:      json.RawMessage(call.Payload),
-				Continuation: call.MCPContinuation,
+				Continuation: inputContinuation,
 			})
 			if err != nil {
 				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
@@ -119,7 +131,7 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
 				Tool:         "extract_keywords",
 				Payload:      json.RawMessage(call.Payload),
-				Continuation: call.MCPContinuation,
+				Continuation: inputContinuation,
 			})
 			if err != nil {
 				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
@@ -163,7 +175,7 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
 				Tool:         "process_batch",
 				Payload:      json.RawMessage(call.Payload),
-				Continuation: call.MCPContinuation,
+				Continuation: inputContinuation,
 			})
 			if err != nil {
 				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
@@ -207,7 +219,7 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
 				Tool:         "search",
 				Payload:      json.RawMessage(call.Payload),
-				Continuation: call.MCPContinuation,
+				Continuation: inputContinuation,
 			})
 			if err != nil {
 				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
@@ -251,7 +263,7 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
 				Tool:         "summarize_text",
 				Payload:      json.RawMessage(call.Payload),
-				Continuation: call.MCPContinuation,
+				Continuation: inputContinuation,
 			})
 			if err != nil {
 				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil
@@ -295,7 +307,7 @@ func NewMCPExecutor(caller mcpruntime.Caller) runtime.ToolCallExecutor {
 			resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
 				Tool:         "test_tool_with_progress",
 				Payload:      json.RawMessage(call.Payload),
-				Continuation: call.MCPContinuation,
+				Continuation: inputContinuation,
 			})
 			if err != nil {
 				return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil

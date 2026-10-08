@@ -4,6 +4,7 @@
 package design
 
 import (
+	_ "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 
 	registrytypes "goa.design/goa-ai/registry/design/types"

@@ -16,9 +16,9 @@ import (
 	"time"
 
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/internal/tooloperation"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/mcp"
 	"goa.design/goa-ai/runtime/toolregistry"
 	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 	goa "goa.design/goa/v3/pkg"
@@ -1096,46 +1096,36 @@ func (s *Service) rejectPreparedToolCall(
 }
 
 // prepareToolCallIdentity derives the token-independent immutable request
-// identity used to attach duplicate delivery before current routing. Each input
-// round includes an immutable copy of its state and host answers.
+// identity used to attach duplicate delivery before current routing. Each saved
+// operation includes an immutable copy of its state and host answers.
 func prepareToolCallIdentity(
 	toolset, tool string,
 	payload []byte,
 	meta *genregistry.ToolCallMeta,
 ) (preparedToolCall, error) {
 	toolUseID := toolUseIDForCall(meta)
-	// Copy host input before validation and hashing so later caller mutations
-	// cannot change the request the provider receives.
-	var continuation *mcp.CallContinuation
-	if meta.InputContinuation != nil {
-		continuation = &mcp.CallContinuation{}
-		if meta.InputContinuation.State != nil {
-			state := *meta.InputContinuation.State
-			continuation.RequestState = &state
-		}
-		if meta.InputContinuation.Responses != nil {
-			continuation.InputResponses = make(map[string]json.RawMessage, len(meta.InputContinuation.Responses))
-			for id, answer := range meta.InputContinuation.Responses {
-				continuation.InputResponses[id] = append(json.RawMessage(nil), answer...)
-			}
-		}
+	// Copy the selected operation before hashing so caller mutations cannot
+	// change the request the provider receives.
+	continuation, err := tooloperation.FromValue(meta.ExecutionContinuation)
+	if err != nil {
+		return preparedToolCall{}, genregistry.MakeValidationError(err)
 	}
-	if err := toolregistry.ValidateInputRound(meta.InputRound, continuation, meta.TextOnly); err != nil {
+	if err := toolregistry.ValidateExecution(meta.ExecutionSequence, continuation, meta.TextOnly); err != nil {
 		return preparedToolCall{}, genregistry.MakeValidationError(err)
 	}
 	messageMeta := toolregistry.ToolCallMeta{
-		TextOnly:          meta.TextOnly,
-		InputRound:        meta.InputRound,
-		InputContinuation: continuation,
-		RunID:             meta.RunID,
-		SessionID:         meta.SessionID,
-		TurnID:            derefString(meta.TurnID),
-		ToolCallID:        meta.ToolCallID,
-		ParentToolCallID:  derefString(meta.ParentToolCallID),
-		Labels:            maps.Clone(meta.Labels),
+		TextOnly:              meta.TextOnly,
+		ExecutionSequence:     meta.ExecutionSequence,
+		ExecutionContinuation: continuation,
+		RunID:                 meta.RunID,
+		SessionID:             meta.SessionID,
+		TurnID:                derefString(meta.TurnID),
+		ToolCallID:            meta.ToolCallID,
+		ParentToolCallID:      derefString(meta.ParentToolCallID),
+		Labels:                maps.Clone(meta.Labels),
 	}
 	// Include the exact execution metadata in the request digest. Reusing a
-	// round number with different answers is an admission conflict.
+	// sequence with a different operation or answers is an admission conflict.
 	body, err := json.Marshal(struct {
 		Toolset string                     `json:"toolset"`
 		Tool    tools.Ident                `json:"tool"`
@@ -1248,10 +1238,10 @@ func (e *providerUnavailableError) Error() string {
 }
 
 // toolUseIDForCall returns the stable transport identity for a registry-routed
-// service invocation. Run ID, tool call ID and input round separate concurrent
-// invocations while duplicate delivery of one round reuses its result stream.
+// operation. Run ID, tool call ID and execution sequence separate new
+// operations while duplicate delivery keeps the original result stream.
 func toolUseIDForCall(meta *genregistry.ToolCallMeta) string {
-	return toolregistry.DeriveToolUseID(meta.RunID, meta.ToolCallID, meta.InputRound)
+	return toolregistry.DeriveToolUseID(meta.RunID, meta.ToolCallID, meta.ExecutionSequence)
 }
 
 // callToolResult returns the stable replay contract for one admitted call.

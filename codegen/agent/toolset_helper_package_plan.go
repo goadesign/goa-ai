@@ -266,7 +266,7 @@ func (p *toolsetHelperPackagePlan) planMethodImports(servicePlan *service.Plan, 
 		serviceImports = append(serviceImports, goacodegen.NewImport("agent", "goa.design/goa-ai/runtime/agent"))
 	}
 	if hasInputExchangeTool(tools) {
-		serviceImports = append(serviceImports, goacodegen.SimpleImport("goa.design/goa-ai/runtime/toolregistry"))
+		serviceImports = append(serviceImports, goacodegen.SimpleImport("goa.design/goa-ai/runtime/toolregistry"), goacodegen.NewImport("mcpruntime", mcpRuntimeImportPath))
 	}
 	if hasServerDataTool(tools) {
 		serviceImports = append(serviceImports,
@@ -304,6 +304,7 @@ func (p *toolsetHelperPackagePlan) planMCPImports() error {
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/planner"),
 		goacodegen.NewImport("runtime", "goa.design/goa-ai/runtime/agent/runtime"),
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
+		goacodegen.SimpleImport("goa.design/goa-ai/runtime/toolregistry"),
 		goacodegen.NewImport("mcpruntime", "goa.design/goa-ai/runtime/mcp"),
 		goacodegen.NewImport("gen"+p.reference.SpecsPackageName, p.reference.SpecsImportPath),
 	}
@@ -417,7 +418,15 @@ func (p *toolsetHelperPackagePlan) link(toolset *ToolsetData, services *service.
 		}
 		serviceImports := linkedPlannedImports(p.pkg, p.serviceImports)
 		serviceImports = append(serviceImports, importsForPaths(p.pkg, p.serviceTypeImports)...)
+		mcpPackage := ""
+		for _, tool := range serviceTools {
+			if tool.FillInputContinuation != "" {
+				mcpPackage = p.pkg.ImportName(mcpRuntimeImportPath)
+				break
+			}
+		}
 		p.serviceExecutor = &serviceExecutorData{
+			MCPPackage:        mcpPackage,
 			Imports:           serviceImports,
 			ServiceClientRef:  p.pkg.ImportName(p.serviceImportPath) + "." + toolset.SourceService.ClientDeclaration.Name(),
 			SpecsPackageAlias: p.pkg.ImportName(p.specsImportPath),

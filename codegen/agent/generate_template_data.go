@@ -148,6 +148,8 @@ type (
 	}
 
 	serviceToolsetFileData struct {
+		// MCPPackage names the planned import used for typed host continuation.
+		MCPPackage       string
 		PackageName      string
 		Toolset          *ToolsetData
 		Tools            []*serviceExecutorToolData
@@ -159,6 +161,8 @@ type (
 	// serviceExecutorData stores the final imports, aliases, and tool type
 	// references used by one generated service executor package.
 	serviceExecutorData struct {
+		// MCPPackage names the planned import used for typed host continuation.
+		MCPPackage        string
 		Imports           []*codegen.ImportSpec
 		ServiceClientRef  string
 		SpecsPackageAlias string

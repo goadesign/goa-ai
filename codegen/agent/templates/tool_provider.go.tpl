@@ -49,7 +49,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 	if msg.Meta == nil {
 		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "meta is required"), nil
 	}
-    if err := toolregistry.ValidateInputRound(msg.Meta.InputRound, msg.Meta.InputContinuation, msg.Meta.TextOnly); err != nil {
+    if err := toolregistry.ValidateExecution(msg.Meta.ExecutionSequence, msg.Meta.ExecutionContinuation, msg.Meta.TextOnly); err != nil {
         return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", err.Error()), nil
     }
 {{- if .NeedsInject }}
@@ -70,7 +70,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- if .IsMethodBacked }}
 	case {{ .ConstName }}:
 {{- if not .FillInputContinuation }}
-        if msg.Meta.InputContinuation != nil || msg.Meta.InputRound != 0 {
+        if msg.Meta.ExecutionContinuation != nil || msg.Meta.ExecutionSequence != 0 {
             return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "tool does not accept input continuation"), nil
         }
 {{- end }}
@@ -114,7 +114,15 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 		methodIn := {{ .MethodPayloadTransform }}(args)
 {{- end }}
 {{- if .FillInputContinuation }}
-        if err := {{ .FillInputContinuation }}(methodIn, msg.Meta.InputContinuation); err != nil {
+        var inputContinuation *{{ $.MCPPackage }}.CallContinuation
+        if msg.Meta.ExecutionContinuation != nil {
+            var ok bool
+            inputContinuation, ok = msg.Meta.ExecutionContinuation.AsInput()
+            if !ok {
+                return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "tool does not accept Task continuation"), nil
+            }
+        }
+        if err := {{ .FillInputContinuation }}(methodIn, inputContinuation); err != nil {
             return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
         }
 {{- end }}

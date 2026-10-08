@@ -13,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -94,6 +95,14 @@ func (b *planActivityOutputBudget) walk(value reflect.Value, depth int) error {
 	}
 	if !value.IsValid() {
 		return b.addBytes(len("null"))
+	}
+	if value.CanInterface() {
+		if size, known, err := tooloperation.EncodedJSONSize(value.Interface()); known {
+			if err != nil {
+				return err
+			}
+			return b.addBytes(size)
+		}
 	}
 	if isRawJSON(value) {
 		if value.IsNil() {

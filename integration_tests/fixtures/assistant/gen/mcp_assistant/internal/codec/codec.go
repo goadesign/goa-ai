@@ -12,10 +12,9 @@ import (
 	json "encoding/json"
 	fmt "fmt"
 	io "io"
-	strconv "strconv"
-	strings "strings"
 
 	assistant "example.com/assistant/gen/assistant"
+	rawjson "goa.design/goa-ai/runtime/agent/rawjson"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -900,11 +899,7 @@ type SearchPayloadIntTransport int
 // UnmarshalJSON reads an exact whole JSON number and stores it within this type's
 // declared range. Decimal and exponent spellings do not change its value.
 func (value *SearchPayloadIntTransport) UnmarshalJSON(data []byte) error {
-	text, err := integerJSONText(data)
-	if err != nil {
-		return err
-	}
-	number, err := strconv.ParseInt(text, 10, strconv.IntSize)
+	number, err := rawjson.DecodeInteger[int](data)
 	if err != nil {
 		return fmt.Errorf("decode SearchPayloadIntTransport integer: %w", err)
 	}
@@ -2843,56 +2838,4 @@ func encodeTemplateTextToReadResourceResultTemplateTextTransport(v *assistant.Te
 	}
 
 	return res
-}
-
-// integerJSONText reads a JSON number and returns the same whole number in
-// decimal notation. Fractional values and values beyond native integer ranges fail.
-func integerJSONText(data []byte) (string, error) {
-	text := string(bytes.TrimSpace(data))
-	if len(text) == 0 || (text[0] != '-' && (text[0] < '0' || text[0] > '9')) || !json.Valid([]byte(text)) {
-		return "", fmt.Errorf("expected an integer JSON number")
-	}
-	negative := text[0] == '-'
-	if negative {
-		text = text[1:]
-	}
-	coefficient, exponentText, hasExponent := strings.Cut(text, "e")
-	if !hasExponent {
-		coefficient, exponentText, hasExponent = strings.Cut(text, "E")
-	}
-	whole, fraction, _ := strings.Cut(coefficient, ".")
-	digits := strings.TrimLeft(whole+fraction, "0")
-	if digits == "" {
-		return "0", nil
-	}
-	exponent := 0
-	if hasExponent {
-		parsed, err := strconv.Atoi(exponentText)
-		if err != nil {
-			return "", fmt.Errorf("JSON number cannot be represented as an integer")
-		}
-		exponent = parsed
-	}
-	// A negative exponent cannot cancel more digits than the input contains.
-	// Comparing before subtraction also prevents overflow for extreme exponents.
-	if exponent < -len(digits) || exponent > len(fraction)+len(strconv.FormatUint(^uint64(0), 10)) {
-		return "", fmt.Errorf("JSON number cannot be represented as an integer")
-	}
-	scale := exponent - len(fraction)
-	if scale < 0 {
-		removed := -scale
-		if removed >= len(digits) || strings.Trim(digits[len(digits)-removed:], "0") != "" {
-			return "", fmt.Errorf("expected a whole JSON number")
-		}
-		digits = digits[:len(digits)-removed]
-		scale = 0
-	}
-	if len(digits)+scale > len(strconv.FormatUint(^uint64(0), 10)) {
-		return "", fmt.Errorf("JSON number cannot be represented as an integer")
-	}
-	digits += strings.Repeat("0", scale)
-	if negative {
-		digits = "-" + digits
-	}
-	return digits, nil
 }

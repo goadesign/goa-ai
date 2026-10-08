@@ -12,6 +12,7 @@ import (
 
 	registrypb "goa.design/goa-ai/registry/gen/grpc/registry/pb"
 	registry "goa.design/goa-ai/registry/gen/registry"
+	tooloperations "goa.design/goa-ai/registry/gen/tooloperations"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -1128,8 +1129,8 @@ func ValidateAttachProviderRequest(message *registrypb.AttachProviderRequest) (e
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 11) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{11}))
+		if !(*message.WireProtocolVersion == 12) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{12}))
 		}
 	}
 	return
@@ -1223,8 +1224,8 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 11) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{11}))
+		if !(*message.WireProtocolVersion == 12) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{12}))
 		}
 	}
 	if message.SchemaFingerprint != nil {
@@ -1807,8 +1808,8 @@ func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 11) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{11}))
+		if !(*message.WireProtocolVersion == 12) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{12}))
 		}
 	}
 	return
@@ -1870,6 +1871,69 @@ func validateregistry_registry_ToolCallMeta_At_meta(meta *registrypb.ToolCallMet
 		if utf8.RuneCountInString(*meta.ParentToolCallId) > 256 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.parent_tool_call_id", *meta.ParentToolCallId, utf8.RuneCountInString(*meta.ParentToolCallId), 256, false))
 		}
+	}
+	if meta.ExecutionContinuation != nil {
+		if err2 := validateregistry_registry_ExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation(meta.ExecutionContinuation); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation
+// runs the validations defined on ExecutionContinuation.
+func validateregistry_registry_ExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation(executionContinuation *registrypb.ExecutionContinuation) (err error) {
+	if executionContinuation.Operation == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "execution_continuation"))
+	}
+	switch v := executionContinuation.Operation.(type) {
+	case *registrypb.ExecutionContinuation_Input:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("input", "execution_continuation.operation"))
+			break
+		}
+		if v.Input == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("input", "execution_continuation.operation"))
+			break
+		}
+
+	case *registrypb.ExecutionContinuation_TaskGet:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("task_get", "execution_continuation.operation"))
+			break
+		}
+
+	case *registrypb.ExecutionContinuation_TaskUpdate:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("task_update", "execution_continuation.operation"))
+			break
+		}
+		if v.TaskUpdate == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("task_update", "execution_continuation.operation"))
+			break
+		}
+		if v.TaskUpdate != nil {
+			if err2 := validateregistry_registry_TaskAnswers_Target_taskUpdate_Context_task_5F_update(v.TaskUpdate); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *registrypb.ExecutionContinuation_TaskCancel:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("task_cancel", "execution_continuation.operation"))
+			break
+		}
+
+	}
+
+	return
+}
+
+// validateregistry_registry_TaskAnswers_Target_taskUpdate_Context_task_5F_update
+// runs the validations defined on TaskAnswers.
+func validateregistry_registry_TaskAnswers_Target_taskUpdate_Context_task_5F_update(taskUpdate *registrypb.TaskAnswers) (err error) {
+	if taskUpdate.TaskId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("task_id", "task_update"))
 	}
 	return
 }
@@ -1959,8 +2023,8 @@ func ValidateCallResolvedToolRequest(message *registrypb.CallResolvedToolRequest
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 11) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{11}))
+		if !(*message.WireProtocolVersion == 12) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{12}))
 		}
 	}
 	return
@@ -2051,8 +2115,8 @@ func ValidateRetryToolRequest(message *registrypb.RetryToolRequest) (err error) 
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 11) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{11}))
+		if !(*message.WireProtocolVersion == 12) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{12}))
 		}
 	}
 	return
@@ -3011,13 +3075,13 @@ func transformProtoToolsetInfoToToolsetInfo(v *registrypb.ToolsetInfo) *registry
 // *registrypb.ToolCallMeta from a value of type *registry.ToolCallMeta.
 func transformToolCallMetaToProtoToolCallMeta(v *registry.ToolCallMeta) *registrypb.ToolCallMeta {
 	res := &registrypb.ToolCallMeta{
-		RunId:            &v.RunID,
-		SessionId:        &v.SessionID,
-		TurnId:           v.TurnID,
-		ToolCallId:       &v.ToolCallID,
-		ParentToolCallId: v.ParentToolCallID,
-		TextOnly:         &v.TextOnly,
-		InputRound:       &v.InputRound,
+		RunId:             &v.RunID,
+		SessionId:         &v.SessionID,
+		TurnId:            v.TurnID,
+		ToolCallId:        &v.ToolCallID,
+		ParentToolCallId:  v.ParentToolCallID,
+		TextOnly:          &v.TextOnly,
+		ExecutionSequence: &v.ExecutionSequence,
 	}
 	if v.Labels != nil {
 		res.Labels = make(map[string]string, len(v.Labels))
@@ -3027,8 +3091,33 @@ func transformToolCallMetaToProtoToolCallMeta(v *registry.ToolCallMeta) *registr
 			res.Labels[tk] = tv
 		}
 	}
-	if v.InputContinuation != nil {
-		res.InputContinuation = transformInputContinuationToProtoInputContinuation(v.InputContinuation)
+	if v.ExecutionContinuation != nil {
+		res.ExecutionContinuation = transformExecutionContinuationToProtoExecutionContinuation(v.ExecutionContinuation)
+	}
+
+	return res
+}
+
+// transformExecutionContinuationToProtoExecutionContinuation builds a value of
+// type *registrypb.ExecutionContinuation from a value of type
+// *tooloperations.ExecutionContinuation.
+func transformExecutionContinuationToProtoExecutionContinuation(v *tooloperations.ExecutionContinuation) *registrypb.ExecutionContinuation {
+	res := &registrypb.ExecutionContinuation{}
+	if v.Operation.Kind() != "" {
+		switch string(v.Operation.Kind()) {
+		case "input":
+			actual, _ := v.Operation.AsInput()
+			res.Operation = &registrypb.ExecutionContinuation_Input{Input: transformInputContinuationToProtoInputContinuation(actual)}
+		case "task_get":
+			actual, _ := v.Operation.AsTaskGet()
+			res.Operation = &registrypb.ExecutionContinuation_TaskGet{TaskGet: string(actual)}
+		case "task_update":
+			actual, _ := v.Operation.AsTaskUpdate()
+			res.Operation = &registrypb.ExecutionContinuation_TaskUpdate{TaskUpdate: transformTaskAnswersToProtoTaskAnswers(actual)}
+		case "task_cancel":
+			actual, _ := v.Operation.AsTaskCancel()
+			res.Operation = &registrypb.ExecutionContinuation_TaskCancel{TaskCancel: string(actual)}
+		}
 	}
 
 	return res
@@ -3036,10 +3125,28 @@ func transformToolCallMetaToProtoToolCallMeta(v *registry.ToolCallMeta) *registr
 
 // transformInputContinuationToProtoInputContinuation builds a value of type
 // *registrypb.InputContinuation from a value of type
-// *registry.InputContinuation.
-func transformInputContinuationToProtoInputContinuation(v *registry.InputContinuation) *registrypb.InputContinuation {
+// *tooloperations.InputContinuation.
+func transformInputContinuationToProtoInputContinuation(v *tooloperations.InputContinuation) *registrypb.InputContinuation {
 	res := &registrypb.InputContinuation{
 		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
+	}
+
+	return res
+}
+
+// transformTaskAnswersToProtoTaskAnswers builds a value of type
+// *registrypb.TaskAnswers from a value of type *tooloperations.TaskAnswers.
+func transformTaskAnswersToProtoTaskAnswers(v *tooloperations.TaskAnswers) *registrypb.TaskAnswers {
+	res := &registrypb.TaskAnswers{
+		TaskId: &v.TaskID,
 	}
 	if v.Responses != nil {
 		res.Responses = make(map[string][]byte, len(v.Responses))
@@ -3066,8 +3173,8 @@ func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *regis
 	if v.TextOnly != nil {
 		res.TextOnly = *v.TextOnly
 	}
-	if v.InputRound != nil {
-		res.InputRound = *v.InputRound
+	if v.ExecutionSequence != nil {
+		res.ExecutionSequence = *v.ExecutionSequence
 	}
 	if v.Labels != nil {
 		res.Labels = make(map[string]string, len(v.Labels))
@@ -3080,21 +3187,58 @@ func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *regis
 	if v.TextOnly == nil {
 		res.TextOnly = false
 	}
-	if v.InputRound == nil {
-		res.InputRound = 0
+	if v.ExecutionSequence == nil {
+		res.ExecutionSequence = 0
 	}
-	if v.InputContinuation != nil {
-		res.InputContinuation = transformProtoInputContinuationToInputContinuation(v.InputContinuation)
+	if v.ExecutionContinuation != nil {
+		res.ExecutionContinuation = transformProtoExecutionContinuationToExecutionContinuation(v.ExecutionContinuation)
+	}
+
+	return res
+}
+
+// transformProtoExecutionContinuationToExecutionContinuation builds a value of
+// type *tooloperations.ExecutionContinuation from a value of type
+// *registrypb.ExecutionContinuation.
+func transformProtoExecutionContinuationToExecutionContinuation(v *registrypb.ExecutionContinuation) *tooloperations.ExecutionContinuation {
+	res := &tooloperations.ExecutionContinuation{}
+	if v.Operation != nil {
+		switch val := v.Operation.(type) {
+		case *registrypb.ExecutionContinuation_Input:
+			{
+				u := res.Operation
+				u.SetInput(transformProtoInputContinuationToInputContinuation(val.Input))
+				res.Operation = u
+			}
+		case *registrypb.ExecutionContinuation_TaskGet:
+			{
+				u := res.Operation
+				u.SetTaskGet(tooloperations.OperationBranchTaskGet(val.TaskGet))
+				res.Operation = u
+			}
+		case *registrypb.ExecutionContinuation_TaskUpdate:
+			{
+				u := res.Operation
+				u.SetTaskUpdate(transformProtoTaskAnswersToTaskAnswers(val.TaskUpdate))
+				res.Operation = u
+			}
+		case *registrypb.ExecutionContinuation_TaskCancel:
+			{
+				u := res.Operation
+				u.SetTaskCancel(tooloperations.OperationBranchTaskCancel(val.TaskCancel))
+				res.Operation = u
+			}
+		}
 	}
 
 	return res
 }
 
 // transformProtoInputContinuationToInputContinuation builds a value of type
-// *registry.InputContinuation from a value of type
+// *tooloperations.InputContinuation from a value of type
 // *registrypb.InputContinuation.
-func transformProtoInputContinuationToInputContinuation(v *registrypb.InputContinuation) *registry.InputContinuation {
-	res := &registry.InputContinuation{
+func transformProtoInputContinuationToInputContinuation(v *registrypb.InputContinuation) *tooloperations.InputContinuation {
+	res := &tooloperations.InputContinuation{
 		State: v.State,
 	}
 	if v.Responses != nil {
@@ -3104,6 +3248,22 @@ func transformProtoInputContinuationToInputContinuation(v *registrypb.InputConti
 			tv := val
 			res.Responses[tk] = tv
 		}
+	}
+
+	return res
+}
+
+// transformProtoTaskAnswersToTaskAnswers builds a value of type
+// *tooloperations.TaskAnswers from a value of type *registrypb.TaskAnswers.
+func transformProtoTaskAnswersToTaskAnswers(v *registrypb.TaskAnswers) *tooloperations.TaskAnswers {
+	res := &tooloperations.TaskAnswers{
+		TaskID: *v.TaskId,
+	}
+	res.Responses = make(map[string][]byte, len(v.Responses))
+	for key, val := range v.Responses {
+		tk := key
+		tv := val
+		res.Responses[tk] = tv
 	}
 
 	return res

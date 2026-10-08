@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	genrecords "goa.design/goa-ai/internal/testpresentation/gen/records/toolsets/records"
 
+	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -43,17 +44,19 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 				binding := rt.toolsets["remote.tools"]
 				binding.Execute = func(_ context.Context, call *ToolCall) (*ToolExecutionResult, error) {
 					round++
-					assert.Equal(t, round-1, call.InputRound)
+					assert.Equal(t, round-1, call.ExecutionSequence)
 					assert.JSONEq(t, `{"query":"original"}`, string(call.Payload))
 					if round > 1 {
-						require.NotNil(t, call.MCPContinuation)
+						require.NotNil(t, call.ExecutionContinuation)
+						continuation, ok := call.ExecutionContinuation.AsInput()
+						require.True(t, ok)
 						expectedState := fmt.Sprintf("opaque state %d", round-1)
 						if mode == "identical_state" {
 							expectedState = ""
 						}
-						assert.Equal(t, expectedState, *call.MCPContinuation.RequestState)
+						assert.Equal(t, expectedState, *continuation.RequestState)
 						if !stateOnly {
-							assert.JSONEq(t, `{"action":"accept","content":{"choice":"yes"}}`, string(call.MCPContinuation.InputResponses[requestID]))
+							assert.JSONEq(t, `{"action":"accept","content":{"choice":"yes"}}`, string(continuation.InputResponses[requestID]))
 						}
 					}
 					if round == 3 {
@@ -249,7 +252,7 @@ func TestTextOnlyMCPInputBoundaries(t *testing.T) {
 	}
 }
 
-func TestTextOnlyMCPContinuationCannotDispatch(t *testing.T) {
+func TestTextOnlyExecutionContinuationCannotDispatch(t *testing.T) {
 	rt := New(newTestStore())
 	spec := genrecords.SpecRead()
 	calls := 0
@@ -257,9 +260,11 @@ func TestTextOnlyMCPContinuationCannotDispatch(t *testing.T) {
 		calls++
 		return Executed(&planner.ToolResult{Name: genrecords.Read, Result: &genrecords.ReadResult{Count: 1}}), nil
 	}}))
-	output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{ToolName: genrecords.Read, ToolsetName: "records", Payload: []byte(`{"query":"active"}`), TextOnly: true, MCPContinuation: &mcp.CallContinuation{}})
+	continuation, err := tooloperation.NewInput(&mcp.CallContinuation{})
+	require.NoError(t, err)
+	output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{ToolName: genrecords.Read, ToolsetName: "records", Payload: []byte(`{"query":"active"}`), TextOnly: true, ExecutionSequence: 1, ExecutionContinuation: continuation})
 	assert.Nil(t, output)
-	require.ErrorContains(t, err, "text-only tools cannot continue MCP host input")
+	require.ErrorContains(t, err, "text-only calls cannot carry host input")
 	assert.True(t, engine.IsActivityErrorNonRetryable(err))
 	assert.Zero(t, calls)
 }

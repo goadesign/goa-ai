@@ -904,7 +904,7 @@ func (l *workflowLoop) consumeCheckpointInput(batch *stepBatch, pending checkpoi
 		return nil, errors.New("run continuation response is required")
 	}
 	if pending.MCP != nil {
-		return l.applyMCPContinuation(batch, pending.MCP, response.MCP)
+		return l.applyExecutionContinuation(batch, pending.MCP, response.MCP)
 	}
 	if pending.Child != nil {
 		return l.applyChildContinuation(batch, pending.Child, response)

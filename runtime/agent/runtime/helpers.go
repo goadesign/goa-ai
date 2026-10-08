@@ -191,14 +191,9 @@ func cloneToolCall(src ToolCall) ToolCall {
 	cloned.ModelPayload = append(rawjson.Message(nil), src.ModelPayload...)
 	cloned.Labels = cloneLabels(src.Labels)
 	cloned.Registry = src.Registry.Clone()
-	if src.MCPContinuation != nil {
-		continuation := *src.MCPContinuation
-		continuation.InputResponses = cloneMCPResponses(continuation.InputResponses)
-		if continuation.RequestState != nil {
-			state := *continuation.RequestState
-			continuation.RequestState = &state
-		}
-		cloned.MCPContinuation = &continuation
+	if src.ExecutionContinuation != nil {
+		continuation := *src.ExecutionContinuation
+		cloned.ExecutionContinuation = &continuation
 	}
 	return cloned
 }

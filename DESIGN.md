@@ -1129,7 +1129,7 @@ writers must not overlap. How the host reaches that state depends on its
 database and deployment environment.
 
 Continuation preparation accepts only the current suspension schema,
-`goa-ai.run-suspension.v11`, which references an exact saved history position.
+`goa-ai.run-suspension.v12`, which references an exact saved history position.
 Every accepted recovery plan that waits for input retains its actual advertised
 catalog, including authorized alternatives to a
 failed tool, preserving the catalog contract introduced in version eight.
@@ -1218,7 +1218,7 @@ var AnthropicRegistry = Registry("anthropic", func() {
 - **DSL registry source**: `Registry(...)` declares a remote catalog and `FromRegistry(...)` binds a toolset to it.
 - **Generated registry client**: `gen/<svc>/registry/<name>/` contains the agent-side client/helpers for one declared DSL registry source.
 - **Registry wire protocol**: `runtime/toolregistry/` defines the Pulse stream names, message envelopes, and output-delta context used by providers, executors, and the clustered gateway.
-  Registry protocol 11 also carries workflow-owned input rounds and host answers
+  Registry protocol 12 carries workflow-owned operation sequences and host answers
   outside model arguments. Each service round has its own admission identity;
   duplicate delivery of that round reuses the saved outcome. Required input is
   exclusive with completed result data, errors, retries, bounds and server data.
@@ -1674,12 +1674,12 @@ run-scoped decision is retained, so the executor may safely replan. Generated
 decision record. Errors after request publication remain ambiguous and produce
 `outcome_unknown`, which forbids replacement execution because an effect may
 have occurred.
-The explicit decision record is wire protocol version 11. Registry replicas,
+The explicit decision record is wire protocol version 12. Registry replicas,
 providers, and consumers use that exact protocol. Records with another shape
 are rejected and never rewritten.
 The earlier protocol-8/9 transition changed message and call-record contracts;
 it is distinct from the catalog storage split, which kept protocol 10,
-and the MCP input upgrade to protocol 11. Do not apply a
+and the MCP execution upgrade to protocol 12. Do not apply a
 historical catalog reset to current state or retirement history. See the
 [preview upgrade guide](docs/runtime.md#preview-upgrade-guide) for the separate
 source, storage, and historical wire-version requirements.
@@ -1989,7 +1989,7 @@ for details and the SDK source-compatibility change.
   error instead of fabricating success after the required side effect did not
   occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
   because they assign different outcomes to the same exhausted limits.
-  Completion-aware suspensions use `goa-ai.run-suspension.v11`. The saved policy
+  Completion-aware suspensions use `goa-ai.run-suspension.v12`. The saved policy
   is required, and a checkpoint with another version fails at that typed
   boundary.
 - **Provider reasoning stream contract**: when a caller enables thinking

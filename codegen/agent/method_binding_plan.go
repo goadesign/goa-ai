@@ -79,6 +79,9 @@ func planProviderImports(
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/toolregistry"),
 		goacodegen.NewImport("goa", "goa.design/goa/v3/pkg"),
 	}
+	if hasInputExchangeTool(tools) {
+		fixed = append(fixed, goacodegen.NewImport("mcpruntime", mcpRuntimeImportPath))
+	}
 	if hasBoundsTool(tools) {
 		fixed = append(fixed, goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent"))
 	}

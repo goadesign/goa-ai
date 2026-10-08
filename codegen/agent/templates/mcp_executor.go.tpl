@@ -5,13 +5,24 @@ func {{ .Constructor }}(caller mcpruntime.Caller) runtime.ToolCallExecutor {
         if call.TextOnly {
             ctx = mcpruntime.WithoutHostInput(ctx)
         }
+        if err := toolregistry.ValidateExecution(call.ExecutionSequence, call.ExecutionContinuation, call.TextOnly); err != nil {
+            return runtime.Executed({{ .Failure }}(call.Name, planner.FailureInvalidCall, planner.RecoveryFinish, err)), nil
+        }
+        var inputContinuation *mcpruntime.CallContinuation
+        if call.ExecutionContinuation != nil {
+            var ok bool
+            inputContinuation, ok = call.ExecutionContinuation.AsInput()
+            if !ok {
+                return runtime.Executed({{ .Failure }}(call.Name, planner.FailureInvalidCall, planner.RecoveryFinish, errors.New("MCP Task execution is not enabled"))), nil
+            }
+        }
         switch call.Name {
         {{- range .Tools }}
         case {{ $.SpecsAlias }}.{{ .ConstName }}:
             resp, err := caller.CallTool(ctx, mcpruntime.CallRequest{
 				Tool:    {{ printf "%q" .LocalName }},
 				Payload: json.RawMessage(call.Payload),
-				Continuation: call.MCPContinuation,
+				Continuation: inputContinuation,
             })
             if err != nil {
                 return runtime.Executed(runtime.MCPCallFailure(call.Name, err)), nil

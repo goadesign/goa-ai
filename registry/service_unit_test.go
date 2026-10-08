@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -14,9 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 	clientspulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	mockpulse "goa.design/goa-ai/features/stream/pulse/clients/pulse/mocks"
+	"goa.design/goa-ai/internal/tooloperation"
 	genregistrypb "goa.design/goa-ai/registry/gen/grpc/registry/pb"
 	genregistryserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
+	"goa.design/goa-ai/runtime/mcp"
 	"goa.design/goa-ai/runtime/toolregistry"
 	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 	goa "goa.design/goa/v3/pkg"
@@ -591,8 +594,10 @@ func TestPrepareToolCallIdentitySeparatesInputRounds(t *testing.T) {
 	require.NoError(t, err)
 	seen := map[string]bool{initial.toolUseID: true}
 	for _, round := range []uint64{1, 2, ^uint64(0)} {
-		meta.InputRound = round
-		meta.InputContinuation = &genregistry.InputContinuation{}
+		meta.ExecutionSequence = round
+		operation, err := tooloperation.NewInput(&mcp.CallContinuation{})
+		require.NoError(t, err)
+		meta.ExecutionContinuation = tooloperation.Value(operation)
 		next, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{"query":"same"}`), meta)
 		require.NoError(t, err)
 		replayed, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{"query":"same"}`), meta)
@@ -601,31 +606,74 @@ func TestPrepareToolCallIdentitySeparatesInputRounds(t *testing.T) {
 		seen[next.toolUseID] = true
 		assert.NotEqual(t, initial.admissionDigest, next.admissionDigest)
 		assert.Equal(t, next, replayed)
-		assert.Equal(t, round, next.meta.InputRound)
+		assert.Equal(t, round, next.meta.ExecutionSequence)
 	}
+}
+
+// Repeated delivery of a Task operation reuses one immutable admission. A new
+// observation has a new sequence even when it reads the same Task identifier.
+func TestPrepareToolCallIdentitySeparatesTaskOperations(t *testing.T) {
+	meta := &genregistry.ToolCallMeta{RunID: "run", SessionID: "session", ToolCallID: "call", ExecutionSequence: 1}
+	get, err := tooloperation.NewTaskGet("")
+	require.NoError(t, err)
+	update, err := tooloperation.NewTaskUpdate("", map[string]json.RawMessage{})
+	require.NoError(t, err)
+	cancellation, err := tooloperation.NewTaskCancel("")
+	require.NoError(t, err)
+	for _, operation := range []*tooloperation.Continuation{get, update, cancellation} {
+		meta.ExecutionContinuation = tooloperation.Value(operation)
+		first, err := prepareToolCallIdentity("remote.tools", "lookup", []byte(`{}`), meta)
+		require.NoError(t, err)
+		repeated, err := prepareToolCallIdentity("remote.tools", "lookup", []byte(`{}`), meta)
+		require.NoError(t, err)
+		assert.Equal(t, first, repeated)
+		meta.ExecutionSequence++
+		later, err := prepareToolCallIdentity("remote.tools", "lookup", []byte(`{}`), meta)
+		require.NoError(t, err)
+		assert.NotEqual(t, first.toolUseID, later.toolUseID)
+		assert.NotEqual(t, first.admissionDigest, later.admissionDigest)
+	}
+	meta.ExecutionSequence = 1
+	meta.ExecutionContinuation = tooloperation.Value(get)
+	read, err := prepareToolCallIdentity("remote.tools", "lookup", []byte(`{}`), meta)
+	require.NoError(t, err)
+	meta.ExecutionContinuation = tooloperation.Value(cancellation)
+	cancel, err := prepareToolCallIdentity("remote.tools", "lookup", []byte(`{}`), meta)
+	require.NoError(t, err)
+	assert.Equal(t, read.toolUseID, cancel.toolUseID)
+	assert.NotEqual(t, read.admissionDigest, cancel.admissionDigest)
 }
 
 func TestPrepareToolCallIdentityKeepsHostInputImmutable(t *testing.T) {
 	t.Parallel()
 	state := ""
 	answer := []byte(`{ "action": "cancel" }`)
+	operation, err := tooloperation.NewInput(&mcp.CallContinuation{RequestState: &state, InputResponses: map[string]json.RawMessage{"question": answer}})
+	require.NoError(t, err)
 	meta := &genregistry.ToolCallMeta{
-		RunID: "run-1", SessionID: "session-1", ToolCallID: "call-1", InputRound: 1,
-		InputContinuation: &genregistry.InputContinuation{State: &state, Responses: map[string][]byte{"question": answer}},
+		RunID: "run-1", SessionID: "session-1", ToolCallID: "call-1", ExecutionSequence: 1,
+		ExecutionContinuation: tooloperation.Value(operation),
 	}
 	prepared, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{}`), meta)
 	require.NoError(t, err)
-	require.NotNil(t, prepared.meta.InputContinuation)
-	assert.Empty(t, *prepared.meta.InputContinuation.RequestState)
-	assert.Equal(t, answer, []byte(prepared.meta.InputContinuation.InputResponses["question"]))
+	require.NotNil(t, prepared.meta.ExecutionContinuation)
+	input, ok := prepared.meta.ExecutionContinuation.AsInput()
+	require.True(t, ok)
+	assert.Empty(t, *input.RequestState)
+	assert.Equal(t, answer, []byte(input.InputResponses["question"]))
 	state = "changed"
+	nativeInput, ok := meta.ExecutionContinuation.Operation.AsInput()
+	require.True(t, ok)
+	nativeInput.State = &state
 	changed, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{}`), meta)
 	require.NoError(t, err)
 	assert.Equal(t, prepared.toolUseID, changed.toolUseID)
 	assert.NotEqual(t, prepared.admissionDigest, changed.admissionDigest)
-	clear(answer)
-	assert.Empty(t, *prepared.meta.InputContinuation.RequestState)
-	assert.Equal(t, `{ "action": "cancel" }`, string(prepared.meta.InputContinuation.InputResponses["question"])) //nolint:testifylint // The admitted answer retains exact bytes, including whitespace.
+	clear(nativeInput.Responses["question"])
+	input, ok = prepared.meta.ExecutionContinuation.AsInput()
+	require.True(t, ok)
+	assert.Empty(t, *input.RequestState)
+	assert.Equal(t, `{ "action": "cancel" }`, string(input.InputResponses["question"])) //nolint:testifylint // The admitted answer retains exact bytes, including whitespace.
 }
 
 func TestCallAdmissionParseResultPreservesRegistrationToken(t *testing.T) {
@@ -793,7 +841,7 @@ func TestToolUseIDForCallUsesRequiredRunScopedIdentity(t *testing.T) {
 	}
 	assert.Equal(
 		t,
-		toolregistry.DeriveToolUseID(meta.RunID, callID, meta.InputRound),
+		toolregistry.DeriveToolUseID(meta.RunID, callID, meta.ExecutionSequence),
 		toolUseIDForCall(meta),
 	)
 	otherRun := *meta

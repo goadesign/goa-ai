@@ -1578,7 +1578,7 @@ directly:
   `codegen.CapsData.MaxRecoveryTurns`.
 
 These names and their serialized field names are intentionally breaking.
-Suspensions written by this runtime use `goa-ai.run-suspension.v11`. Earlier
+Suspensions written by this runtime use `goa-ai.run-suspension.v12`. Earlier
 versions cannot resume on this runtime. Version nine references an exact saved
 history position; see [Runtime Store](#runtime-store-storagestore) for preparation
 and checkpoint upgrade requirements. It retains the recovery contract introduced
@@ -4212,13 +4212,13 @@ For runtime storage and workflow adapters:
 - Stop setting `policy.CapsState.ExpiresAt`. The workflow owns its budget and
   hard deadlines directly.
 - Treat saved suspensions from versions before
-  `goa-ai.run-suspension.v11` as incompatible. They cannot be resumed by this
+  `goa-ai.run-suspension.v12` as incompatible. They cannot be resumed by this
   runtime.
 
 Install the Goa revision required by this module before regenerating:
 
 ```bash
-go install goa.design/goa/v3/cmd/goa@v3.33.1-0.20261006190149-aa9815a0452e
+go install goa.design/goa/v3/cmd/goa@v3.34.1-0.20261007074038-7e04829cef48
 ```
 
 For a release that changes generated or persisted runtime shapes:
@@ -4234,7 +4234,7 @@ For a release that changes generated or persisted runtime shapes:
    new work.
 
 Completed run history keeps the same meaning. Suspensions restored for
-continuation must use the current `goa-ai.run-suspension.v11` contract. Historical
+continuation must use the current `goa-ai.run-suspension.v12` contract. Historical
 reporting does not restore private checkpoint state; see
 [Runtime Store](#runtime-store-storagestore). A host may still need to convert
 its physical records or collections so the new store can read them. That
@@ -4250,8 +4250,8 @@ workflow still requires attachment by exact ID. Deploy every workflow starter
 together before admission resumes. A queryable execution without the reserved
 recipe memo is a conflict; the runtime never infers its original start request.
 
-`goa-ai.run-suspension.v11` is the only accepted suspension schema for
-continuation restoration. Version ten and earlier are rejected without an
+`goa-ai.run-suspension.v12` is the only accepted suspension schema for
+continuation restoration. Version eleven and earlier are rejected without an
 omission fallback. Before coordinated
 worker upgrade, finish old-format saved work under its owning runtime; if any
 must remain unfinished, obtain a separate host-owned preservation decision.
@@ -7347,9 +7347,10 @@ version-9 checkpoints are rejected, with no legacy reader or conversion path.
 Rollback requires restoring the previous binaries and their matching generated
 contracts; version-11 suspensions cannot be resumed by the previous runtime.
 
-Registry wire protocol 11 carries the workflow-owned input round and host
-continuation separately from tool arguments. Each round has its own admission
-identity; duplicate delivery of that round returns its saved outcome. Required
+Registry wire protocol 12 carries a workflow-owned execution sequence and one
+typed operation separately from tool arguments. The original tool call uses
+sequence zero; every new input continuation or Task operation advances it.
+Duplicate delivery retains the sequence and returns its saved outcome. Required
 input completes one service invocation while the durable workflow keeps the
 logical tool call unfinished. Regenerate and deploy registry replicas, providers
 and consumers together. Drain accepted calls and old providers before cutover;

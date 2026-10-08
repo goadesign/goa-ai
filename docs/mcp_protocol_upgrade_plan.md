@@ -979,8 +979,8 @@ progress, resource sources and retry ownership in all five languages. The
 registration and planner snippets compile against freshly generated contracts.
 Website checks pass: 70 tests, the production Hugo build and 166 rendered pages
 with no broken internal links. The user authorized pushing the documentation
-branch. Website PR creation still requires separate explicit authorization; the
-branch must remain separate from live documentation until the upgrade is ready. Local API/runtime, README,
+branch. Website PR creation has standing authorization; the branch must remain
+separate from live documentation until the upgrade is ready. Local API/runtime, README,
 architecture, quickstart, and integration documentation are updated.
 No release or deployment has been performed. Review proceeds through a draft PR while these release gates remain open.
 
@@ -990,7 +990,7 @@ string result; the registry fingerprint includes exact payload/result schema
 bytes (`internal/toolregistry/admission.SchemaFingerprint`). Existing immutable
 service declarations reject a changed fingerprint. Regeneration therefore needs
 an explicit declaration comparison and normal registry cutover without changing catalog storage. The later registry continuation scope
-separately changes wire protocol 10 to 11. Service providers use the existing
+changes the coordinated final wire protocol from 10 to 12. Service providers use the existing
 `Register` admission-revision contract; native Agent declarations use
 `ReplaceAgentToolset` with the current token. Match providers and consumers to
 the replacement declaration and preserve already accepted calls. The Redis
@@ -3407,3 +3407,68 @@ keys survive retained registry result JSON. Text-only restrictions and absence
 rules remain enforced. Scoped lint reports zero issues; the whole suite was not
 repeated. Existing named-key callers are unchanged, and no stored format or
 migration changes. Task generation and durable consumption remain release gates.
+
+
+### One saved execution operation — 2026-10-07
+
+Task observations cannot reuse the input-only round identity: the registry would
+return the previous saved observation. Replace that counter and its input-only
+metadata with `ExecutionSequence` and one sealed `ExecutionContinuation`. The
+shared Goa schema selects input continuation, Task observation, Task answers or
+Task cancellation explicitly. Answers cannot select a method by being absent or
+empty. Task identifiers and request keys remain exact, including empty strings.
+
+The registry generates the shared operation values, strict JSON codecs and
+protobuf transforms. Runtime accessors return copies of mutable state and answers;
+private generated representations do not become new runtime configuration APIs.
+Generated native input-only tools accept the input branch and reject Task
+operations. Ordinary tools reject every continuation. Text-only metadata permits
+Task observation and cancellation but rejects input continuation and Task answers.
+Task execution remains unadvertised until its durable lifecycle is complete.
+
+The workflow advances the sequence for each new operation and retains it for
+repeat delivery. Registry admission hashes the exact selected operation and its
+copied answers. Reusing a sequence with changed operation data conflicts; a new
+sequence admits a fresh observation. A single model tool invocation still keeps
+its original arguments, result codec and tool-call budget across input rounds.
+
+This replaces unshipped wire protocol 11 with 12 and the private suspension
+format with `goa-ai.run-suspension.v12`; no legacy reader or compatibility mode
+is added. Regenerate all registry clients/providers and deploy matching workers
+and replicas together after old work has finished. Mixed wire revisions are
+rejected. Rollback needs the matching earlier binaries and saved data, as in the
+existing coordinated upgrade contract.
+
+A real generated client → protobuf serialization → generated server check proves
+that empty Task updates survive gRPC. Goa constructs a present empty map for a
+required map, so no extra answer wrapper or transport workaround is needed.
+Creation acknowledgments, durable polling, updates/cancellation scheduling,
+native Task bindings and notification production remain required release gates.
+
+
+Saved operation verification passed strict value/immutability and gRPC checks in
+0.404 s, registry boundaries in 0.347 s, registry admission identity in 0.450 s,
+and the shared workflow converter in 0.431 s. Runtime byte-budget, retained
+suspension and successor-run checks passed in 0.856 s. Real Temporal worker
+replacement passed in 0.928 s. Compiled native input/view and MCP executor
+fixtures passed in 18.043 s; the regenerated assistant executor compiles.
+
+The Temporal checkpoint initially rejected the private continuation encoder.
+Construction now retains generated canonical JSON alongside the private typed
+operation. The existing planner and shared workflow guards charge its exact
+immutable bytes without invoking serialization; arbitrary custom encoders still
+fail. The byte cap remains one complete activity output or workflow argument
+list, not a Task lifetime. Two individually valid continuations can exceed the
+combined argument limit. No new polling or retention limit is introduced.
+
+The registry design now loads the existing Goa-AI value-codec plugin. Besides the
+shared operation, this regenerates strict standalone codecs for supported
+registry value types. The large generated service diff comes from those codecs;
+no new registry endpoint or scheduler is added. Generation still uses the owning
+`gen-registry` target. Old operation fields and the unused answer-copy helper are
+removed. The current synthetic suspension fixture is version 12, while version
+11 remains only as a negative compatibility test.
+
+Final focused lint reported zero issues. A second registry generation produced
+the same SHA-256 hashes for all 22 generated files. The regenerated assistant
+executor compiled successfully; that package has no test cases.

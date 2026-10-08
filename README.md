@@ -334,8 +334,8 @@ Input keys from external servers stay exact, including empty strings, through
 validation and registry continuation records.
 
 Registry users must regenerate and deploy registry replicas, providers and
-consumers together for wire protocol 11. It adds workflow-owned input-round
-identity and continuation metadata; earlier wire versions are rejected. Drain old
+consumers together for wire protocol 12. It carries one workflow-owned operation
+sequence and typed continuation outside model arguments; earlier wire versions are rejected. Drain old
 providers and workers before cutover. Generated native `BindTo` and registry
 providers now share typed input-exchange generation with MCP endpoints. The
 [implementation plan](docs/mcp_protocol_upgrade_plan.md) tracks the remaining

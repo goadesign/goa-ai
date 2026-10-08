@@ -307,6 +307,7 @@ func serviceExecutorFile(plan *toolsetHelperPackagePlan) *codegen.File {
 	toolset := *plan.toolset
 	toolset.SpecsPackageName = linked.SpecsPackageAlias
 	data := serviceToolsetFileData{
+		MCPPackage:       linked.MCPPackage,
 		PackageName:      toolset.PackageName,
 		Toolset:          &toolset,
 		Tools:            linked.Tools,

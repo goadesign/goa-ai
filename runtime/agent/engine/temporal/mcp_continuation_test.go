@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -118,7 +119,15 @@ func TestMCPContinuationThroughTemporalWorkers(t *testing.T) {
 		require.NoError(t, rt.RegisterToolset(agentruntime.ToolsetRegistration{
 			Name: "remote", Specs: []tools.ToolSpec{spec}, ActivityRetryPolicy: &engine.RetryPolicy{MaxAttempts: 1},
 			Execute: func(ctx context.Context, call *agentruntime.ToolCall) (*agentruntime.ToolExecutionResult, error) {
-				response, err := remote.CallTool(ctx, mcp.CallRequest{Tool: "lookup", Payload: json.RawMessage(call.Payload), Continuation: call.MCPContinuation})
+				var inputContinuation *mcp.CallContinuation
+				if call.ExecutionContinuation != nil {
+					var ok bool
+					inputContinuation, ok = call.ExecutionContinuation.AsInput()
+					if !ok {
+						return nil, fmt.Errorf("unexpected Task continuation")
+					}
+				}
+				response, err := remote.CallTool(ctx, mcp.CallRequest{Tool: "lookup", Payload: json.RawMessage(call.Payload), Continuation: inputContinuation})
 				if err != nil {
 					return nil, err
 				}

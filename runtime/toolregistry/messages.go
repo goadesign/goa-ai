@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/mcp"
@@ -30,18 +31,18 @@ type (
 	ToolCallMeta struct {
 		// TextOnly is the accepted execution restriction supplied by the runtime.
 		TextOnly bool `json:"text_only,omitempty"`
-		// InputRound identifies one service invocation within a host-input exchange.
+		// ExecutionSequence identifies one new operation on an unfinished invocation.
 		// Zero is the first invocation; repeated delivery keeps the same value.
-		InputRound uint64 `json:"input_round"`
-		// InputContinuation carries saved state and host answers outside tool arguments.
-		// It is present only after the workflow accepted input for a pending round.
-		InputContinuation *mcp.CallContinuation `json:"input_continuation,omitempty"`
-		RunID             string                `json:"run_id"`
-		SessionID         string                `json:"session_id"`
-		TurnID            string                `json:"turn_id,omitempty"`
+		ExecutionSequence uint64 `json:"execution_sequence"`
+		// ExecutionContinuation selects the exact saved operation outside tool arguments.
+		// It is absent on the original call and present on each later operation.
+		ExecutionContinuation *api.ExecutionContinuation `json:"execution_continuation,omitempty"`
+		RunID                 string                     `json:"run_id"`
+		SessionID             string                     `json:"session_id"`
+		TurnID                string                     `json:"turn_id,omitempty"`
 		// ToolCallID is the model/provider call identity. The registry preserves it
 		// as metadata and derives the separate global ToolUseID from RunID,
-		// ToolCallID and InputRound.
+		// ToolCallID and ExecutionSequence.
 		ToolCallID       string `json:"tool_call_id"`
 		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 		// Labels carries run labels and runtime-supplied values fixed for this call.
@@ -291,7 +292,7 @@ func ValidateToolCallMessage(message ToolCallMessage) error {
 			message.Meta.ToolCallID == "" {
 			return fmt.Errorf("tool call run, session, and tool call metadata are required")
 		}
-		if err := ValidateInputRound(message.Meta.InputRound, message.Meta.InputContinuation, message.Meta.TextOnly); err != nil {
+		if err := ValidateExecution(message.Meta.ExecutionSequence, message.Meta.ExecutionContinuation, message.Meta.TextOnly); err != nil {
 			return err
 		}
 		for name, value := range map[string]string{

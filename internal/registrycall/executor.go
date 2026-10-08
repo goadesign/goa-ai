@@ -190,7 +190,7 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 		trace.WithAttributes(
 			attribute.String("toolregistry.toolset", toolsetID),
 			attribute.String("toolregistry.tool", call.Name.String()),
-			attribute.String("toolregistry.input_round", strconv.FormatUint(call.InputRound, 10)),
+			attribute.String("toolregistry.execution_sequence", strconv.FormatUint(call.ExecutionSequence, 10)),
 			attribute.String("toolregistry.run_id", meta.RunID),
 			attribute.String("toolregistry.session_id", meta.SessionID),
 			attribute.String("toolregistry.turn_id", meta.TurnID),
@@ -203,19 +203,19 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 	defer span.End()
 
 	tmeta := toolregistry.ToolCallMeta{
-		TextOnly:          meta.TextOnly,
-		InputRound:        call.InputRound,
-		InputContinuation: call.MCPContinuation,
-		RunID:             meta.RunID,
-		SessionID:         meta.SessionID,
-		TurnID:            meta.TurnID,
-		ToolCallID:        meta.ToolCallID,
-		ParentToolCallID:  meta.ParentToolCallID,
-		Labels:            maps.Clone(meta.Labels),
+		TextOnly:              meta.TextOnly,
+		ExecutionSequence:     call.ExecutionSequence,
+		ExecutionContinuation: call.ExecutionContinuation,
+		RunID:                 meta.RunID,
+		SessionID:             meta.SessionID,
+		TurnID:                meta.TurnID,
+		ToolCallID:            meta.ToolCallID,
+		ParentToolCallID:      meta.ParentToolCallID,
+		Labels:                maps.Clone(meta.Labels),
 	}
-	if err := toolregistry.ValidateInputRound(tmeta.InputRound, tmeta.InputContinuation, tmeta.TextOnly); err != nil {
+	if err := toolregistry.ValidateExecution(tmeta.ExecutionSequence, tmeta.ExecutionContinuation, tmeta.TextOnly); err != nil {
 		span.RecordError(err)
-		span.SetStatus(codes.Error, "invalid workflow input round")
+		span.SetStatus(codes.Error, "invalid workflow execution operation")
 		return internalFailureResult(err.Error()), nil
 	}
 	admissionCtx, cancelAdmission := context.WithTimeout(

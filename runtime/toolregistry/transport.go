@@ -37,14 +37,14 @@ const (
 )
 
 // DeriveToolUseID returns the deterministic global transport identity for one
-// service invocation inside one run and tool call. The round number separates
-// host-input rounds even when their arguments, state and answers are identical.
+// operation inside one run and tool call. The sequence separates new operations
+// even when their arguments, state and answers are identical.
 // Length delimiters prevent ambiguous strings from producing the same identity.
-func DeriveToolUseID(runID, toolCallID string, inputRound uint64) string {
+func DeriveToolUseID(runID, toolCallID string, sequence uint64) string {
 	body := []byte(toolUseIDDomain)
 	body = appendLengthDelimited(body, runID)
 	body = appendLengthDelimited(body, toolCallID)
-	body = binary.BigEndian.AppendUint64(body, inputRound)
+	body = binary.BigEndian.AppendUint64(body, sequence)
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
 }

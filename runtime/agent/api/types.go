@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/internal/responseevidence"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -23,6 +24,10 @@ import (
 )
 
 type (
+	// ExecutionContinuation retains one workflow-selected later operation. Its
+	// accessors expose copied input or exact Task identifiers, never model arguments.
+	ExecutionContinuation = tooloperation.Continuation
+
 	// RunInput captures everything an initial or continuation workflow needs.
 	// Initial history has already been published; engine commands carry its
 	// position plus caller-provided control values.
@@ -571,12 +576,12 @@ type (
 	// workflow execution. Planner implementations cannot construct this type
 	// through their PlanResult contract.
 	ToolCall struct {
-		// MCPContinuation carries runtime-owned input for a later round of this
+		// ExecutionContinuation selects the workflow-owned next operation on this
 		// invocation. It is never advertised as a model-authored argument.
-		MCPContinuation *mcp.CallContinuation
-		// InputRound counts completed host-input rounds for this invocation.
+		ExecutionContinuation *ExecutionContinuation
+		// ExecutionSequence identifies each new operation on this invocation.
 		// The workflow saves it so duplicate activity delivery keeps one identity.
-		InputRound uint64
+		ExecutionSequence uint64
 		// TextOnly is derived from the accepted run policy and disables UI interaction.
 		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
 		// Registry retains the exact registered contract selected for this call.
@@ -977,12 +982,12 @@ type (
 	// ToolInput carries the execution payload for one tool call from workflow
 	// code to its activity. The workflow retains model-authored transcript data.
 	ToolInput struct {
-		// MCPContinuation supplies only the answers and opaque state saved for
-		// this unfinished invocation. The original tool arguments stay in Payload.
-		MCPContinuation *mcp.CallContinuation
-		// InputRound counts completed host-input rounds for this invocation.
+		// ExecutionContinuation selects the saved next operation on this unfinished
+		// invocation. The original tool arguments stay in Payload.
+		ExecutionContinuation *ExecutionContinuation
+		// ExecutionSequence identifies each new operation on this invocation.
 		// The workflow saves it so duplicate activity delivery keeps one identity.
-		InputRound uint64
+		ExecutionSequence uint64
 		// TextOnly is derived from the accepted run policy and disables UI interaction.
 		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
 		// Registry carries the selected registration into the execution activity.
@@ -1237,10 +1242,10 @@ const (
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
 	// RunSuspensionVersion identifies the checkpoint emitted by this runtime.
-	// Version 11 retains ordered tool content alongside the accepted result,
-	// advertised catalog, unfinished MCP arguments, host requests, and opaque
-	// server state. Earlier versions are rejected without conversion.
-	RunSuspensionVersion = "goa-ai.run-suspension.v11"
+	// Version 12 retains the workflow-selected execution sequence alongside
+	// ordered tool content, the accepted catalog, unfinished arguments and host
+	// requests. Earlier versions are rejected without conversion.
+	RunSuspensionVersion = "goa-ai.run-suspension.v12"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.
