@@ -213,6 +213,7 @@ func runMCPPeer(t *testing.T, moduleName, design, runtime string) {
 
 go 1.27.0
 require (
+ github.com/modelcontextprotocol/go-sdk v1.8.0
  goa.design/goa-ai v0.0.0
  goa.design/goa/v3 v3.0.0
 )

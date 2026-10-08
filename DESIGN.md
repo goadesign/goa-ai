@@ -2123,6 +2123,16 @@ cannot reopen the invocation. Each selected branch retains its required fields
 and null checks. Independent HTTP peers from the official Go SDK test these
 contracts without adding an application dependency.
 
+`internal/mcpinput` reads inherited method contracts for early DSL validation.
+Goa validates every root before finalizing inherited fields, so this reader
+resolves a detached graph with Goa's `AttributeGraphCopier` and `Finalize`.
+It finalizes inherited sources before their consumers, including nested sources,
+and returns the original selected declarations to InputExchange and Task planners.
+Ordinary contracts retain their original attribute identity. Result validators,
+argument selection and native job roles use this shared reader; they do not
+implement their own field merges or change authored expressions before Goa's
+normal finalization phase.
+
 An authored `InputExchange` maps an optional native payload continuation and a
 required completed-or-input-required result union. Generation derives matching
 question identifiers, flat form schemas, native answer codecs and pending-result

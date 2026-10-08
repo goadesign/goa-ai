@@ -396,6 +396,10 @@ Authored URL mappings use Goa's `Param("payload_field:url_name")` notation.
 Generated clients retain the complete API and service path; adapters decode and
 validate each method's own typed URL values before endpoint execution. These
 values stay outside model arguments. See [URL values](docs/dsl.md#url-values-and-mapped-attributes).
+MCP bindings retain Goa's inherited payload and result contracts, including
+nested fields and required constraints. Use ordinary `Extend` and `Reference`
+declarations across exchanges, jobs, catalogs, resources and subscriptions. See
+[inherited contracts](docs/dsl.md#inherited-mcp-method-contracts).
 `InputExchange(continuationField, outcomeField)` lets unary tools, resource readers
 and prompts collect typed form input or URL consent before completion. Generation
 derives the form schema and answer codec from Goa types; continuation data stays

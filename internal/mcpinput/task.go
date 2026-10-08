@@ -69,8 +69,9 @@ func TaskExchange(method *expr.MethodExpr) (*TaskBinding, error) {
 		if _, nested := operation.Meta[TaskExchangeMetaKey]; nested {
 			return nil, fmt.Errorf("TaskExchange method %q cannot create another job", name)
 		}
-		payload := expr.AsObject(operation.Payload.Type)
-		if payload == nil || payload.Attribute("taskId") == nil || !operation.Payload.IsRequired("taskId") || primitive(payload.Attribute("taskId").Type) != expr.String {
+		input := Resolved(operation.Payload)
+		payload := expr.AsObject(input.Type)
+		if payload == nil || payload.Attribute("taskId") == nil || !input.IsRequired("taskId") || primitive(payload.Attribute("taskId").Type) != expr.String {
 			return nil, fmt.Errorf("TaskExchange method %q requires a taskId string", name)
 		}
 		seen[name] = true
@@ -90,17 +91,20 @@ func TaskExchange(method *expr.MethodExpr) (*TaskBinding, error) {
 	if binding.Answer.Result.Type != expr.Empty || binding.Cancel.Result.Type != expr.Empty {
 		return nil, fmt.Errorf("TaskExchange answer and cancel methods must return no domain result")
 	}
-	if err := binding.validateObservation(); err != nil {
+	graph := newContractGraph(binding.Observation, binding.Answer.Payload)
+	if err := binding.validateObservation(graph); err != nil {
 		return nil, err
 	}
+	binding.restoreAuthoredFields(graph)
 	return binding, nil
 }
 
 // validateObservation requires metadata and one state. The state discriminator
 // derives the protocol status; metadata cannot contradict it with a second status.
-func (b *TaskBinding) validateObservation() error {
-	object := expr.AsObject(b.Observation.Type)
-	if object == nil || len(*object) != 2 || object.Attribute("task") == nil || object.Attribute("outcome") == nil || !b.Observation.IsRequired("task") || !b.Observation.IsRequired("outcome") {
+func (b *TaskBinding) validateObservation(graph contractGraph) error {
+	observation := graph.attribute(b.Observation)
+	object := expr.AsObject(observation.Type)
+	if object == nil || len(*object) != 2 || object.Attribute("task") == nil || object.Attribute("outcome") == nil || !observation.IsRequired("task") || !observation.IsRequired("outcome") {
 		return fmt.Errorf("TaskExchange observation requires only task metadata and an outcome OneOf")
 	}
 	b.Metadata, b.Outcome = object.Attribute("task"), object.Attribute("outcome")
@@ -143,8 +147,9 @@ func (b *TaskBinding) validateObservation() error {
 	if pending == nil || len(*pending) != 1 || pending.Attribute("requests") == nil || !b.Pending.IsRequired("requests") {
 		return fmt.Errorf("TaskExchange input_required requires only a requests object")
 	}
-	answers := b.Answer.Payload.Find("responses")
-	if answers == nil || !b.Answer.Payload.IsRequired("responses") {
+	answerInput := graph.attribute(b.Answer.Payload)
+	answers := answerInput.Find("responses")
+	if answers == nil || !answerInput.IsRequired("responses") {
 		return fmt.Errorf("TaskExchange answer method requires a responses object")
 	}
 	questions, err := mapTaskQuestions(pending.Attribute("requests"), answers)
@@ -262,4 +267,17 @@ func validateTaskFailure(attribute *expr.AttributeExpr) error {
 		}
 	}
 	return nil
+}
+
+// restoreAuthoredFields returns the original observation and question declarations.
+// The creator and its read, answer and cancel methods keep their existing identity.
+func (b *TaskBinding) restoreAuthoredFields(graph contractGraph) {
+	b.Metadata = graph.original(b.Metadata)
+	b.Outcome = graph.original(b.Outcome)
+	b.Complete = graph.original(b.Complete)
+	b.Pending = graph.original(b.Pending)
+	b.Failure = graph.original(b.Failure)
+	for _, question := range b.Questions {
+		question.restoreAuthoredFields(graph)
+	}
 }

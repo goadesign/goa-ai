@@ -19,6 +19,18 @@ and verification evidence and do not supersede unfinished gates.
 | Dependencies, documentation and website | Dependency updates are underway. Finish caller migration, authoritative docs, translations and the MCP home-page section after capability acceptance. |
 | Generated stdio servers | Explicitly deferred. Existing stdio consumers remain supported. |
 
+Early MCP validation now resolves inherited arguments and results through one
+shared reader. A detached Goa attribute graph retains concrete type identity and
+source locations, and Goa finalizes inherited sources before consumers. Input
+exchange and job planners return the original selected declarations for normal
+generation. Nested arrays, maps, unions, recursive types and distinct copies of
+one type origin are covered. Catalogs, resource readers, prompts, completions and
+subscription events use the same resolution. No public DSL or wire contract is
+added. Generated inherited HTTP peers pass for input exchanges (9.75 seconds),
+job lifecycle (6.44 seconds) and catalogs with changes (6.27 seconds). Local and
+registry caller generation passes in 5.34 seconds; shared-reader race tests pass
+in 2.49 seconds. Scoped lint reports zero issues. Final-head CI remains required.
+
 Task metadata has one existing protocol decoder. Every generated HTTP client
 already sends through `HTTPTransport` before Goa's typed response decoder. The
 transport now checks creation metadata, detailed task state, exact queried task

@@ -60,9 +60,10 @@ func validateCatalogMethod(verr *eval.ValidationErrors, method *expr.MethodExpr,
 	if payload == nil || len(*payload) != 1 || payload.Attribute("cursor") == nil || !isPrimitive(payload.Attribute("cursor").Type, expr.String) || arguments.IsRequired("cursor") {
 		verr.Add(method, "MCP catalog payload must contain only an optional cursor string apart from native HTTP inputs")
 	}
+	output := mcpinput.Resolved(method.Result)
 	var result *expr.Object
-	if hasValue(method.Result) {
-		result = expr.AsObject(method.Result.Type)
+	if hasValue(output) {
+		result = expr.AsObject(output.Type)
 	}
 	if result == nil || result.Attribute(collection) == nil {
 		verr.Add(method, "MCP catalog result must contain a %s array and optional nextCursor string", collection)
@@ -82,7 +83,7 @@ func validateCatalogMethod(verr *eval.ValidationErrors, method *expr.MethodExpr,
 				}
 			}
 		case "nextCursor":
-			if !isPrimitive(field.Attribute.Type, expr.String) || method.Result.IsRequired(field.Name) {
+			if !isPrimitive(field.Attribute.Type, expr.String) || output.IsRequired(field.Name) {
 				verr.Add(method, "MCP catalog nextCursor must be an optional string")
 			}
 		default:

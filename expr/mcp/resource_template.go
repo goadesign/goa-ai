@@ -82,6 +82,7 @@ func ValidateResourceReader(method *expr.MethodExpr) error {
 		verr.Add(method, "%s", resultErr.Error())
 		return verr
 	}
+	completed = mcpinput.Resolved(completed)
 	var result *expr.Object
 	if hasValue(completed) {
 		result = expr.AsObject(completed.Type)

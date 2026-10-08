@@ -61,7 +61,7 @@ func (s *SubscriptionSourceExpr) Validate() error {
 			verr.Add(s, "subscription input has unsupported field %q", field.Name)
 		}
 	}
-	result := method.StreamingResult
+	result := mcpinput.Resolved(method.StreamingResult)
 	if !hasValue(result) {
 		verr.Add(s, "subscription stream must contain a required change OneOf")
 		return verr

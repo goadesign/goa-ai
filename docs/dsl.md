@@ -1670,6 +1670,15 @@ prefix and composite variables. Unknown templates, variables and prior names
 fail before dispatch; a declared variable without a provider returns `[]`.
 Completion does not expand a URI or read the resource.
 
+### Inherited MCP method contracts
+
+MCP methods can reuse Goa types with `Extend` and `Reference`. Inherited payload
+and result fields keep their required constraints, aliases and package locations,
+including fields inside arrays, maps and OneOf branches. The same rules apply to
+input exchanges, native job operations, catalogs, resource readers, prompts,
+completion suggestions and subscription events. Author these types normally;
+MCP bindings do not require you to repeat inherited fields in each method.
+
 ### Native job tools
 
 `TaskExchange(read, answer, cancel)` binds a creator to three ordinary methods
@@ -1754,7 +1763,7 @@ For `PromptCatalog`, return `prompts` instead of `tools`. Names select authored
 static or method-backed prompts. Both page inputs contain only an optional
 `cursor` string apart from native credentials and mapped URL values. Both page
 results contain the names array and an optional `nextCursor` string. String
-aliases, inherited inputs, custom Go selectors and Goa result views retain
+aliases, inherited inputs and results, custom Go selectors and Goa result views retain
 normal generated representations. Every selected view must include its names
 array. Make the array optional when an empty page is valid.
 

@@ -65,8 +65,11 @@ func InputExchange(method *expr.MethodExpr) (*Exchange, error) {
 	if method.IsStreaming() {
 		return nil, fmt.Errorf("InputExchange requires a unary method")
 	}
-	payload := expr.AsObject(method.Payload.Type)
-	if payload == nil || payload.Attribute(names[0]) == nil || method.Payload.IsRequired(names[0]) {
+	graph := newContractGraph(method.Payload, method.Result)
+	payloadAttribute := graph.attribute(method.Payload)
+	resultAttribute := graph.attribute(method.Result)
+	payload := expr.AsObject(payloadAttribute.Type)
+	if payload == nil || payload.Attribute(names[0]) == nil || payloadAttribute.IsRequired(names[0]) {
 		return nil, fmt.Errorf("InputExchange continuation %q must be an optional payload object", names[0])
 	}
 	mapping := &Exchange{ContinuationName: names[0], OutcomeName: names[1], Continuation: payload.Attribute(names[0])}
@@ -74,8 +77,8 @@ func InputExchange(method *expr.MethodExpr) (*Exchange, error) {
 		return nil, fmt.Errorf("InputExchange continuation: %w", err)
 	}
 	mapping.Responses = expr.AsObject(mapping.Continuation.Type).Attribute("responses")
-	result := expr.AsObject(method.Result.Type)
-	if result == nil || len(*result) != 1 || result.Attribute(names[1]) == nil || !method.Result.IsRequired(names[1]) {
+	result := expr.AsObject(resultAttribute.Type)
+	if result == nil || len(*result) != 1 || result.Attribute(names[1]) == nil || !resultAttribute.IsRequired(names[1]) {
 		return nil, fmt.Errorf("InputExchange result must contain only required outcome %q", names[1])
 	}
 	mapping.Outcome = result.Attribute(names[1])
@@ -111,6 +114,7 @@ func InputExchange(method *expr.MethodExpr) (*Exchange, error) {
 	if err := mapQuestions(mapping); err != nil {
 		return nil, err
 	}
+	mapping.restoreAuthoredFields(graph)
 	return mapping, nil
 }
 
@@ -286,4 +290,26 @@ func primitive(value expr.DataType) expr.DataType {
 		}
 		value = named.Attribute().Type
 	}
+}
+
+// restoreAuthoredFields returns the original declarations selected by validation.
+// Generators can then resolve their existing names and package locations.
+func (e *Exchange) restoreAuthoredFields(graph contractGraph) {
+	e.Continuation = graph.original(e.Continuation)
+	e.Responses = graph.original(e.Responses)
+	e.Outcome = graph.original(e.Outcome)
+	e.Complete = graph.original(e.Complete)
+	e.Pending = graph.original(e.Pending)
+	e.Requests = graph.original(e.Requests)
+	for _, question := range e.Questions {
+		question.restoreAuthoredFields(graph)
+	}
+}
+
+// restoreAuthoredFields keeps each validated question tied to its service types.
+func (q *Question) restoreAuthoredFields(graph contractGraph) {
+	q.Request = graph.original(q.Request)
+	q.Response = graph.original(q.Response)
+	q.Answer = graph.original(q.Answer)
+	q.Content = graph.original(q.Content)
 }

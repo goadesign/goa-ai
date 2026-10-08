@@ -56,6 +56,7 @@ func (p *MethodPromptExpr) Validate() error {
 		verr.Add(p, "%s", err.Error())
 		return verr
 	}
+	completed = mcpinput.Resolved(completed)
 	if !hasValue(completed) || expr.AsObject(completed.Type) == nil {
 		verr.Add(p, "prompt result must be an object containing messages")
 	} else {

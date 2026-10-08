@@ -71,9 +71,10 @@ func validateCompletionMethod(owner eval.Expression, method *expr.MethodExpr) er
 			}
 		}
 	}
+	output := mcpinput.Resolved(method.Result)
 	var result *expr.Object
-	if hasValue(method.Result) {
-		result = expr.AsObject(method.Result.Type)
+	if hasValue(output) {
+		result = expr.AsObject(output.Type)
 	}
 	if result == nil {
 		verr.Add(owner, "completion result must contain a values array")
