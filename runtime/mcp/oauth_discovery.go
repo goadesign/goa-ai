@@ -19,7 +19,7 @@ import (
 // domain request. Missing locations return absence so the caller can obtain the
 // resource's advertised address from a read-only discovery challenge instead.
 func discoverProtectedResource(ctx context.Context, client *http.Client, resource, issuer *url.URL) (*genresourcemetadata.ReadResult, error) {
-	for _, address := range resourceMetadataAddresses(resource) {
+	for index, address := range resourceMetadataAddresses(resource) {
 		metadata, err := readProtectedResource(ctx, client, address)
 		if metadataMissing(err) {
 			continue
@@ -27,7 +27,13 @@ func discoverProtectedResource(ctx context.Context, client *http.Client, resourc
 		if err != nil {
 			return nil, err
 		}
-		return bindProtectedResource(metadata, resource, issuer)
+		identifier := resource
+		// Origin well-known metadata names the origin, without the endpoint's
+		// path or query. Check that exact identity before using its issuer.
+		if index > 0 {
+			identifier = &url.URL{Scheme: resource.Scheme, Host: resource.Host}
+		}
+		return bindProtectedResource(metadata, identifier, issuer)
 	}
 	return nil, nil
 }
@@ -82,18 +88,14 @@ func challengedProtectedResource(ctx context.Context, client *http.Client, resou
 	if len(challenges) != 1 {
 		return nil, oauthChallenge{}, errors.New("mcp: authorization challenge does not identify one resource realm")
 	}
-	for _, address := range resourceMetadataAddresses(resource) {
-		metadata, err := readProtectedResource(ctx, client, address)
-		if metadataMissing(err) {
-			continue
-		}
-		if err != nil {
-			return nil, oauthChallenge{}, err
-		}
-		bound, err := bindProtectedResource(metadata, resource, issuer)
-		return bound, challenges[0], err
+	metadata, err := discoverProtectedResource(ctx, client, resource, issuer)
+	if err != nil {
+		return nil, oauthChallenge{}, err
 	}
-	return nil, oauthChallenge{}, errors.New("mcp: challenged resource metadata was not found")
+	if metadata == nil {
+		return nil, oauthChallenge{}, errors.New("mcp: challenged resource metadata was not found")
+	}
+	return metadata, challenges[0], nil
 }
 
 // readProtectedResource uses Goa's generated response type and validations at

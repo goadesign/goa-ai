@@ -460,7 +460,9 @@ Construct an OAuth `mcp.ClientRegistration` for one issuer with explicit public,
 Basic-header secret, request-body secret or signed authentication. Registrations
 contain no user, resource scope or token. `mcp.NewClientCredentialsHTTPTransport`
 obtains confidential machine grants before MCP dispatch; resource records remain
-separate in the configured application store. Generated clients and `HTTPOptions.Client` accept
+separate in the configured application store. Validated metadata selects the token
+audience; the configured MCP endpoint still restricts request delivery. Origin
+metadata uses an origin audience without granting access to sibling endpoints. Generated clients and `HTTPOptions.Client` accept
 this same transport. Native Goa forms and security headers encode credentials;
 only the resource bearer token reaches MCP. Metadata must support the selected
 method. An omitted authentication-method list permits Basic only, as RFC 8414

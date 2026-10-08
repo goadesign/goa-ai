@@ -1,7 +1,9 @@
-// Package mcp owns resource-bound OAuth client state for all implemented grants.
-// Generated HTTP clients decode metadata and token results; this owner checks
-// their identities, serializes grant changes, and supplies credentials only to
-// the configured MCP resource with each operation's cancellation context.
+// Package mcp obtains and stores OAuth credentials for one host account.
+// Generated clients read metadata and tokens. The metadata's resource identifier
+// selects what a token authorizes, called its audience. Each operation validates
+// identities and loads that audience's record; storage serializes grant changes.
+// Credentials reach only the configured MCP address, and failures retain no
+// usable token after an uncertain exchange or save.
 package mcp
 
 import (
@@ -35,11 +37,13 @@ type (
 		recoversChallenges() bool
 		acquire(context.Context, *http.Client, string, *genissuermetadata.ReadResult, []string, *genaccesstokens.BearerToken, []AuthorizationCredential) (*genaccesstokens.BearerToken, time.Time, error)
 	}
-	// authorizationClient loads credentials for one host user or application,
-	// issuer and resource. No token or registration enters tool input.
+	// authorizationClient fixes the host account, registration and request address.
+	// Each operation copies it and loads credentials for its validated audience.
+	// No token or registration enters tool input.
 	authorizationClient struct {
 		client     *http.Client
 		resource   *url.URL
+		audience   string
 		issuer     *url.URL
 		clientInfo ClientInfo
 		scopes     []string
@@ -94,11 +98,7 @@ func newAuthorizationHTTPTransport(opts HTTPOptions, registration *ClientRegistr
 	owner := &authorizationClient{
 		client: &configured, resource: resource, issuer: issuer,
 		clientInfo: opts.ClientInfo, scopes: slices.Clone(scopes),
-		grant: grant, store: store, bindings: grant.credentialBindings(resource.String()),
-	}
-	owner.keys = make([]string, len(owner.bindings))
-	for n, binding := range owner.bindings {
-		owner.keys[n] = authorizationCredentialKey(binding)
+		grant: grant, store: store,
 	}
 	caller.transport.authorization = owner
 	return caller.transport, nil
@@ -126,19 +126,6 @@ func (g *authorizationClient) prepare(request *http.Request, credentialQueries, 
 	if request.Header.Get("Authorization") != "" {
 		return "", errors.New("mcp: built-in authorization cannot replace an existing authorization credential")
 	}
-	err = withAuthorizationCredentials(ctx, g.store, g.keys, func(ctx context.Context, records []AuthorizationCredential) error {
-		if err := g.loadCredential(ctx, records[0]); err != nil {
-			return err
-		}
-		issuance, err = g.prepareCredential(ctx, request, records)
-		return err
-	})
-	return issuance, err
-}
-
-// prepareCredential uses only the record currently held by the store. It saves
-// any new credential before adding a bearer header and returning its issuance.
-func (g *authorizationClient) prepareCredential(ctx context.Context, request *http.Request, records []AuthorizationCredential) (string, error) {
 	resource, err := discoverProtectedResource(ctx, g.client, g.resource, g.issuer)
 	if err != nil {
 		return "", err
@@ -158,13 +145,42 @@ func (g *authorizationClient) prepareCredential(ctx context.Context, request *ht
 	if err := g.grant.validateIssuer(issuer); err != nil {
 		return "", err
 	}
-	_, retained := g.state.State.AsReady()
-	if !probed && !retained && g.grant.recoversChallenges() {
+
+	// Metadata selects the token audience before the store selects its record.
+	// A new interactive grant releases that record to obtain initial challenge
+	// scopes, then loads the record for the challenge's validated audience.
+	for {
+		span.SetAttributes(attribute.String("oauth.audience", resource.Resource))
+		owner := g.credentialOwner(resource.Resource)
+		needsChallenge := false
+		err = withAuthorizationCredentials(ctx, owner.store, owner.keys, func(ctx context.Context, records []AuthorizationCredential) error {
+			if err := owner.loadCredential(ctx, records[0]); err != nil {
+				return err
+			}
+			_, retained := owner.state.State.AsReady()
+			if !probed && !retained && owner.grant.recoversChallenges() {
+				needsChallenge = true
+				return nil
+			}
+			issuance, err = owner.prepareCredential(ctx, request, records, resource, issuer, challenged)
+			return err
+		})
+		if err != nil || !needsChallenge {
+			return issuance, err
+		}
 		resource, challenged, err = discoverResourceAuthorization(ctx, g.client, g.resource, g.issuer, g.clientInfo, resource)
 		if err != nil {
 			return "", err
 		}
+		probed = true
 	}
+}
+
+// prepareCredential uses only the record currently held by the store. It saves
+// any new credential before adding a bearer header and returning its issuance.
+func (g *authorizationClient) prepareCredential(ctx context.Context, request *http.Request, records []AuthorizationCredential, resource *genresourcemetadata.ReadResult, issuer *genissuermetadata.ReadResult, challenged []string) (string, error) {
+	_, retained := g.state.State.AsReady()
+
 	known := unionScopes(g.state.Requested, g.state.Granted)
 	scopes := g.requestScopes(resource)
 	if g.grant.recoversChallenges() {
@@ -268,11 +284,17 @@ func (g *authorizationClient) recover(request *http.Request, response *HTTPRespo
 	if len(challenges) == 0 {
 		return false, nil
 	}
-	err = withAuthorizationCredentials(ctx, g.store, g.keys, func(ctx context.Context, records []AuthorizationCredential) error {
-		if err := g.loadCredential(ctx, records[0]); err != nil {
+	resource, challenge, err := challengedProtectedResource(ctx, g.client, g.resource, g.issuer, challenges)
+	if err != nil {
+		return false, err
+	}
+	span.SetAttributes(attribute.String("oauth.audience", resource.Resource))
+	owner := g.credentialOwner(resource.Resource)
+	err = withAuthorizationCredentials(ctx, owner.store, owner.keys, func(ctx context.Context, records []AuthorizationCredential) error {
+		if err := owner.loadCredential(ctx, records[0]); err != nil {
 			return err
 		}
-		recovered, err = g.recoverCredential(ctx, request, response, challenges, sent, records)
+		recovered, err = owner.recoverCredential(ctx, request, response, challenge, sent, records)
 		return err
 	})
 	if recovered {
@@ -283,11 +305,7 @@ func (g *authorizationClient) recover(request *http.Request, response *HTTPRespo
 
 // recoverCredential compares stable issuance identifiers, so a record loaded
 // in another process can satisfy a stale rejection without refreshing twice.
-func (g *authorizationClient) recoverCredential(ctx context.Context, request *http.Request, response *HTTPResponseError, challenges []oauthChallenge, sent string, records []AuthorizationCredential) (bool, error) {
-	_, challenge, err := challengedProtectedResource(ctx, g.client, g.resource, g.issuer, challenges)
-	if err != nil {
-		return false, err
-	}
+func (g *authorizationClient) recoverCredential(ctx context.Context, request *http.Request, response *HTTPResponseError, challenge oauthChallenge, sent string, records []AuthorizationCredential) (bool, error) {
 	if response.StatusCode == http.StatusForbidden && (challenge.error != oauthInsufficientScope || len(challenge.scopes) == 0) {
 		return false, nil
 	}
@@ -334,7 +352,7 @@ func (g *authorizationClient) obtain(ctx context.Context, issuer *genissuermetad
 	if err := g.saveCredential(ctx, records[0]); err != nil {
 		return err
 	}
-	token, obtained, err := g.grant.acquire(ctx, g.client, g.resource.String(), issuer, scopes, previous, records)
+	token, obtained, err := g.grant.acquire(ctx, g.client, g.audience, issuer, scopes, previous, records)
 	if err != nil {
 		return err
 	}
@@ -416,4 +434,18 @@ func (g *authorizationClient) saveCredential(ctx context.Context, record Authori
 		return authorizationFailure(ctx, "credential save", err)
 	}
 	return nil
+}
+
+// credentialOwner keeps grant changes local to one operation and selects saved
+// records for the validated token audience. The configured request address stays
+// fixed; another audience cannot reuse this operation's token or refresh value.
+func (g *authorizationClient) credentialOwner(audience string) *authorizationClient {
+	owner := *g
+	owner.audience = audience
+	owner.bindings = g.grant.credentialBindings(audience)
+	owner.keys = make([]string, len(owner.bindings))
+	for n, binding := range owner.bindings {
+		owner.keys[n] = authorizationCredentialKey(binding)
+	}
+	return &owner
 }

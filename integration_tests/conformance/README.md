@@ -145,6 +145,14 @@ assertion is absent from its recorded result. Its informational grant-list check
 is not independent verification. Local generated-client tests separately verify
 registered refresh grants; no full conformance claim follows from this case.
 
+The four `auth/metadata-*` cases receive their exact configured issuer from host
+setup before startup. Their original discovery, resource-parameter and wire checks
+run unchanged. Each still fails its required dynamic-registration assertion; these
+are supported-path observations, not scenario passes. `auth/authorization-server-migration`
+receives only its initial issuer registration. Its positive no-cross-issuer checks
+run unchanged, while automatic dynamic re-registration remains an overall failure.
+The transport rejects the issuer change instead of trusting it with old credentials.
+
 The certificate's one-day validity is local test setup, not an OAuth token or
 product retention rule. Keep the private key and raw reports out of commits:
 reports contain synthetic secrets, authorization codes and tokens. After the
@@ -169,6 +177,8 @@ Verified on 2026-10-03 with the pinned referee:
 | Client / `auth/basic-cimd`, HTTPS/document-host-adapted, verified 2026-10-08 | 14 passed; no warnings or failures | The production client fetches and validates the real document, uses its exact HTTPS identifier, and completes authorization and MCP dispatch. Run took 1.02 seconds. |
 | Client / `auth/offline-access-scope`, HTTPS/document-host-adapted, verified 2026-10-08 | 13 passed; no warnings or failures | Omitting the optional scope is permitted. The referee's grant-list assertion remains informational because checks are recorded before its cleanup-time fetch. Run took 0.55 seconds. |
 | Client / `auth/offline-access-not-supported`, HTTPS/preregistration-adapted, verified 2026-10-08 | 14 passed; no warnings or failures | The client does not request unsupported offline access. Run took 0.52 seconds. |
+| Client / `auth/metadata-default`, `auth/metadata-var1`, `auth/metadata-var2`, `auth/metadata-var3`, HTTPS/preregistration-adapted, verified 2026-10-08 | 18, 18, 18 and 17 successful checks; one failure each; overall failures | All four complete authorization and MCP calls with no driver errors. Discovery covers OAuth metadata, both OpenID path arrangements and origin resource identity. Each original dynamic-registration assertion remains unmet. Runs took 0.98, 0.52, 0.52 and 0.52 seconds. |
+| Client / `auth/authorization-server-migration`, HTTPS/preregistration-adapted, verified 2026-10-08 | 13 successful checks; one failure; overall failure | Both no-cross-issuer credential checks pass. The production client rejects changed issuer metadata before sending old credentials to it. Automatic dynamic re-registration remains unmet. Run took 0.52 seconds. |
 | Client / `tools_call` | 2 checks passed | Simple tool call and its wire schema |
 | Client / `request-metadata` | 4 passed, 3 skipped, 1 warning; overall failure | Roots, sampling, and elicitation are unclaimed by this driver. The peer rejects `2026-07-28` while advertising that same revision as supported; it warns because the client stops instead of repeating the request. This is not an old-version fallback test. |
 | Client / `http-standard-headers` | 3 passed, 8 skipped | Tool list/call method headers and tool name header. The driver does not exercise resource/prompt methods or removed initialization methods. |

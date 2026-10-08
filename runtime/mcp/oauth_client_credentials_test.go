@@ -413,12 +413,18 @@ func TestClientCredentialsOrderedDiscovery(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			peer := newOAuthPeer(t)
 			peer.missingPaths = tc.missing
+			if tc.name == "resource root" {
+				peer.metadata = strings.Replace(peer.metadata, peer.resource, peer.server.URL, 1)
+			}
 			transport := peer.transport(t, "client", "secret", nil)
 			require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
 			peer.mutex.Lock()
 			defer peer.mutex.Unlock()
 			require.GreaterOrEqual(t, len(peer.addresses), len(tc.prefix))
 			assert.Equal(t, tc.prefix, peer.addresses[:len(tc.prefix)])
+			if tc.name == "resource root" {
+				assert.Equal(t, peer.server.URL, peer.forms[0].Get("resource"))
+			}
 		})
 	}
 }
@@ -534,7 +540,13 @@ func TestClientCredentialsTracesExcludeCredentialContent(t *testing.T) {
 			continue
 		}
 		httpSpans++
-		assert.Equal(t, credentials.SpanContext().SpanID(), span.Parent().SpanID())
+		parent := credentials.SpanContext().SpanID()
+		for _, attr := range span.Attributes() {
+			if string(attr.Key) == "oauth.operation" && (attr.Value.AsString() == "resource_metadata" || attr.Value.AsString() == "issuer_metadata") {
+				parent = prepare.SpanContext().SpanID()
+			}
+		}
+		assert.Equal(t, parent, span.Parent().SpanID())
 		for _, attr := range span.Attributes() {
 			if string(attr.Key) == "http.response.status_code" && attr.Value.AsInt64() == http.StatusNotFound {
 				assert.Equal(t, codes.Unset, span.Status().Code)

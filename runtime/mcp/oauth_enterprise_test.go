@@ -25,6 +25,8 @@ import (
 	"github.com/go-jose/go-jose/v4/jwt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	genaccesstokens "goa.design/goa-ai/internal/mcpauth/gen/access_tokens"
 )
 
 type (
@@ -95,8 +97,17 @@ func TestEnterpriseDiscoveryCallerAndScopeNarrowing(t *testing.T) {
 	response, err := caller.CallTool(t.Context(), CallRequest{Tool: "read", Payload: []byte(`{}`)})
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"value":"ok"}`, string(response.StructuredContent))
-	assert.Equal(t, []string{"records:read"}, transport.authorization.state.Granted)
-	assert.Equal(t, []string{"records:read", "records:write"}, transport.authorization.state.Requested)
+	binding := transport.authorization.grant.credentialBindings(peer.resource.resource)[0]
+	require.NoError(t, withTestAuthorizationCredential(t.Context(), transport.authorization.store, binding, func(record AuthorizationCredential) error {
+		data, exists, err := record.Load()
+		require.NoError(t, err)
+		require.True(t, exists)
+		state, err := genaccesstokens.DecodeResourceCredentialState(data)
+		require.NoError(t, err)
+		assert.Equal(t, []string{"records:read"}, state.Granted)
+		assert.Equal(t, []string{"records:read", "records:write"}, state.Requested)
+		return nil
+	}))
 	peer.mutex.Lock()
 	defer peer.mutex.Unlock()
 	require.Len(t, peer.forms, 1)

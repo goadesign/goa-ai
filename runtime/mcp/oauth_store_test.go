@@ -200,7 +200,7 @@ func TestAuthorizationStoreRejectsCorruptAndMisboundRecords(t *testing.T) {
 			store := NewMemoryAuthorizationStore()
 			first := peer.transportWithStore(t, peer.authorize(t), store)
 			require.NoError(t, callOAuthPeer(t.Context(), first, peer.resource))
-			require.NoError(t, withTestAuthorizationCredential(t.Context(), store, first.authorization.bindings[0], func(record AuthorizationCredential) error {
+			require.NoError(t, withTestAuthorizationCredential(t.Context(), store, first.authorization.grant.credentialBindings(first.authorization.resource.String())[0], func(record AuthorizationCredential) error {
 				data, exists, err := record.Load()
 				require.NoError(t, err)
 				require.True(t, exists)
@@ -307,7 +307,7 @@ func TestAuthorizationStoreWaitCancellationAndIndependentKeys(t *testing.T) {
 func storedOAuthCredential(t *testing.T, transport *HTTPTransport) *genaccesstokens.ResourceCredentialReady {
 	t.Helper()
 	var ready *genaccesstokens.ResourceCredentialReady
-	require.NoError(t, withTestAuthorizationCredential(t.Context(), transport.authorization.store, transport.authorization.bindings[0], func(record AuthorizationCredential) error {
+	require.NoError(t, withTestAuthorizationCredential(t.Context(), transport.authorization.store, transport.authorization.grant.credentialBindings(transport.authorization.resource.String())[0], func(record AuthorizationCredential) error {
 		data, exists, err := record.Load()
 		require.NoError(t, err)
 		require.True(t, exists)
@@ -325,7 +325,7 @@ func storedOAuthCredential(t *testing.T, transport *HTTPTransport) *genaccesstok
 // issuer lifetime to elapse. Subsequent clients must reload this saved value.
 func setOAuthCredentialTime(t *testing.T, transport *HTTPTransport, obtained time.Time) {
 	t.Helper()
-	require.NoError(t, withTestAuthorizationCredential(t.Context(), transport.authorization.store, transport.authorization.bindings[0], func(record AuthorizationCredential) error {
+	require.NoError(t, withTestAuthorizationCredential(t.Context(), transport.authorization.store, transport.authorization.grant.credentialBindings(transport.authorization.resource.String())[0], func(record AuthorizationCredential) error {
 		data, exists, err := record.Load()
 		require.NoError(t, err)
 		require.True(t, exists)

@@ -2,6 +2,7 @@
 // and makes enterprise identity metadata describe its existing public client.
 // The original command and assertions still run; token handlers are unchanged.
 import { createServer } from 'node:https';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { readFileSync } from 'node:fs';
 import { exportSPKI } from '../../.cache/mcp-conformance/node_modules/jose/dist/webapi/index.js';
 import { EnterpriseManagedAuthorizationScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/enterprise-managed-authorization.ts';
@@ -11,11 +12,14 @@ import { IssParameterSupportedScenario, IssParameterNotAdvertisedScenario, IssPa
 import { ScopeFromWwwAuthenticateScenario, ScopeFromScopesSupportedScenario, ScopeOmittedWhenUndefinedScenario, ScopeStepUpAuthScenario, ScopeRetryLimitScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/scope-handling.ts';
 import { AuthBasicCIMDScenario, CIMD_CLIENT_METADATA_URL } from '../../.cache/mcp-conformance/src/scenarios/client/auth/basic-cimd.ts';
 import { OfflineAccessScopeScenario, OfflineAccessNotSupportedScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/offline-access.ts';
+import { metadataScenarios } from '../../.cache/mcp-conformance/src/scenarios/client/auth/discovery-metadata.ts';
+import { AuthorizationServerMigrationScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/authorization-server-migration.ts';
 import { ResourceMismatchScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/resource-mismatch.ts';
 import { ServerLifecycle } from '../../.cache/mcp-conformance/src/scenarios/client/auth/helpers/serverLifecycle.ts';
 
 const publicIdentityServers = new WeakSet();
 const clientMetadataServers = new WeakMap();
+const metadataHostAddresses = new AsyncLocalStorage();
 
 const key = readFileSync(process.env.MCP_CONFORMANCE_TLS_KEY);
 const cert = readFileSync(process.env.MCP_CONFORMANCE_CA_FILE);
@@ -53,6 +57,7 @@ ServerLifecycle.prototype.start = async function (app) {
     this.httpServer.listen(0, resolve);
   });
   this.baseUrl = `https://localhost:${this.httpServer.address().port}`;
+  metadataHostAddresses.getStore()?.push(this.baseUrl);
   return this.baseUrl;
 };
 
@@ -137,3 +142,39 @@ for (const [scenario, identifier] of [
     return urls;
   };
 }
+
+// Metadata scenarios start their configured issuer first, then their resource.
+// Retain that host configuration while starting each fixture; discovery responses
+// cannot select a registered client's trusted issuer. Original checks stay intact,
+// including their unmet dynamic-registration assertion.
+for (const scenario of metadataScenarios) {
+  const start = scenario.start;
+  scenario.start = async function (context) {
+    return metadataHostAddresses.run([], async () => {
+      const urls = await start.call(this, context);
+      const prefix = ['auth/metadata-var2', 'auth/metadata-var3'].includes(this.name)
+        ? '/tenant1'
+        : '';
+      urls.context = {
+        issuer: `${metadataHostAddresses.getStore()[0]}${prefix}`,
+        client_id: 'test-client-id',
+        token_endpoint_auth_method: 'none'
+      };
+      return urls;
+    });
+  };
+}
+
+// Migration supplies only the initial issuer's registration. A changed issuer
+// cannot acquire those credentials; the original re-registration assertion stays
+// unmet because this upgrade has no dynamic-registration compatibility path.
+const migrationStart = AuthorizationServerMigrationScenario.prototype.start;
+AuthorizationServerMigrationScenario.prototype.start = async function (context) {
+  const urls = await migrationStart.call(this, context);
+  urls.context = {
+    issuer: this.as1.getUrl(),
+    client_id: 'as1-client-id-LEAKED-IF-SEEN-AT-AS2',
+    token_endpoint_auth_method: 'none'
+  };
+  return urls;
+};

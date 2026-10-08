@@ -29,6 +29,8 @@ type (
 	browserOAuthPeer struct {
 		server           *httptest.Server
 		resource         string
+		resourceID       string
+		rootMetadata     string
 		issuer           string
 		metadata         string
 		clientID         string
@@ -704,6 +706,13 @@ func newBrowserOAuthPeer(t *testing.T) *browserOAuthPeer {
 			}
 			assert.Empty(t, r.Header.Get("Authorization"))
 			body = peer.metadata
+		case "/.well-known/oauth-protected-resource":
+			assert.Empty(t, r.Header.Get("Authorization"))
+			if peer.rootMetadata == "" {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			body = peer.rootMetadata
 		case "/.well-known/oauth-authorization-server/issuer":
 			assert.Empty(t, r.Header.Get("Authorization"))
 			body = peer.issuerBody
@@ -726,7 +735,7 @@ func newBrowserOAuthPeer(t *testing.T) *browserOAuthPeer {
 				w.WriteHeader(http.StatusUnauthorized)
 				return
 			}
-			assert.Equal(t, peer.resource, r.PostForm.Get("resource"))
+			assert.Equal(t, peer.resourceID, r.PostForm.Get("resource"))
 			peer.mutex.Lock()
 			peer.forms = append(peer.forms, r.PostForm)
 			if r.PostForm.Get("grant_type") == "authorization_code" {
@@ -787,6 +796,7 @@ func newBrowserOAuthPeer(t *testing.T) *browserOAuthPeer {
 	t.Cleanup(peer.server.Close)
 	peer.clientID = "registered-public"
 	peer.resource = peer.server.URL + "/mcp/a%2Fb?tenant=selected"
+	peer.resourceID = peer.resource
 	peer.issuer = peer.server.URL + "/issuer"
 	peer.metadata = fmt.Sprintf(`{"resource":%q,"authorization_servers":[%q],"scopes_supported":["records:read"]}`, peer.resource, peer.issuer)
 	peer.initialChallenge = fmt.Sprintf(`Bearer resource_metadata=%q`, peer.server.URL+"/challenged/resource")
@@ -824,7 +834,7 @@ func (p *browserOAuthPeer) authorize(t *testing.T) func(context.Context, string)
 			return "", err
 		}
 		query := parsed.Query()
-		assert.Equal(t, p.resource, query.Get("resource"))
+		assert.Equal(t, p.resourceID, query.Get("resource"))
 		assert.Equal(t, "code", query.Get("response_type"))
 		assert.Equal(t, "S256", query.Get("code_challenge_method"))
 		assert.Empty(t, query.Get("code_verifier"))

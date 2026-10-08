@@ -2887,8 +2887,14 @@ HTTPS and issuer configuration described in the
 passes do not prove complete extension conformance. No redirects,
 unchanged machine-credential retries or token-syntax guesses are made. Only HTTP
 404 advances well-known discovery; malformed documents and owner mismatches stop
-before dispatch. Each transport retains separate user and resource token state
-when an application registration is shared.
+before dispatch. Validated metadata selects the exact token audience for grant forms and saved
+record identity. Endpoint metadata binds its configured request address; origin
+well-known metadata binds the exact origin. Advertised challenge metadata still
+binds the exact challenged request address. No prefix matching or sibling-endpoint
+permission follows from an origin audience. Each operation loads its audience's
+record into private operation state; concurrent operations cannot overwrite another
+audience's grant. A shared application registration does not merge user, issuer,
+audience or grant identities.
 
 Browser authorization uses the same private grant owner and native generated
 OAuth contracts. Registration constructors select preregistration or a client-hosted HTTPS

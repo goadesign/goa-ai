@@ -94,7 +94,9 @@ func exerciseAuthorization(endpoint string) error {
 		"auth/metadata-issuer-mismatch", "auth/resource-mismatch",
 		"auth/scope-from-www-authenticate", "auth/scope-from-scopes-supported",
 		"auth/scope-omitted-when-undefined", "auth/scope-step-up", "auth/scope-retry-limit",
-		metadataScenario, offlineAccessScenario, "auth/offline-access-not-supported":
+		metadataScenario, offlineAccessScenario, "auth/offline-access-not-supported",
+		"auth/metadata-default", "auth/metadata-var1", "auth/metadata-var2", "auth/metadata-var3",
+		"auth/authorization-server-migration":
 		transport, err = mcp.NewAuthorizationCodeHTTPTransport(mcp.HTTPOptions{Endpoint: endpoint, Client: browser, ClientInfo: info}, mcp.AuthorizationCode{
 			Registration: registration,
 			RedirectURI:  "http://127.0.0.1:3000/callback",

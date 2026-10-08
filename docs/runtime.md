@@ -7170,7 +7170,10 @@ remains subject to independent conformance verification before release.
 ### Browser authorization
 
 Browser grants use the same constructed registration for public, Basic, POST or
-signed authentication. A host supplies sign-in and consent for one user:
+signed authentication. The registration fixes one trusted issuer. If
+resource metadata changes to another issuer, the transport stops before sending
+credentials there. The host must construct a registration for the new issuer;
+peer metadata cannot transfer existing issuer credentials or establish that trust. A host supplies sign-in and consent for one user:
 
 ```go
 registration, err := mcp.NewPublicClientRegistration(
@@ -7192,7 +7195,12 @@ transport, err := mcp.NewAuthorizationCodeHTTPTransport(mcp.HTTPOptions{
 ```
 
 Check the transport error. Construct a separate transport for each host user and
-resource, even when their application registration is shared. `Authorize(ctx, URL)`
+resource, even when their application registration is shared. The endpoint
+restricts request delivery. Validated resource metadata selects the token audience,
+which can be that exact endpoint or the exact origin from origin well-known
+metadata. Grants, refreshes and private saved records use that audience without
+allowing requests to sibling endpoints. A changed audience receives its own saved
+record and does not inherit another audience's permissions or refresh credential. `Authorize(ctx, URL)`
 returns the complete redirect URL and respects cancellation; neither URL may be logged.
 The runtime creates fresh state and a private Proof Key for Code Exchange (PKCE)
 verifier, verifies advertised S256 support, and checks the exact redirect and issuer

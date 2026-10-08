@@ -14,7 +14,7 @@ and verification evidence and do not supersede unfinished gates.
 | Durable Task consumption and cancellation | Implemented. Final caller/database acceptance remains required. |
 | Task production and notifications | Implemented through existing typed job methods and one shared resource/Task subscription source. Generated HTTP lifecycle, native executor/provider paths, discovery, full snapshots and selected views are verified. Final-head integration and caller acceptance remain required. |
 | Dynamic catalogs | Implemented through authenticated native methods for tools, prompts, resources and URI templates, with one shared subscription source. Final-head integration and review remain required. |
-| OAuth | Built-in authorization paths are implemented; finish the remaining agreed profile and conformance assessment. |
+| OAuth | Built-in authorization paths and the agreed metadata/profile assessment are implemented. Selected independent checks and explicit legacy-fixture mismatches are recorded. Final-head verification, review and caller acceptance remain required. |
 | MCP Apps and Skills | Required. Complete their authored, generated and consuming paths and verify extension contracts. |
 | Dependencies, documentation and website | Dependency updates are underway. Finish caller migration, authoritative docs, translations and the MCP home-page section after capability acceptance. |
 | Generated stdio servers | Explicitly deferred. Existing stdio consumers remain supported. |
@@ -3986,3 +3986,43 @@ Existing local metadata-refresh checks establish registered grant handling. See
 [the report](../integration_tests/conformance/README.md) for exact adaptations.
 Metadata-location and issuer-migration assessment still require complete-path
 review; these passes do not close OAuth or full-upgrade release gates.
+
+### Metadata-derived audience and issuer binding (2026-10-08)
+
+The complete discovery path exposed a missing distinction between the configured
+MCP request address and the token audience. RFC 9728 requires origin well-known
+metadata to identify the origin; the official Go SDK derives that identifier
+separately from the endpoint. The shared owner now validates each document against
+its discovery location, then uses its exact audience for grants, refreshes and
+saved-record keys. Request delivery remains restricted to the configured endpoint.
+Advertised challenge metadata must still identify the exact challenged address.
+No URI prefix match, sibling-endpoint authorization, public configuration option
+or second token store is introduced.
+
+Each operation loads the selected record into its own private state. Different
+audiences cannot share retained permissions or refresh credentials accidentally;
+concurrent operations retain storage-owned serialization. Native generated
+metadata and credential codecs remain the single boundary implementation. The
+existing private record shape is unchanged; origin and endpoint records have
+different keys. No legacy key lookup or credential migration fallback is added.
+
+Focused OAuth checks passed with race detection in 7.06 seconds, including origin
+restart reuse, origin refresh, audience changes, malformed location identities,
+concurrent recovery, machine grants, signed registration and enterprise flows.
+Scoped lint passed in 1.72 seconds. A fresh independent scope-escalation
+regression passed 25 checks without warnings or driver errors in 0.54 seconds.
+All four independent discovery-location cases
+completed their supported authorization and MCP paths, with 18, 18, 18 and 17
+successful checks. Each remains an overall failure because its unchanged referee
+requires dynamic registration. Issuer migration passes both no-cross-issuer
+credential checks and stops before sending credentials to the new issuer; it
+remains an overall failure on automatic dynamic re-registration. That legacy
+mechanism is excluded by the requested breaking contract. A host constructs a
+trusted registration for a new issuer rather than deriving trust from discovery.
+
+See [RFC 9728 validation](https://www.rfc-editor.org/rfc/rfc9728.html#section-3.3),
+[MCP discovery](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/authorization-server-discovery)
+and the [exact referee results](../integration_tests/conformance/README.md).
+This completes the remaining metadata/profile assessment without claiming a
+full referee pass. Final caller acceptance, Apps, Skills and website completion
+remain upgrade release gates.
