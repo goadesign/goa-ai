@@ -139,13 +139,25 @@ func resultMeta() json.RawMessage {
     return json.RawMessage({{ quote .ResultMeta }})
 }
 
+{{- if .NeedsToolMetadata }}
+// toolResultMeta combines the validated object emitted by the private codec
+// with this server's identity. Both encoders produce objects, and the design
+// prevents the service from supplying the framework's serverInfo field.
+func toolResultMeta(encoded json.RawMessage) json.RawMessage {
+    metadata := resultMeta()
+    if string(encoded) == "{}" { return metadata }
+    metadata = append(metadata[:len(metadata)-1], ',')
+    return append(metadata, encoded[1:]...)
+}
+{{- end }}
+
 // ServerDiscover describes declared capabilities without creating client state.
 func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ {{ index .PayloadRefs "server/discover" }}) (*DiscoverResult, error) {
     _, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.server/discover")
     defer span.End()
     capabilities := &ServerCapabilities{}
-    {{- if .Tasks }}
-    capabilities.Extensions = json.RawMessage(`{"io.modelcontextprotocol/tasks":{}}`)
+    {{- if .ExtensionMetadata }}
+    capabilities.Extensions = json.RawMessage({{ quote .ExtensionMetadata }})
     {{- end }}
     {{- if .Tools }}
     capabilities.Tools = &ToolsCapability{ {{ if and .SubscriptionSource (index .SubscriptionSource.Catalogs "tools") }}ListChanged: boolPtr(true),{{ end }} }

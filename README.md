@@ -359,6 +359,13 @@ providers now share typed input-exchange generation with MCP endpoints. The
 [implementation plan](docs/mcp_protocol_upgrade_plan.md) tracks the remaining
 release gates.
 
+MCP tools can [declare an Apps UI and caller visibility](docs/dsl.md#mcp-apps-declarations)
+through `ToolUI` and `ToolVisibility`. App-only helpers stay out of model
+toolsets and model callers reject their execution. `ToolMetadata` sends a typed
+completed-result object to hosts and apps while excluding it from model output.
+HTML contents and browser policy reuse ordinary resource methods and codecs.
+The browser host integration is still a release requirement.
+
 Direct HTTP and stdio clients can [observe and answer Tasks](docs/runtime.md#mcp-task-clients)
 through `GetTask`, `UpdateTask`, and `CancelTask`. The `mcp.Caller` contract includes
 all three operations; custom callers must implement the complete tool lifecycle.

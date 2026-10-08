@@ -77,8 +77,14 @@ type (
 		Method *expr.MethodExpr
 		// ContentField names the result array sent as MCP content instead of structured JSON.
 		ContentField string
+		// MetadataField names the typed result object sent only to MCP hosts as _meta.
+		MetadataField string
 		// Annotations describes the tool behavior declared by its service author.
 		Annotations *ToolAnnotationsExpr
+		// UIResourceURI identifies the existing HTML resource for an embedded app.
+		UIResourceURI string
+		// Visibility selects callers allowed to use the tool; zero permits both.
+		Visibility ToolVisibility
 	}
 
 	// ToolAnnotationsExpr records optional MCP tool behavior hints at design time.
@@ -203,6 +209,7 @@ func (m *MCPExpr) Validate() error {
 			verr.Add(t, "tool name %q is used more than once", t.Name)
 		}
 		toolNames[t.Name] = struct{}{}
+		m.validateToolUI(t, verr)
 		if err := t.Validate(); err != nil {
 			var ve *eval.ValidationErrors
 			if errors.As(err, &ve) {
@@ -272,6 +279,7 @@ func (m *MCPExpr) Validate() error {
 // Validate validates a tool expression
 func (t *ToolExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
+	t.validateAppDeclarations(verr)
 	if t.Name == "" {
 		verr.Add(t, "tool name is required")
 	}
@@ -313,6 +321,19 @@ func (t *ToolExpr) Validate() error {
 			if required != nil && slices.Contains(required.Required, t.ContentField) && (validation == nil || validation.MinLength == nil || *validation.MinLength < 1) {
 				verr.Add(t, "required ToolContent(%q) must declare MinLength(1)", t.ContentField)
 			}
+		}
+	}
+	if t.MetadataField != "" {
+		completed, err := mcpinput.CompleteResult(t.Method)
+		if err != nil {
+			verr.Add(t, "%s", err.Error())
+			return verr
+		}
+		object := expr.AsObject(completed.Type)
+		if object == nil || object.Attribute(t.MetadataField) == nil {
+			verr.Add(t, "ToolMetadata(%q) must name a field on the completed method result", t.MetadataField)
+		} else if metadata := expr.AsObject(object.Attribute(t.MetadataField).Type); metadata == nil {
+			verr.Add(t, "ToolMetadata(%q) must name a typed object", t.MetadataField)
 		}
 	}
 	if len(verr.Errors) > 0 {

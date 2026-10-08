@@ -2134,6 +2134,23 @@ Catalog projections use `MethodTypeLayout` for the selected result graph;
 content metadata uses the selected union's layout rather than unrelated result
 fields. There is no separate Apps resource converter or service serialization API.
 
+`ToolUI` associates a tool with an existing HTML resource, and `ToolVisibility`
+selects model callers, app callers, or both. Generation emits nested UI metadata
+and removes app-only tools from model toolsets. Generated model callers use
+their authored visibility; remote HTTP and stdio model callers share catalog,
+schema and visibility validation for the current credentials. The protocol
+client remains the app host's transport. The host must enforce app permissions.
+
+`ToolMetadata` selects a typed completed-result object for host-only result
+metadata. `mcpcontract.StructuredResult` removes both content and host metadata
+from the same model contract. One private result converter handles ordinary
+results, selected views and completed Tasks; existing codecs validate and encode
+the selected object. The framework's server identity is added at the protocol
+boundary without decoding or rewriting authored JSON numbers. Generation uses
+the shared JSON-name resolver to reject fields that would replace that identity.
+Browser messaging, sandbox policy and app permission acceptance remain separate
+release requirements; declarations alone do not complete Apps integration.
+
 `internal/mcpinput` reads inherited method contracts for early DSL validation.
 Goa validates every root before finalizing inherited fields, so this reader
 resolves a detached graph with Goa's `AttributeGraphCopier` and `Finalize`.

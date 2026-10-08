@@ -34,3 +34,25 @@ func ToolContent(field string) {
 	}
 	tool.ContentField = field
 }
+
+// ToolMetadata selects a top-level typed object on the completed method result
+// inside its MCP Tool block. The generated codec writes its fields to _meta for
+// the host and app, excluding them from structured output and model contracts.
+// Goa views control which metadata is returned; omitted objects add no fields.
+// The framework owns io.modelcontextprotocol/serverInfo and adds it independently.
+func ToolMetadata(field string) {
+	tool, ok := eval.Current().(*mcpexpr.ToolExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	if field == "" {
+		eval.ReportError("ToolMetadata requires a non-empty result field name")
+		return
+	}
+	if tool.MetadataField != "" {
+		eval.ReportError("ToolMetadata may be declared only once for a tool")
+		return
+	}
+	tool.MetadataField = field
+}

@@ -107,6 +107,12 @@ func serveStdioProtocolPeer() error {
 			blocked, blockedToken = nil, nil
 			continue
 		}
+		if request.Method == "tools/list" {
+			if err := writePeerToolCatalog(encoder, request.ID, []string{"first", "blocked", "after-cancel", "error", "progress", "progress-fail", "pair-one", "pair-two", "app-only"}); err != nil {
+				return err
+			}
+			continue
+		}
 		if request.Method != "tools/call" {
 			return fmt.Errorf("unexpected method %s", request.Method)
 		}
@@ -132,6 +138,9 @@ func serveStdioProtocolPeer() error {
 		var name string
 		if err := json.Unmarshal(request.Params["name"], &name); err != nil {
 			return err
+		}
+		if name == "app-only" {
+			return errors.New("model caller executed an app-only tool")
 		}
 		if name == "blocked" {
 			blocked = request.ID
@@ -184,6 +193,20 @@ func serveStdioProtocolPeer() error {
 			return err
 		}
 	}
+}
+
+// writePeerToolCatalog describes the synthetic process's tools before execution.
+// The app-only entry lets callers prove that visibility prevents a tool request.
+func writePeerToolCatalog(encoder *json.Encoder, id json.RawMessage, names []string) error {
+	tools := make([]map[string]any, 0, len(names))
+	for _, name := range names {
+		tool := map[string]any{"name": name, "inputSchema": json.RawMessage(`{"type":"object","additionalProperties":false}`), "outputSchema": json.RawMessage(`{"type":"string"}`)}
+		if name == "app-only" {
+			tool["_meta"] = json.RawMessage(`{"ui":{"visibility":["app"]}}`)
+		}
+		tools = append(tools, tool)
+	}
+	return encoder.Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": map[string]any{"resultType": "complete", "tools": tools, "ttlMs": 0, "cacheScope": "private"}})
 }
 
 // writePeerProgress emits an independent protocol notification using the exact

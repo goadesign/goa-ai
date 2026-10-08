@@ -31,6 +31,9 @@ func populateMCPToolset(mcpRoot *mcpexpr.RootExpr, ts *ToolsetData) (bool, error
 		ts.Description = mcp.Description
 	}
 	for _, tool := range mcp.Tools {
+		if tool.Visibility == mcpexpr.AppVisibility {
+			continue
+		}
 		var payload, result *goaexpr.AttributeExpr
 		if tool.Method != nil {
 			var err error

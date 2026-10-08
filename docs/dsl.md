@@ -2263,6 +2263,45 @@ fields are determined externally, use `Any` with
 must be a JSON object. Service implementations do not need to encode their
 own authored metadata.
 
+### MCP Apps declarations
+
+Use `ToolUI(uri)` to associate a tool with an HTML resource served by the same
+MCP service. The resource must use `text/html;profile=mcp-app`. A fixed `Resource`
+or the service's existing `ResourceReader` supplies its contents; ordinary typed
+resource `_meta.ui` fields supply its browser policy.
+
+```go
+Tool("show_record", "Show a record", func() {
+    ToolUI("ui://records/panel")
+    ToolMetadata("hostData")
+})
+Tool("refresh_panel", "Refresh the panel", func() {
+    ToolVisibility("app")
+})
+```
+
+`ToolVisibility` accepts `"model"`, `"app"`, or both. Omission permits both, as
+the Apps protocol requires. An app-only helper does not need its own HTML
+resource. Generation writes current nested `_meta.ui` metadata, excludes
+app-only tools from `FromMCP` model toolsets, and rejects their invocation through
+generated model callers. Remote HTTP and stdio model callers validate the
+current catalog's visibility before execution. The typed protocol client remains
+available to an app host, which must enforce app permissions itself.
+
+`ToolMetadata(field)` selects a typed object on the completed method result.
+Its fields become tool-result `_meta` for the host and app. They are excluded
+from structured output, output schemas, examples, field metadata and model
+codecs. Optional absent objects add no fields. Goa views select metadata just
+as they select content and domain fields; completed Tasks use the same result
+converter. The framework adds `io.modelcontextprotocol/serverInfo` and rejects
+authored JSON fields that would replace it, including renamed JSON fields.
+
+Regenerate servers and consumers after adding these declarations. Stdio model
+callers now read `tools/list` before execution and validate arguments and
+completed output against that catalog. Apps browser integration remains a
+release gate: these declarations do not supply a browser sandbox or grant
+permission to render HTML or forward app requests.
+
 ### Authored MCP tool content
 
 Use `ToolContent(field)` inside a method's `Tool` block to select a top-level

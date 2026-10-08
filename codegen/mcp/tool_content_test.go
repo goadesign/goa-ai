@@ -59,7 +59,7 @@ func TestToolContentSelectedContracts(t *testing.T) {
 		assert.Nil(t, expr.AsObject(branch.Attribute.Type).Attribute("attachments"))
 		assert.NotNil(t, expr.AsObject(branch.Attribute.Type).Attribute("summary"))
 	}
-	authored, err := newAdapterGenerator(testSchemaAPI(), service, definition).buildToolContentAdapter(rich)
+	authored, err := newAdapterGenerator(testSchemaAPI(), service, definition).buildToolResultAdapter(rich)
 	require.NoError(t, err)
 	assert.NotNil(t, authored.Cases[0].conversion)
 	assert.Nil(t, authored.Cases[1].conversion)

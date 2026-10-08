@@ -1,12 +1,13 @@
-// Package codegen emits typed tool content and structured results from one Goa
-// endpoint result. Content is validated and converted separately so audience
-// annotations cannot be bypassed through the tool's structured JSON fields.
+// Package codegen separates typed content, host metadata and structured output
+// from one completed Goa result. Each output follows the selected result view;
+// presentation and host metadata cannot enter the model's structured JSON.
 package codegen
 
 import (
 	"fmt"
 
 	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
+	"goa.design/goa-ai/codegen/internal/jsonshape"
 	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/internal/mcpinput"
@@ -16,42 +17,58 @@ import (
 )
 
 type (
-	// toolContentAdapter supplies a generated result converter for one tool.
-	toolContentAdapter struct {
+	// toolResultAdapter separates presentation and host-only metadata from a
+	// tool's structured output using the same completed result and selected view.
+	toolResultAdapter struct {
 		Name          string
 		SourceRef     string
 		Validate      string
 		ExecutionView bool
-		Cases         []*toolContentCase
+		Cases         []*toolResultCase
 		// OutcomeValue selects the completed branch inside a service-selected view.
 		OutcomeValue string
 
 		tool        *mcpexpr.ToolExpr
 		declaration *codegen.NameDeclaration
 	}
-	// toolContentCase records the fields returned by one declared view.
-	toolContentCase struct {
+	// toolResultCase records the fields returned by one declared view.
+	toolResultCase struct {
 		Name         string
 		Field        string
 		ElementField string
 		Convert      string
 		Encode       string
 		Value        string
+		Metadata     *contentMetadataData
 
 		result     *expr.AttributeExpr
 		layout     *codegen.GoTypePlan
 		conversion *contentConversion
 		structured *jsoncodec.Value
+		metaCodec  *jsoncodec.Value
 	}
 )
 
-// buildToolContentAdapter checks every selected view before planning converters.
+// buildToolResultAdapter checks every selected view before planning converters.
 // A view may omit content; an included content field must retain its full union.
-func (g *adapterGenerator) buildToolContentAdapter(tool *mcpexpr.ToolExpr) (*toolContentAdapter, error) {
+func (g *adapterGenerator) buildToolResultAdapter(tool *mcpexpr.ToolExpr) (*toolResultAdapter, error) {
 	if err := tool.Validate(); err != nil {
 		return nil, err
 	}
-	adapter := &toolContentAdapter{tool: tool}
+	if tool.MetadataField != "" {
+		completed, err := mcpinput.CompleteResult(tool.Method)
+		if err != nil {
+			return nil, err
+		}
+		metadata := expr.AsObject(expr.AsObject(completed.Type).Attribute(tool.MetadataField).Type)
+		for _, field := range *metadata {
+			name, visible := jsonshape.FieldName(field)
+			if visible && name == "io.modelcontextprotocol/serverInfo" {
+				return nil, fmt.Errorf("tool %q metadata must not declare the framework-owned serverInfo JSON field", tool.Name)
+			}
+		}
+	}
+	adapter := &toolResultAdapter{tool: tool}
 	owner := tool.Method
 	if task, err := mcpinput.TaskExchange(tool.Method); err != nil {
 		return nil, err
@@ -64,7 +81,7 @@ func (g *adapterGenerator) buildToolContentAdapter(tool *mcpexpr.ToolExpr) (*too
 			if err != nil {
 				return nil, err
 			}
-			adapter.Cases = append(adapter.Cases, &toolContentCase{Name: view, result: selected})
+			adapter.Cases = append(adapter.Cases, &toolResultCase{Name: view, result: selected})
 		} else {
 			adapter.ExecutionView = true
 			for _, view := range result.Views {
@@ -72,7 +89,7 @@ func (g *adapterGenerator) buildToolContentAdapter(tool *mcpexpr.ToolExpr) (*too
 				if err != nil {
 					return nil, err
 				}
-				adapter.Cases = append(adapter.Cases, &toolContentCase{Name: view.Name, result: selected})
+				adapter.Cases = append(adapter.Cases, &toolResultCase{Name: view.Name, result: selected})
 			}
 		}
 	} else {
@@ -80,7 +97,7 @@ func (g *adapterGenerator) buildToolContentAdapter(tool *mcpexpr.ToolExpr) (*too
 		if err != nil {
 			return nil, err
 		}
-		adapter.Cases = append(adapter.Cases, &toolContentCase{result: completed})
+		adapter.Cases = append(adapter.Cases, &toolResultCase{result: completed})
 	}
 	builder := newMCPExprBuilder(g.originalService, g.mcp)
 	target := &expr.AttributeExpr{Type: builder.getOrCreateType("ContentItem", builder.buildContentItemType)}
@@ -108,10 +125,10 @@ func (g *adapterGenerator) buildToolContentAdapter(tool *mcpexpr.ToolExpr) (*too
 	return adapter, nil
 }
 
-// planToolContent reserves typed converters and codecs for the fields remaining
-// after the content array is excluded. Full endpoint results retain their own
-// validation; these codecs encode only the structured tool contract.
-func planToolContent(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData, codecs *jsoncodec.Plan, methods map[string]*plannedMethodCodec) error {
+// planToolResults reserves typed converters and codecs for the fields remaining
+// after content and host metadata are excluded. Full endpoint results retain
+// their own validation; each output uses its separately selected typed codec.
+func planToolResults(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData, codecs *jsoncodec.Plan, methods map[string]*plannedMethodCodec) error {
 	pkg := generation.Package(data.mcpImportPath)
 	imports := codegen.NewGeneratedImportPlan(pkg)
 	var target *expr.AttributeExpr
@@ -122,7 +139,7 @@ func planToolContent(generation *codegen.Generation, services *goaservice.Plan, 
 		target = expr.AsArray(expr.AsObject(protocolCompletedResult(method.Result).Type).Attribute("content").Type).ElemType
 	}
 	for index, tool := range data.Tools {
-		content := tool.Content
+		content := tool.ResultConversion
 		if content == nil {
 			continue
 		}
@@ -161,7 +178,13 @@ func planToolContent(generation *codegen.Generation, services *goaservice.Plan, 
 				}
 				contentConversionNeeds(data, selected.conversion)
 			}
-			structured, err := mcpcontract.WithoutField(selected.result, content.tool.ContentField)
+			if attribute := expr.AsObject(selected.result.Type).Attribute(content.tool.MetadataField); attribute != nil {
+				selected.metaCodec, _, err = planContentMetadata(codecs, attribute, selected.layout, fmt.Sprintf("Tool%dView%dMetadata", index, viewIndex))
+				if err != nil {
+					return err
+				}
+			}
+			structured, err := mcpcontract.StructuredResult(content.tool, selected.result)
 			if err != nil {
 				return err
 			}
@@ -186,13 +209,13 @@ func planToolContent(generation *codegen.Generation, services *goaservice.Plan, 
 	return nil
 }
 
-// bindToolContent joins result fields to Goa's final names and renders the shared
+// bindToolResults joins result fields to Goa's final names and renders the shared
 // content conversions. Each declared view selects only its own returned fields.
-func bindToolContent(services *goaservice.ServicesData, planned *plannedMCPService) error {
+func bindToolResults(services *goaservice.ServicesData, planned *plannedMCPService) error {
 	data := planned.adapterData
 	target := services.ServiceAttributor(planned.prepared.mcpService.Name, data.mcpImportPath)
 	for _, tool := range data.Tools {
-		content := tool.Content
+		content := tool.ResultConversion
 		if content == nil {
 			continue
 		}
@@ -245,6 +268,14 @@ func bindToolContent(services *goaservice.ServicesData, planned *plannedMCPServi
 			}
 			if selected.structured != nil {
 				selected.Encode = data.CodecPackage + "." + selected.structured.EncodeDeclaration().Name()
+			}
+			if selected.metaCodec != nil {
+				attribute := expr.AsObject(selected.result.Type).Attribute(content.tool.MetadataField)
+				selected.Metadata = &contentMetadataData{
+					Field:    source.Field(attribute, content.tool.MetadataField, true),
+					Encode:   data.CodecPackage + "." + selected.metaCodec.EncodeDeclaration().Name(),
+					Optional: !selected.result.IsRequired(content.tool.MetadataField),
+				}
 			}
 		}
 	}

@@ -22,6 +22,13 @@ func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.In
 
 // CallTool sends exact arguments and returns validated content beside domain JSON.
 func (c *Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
+    {{- range .Tools }}
+    {{- if .AppOnly }}
+    if req.Tool == {{ quote .Name }} {
+        return mcpruntime.CallResponse{}, &mcpruntime.Error{Code: mcpruntime.JSONRPCInvalidParams, Message: "app-only tool cannot be called by a model"}
+    }
+    {{- end }}
+    {{- end }}
     payload := &{{ .PayloadRef }}{Name: req.Tool, Arguments: json.RawMessage(req.Payload){{ range .Paths }}, {{ .Selector }}: c.{{ .Name }}{{ end }}}
     request, err := c.client.BuildToolsCallRequest(ctx, payload)
     if err != nil { return mcpruntime.CallResponse{}, err }

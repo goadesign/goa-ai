@@ -141,8 +141,8 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "too
         state := {{ .Task.Created.Name }}Metadata(observation.{{ .Task.Created.MetadataField }}, string(observation.{{ .Task.Created.OutcomeField }}.Kind()))
         return &ToolsCallResult{Outcome: NewToolsCallOutcomeTask(state)}, nil
         {{- else }}
-        {{- if .Content }}
-        content, encoded, err := {{ .Content.Name }}({{ if and .Endpoint.InputExchange (not .Endpoint.ExecutionView) }}completedResult{{ else }}result{{ end }})
+        {{- if .ResultConversion }}
+        content, encoded, metadata, err := {{ .ResultConversion.Name }}({{ if and .Endpoint.InputExchange (not .Endpoint.ExecutionView) }}completedResult{{ else }}result{{ end }})
         {{- else }}
         encoded, err := {{ .Codec.ResultEncode }}({{ if and .Endpoint.InputExchange (not .Endpoint.ExecutionView) }}completedResult{{ else }}result{{ end }})
         {{- end }}
@@ -152,8 +152,8 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "too
             return nil, goa.PermanentError("internal_error", "%s", err.Error())
         }
         return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
-            Meta: resultMeta(),
-            Content: {{ if .Content }}content{{ else }}[]*ContentItem{}{{ end }},
+            Meta: {{ if .ResultConversion }}metadata{{ else }}resultMeta(){{ end }},
+            Content: {{ if .ResultConversion }}content{{ else }}[]*ContentItem{}{{ end }},
             StructuredContent: json.RawMessage(encoded),
         })}, nil
         {{- end }}
@@ -182,12 +182,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "too
 {{- end }}
 
 {{- range .Tools }}
-{{- with .Content }}
+{{- with .ResultConversion }}
 // {{ .Name }} validates the returned service value and separates content from
-// structured JSON. A service-selected view keeps both outputs within that view.
-func {{ .Name }}(result {{ .SourceRef }}) ([]*ContentItem, json.RawMessage, error) {
+// structured JSON and host metadata. A service-selected view keeps each output
+// within that view, and host metadata never enters structured model output.
+func {{ .Name }}(result {{ .SourceRef }}) ([]*ContentItem, json.RawMessage, json.RawMessage, error) {
     {{- if .Validate }}
-    if err := {{ .Validate }}(result); err != nil { return nil, nil, err }
+    if err := {{ .Validate }}(result); err != nil { return nil, nil, nil, err }
     {{- end }}
     {{- if .OutcomeValue }}
     completedResult, _ := {{ .OutcomeValue }}.AsComplete()
@@ -201,31 +202,44 @@ func {{ .Name }}(result {{ .SourceRef }}) ([]*ContentItem, json.RawMessage, erro
     case {{ quote .Name }}:
     {{- end }}
         content := []*ContentItem{}
+        metadata := resultMeta()
+        {{- $selected := . }}
+        {{- with .Metadata }}
+        {{- if .Optional }}
+        if {{ $selected.Value }}.{{ .Field }} != nil {
+        {{- end }}
+            encodedMetadata, err := {{ .Encode }}({{ $selected.Value }}.{{ .Field }})
+            if err != nil { return nil, nil, nil, err }
+            metadata = toolResultMeta(encodedMetadata)
+        {{- if .Optional }}
+        }
+        {{- end }}
+        {{- end }}
         {{- if .Field }}
         for _, value := range {{ .Value }}.{{ .Field }} {
             item, err := {{ .Convert }}(value.{{ .ElementField }})
-            if err != nil { return nil, nil, err }
+            if err != nil { return nil, nil, nil, err }
             content = append(content, item)
         }
         {{- end }}
         {{- if .Encode }}
         encoded, err := {{ .Encode }}({{ .Value }})
-        if err != nil { return nil, nil, err }
+        if err != nil { return nil, nil, nil, err }
         {{- if $content.ExecutionView }}
         encoded, err = json.Marshal(struct {
             Type string `json:"type"`
             Value json.RawMessage `json:"value"`
         }{Type: {{ quote .Name }}, Value: encoded})
-        if err != nil { return nil, nil, err }
+        if err != nil { return nil, nil, nil, err }
         {{- end }}
-        return content, encoded, nil
+        return content, encoded, metadata, nil
         {{- else }}
-        return content, nil, nil
+        return content, nil, metadata, nil
         {{- end }}
     {{- end }}
     {{- if .ExecutionView }}
     default:
-        return nil, nil, fmt.Errorf("endpoint returned undeclared result view %q", result.View)
+        return nil, nil, nil, fmt.Errorf("endpoint returned undeclared result view %q", result.View)
     }
     {{- end }}
 }
@@ -244,6 +258,9 @@ func {{ .Name }}(result {{ .SourceRef }}) ([]*ContentItem, json.RawMessage, erro
                     {{- if ne .IdempotentHint nil }}IdempotentHint: boolPtr({{ .IdempotentHint }}),{{ end }}
                     {{- if ne .OpenWorldHint nil }}OpenWorldHint: boolPtr({{ .OpenWorldHint }}),{{ end }}
                 },
+                {{- end }}
+                {{- if .UIMetadata }}
+                Meta: json.RawMessage({{ quote .UIMetadata }}),
                 {{- end }}
                 InputSchema: json.RawMessage({{ quote .InputSchema }}),
                 {{- if .OutputSchema }}

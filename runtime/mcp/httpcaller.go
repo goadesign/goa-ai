@@ -1,6 +1,6 @@
-// Package mcp sends stateless MCP tool requests over HTTP. Each invocation carries
-// its own protocol metadata and returns one validated result. Explicit trust and
-// behavior hints control retries after an interrupted SSE response.
+// Package mcp sends stateless MCP tool requests over HTTP. HTTP and stdio model
+// callers share catalog, visibility and schema validation for each invocation.
+// Explicit trust and behavior hints control HTTP retries after stream loss.
 package mcp
 
 import (
@@ -84,16 +84,12 @@ func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallRespons
 	if err != nil {
 		return CallResponse{}, err
 	}
-	contract, err := c.toolContract(ctx, req.Tool)
+	contract, err := readToolContract(ctx, req.Tool, c.catalogCall)
 	if err != nil {
 		return CallResponse{}, err
 	}
-	payload := req.Payload
-	if len(payload) == 0 {
-		payload = json.RawMessage("{}")
-	}
-	if err := jsonschema.Validate(contract.input, payload); err != nil {
-		return CallResponse{}, &Error{Code: JSONRPCInvalidParams, Message: fmt.Sprintf("MCP tool arguments: %v", err)}
+	if err := contract.validateArguments(req.Payload); err != nil {
+		return CallResponse{}, err
 	}
 	transport := NewHTTPTransport(c.transport, c.transport.clientInfo, HTTPBindings{Tools: map[string]ToolBinding{req.Tool: contract.binding}}, c.transport.inputSupport, c.transport.retry)
 	var result toolsCallResult
@@ -104,17 +100,16 @@ func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallRespons
 	if err != nil {
 		return CallResponse{}, err
 	}
-	if response.InputRequired == nil && response.Task == nil && contract.output != nil {
-		if err := jsonschema.Validate(contract.output, response.StructuredContent); err != nil {
-			return CallResponse{}, NewMalformedResponseError(fmt.Errorf("MCP structured result: %w", err))
-		}
+	if err := contract.validateResult(response); err != nil {
+		return CallResponse{}, err
 	}
 	return response, nil
 }
 
-// toolContract reads every catalog page without sharing a cache across credentials.
+// readToolContract reads every catalog page through the selected transport without
+// sharing a cache across credentials.
 // A malformed annotation excludes only its tool; another valid tool remains usable.
-func (c *HTTPCaller) toolContract(ctx context.Context, name string) (*remoteToolContract, error) {
+func readToolContract(ctx context.Context, name string, call func(context.Context, string, map[string]any, any) error) (*remoteToolContract, error) {
 	var cursor *string
 	seen := make(map[string]bool)
 	names := make(map[string]bool)
@@ -128,6 +123,7 @@ func (c *HTTPCaller) toolContract(ctx context.Context, name string) (*remoteTool
 		var catalog struct {
 			ResultType string `json:"resultType"` //nolint:tagliatelle // MCP defines this wire field name.
 			Tools      *[]struct {
+				Meta         json.RawMessage `json:"_meta"` //nolint:tagliatelle // MCP defines this wire field name.
 				Annotations  json.RawMessage `json:"annotations"`
 				Name         string          `json:"name"`
 				InputSchema  json.RawMessage `json:"inputSchema"`  //nolint:tagliatelle // MCP defines this wire field name.
@@ -137,7 +133,7 @@ func (c *HTTPCaller) toolContract(ctx context.Context, name string) (*remoteTool
 			TTLMs      *float64 `json:"ttlMs"`      //nolint:tagliatelle // MCP defines this wire field name.
 			CacheScope string   `json:"cacheScope"` //nolint:tagliatelle // MCP defines this wire field name.
 		}
-		if err := c.transport.call(ctx, c.endpoint, "tools/list", params, &catalog); err != nil {
+		if err := call(ctx, "tools/list", params, &catalog); err != nil {
 			return nil, err
 		}
 		if catalog.ResultType != resultComplete || catalog.Tools == nil || catalog.TTLMs == nil || *catalog.TTLMs < 0 ||
@@ -151,6 +147,14 @@ func (c *HTTPCaller) toolContract(ctx context.Context, name string) (*remoteTool
 			names[tool.Name] = true
 			if tool.Name != name {
 				continue
+			}
+			allowed, err := toolModelVisibility(tool.Meta)
+			if err != nil {
+				selectedError = err
+				continue
+			}
+			if !allowed {
+				return nil, &Error{Code: JSONRPCInvalidParams, Message: "app-only tool cannot be called by a model"}
 			}
 			bindings, err := mcpprotocol.CompileHeaderBindings(tool.InputSchema)
 			if err != nil {
@@ -201,6 +205,35 @@ func (c *HTTPCaller) toolContract(ctx context.Context, name string) (*remoteTool
 		seen[*catalog.NextCursor] = true
 		cursor = catalog.NextCursor
 	}
+}
+
+// catalogCall sends catalog requests to this HTTP caller's fixed server address
+// using the credentials attached to the current request context.
+func (c *HTTPCaller) catalogCall(ctx context.Context, method string, params map[string]any, result any) error {
+	return c.transport.call(ctx, c.endpoint, method, params, result)
+}
+
+// validateArguments checks model arguments against the selected remote schema
+// before either transport sends a request that could execute a tool.
+func (c *remoteToolContract) validateArguments(payload json.RawMessage) error {
+	if len(payload) == 0 {
+		payload = json.RawMessage("{}")
+	}
+	if err := jsonschema.Validate(c.input, payload); err != nil {
+		return &Error{Code: JSONRPCInvalidParams, Message: fmt.Sprintf("MCP tool arguments: %v", err)}
+	}
+	return nil
+}
+
+// validateResult checks completed structured output against the advertised
+// schema. Input requests and unfinished tasks have no completed output to check.
+func (c *remoteToolContract) validateResult(response CallResponse) error {
+	if response.InputRequired == nil && response.Task == nil && c.output != nil {
+		if err := jsonschema.Validate(c.output, response.StructuredContent); err != nil {
+			return NewMalformedResponseError(fmt.Errorf("MCP structured result: %w", err))
+		}
+	}
+	return nil
 }
 
 // decodeToolAnnotations validates optional hints from an external catalog before

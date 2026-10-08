@@ -57,6 +57,25 @@ func TestMCPTypedTaskContentMetadata(t *testing.T) {
 	runMCPPeer(t, "task-peer.local", design, runtime)
 }
 
+func TestMCPTypedTaskResultMetadata(t *testing.T) {
+	design, runtime := taskContentPeer(t)
+	design = strings.Replace(design, `var text=`, typedResourceMetadataDesign+`var text=`, 1)
+	design = strings.Replace(design, `Required("summary")`, `Field(3,"hostData",resourceMetadata,"Private app result",func(){Meta("struct:field:name","PrivateInfo")});Required("summary")`, 1)
+	design = strings.Replace(design, `ToolContent("attachments")`, `ToolContent("attachments");ToolMetadata("hostData")`, 1)
+	runtime = strings.Replace(runtime, `Summary:accepted.Content.Label,`, `Summary:accepted.Content.Label,PrivateInfo:&genjobs.ResourceMetadata{Policy:&genjobs.UIPolicy{PrefersBorder:new(true)},Note:"checked"},`, 1)
+	assertion := `assert.Equal(t,"user presentation",presentation.Text)`
+	runtime = strings.Replace(runtime, assertion, assertion+`
+ metadataLocation,metadataErr:=url.Parse(peer.URL);require.NoError(t,metadataErr)
+ metadataClient:=genclient.NewClient(metadataLocation.Scheme,metadataLocation.Host,httpClient,goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
+ metadataClient.Doer=transport
+ metadataReply,metadataErr:=metadataClient.TasksGet()(t.Context(),&genmcp.TasksGetPayload{TaskID:id,HTTPPath0:"owner"});require.NoError(t,metadataErr)
+ metadataTask,metadataOK:=metadataReply.(*genmcp.TasksGetResult).Outcome.AsCompleted();require.True(t,metadataOK)
+ assert.JSONEq(t,"{\"ui\":{\"prefersBorder\":true},\"note\":\"checked\",\"io.modelcontextprotocol/serverInfo\":{\"name\":\"jobs\",\"version\":\"1\"}}",string(metadataTask.Result.Meta))
+ assert.NotContains(t,string(metadataTask.Result.StructuredContent),"hostData")
+ assert.NotContains(t,string(metadataTask.Result.StructuredContent),"checked")`, 1)
+	runMCPPeer(t, "task-peer.local", design, runtime)
+}
+
 // typedResourceCatalogMetadataPeer uses the same authored metadata in both
 // descriptor catalogs, including omitted values and invalid field validation.
 func typedResourceCatalogMetadataPeer() (string, string) {

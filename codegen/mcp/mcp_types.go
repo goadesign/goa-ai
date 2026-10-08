@@ -145,6 +145,7 @@ func (b *mcpExprBuilder) buildToolInfoType() *expr.AttributeExpr {
 				Type:        expr.String,
 				Description: "Tool description",
 			}},
+			{Name: "_meta", Attribute: contentMetaAttribute()},
 			{Name: "annotations", Attribute: &expr.AttributeExpr{
 				Type:        b.getOrCreateType("ToolAnnotations", b.buildToolAnnotationsType),
 				Description: "Optional behavior hints; clients must trust the server before acting on them",

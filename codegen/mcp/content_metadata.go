@@ -44,14 +44,23 @@ func bindContentMetadataCodecs(services *goaservice.ServicesData, planned *plann
 		}
 	}
 	for _, tool := range data.Tools {
-		if tool.Content == nil {
+		if tool.ResultConversion == nil {
 			continue
 		}
-		owner := tool.Content.tool.Method
+		owner := tool.ResultConversion.tool.Method
 		if tool.Task != nil {
 			owner = tool.Task.binding.Read
 		}
-		for _, selected := range tool.Content.Cases {
+		for _, selected := range tool.ResultConversion.Cases {
+			if selected.metaCodec != nil {
+				writer := services.ServiceAttributor(planned.prepared.userService.Name, data.CodecImportPath)
+				if _, viewed := owner.Result.Type.(*expr.ResultTypeExpr); viewed {
+					writer = services.ViewAttributor(planned.prepared.userService.Name, data.CodecImportPath)
+				}
+				if err := selected.metaCodec.BindService(writer); err != nil {
+					return err
+				}
+			}
 			if selected.conversion == nil {
 				continue
 			}

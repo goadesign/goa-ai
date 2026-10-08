@@ -120,6 +120,10 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planTaskAdapters(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
+		adapter.ExtensionMetadata, err = serverExtensionMetadata(adapter)
+		if err != nil {
+			return err
+		}
 		codecPlan, methodCodecs, err := planMCPCodecs(plan.Generation(), servicePlan, prepared, adapter)
 		if err != nil {
 			return err
@@ -142,7 +146,7 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := declareMCPNames(plan.Generation(), adapter); err != nil {
 			return err
 		}
-		if err := planToolContent(plan.Generation(), servicePlan, prepared, adapter, codecPlan, methodCodecs); err != nil {
+		if err := planToolResults(plan.Generation(), servicePlan, prepared, adapter, codecPlan, methodCodecs); err != nil {
 			return err
 		}
 		for _, dependency := range append(credentialInputImports(prepared.credentials), routeInputImports(adapter)...) {
@@ -209,7 +213,7 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 		if err := bindContentConversions(services, planned); err != nil {
 			return nil, err
 		}
-		if err := bindToolContent(services, planned); err != nil {
+		if err := bindToolResults(services, planned); err != nil {
 			return nil, err
 		}
 		if err := bindCompletionConversions(services, planned); err != nil {
@@ -703,10 +707,10 @@ func bindMCPCodecs(generation *goacodegen.Generation, services *goaservice.Servi
 		}
 	}
 	for _, tool := range planned.adapterData.Tools {
-		if tool.Content == nil {
+		if tool.ResultConversion == nil {
 			continue
 		}
-		owner := tool.Content.tool.Method
+		owner := tool.ResultConversion.tool.Method
 		if tool.Task != nil {
 			owner = tool.Task.binding.Read
 		}
@@ -714,7 +718,7 @@ func bindMCPCodecs(generation *goacodegen.Generation, services *goaservice.Servi
 		if _, viewed := owner.Result.Type.(*expr.ResultTypeExpr); viewed {
 			writer = services.ViewAttributor(planned.prepared.userService.Name, planned.adapterData.CodecImportPath)
 		}
-		for _, selected := range tool.Content.Cases {
+		for _, selected := range tool.ResultConversion.Cases {
 			if selected.structured == nil {
 				continue
 			}
@@ -812,7 +816,7 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 	for _, tool := range data.Tools {
 		if tool.userMethodName == methodName {
 			payload = jsoncodec.DecodeOnly
-			if tool.Content == nil || result == jsoncodec.EncodeOnly {
+			if tool.ResultConversion == nil || result == jsoncodec.EncodeOnly {
 				result = jsoncodec.EncodeOnly
 			} else {
 				result = jsoncodec.ValidateOnly

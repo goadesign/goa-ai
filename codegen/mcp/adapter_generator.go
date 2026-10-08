@@ -27,6 +27,8 @@ type (
 		ServiceGoName string
 		// ResultMeta is the generated server identity encoded as protocol metadata.
 		ResultMeta string
+		// ExtensionMetadata contains the generated server extension declarations.
+		ExtensionMetadata string
 		// MCPName is the server name returned in MCP response metadata.
 		MCPName string
 		// MCPVersion is the server version returned in MCP response metadata.
@@ -86,6 +88,8 @@ type (
 		NeedsContentBytes bool
 		// NeedsContentMeta reports that authored metadata needs object validation.
 		NeedsContentMeta bool
+		// NeedsToolMetadata reports that typed tool results add host-only metadata.
+		NeedsToolMetadata bool
 		// NeedsContentNumbers reports that content needs finite JSON number checks.
 		NeedsContentNumbers bool
 		// NeedsNoArgumentsValidation reports whether a tool has no payload.
@@ -147,6 +151,10 @@ type (
 		Description string
 		// Annotations contains the behavior hints advertised by this tool.
 		Annotations *mcpexpr.ToolAnnotationsExpr
+		// UIMetadata is the generated JSON object for Apps resource and caller choices.
+		UIMetadata string
+		// AppOnly excludes this tool from model-facing invocations.
+		AppOnly bool
 		// ReadOnly is the design-time promise used by the generated HTTP binding.
 		ReadOnly bool
 		// Idempotent is the design-time promise that repeated arguments have no additional effects.
@@ -159,8 +167,9 @@ type (
 		HasPayload bool
 		// HasResult reports whether the Goa method returns a result.
 		HasResult bool
-		// Content converts the authored content field for the selected view.
-		Content *toolContentAdapter
+		// ResultConversion separates content, structured output and host metadata
+		// from the completed service result using its selected view.
+		ResultConversion *toolResultAdapter
 		// InputSchema is the JSON Schema sent by tools/list.
 		InputSchema string
 		// Headers contains precomputed paths mirrored to HTTP headers.
@@ -303,6 +312,12 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 	}
 	data.ResultMeta = string(metadata)
 	data.NeedsNoArgumentsValidation = adapterDataNeedsNoArgumentsValidation(data)
+	for _, tool := range g.mcp.Tools {
+		if tool.MetadataField != "" {
+			data.NeedsToolMetadata = true
+			break
+		}
+	}
 
 	data.ClientCaller = g.buildClientCallerData(data)
 
@@ -344,6 +359,13 @@ func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 			userMethodName: tool.Method.Name,
 		}
 
+		var err error
+		adapter.UIMetadata, err = toolUIMetadata(tool)
+		if err != nil {
+			return nil, fmt.Errorf("encode tool %q Apps metadata: %w", tool.Name, err)
+		}
+		adapter.AppOnly = tool.Visibility == mcpexpr.AppVisibility
+
 		if tool.Annotations != nil {
 			adapter.ReadOnly = tool.Annotations.ReadOnlyHint != nil && *tool.Annotations.ReadOnlyHint
 			adapter.Idempotent = tool.Annotations.IdempotentHint != nil && *tool.Annotations.IdempotentHint
@@ -377,12 +399,12 @@ func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 			return nil, fmt.Errorf("tool %q header annotations: %w", tool.Name, err)
 		}
 		adapter.Headers = headers
-		if tool.ContentField != "" {
-			content, err := g.buildToolContentAdapter(tool)
+		if tool.ContentField != "" || tool.MetadataField != "" {
+			content, err := g.buildToolResultAdapter(tool)
 			if err != nil {
 				return nil, err
 			}
-			adapter.Content = content
+			adapter.ResultConversion = content
 		}
 		if adapter.HasResult {
 			result, err := mcpcontract.ToolResult(tool)

@@ -153,17 +153,32 @@ func (c *StdioCaller) Close(ctx context.Context) error {
 	return c.shutdownErr
 }
 
-// CallTool invokes tools/call over the stdio transport.
+// CallTool checks the current catalog's model visibility and schemas, then
+// invokes tools/call over the stdio transport and returns validated output.
 func (c *StdioCaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
 	params, err := toolParams(ctx, req)
 	if err != nil {
+		return CallResponse{}, err
+	}
+	contract, err := readToolContract(ctx, req.Tool, c.call)
+	if err != nil {
+		return CallResponse{}, err
+	}
+	if err := contract.validateArguments(req.Payload); err != nil {
 		return CallResponse{}, err
 	}
 	var result toolsCallResult
 	if err := c.call(ctx, methodToolsCall, params, &result); err != nil {
 		return CallResponse{}, err
 	}
-	return normalizeCallResult(ctx, result, c.inputSupport)
+	response, err := normalizeCallResult(ctx, result, c.inputSupport)
+	if err != nil {
+		return CallResponse{}, err
+	}
+	if err := contract.validateResult(response); err != nil {
+		return CallResponse{}, err
+	}
+	return response, nil
 }
 
 // call writes one request and waits for the read loop to return the response

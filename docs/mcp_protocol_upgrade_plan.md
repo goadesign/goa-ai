@@ -4060,6 +4060,50 @@ ordinary generated client/server checkpoint passed both view variants in
 38.61 seconds. Scoped lint reported zero issues in 7.53 seconds. The compatible
 pinned linter was used after the PATH binary rejected Go 1.27 configuration.
 
-Apps still requires typed tool declarations, model/app visibility enforcement
-and verified official browser SDK integration. Skills, final caller/store
-acceptance and website publication remain completion gates.
+Apps now has typed tool declarations and model visibility enforcement; it still
+requires verified official browser SDK integration and app-host permissions.
+Skills, final caller/store acceptance and website publication remain completion
+gates.
+
+### Apps producer and model caller contracts
+
+The server declarations follow the [pinned Apps contract](https://github.com/modelcontextprotocol/ext-apps/blob/82221c0c8ce7661efa6771c9d461511b1650495f/specification/2026-01-26/apps.mdx).
+`ToolUI` selects an existing same-server HTML resource. `ToolVisibility` selects
+model, app, or both callers, with both as the protocol default. Generation emits
+only nested `_meta.ui` metadata and advertises the UI MIME type alongside any
+Task extension. Fixed resources and URI readers retain their existing method,
+credential, route and typed metadata contracts.
+
+`FromMCP` excludes app-only helpers. Generated model callers reject direct
+invocation of those helpers using authored facts. Remote HTTP and stdio model
+callers share the same current-credential catalog reader, visibility checks and
+argument/result validation. Stdio consumers now read the catalog before tool
+execution. The typed protocol client remains usable by an app host; that host
+must independently enforce app visibility, origin and resource permissions.
+
+`ToolMetadata` selects a typed completed-result object for private host/app
+data. The shared structured-result projection removes both presentation and
+metadata fields from every model contract. One private result converter handles
+ordinary calls, native views and completed Tasks. Existing codecs retain mapped
+selectors, JSON names, validation and exact integers. The framework adds server
+identity independently; the shared JSON-name resolver rejects authored fields
+that would overwrite it. No agent attachment mode, generic public JSON merger,
+or separate Apps result implementation is introduced.
+
+Focused callers passed in 2.38 seconds; affected stdio subscription and Task
+checks passed in 0.97 seconds. The generated Apps HTTP peer passed in 11.54
+seconds with private metadata, omission, invalid output and model exclusion.
+Native view and completed-Task metadata checks passed together in 23.54 seconds,
+including renamed reserved fields. Scoped lint reported zero issues in 6.27
+seconds. Successful earlier caller results were reused; no full-suite rerun was
+needed for this increment.
+
+The official browser integration remains required. Published Apps SDK 2.0.3 and
+the official client 2.3.1 provide a distinct seam: the SDK owns `ui/initialize`
+and browser messages, while the host owns permissions and browser isolation.
+That browser handshake is separate from the removed core MCP initialization.
+The SDK's automatic tool forwarding does not enforce visibility; register
+checked handlers with an `AppBridge` constructed without an automatic client.
+Prove real browser exchange, blocked model-only and foreign-origin operations,
+declared content policy and teardown before closing this gate. Skills, caller
+acceptance and final website work also remain required; keep this PR draft.

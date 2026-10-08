@@ -404,6 +404,10 @@ func serveStdioSubscriptionPeer() error {
 			if err := encoder.Encode(subscriptionPeerNotification("notifications/resources/updated", request.Params["requestId"], map[string]any{"uri": "file:///late"})); err != nil {
 				return err
 			}
+		case "tools/list":
+			if err := writePeerToolCatalog(encoder, request.ID, []string{"ignore-cancellation", "after-cancel", "after-callback", "after-server-cancel", "reader-released"}); err != nil {
+				return err
+			}
 		case "tools/call":
 			var name string
 			if err := json.Unmarshal(request.Params["name"], &name); err != nil {

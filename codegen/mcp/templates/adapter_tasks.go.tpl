@@ -108,11 +108,11 @@ func {{ .Prefix }}Observation(result {{ .Read.ResultRef }}, nativeID string, met
             Error: failure,
         })}, nil
     case "completed":
-        {{- if not (and .Tool.Content .Read.ExecutionView) }}
+        {{- if not (and .Tool.ResultConversion .Read.ExecutionView) }}
         completedResult, _ := value.{{ .Observed.OutcomeField }}.AsComplete()
         {{- end }}
-        {{- if .Tool.Content }}
-        content, encoded, err := {{ .Tool.Content.Name }}({{ if .Read.ExecutionView }}result{{ else }}completedResult{{ end }})
+        {{- if .Tool.ResultConversion }}
+        content, encoded, metadata, err := {{ .Tool.ResultConversion.Name }}({{ if .Read.ExecutionView }}result{{ else }}completedResult{{ end }})
         {{- else if .Tool.Codec.ResultViews }}
         var encoded []byte
         var err error
@@ -133,7 +133,7 @@ func {{ .Prefix }}Observation(result {{ .Read.ResultRef }}, nativeID string, met
         if err != nil { return nil, goa.PermanentError("internal_error", "%s", err.Error()) }
         return &TasksGetResult{Outcome: NewDetailedTaskCompleted(&TaskCompletedResult{
             {{ template "task-fields" }}
-            Result: &TaskToolResult{ResultType: "complete", Meta: resultMeta(), Content: {{ if .Tool.Content }}content{{ else }}[]*ContentItem{}{{ end }}, StructuredContent: json.RawMessage(encoded)},
+            Result: &TaskToolResult{ResultType: "complete", Meta: {{ if .Tool.ResultConversion }}metadata{{ else }}resultMeta(){{ end }}, Content: {{ if .Tool.ResultConversion }}content{{ else }}[]*ContentItem{}{{ end }}, StructuredContent: json.RawMessage(encoded)},
         })}, nil
     default:
         panic("validated task observation has an undeclared status")
