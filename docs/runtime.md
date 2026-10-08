@@ -6555,10 +6555,22 @@ request under the same consent and form-validation rules as ordinary input;
 answers go to `tasks/update`, never a repeated `tools/call`.
 
 `CancelTask(ctx, taskID)` acknowledges cancellation intent. Work can finish while
-cancellation is being processed; observe the final state rather than interpreting
-the acknowledgement as proof of cancellation. These client methods send one
+cancellation is being processed, and the acknowledgement does not prove that
+execution stopped. No further read is required after sending cancellation.
+These client methods send one
 request and start no polling loop. The server remains responsible for completing
 its durably accepted work.
+
+The shared agent execution path retains accepted Task identity, acknowledged
+answer keys and the original tool result codec across replacement workers.
+Temporary read failures use the same workflow timer and last polling hint as
+ordinary observations. Temporary cancellation delivery failures repeat only the
+same intent and operation identity after a workflow wait. Each activity has one
+network attempt; configured activity deadlines apply to that attempt. Permanent
+rejections end delivery with an error. Observed terminal Tasks need no cancellation.
+Uncertain answer delivery never repeats answers or the creating tool. Generated
+advertisement still waits for suspended-run cancellation, one-successor admission
+and the remaining producer bindings.
 
 The `ttlMs` member is required on the wire; null means unlimited retention, while
 an absent member is invalid. `TaskInfo.TTLMs` represents that value with `*int64`

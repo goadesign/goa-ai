@@ -3531,11 +3531,52 @@ cancellation, Task production or notification production.
 as already settled, and store admission currently permits more than one successor
 of a suspended predecessor. Before advertising Tasks, the shared continuation
 contract must select either answering or cancellation through one closed action,
-and the owning store must atomically claim one successor. Task observations and
-cancellation also need a durable policy for temporary delivery failures, with
-permanent contract/authorization errors kept distinct and no replay of the
-creating tool. Suspended child runs
-must compose through that same path. Migrate every storage implementation and
+and the owning store must atomically claim one successor. Temporary read and
+cancellation delivery policy is now implemented below. Suspended child runs must
+compose through that same continuation path. Migrate every storage implementation and
 caller with the breaking contract. Generated native Task creation, full producer
 bindings and notifications also remain required, along with the other capability
 gates in this plan. Keep the pull request draft and do not release this checkpoint.
+
+### Temporary Task delivery and activity retry ownership — 2026-10-07
+
+The shared MCP executor now keeps delivery failures separate from observed
+terminal Task results. Temporary HTTP rejection and connection loss from a read
+return activity errors; the workflow waits with the last exact polling hint and
+schedules another observation. Accepted Task identity, answers, original arguments
+and the tool-call budget remain unchanged. A failed or cancelled Task observation
+is already terminal and receives no redundant cancellation.
+
+Cancellation delivery uses the same saved Task, intent and operation sequence
+through separate activity attempts. A workflow timer waits one second between
+failed deliveries. That interval protects the unavailable endpoint; its units
+are seconds between attempts of this one cancellation operation, not a limit on
+Task retention or total completion time. This greenfield behavior has no deployed
+configuration or telemetry. Synthetic workflow tests prove that configured
+per-activity timeouts remain per-attempt values and do not end the complete
+cancellation obligation. Permanent contract or authorization rejection stops
+with an error. An acknowledgment still proves only accepted intent.
+
+Each Task activity receives one attempt even when a toolset configures more.
+Workflow timers own repeated reads and cancellation, so activity retries cannot
+skip server polling guidance or repeat uncertain answers. Lost `tasks/update`
+acknowledgment remains terminal: the protocol recommends duplicate-answer
+suppression but does not guarantee it. The original creating `tools/call` is
+never repeated by this handling.
+
+All Temporal activity classes use the same error serializer for permanent input
+rejection. The saved failure prohibits another attempt with that exact activity
+input. It does not prohibit a fresh workflow attempt that selects different
+input; the existing positive retry test retains that behavior. Cancellation
+keeps its existing cancellation error shape. No new production dependency or
+public retry setting is introduced.
+
+Verification includes actual HTTP 503 body-decoding behavior, safe-operation
+classification, exact timer guidance after a read outage, repeated cancellation
+with one operation identity, permanent rejection, and terminal ownership. A real
+Temporal peer survives two failed reads before host input, replaces its worker,
+answers once and completes the original tool once. The shared error package took
+0.703 s. The final affected runtime and Temporal checks took 0.958 s and 0.911 s;
+the command including compilation took 11.29 s. Scoped lint reports zero issues.
+No full root suite was repeated. Suspended cancellation, one-successor admission,
+Task producer bindings and notifications remain release gates.

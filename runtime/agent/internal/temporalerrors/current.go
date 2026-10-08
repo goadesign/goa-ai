@@ -5,11 +5,13 @@ package temporalerrors
 // decoded. Historical types still use their original readers and wrapping rules.
 
 import (
+	"errors"
 	"fmt"
 	"unicode/utf8"
 
 	"go.temporal.io/sdk/temporal"
 
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -130,6 +132,51 @@ func Wrap(err error) error {
 			return err
 		}
 		return wrapCurrentGeneric(err, "", true)
+	default:
+		panic(fmt.Sprintf("temporalerrors: unknown classification kind %d", classified.kind))
+	}
+}
+
+// WrapActivity stores a permanent rejection of this activity's exact input.
+// A fresh workflow attempt may choose another input, so workflow serialization
+// still uses Wrap and the host's workflow retry policy.
+func WrapActivity(err error) error {
+	if CancellationOnly(err) {
+		return Wrap(err)
+	}
+	if engine.IsActivityErrorNonRetryable(err) {
+		return temporal.NewNonRetryableApplicationError(
+			errorevidence.DiagnosticMessage(errorevidence.Text(err)), "goa_ai_activity_input_rejection", nil,
+		)
+	}
+	return Wrap(err)
+}
+
+// Retryable reads the activity owner's retry decision before a workflow repeats
+// a safe read. Saved provider and generic failures retain their original flag;
+// invalid contracts and malformed saved errors never permit another attempt.
+func Retryable(err error) bool {
+	if err == nil || CancellationOnly(err) || engine.IsActivityErrorNonRetryable(err) {
+		return false
+	}
+	//nolint:errorlint // The exact outer custom error owns its attempt policy.
+	if app, ok := err.(*temporal.ApplicationError); ok && !reservedApplicationType(app.Type()) {
+		return !app.NonRetryable()
+	}
+	classified := classify(err)
+	switch classified.kind {
+	case errorKindProvider:
+		return classified.provider.Retryable()
+	case errorKindGeneric:
+		return !classified.application.NonRetryable()
+	case errorKindNone:
+		var app *temporal.ApplicationError
+		if errors.As(err, &app) {
+			return !app.NonRetryable()
+		}
+		return true
+	case errorKindOutputContract, errorKindInvalidReserved, errorKindRequestValidation:
+		return false
 	default:
 		panic(fmt.Sprintf("temporalerrors: unknown classification kind %d", classified.kind))
 	}

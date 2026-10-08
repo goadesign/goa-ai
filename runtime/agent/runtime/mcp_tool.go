@@ -10,6 +10,7 @@ import (
 	"errors"
 
 	"goa.design/goa-ai/internal/tooloperation"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/mcp"
@@ -18,7 +19,9 @@ import (
 
 // ExecuteMCPTool performs the saved operation on one tool and decodes a completed
 // reply with the supplied original specification. Task operations never repeat
-// the creating tools/call; their failures cannot request corrected tool arguments.
+// the creating tools/call. Delivery failures return activity errors; permanent
+// rejection carries the engine's nonretryable marker. Observed terminal Task
+// failures return completed tool failures without correcting original arguments.
 func ExecuteMCPTool(ctx context.Context, caller mcp.Caller, call *ToolCall, remoteName string, spec tools.ToolSpec) (*ToolExecutionResult, error) {
 	if err := toolregistry.ValidateExecution(call.ExecutionSequence, call.ExecutionContinuation, call.TextOnly); err != nil {
 		return Executed(&planner.ToolResult{Name: call.Name, Failure: &planner.ToolFailure{
@@ -38,11 +41,11 @@ func ExecuteMCPTool(ctx context.Context, caller mcp.Caller, call *ToolCall, remo
 		if taskID, ok := continuation.AsTaskGet(); ok {
 			task, err := caller.GetTask(ctx, taskID)
 			if err != nil {
-				return Executed(mcpTaskFailure(call.Name, err)), nil
+				return nil, mcpTaskDeliveryError(call.ExecutionContinuation, err)
 			}
 			info := task.Info()
 			if info.TaskID != taskID {
-				return Executed(mcpTaskFailure(call.Name, mcp.NewMalformedResponseError(errors.New("task observation changed its identifier")))), nil
+				return nil, engine.MarkActivityErrorNonRetryable(mcp.NewMalformedResponseError(errors.New("task observation changed its identifier")))
 			}
 			switch info.Status {
 			case mcp.TaskWorking:
@@ -50,38 +53,38 @@ func ExecuteMCPTool(ctx context.Context, caller mcp.Caller, call *ToolCall, remo
 			case mcp.TaskInputRequired:
 				questions, ok := task.AsInputRequired()
 				if !ok {
-					return Executed(mcpTaskFailure(call.Name, mcp.NewMalformedResponseError(errors.New("task input is missing questions")))), nil
+					return nil, engine.MarkActivityErrorNonRetryable(mcp.NewMalformedResponseError(errors.New("task input is missing questions")))
 				}
 				pending, err := tooloperation.NewPendingTaskInput(taskID, info.PollIntervalMs, questions)
 				if err != nil {
-					return Executed(mcpTaskFailure(call.Name, mcp.NewMalformedResponseError(err))), nil
+					return nil, engine.MarkActivityErrorNonRetryable(mcp.NewMalformedResponseError(err))
 				}
 				return Unfinished(pending)
 			case mcp.TaskCompleted:
 				var ok bool
 				response, ok = task.AsCompleted()
 				if !ok {
-					return Executed(mcpTaskFailure(call.Name, mcp.NewMalformedResponseError(errors.New("completed Task is missing its result")))), nil
+					return nil, engine.MarkActivityErrorNonRetryable(mcp.NewMalformedResponseError(errors.New("completed Task is missing its result")))
 				}
 			case mcp.TaskFailed:
 				failure, ok := task.AsFailed()
 				if !ok {
-					return Executed(mcpTaskFailure(call.Name, mcp.NewMalformedResponseError(errors.New("failed Task is missing its protocol error")))), nil
+					return nil, engine.MarkActivityErrorNonRetryable(mcp.NewMalformedResponseError(errors.New("failed Task is missing its protocol error")))
 				}
 				return Executed(mcpTaskFailure(call.Name, failure)), nil
 			case mcp.TaskCancelled:
 				return Executed(mcpTaskFailure(call.Name, context.Canceled)), nil
 			default:
-				return Executed(mcpTaskFailure(call.Name, mcp.NewMalformedResponseError(errors.New("task observation has an unsupported status")))), nil
+				return nil, engine.MarkActivityErrorNonRetryable(mcp.NewMalformedResponseError(errors.New("task observation has an unsupported status")))
 			}
 		} else if taskID, answers, ok := continuation.AsTaskUpdate(); ok {
 			if err := caller.UpdateTask(ctx, taskID, answers); err != nil {
-				return Executed(mcpTaskFailure(call.Name, err)), nil
+				return nil, mcpTaskDeliveryError(call.ExecutionContinuation, err)
 			}
 			return awaitMCPTask(taskID, nil)
 		} else if taskID, ok := continuation.AsTaskCancel(); ok {
 			if err := caller.CancelTask(ctx, taskID); err != nil {
-				return Executed(mcpTaskFailure(call.Name, err)), nil
+				return nil, mcpTaskDeliveryError(call.ExecutionContinuation, err)
 			}
 			return awaitMCPTask(taskID, nil)
 		} else {

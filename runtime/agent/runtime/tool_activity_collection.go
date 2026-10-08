@@ -70,6 +70,14 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 					return activityByID, pending, false, err
 				}
 				if info.task != nil {
+					if _, reading := info.call.ExecutionContinuation.AsTaskGet(); reading && temporalerrors.Retryable(err) {
+						if err := startTaskObservationTimer(wfCtx, &info); err != nil {
+							return activityByID, pending, false, err
+						}
+						pending = append(pending, info)
+						e.ownedTasks[info.call.ToolCallID] = info
+						continue
+					}
 					if cancelErr := e.cancelAcceptedTask(wfCtx, info); cancelErr != nil {
 						return activityByID, pending, false, errors.Join(err, cancelErr)
 					}
@@ -92,11 +100,6 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				continue
 			}
 
-			if info.task != nil && out.Failure != nil {
-				if err := e.cancelAcceptedTask(wfCtx, info); err != nil {
-					return activityByID, pending, false, err
-				}
-			}
 			execResult, err := e.executionFromActivityOutput(ctx, info, out, wfCtx.Now().Sub(info.startTime))
 			if err != nil {
 				if execResult != nil {
@@ -116,11 +119,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 					e.ownedTasks[info.call.ToolCallID] = info
 				}
 				if waiting {
-					delay := defaultTaskPollIntervalMs
-					if hint := info.task.PollIntervalMs; hint != nil {
-						delay = *hint
-					}
-					if err := startTaskPollTimer(wfCtx, &info, delay); err != nil {
+					if err := startTaskObservationTimer(wfCtx, &info); err != nil {
 						return activityByID, pending, false, err
 					}
 					pending = append(pending, info)
@@ -227,9 +226,29 @@ func (e *toolBatchExec) scheduleToolActivity(wfCtx engine.WorkflowContext, call 
 		TurnID:                call.TurnID,
 		ParentToolCallID:      call.ParentToolCallID,
 	}
-	options := computeToolActivityOptions(wfCtx, e.toolActOptions, e.finishBy)
+	finishBy := e.finishBy
+	cancelling := false
+	if operation := call.ExecutionContinuation; operation != nil {
+		_, cancelling = operation.AsTaskCancel()
+		if cancelling {
+			// Cleanup owns a separate obligation after the run deadline. Its
+			// attempts use the configured activity timeout, not the expired run.
+			finishBy = time.Time{}
+		}
+	}
+	options := computeToolActivityOptions(wfCtx, e.toolActOptions, finishBy)
 	if hasTS && ts.ActivityRetryPolicy != nil {
 		options.RetryPolicy = *ts.ActivityRetryPolicy
+	}
+	if operation := call.ExecutionContinuation; operation != nil {
+		_, reading := operation.AsTaskGet()
+		_, _, answering := operation.AsTaskUpdate()
+		if reading || answering || cancelling {
+			// Workflow timers own repeated reads and cancellation delivery. An
+			// uncertain answer must never be repeated by an activity policy.
+			options.RetryPolicy.MaxAttempts = 1
+			options.RetryPolicy.UnlimitedAttempts = false
+		}
 	}
 	if options.Queue == "" && hasTS && !ts.Inline && ts.TaskQueue != "" {
 		options.Queue = ts.TaskQueue

@@ -32,6 +32,8 @@ type (
 	taskTimerWorkflow struct {
 		engine.WorkflowContext
 		durations []time.Duration
+		options   []engine.ActivityOptions
+		observer  *taskTimerWorkflow
 	}
 
 	// taskActivityFailureWorkflow rejects one read before the activity starts.
@@ -156,7 +158,7 @@ func TestTaskPollHintKeepsCompleteWait(t *testing.T) {
 	segment := int64(math.MaxInt64) / int64(time.Millisecond)
 	for _, millis := range []int64{-1, 0, 1, segment, segment + 1, math.MaxInt64} {
 		t.Run(fmt.Sprint(millis), func(t *testing.T) {
-			wf := &taskTimerWorkflow{WorkflowContext: &testWorkflowContext{ctx: t.Context()}}
+			wf := newTaskTimerWorkflow(&testWorkflowContext{ctx: t.Context()})
 			info := &futureInfo{}
 			require.NoError(t, startTaskPollTimer(wf, info, millis))
 			assert.Equal(t, time.Duration(min(max(millis, 0), segment))*time.Millisecond, wf.durations[0])
@@ -171,8 +173,25 @@ func TestTaskPollHintKeepsCompleteWait(t *testing.T) {
 	}
 }
 
+// newTaskTimerWorkflow keeps timer and activity observations shared across the
+// detached context used to finish cancellation after the run has stopped.
+func newTaskTimerWorkflow(wf engine.WorkflowContext) *taskTimerWorkflow {
+	wrapped := &taskTimerWorkflow{WorkflowContext: wf}
+	wrapped.observer = wrapped
+	return wrapped
+}
+
+func (w *taskTimerWorkflow) Detached() engine.WorkflowContext {
+	return &taskTimerWorkflow{WorkflowContext: w.WorkflowContext.Detached(), observer: w.observer}
+}
+
+func (w *taskTimerWorkflow) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.Future[*ToolOutput], error) {
+	w.observer.options = append(w.observer.options, call.Options)
+	return w.WorkflowContext.ExecuteToolActivityAsync(call)
+}
+
 func (w *taskTimerWorkflow) NewTimer(_ context.Context, duration time.Duration) (engine.Future[time.Time], error) {
-	w.durations = append(w.durations, duration)
+	w.observer.durations = append(w.observer.durations, duration)
 	ready := make(chan struct{})
 	close(ready)
 	return &controlledTimeFuture{ready: ready}, nil
@@ -238,7 +257,7 @@ func TestTaskCleanupBeforeActiveRunSettles(t *testing.T) {
 				require.NoError(t, activityCtx.Err(), "cleanup must outlive the cancelled run context")
 				operations = append(operations, "cancel")
 				if mode == "cancel failure" {
-					return nil, errors.New("cancellation delivery unavailable")
+					return nil, engine.MarkActivityErrorNonRetryable(errors.New("cancellation delivery unavailable"))
 				}
 				pending, err := tooloperation.NewPendingTaskWait(id, nil)
 				require.NoError(t, err)
@@ -282,7 +301,7 @@ func TestTaskReadFailureCancelsWithANewOperation(t *testing.T) {
 				if operation := input.ExecutionContinuation; operation != nil {
 					if _, reading := operation.AsTaskGet(); reading {
 						assert.EqualValues(t, 1, input.ExecutionSequence)
-						return nil, errors.New("read activity unavailable")
+						return nil, engine.MarkActivityErrorNonRetryable(errors.New("read activity unavailable"))
 					}
 					id, cancelling := operation.AsTaskCancel()
 					require.True(t, cancelling)

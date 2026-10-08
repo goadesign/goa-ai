@@ -342,14 +342,7 @@ func (e *Engine) RegisterStorageActivity(_ context.Context, name string, opts en
 		if errors.As(err, &conflict) {
 			return out, startConflictApplicationError(conflict)
 		}
-		if engine.IsActivityErrorNonRetryable(err) {
-			return out, temporal.NewNonRetryableApplicationError(
-				err.Error(),
-				"goa_ai_storage_contract",
-				err,
-			)
-		}
-		return out, temporalerrors.Wrap(err)
+		return out, temporalerrors.WrapActivity(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -376,7 +369,7 @@ func (e *Engine) RegisterPlannerActivity(_ context.Context, name string, opts en
 	wrapped := func(ctx context.Context, in *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
 		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
 		e.recordActivityError(ctx, err)
-		return output, temporalerrors.Wrap(err)
+		return output, temporalerrors.WrapActivity(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -401,7 +394,7 @@ func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opt
 	wrapped := func(ctx context.Context, in *api.ToolInput) (*api.ToolOutput, error) {
 		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
 		e.recordActivityError(ctx, err)
-		return output, temporalerrors.Wrap(err)
+		return output, temporalerrors.WrapActivity(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -416,14 +409,7 @@ func (e *Engine) RegisterAgentChildActivity(_ context.Context, name string, opts
 	wrapped := func(ctx context.Context, in *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error) {
 		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
 		e.recordActivityError(ctx, err)
-		if engine.IsActivityErrorNonRetryable(err) {
-			return output, temporal.NewNonRetryableApplicationError(
-				err.Error(),
-				"goa_ai_agent_child_contract",
-				err,
-			)
-		}
-		return output, temporalerrors.Wrap(err)
+		return output, temporalerrors.WrapActivity(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }

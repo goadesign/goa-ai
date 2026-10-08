@@ -51,22 +51,26 @@ func (p *mcpInputPlanner) PlanResume(_ context.Context, input *planner.PlanResum
 }
 
 func TestMCPContinuationThroughTemporalWorkers(t *testing.T) {
-	testMCPContinuationThroughTemporalWorkers(t, false)
+	testMCPContinuationThroughTemporalWorkers(t, false, false)
 }
 
 func TestTaskContinuationThroughTemporalWorkers(t *testing.T) {
-	testMCPContinuationThroughTemporalWorkers(t, true)
+	testMCPContinuationThroughTemporalWorkers(t, true, false)
+}
+
+func TestTaskReadOutageThroughTemporalWorkers(t *testing.T) {
+	testMCPContinuationThroughTemporalWorkers(t, true, true)
 }
 
 // The same prepared-start path restores ordinary input and Task input. Each
 // successor uses a new worker, the original result codec and the stored history.
-func testMCPContinuationThroughTemporalWorkers(t *testing.T, taskMode bool) {
+func testMCPContinuationThroughTemporalWorkers(t *testing.T, taskMode, readOutage bool) {
 	store := storageinmem.New()
 	_, err := store.CreateSession(t.Context(), "mcp-session", time.Now().UTC())
 	require.NoError(t, err)
 	plan := &mcpInputPlanner{}
 	var calls atomic.Int32
-	var observations, updates atomic.Int32
+	var observations, updates, readAttempts atomic.Int32
 	var idMu sync.Mutex
 	var ids []string
 	peer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
@@ -106,6 +110,10 @@ func testMCPContinuationThroughTemporalWorkers(t *testing.T, taskMode bool) {
 				result = map[string]any{"resultType": "complete", "content": []any{}, "structuredContent": json.RawMessage(`{"answer":42}`)}
 			}
 		case "tasks/get":
+			if attempt := readAttempts.Add(1); readOutage && attempt <= 2 {
+				writer.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
 			assert.True(t, taskMode)
 			assert.JSONEq(t, `""`, string(message.Params["taskId"]))
 			result = map[string]any{"resultType": "complete", "taskId": "", "createdAt": "2026-10-07T00:00:00Z", "lastUpdatedAt": "2026-10-07T00:00:00Z", "ttlMs": nil, "pollIntervalMs": 1}
@@ -220,6 +228,11 @@ func testMCPContinuationThroughTemporalWorkers(t *testing.T, taskMode bool) {
 		assert.EqualValues(t, 1, calls.Load())
 		assert.EqualValues(t, 3, observations.Load())
 		assert.EqualValues(t, 1, updates.Load())
+		if readOutage {
+			assert.EqualValues(t, 5, readAttempts.Load())
+		} else {
+			assert.EqualValues(t, 3, readAttempts.Load())
+		}
 	} else {
 		assert.EqualValues(t, 2, calls.Load())
 	}

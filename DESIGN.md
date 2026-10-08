@@ -2969,8 +2969,11 @@ Task waiting or Task input. A workflow timer separates creation, each read and
 each acknowledged update. Exact Task identity and answered request keys survive
 host-input suspensions; original arguments, codecs and tool-call budget remain
 owned by the original invocation. Active cancellation sends a saved cancellation
-operation independently of the stopped run context. Failed delivery remains an
-error. Generated executors still do not advertise Tasks: cancellation after a
+operation independently of the stopped run context. Temporary reads and
+cancellation delivery use workflow timers; permanent rejection remains an error.
+The shared activity serializer preserves rejection of one exact activity input
+without forbidding a fresh workflow attempt that chooses different input.
+Generated executors still do not advertise Tasks: cancellation after a
 suspension, one-successor admission, producer bindings and notifications must
 complete first. Registry protocol 13 and suspension version 13 reject prior
 contracts; providers, consumers and workers must migrate together.

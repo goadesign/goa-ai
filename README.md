@@ -347,7 +347,10 @@ all three operations; custom callers must implement the complete tool lifecycle.
 The function-only `CallerFunc` adapter is removed. Task creation requires an
 explicit host capability on that request. `Listen` can select task IDs and
 receive their acknowledged full state through the same subscription callback.
-Generated server bindings and durable agent Task consumption remain required before this upgrade is released.
+Agent execution retains Task identity across worker replacement and uses workflow
+timers for temporary read and cancellation delivery failures. The creating tool
+and uncertain answer submission are never repeated. Generated server bindings,
+suspended-run cancellation and one-successor admission remain release requirements.
 
 Generated MCP adapters accept the application's configured Goa endpoints.
 Authentication, method scopes, interceptors and endpoint middleware therefore run

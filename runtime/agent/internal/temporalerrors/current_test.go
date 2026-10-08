@@ -225,3 +225,40 @@ func roundTripCurrentFailure(t *testing.T, err error) *temporal.ApplicationError
 	require.ErrorAs(t, codec.FailureToError(failure), &app)
 	return app
 }
+
+func TestRetryableRetainsSavedFailureDecision(t *testing.T) {
+	for _, retryable := range []bool{false, true} {
+		original := temporal.NewApplicationErrorWithOptions("delivery failed", "custom.delivery", temporal.ApplicationErrorOptions{NonRetryable: !retryable})
+		assert.Equal(t, retryable, Retryable(original))
+		saved := roundTripCurrentFailure(t, Wrap(original))
+		assert.Equal(t, retryable, Retryable(saved))
+		assert.Equal(t, retryable, Retryable(fmt.Errorf("tool activity: %w", saved)))
+	}
+	for _, err := range []error{
+		nil, context.Canceled, engine.MarkActivityErrorNonRetryable(errors.New("permanent rejection")),
+		model.NewRequestValidationError(errors.New("invalid input")),
+		outputcontract.NewWithOrigin(errors.New("invalid output"), outputcontract.OriginTool),
+		temporal.NewApplicationError("invalid saved failure", currentGenericApplicationType),
+	} {
+		assert.False(t, Retryable(err))
+	}
+	assert.True(t, Retryable(errors.New("delivery lost before an outcome was saved")))
+}
+
+// One rejected activity cannot send the same input again. A later workflow
+// attempt may select a different input under its existing host retry policy.
+func TestActivityRejectionRetainsItsAttemptLifetime(t *testing.T) {
+	original := engine.MarkActivityErrorNonRetryable(errors.New("authorization rejected"))
+	activity := roundTripCurrentFailure(t, WrapActivity(original))
+	assert.True(t, activity.NonRetryable())
+	assert.False(t, Retryable(activity))
+	workflow := roundTripCurrentFailure(t, Wrap(fmt.Errorf("tool activity: %w", activity)))
+	assert.False(t, workflow.NonRetryable())
+	assert.True(t, Retryable(workflow))
+}
+
+func TestActivitySerializationPreservesCancellation(t *testing.T) {
+	for _, err := range []error{context.Canceled, engine.MarkActivityErrorNonRetryable(context.Canceled)} {
+		assert.True(t, temporal.IsCanceledError(WrapActivity(err)))
+	}
+}

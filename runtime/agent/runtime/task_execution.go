@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/mcp"
 )
 
@@ -34,6 +35,9 @@ const (
 	// defaultTaskPollIntervalMs spaces this Task's reads when the server supplies
 	// no guidance. It is not a limit on retention, activity time or run duration.
 	defaultTaskPollIntervalMs int64 = 1000
+	// taskCancellationRetryDelay spaces retries of one cancellation delivery.
+	// It protects the unavailable endpoint and imposes no complete-operation limit.
+	taskCancellationRetryDelay = time.Second
 )
 
 // acceptTaskPending retains the current Task and suppresses questions already
@@ -99,6 +103,16 @@ func startTaskPollTimer(wfCtx engine.WorkflowContext, info *futureInfo, millis i
 	info.pollTimer = timer
 	info.future = nil
 	return nil
+}
+
+// startTaskObservationTimer waits before reading an accepted Task again. Both
+// working observations and failed reads retain the last exact polling guidance.
+func startTaskObservationTimer(wfCtx engine.WorkflowContext, info *futureInfo) error {
+	millis := defaultTaskPollIntervalMs
+	if hint := info.task.PollIntervalMs; hint != nil {
+		millis = *hint
+	}
+	return startTaskPollTimer(wfCtx, info, millis)
 }
 
 // cloneTaskExecution copies the saved answer keys and hint before an execution
@@ -229,13 +243,28 @@ func (e *toolBatchExec) cancelAcceptedTask(wfCtx engine.WorkflowContext, info fu
 	// A workflow replay schedules the same activity with the same sequence.
 	e.ownedTasks[info.call.ToolCallID] = info
 	detached := wfCtx.Detached()
-	future, err := e.scheduleToolActivity(detached, info.call)
-	if err != nil {
-		return fmt.Errorf("schedule task cancellation: %w", err)
-	}
-	output, err := future.Get(detached.Context())
-	if err != nil {
-		return fmt.Errorf("cancel accepted task: %w", err)
+	var output *ToolOutput
+	for {
+		future, err := e.scheduleToolActivity(detached, info.call)
+		if err != nil {
+			return fmt.Errorf("schedule task cancellation: %w", err)
+		}
+		output, err = future.Get(detached.Context())
+		if err == nil {
+			break
+		}
+		if !temporalerrors.Retryable(err) {
+			return fmt.Errorf("cancel accepted task: %w", err)
+		}
+		// This activity may have sent cancellation before losing its response.
+		// Repeat only that same intent, Task and sequence after a workflow wait.
+		timer, err := detached.NewTimer(detached.Context(), taskCancellationRetryDelay)
+		if err != nil {
+			return fmt.Errorf("wait before task cancellation retry: %w", err)
+		}
+		if _, err := timer.Get(detached.Context()); err != nil {
+			return fmt.Errorf("wait before task cancellation retry: %w", err)
+		}
 	}
 	if output == nil {
 		return errors.New("task cancellation returned no output")
